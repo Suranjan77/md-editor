@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MD Editor</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="app">
+      <nav id="sidebar">
+        <div class="sidebar-header">
+          <h2>Vault</h2>
+          <div class="sidebar-actions">
+            <button id="btn-open-folder" title="Open Folder">📁</button>
+            <button id="btn-new-file" title="New File (Ctrl+N)">➕</button>
+          </div>
+        </div>
+        <div id="file-list">
+          <div class="empty-state">Open a folder to start</div>
+        </div>
+      </nav>
+      <main id="editor-container">
+        <div id="toolbar">
+          <button id="btn-toggle-sidebar" title="Toggle sidebar (Ctrl+\\)">☰</button>
+          <span id="toolbar-filename"></span>
+          <button id="btn-toggle-backlinks" title="Toggle backlinks">🔗</button>
+        </div>
+        <div id="cm-host"></div>
+        <div id="welcome-screen">
+          <div class="welcome-content">
+            <h1>MD Editor</h1>
+            <p>A magical Markdown writing experience</p>
+            <div class="shortcuts">
+              <div><kbd>Ctrl</kbd>+<kbd>O</kbd> Open Folder</div>
+              <div><kbd>Ctrl</kbd>+<kbd>N</kbd> New File</div>
+              <div><kbd>Ctrl</kbd>+<kbd>S</kbd> Save</div>
+              <div><kbd>Ctrl</kbd>+<kbd>B</kbd> Bold</div>
+              <div><kbd>Ctrl</kbd>+<kbd>I</kbd> Italic</div>
+            </div>
+            <button id="btn-open-welcome" class="primary-btn">Open Folder</button>
+          </div>
+        </div>
+      </main>
+      <aside id="backlinks-pane">
+        <div class="sidebar-header"><h2>Backlinks</h2></div>
+        <div id="backlinks-list"><div class="empty-state">No backlinks</div></div>
+      </aside>
+    </div>
+    <div id="new-file-modal" class="modal hidden">
+      <div class="modal-content">
+        <h3>Create New File</h3>
+        <input type="text" id="new-filename-input" placeholder="filename.md" />
+        <div class="modal-actions">
+          <button id="btn-cancel-new">Cancel</button>
+          <button id="btn-confirm-new" class="primary-btn">Create</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
