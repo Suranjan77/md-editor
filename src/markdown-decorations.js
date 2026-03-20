@@ -5,6 +5,8 @@ import { Decoration, WidgetType, EditorView } from '@codemirror/view';
 import { RangeSetBuilder, StateField } from '@codemirror/state';
 import katex from 'katex';
 import MarkdownIt from 'markdown-it';
+import hljs from 'highlight.js';
+import 'highlight.js/styles/atom-one-dark.css';
 
 const md = new MarkdownIt();
 
@@ -133,6 +135,36 @@ class MathInlineWidget extends WidgetType {
     }
 }
 
+class CodeBlockWidget extends WidgetType {
+    constructor(codeText, lang, pos) { super(); this.codeText = codeText; this.lang = lang; this.pos = pos; }
+    eq(other) { return this.codeText === other.codeText && this.lang === other.lang && this.pos === other.pos; }
+    toDOM(view) {
+        const pre = document.createElement('pre');
+        pre.className = 'md-code-render-block hljs';
+        const code = document.createElement('code');
+        
+        if (this.lang && hljs.getLanguage(this.lang)) {
+            try {
+                code.innerHTML = hljs.highlight(this.codeText, { language: this.lang }).value;
+            } catch (e) {
+                code.textContent = this.codeText;
+            }
+        } else {
+            code.textContent = this.codeText;
+        }
+        pre.appendChild(code);
+        
+        pre.onmousedown = (e) => {
+            if (view && this.pos !== undefined) {
+                e.preventDefault();
+                view.dispatch({ selection: { anchor: this.pos } });
+                view.focus();
+            }
+        };
+        return pre;
+    }
+}
+
 class TableBlockWidget extends WidgetType {
     constructor(mdText, pos) { super(); this.mdText = mdText; this.pos = pos; }
     eq(other) { return this.mdText === other.mdText && this.pos === other.pos; }
@@ -171,15 +203,30 @@ function findBlocks(doc) {
             const fenceMatch = text.match(/^(\s*)(`{3,}|~{3,})/);
             if (fenceMatch) {
                 const fenceChar = fenceMatch[2].charAt(0);
-                const infoString = text.slice(fenceMatch[0].length);
+                const infoString = text.slice(fenceMatch[0].length).trim();
                 if (!infoString.includes(fenceChar)) {
-                    inCode = fenceChar;
+                    inCode = { char: fenceChar, lang: infoString, startLine: i, startFrom: line.from };
                 }
                 i++; continue;
             }
         } else {
-            const closeRegex = new RegExp(`^(\\s*)(${inCode}{3,})\\s*$`);
-            if (closeRegex.test(text)) inCode = false;
+            const closeRegex = new RegExp(`^(\\s*)(${inCode.char}{3,})\\s*$`);
+            if (closeRegex.test(text)) {
+                let codeLines = [];
+                for (let j = inCode.startLine + 1; j < i; j++) {
+                    codeLines.push(doc.line(j).text);
+                }
+                blocks.push({
+                    type: 'code',
+                    from: inCode.startFrom,
+                    to: line.to,
+                    startLine: inCode.startLine,
+                    endLine: i,
+                    lang: inCode.lang,
+                    content: codeLines.join('\n')
+                });
+                inCode = false;
+            }
             i++; continue;
         }
 
@@ -277,6 +324,8 @@ function buildDecorations(state) {
                         widgetDeco = Decoration.replace({ widget: new MathBlockWidget(block.content, block.from), block: true });
                     } else if (block.type === 'table') {
                         widgetDeco = Decoration.replace({ widget: new TableBlockWidget(block.content, block.from), block: true });
+                    } else if (block.type === 'code') {
+                        widgetDeco = Decoration.replace({ widget: new CodeBlockWidget(block.content, block.lang, block.from), block: true });
                     }
                     builder.add(block.from, block.to, widgetDeco);
                     i = block.endLine;
@@ -423,18 +472,18 @@ function addInline(builder, text, offset, isActive, selection) {
                     const url = spaceIndex !== -1 ? rawUrl.substring(0, spaceIndex) : rawUrl;
 
                     if (!isActive) {
-                        safeMark(builder, offset + i, offset + i + 2, mark);
-                        safeMark(builder, offset + i + 2, offset + altEnd, linkDeco);
-                        
-                        let replaceDeco = mark;
                         if (url) {
                             let srcUrl = url;
                             if (!url.startsWith('http') && window.__TAURI__ && window.__TAURI__.core) {
                                 try { srcUrl = window.__TAURI__.core.convertFileSrc(url); } catch (e) {}
                             }
-                            replaceDeco = Decoration.replace({ widget: new ImageWidget(srcUrl, alt, offset + i) });
+                            const replaceDeco = Decoration.replace({ widget: new ImageWidget(srcUrl, alt, offset + i) });
+                            safeMark(builder, offset + i, offset + urlEnd + 1, replaceDeco);
+                        } else {
+                            safeMark(builder, offset + i, offset + i + 2, mark);
+                            safeMark(builder, offset + i + 2, offset + altEnd, linkDeco);
+                            safeMark(builder, offset + altEnd, offset + urlEnd + 1, mark);
                         }
-                        safeMark(builder, offset + altEnd, offset + urlEnd + 1, replaceDeco);
                     } else {
                         safeMark(builder, offset + i, offset + urlEnd + 1, markDim);
                     }

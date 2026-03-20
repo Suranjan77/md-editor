@@ -182,7 +182,7 @@ html, body {
 
 /* ── Custom Replace Widgets ────────────────────────────────────────── */
 .md-hr-widget {
-    width: 100%; height: 2px;
+    width: 100%; height: 30px;
     background: rgba(124, 140, 248, 0.25);
     background-clip: content-box;
     padding: 14px 0;
@@ -211,8 +211,34 @@ html, body {
     color: var(--text-base);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
+.md-code-render-block {
+    margin: 8px 0;
+    padding: 16px;
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary) !important;
+    border: 1px solid rgba(124, 140, 248, 0.12);
+    font-size: 13.5px;
+    font-family: var(--font-mono);
+    line-height: 1.5;
+    overflow-x: auto;
+}
 .md-math-render-inline {
     margin: 0 4px; color: var(--text-base); display: inline-block;
+}
+
+/* ── Custom Tooltips ────────────────────────────────────────────────── */
+.cm-tooltip.cm-tooltip-math {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-active);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    box-shadow: var(--shadow-lg);
+    color: var(--text-primary);
+    font-size: 14px;
+    z-index: 100;
+}
+.cm-tooltip-arrow:before, .cm-tooltip-arrow:after {
+    border-top-color: var(--border-active) !important;
 }
 
 .md-table-render-block {

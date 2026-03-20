@@ -6,6 +6,7 @@ import { EditorState } from '@codemirror/state';
 import { markdown } from '@codemirror/lang-markdown';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdownDecorations } from './markdown-decorations.js';
+import { mathTooltip } from './math-tooltip.js';
 
 // ── Markdown formatting commands ────────────────────────────────────
 function wrapSelection(view, wrapper) {
@@ -276,6 +277,7 @@ export function createEditor(parent, onSave) {
             extensions: [
                 markdown(),
                 markdownDecorations(),
+                mathTooltip(),
                 history(),
                 keymap.of([
                     { key: 'Mod-b', run: boldCommand },
