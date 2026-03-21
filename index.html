@@ -4,7 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MD Editor</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <meta name="description" content="A magical Markdown writing experience with live preview and rich editing">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css" />
   </head>
   <body>
     <div id="app">
@@ -12,7 +14,7 @@
         <div class="sidebar-header">
           <h2>Vault</h2>
           <div class="sidebar-actions">
-            <button id="btn-open-folder" title="Open Folder">📁</button>
+            <button id="btn-open-folder" title="Open Folder (Ctrl+O)">📁</button>
             <button id="btn-new-file" title="New File (Ctrl+N)">➕</button>
           </div>
         </div>
@@ -22,9 +24,9 @@
       </nav>
       <main id="editor-container">
         <div id="toolbar">
-          <button id="btn-toggle-sidebar" title="Toggle sidebar (Ctrl+\\)">☰</button>
+          <button id="btn-toggle-sidebar" title="Toggle sidebar (Ctrl+\)">☰</button>
           <span id="toolbar-filename"></span>
-          <button id="btn-toggle-backlinks" title="Toggle backlinks">🔗</button>
+          <button id="btn-toggle-backlinks" title="Toggle backlinks (Ctrl+Shift+B)">🔗</button>
         </div>
         <div id="cm-host"></div>
         <div id="welcome-screen">
@@ -32,21 +34,44 @@
             <h1>MD Editor</h1>
             <p>A magical Markdown writing experience</p>
             <div class="shortcuts">
-              <div><kbd>Ctrl</kbd>+<kbd>O</kbd> Open Folder</div>
-              <div><kbd>Ctrl</kbd>+<kbd>N</kbd> New File</div>
-              <div><kbd>Ctrl</kbd>+<kbd>S</kbd> Save</div>
-              <div><kbd>Ctrl</kbd>+<kbd>B</kbd> Bold</div>
-              <div><kbd>Ctrl</kbd>+<kbd>I</kbd> Italic</div>
+              <div>
+                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>O</kbd></span>
+                Open Folder
+              </div>
+              <div>
+                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>N</kbd></span>
+                New File
+              </div>
+              <div>
+                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>S</kbd></span>
+                Save
+              </div>
+              <div>
+                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>B</kbd></span>
+                Bold
+              </div>
+              <div>
+                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>I</kbd></span>
+                Italic
+              </div>
+              <div>
+                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>/</kbd></span>
+                All Shortcuts
+              </div>
             </div>
             <button id="btn-open-welcome" class="primary-btn">Open Folder</button>
           </div>
         </div>
       </main>
       <aside id="backlinks-pane">
-        <div class="sidebar-header"><h2>Backlinks</h2></div>
+        <div class="sidebar-header">
+          <h2>Backlinks</h2>
+        </div>
         <div id="backlinks-list"><div class="empty-state">No backlinks</div></div>
       </aside>
     </div>
+
+    <!-- New file modal -->
     <div id="new-file-modal" class="modal hidden">
       <div class="modal-content">
         <h3>Create New File</h3>
@@ -57,6 +82,42 @@
         </div>
       </div>
     </div>
+
+    <!-- Keyboard shortcuts overlay -->
+    <div id="shortcuts-overlay" class="hidden">
+      <div class="shortcuts-panel">
+        <h3><span class="icon">⌨️</span> Keyboard Shortcuts</h3>
+
+        <div class="shortcut-group">
+          <h4>Files</h4>
+          <div class="shortcut-row"><span>Open Folder</span><span class="keys"><kbd>Ctrl</kbd><kbd>O</kbd></span></div>
+          <div class="shortcut-row"><span>New File</span><span class="keys"><kbd>Ctrl</kbd><kbd>N</kbd></span></div>
+          <div class="shortcut-row"><span>Save</span><span class="keys"><kbd>Ctrl</kbd><kbd>S</kbd></span></div>
+        </div>
+
+        <div class="shortcut-group">
+          <h4>Formatting</h4>
+          <div class="shortcut-row"><span>Bold</span><span class="keys"><kbd>Ctrl</kbd><kbd>B</kbd></span></div>
+          <div class="shortcut-row"><span>Italic</span><span class="keys"><kbd>Ctrl</kbd><kbd>I</kbd></span></div>
+          <div class="shortcut-row"><span>Inline Code</span><span class="keys"><kbd>Ctrl</kbd><kbd>E</kbd></span></div>
+          <div class="shortcut-row"><span>Link</span><span class="keys"><kbd>Ctrl</kbd><kbd>K</kbd></span></div>
+          <div class="shortcut-row"><span>Wikilink</span><span class="keys"><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>K</kbd></span></div>
+          <div class="shortcut-row"><span>Strikethrough</span><span class="keys"><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>X</kbd></span></div>
+        </div>
+
+        <div class="shortcut-group">
+          <h4>Navigation</h4>
+          <div class="shortcut-row"><span>Toggle Sidebar</span><span class="keys"><kbd>Ctrl</kbd><kbd>\</kbd></span></div>
+          <div class="shortcut-row"><span>Toggle Backlinks</span><span class="keys"><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>B</kbd></span></div>
+          <div class="shortcut-row"><span>Undo</span><span class="keys"><kbd>Ctrl</kbd><kbd>Z</kbd></span></div>
+          <div class="shortcut-row"><span>Redo</span><span class="keys"><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>Z</kbd></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast container -->
+    <div id="toast-container"></div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
