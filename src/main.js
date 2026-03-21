@@ -14,6 +14,8 @@ const newFileModal = document.getElementById('new-file-modal');
 const inputNewFilename = document.getElementById('new-filename-input');
 const sidebar = document.getElementById('sidebar');
 const backlinksPane = document.getElementById('backlinks-pane');
+const shortcutsOverlay = document.getElementById('shortcuts-overlay');
+const toastContainer = document.getElementById('toast-container');
 
 const editor = createEditor(cmHost, handleSave);
 
@@ -25,12 +27,20 @@ function init() {
     document.getElementById('btn-cancel-new').addEventListener('click', hideNewFileModal);
     document.getElementById('btn-confirm-new').addEventListener('click', handleCreateFile);
 
-    // ── Panel toggles ───────────────────────────────────────
-    document.getElementById('btn-toggle-sidebar').addEventListener('click', () => {
-        sidebar.classList.toggle('collapsed');
-    });
-    document.getElementById('btn-toggle-backlinks').addEventListener('click', () => {
-        backlinksPane.classList.toggle('collapsed');
+    // ── Panel toggles (toolbar buttons) ─────────────────────
+    document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
+    document.getElementById('btn-toggle-backlinks').addEventListener('click', toggleBacklinks);
+
+    // ── Collapse chevron buttons ─────────────────────────────
+    const btnCollapseSidebar = document.getElementById('btn-collapse-sidebar');
+    if (btnCollapseSidebar) btnCollapseSidebar.addEventListener('click', toggleSidebar);
+
+    const btnCollapseBacklinks = document.getElementById('btn-collapse-backlinks');
+    if (btnCollapseBacklinks) btnCollapseBacklinks.addEventListener('click', toggleBacklinks);
+
+    // ── Shortcuts overlay close on click outside ─────────────
+    shortcutsOverlay.addEventListener('click', (e) => {
+        if (e.target === shortcutsOverlay) hideShortcutsOverlay();
     });
 
     inputNewFilename.addEventListener('keydown', (e) => {
@@ -40,9 +50,28 @@ function init() {
 
     // ── Global shortcuts ────────────────────────────────────
     window.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); handleOpenFolder(); }
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); showNewFileModal(); }
-        if ((e.ctrlKey || e.metaKey) && e.key === '\\') { e.preventDefault(); sidebar.classList.toggle('collapsed'); }
+        const mod = e.ctrlKey || e.metaKey;
+
+        // Ctrl+O — Open folder
+        if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); handleOpenFolder(); return; }
+
+        // Ctrl+N — New file
+        if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); showNewFileModal(); return; }
+
+        // Ctrl+\ — Toggle sidebar
+        if (mod && e.key === '\\') { e.preventDefault(); toggleSidebar(); return; }
+
+        // Ctrl+Shift+B — Toggle backlinks
+        if (mod && e.shiftKey && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleBacklinks(); return; }
+
+        // Ctrl+/ — Toggle shortcuts overlay
+        if (mod && e.key === '/') { e.preventDefault(); toggleShortcutsOverlay(); return; }
+
+        // Escape — close overlays
+        if (e.key === 'Escape') {
+            if (!shortcutsOverlay.classList.contains('hidden')) { hideShortcutsOverlay(); return; }
+            if (!newFileModal.classList.contains('hidden')) { hideNewFileModal(); return; }
+        }
     });
 
     // ── Wikilink clicks ─────────────────────────────────────
@@ -53,6 +82,23 @@ function init() {
             if (text) handleOpenFile(text.trim());
         }
     });
+}
+
+// ── Panel toggles ───────────────────────────────────────────────────
+function toggleSidebar() {
+    sidebar.classList.toggle('collapsed');
+}
+
+function toggleBacklinks() {
+    backlinksPane.classList.toggle('collapsed');
+}
+
+// ── Shortcuts overlay ───────────────────────────────────────────────
+function toggleShortcutsOverlay() {
+    shortcutsOverlay.classList.toggle('hidden');
+}
+function hideShortcutsOverlay() {
+    shortcutsOverlay.classList.add('hidden');
 }
 
 // ── File ops ────────────────────────────────────────────────────────
@@ -77,6 +123,7 @@ async function handleOpenFile(relativePath) {
         setContent(editor, content);
         editor.focus();
         updateSidebarSelection();
+        updateToolbarFilename();
         await updateBacklinks(relativePath);
     } catch (err) { console.error('Open file:', err); }
 }
@@ -85,7 +132,7 @@ async function handleSave() {
     if (!state.currentPath) return;
     try {
         await saveFile(state.currentPath, getContent(editor));
-        flashSave();
+        showToast('Saved', 'success');
     } catch (err) { console.error('Save:', err); }
 }
 
@@ -117,11 +164,16 @@ async function updateBacklinks(path) {
     try {
         const links = await getBacklinks(path);
         backlinksList.innerHTML = '';
-        if (!links.length) { backlinksList.innerHTML = '<div class="empty-state">No backlinks</div>'; return; }
-        links.forEach(absPath => {
+        if (!links.length) {
+            backlinksList.innerHTML = '<div class="empty-state">No backlinks</div>';
+            return;
+        }
+        links.forEach((absPath, idx) => {
             const rel = state.vaultRoot ? absPath.replace(state.vaultRoot, '').replace(/^[\\/]/, '') : absPath;
             const el = document.createElement('div');
             el.className = 'backlink-item';
+            el.style.animationDelay = `${idx * 0.04}s`;
+            el.style.animation = `fadeSlideIn 0.25s var(--ease-spring) both`;
             el.innerHTML = `<span class="icon">🔗</span> ${rel}`;
             el.addEventListener('click', () => handleOpenFile(rel));
             backlinksList.appendChild(el);
@@ -130,17 +182,72 @@ async function updateBacklinks(path) {
 }
 
 // ── UI helpers ──────────────────────────────────────────────────────
+function buildTree(entries) {
+    const root = { children: {} };
+    for (const entry of entries) {
+        const parts = entry.path.split('/');
+        let current = root;
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (!current.children[part]) {
+                current.children[part] = {
+                    name: part,
+                    path: parts.slice(0, i + 1).join('/'),
+                    is_dir: i < parts.length - 1 || entry.is_dir,
+                    children: {}
+                };
+            }
+            current = current.children[part];
+        }
+    }
+    return root;
+}
+
+function renderTreeNodes(node, container, level = 0) {
+    const children = Object.values(node.children).sort((a, b) => {
+        if (a.is_dir === b.is_dir) return a.name.localeCompare(b.name);
+        return a.is_dir ? -1 : 1;
+    });
+
+    children.forEach((child, idx) => {
+        if (child.is_dir) {
+            const details = document.createElement('details');
+            details.className = 'tree-dir';
+            if (level === 0) details.open = true;
+
+            const summary = document.createElement('summary');
+            summary.className = `file-item`;
+            summary.setAttribute('data-path', child.path);
+            summary.style.paddingLeft = `${14 + level * 16}px`;
+            summary.innerHTML = `<span class="icon">📁</span> ${child.name}`;
+            
+            const childrenContainer = document.createElement('div');
+            childrenContainer.className = 'tree-children';
+            renderTreeNodes(child, childrenContainer, level + 1);
+            
+            details.appendChild(summary);
+            details.appendChild(childrenContainer);
+            container.appendChild(details);
+        } else {
+            const el = document.createElement('div');
+            el.className = `file-item ${child.path === state.currentPath ? 'active' : ''}`;
+            el.setAttribute('data-path', child.path);
+            el.style.paddingLeft = `${14 + level * 16}px`;
+            el.innerHTML = `<span class="icon">📝</span> ${child.name}`;
+            el.addEventListener('click', () => handleOpenFile(child.path));
+            container.appendChild(el);
+        }
+    });
+}
+
 function renderFileList(entries) {
     fileList.innerHTML = '';
-    if (!entries.length) { fileList.innerHTML = '<div class="empty-state">No markdown files</div>'; return; }
-    entries.forEach(entry => {
-        const el = document.createElement('div');
-        el.className = `file-item ${entry.path === state.currentPath ? 'active' : ''}`;
-        el.setAttribute('data-path', entry.path);
-        el.innerHTML = `<span class="icon">${entry.is_dir ? '📁' : '📝'}</span> ${entry.name}`;
-        if (!entry.is_dir) el.addEventListener('click', () => handleOpenFile(entry.path));
-        fileList.appendChild(el);
-    });
+    if (!entries.length) {
+        fileList.innerHTML = '<div class="empty-state">No markdown files</div>';
+        return;
+    }
+    const tree = buildTree(entries);
+    renderTreeNodes(tree, fileList, 0);
 }
 
 function updateSidebarSelection() {
@@ -149,9 +256,25 @@ function updateSidebarSelection() {
     });
 }
 
-function flashSave() {
-    const el = cmHost.querySelector('.cm-content');
-    if (el) { el.style.opacity = '0.7'; setTimeout(() => el.style.opacity = '1', 200); }
+function updateToolbarFilename() {
+    const el = document.getElementById('toolbar-filename');
+    if (el && state.currentPath) {
+        el.textContent = state.currentPath;
+    }
+}
+
+// ── Toast notification ──────────────────────────────────────────────
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    const icons = { success: '✓', info: 'ℹ', error: '✕' };
+    toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span> ${message}`;
+    toastContainer.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.add('toast-out');
+        toast.addEventListener('animationend', () => toast.remove());
+    }, 2000);
 }
 
 document.addEventListener('DOMContentLoaded', init);
