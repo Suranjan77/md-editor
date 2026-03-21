@@ -13,6 +13,8 @@ fn main() {
             md_editor_lib::commands::list_vault,
             md_editor_lib::commands::set_vault_root,
             md_editor_lib::commands::get_backlinks,
+            md_editor_lib::commands::get_sys_config,
+            md_editor_lib::commands::set_sys_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

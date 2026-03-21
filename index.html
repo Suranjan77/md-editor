@@ -1,123 +1,142 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MD Editor</title>
-    <meta name="description" content="A magical Markdown writing experience with live preview and rich editing">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>MD Editor - Digital Vellum</title>
+    <!-- External Typefaces & Styles -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css" />
-  </head>
-  <body>
-    <div id="app">
-      <nav id="sidebar">
-        <div class="sidebar-header">
-          <h2>Vault</h2>
-          <div class="sidebar-actions">
-            <button id="btn-open-folder" title="Open Folder (Ctrl+O)">📁</button>
-            <button id="btn-new-file" title="New File (Ctrl+N)">➕</button>
-          </div>
-        </div>
-        <div id="file-list">
-          <div class="empty-state">Open a folder to start</div>
-        </div>
-      </nav>
-      <main id="editor-container">
-        <div id="toolbar">
-          <button id="btn-toggle-sidebar" title="Toggle sidebar (Ctrl+\)">☰</button>
-          <span id="toolbar-filename"></span>
-          <button id="btn-toggle-backlinks" title="Toggle backlinks (Ctrl+Shift+B)">🔗</button>
-        </div>
-        <div id="cm-host"></div>
-        <div id="welcome-screen">
-          <div class="welcome-content">
-            <h1>MD Editor</h1>
-            <p>A magical Markdown writing experience</p>
-            <div class="shortcuts">
-              <div>
-                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>O</kbd></span>
-                Open Folder
-              </div>
-              <div>
-                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>N</kbd></span>
-                New File
-              </div>
-              <div>
-                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>S</kbd></span>
-                Save
-              </div>
-              <div>
-                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>B</kbd></span>
-                Bold
-              </div>
-              <div>
-                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>I</kbd></span>
-                Italic
-              </div>
-              <div>
-                <span class="shortcut-keys"><kbd>Ctrl</kbd><kbd>/</kbd></span>
-                All Shortcuts
-              </div>
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .signature-glow:hover { box-shadow: 0 0 20px rgba(177, 204, 198, 0.15); }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #23262b; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-[#0d0e10] text-[#e3e5ed] font-body selection:bg-primary-container selection:text-primary">
+<div class="flex h-screen overflow-hidden" id="app">
+
+    <!-- Ghost Sidebar -->
+    <aside id="sidebar" class="bg-slate-900 dark:bg-[#181a1d] text-[#b1ccc6] font-['Inter'] antialiased leading-[1.6] tracking-tight h-screen w-[64px] hover:w-[240px] transition-all duration-300 ease-in-out overflow-hidden sticky left-0 top-0 flex flex-col py-8 px-2 z-50 group border-r border-[#45484e]/20">
+        <div class="flex items-center gap-4 px-3 mb-10 overflow-hidden whitespace-nowrap">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary-container flex-shrink-0"></div>
+            <div class="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <span class="text-sm font-bold tracking-[0.1em] uppercase text-[#9d9ea3]">MD Editor</span>
+                <span class="text-[10px] text-secondary opacity-60">Digital Vellum</span>
             </div>
-            <button id="btn-open-welcome" class="primary-btn">Open Folder</button>
-          </div>
         </div>
-      </main>
-      <aside id="backlinks-pane">
-        <div class="sidebar-header">
-          <h2>Backlinks</h2>
+        
+        <nav class="flex flex-col gap-2 flex-grow">
+            <!-- Vault/Folder Button -->
+            <div id="btn-open-folder" class="flex items-center gap-4 p-3 rounded-xl text-[#b1ccc6] font-semibold hover:bg-[#23262b] transition-all cursor-pointer overflow-hidden whitespace-nowrap mx-1">
+                <span class="material-symbols-outlined flex-shrink-0 text-xl" data-icon="folder_open">folder_open</span>
+                <span class="text-sm opacity-0 group-hover:opacity-100 transition-opacity">Vault</span>
+            </div>
+            
+            <!-- File Tree Injection Point -->
+            <div id="file-list" class="flex flex-col w-[200px] opacity-0 group-hover:opacity-100 transition-opacity max-h-[50vh] overflow-y-auto mt-2 mb-4 px-1 gap-1">
+                <div class="empty-state text-[11px] text-secondary opacity-50 px-2 italic">Open a folder to start</div>
+            </div>
+            
+        </nav>
+        
+        <div class="mt-auto px-2 overflow-hidden w-full">
+            <div id="btn-new-file" class="w-[200px] py-3 border border-outline-variant/20 rounded-lg text-center text-[10px] font-bold uppercase tracking-widest text-[#b1ccc6] cursor-pointer hover:bg-primary-container transition-colors whitespace-nowrap opacity-0 group-hover:opacity-100">
+                <span class="material-symbols-outlined align-middle !text-[12px] mr-1" data-icon="add">add</span>New File
+            </div>
         </div>
-        <div id="backlinks-list"><div class="empty-state">No backlinks</div></div>
-      </aside>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-grow flex flex-col bg-[#121316] relative transition-all duration-300 min-w-0" id="editor-container">
+        <!-- TopAppBar -->
+        <header id="toolbar" class="flex justify-between items-center w-full px-12 h-16 bg-[#121316] text-[#b1ccc6] font-['Inter'] text-sm font-medium z-20 shrink-0">
+            <div class="flex items-center gap-4">
+                <button id="btn-toggle-sidebar" class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center">
+                    <span class="material-symbols-outlined text-lg" data-icon="menu">menu</span>
+                </button>
+                <div class="flex items-center gap-3">
+                    <span id="toolbar-filename" class="text-[#e3e5ed] font-bold"></span>
+                </div>
+            </div>
+            <div class="flex items-center gap-6">
+                <button id="btn-toggle-backlinks" class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center p-2 rounded-full">
+                    <span class="material-symbols-outlined text-lg" data-icon="tab">tab</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Editor canvas -->
+        <div id="cm-host" class="flex-grow w-full h-full relative z-10 overflow-hidden outline-none"></div>
+
+        <!-- Welcome Screen -->
+        <div id="welcome-screen" class="absolute inset-0 flex flex-col items-center justify-center p-8 bg-[#121316] z-10 transition-opacity">
+            <div class="text-center max-w-2xl mb-24">
+                <h2 class="text-6xl font-extrabold tracking-tight text-[#e3e5ed] mb-4">MD Editor</h2>
+                <p class="text-lg text-[#9d9ea3] leading-[1.6] opacity-80">
+                    A magical Markdown writing experience<br/>
+                </p>
+                <span class="text-xs font-bold tracking-[0.2em] uppercase mt-6 block text-[#b1ccc6]/40">Digital Vellum Protocol</span>
+            </div>
+            
+            <button id="btn-open-welcome" class="group relative px-8 py-4 bg-[#334b47] text-[#bbd6d0] rounded-xl font-medium transition-all hover:scale-[1.02] active:scale-[0.98] mb-16 signature-glow flex items-center gap-3">
+                <span class="material-symbols-outlined" data-icon="margin">margin</span>
+                <span>Open Workspace</span>
+            </button>
+        </div>
+    </main>
+
+    <!-- Contextual Sidebar (Right Panel) -->
+    <aside id="backlinks-pane" class="bg-[#181a1d] dark:bg-[#181a1d] text-[#b1ccc6] font-['Inter'] text-xs uppercase tracking-[0.1em] h-screen w-[280px] sticky right-0 top-0 flex flex-col p-6 z-30 transition-all duration-300 border-l border-[#45484e]/20 shrink-0 collapsed">
+        <div class="mb-10">
+            <h2 class="text-[#9d9ea3] font-bold mb-1">Backlinks</h2>
+            <p class="text-[10px] opacity-40 lowercase tracking-normal italic">Contextual References</p>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto w-full">
+            <div id="backlinks-list" class="space-y-4 pr-2">
+                <div class="empty-state text-[10px] text-[#9d9ea3] opacity-40 italic mt-6 text-center">No linked references found.</div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- OVERLAYS -->
+    
+    <!-- New File Modal -->
+    <div id="new-file-modal" class="fixed inset-0 bg-[#0d0e10]/80 backdrop-blur-sm flex items-center justify-center z-[100] hidden">
+        <div class="bg-[#181a1d] border border-[#45484e]/50 rounded-2xl p-8 min-w-[360px] shadow-2xl">
+            <h3 class="text-lg text-[#e3e5ed] font-bold mb-6">Create New File</h3>
+            <input type="text" id="new-filename-input" class="w-full bg-[#0d0e10] border border-[#45484e] rounded-xl px-4 py-3 text-[#e3e5ed] mb-6 focus:outline-none focus:border-[#b1ccc6] font-mono text-sm" placeholder="filename.md" />
+            <div class="flex justify-end gap-3">
+                <button id="btn-cancel-new" class="px-5 py-2.5 rounded-xl text-[#9d9ea3] hover:bg-[#23262b] transition-colors font-medium text-sm">Cancel</button>
+                <button id="btn-confirm-new" class="px-5 py-2.5 rounded-xl bg-[#334b47] text-[#bbd6d0] hover:brightness-110 transition-colors font-medium text-sm">Create File</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Shortcuts Overlay -->
+    <div id="shortcuts-overlay" class="fixed inset-0 bg-[#0d0e10]/80 backdrop-blur-md flex items-center justify-center z-[100] hidden cursor-pointer">
+        <div class="bg-[#181a1d] border border-[#45484e]/50 rounded-2xl p-10 min-w-[480px] shadow-2xl cursor-default">
+            <h3 class="text-lg text-[#e3e5ed] font-bold mb-8 flex items-center gap-3 opacity-80"><span class="material-symbols-outlined text-[#b1ccc6]">keyboard</span> Shortcuts</h3>
+            <div class="grid grid-cols-2 gap-y-6 gap-x-12">
+                <div class="flex justify-between items-center text-sm text-[#9d9ea3]"><span>Open Folder</span> <span class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold">Ctrl+O</span></div>
+                <div class="flex justify-between items-center text-sm text-[#9d9ea3]"><span>New File</span> <span class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold">Ctrl+N</span></div>
+                <div class="flex justify-between items-center text-sm text-[#9d9ea3]"><span>Toggle Sidebar</span> <span class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold">Ctrl+\</span></div>
+                <div class="flex justify-between items-center text-sm text-[#9d9ea3]"><span>Toggle Backlinks</span> <span class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold">Ctrl+Shift+B</span></div>
+                <div class="flex justify-between items-center text-sm text-[#9d9ea3]"><span>Shortcuts Menu</span> <span class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold">Ctrl+/</span></div>
+                <div class="flex justify-between items-center text-sm text-[#9d9ea3]"><span>Format Bold</span> <span class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold">Ctrl+B</span></div>
+            </div>
+        </div>
     </div>
 
-    <!-- New file modal -->
-    <div id="new-file-modal" class="modal hidden">
-      <div class="modal-content">
-        <h3>Create New File</h3>
-        <input type="text" id="new-filename-input" placeholder="filename.md" />
-        <div class="modal-actions">
-          <button id="btn-cancel-new">Cancel</button>
-          <button id="btn-confirm-new" class="primary-btn">Create</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Keyboard shortcuts overlay -->
-    <div id="shortcuts-overlay" class="hidden">
-      <div class="shortcuts-panel">
-        <h3><span class="icon">⌨️</span> Keyboard Shortcuts</h3>
-
-        <div class="shortcut-group">
-          <h4>Files</h4>
-          <div class="shortcut-row"><span>Open Folder</span><span class="keys"><kbd>Ctrl</kbd><kbd>O</kbd></span></div>
-          <div class="shortcut-row"><span>New File</span><span class="keys"><kbd>Ctrl</kbd><kbd>N</kbd></span></div>
-          <div class="shortcut-row"><span>Save</span><span class="keys"><kbd>Ctrl</kbd><kbd>S</kbd></span></div>
-        </div>
-
-        <div class="shortcut-group">
-          <h4>Formatting</h4>
-          <div class="shortcut-row"><span>Bold</span><span class="keys"><kbd>Ctrl</kbd><kbd>B</kbd></span></div>
-          <div class="shortcut-row"><span>Italic</span><span class="keys"><kbd>Ctrl</kbd><kbd>I</kbd></span></div>
-          <div class="shortcut-row"><span>Inline Code</span><span class="keys"><kbd>Ctrl</kbd><kbd>E</kbd></span></div>
-          <div class="shortcut-row"><span>Link</span><span class="keys"><kbd>Ctrl</kbd><kbd>K</kbd></span></div>
-          <div class="shortcut-row"><span>Wikilink</span><span class="keys"><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>K</kbd></span></div>
-          <div class="shortcut-row"><span>Strikethrough</span><span class="keys"><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>X</kbd></span></div>
-        </div>
-
-        <div class="shortcut-group">
-          <h4>Navigation</h4>
-          <div class="shortcut-row"><span>Toggle Sidebar</span><span class="keys"><kbd>Ctrl</kbd><kbd>\</kbd></span></div>
-          <div class="shortcut-row"><span>Toggle Backlinks</span><span class="keys"><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>B</kbd></span></div>
-          <div class="shortcut-row"><span>Undo</span><span class="keys"><kbd>Ctrl</kbd><kbd>Z</kbd></span></div>
-          <div class="shortcut-row"><span>Redo</span><span class="keys"><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>Z</kbd></span></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Toast container -->
-    <div id="toast-container"></div>
-
-    <script type="module" src="/src/main.js"></script>
-  </body>
+    <!-- Toasts -->
+    <div id="toast-container" class="fixed bottom-8 right-8 z-[200] flex flex-col gap-3 pointer-events-none"></div>
+    
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
 </html>
