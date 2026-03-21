@@ -1,12 +1,13 @@
 {
   "name": "md-editor",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "@codemirror/commands": "^6.7.1",
@@ -17,11 +18,17 @@
     "@lezer/markdown": "^1.3.2",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
+    "highlight.js": "^11.11.1",
     "katex": "^0.16.40",
     "markdown-it": "^14.1.1"
   },
   "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
+    "@tailwindcss/forms": "^0.5.11",
+    "autoprefixer": "^10.4.27",
     "jsdom": "^29.0.1",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.19",
     "vite": "^6.0.0",
     "vitest": "^4.1.0"
   }

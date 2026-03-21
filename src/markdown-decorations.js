@@ -5,6 +5,8 @@ import { Decoration, WidgetType, EditorView } from '@codemirror/view';
 import { RangeSetBuilder, StateField } from '@codemirror/state';
 import katex from 'katex';
 import MarkdownIt from 'markdown-it';
+import hljs from 'highlight.js';
+import 'highlight.js/styles/atom-one-dark.css';
 
 const md = new MarkdownIt();
 
@@ -23,6 +25,8 @@ const fenceOpen = Decoration.line({ class: 'md-fence-line md-fence-open' });
 const fenceClose = Decoration.line({ class: 'md-fence-line md-fence-close' });
 const mathLineD = Decoration.line({ class: 'md-math-line' });
 const mathFenceD = Decoration.line({ class: 'md-math-line md-math-fence' });
+const mathFenceOpenD = Decoration.line({ class: 'md-math-line md-math-fence md-math-fence-open' });
+const mathFenceCloseD = Decoration.line({ class: 'md-math-line md-math-fence md-math-fence-close' });
 const hrLine = Decoration.line({ class: 'md-hr-line' });
 const listLineDeco = Decoration.line({ class: 'md-list-line' });
 const tableFirst = Decoration.line({ class: 'md-table-line md-table-first' });
@@ -55,8 +59,12 @@ class TaskCheckboxWidget extends WidgetType {
 }
 
 class ImageWidget extends WidgetType {
-    constructor(src, alt, pos) { super(); this.src = src; this.alt = alt; this.pos = pos; }
+    constructor(src, alt, seq) { super(); this.src = src; this.alt = alt; this.seq = seq; }
     toDOM(view) {
+        const container = document.createElement('div');
+        container.className = 'md-image-container';
+        container.id = 'figure-' + this.seq;
+
         const img = document.createElement('img');
         img.className = 'md-image-widget';
         img.src = this.src;
@@ -64,29 +72,49 @@ class ImageWidget extends WidgetType {
         img.loading = 'lazy';
         img.onerror = () => { img.style.display = 'none'; };
         
-        img.onmousedown = (e) => {
-            if (view && this.pos !== undefined) {
+        container.appendChild(img);
+
+        const caption = document.createElement('div');
+        caption.className = 'md-image-caption';
+        caption.textContent = `Figure ${this.seq}: ${this.alt}`;
+        container.appendChild(caption);
+
+        img.src = this.src;
+        img.alt = this.alt || '';
+        img.loading = 'lazy';
+        img.onerror = () => { img.style.display = 'none'; };
+        
+        container.onmousedown = (e) => {
+            if (view) {
                 e.preventDefault();
-                view.dispatch({ selection: { anchor: this.pos } });
-                view.focus();
+                e.stopPropagation();
+                const pos = view.posAtDOM(container);
+                if (pos !== null) {
+                    view.dispatch({ selection: { anchor: pos } });
+                    view.focus();
+                }
             }
         };
-        return img;
+        return container;
     }
-    eq(other) { return this.src === other.src && this.pos === other.pos; }
+    eq(other) { return this.src === other.src && this.alt === other.alt && this.seq === other.seq; }
 }
 
 class HrWidget extends WidgetType {
-    constructor(pos) { super(); this.pos = pos; }
-    eq(other) { return this.pos === other.pos; }
+    eq() { return true; }
     toDOM(view) {
         const div = document.createElement('div');
         div.className = 'md-hr-widget';
+        
         div.onmousedown = (e) => {
-            if (view && this.pos !== undefined) {
+            if (view) {
                 e.preventDefault();
-                view.dispatch({ selection: { anchor: this.pos } });
-                view.focus();
+                e.stopPropagation();
+                const pos = view.posAtDOM(div);
+                if (pos !== null) {
+                    view.dispatch({ selection: { anchor: pos } });
+                    view.focus();
+                }
             }
         };
         return div;
@@ -94,19 +122,37 @@ class HrWidget extends WidgetType {
 }
 
 class MathBlockWidget extends WidgetType {
-    constructor(mathText, pos) { super(); this.mathText = mathText; this.pos = pos; }
-    eq(other) { return this.mathText === other.mathText && this.pos === other.pos; }
+    constructor(mathText, seq) { super(); this.mathText = mathText; this.seq = seq; }
+    eq(other) { return this.mathText === other.mathText && this.seq === other.seq; }
     toDOM(view) {
         const div = document.createElement('div');
         div.className = 'md-math-render-block';
-        try { katex.render(this.mathText, div, { displayMode: true, throwOnError: false }); }
-        catch (e) { div.textContent = this.mathText; }
+        div.id = 'equation-' + this.seq;
+
+        const eqWrapper = document.createElement('div');
+        eqWrapper.className = 'md-math-eq-wrapper flex items-center justify-center relative w-full';
+        
+        const mathContent = document.createElement('div');
+        try { katex.render(this.mathText, mathContent, { displayMode: true, throwOnError: false }); }
+        catch (e) { mathContent.textContent = this.mathText; }
+
+        const number = document.createElement('div');
+        number.className = 'md-math-number absolute right-0 text-[10px] opacity-40 font-mono tracking-wider';
+        number.textContent = `(${this.seq})`;
+
+        eqWrapper.appendChild(mathContent);
+        eqWrapper.appendChild(number);
+        div.appendChild(eqWrapper);
         
         div.onmousedown = (e) => {
-            if (view && this.pos !== undefined) {
+            if (view) {
                 e.preventDefault();
-                view.dispatch({ selection: { anchor: this.pos } });
-                view.focus();
+                e.stopPropagation();
+                const pos = view.posAtDOM(div);
+                if (pos !== null) {
+                    view.dispatch({ selection: { anchor: pos } });
+                    view.focus();
+                }
             }
         };
         return div;
@@ -114,8 +160,8 @@ class MathBlockWidget extends WidgetType {
 }
 
 class MathInlineWidget extends WidgetType {
-    constructor(mathText, pos) { super(); this.mathText = mathText; this.pos = pos; }
-    eq(other) { return this.mathText === other.mathText && this.pos === other.pos; }
+    constructor(mathText) { super(); this.mathText = mathText; }
+    eq(other) { return this.mathText === other.mathText; }
     toDOM(view) {
         const span = document.createElement('span');
         span.className = 'md-math-render-inline';
@@ -123,30 +169,99 @@ class MathInlineWidget extends WidgetType {
         catch (e) { span.textContent = this.mathText; }
         
         span.onmousedown = (e) => {
-            if (view && this.pos !== undefined) {
+            if (view) {
                 e.preventDefault();
-                view.dispatch({ selection: { anchor: this.pos } });
-                view.focus();
+                e.stopPropagation();
+                const pos = view.posAtDOM(span);
+                if (pos !== null) {
+                    view.dispatch({ selection: { anchor: pos } });
+                    view.focus();
+                }
             }
         };
         return span;
     }
 }
 
+class CodeInlineWidget extends WidgetType {
+    constructor(codeText) { super(); this.codeText = codeText; }
+    eq(other) { return this.codeText === other.codeText; }
+    toDOM(view) {
+        const span = document.createElement('span');
+        span.className = 'cm-inline-code';
+        span.textContent = this.codeText;
+        
+        span.onmousedown = (e) => {
+            if (view) {
+                e.preventDefault();
+                e.stopPropagation();
+                const pos = view.posAtDOM(span);
+                if (pos !== null) {
+                    view.dispatch({ selection: { anchor: pos } });
+                    view.focus();
+                }
+            }
+        };
+        return span;
+    }
+}
+
+class CodeBlockWidget extends WidgetType {
+    constructor(codeText, lang, seq) { super(); this.codeText = codeText; this.lang = lang; this.seq = seq; }
+    eq(other) { return this.codeText === other.codeText && this.lang === other.lang && this.seq === other.seq; }
+    toDOM(view) {
+        const pre = document.createElement('pre');
+        pre.className = 'md-code-render-block hljs relative';
+        pre.id = 'listing-' + this.seq;
+        
+        const header = document.createElement('div');
+        header.className = 'md-code-header absolute top-[2px] right-[6px] text-[9px] text-[#b1ccc6]/40 font-mono tracking-wider uppercase';
+        header.textContent = `Listing ${this.seq}`;
+
+        const code = document.createElement('code');
+        
+        if (this.lang && hljs.getLanguage(this.lang)) {
+            try { code.innerHTML = hljs.highlight(this.codeText, { language: this.lang }).value; }
+            catch (e) { code.textContent = this.codeText; }
+        } else {
+            code.textContent = this.codeText;
+        }
+        pre.appendChild(header);
+        pre.appendChild(code);
+        
+        pre.onmousedown = (e) => {
+            if (view) {
+                e.preventDefault();
+                e.stopPropagation();
+                const pos = view.posAtDOM(pre);
+                if (pos !== null) {
+                    view.dispatch({ selection: { anchor: pos } });
+                    view.focus();
+                }
+            }
+        };
+        return pre;
+    }
+}
+
+
 class TableBlockWidget extends WidgetType {
-    constructor(mdText, pos) { super(); this.mdText = mdText; this.pos = pos; }
-    eq(other) { return this.mdText === other.mdText && this.pos === other.pos; }
+    constructor(mdText) { super(); this.mdText = mdText; }
+    eq(other) { return this.mdText === other.mdText; }
     toDOM(view) {
         const div = document.createElement('div');
         div.className = 'md-table-render-block';
         div.innerHTML = md.render(this.mdText);
         
         div.onmousedown = (e) => {
-            if (view && this.pos !== undefined) {
-                // Prevent standard DOM selection and force CodeMirror state integration
+            if (view) {
                 e.preventDefault();
-                view.dispatch({ selection: { anchor: this.pos } });
-                view.focus();
+                e.stopPropagation();
+                const pos = view.posAtDOM(div);
+                if (pos !== null) {
+                    view.dispatch({ selection: { anchor: pos } });
+                    view.focus();
+                }
             }
         };
         return div;
@@ -159,7 +274,7 @@ function isTableLine(doc, lineNum) {
 }
 
 // Scans document to construct bounding coordinates for multi-line block elements
-function findBlocks(doc) {
+export function findBlocks(doc, includeUnclosed = false) {
     const blocks = [];
     let inCode = false;
     let i = 1;
@@ -171,15 +286,30 @@ function findBlocks(doc) {
             const fenceMatch = text.match(/^(\s*)(`{3,}|~{3,})/);
             if (fenceMatch) {
                 const fenceChar = fenceMatch[2].charAt(0);
-                const infoString = text.slice(fenceMatch[0].length);
+                const infoString = text.slice(fenceMatch[0].length).trim();
                 if (!infoString.includes(fenceChar)) {
-                    inCode = fenceChar;
+                    inCode = { char: fenceChar, lang: infoString, startLine: i, startFrom: line.from };
                 }
                 i++; continue;
             }
         } else {
-            const closeRegex = new RegExp(`^(\\s*)(${inCode}{3,})\\s*$`);
-            if (closeRegex.test(text)) inCode = false;
+            const closeRegex = new RegExp(`^(\\s*)(${inCode.char}{3,})\\s*$`);
+            if (closeRegex.test(text)) {
+                let codeLines = [];
+                for (let j = inCode.startLine + 1; j < i; j++) {
+                    codeLines.push(doc.line(j).text);
+                }
+                blocks.push({
+                    type: 'code',
+                    from: inCode.startFrom,
+                    to: line.to,
+                    startLine: inCode.startLine,
+                    endLine: i,
+                    lang: inCode.lang,
+                    content: codeLines.join('\n')
+                });
+                inCode = false;
+            }
             i++; continue;
         }
 
@@ -201,8 +331,11 @@ function findBlocks(doc) {
                 }
                 mathLines.push(nextLine.text);
                 i++;
+                if (includeUnclosed && mathLines.length >= 50) {
+                    break;
+                }
             }
-            if (closed && mathLines.length > 0) {
+            if ((closed || includeUnclosed) && mathLines.length > 0) {
                 blocks.push({
                     type: 'math',
                     from: startFrom,
@@ -255,6 +388,7 @@ function buildDecorations(state) {
 
     // Phase 1: Identify all multiline Live Preview structural blocks
     const blocks = findBlocks(doc);
+    const passState = { math: 0, code: 0, img: 0 };
 
     // Phase 2: Process document lines sequentially, collapsing inactive blocks to HTML Native widgets
     for (let i = 1; i <= doc.lines; i++) {
@@ -274,9 +408,13 @@ function buildDecorations(state) {
                 if (i === block.startLine) {
                     let widgetDeco;
                     if (block.type === 'math') {
-                        widgetDeco = Decoration.replace({ widget: new MathBlockWidget(block.content, block.from), block: true });
+                        passState.math++;
+                        widgetDeco = Decoration.replace({ widget: new MathBlockWidget(block.content, passState.math), block: true });
                     } else if (block.type === 'table') {
-                        widgetDeco = Decoration.replace({ widget: new TableBlockWidget(block.content, block.from), block: true });
+                        widgetDeco = Decoration.replace({ widget: new TableBlockWidget(block.content), block: true });
+                    } else if (block.type === 'code') {
+                        passState.code++;
+                        widgetDeco = Decoration.replace({ widget: new CodeBlockWidget(block.content, block.lang, passState.code), block: true });
                     }
                     builder.add(block.from, block.to, widgetDeco);
                     i = block.endLine;
@@ -286,8 +424,11 @@ function buildDecorations(state) {
             
             // Render active blocks natively in plain-text mode with raw structural markers
             if (block.type === 'math') {
-                if (/^\$\$\s*$/.test(text)) {
-                    builder.add(from, from, mathFenceD);
+                if (i === block.startLine) {
+                    builder.add(from, from, mathFenceOpenD);
+                    safeMark(builder, from, from + text.length, markDim);
+                } else if (i === block.endLine) {
+                    builder.add(from, from, mathFenceCloseD);
                     safeMark(builder, from, from + text.length, markDim);
                 } else {
                     builder.add(from, from, mathLineD);
@@ -344,13 +485,13 @@ function buildDecorations(state) {
             const level = hm[1].length;
             builder.add(from, from, headingLines[level - 1]);
             safeMark(builder, from, from + hm[0].length, mark);
-            addInline(builder, text.slice(hm[0].length), from + hm[0].length, isActive, selection);
+            addInline(builder, text.slice(hm[0].length), from + hm[0].length, isActive, selection, passState);
             continue;
         }
 
         if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(text)) {
             if (!isActive) {
-                const widgetDeco = Decoration.replace({ widget: new HrWidget(from), block: true });
+                const widgetDeco = Decoration.replace({ widget: new HrWidget(), block: true });
                 safeMark(builder, from, from + text.length, widgetDeco);
             } else {
                 builder.add(from, from, hrLine);
@@ -363,7 +504,7 @@ function buildDecorations(state) {
         if (bqm) {
             builder.add(from, from, bqLine);
             safeMark(builder, from, from + bqm[1].length, structMark);
-            addInline(builder, text.slice(bqm[1].length), from + bqm[1].length, isActive, selection);
+            addInline(builder, text.slice(bqm[1].length), from + bqm[1].length, isActive, selection, passState);
             continue;
         }
 
@@ -384,7 +525,7 @@ function buildDecorations(state) {
             } else {
                 safeMark(builder, brackStart, spaceEnd, markDim);
             }
-            addInline(builder, text.slice(taskm[0].length), from + taskm[0].length, isActive, selection);
+            addInline(builder, text.slice(taskm[0].length), from + taskm[0].length, isActive, selection, passState);
             continue;
         }
 
@@ -394,19 +535,19 @@ function buildDecorations(state) {
             const ms = from + lm[1].length;
             const me = ms + lm[2].length + 1;
             safeMark(builder, ms, me, structMark);
-            addInline(builder, text.slice(lm[0].length), from + lm[0].length, isActive, selection);
+            addInline(builder, text.slice(lm[0].length), from + lm[0].length, isActive, selection, passState);
             continue;
         }
 
         if (text.length > 0) {
-            addInline(builder, text, from, isActive, selection);
+            addInline(builder, text, from, isActive, selection, passState);
         }
     }
 
     return builder.finish();
 }
 
-function addInline(builder, text, offset, isActive, selection) {
+function addInline(builder, text, offset, isActive, selection, passState) {
     const mark = isActive ? markDim : markHide;
     let i = 0;
 
@@ -423,18 +564,19 @@ function addInline(builder, text, offset, isActive, selection) {
                     const url = spaceIndex !== -1 ? rawUrl.substring(0, spaceIndex) : rawUrl;
 
                     if (!isActive) {
-                        safeMark(builder, offset + i, offset + i + 2, mark);
-                        safeMark(builder, offset + i + 2, offset + altEnd, linkDeco);
-                        
-                        let replaceDeco = mark;
                         if (url) {
                             let srcUrl = url;
                             if (!url.startsWith('http') && window.__TAURI__ && window.__TAURI__.core) {
                                 try { srcUrl = window.__TAURI__.core.convertFileSrc(url); } catch (e) {}
                             }
-                            replaceDeco = Decoration.replace({ widget: new ImageWidget(srcUrl, alt, offset + i) });
+                            passState.img++;
+                            const replaceDeco = Decoration.replace({ widget: new ImageWidget(srcUrl, alt, passState.img) });
+                            safeMark(builder, offset + i, offset + urlEnd + 1, replaceDeco);
+                        } else {
+                            safeMark(builder, offset + i, offset + i + 2, mark);
+                            safeMark(builder, offset + i + 2, offset + altEnd, linkDeco);
+                            safeMark(builder, offset + altEnd, offset + urlEnd + 1, mark);
                         }
-                        safeMark(builder, offset + altEnd, offset + urlEnd + 1, replaceDeco);
                     } else {
                         safeMark(builder, offset + i, offset + urlEnd + 1, markDim);
                     }
@@ -444,10 +586,34 @@ function addInline(builder, text, offset, isActive, selection) {
             }
         }
 
+        // Inline code: `...`
+        if (text[i] === '`') {
+            const end = text.indexOf('`', i + 1);
+            if (end !== -1) {
+                const codeText = text.slice(i + 1, end);
+                const isCodeActive = selection.head >= offset + i && selection.head <= offset + end + 1;
+                
+                if (isCodeActive) {
+                    safeMark(builder, offset + i, offset + end + 1, mark);
+                } else {
+                    const widgetDeco = Decoration.replace({ widget: new CodeInlineWidget(codeText) });
+                    safeMark(builder, offset + i, offset + end + 1, widgetDeco);
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+
         // Inline math: $...$
-        if (text[i] === '$' && text[i + 1] !== '$') {
-            const end = text.indexOf('$', i + 1);
-            if (end !== -1 && end > i + 1 && text[end + 1] !== '$') {
+        if (text[i] === '$' && text[i + 1] !== '$' && text[i + 1] !== ' ' && text[i + 1] !== '\t') {
+            let end = text.indexOf('$', i + 1);
+            while (end !== -1) {
+                // Ensure it's not a $$ and no space before closing $
+                if (text[end + 1] !== '$' && text[end - 1] !== ' ' && text[end - 1] !== '\t') break;
+                end = text.indexOf('$', end + 1);
+            }
+
+            if (end !== -1 && end > i + 1) {
                 const mathText = text.slice(i + 1, end).trim();
                 const isMathActive = selection.head >= offset + i && selection.head <= offset + end + 1;
 
@@ -456,20 +622,9 @@ function addInline(builder, text, offset, isActive, selection) {
                     safeMark(builder, offset + i + 1, offset + end, mathInlineDeco);
                     safeMark(builder, offset + end, offset + end + 1, mark);
                 } else {
-                    const widgetDeco = Decoration.replace({ widget: new MathInlineWidget(mathText, offset + i) });
+                    const widgetDeco = Decoration.replace({ widget: new MathInlineWidget(mathText) });
                     safeMark(builder, offset + i, offset + end + 1, widgetDeco);
                 }
-                i = end + 1;
-                continue;
-            }
-        }
-
-        if (text[i] === '`') {
-            const end = text.indexOf('`', i + 1);
-            if (end !== -1) {
-                safeMark(builder, offset + i, offset + i + 1, mark);
-                safeMark(builder, offset + i + 1, offset + end, codeDeco);
-                safeMark(builder, offset + end, offset + end + 1, mark);
                 i = end + 1;
                 continue;
             }

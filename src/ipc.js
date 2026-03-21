@@ -32,3 +32,11 @@ export async function setVaultRoot(path) {
 export async function getBacklinks(path) {
     return await invoke('get_backlinks', { path });
 }
+
+export async function getSysConfig(key) {
+    return await invoke('get_sys_config', { key });
+}
+
+export async function setSysConfig(key, value) {
+    return await invoke('set_sys_config', { key, value });
+}
