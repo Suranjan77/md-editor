@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
     --bg-primary: #0d0e10; 
     --bg-secondary: #181a1d; 
@@ -72,7 +76,7 @@
 }
 .md-math-render-block .katex-display { margin: 0; }
 .md-code-render-block {
-    padding: 20px;
+    padding: 32px 20px !important;
     border-radius: var(--radius-md);
     background: var(--bg-secondary) !important;
     border: 1px solid var(--border);

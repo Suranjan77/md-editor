@@ -25,6 +25,8 @@ const fenceOpen = Decoration.line({ class: 'md-fence-line md-fence-open' });
 const fenceClose = Decoration.line({ class: 'md-fence-line md-fence-close' });
 const mathLineD = Decoration.line({ class: 'md-math-line' });
 const mathFenceD = Decoration.line({ class: 'md-math-line md-math-fence' });
+const mathFenceOpenD = Decoration.line({ class: 'md-math-line md-math-fence md-math-fence-open' });
+const mathFenceCloseD = Decoration.line({ class: 'md-math-line md-math-fence md-math-fence-close' });
 const hrLine = Decoration.line({ class: 'md-hr-line' });
 const listLineDeco = Decoration.line({ class: 'md-list-line' });
 const tableFirst = Decoration.line({ class: 'md-table-line md-table-first' });
@@ -57,8 +59,12 @@ class TaskCheckboxWidget extends WidgetType {
 }
 
 class ImageWidget extends WidgetType {
-    constructor(src, alt) { super(); this.src = src; this.alt = alt; }
+    constructor(src, alt, seq) { super(); this.src = src; this.alt = alt; this.seq = seq; }
     toDOM(view) {
+        const container = document.createElement('div');
+        container.className = 'md-image-container';
+        container.id = 'figure-' + this.seq;
+
         const img = document.createElement('img');
         img.className = 'md-image-widget';
         img.src = this.src;
@@ -66,20 +72,32 @@ class ImageWidget extends WidgetType {
         img.loading = 'lazy';
         img.onerror = () => { img.style.display = 'none'; };
         
-        img.onmousedown = (e) => {
+        container.appendChild(img);
+
+        const caption = document.createElement('div');
+        caption.className = 'md-image-caption';
+        caption.textContent = `Figure ${this.seq}: ${this.alt}`;
+        container.appendChild(caption);
+
+        img.src = this.src;
+        img.alt = this.alt || '';
+        img.loading = 'lazy';
+        img.onerror = () => { img.style.display = 'none'; };
+        
+        container.onmousedown = (e) => {
             if (view) {
                 e.preventDefault();
                 e.stopPropagation();
-                const pos = view.posAtDOM(img);
+                const pos = view.posAtDOM(container);
                 if (pos !== null) {
                     view.dispatch({ selection: { anchor: pos } });
                     view.focus();
                 }
             }
         };
-        return img;
+        return container;
     }
-    eq(other) { return this.src === other.src && this.alt === other.alt; }
+    eq(other) { return this.src === other.src && this.alt === other.alt && this.seq === other.seq; }
 }
 
 class HrWidget extends WidgetType {
@@ -104,13 +122,27 @@ class HrWidget extends WidgetType {
 }
 
 class MathBlockWidget extends WidgetType {
-    constructor(mathText) { super(); this.mathText = mathText; }
-    eq(other) { return this.mathText === other.mathText; }
+    constructor(mathText, seq) { super(); this.mathText = mathText; this.seq = seq; }
+    eq(other) { return this.mathText === other.mathText && this.seq === other.seq; }
     toDOM(view) {
         const div = document.createElement('div');
         div.className = 'md-math-render-block';
-        try { katex.render(this.mathText, div, { displayMode: true, throwOnError: false }); }
-        catch (e) { div.textContent = this.mathText; }
+        div.id = 'equation-' + this.seq;
+
+        const eqWrapper = document.createElement('div');
+        eqWrapper.className = 'md-math-eq-wrapper flex items-center justify-center relative w-full';
+        
+        const mathContent = document.createElement('div');
+        try { katex.render(this.mathText, mathContent, { displayMode: true, throwOnError: false }); }
+        catch (e) { mathContent.textContent = this.mathText; }
+
+        const number = document.createElement('div');
+        number.className = 'md-math-number absolute right-0 text-[10px] opacity-40 font-mono tracking-wider';
+        number.textContent = `(${this.seq})`;
+
+        eqWrapper.appendChild(mathContent);
+        eqWrapper.appendChild(number);
+        div.appendChild(eqWrapper);
         
         div.onmousedown = (e) => {
             if (view) {
@@ -175,11 +207,17 @@ class CodeInlineWidget extends WidgetType {
 }
 
 class CodeBlockWidget extends WidgetType {
-    constructor(codeText, lang) { super(); this.codeText = codeText; this.lang = lang; }
-    eq(other) { return this.codeText === other.codeText && this.lang === other.lang; }
+    constructor(codeText, lang, seq) { super(); this.codeText = codeText; this.lang = lang; this.seq = seq; }
+    eq(other) { return this.codeText === other.codeText && this.lang === other.lang && this.seq === other.seq; }
     toDOM(view) {
         const pre = document.createElement('pre');
-        pre.className = 'md-code-render-block hljs';
+        pre.className = 'md-code-render-block hljs relative';
+        pre.id = 'listing-' + this.seq;
+        
+        const header = document.createElement('div');
+        header.className = 'md-code-header absolute top-[2px] right-[6px] text-[9px] text-[#b1ccc6]/40 font-mono tracking-wider uppercase';
+        header.textContent = `Listing ${this.seq}`;
+
         const code = document.createElement('code');
         
         if (this.lang && hljs.getLanguage(this.lang)) {
@@ -188,6 +226,7 @@ class CodeBlockWidget extends WidgetType {
         } else {
             code.textContent = this.codeText;
         }
+        pre.appendChild(header);
         pre.appendChild(code);
         
         pre.onmousedown = (e) => {
@@ -349,6 +388,7 @@ function buildDecorations(state) {
 
     // Phase 1: Identify all multiline Live Preview structural blocks
     const blocks = findBlocks(doc);
+    const passState = { math: 0, code: 0, img: 0 };
 
     // Phase 2: Process document lines sequentially, collapsing inactive blocks to HTML Native widgets
     for (let i = 1; i <= doc.lines; i++) {
@@ -368,11 +408,13 @@ function buildDecorations(state) {
                 if (i === block.startLine) {
                     let widgetDeco;
                     if (block.type === 'math') {
-                        widgetDeco = Decoration.replace({ widget: new MathBlockWidget(block.content), block: true });
+                        passState.math++;
+                        widgetDeco = Decoration.replace({ widget: new MathBlockWidget(block.content, passState.math), block: true });
                     } else if (block.type === 'table') {
                         widgetDeco = Decoration.replace({ widget: new TableBlockWidget(block.content), block: true });
                     } else if (block.type === 'code') {
-                        widgetDeco = Decoration.replace({ widget: new CodeBlockWidget(block.content, block.lang), block: true });
+                        passState.code++;
+                        widgetDeco = Decoration.replace({ widget: new CodeBlockWidget(block.content, block.lang, passState.code), block: true });
                     }
                     builder.add(block.from, block.to, widgetDeco);
                     i = block.endLine;
@@ -382,8 +424,11 @@ function buildDecorations(state) {
             
             // Render active blocks natively in plain-text mode with raw structural markers
             if (block.type === 'math') {
-                if (/^\$\$\s*$/.test(text)) {
-                    builder.add(from, from, mathFenceD);
+                if (i === block.startLine) {
+                    builder.add(from, from, mathFenceOpenD);
+                    safeMark(builder, from, from + text.length, markDim);
+                } else if (i === block.endLine) {
+                    builder.add(from, from, mathFenceCloseD);
                     safeMark(builder, from, from + text.length, markDim);
                 } else {
                     builder.add(from, from, mathLineD);
@@ -440,7 +485,7 @@ function buildDecorations(state) {
             const level = hm[1].length;
             builder.add(from, from, headingLines[level - 1]);
             safeMark(builder, from, from + hm[0].length, mark);
-            addInline(builder, text.slice(hm[0].length), from + hm[0].length, isActive, selection);
+            addInline(builder, text.slice(hm[0].length), from + hm[0].length, isActive, selection, passState);
             continue;
         }
 
@@ -459,7 +504,7 @@ function buildDecorations(state) {
         if (bqm) {
             builder.add(from, from, bqLine);
             safeMark(builder, from, from + bqm[1].length, structMark);
-            addInline(builder, text.slice(bqm[1].length), from + bqm[1].length, isActive, selection);
+            addInline(builder, text.slice(bqm[1].length), from + bqm[1].length, isActive, selection, passState);
             continue;
         }
 
@@ -480,7 +525,7 @@ function buildDecorations(state) {
             } else {
                 safeMark(builder, brackStart, spaceEnd, markDim);
             }
-            addInline(builder, text.slice(taskm[0].length), from + taskm[0].length, isActive, selection);
+            addInline(builder, text.slice(taskm[0].length), from + taskm[0].length, isActive, selection, passState);
             continue;
         }
 
@@ -490,19 +535,19 @@ function buildDecorations(state) {
             const ms = from + lm[1].length;
             const me = ms + lm[2].length + 1;
             safeMark(builder, ms, me, structMark);
-            addInline(builder, text.slice(lm[0].length), from + lm[0].length, isActive, selection);
+            addInline(builder, text.slice(lm[0].length), from + lm[0].length, isActive, selection, passState);
             continue;
         }
 
         if (text.length > 0) {
-            addInline(builder, text, from, isActive, selection);
+            addInline(builder, text, from, isActive, selection, passState);
         }
     }
 
     return builder.finish();
 }
 
-function addInline(builder, text, offset, isActive, selection) {
+function addInline(builder, text, offset, isActive, selection, passState) {
     const mark = isActive ? markDim : markHide;
     let i = 0;
 
@@ -524,7 +569,8 @@ function addInline(builder, text, offset, isActive, selection) {
                             if (!url.startsWith('http') && window.__TAURI__ && window.__TAURI__.core) {
                                 try { srcUrl = window.__TAURI__.core.convertFileSrc(url); } catch (e) {}
                             }
-                            const replaceDeco = Decoration.replace({ widget: new ImageWidget(srcUrl, alt) });
+                            passState.img++;
+                            const replaceDeco = Decoration.replace({ widget: new ImageWidget(srcUrl, alt, passState.img) });
                             safeMark(builder, offset + i, offset + urlEnd + 1, replaceDeco);
                         } else {
                             safeMark(builder, offset + i, offset + i + 2, mark);

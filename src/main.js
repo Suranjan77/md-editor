@@ -1,5 +1,5 @@
 import { createEditor, setContent, getContent } from './editor.js';
-import { openFile, saveFile, createFile, listVault, setVaultRoot, getBacklinks } from './ipc.js';
+import { openFile, saveFile, createFile, listVault, setVaultRoot, getBacklinks, getSysConfig, setSysConfig } from './ipc.js';
 import './style.css';
 
 const { open } = window.__TAURI__.dialog;
@@ -19,7 +19,19 @@ const toastContainer = document.getElementById('toast-container');
 
 const editor = createEditor(cmHost, handleSave);
 
-function init() {
+async function init() {
+    try {
+        const lastRoot = await getSysConfig('last_vault_root');
+        if (lastRoot) {
+            state.vaultRoot = lastRoot;
+            const entries = await setVaultRoot(lastRoot);
+            renderFileList(entries);
+            welcomeScreen.classList.add('hidden');
+            
+            const lastFile = await getSysConfig('last_file');
+            if (lastFile) { await handleOpenFile(lastFile); }
+        }
+    } catch (err) { console.warn('Workspace cache miss:', err); }
     // ── Buttons ──────────────────────────────────────────────
     document.getElementById('btn-open-folder')?.addEventListener('click', handleOpenFolder);
     document.getElementById('btn-open-welcome')?.addEventListener('click', handleOpenFolder);
@@ -107,6 +119,7 @@ async function handleOpenFolder() {
         const selected = await open({ directory: true, multiple: false });
         if (selected) {
             state.vaultRoot = selected;
+            await setSysConfig('last_vault_root', selected);
             const entries = await setVaultRoot(selected);
             renderFileList(entries);
             welcomeScreen.classList.add('hidden');
@@ -119,6 +132,7 @@ async function handleOpenFile(relativePath) {
     try {
         const content = await openFile(relativePath);
         state.currentPath = relativePath;
+        await setSysConfig('last_file', relativePath);
         welcomeScreen.classList.add('hidden');
         setContent(editor, content);
         editor.focus();

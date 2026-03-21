@@ -171,13 +171,18 @@ const editorTheme = EditorView.theme({
     '.md-math-line': {
         backgroundColor: 'var(--bg-tertiary)',
         padding: '0 16px',
-        borderLeft: '3px solid var(--accent-secondary)',
+        borderLeft: '1px solid var(--accent-dim)', borderRight: '1px solid var(--accent-dim)',
         fontFamily: "var(--font-mono)",
-        fontSize: '0.9em', color: 'var(--accent-secondary)',
+        fontSize: '14px', lineHeight: '1.6', color: 'var(--accent-secondary)',
     },
-    '.md-math-fence': {
-        fontSize: '0.82em', color: 'var(--text-muted)',
-        fontFamily: "var(--font-mono)",
+    '.md-math-fence': { color: 'var(--text-muted)' },
+    '.md-math-fence-open': {
+        borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
+        paddingTop: '24px', borderTop: '1px solid var(--accent-dim)',
+    },
+    '.md-math-fence-close': {
+        borderRadius: '0 0 var(--radius-md) var(--radius-md)',
+        paddingBottom: '24px', borderBottom: '1px solid var(--accent-dim)',
     },
 
     // ── Task checkboxes ─────────────────────────────────────
@@ -195,8 +200,8 @@ const editorTheme = EditorView.theme({
 
     // ── Image preview ───────────────────────────────────────
     '.md-image-widget': {
-        display: 'inline-block',
-        verticalAlign: 'bottom',
+        display: 'block',
+        margin: '0 auto',
         maxWidth: '100%', maxHeight: '400px',
         borderRadius: 'var(--radius-md)',
         border: '1px solid var(--border)',
@@ -206,6 +211,12 @@ const editorTheme = EditorView.theme({
     '.md-image-widget:hover': {
         transform: 'scale(1.01)',
         boxShadow: 'var(--shadow-lg)',
+    },
+    '.md-image-caption': {
+        textAlign: 'center',
+        paddingTop: '8px',
+        fontSize: '13px',
+        color: 'var(--text-muted)',
     },
 
     // ── Blockquotes ─────────────────────────────────────────
@@ -217,19 +228,25 @@ const editorTheme = EditorView.theme({
     // ── Code blocks (container) ────────────────────────────
     '.md-code-line, .md-fence-line': {
         backgroundColor: 'var(--bg-secondary)',
-        padding: '0 16px',
-        borderLeft: '3px solid var(--border)',
+        padding: '0 20px',
+        borderLeft: '1px solid var(--border)', borderRight: '1px solid var(--border)',
     },
     '.md-code-line': {
         fontFamily: "var(--font-mono)",
-        fontSize: '0.9em', color: 'var(--text-primary)',
+        fontSize: '14px', lineHeight: '1.6', color: 'var(--text-primary)',
     },
     '.md-fence-line': {
         fontFamily: "var(--font-mono)",
-        fontSize: '0.82em', color: 'var(--text-muted)',
+        fontSize: '14px', lineHeight: '1.6', color: 'var(--text-muted)',
     },
-    '.md-fence-open': { borderRadius: 'var(--radius-md) var(--radius-md) 0 0' },
-    '.md-fence-close': { borderRadius: '0 0 var(--radius-md) var(--radius-md)' },
+    '.md-fence-open': {
+        borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
+        paddingTop: '10px', borderTop: '1px solid var(--border)'
+    },
+    '.md-fence-close': {
+        borderRadius: '0 0 var(--radius-md) var(--radius-md)',
+        paddingBottom: '10px', borderBottom: '1px solid var(--border)'
+    },
 
     // ── Horizontal rule ─────────────────────────────────────
     '.md-hr-line': { textAlign: 'center', color: 'var(--border)' },
