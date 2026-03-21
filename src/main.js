@@ -21,15 +21,15 @@ const editor = createEditor(cmHost, handleSave);
 
 function init() {
     // ── Buttons ──────────────────────────────────────────────
-    document.getElementById('btn-open-folder').addEventListener('click', handleOpenFolder);
-    document.getElementById('btn-open-welcome').addEventListener('click', handleOpenFolder);
-    document.getElementById('btn-new-file').addEventListener('click', showNewFileModal);
-    document.getElementById('btn-cancel-new').addEventListener('click', hideNewFileModal);
-    document.getElementById('btn-confirm-new').addEventListener('click', handleCreateFile);
+    document.getElementById('btn-open-folder')?.addEventListener('click', handleOpenFolder);
+    document.getElementById('btn-open-welcome')?.addEventListener('click', handleOpenFolder);
+    document.getElementById('btn-new-file')?.addEventListener('click', showNewFileModal);
+    document.getElementById('btn-cancel-new')?.addEventListener('click', hideNewFileModal);
+    document.getElementById('btn-confirm-new')?.addEventListener('click', handleCreateFile);
 
     // ── Panel toggles (toolbar buttons) ─────────────────────
-    document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
-    document.getElementById('btn-toggle-backlinks').addEventListener('click', toggleBacklinks);
+    document.getElementById('btn-toggle-sidebar')?.addEventListener('click', toggleSidebar);
+    document.getElementById('btn-toggle-backlinks')?.addEventListener('click', toggleBacklinks);
 
     // ── Collapse chevron buttons ─────────────────────────────
     const btnCollapseSidebar = document.getElementById('btn-collapse-sidebar');
@@ -171,10 +171,8 @@ async function updateBacklinks(path) {
         links.forEach((absPath, idx) => {
             const rel = state.vaultRoot ? absPath.replace(state.vaultRoot, '').replace(/^[\\/]/, '') : absPath;
             const el = document.createElement('div');
-            el.className = 'backlink-item';
-            el.style.animationDelay = `${idx * 0.04}s`;
-            el.style.animation = `fadeSlideIn 0.25s var(--ease-spring) both`;
-            el.innerHTML = `<span class="icon">🔗</span> ${rel}`;
+            el.className = 'backlink-item flex flex-col gap-1 p-3 bg-[#23262b]/50 hover:bg-[#23262b] border border-[#45484e]/30 rounded-xl transition-all cursor-pointer group mb-3';
+            el.innerHTML = `<span class="text-on-surface text-[11px] font-medium tracking-normal normal-case group-hover:text-primary transition-colors">${rel}</span>`;
             el.addEventListener('click', () => handleOpenFile(rel));
             backlinksList.appendChild(el);
         });
@@ -212,14 +210,14 @@ function renderTreeNodes(node, container, level = 0) {
     children.forEach((child, idx) => {
         if (child.is_dir) {
             const details = document.createElement('details');
-            details.className = 'tree-dir';
+            details.className = 'tree-dir mb-1';
             if (level === 0) details.open = true;
 
             const summary = document.createElement('summary');
-            summary.className = `file-item`;
+            summary.className = `file-item flex items-center gap-3 p-2 text-[#9d9ea3] hover:text-[#b1ccc6] hover:bg-[#23262b] rounded-lg transition-all cursor-pointer text-xs whitespace-nowrap outline-none select-none`;
             summary.setAttribute('data-path', child.path);
-            summary.style.paddingLeft = `${14 + level * 16}px`;
-            summary.innerHTML = `<span class="icon">📁</span> ${child.name}`;
+            summary.style.paddingLeft = `${8 + level * 12}px`;
+            summary.innerHTML = `<span class="material-symbols-outlined !text-[14px]">folder</span> ${child.name}`;
             
             const childrenContainer = document.createElement('div');
             childrenContainer.className = 'tree-children';
@@ -230,10 +228,11 @@ function renderTreeNodes(node, container, level = 0) {
             container.appendChild(details);
         } else {
             const el = document.createElement('div');
-            el.className = `file-item ${child.path === state.currentPath ? 'active' : ''}`;
+            const isActive = child.path === state.currentPath;
+            el.className = `file-item flex items-center gap-3 p-2 rounded-lg transition-all cursor-pointer text-xs whitespace-nowrap mb-1 outline-none select-none ${isActive ? 'text-[#b1ccc6] bg-[#23262b] font-medium border border-[#45484e]/50 shadow-sm' : 'text-[#9d9ea3] hover:text-[#b1ccc6] hover:bg-[#23262b]/50'}`;
             el.setAttribute('data-path', child.path);
-            el.style.paddingLeft = `${14 + level * 16}px`;
-            el.innerHTML = `<span class="icon">📝</span> ${child.name}`;
+            el.style.paddingLeft = `${8 + level * 12}px`;
+            el.innerHTML = `<span class="material-symbols-outlined !text-[14px]">draft</span> ${child.name}`;
             el.addEventListener('click', () => handleOpenFile(child.path));
             container.appendChild(el);
         }
@@ -252,7 +251,10 @@ function renderFileList(entries) {
 
 function updateSidebarSelection() {
     document.querySelectorAll('.file-item').forEach(el => {
-        el.classList.toggle('active', el.getAttribute('data-path') === state.currentPath);
+        const isActive = el.getAttribute('data-path') === state.currentPath;
+        if (!el.matches('summary')) {
+            el.className = `file-item flex items-center gap-3 p-2 rounded-lg transition-all cursor-pointer text-xs whitespace-nowrap mb-1 outline-none select-none ${isActive ? 'text-[#b1ccc6] bg-[#23262b] font-medium border border-[#45484e]/50 shadow-sm' : 'text-[#9d9ea3] hover:text-[#b1ccc6] hover:bg-[#23262b]/50'}`;
+        }
     });
 }
 
@@ -266,15 +268,16 @@ function updateToolbarFilename() {
 // ── Toast notification ──────────────────────────────────────────────
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    const icons = { success: '✓', info: 'ℹ', error: '✕' };
-    toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span> ${message}`;
+    const border = type === 'success' ? 'border-[#b1ccc6]' : 'border-[#45484e]';
+    toast.className = `toast px-5 py-3 bg-[#181a1d] text-[#e3e5ed] text-xs font-medium rounded-xl shadow-2xl border ${border} flex items-center gap-3 w-max`;
+    const icons = { success: 'check_circle', info: 'info', error: 'error' };
+    toast.innerHTML = `<span class="material-symbols-outlined !text-[16px] ${type === 'success' ? 'text-[#b1ccc6]' : ''}">${icons[type] || icons.info}</span> ${message}`;
     toastContainer.appendChild(toast);
 
     setTimeout(() => {
         toast.classList.add('toast-out');
-        toast.addEventListener('animationend', () => toast.remove());
+        setTimeout(() => toast.remove(), 300);
     }, 2000);
 }
 
-document.addEventListener('DOMContentLoaded', init);
+init();

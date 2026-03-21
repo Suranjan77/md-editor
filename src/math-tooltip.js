@@ -1,6 +1,7 @@
 import { showTooltip } from "@codemirror/view";
 import { StateField } from "@codemirror/state";
 import katex from "katex";
+import { findBlocks } from './markdown-decorations.js';
 
 export function mathTooltip() {
     return mathTooltipField;
@@ -27,10 +28,30 @@ function getMathTooltip(state) {
     // 1. Fast check if inline math
     let i = 0;
     while (i < text.length) {
-        if (text[i] === '$' && text[i + 1] !== '$') {
+        if (text[i] === '`') {
+            const end = text.indexOf('`', i + 1);
+            if (end !== -1) {
+                i = end + 1;
+                continue;
+            }
+        }
+
+        if (text[i] === '$' && text[i + 1] !== '$' && text[i + 1] !== ' ' && text[i + 1] !== '\t') {
             let end = text.indexOf('$', i + 1);
+            while (end !== -1) {
+                if (text[end + 1] !== '$' && text[end - 1] !== ' ' && text[end - 1] !== '\t') break;
+                end = text.indexOf('$', end + 1);
+            }
             if (end !== -1 && text[end + 1] === '$') end = -1;
             
+            // If completely unclosed, make sure it doesn't look like currency
+            if (end === -1) {
+                if (/\d/.test(text[i + 1])) {
+                    i++;
+                    continue; 
+                }
+            }
+
             const actualEnd = end !== -1 ? end : text.length;
             if (offset >= i && offset <= actualEnd + (end !== -1 ? 1 : 0)) {
                 const mathText = text.slice(i + 1, actualEnd).trim();
@@ -46,45 +67,12 @@ function getMathTooltip(state) {
         i++;
     }
 
-    // 2. Fast check for block math around cursor
-    let blockStartLine = -1;
-    let blockEndLine = -1;
-
-    // Scan backwards to find the nearest $$
-    for (let j = line.number; j >= Math.max(1, line.number - 50); j--) {
-        if (/^\$\$\s*$/.test(state.doc.line(j).text)) {
-            // Check if this is an opening or closing by scanning further back,
-            // but for a simple tooltip scanner, finding nearest bounds is usually ok.
-            blockStartLine = j;
-            break;
-        }
-    }
-
-    // Scan forwards to find the terminating $$
-    for (let j = line.number; j <= Math.min(state.doc.lines, line.number + 50); j++) {
-        if (/^\$\$\s*$/.test(state.doc.line(j).text)) {
-            // Cannot be the same line if we are looking for a pair
-            if (j !== blockStartLine) {
-                blockEndLine = j;
-                break;
-            }
-        }
-    }
-
-    if (blockStartLine !== -1 && blockEndLine === -1) {
-        blockEndLine = Math.min(state.doc.lines, blockStartLine + 50);
-    }
-
-    if (blockStartLine !== -1 && blockEndLine !== -1 && blockStartLine <= blockEndLine) {
-        if (line.number >= blockStartLine && line.number <= blockEndLine) {
-            let mathLines = [];
-            for (let j = blockStartLine + 1; j < blockEndLine; j++) {
-                mathLines.push(state.doc.line(j).text);
-            }
-            const mathText = mathLines.join('\n');
-            // Show tooltip above the start of the block
-            return createTooltip(state.doc.line(blockStartLine).from, mathText, true);
-        }
+    // 2. Block math check via AST parser
+    const blocks = findBlocks(state.doc, true);
+    const block = blocks.find(b => b.type === 'math' && line.number >= b.startLine && line.number <= b.endLine);
+    
+    if (block) {
+        return createTooltip(state.doc.line(block.startLine).from, block.content, true);
     }
 
     return null;
