@@ -104,13 +104,12 @@ function linkCommand(view) {
         { from, insert: "[" },
         { from: to, insert: "](url)" },
       ],
-      selection: { anchor: to + 3, head: to + 6 }, // select "url"
+      selection: { anchor: to + 3, head: to + 6 },
     });
   }
   return true;
 }
 
-// ── Theme ───────────────────────────────────────────────────────────
 const editorTheme = EditorView.theme(
   {
     "&": {
@@ -356,7 +355,6 @@ const editorTheme = EditorView.theme(
   { dark: true },
 );
 
-// ── Create editor ───────────────────────────────────────────────────
 export function createEditor(parent, onSave) {
   const view = new EditorView({
     state: EditorState.create({
