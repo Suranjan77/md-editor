@@ -187,6 +187,7 @@ async function handleOpenFolder() {
 }
 
 async function handleOpenMdFile(relativePath) {
+  // This line is necessary for backlinks to work without writing extensions
   if (!relativePath.endsWith(".md")) relativePath += ".md";
   try {
     const content = await openFile(relativePath).then((c) => {

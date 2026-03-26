@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ipc_types::FileEntry;
 
-const IMAGE_EXTENSIONS: [&str; 5] = ["jpeg", "jpg", "png", "svg", "webp"];
+const IMAGE_EXTENSIONS: [&str; 6] = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
 
 /// Read file content from disk.
 pub fn read_file(path: &Path) -> Result<String, String> {

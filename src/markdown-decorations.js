@@ -1,5 +1,5 @@
 /**
- * Typora-like Markdown Decorations for CodeMirror 6 with Live Preview.
+ * Markdown Decorations for CodeMirror 6
  */
 import { Decoration, WidgetType, EditorView } from "@codemirror/view";
 import { RangeSetBuilder, StateField } from "@codemirror/state";
@@ -53,6 +53,8 @@ const wikiDeco = Decoration.mark({ class: "cm-wikilink" });
 const strikeDeco = Decoration.mark({ class: "cm-strikethrough" });
 const mathInlineDeco = Decoration.mark({ class: "md-math-inline" });
 
+const imageWidgetImageCache = new Map();
+
 // ── Live Preview Widgets ───────────────────────────────────────────
 class TaskCheckboxWidget extends WidgetType {
   constructor(checked) {
@@ -88,12 +90,24 @@ class ImageWidget extends WidgetType {
     container.appendChild(img);
 
     if (this.is_local) {
-      const img_ext = this.src.substring(this.src.lastIndexOf(".") + 1);
-      openFile(this.src).then((bytes) => {
-        const uint8Array = new Uint8Array(bytes);
-        const blob = new Blob([uint8Array], { type: `image/${img_ext}` });
-        const imageUrl = URL.createObjectURL(blob);
-        img.src = imageUrl;
+      if (!imageWidgetImageCache.has(this.src)) {
+        const imageFetch = openFile(this.src)
+          .then((bytes) => {
+            const img_ext = this.src.substring(this.src.lastIndexOf(".") + 1);
+            const uint8Array = new Uint8Array(bytes);
+            const blob = new Blob([uint8Array], { type: `image/${img_ext}` });
+            return URL.createObjectURL(blob);
+          })
+          .catch((err) => {
+            console.error("Failed to fetch local image:", err);
+            return "";
+          });
+
+        imageWidgetImageCache.set(this.src, imageFetch);
+      }
+
+      imageWidgetImageCache.get(this.src).then((imageUrl) => {
+        if (imageUrl) img.src = imageUrl;
       });
     } else {
       img.src = this.src;
@@ -109,13 +123,6 @@ class ImageWidget extends WidgetType {
     caption.className = "md-image-caption";
     caption.textContent = `Figure ${this.seq}: ${this.alt}`;
     container.appendChild(caption);
-
-    img.src = this.src;
-    img.alt = this.alt || "";
-    img.loading = "lazy";
-    img.onerror = () => {
-      img.style.display = "none";
-    };
 
     container.onmousedown = (e) => {
       if (view) {
