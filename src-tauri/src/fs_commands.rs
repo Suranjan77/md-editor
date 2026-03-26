@@ -3,9 +3,19 @@ use std::path::{Path, PathBuf};
 
 use crate::ipc_types::FileEntry;
 
+const IMAGE_EXTENSIONS: [&str; 5] = ["jpeg", "jpg", "png", "svg", "webp"];
+
 /// Read file content from disk.
 pub fn read_file(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))
+}
+
+pub fn read_image(path: &PathBuf) -> Result<Vec<u8>, String> {
+    if !is_image(path.extension().unwrap().to_str().unwrap()) {
+        return Err(format!("The file is not an image: {}", path.display()));
+    }
+    return fs::read(path)
+        .map_err(|e| format!("Failed to read image file {}: {}", path.display(), e));
 }
 
 /// Write content to disk.
@@ -70,7 +80,7 @@ fn list_vault_recursive(
             list_vault_recursive(root, &path, entries)?;
         } else if path
             .extension()
-            .map(|e| e == "md" || e == "markdown")
+            .map(|e| e == "md" || e == "markdown" || is_image(&e.to_str().unwrap()))
             .unwrap_or(false)
         {
             entries.push(FileEntry {
@@ -94,4 +104,8 @@ fn path_to_relative_string(path: &Path, root: &Path) -> String {
 /// Resolve a vault-relative path to an absolute path.
 pub fn resolve_vault_path(vault_root: &Path, relative_path: &str) -> PathBuf {
     vault_root.join(relative_path)
+}
+
+pub fn is_image(extention: &str) -> bool {
+    IMAGE_EXTENSIONS.contains(&extention)
 }
