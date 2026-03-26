@@ -1,8 +1,3 @@
-/**
- * Simplified Rust commands — pure file I/O + backlinks.
- * No piece table, no tree-sitter, no AST diffs.
- * CodeMirror 6 handles all document state on the frontend.
- */
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -36,7 +31,8 @@ impl AppState {
                 value TEXT NOT NULL
             )",
             [],
-        ).expect("Failed to initialize settings table");
+        )
+        .expect("Failed to initialize settings table");
 
         AppState {
             vault_root: Mutex::new(None),
@@ -47,17 +43,21 @@ impl AppState {
 }
 
 #[tauri::command]
-pub fn open_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
+pub fn open_file(path: String, state: State<'_, AppState>) -> Result<Vec<u8>, String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = fs_commands::resolve_vault_path(vault_root, &path);
-    let content = fs_commands::read_file(&abs_path)?;
 
-    // Update wikilink index
-    let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
-    index.update_file(&abs_path, &content);
-
-    Ok(content)
+    if fs_commands::is_image(&abs_path.extension().unwrap().to_str().unwrap()) {
+        let content = fs_commands::read_image(&abs_path)?;
+        return Ok(content);
+    } else {
+        let content = fs_commands::read_file(&abs_path)?;
+        // Update wikilink index
+        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+        index.update_file(&abs_path, &content);
+        return Ok(content.into_bytes());
+    }
 }
 
 #[tauri::command]
@@ -139,11 +139,13 @@ pub fn get_backlinks(path: String, state: State<'_, AppState>) -> Result<Vec<Str
 #[tauri::command]
 pub fn get_sys_config(key: String, state: State<'_, AppState>) -> Result<Option<String>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = db.prepare("SELECT value FROM settings WHERE key = ?1").map_err(|e| e.to_string())?;
-    
+    let mut stmt = db
+        .prepare("SELECT value FROM settings WHERE key = ?1")
+        .map_err(|e| e.to_string())?;
+
     // Attempt to map the row explicitly
     let maybe_val: Result<String, _> = stmt.query_row([&key], |row| row.get(0));
-    
+
     match maybe_val {
         Ok(val) => Ok(Some(val)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -152,7 +154,11 @@ pub fn get_sys_config(key: String, state: State<'_, AppState>) -> Result<Option<
 }
 
 #[tauri::command]
-pub fn set_sys_config(key: String, value: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn set_sys_config(
+    key: String,
+    value: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
