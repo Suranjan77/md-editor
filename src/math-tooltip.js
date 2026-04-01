@@ -111,6 +111,7 @@ function createTooltip(pos, mathText, isBlock) {
         katex.render(mathText, dom, {
           displayMode: isBlock,
           throwOnError: false,
+          output: "html",
         });
       } catch (e) {
         dom.textContent = mathText;
