@@ -13,4 +13,4 @@ If yes, this app is similar. I have a plan to add more by stealing features from
 - Then figure out.
 
 ## Demonstration
-![Video](images/video.mp4)
+![Usage demo](images/demonstration.gif)
