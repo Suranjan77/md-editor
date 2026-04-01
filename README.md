@@ -1,3 +1,7 @@
+# MD Editor
+---
+![Home screen](images/home_screen.png)
+
 ## Have you used **Tauri**?
 If yes, this app is similar. I have a plan to add more by stealing features from **Obsidian**.
 
@@ -8,6 +12,5 @@ If yes, this app is similar. I have a plan to add more by stealing features from
 - A portable zip will be built on the root folder (works on linux and windows, I don't have mac to test). Extract and double click the `md-editor.exe` file.
 - Then figure out.
 
----
-## Screenshot
-![Home screen](images/home_screen.png)
+## Demonstration
+![Video](images/video.mp4)
