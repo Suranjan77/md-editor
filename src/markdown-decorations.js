@@ -190,8 +190,8 @@ class MathBlockWidget extends WidgetType {
       katex.render(this.mathText, mathContent, {
         displayMode: true,
         throwOnError: false,
-      });
-    } catch (e) {
+        output: "html",
+      });    } catch (e) {
       mathContent.textContent = this.mathText;
     }
 
@@ -234,6 +234,7 @@ class MathInlineWidget extends WidgetType {
       katex.render(this.mathText, span, {
         displayMode: false,
         throwOnError: false,
+        output: "html",
       });
     } catch (e) {
       span.textContent = this.mathText;
