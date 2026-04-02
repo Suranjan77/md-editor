@@ -8,8 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "tauri": "tauri",
-    "package:portable": "node scripts/package-portable.js"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@codemirror/commands": "^6.7.1",
