@@ -44,12 +44,12 @@
 /* ── CodeMirror Base Integration ────────────────────────────────────── */
 
 #sidebar.collapsed {
-    width: 0 !important;
-    padding-left: 0 !important;
-    padding-right: 0 !important;
+    width: 64px !important;
+}
+#sidebar.collapsed .transition-opacity,
+#sidebar.collapsed #btn-new-file {
     opacity: 0 !important;
-    overflow: hidden !important;
-    border: none !important;
+    pointer-events: none;
 }
 #backlinks-pane.collapsed {
     width: 0 !important;
@@ -251,3 +251,35 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
+
+/* ── CodeMirror Search Panel (Custom) ─────────────────────────────── */
+.cm-panels {
+    border: none !important;
+}
+.cm-search-custom {
+    color: var(--text-primary);
+}
+.cm-search-toggle.active {
+    color: var(--accent) !important;
+    background: var(--accent-dim) !important;
+}
+.cm-search-btn {
+    color: var(--text-muted);
+}
+.cm-search-btn:hover {
+    color: var(--accent);
+}
+
+/* ── CodeMirror Search Highlights ─────────────────────────────────── */
+.cm-searchMatch {
+    background-color: rgba(177, 204, 198, 0.25) !important;
+    border-radius: 2px;
+}
+.cm-searchMatch-selected {
+    background-color: rgba(177, 204, 198, 0.5) !important;
+    outline: 1px solid var(--accent) !important;
+    border-radius: 2px;
+}
+
+
+
