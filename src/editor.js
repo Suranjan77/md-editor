@@ -18,6 +18,7 @@ import {
 import {
   search,
   searchKeymap,
+  SearchQuery,
   getSearchQuery,
   setSearchQuery,
   findNext,
@@ -43,13 +44,18 @@ function createSearchPanel(view) {
   searchInput.placeholder = "Find";
   searchInput.oninput = () => {
     const query = getSearchQuery(view.state);
-    view.dispatch({ effects: setSearchQuery.of(query.update({ search: searchInput.value })) });
+    const newQuery = new SearchQuery({ ...query, search: searchInput.value });
+    view.dispatch({ effects: setSearchQuery.of(newQuery) });
   };
   searchInput.onkeydown = (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       if (e.shiftKey) findPrevious(view);
       else findNext(view);
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearchPanel(view);
     }
   };
 
@@ -65,9 +71,10 @@ function createSearchPanel(view) {
 
     btn.onclick = () => {
       const currentQuery = getSearchQuery(view.state);
-      const newQuery = currentQuery.update({ [field]: !currentQuery[field] });
+      const newQuery = new SearchQuery({ ...currentQuery, [field]: !currentQuery[field] });
       view.dispatch({ effects: setSearchQuery.of(newQuery) });
-      btn.classList.toggle("active");
+      // Don't toggle class here — update() callback handles it.
+      // Doing both causes a double-toggle (dispatch runs update synchronously).
     };
     return btn;
   };
@@ -106,7 +113,14 @@ function createSearchPanel(view) {
   replaceInput.placeholder = "Replace";
   replaceInput.oninput = () => {
     const query = getSearchQuery(view.state);
-    view.dispatch({ effects: setSearchQuery.of(query.update({ replace: replaceInput.value })) });
+    const newQuery = new SearchQuery({ ...query, replace: replaceInput.value });
+    view.dispatch({ effects: setSearchQuery.of(newQuery) });
+  };
+  replaceInput.onkeydown = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearchPanel(view);
+    }
   };
 
   const btnReplace = document.createElement("button");
@@ -136,13 +150,19 @@ function createSearchPanel(view) {
       const newQuery = getSearchQuery(update.state);
       const oldQuery = getSearchQuery(update.startState);
       if (!newQuery.eq(oldQuery)) {
-        searchInput.value = newQuery.search;
-        replaceInput.value = newQuery.replace;
+        // Only update input values when the input is NOT focused,
+        // to avoid resetting cursor position while the user types
+        if (document.activeElement !== searchInput) {
+          searchInput.value = newQuery.search;
+        }
+        if (document.activeElement !== replaceInput) {
+          replaceInput.value = newQuery.replace;
+        }
         
-        // Sync toggle states
-        if (newQuery.caseSensitive !== oldQuery.caseSensitive) caseToggle.classList.toggle("active", newQuery.caseSensitive);
-        if (newQuery.wholeWord !== oldQuery.wholeWord) wordToggle.classList.toggle("active", newQuery.wholeWord);
-        if (newQuery.regexp !== oldQuery.regexp) regexToggle.classList.toggle("active", newQuery.regexp);
+        // Sync toggle button visual states
+        caseToggle.classList.toggle("active", newQuery.caseSensitive);
+        wordToggle.classList.toggle("active", newQuery.wholeWord);
+        regexToggle.classList.toggle("active", newQuery.regexp);
       }
     }
   };

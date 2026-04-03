@@ -1,4 +1,5 @@
 import { createEditor, setContent, getContent, hasFocus } from "./editor.js";
+import { clearImageCache } from "./markdown-decorations.js";
 import {
   openFile,
   saveFile,
@@ -168,10 +169,9 @@ async function init() {
 
     // Delete — Delete selected file/folder
     if (e.key === "Delete" && state.selectedSidebarPath) {
-      const isSidebarFocused = document.activeElement.closest(".file-item");
-      const isInputFocused = document.activeElement.tagName === "INPUT";
+      const isInputFocused = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
       
-      if (isSidebarFocused || (!isInputFocused && !hasFocus(editor))) {
+      if (!isInputFocused && !hasFocus(editor)) {
         e.preventDefault();
         e.stopPropagation();
         handleDelete(state.selectedSidebarPath);
@@ -181,10 +181,9 @@ async function init() {
 
     // F2 — Rename selected file/folder
     if (e.key === "F2" && state.selectedSidebarPath) {
-      const isSidebarFocused = document.activeElement.closest(".file-item");
-      const isInputFocused = document.activeElement.tagName === "INPUT";
+      const isInputFocused = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
 
-      if (isSidebarFocused || (!isInputFocused && !hasFocus(editor))) {
+      if (!isInputFocused) {
         e.preventDefault();
         e.stopPropagation();
         showNameModal("rename", state.selectedSidebarPath);
@@ -219,8 +218,11 @@ async function init() {
   cmHost.addEventListener("click", (e) => {
     const wl = e.target.closest(".cm-wikilink");
     if (wl) {
-      const text = wl.textContent;
-      if (text) handleOpenMdFile(text.trim());
+      let text = wl.textContent;
+      if (text) {
+        text = text.split("|")[0].trim(); // Strip alias from [[page|alias]]
+        handleOpenMdFile(text);
+      }
     }
   });
 }
@@ -315,6 +317,7 @@ async function handleOpenFolder() {
     const selected = await open({ directory: true, multiple: false });
     if (selected) {
       state.vaultRoot = selected;
+      clearImageCache(); // Free old blob URLs before switching vaults
       await setSysConfig("last_vault_root", selected);
       const entries = await setVaultRoot(selected);
       renderFileList(entries);
@@ -552,6 +555,20 @@ function renderTreeNodes(node, container, level = 0) {
     const itemContainer = document.createElement("div");
     itemContainer.className = "group relative";
 
+    // Reusable delete button for sidebar items
+    function createDeleteBtn(path) {
+      const btn = document.createElement("button");
+      btn.className = "sidebar-delete-btn material-symbols-outlined !text-[14px] p-1 rounded-md opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-[#ee7d77] hover:bg-[#ee7d77]/10 transition-all duration-150 flex-shrink-0";
+      btn.textContent = "delete";
+      btn.title = "Delete";
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleDelete(path);
+      });
+      return btn;
+    }
+
     if (child.is_dir) {
       const details = document.createElement("details");
       details.className = "tree-dir mb-1";
@@ -567,6 +584,7 @@ function renderTreeNodes(node, container, level = 0) {
       label.className = "flex items-center gap-3 overflow-hidden";
       label.innerHTML = `<span class="material-symbols-outlined !text-[14px]">folder</span> <span class="truncate">${child.name}</span>`;
       summary.appendChild(label);
+      summary.appendChild(createDeleteBtn(child.path));
 
       summary.addEventListener("click", (e) => {
         state.selectedSidebarPath = child.path;
@@ -593,6 +611,7 @@ function renderTreeNodes(node, container, level = 0) {
       label.className = "flex items-center gap-3 overflow-hidden";
       label.innerHTML = `<span class="material-symbols-outlined !text-[14px]">draft</span> <span class="truncate">${child.name}</span>`;
       el.appendChild(label);
+      el.appendChild(createDeleteBtn(child.path));
       
       el.addEventListener("click", (e) => {
         handleOpenMdFile(child.path);
