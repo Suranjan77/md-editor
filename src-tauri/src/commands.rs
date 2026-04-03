@@ -48,7 +48,7 @@ pub fn open_file(path: String, state: State<'_, AppState>) -> Result<Vec<u8>, St
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = fs_commands::resolve_vault_path(vault_root, &path);
 
-    if fs_commands::is_image(&abs_path.extension().unwrap().to_str().unwrap()) {
+    if abs_path.extension().map_or(false, |e| fs_commands::is_image(e.to_str().unwrap_or(""))) {
         let content = fs_commands::read_image(&abs_path)?;
         return Ok(content);
     } else {

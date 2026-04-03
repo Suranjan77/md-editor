@@ -47,7 +47,8 @@
     width: 64px !important;
 }
 #sidebar.collapsed .transition-opacity,
-#sidebar.collapsed #btn-new-file {
+#sidebar.collapsed #btn-new-file,
+#sidebar.collapsed #btn-new-folder {
     opacity: 0 !important;
     pointer-events: none;
 }
