@@ -1,5 +1,5 @@
 /**
- * CodeMirror 6 editor setup with Typora-like keybindings.
+ * CodeMirror 6 editor setup
  */
 import {
   EditorView,
@@ -15,8 +15,138 @@ import {
   historyKeymap,
   indentWithTab,
 } from "@codemirror/commands";
+import {
+  search,
+  searchKeymap,
+  getSearchQuery,
+  setSearchQuery,
+  findNext,
+  findPrevious,
+  replaceNext,
+  replaceAll,
+  closeSearchPanel,
+} from "@codemirror/search";
 import { markdownDecorations } from "./markdown-decorations.js";
 import { mathTooltip } from "./math-tooltip.js";
+
+// ── Custom Search Panel ─────────────────────────────────────────────
+function createSearchPanel(view) {
+  const container = document.createElement("div");
+  container.className = "cm-search-custom flex flex-col gap-2 p-3 bg-[#181a1d] border-b border-[#45484e]/30 shadow-lg";
+
+  // Search Row
+  const searchRow = document.createElement("div");
+  searchRow.className = "flex items-center gap-2";
+
+  const searchInput = document.createElement("input");
+  searchInput.className = "cm-search-input flex-grow bg-[#0d0e10] border border-[#45484e] rounded-lg px-3 py-1.5 text-sm text-[#e3e5ed] focus:outline-none focus:border-[#b1ccc6]";
+  searchInput.placeholder = "Find";
+  searchInput.oninput = () => {
+    const query = getSearchQuery(view.state);
+    view.dispatch({ effects: setSearchQuery.of(query.update({ search: searchInput.value })) });
+  };
+  searchInput.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (e.shiftKey) findPrevious(view);
+      else findNext(view);
+    }
+  };
+
+  const createToggle = (icon, title, field) => {
+    const btn = document.createElement("button");
+    btn.className = "cm-search-toggle material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
+    btn.textContent = icon;
+    btn.title = title;
+    
+    // Initial state
+    const query = getSearchQuery(view.state);
+    if (query[field]) btn.classList.add("active");
+
+    btn.onclick = () => {
+      const currentQuery = getSearchQuery(view.state);
+      const newQuery = currentQuery.update({ [field]: !currentQuery[field] });
+      view.dispatch({ effects: setSearchQuery.of(newQuery) });
+      btn.classList.toggle("active");
+    };
+    return btn;
+  };
+
+  const caseToggle = createToggle("match_case", "Match Case", "caseSensitive");
+  const wordToggle = createToggle("match_word", "Whole Words", "wholeWord");
+  const regexToggle = createToggle("regular_expression", "Regex", "regexp");
+
+  const navPrev = document.createElement("button");
+  navPrev.className = "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
+  navPrev.textContent = "keyboard_arrow_up";
+  navPrev.title = "Previous (Shift+Enter)";
+  navPrev.onclick = () => findPrevious(view);
+
+  const navNext = document.createElement("button");
+  navNext.className = "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
+  navNext.textContent = "keyboard_arrow_down";
+  navNext.title = "Next (Enter)";
+  navNext.onclick = () => findNext(view);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b] ml-1";
+  closeBtn.textContent = "close";
+  closeBtn.onclick = () => {
+    closeSearchPanel(view);
+  };
+
+  searchRow.append(searchInput, caseToggle, wordToggle, regexToggle, navPrev, navNext, closeBtn);
+
+  // Replace Row
+  const replaceRow = document.createElement("div");
+  replaceRow.className = "flex items-center gap-2";
+
+  const replaceInput = document.createElement("input");
+  replaceInput.className = "cm-replace-input flex-grow bg-[#0d0e10] border border-[#45484e] rounded-lg px-3 py-1.5 text-sm text-[#e3e5ed] focus:outline-none focus:border-[#b1ccc6]";
+  replaceInput.placeholder = "Replace";
+  replaceInput.oninput = () => {
+    const query = getSearchQuery(view.state);
+    view.dispatch({ effects: setSearchQuery.of(query.update({ replace: replaceInput.value })) });
+  };
+
+  const btnReplace = document.createElement("button");
+  btnReplace.className = "cm-search-btn text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 border border-[#45484e]/20 rounded-lg hover:bg-[#23262b] transition-colors";
+  btnReplace.textContent = "Replace";
+  btnReplace.onclick = () => replaceNext(view);
+
+  const btnReplaceAll = document.createElement("button");
+  btnReplaceAll.className = "cm-search-btn text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 border border-[#45484e]/20 rounded-lg hover:bg-[#23262b] transition-colors";
+  btnReplaceAll.textContent = "Replace All";
+  btnReplaceAll.onclick = () => replaceAll(view);
+
+  replaceRow.append(replaceInput, btnReplace, btnReplaceAll);
+
+  container.append(searchRow, replaceRow);
+
+  return {
+    dom: container,
+    mount() {
+      const query = getSearchQuery(view.state);
+      searchInput.value = query.search;
+      replaceInput.value = query.replace;
+      searchInput.focus();
+      searchInput.select();
+    },
+    update(update) {
+      const newQuery = getSearchQuery(update.state);
+      const oldQuery = getSearchQuery(update.startState);
+      if (!newQuery.eq(oldQuery)) {
+        searchInput.value = newQuery.search;
+        replaceInput.value = newQuery.replace;
+        
+        // Sync toggle states
+        if (newQuery.caseSensitive !== oldQuery.caseSensitive) caseToggle.classList.toggle("active", newQuery.caseSensitive);
+        if (newQuery.wholeWord !== oldQuery.wholeWord) wordToggle.classList.toggle("active", newQuery.wholeWord);
+        if (newQuery.regexp !== oldQuery.regexp) regexToggle.classList.toggle("active", newQuery.regexp);
+      }
+    }
+  };
+}
 
 // ── Markdown formatting commands ────────────────────────────────────
 function wrapSelection(view, wrapper) {
@@ -364,6 +494,7 @@ export function createEditor(parent, onSave) {
         markdownDecorations(),
         mathTooltip(),
         history(),
+        search({ top: true, createPanel: createSearchPanel }),
         keymap.of([
           { key: "Mod-b", run: boldCommand },
           { key: "Mod-i", run: italicCommand },
@@ -380,6 +511,7 @@ export function createEditor(parent, onSave) {
           },
           ...defaultKeymap,
           ...historyKeymap,
+          ...searchKeymap,
           indentWithTab,
         ]),
         highlightActiveLine(),
@@ -401,4 +533,8 @@ export function setContent(view, content) {
 
 export function getContent(view) {
   return view.state.doc.toString();
+}
+
+export function hasFocus(view) {
+  return view.hasFocus;
 }

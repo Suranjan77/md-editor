@@ -7,3 +7,10 @@ pub struct FileEntry {
     pub name: String,
     pub is_dir: bool,
 }
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SearchResult {
+    pub path: String,
+    pub line: usize,
+    pub context: String,
+}
