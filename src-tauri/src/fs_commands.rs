@@ -1,9 +1,62 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::ipc_types::FileEntry;
+use crate::ipc_types::{FileEntry, SearchResult};
 
 const IMAGE_EXTENSIONS: [&str; 6] = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
+
+/// Search for a query in all markdown files in the vault.
+pub fn search_vault(root: &Path, query: &str) -> Result<Vec<SearchResult>, String> {
+    let mut results = Vec::new();
+    let query_lower = query.to_lowercase();
+    let md_files = list_all_md_files(root)?;
+
+    for path in md_files {
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
+        
+        let relative_path = path_to_relative_string(&path, root);
+        
+        for (line_num, line) in content.lines().enumerate() {
+            if line.to_lowercase().contains(&query_lower) {
+                results.push(SearchResult {
+                    path: relative_path.clone(),
+                    line: line_num + 1,
+                    context: line.trim().to_string(),
+                });
+            }
+        }
+    }
+    Ok(results)
+}
+
+fn list_all_md_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    list_all_md_files_recursive(root, &mut files)?;
+    Ok(files)
+}
+
+fn list_all_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let read_dir = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        if name.starts_with('.') {
+            continue;
+        }
+
+        if path.is_dir() {
+            list_all_md_files_recursive(&path, files)?;
+        } else if path.extension().map_or(false, |e| e == "md" || e == "markdown") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
 
 /// Read file content from disk.
 pub fn read_file(path: &Path) -> Result<String, String> {
@@ -35,9 +88,30 @@ pub fn create_file(path: &Path) -> Result<(), String> {
     write_file(path, "")
 }
 
-/// Delete a file.
-pub fn delete_file(path: &Path) -> Result<(), String> {
-    fs::remove_file(path).map_err(|e| format!("Failed to delete file {}: {}", path.display(), e))
+/// Create a new directory.
+pub fn create_dir(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        return Err(format!("Directory already exists: {}", path.display()));
+    }
+    fs::create_dir_all(path).map_err(|e| format!("Failed to create directory {}: {}", path.display(), e))
+}
+
+/// Rename a file or directory.
+pub fn rename_file(old_path: &Path, new_path: &Path) -> Result<(), String> {
+    if new_path.exists() {
+        return Err(format!("Target already exists: {}", new_path.display()));
+    }
+    fs::rename(old_path, new_path)
+        .map_err(|e| format!("Failed to rename {}: {}", old_path.display(), e))
+}
+
+/// Delete a file or directory.
+pub fn delete_entry(path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        fs::remove_dir_all(path).map_err(|e| format!("Failed to delete directory {}: {}", path.display(), e))
+    } else {
+        fs::remove_file(path).map_err(|e| format!("Failed to delete file {}: {}", path.display(), e))
+    }
 }
 
 /// Recursively list all markdown files in a directory.

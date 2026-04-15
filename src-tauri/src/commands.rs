@@ -7,7 +7,7 @@ use rusqlite::Connection;
 
 use crate::file_index::FileIndex;
 use crate::fs_commands;
-use crate::ipc_types::FileEntry;
+use crate::ipc_types::{FileEntry, SearchResult};
 
 pub struct AppState {
     pub vault_root: Mutex<Option<PathBuf>>,
@@ -48,7 +48,7 @@ pub fn open_file(path: String, state: State<'_, AppState>) -> Result<Vec<u8>, St
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = fs_commands::resolve_vault_path(vault_root, &path);
 
-    if fs_commands::is_image(&abs_path.extension().unwrap().to_str().unwrap()) {
+    if abs_path.extension().map_or(false, |e| fs_commands::is_image(e.to_str().unwrap_or(""))) {
         let content = fs_commands::read_image(&abs_path)?;
         return Ok(content);
     } else {
@@ -83,15 +83,43 @@ pub fn create_file(path: String, state: State<'_, AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
+pub fn create_dir(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
+    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let abs_path = fs_commands::resolve_vault_path(vault_root, &path);
+    fs_commands::create_dir(&abs_path)
+}
+
+#[tauri::command]
+pub fn rename_file(old_path: String, new_path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
+    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let abs_old_path = fs_commands::resolve_vault_path(vault_root, &old_path);
+    let abs_new_path = fs_commands::resolve_vault_path(vault_root, &new_path);
+    
+    // Update index if it's a markdown file
+    if abs_old_path.is_file() && abs_old_path.extension().map_or(false, |e| e == "md") {
+        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+        index.remove_file(&abs_old_path);
+        // We'll update the new path when it's opened or saved, 
+        // but for now let's just make sure the old one is gone.
+    }
+
+    fs_commands::rename_file(&abs_old_path, &abs_new_path)
+}
+
+#[tauri::command]
 pub fn delete_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = fs_commands::resolve_vault_path(vault_root, &path);
 
-    let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
-    index.remove_file(&abs_path);
+    if abs_path.is_file() {
+        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+        index.remove_file(&abs_path);
+    }
 
-    fs_commands::delete_file(&abs_path)
+    fs_commands::delete_entry(&abs_path)
 }
 
 #[tauri::command]
@@ -119,6 +147,13 @@ pub fn set_vault_root(path: String, state: State<'_, AppState>) -> Result<Vec<Fi
     }
 
     fs_commands::list_vault(&root)
+}
+
+#[tauri::command]
+pub fn search_vault(query: String, state: State<'_, AppState>) -> Result<Vec<SearchResult>, String> {
+    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
+    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    fs_commands::search_vault(vault_root, &query)
 }
 
 #[tauri::command]
