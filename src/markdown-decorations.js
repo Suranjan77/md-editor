@@ -55,20 +55,47 @@ const mathInlineDeco = Decoration.mark({ class: "md-math-inline" });
 
 const imageWidgetImageCache = new Map();
 
+/** Clear cached blob URLs to free memory (call on vault switch). */
+export function clearImageCache() {
+  for (const promise of imageWidgetImageCache.values()) {
+    promise.then((url) => { if (url) URL.revokeObjectURL(url); });
+  }
+  imageWidgetImageCache.clear();
+}
+
 // ── Live Preview Widgets ───────────────────────────────────────────
 class TaskCheckboxWidget extends WidgetType {
   constructor(checked) {
     super();
     this.checked = checked;
   }
-  toDOM() {
+  toDOM(view) {
     const span = document.createElement("span");
     span.className = "md-task-checkbox" + (this.checked ? " checked" : "");
     span.textContent = this.checked ? "✓" : "";
+    span.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!view) return;
+      const pos = view.posAtDOM(span);
+      if (pos == null) return;
+      // Find the [ ] or [x] bracket from the widget position
+      const line = view.state.doc.lineAt(pos);
+      const taskMatch = line.text.match(/^(\s*)([-*+])\s\[([ xX])\]/);
+      if (!taskMatch) return;
+      const checkCharPos = line.from + taskMatch[1].length + taskMatch[2].length + 2; // position of the space/x inside []
+      const newChar = this.checked ? " " : "x";
+      view.dispatch({
+        changes: { from: checkCharPos, to: checkCharPos + 1, insert: newChar },
+      });
+    };
     return span;
   }
   eq(other) {
     return this.checked === other.checked;
+  }
+  ignoreEvent() {
+    return false; // Allow click events to reach our handler
   }
 }
 
@@ -349,7 +376,14 @@ class TableBlockWidget extends WidgetType {
   toDOM(view) {
     const div = document.createElement("div");
     div.className = "md-table-render-block";
-    div.innerHTML = md.render(this.mdText);
+    
+    let html = md.render(this.mdText);
+    // Add support for wikilinks and task checkboxes inside tables
+    html = html.replace(/\[\[(.*?)\]\]/g, '<span class="cm-wikilink">[[$1]]</span>');
+    html = html.replace(/\[([xX])\]/g, '<span class="md-task-checkbox checked">✓</span>');
+    html = html.replace(/\[ \]/g, '<span class="md-task-checkbox"></span>');
+    
+    div.innerHTML = html;
 
     div.onmousedown = (e) => {
       if (view) {
