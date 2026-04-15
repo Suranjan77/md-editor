@@ -376,7 +376,14 @@ class TableBlockWidget extends WidgetType {
   toDOM(view) {
     const div = document.createElement("div");
     div.className = "md-table-render-block";
-    div.innerHTML = md.render(this.mdText);
+    
+    let html = md.render(this.mdText);
+    // Add support for wikilinks and task checkboxes inside tables
+    html = html.replace(/\[\[(.*?)\]\]/g, '<span class="cm-wikilink">[[$1]]</span>');
+    html = html.replace(/\[([xX])\]/g, '<span class="md-task-checkbox checked">✓</span>');
+    html = html.replace(/\[ \]/g, '<span class="md-task-checkbox"></span>');
+    
+    div.innerHTML = html;
 
     div.onmousedown = (e) => {
       if (view) {

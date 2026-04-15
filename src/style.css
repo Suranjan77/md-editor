@@ -209,6 +209,7 @@
     background: var(--bg-secondary);
     font-weight: 600;
     color: var(--text-bright);
+    text-align: center;
 }
 .md-table-render-block tr:last-child th,
 .md-table-render-block tr:last-child td {
@@ -223,7 +224,7 @@
 }
 
 #cm-host .cm-content {
-    max-width: 1000px;
+    max-width: 100%;
     margin: 0 auto;
     padding: 40px 32px 40vh 32px !important;
     word-break: break-word;
