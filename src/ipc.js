@@ -17,12 +17,24 @@ export async function createFile(path) {
   return await invoke("create_file", { path });
 }
 
+export async function createDir(path) {
+  return await invoke("create_dir", { path });
+}
+
+export async function renameFile(oldPath, newPath) {
+  return await invoke("rename_file", { oldPath, newPath });
+}
+
 export async function deleteFile(path) {
   return await invoke("delete_file", { path });
 }
 
 export async function listVault() {
   return await invoke("list_vault");
+}
+
+export async function searchVault(query) {
+  return await invoke("search_vault", { query });
 }
 
 export async function setVaultRoot(path) {

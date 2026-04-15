@@ -38,7 +38,7 @@
             <!-- Ghost Sidebar -->
             <aside
                 id="sidebar"
-                class="bg-slate-900 dark:bg-[#181a1d] text-[#b1ccc6] font-['Inter'] antialiased leading-[1.6] tracking-tight h-screen w-[64px] hover:w-[240px] transition-all duration-300 ease-in-out overflow-hidden sticky left-0 top-0 flex flex-col py-8 px-2 z-50 group border-r border-[#45484e]/20"
+                class="bg-slate-900 dark:bg-[#181a1d] text-[#b1ccc6] font-['Inter'] antialiased leading-[1.6] tracking-tight h-screen w-[240px] transition-all duration-300 ease-in-out overflow-hidden sticky left-0 top-0 flex flex-col py-8 px-2 z-50 group border-r border-[#45484e]/20 shrink-0"
             >
                 <div
                     class="flex items-center gap-4 px-3 mb-10 overflow-hidden whitespace-nowrap"
@@ -47,7 +47,7 @@
                         class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary-container flex-shrink-0"
                     ></div>
                     <div
-                        class="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                        class="flex flex-col transition-opacity duration-300"
                     >
                         <span
                             class="text-sm font-bold tracking-[0.1em] uppercase text-[#9d9ea3]"
@@ -71,7 +71,7 @@
                             >folder_open</span
                         >
                         <span
-                            class="text-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                            class="text-sm transition-opacity"
                             >Vault</span
                         >
                     </div>
@@ -79,7 +79,7 @@
                     <!-- File Tree Injection Point -->
                     <div
                         id="file-list"
-                        class="flex flex-col w-[200px] opacity-0 group-hover:opacity-100 transition-opacity max-h-[50vh] overflow-y-auto mt-2 mb-4 px-1 gap-1"
+                        class="flex flex-col w-[200px] transition-opacity max-h-[50vh] overflow-y-auto mt-2 mb-4 px-1 gap-1"
                     >
                         <div
                             class="empty-state text-[11px] text-secondary opacity-50 px-2 italic"
@@ -89,16 +89,26 @@
                     </div>
                 </nav>
 
-                <div class="mt-auto px-2 overflow-hidden w-full">
+                <div class="mt-auto px-2 overflow-hidden w-full flex flex-col gap-2">
                     <div
                         id="btn-new-file"
-                        class="w-[200px] py-3 border border-outline-variant/20 rounded-lg text-center text-[10px] font-bold uppercase tracking-widest text-[#b1ccc6] cursor-pointer hover:bg-primary-container transition-colors whitespace-nowrap opacity-0 group-hover:opacity-100"
+                        class="w-[200px] py-3 border border-outline-variant/20 rounded-lg text-center text-[10px] font-bold uppercase tracking-widest text-[#b1ccc6] cursor-pointer hover:bg-primary-container transition-colors whitespace-nowrap"
                     >
                         <span
                             class="material-symbols-outlined align-middle !text-[12px] mr-1"
                             data-icon="add"
                             >add</span
                         >New File
+                    </div>
+                    <div
+                        id="btn-new-folder"
+                        class="w-[200px] py-3 border border-outline-variant/20 rounded-lg text-center text-[10px] font-bold uppercase tracking-widest text-[#b1ccc6] cursor-pointer hover:bg-primary-container transition-colors whitespace-nowrap"
+                    >
+                        <span
+                            class="material-symbols-outlined align-middle !text-[12px] mr-1"
+                            data-icon="create_new_folder"
+                            >create_new_folder</span
+                        >New Folder
                     </div>
                 </div>
             </aside>
@@ -210,36 +220,71 @@
 
             <!-- OVERLAYS -->
 
-            <!-- New File Modal -->
+            <!-- Generic Name Input Modal -->
             <div
-                id="new-file-modal"
+                id="name-input-modal"
                 class="fixed inset-0 bg-[#0d0e10]/80 backdrop-blur-sm flex items-center justify-center z-[100] hidden"
             >
                 <div
                     class="bg-[#181a1d] border border-[#45484e]/50 rounded-2xl p-8 min-w-[360px] shadow-2xl"
                 >
-                    <h3 class="text-lg text-[#e3e5ed] font-bold mb-6">
+                    <h3 id="name-input-title" class="text-lg text-[#e3e5ed] font-bold mb-6">
                         Create New File
                     </h3>
                     <input
                         type="text"
-                        id="new-filename-input"
+                        id="name-input-field"
                         class="w-full bg-[#0d0e10] border border-[#45484e] rounded-xl px-4 py-3 text-[#e3e5ed] mb-6 focus:outline-none focus:border-[#b1ccc6] font-mono text-sm"
-                        placeholder="filename.md"
+                        placeholder="Name..."
                     />
                     <div class="flex justify-end gap-3">
                         <button
-                            id="btn-cancel-new"
+                            id="btn-cancel-name"
                             class="px-5 py-2.5 rounded-xl text-[#9d9ea3] hover:bg-[#23262b] transition-colors font-medium text-sm"
                         >
                             Cancel
                         </button>
                         <button
-                            id="btn-confirm-new"
+                            id="btn-confirm-name"
                             class="px-5 py-2.5 rounded-xl bg-[#334b47] text-[#bbd6d0] hover:brightness-110 transition-colors font-medium text-sm"
                         >
-                            Create File
+                            Confirm
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search Overlay -->
+            <div
+                id="search-overlay"
+                class="fixed inset-0 bg-[#0d0e10]/80 backdrop-blur-md flex items-center justify-center z-[100] hidden"
+            >
+                <div
+                    class="bg-[#181a1d] border border-[#45484e]/50 rounded-2xl p-10 min-w-[600px] max-w-[800px] h-[600px] flex flex-col shadow-2xl"
+                >
+                    <h3
+                        class="text-lg text-[#e3e5ed] font-bold mb-6 flex items-center gap-3 opacity-80"
+                    >
+                        <span class="material-symbols-outlined text-[#b1ccc6]"
+                            >search</span
+                        >
+                        Vault Search
+                    </h3>
+                    <input
+                        type="text"
+                        id="search-input"
+                        class="w-full bg-[#0d0e10] border border-[#45484e] rounded-xl px-4 py-3 text-[#e3e5ed] mb-6 focus:outline-none focus:border-[#b1ccc6] font-sans text-sm"
+                        placeholder="Search for text across all files..."
+                    />
+                    <div
+                        id="search-results"
+                        class="flex-grow overflow-y-auto space-y-2 pr-2 custom-scrollbar"
+                    >
+                        <div
+                            class="empty-state text-[13px] text-[#9d9ea3] opacity-40 italic mt-6 text-center"
+                        >
+                            Start typing to search...
+                        </div>
                     </div>
                 </div>
             </div>
@@ -282,6 +327,15 @@
                         <div
                             class="flex justify-between items-center text-sm text-[#9d9ea3]"
                         >
+                            <span>Vault Search</span>
+                            <span
+                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
+                                >Ctrl+Shift+F</span
+                            >
+                        </div>
+                        <div
+                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
+                        >
                             <span>Toggle Sidebar</span>
                             <span
                                 class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
@@ -304,6 +358,24 @@
                             <span
                                 class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
                                 >Ctrl+/</span
+                            >
+                        </div>
+                        <div
+                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
+                        >
+                            <span>Rename Item</span>
+                            <span
+                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
+                                >F2</span
+                            >
+                        </div>
+                        <div
+                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
+                        >
+                            <span>Delete Item</span>
+                            <span
+                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
+                                >Del</span
                             >
                         </div>
                         <div
