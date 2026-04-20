@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Efficient AI Curriculum — Study & Progress Tracker</title>
+  <meta name="description"
+    content="Comprehensive study tracker and dashboard for the Efficient AI curriculum spanning 4 years of research.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <!-- Ambient background blobs -->
+  <div class="bg-blob blob-1"></div>
+  <div class="bg-blob blob-2"></div>
+  <div class="bg-blob blob-3"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo-group">
+        <div class="logo-icon">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M16 2L2 9l14 7 14-7L16 2z" fill="url(#g1)" opacity="0.9" />
+            <path d="M2 23l14 7 14-7" stroke="url(#g2)" stroke-width="2" fill="none" />
+            <path d="M2 16l14 7 14-7" stroke="url(#g2)" stroke-width="2" fill="none" />
+            <defs>
+              <linearGradient id="g1" x1="2" y1="2" x2="30" y2="16">
+                <stop stop-color="#818cf8" />
+                <stop offset="1" stop-color="#6366f1" />
+              </linearGradient>
+              <linearGradient id="g2" x1="2" y1="16" x2="30" y2="30">
+                <stop stop-color="#818cf8" />
+                <stop offset="1" stop-color="#a78bfa" />
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <div>
+          <h1 class="logo-title">Efficient AI Curriculum</h1>
+          <p class="logo-subtitle">Study & Progress Tracker</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="sync-status" id="sync-status">
+          <span class="sync-dot" id="sync-dot"></span>
+          <span class="sync-label" id="sync-label">Local only</span>
+        </div>
+        <button id="btn-connect-file" class="btn btn-secondary" title="Open existing tracker-data.json file">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M6 1v3H1v10h14V4h-5V1H6zm1 1h2v3h4v8H3V5h4V2zM5 8v1h6V8H5zm0 2v1h4v-1H5z" />
+          </svg>
+          Open Data File
+        </button>
+        <button id="btn-create-file" class="btn btn-secondary" title="Create new tracker-data.json file">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm1 10H7V8H4V6h3V3h2v3h3v2H9v3z" />
+          </svg>
+          New Data File
+        </button>
+        <button id="btn-download-json" class="btn btn-secondary" title="Download current data as JSON">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M2 12h12v2H2v-2zm5-1V2h2v9l3-3 1.4 1.4L8 14.8 2.6 9.4 4 8l3 3z" />
+          </svg>
+          Download
+        </button>
+        <button id="btn-export-csv" class="btn btn-secondary" title="Export to CSV (Excel compatible)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path
+              d="M4 1h8a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1zm0 1v12h8V2H4zm1 2h2v1H5V4zm3 0h3v1H8V4zM5 6h2v1H5V6zm3 0h3v1H8V6zM5 8h2v1H5V8zm3 0h3v1H8V8zM5 10h2v1H5v-1zm3 0h3v1H8v-1z" />
+          </svg>
+          CSV
+        </button>
+        <button id="btn-save" class="btn btn-primary" title="Save progress (to file if connected)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path
+              d="M13 1H3a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V3a2 2 0 00-2-2zM8 12a2 2 0 110-4 2 2 0 010 4zM4 3h6v3H4V3z" />
+          </svg>
+          Save
+        </button>
+      </div>
+      <input type="file" id="file-import-input" accept=".json" style="display: none;">
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="tab-nav" id="tab-nav">
+    <button class="tab active" data-tab="dashboard">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M1 1h6v6H1V1zm8 0h6v6H9V1zM1 9h6v6H1V9zm8 0h6v6H9V9z" />
+      </svg>
+      Dashboard
+    </button>
+    <button class="tab" data-tab="weekly">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path
+          d="M4 0a1 1 0 011 1h6a1 1 0 112 0h1a2 2 0 012 2v11a2 2 0 01-2 2H2a2 2 0 01-2-2V3a2 2 0 012-2h1a1 1 0 011-1zm-2 6v8h12V6H2z" />
+      </svg>
+      Weekly Log
+    </button>
+    <button class="tab" data-tab="projects">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path
+          d="M2 2a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm3 1v1h6V3H5zm0 3v1h6V6H5zm0 3v1h4V9H5z" />
+      </svg>
+      Projects
+    </button>
+    <button class="tab" data-tab="gates">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 0a8 8 0 100 16A8 8 0 008 0zm1 11.41L5.59 8 7 6.59l2 2 4-4L14.41 6 9 11.41z" />
+      </svg>
+      Gates & Checks
+    </button>
+    <button class="tab" data-tab="reading">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path
+          d="M1 2.5A1.5 1.5 0 012.5 1h3A1.5 1.5 0 017 2.5v11A1.5 1.5 0 015.5 15h-3A1.5 1.5 0 011 13.5v-11zm8 0A1.5 1.5 0 0110.5 1h3A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-3A1.5 1.5 0 019 13.5v-11z" />
+      </svg>
+      Reading
+    </button>
+    <button class="tab" data-tab="timeline">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path
+          d="M8 0a8 8 0 100 16A8 8 0 008 0zm0 14A6 6 0 118 2a6 6 0 010 12zm1-6.59V4H7v4.41l2.29 2.3 1.42-1.42L9 7.41z" />
+      </svg>
+      Timeline
+    </button>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main" id="main-content">
+
+    <!-- ======================== DASHBOARD TAB ======================== -->
+    <section class="tab-content active" id="tab-dashboard">
+      <!-- KPI Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-icon" style="--accent: #818cf8;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+            </svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-value" id="kpi-overall-pct">0%</span>
+            <span class="kpi-label">Overall Progress</span>
+          </div>
+          <div class="kpi-ring" id="kpi-ring-overall"></div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-icon" style="--accent: #34d399;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z" />
+            </svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-value" id="kpi-projects-done">0 / 60</span>
+            <span class="kpi-label">Projects Done</span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-icon" style="--accent: #fb923c;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
+            </svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-value" id="kpi-papers-read">0 / 88</span>
+            <span class="kpi-label">Papers Read</span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-icon" style="--accent: #f472b6;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z" />
+            </svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-value" id="kpi-gates-passed">0 / 17</span>
+            <span class="kpi-label">Gates Passed</span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-icon" style="--accent: #22d3ee;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z" />
+            </svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-value" id="kpi-study-hours">0 hrs</span>
+            <span class="kpi-label">Total Study Hours</span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-icon" style="--accent: #a78bfa;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z" />
+            </svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-value" id="kpi-streak">0 days</span>
+            <span class="kpi-label">Current Streak</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts Row -->
+      <div class="charts-row">
+        <div class="chart-card wide">
+          <h3 class="chart-title">Year-by-Year Progress</h3>
+          <div class="year-bars" id="year-bars"></div>
+        </div>
+        <div class="chart-card">
+          <h3 class="chart-title">Phase Completion</h3>
+          <canvas id="chart-phase" width="280" height="280"></canvas>
+        </div>
+      </div>
+
+      <!-- Activity Heatmap -->
+      <div class="chart-card full-width">
+        <h3 class="chart-title">Study Activity (Last 6 Months)</h3>
+        <div class="heatmap-container" id="heatmap-container"></div>
+        <div class="heatmap-legend">
+          <span class="heatmap-legend-label">Less</span>
+          <span class="heatmap-cell" style="background: var(--surface-2);"></span>
+          <span class="heatmap-cell" style="background: #4f46e520;"></span>
+          <span class="heatmap-cell" style="background: #4f46e550;"></span>
+          <span class="heatmap-cell" style="background: #4f46e590;"></span>
+          <span class="heatmap-cell" style="background: #6366f1;"></span>
+          <span class="heatmap-legend-label">More</span>
+        </div>
+      </div>
+
+      <!-- Recent Activity -->
+      <div class="chart-card full-width">
+        <h3 class="chart-title">Recent Activity Feed</h3>
+        <div class="activity-feed" id="activity-feed">
+          <div class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p>No activity logged yet. Start tracking your study sessions!</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== WEEKLY LOG TAB ======================== -->
+    <section class="tab-content" id="tab-weekly">
+      <div class="section-header">
+        <h2>Weekly Study Log</h2>
+        <p class="section-desc">Track your daily study sessions. Recommended: 15–20 hrs/week.</p>
+      </div>
+
+      <!-- Add Session Form -->
+      <div class="form-card">
+        <h3 class="form-title">Log Study Session</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="session-date">Date</label>
+            <input type="date" id="session-date" class="input">
+          </div>
+          <div class="form-group">
+            <label for="session-hours">Hours</label>
+            <input type="number" id="session-hours" class="input" min="0.25" max="16" step="0.25" placeholder="2.5">
+          </div>
+          <div class="form-group">
+            <label for="session-type">Activity Type</label>
+            <select id="session-type" class="input">
+              <option value="paper-reading">📄 Paper Reading</option>
+              <option value="theory-study">📖 Theory / Textbook</option>
+              <option value="implementation">💻 Implementation / Coding</option>
+              <option value="debugging">🐛 Debugging</option>
+              <option value="review-writeup">✍️ Review & Writeup</option>
+              <option value="video-lecture">🎥 Video / Lecture</option>
+              <option value="other">🔧 Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="session-phase">Phase</label>
+            <select id="session-phase" class="input">
+              <optgroup label="Year 1">
+                <option value="1A">Phase 1A — Mathematics</option>
+                <option value="1B">Phase 1B — Systems</option>
+                <option value="1C">Phase 1C — Deep Learning</option>
+              </optgroup>
+              <optgroup label="Year 2">
+                <option value="2A">Phase 2A — Quantization</option>
+                <option value="2B">Phase 2B — Pruning</option>
+                <option value="2C">Phase 2C — Distillation</option>
+                <option value="2D">Phase 2D — Efficient Training</option>
+                <option value="2E">Phase 2E — Deployment</option>
+              </optgroup>
+              <optgroup label="Year 3">
+                <option value="3A">Phase 3A — Low-Rank & PEFT</option>
+                <option value="3B">Phase 3B — MoE</option>
+                <option value="3C">Phase 3C — State Space Models</option>
+                <option value="3D">Phase 3D — Attention & Spec. Decoding</option>
+                <option value="3E">Phase 3E — Training at Scale</option>
+                <option value="3F">Phase 3F — TinyML & Edge</option>
+              </optgroup>
+              <optgroup label="Year 4">
+                <option value="4A">Phase 4A — Research Methodology</option>
+                <option value="4B">Phase 4B — Advanced Topics</option>
+                <option value="4C">Phase 4C — Original Research</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="form-group span-2">
+            <label for="session-notes">Notes</label>
+            <input type="text" id="session-notes" class="input" placeholder="What did you work on?">
+          </div>
+          <div class="form-group">
+            <button id="btn-log-session" class="btn btn-primary full-width">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm1 10H7V8H4V6h3V3h2v3h3v2H9v3z" />
+              </svg>
+              Log Session
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Weekly Summary -->
+      <div class="weekly-summary-grid" id="weekly-summary-grid">
+        <!-- Generated by JS -->
+      </div>
+
+      <!-- Session History -->
+      <div class="chart-card full-width">
+        <div class="flex-between">
+          <h3 class="chart-title">Session History</h3>
+          <div class="filter-row">
+            <select id="filter-week" class="input input-sm">
+              <option value="all">All Time</option>
+              <option value="this-week">This Week</option>
+              <option value="last-week">Last Week</option>
+              <option value="this-month">This Month</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table" id="sessions-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Hours</th>
+                <th>Type</th>
+                <th>Phase</th>
+                <th>Notes</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="sessions-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== PROJECTS TAB ======================== -->
+    <section class="tab-content" id="tab-projects">
+      <div class="section-header">
+        <h2>Project Portfolio</h2>
+        <p class="section-desc">60 projects across 4 years. Track status, hours, and notes.</p>
+      </div>
+
+      <!-- Project Filter -->
+      <div class="filter-bar">
+        <button class="filter-chip active" data-filter="all">All</button>
+        <button class="filter-chip" data-filter="year-1">Year 1</button>
+        <button class="filter-chip" data-filter="year-2">Year 2</button>
+        <button class="filter-chip" data-filter="year-3">Year 3</button>
+        <button class="filter-chip" data-filter="year-4">Year 4</button>
+        <span class="filter-separator">|</span>
+        <button class="filter-chip" data-filter="not-started">⬜ Not Started</button>
+        <button class="filter-chip" data-filter="in-progress">🟨 In Progress</button>
+        <button class="filter-chip" data-filter="complete">✅ Complete</button>
+      </div>
+
+      <div id="projects-container"></div>
+    </section>
+
+    <!-- ======================== GATES TAB ======================== -->
+    <section class="tab-content" id="tab-gates">
+      <div class="section-header">
+        <h2>Evaluation Gates & Checklists</h2>
+        <p class="section-desc">17 gates with 73 checklist items. Pass each gate before advancing.</p>
+      </div>
+      <div id="gates-container"></div>
+    </section>
+
+    <!-- ======================== READING TAB ======================== -->
+    <section class="tab-content" id="tab-reading">
+      <div class="section-header">
+        <h2>Reading List</h2>
+        <p class="section-desc">14 textbooks and 88 papers. Track your progress through the literature.</p>
+      </div>
+
+      <div class="filter-bar">
+        <button class="filter-chip active" data-filter="all">All</button>
+        <button class="filter-chip" data-filter="textbook">📚 Textbooks</button>
+        <button class="filter-chip" data-filter="paper">📄 Papers</button>
+        <span class="filter-separator">|</span>
+        <button class="filter-chip" data-filter="critical">🔴 Critical</button>
+        <button class="filter-chip" data-filter="important">🟡 Important</button>
+        <button class="filter-chip" data-filter="reference">🔵 Reference</button>
+      </div>
+
+      <div id="reading-container"></div>
+    </section>
+
+    <!-- ======================== TIMELINE TAB ======================== -->
+    <section class="tab-content" id="tab-timeline">
+      <div class="section-header">
+        <h2>48-Month Timeline</h2>
+        <p class="section-desc">Visual roadmap of the entire curriculum. Click a phase to expand details.</p>
+      </div>
+      <div class="timeline" id="timeline-container"></div>
+    </section>
+
+  </main>
+
+  <!-- Toast notification -->
+  <div class="toast" id="toast"></div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>
