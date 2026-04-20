@@ -21,6 +21,13 @@ fn main() {
             md_editor_lib::commands::get_backlinks,
             md_editor_lib::commands::get_sys_config,
             md_editor_lib::commands::set_sys_config,
+            md_editor_lib::tracker_commands::get_tracker_sessions,
+            md_editor_lib::tracker_commands::add_tracker_session,
+            md_editor_lib::tracker_commands::delete_tracker_session,
+            md_editor_lib::tracker_commands::get_tracker_activities,
+            md_editor_lib::tracker_commands::add_tracker_activity,
+            md_editor_lib::tracker_commands::get_tracker_kv,
+            md_editor_lib::tracker_commands::set_tracker_kv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
