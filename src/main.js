@@ -14,6 +14,7 @@ import {
   getSysConfig,
   setSysConfig,
 } from "./ipc.js";
+import { initTracker, renderTracker } from "./tracker.js";
 import "./style.css";
 
 const { open, ask } = window.__TAURI__.dialog;
@@ -24,10 +25,12 @@ const state = {
   selectedSidebarPath: null, // Track which sidebar item is selected
   selectedSidebarIsDir: false, // Track if selection is a folder
   modalType: null, // 'file', 'folder', 'rename'
-  modalTarget: null 
+  modalTarget: null,
+  isTrackerOpen: false,
 };
 
 const cmHost = document.getElementById("cm-host");
+const trackerHost = document.getElementById("tracker-host");
 const fileList = document.getElementById("file-list");
 const backlinksList = document.getElementById("backlinks-list");
 const welcomeScreen = document.getElementById("welcome-screen");
@@ -63,10 +66,17 @@ async function init() {
   } catch (err) {
     console.warn("Workspace cache miss:", err);
   }
+
+  // Initialize Tracker Native UI
+  initTracker(trackerHost);
+
   // ── Buttons ──────────────────────────────────────────────
   document
     .getElementById("btn-open-folder")
     ?.addEventListener("click", handleOpenFolder);
+  document
+    .getElementById("btn-open-tracker")
+    ?.addEventListener("click", handleOpenTracker);
   document
     .getElementById("btn-open-welcome")
     ?.addEventListener("click", handleOpenFolder);
@@ -338,8 +348,11 @@ async function handleOpenMdFile(relativePath) {
     state.currentPath = relativePath;
     state.selectedSidebarPath = relativePath; // Sync selection with open file
     state.selectedSidebarIsDir = false;
+    state.isTrackerOpen = false;
     await setSysConfig("last_file", relativePath);
     welcomeScreen.classList.add("hidden");
+    trackerHost.classList.add("hidden");
+    cmHost.classList.remove("hidden");
     setContent(editor, content);
     editor.focus();
     updateSidebarSelection();
@@ -348,6 +361,20 @@ async function handleOpenMdFile(relativePath) {
   } catch (err) {
     console.error("Open file:", err);
   }
+}
+
+async function handleOpenTracker() {
+  state.isTrackerOpen = true;
+  state.selectedSidebarPath = null;
+  state.currentPath = "Study Tracker";
+  welcomeScreen.classList.add("hidden");
+  cmHost.classList.add("hidden");
+  trackerHost.classList.remove("hidden");
+  updateSidebarSelection();
+  updateToolbarFilename();
+  
+  // Render the tracker view whenever opened
+  await renderTracker();
 }
 
 async function handleSave() {

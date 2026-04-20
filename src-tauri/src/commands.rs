@@ -34,6 +34,36 @@ impl AppState {
         )
         .expect("Failed to initialize settings table");
 
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS tracker_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                hours REAL NOT NULL,
+                activity_type TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                notes TEXT
+            )",
+            []
+        ).expect("Failed to create tracker_sessions");
+
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS tracker_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                text TEXT NOT NULL,
+                time TEXT NOT NULL
+            )",
+            []
+        ).expect("Failed to create tracker_activity");
+
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS tracker_kv (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )",
+            []
+        ).expect("Failed to create tracker_kv");
+
         AppState {
             vault_root: Mutex::new(None),
             file_index: Mutex::new(FileIndex::new(PathBuf::new())),
