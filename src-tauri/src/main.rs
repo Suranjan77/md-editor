@@ -4,6 +4,14 @@
 )]
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    {
+        // Force the app to use X11/XWayland instead of native Wayland
+        std::env::set_var("GDK_BACKEND", "x11");
+
+        // std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
