@@ -33,14 +33,16 @@ import { mathTooltip } from "./math-tooltip.js";
 // ── Custom Search Panel ─────────────────────────────────────────────
 function createSearchPanel(view) {
   const container = document.createElement("div");
-  container.className = "cm-search-custom flex flex-col gap-2 p-3 bg-[#181a1d] border-b border-[#45484e]/30 shadow-lg";
+  container.className =
+    "cm-search-custom flex flex-col gap-2 p-3 bg-[#181a1d] border-b border-[#45484e]/30 shadow-lg";
 
   // Search Row
   const searchRow = document.createElement("div");
   searchRow.className = "flex items-center gap-2";
 
   const searchInput = document.createElement("input");
-  searchInput.className = "cm-search-input flex-grow bg-[#0d0e10] border border-[#45484e] rounded-lg px-3 py-1.5 text-sm text-[#e3e5ed] focus:outline-none focus:border-[#b1ccc6]";
+  searchInput.className =
+    "cm-search-input flex-grow bg-[#0d0e10] border border-[#45484e] rounded-lg px-3 py-1.5 text-sm text-[#e3e5ed] focus:outline-none focus:border-[#b1ccc6]";
   searchInput.placeholder = "Find";
   searchInput.oninput = () => {
     const query = getSearchQuery(view.state);
@@ -61,17 +63,21 @@ function createSearchPanel(view) {
 
   const createToggle = (icon, title, field) => {
     const btn = document.createElement("button");
-    btn.className = "cm-search-toggle material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
+    btn.className =
+      "cm-search-toggle material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
     btn.textContent = icon;
     btn.title = title;
-    
+
     // Initial state
     const query = getSearchQuery(view.state);
     if (query[field]) btn.classList.add("active");
 
     btn.onclick = () => {
       const currentQuery = getSearchQuery(view.state);
-      const newQuery = new SearchQuery({ ...currentQuery, [field]: !currentQuery[field] });
+      const newQuery = new SearchQuery({
+        ...currentQuery,
+        [field]: !currentQuery[field],
+      });
       view.dispatch({ effects: setSearchQuery.of(newQuery) });
       // Don't toggle class here — update() callback handles it.
       // Doing both causes a double-toggle (dispatch runs update synchronously).
@@ -84,32 +90,44 @@ function createSearchPanel(view) {
   const regexToggle = createToggle("regular_expression", "Regex", "regexp");
 
   const navPrev = document.createElement("button");
-  navPrev.className = "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
+  navPrev.className =
+    "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
   navPrev.textContent = "keyboard_arrow_up";
   navPrev.title = "Previous (Shift+Enter)";
   navPrev.onclick = () => findPrevious(view);
 
   const navNext = document.createElement("button");
-  navNext.className = "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
+  navNext.className =
+    "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b]";
   navNext.textContent = "keyboard_arrow_down";
   navNext.title = "Next (Enter)";
   navNext.onclick = () => findNext(view);
 
   const closeBtn = document.createElement("button");
-  closeBtn.className = "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b] ml-1";
+  closeBtn.className =
+    "material-symbols-outlined !text-[18px] p-1.5 rounded-lg transition-colors hover:bg-[#23262b] ml-1";
   closeBtn.textContent = "close";
   closeBtn.onclick = () => {
     closeSearchPanel(view);
   };
 
-  searchRow.append(searchInput, caseToggle, wordToggle, regexToggle, navPrev, navNext, closeBtn);
+  searchRow.append(
+    searchInput,
+    caseToggle,
+    wordToggle,
+    regexToggle,
+    navPrev,
+    navNext,
+    closeBtn,
+  );
 
   // Replace Row
   const replaceRow = document.createElement("div");
   replaceRow.className = "flex items-center gap-2";
 
   const replaceInput = document.createElement("input");
-  replaceInput.className = "cm-replace-input flex-grow bg-[#0d0e10] border border-[#45484e] rounded-lg px-3 py-1.5 text-sm text-[#e3e5ed] focus:outline-none focus:border-[#b1ccc6]";
+  replaceInput.className =
+    "cm-replace-input flex-grow bg-[#0d0e10] border border-[#45484e] rounded-lg px-3 py-1.5 text-sm text-[#e3e5ed] focus:outline-none focus:border-[#b1ccc6]";
   replaceInput.placeholder = "Replace";
   replaceInput.oninput = () => {
     const query = getSearchQuery(view.state);
@@ -124,12 +142,14 @@ function createSearchPanel(view) {
   };
 
   const btnReplace = document.createElement("button");
-  btnReplace.className = "cm-search-btn text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 border border-[#45484e]/20 rounded-lg hover:bg-[#23262b] transition-colors";
+  btnReplace.className =
+    "cm-search-btn text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 border border-[#45484e]/20 rounded-lg hover:bg-[#23262b] transition-colors";
   btnReplace.textContent = "Replace";
   btnReplace.onclick = () => replaceNext(view);
 
   const btnReplaceAll = document.createElement("button");
-  btnReplaceAll.className = "cm-search-btn text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 border border-[#45484e]/20 rounded-lg hover:bg-[#23262b] transition-colors";
+  btnReplaceAll.className =
+    "cm-search-btn text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 border border-[#45484e]/20 rounded-lg hover:bg-[#23262b] transition-colors";
   btnReplaceAll.textContent = "Replace All";
   btnReplaceAll.onclick = () => replaceAll(view);
 
@@ -158,13 +178,13 @@ function createSearchPanel(view) {
         if (document.activeElement !== replaceInput) {
           replaceInput.value = newQuery.replace;
         }
-        
+
         // Sync toggle button visual states
         caseToggle.classList.toggle("active", newQuery.caseSensitive);
         wordToggle.classList.toggle("active", newQuery.wholeWord);
         regexToggle.classList.toggle("active", newQuery.regexp);
       }
-    }
+    },
   };
 }
 
@@ -219,6 +239,27 @@ function codeCommand(view) {
 }
 function strikethroughCommand(view) {
   return wrapSelection(view, "~~");
+}
+function mathBoldCommand(view) {
+  const { from, to } = view.state.selection.main;
+
+  if (from === to) {
+    // No selection: insert the exact string and put cursor inside {}
+    view.dispatch({
+      changes: { from, insert: "$\\mathbf{}$" },
+      selection: { anchor: from + 9 }, // 9 is the length of "$\\mathbf{"
+    });
+  } else {
+    // Wrap existing selection
+    view.dispatch({
+      changes: [
+        { from, insert: "$\\mathbf{" },
+        { from: to, insert: "}$" },
+      ],
+      selection: { anchor: from + 9, head: to + 9 },
+    });
+  }
+  return true;
 }
 
 function wikilinkCommand(view) {
@@ -522,6 +563,7 @@ export function createEditor(parent, onSave) {
           { key: "Mod-k", run: linkCommand },
           { key: "Mod-Shift-x", run: strikethroughCommand },
           { key: "Mod-Shift-k", run: wikilinkCommand },
+          { key: "Mod-Shift-m", run: mathBoldCommand },
           {
             key: "Mod-s",
             run: () => {
