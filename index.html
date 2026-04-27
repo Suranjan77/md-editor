@@ -16,21 +16,26 @@
                     "GRAD" 0,
                     "opsz" 24;
             }
+
             .signature-glow:hover {
                 box-shadow: 0 0 20px rgba(177, 204, 198, 0.15);
             }
+
             ::-webkit-scrollbar {
                 width: 4px;
             }
+
             ::-webkit-scrollbar-track {
                 background: transparent;
             }
+
             ::-webkit-scrollbar-thumb {
                 background: #23262b;
                 border-radius: 10px;
             }
         </style>
     </head>
+
     <body
         class="bg-[#0d0e10] text-[#e3e5ed] font-body selection:bg-primary-container selection:text-primary"
     >
@@ -43,18 +48,10 @@
                 <div
                     class="flex items-center gap-4 px-3 mb-10 overflow-hidden whitespace-nowrap"
                 >
-                    <div
-                        class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary-container flex-shrink-0"
-                    ></div>
-                    <div
-                        class="flex flex-col transition-opacity duration-300"
-                    >
+                    <div class="flex flex-col transition-opacity duration-300">
                         <span
                             class="text-sm font-bold tracking-[0.1em] uppercase text-[#9d9ea3]"
                             >MD Editor</span
-                        >
-                        <span class="text-[10px] text-secondary opacity-60"
-                            >Digital Vellum</span
                         >
                     </div>
                 </div>
@@ -70,9 +67,21 @@
                             data-icon="folder_open"
                             >folder_open</span
                         >
+                        <span class="text-sm transition-opacity">Vault</span>
+                    </div>
+
+                    <!-- Study Tracker Button -->
+                    <div
+                        id="btn-open-tracker"
+                        class="flex items-center gap-4 p-3 rounded-xl text-[#b1ccc6] font-semibold hover:bg-[#23262b] transition-all cursor-pointer overflow-hidden whitespace-nowrap mx-1"
+                    >
                         <span
-                            class="text-sm transition-opacity"
-                            >Vault</span
+                            class="material-symbols-outlined flex-shrink-0 text-xl"
+                            data-icon="school"
+                            >school</span
+                        >
+                        <span class="text-sm transition-opacity"
+                            >Study Tracker</span
                         >
                     </div>
 
@@ -89,7 +98,9 @@
                     </div>
                 </nav>
 
-                <div class="mt-auto px-2 overflow-hidden w-full flex flex-col gap-2">
+                <div
+                    class="mt-auto px-2 overflow-hidden w-full flex flex-col gap-2"
+                >
                     <div
                         id="btn-new-file"
                         class="w-[200px] py-3 border border-outline-variant/20 rounded-lg text-center text-[10px] font-bold uppercase tracking-widest text-[#b1ccc6] cursor-pointer hover:bg-primary-container transition-colors whitespace-nowrap"
@@ -167,6 +178,12 @@
                     class="hidden flex-grow w-full h-full relative z-10 overflow-auto flex items-center justify-center"
                 ></div>
 
+                <!-- Tracker canvas -->
+                <div
+                    id="tracker-host"
+                    class="flex-grow w-full h-full relative z-10 overflow-y-auto hidden custom-scrollbar bg-[#121316] text-[#e3e5ed]"
+                ></div>
+
                 <!-- Welcome Screen -->
                 <div
                     id="welcome-screen"
@@ -234,7 +251,10 @@
                 <div
                     class="bg-[#181a1d] border border-[#45484e]/50 rounded-2xl p-8 min-w-[360px] shadow-2xl"
                 >
-                    <h3 id="name-input-title" class="text-lg text-[#e3e5ed] font-bold mb-6">
+                    <h3
+                        id="name-input-title"
+                        class="text-lg text-[#e3e5ed] font-bold mb-6"
+                    >
                         Create New File
                     </h3>
                     <input
