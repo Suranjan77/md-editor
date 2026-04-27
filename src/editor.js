@@ -7,7 +7,7 @@ import {
   highlightActiveLine,
   drawSelection,
 } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import {
   defaultKeymap,
@@ -27,7 +27,7 @@ import {
   replaceAll,
   closeSearchPanel,
 } from "@codemirror/search";
-import { markdownDecorations } from "./markdown-decorations.js";
+import { markdownDecorations, currentFilePath } from "./markdown-decorations.js";
 import { mathTooltip } from "./math-tooltip.js";
 
 // ── Custom Search Panel ─────────────────────────────────────────────
@@ -546,6 +546,8 @@ const editorTheme = EditorView.theme(
   { dark: true },
 );
 
+const filePathCompartment = new Compartment();
+
 export function createEditor(parent, onSave) {
   const view = new EditorView({
     state: EditorState.create({
@@ -553,6 +555,7 @@ export function createEditor(parent, onSave) {
       extensions: [
         markdown(),
         markdownDecorations(),
+        filePathCompartment.of(currentFilePath.of("")),
         mathTooltip(),
         history(),
         search({ top: true, createPanel: createSearchPanel }),
@@ -585,6 +588,13 @@ export function createEditor(parent, onSave) {
     parent,
   });
   return view;
+}
+
+/** Update the current file path facet so decorations can resolve relative image paths. */
+export function setCurrentFilePath(view, path) {
+  view.dispatch({
+    effects: filePathCompartment.reconfigure(currentFilePath.of(path)),
+  });
 }
 
 export function setContent(view, content) {
