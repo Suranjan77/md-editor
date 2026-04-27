@@ -1,4 +1,4 @@
-import { createEditor, setContent, getContent, hasFocus } from "./editor.js";
+import { createEditor, setContent, getContent, hasFocus, setCurrentFilePath } from "./editor.js";
 import { clearImageCache } from "./markdown-decorations.js";
 import {
   openFile,
@@ -28,6 +28,7 @@ const state = {
 };
 
 const cmHost = document.getElementById("cm-host");
+const imagePreview = document.getElementById("image-preview");
 const fileList = document.getElementById("file-list");
 const backlinksList = document.getElementById("backlinks-list");
 const welcomeScreen = document.getElementById("welcome-screen");
@@ -45,6 +46,12 @@ const shortcutsOverlay = document.getElementById("shortcuts-overlay");
 const toastContainer = document.getElementById("toast-container");
 
 const editor = createEditor(cmHost, handleSave);
+
+const IMAGE_EXTENSIONS = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
+function isImageFile(filename) {
+  const ext = filename.split(".").pop().toLowerCase();
+  return IMAGE_EXTENSIONS.includes(ext);
+}
 
 async function init() {
   try {
@@ -339,7 +346,12 @@ async function handleOpenMdFile(relativePath) {
     state.selectedSidebarPath = relativePath; // Sync selection with open file
     state.selectedSidebarIsDir = false;
     await setSysConfig("last_file", relativePath);
+    // Hide image preview, show editor
+    imagePreview.classList.add("hidden");
+    cmHost.classList.remove("hidden");
     welcomeScreen.classList.add("hidden");
+    // Update the current file path facet for relative image resolution
+    setCurrentFilePath(editor, relativePath);
     setContent(editor, content);
     editor.focus();
     updateSidebarSelection();
@@ -347,6 +359,37 @@ async function handleOpenMdFile(relativePath) {
     await updateBacklinks(relativePath);
   } catch (err) {
     console.error("Open file:", err);
+  }
+}
+
+async function handleOpenImageFile(relativePath) {
+  try {
+    const bytes = await openFile(relativePath);
+    const ext = relativePath.split(".").pop().toLowerCase();
+    const uint8Array = new Uint8Array(bytes);
+    const mimeType = ext === "svg" ? "image/svg+xml" : `image/${ext}`;
+    const blob = new Blob([uint8Array], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+
+    state.currentPath = null; // Not an editable file
+    state.selectedSidebarPath = relativePath;
+    state.selectedSidebarIsDir = false;
+
+    // Hide editor, show image preview
+    cmHost.classList.add("hidden");
+    welcomeScreen.classList.add("hidden");
+    imagePreview.classList.remove("hidden");
+    imagePreview.innerHTML = `
+      <div class="image-preview-inner">
+        <img src="${url}" alt="${relativePath.split("/").pop()}" />
+        <div class="image-preview-filename">${relativePath}</div>
+      </div>
+    `;
+
+    updateSidebarSelection();
+    updateToolbarFilename(relativePath);
+  } catch (err) {
+    console.error("Open image:", err);
   }
 }
 
@@ -609,12 +652,17 @@ function renderTreeNodes(node, container, level = 0) {
       
       const label = document.createElement("div");
       label.className = "flex items-center gap-3 overflow-hidden";
-      label.innerHTML = `<span class="material-symbols-outlined !text-[14px]">draft</span> <span class="truncate">${child.name}</span>`;
+      const iconName = isImageFile(child.name) ? "image" : "draft";
+      label.innerHTML = `<span class="material-symbols-outlined !text-[14px]">${iconName}</span> <span class="truncate">${child.name}</span>`;
       el.appendChild(label);
       el.appendChild(createDeleteBtn(child.path));
       
       el.addEventListener("click", (e) => {
-        handleOpenMdFile(child.path);
+        if (isImageFile(child.path)) {
+          handleOpenImageFile(child.path);
+        } else {
+          handleOpenMdFile(child.path);
+        }
         state.selectedSidebarPath = child.path;
         state.selectedSidebarIsDir = false;
         updateSidebarSelection();
@@ -664,10 +712,11 @@ function updateSidebarSelection() {
   });
 }
 
-function updateToolbarFilename() {
+function updateToolbarFilename(overridePath) {
   const el = document.getElementById("toolbar-filename");
-  if (el && state.currentPath) {
-    el.textContent = state.currentPath;
+  const path = overridePath || state.currentPath;
+  if (el && path) {
+    el.textContent = path;
   }
 }
 
