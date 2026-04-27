@@ -1,4 +1,10 @@
-import { createEditor, setContent, getContent, hasFocus, setCurrentFilePath } from "./editor.js";
+import {
+  createEditor,
+  setContent,
+  getContent,
+  hasFocus,
+  setCurrentFilePath,
+} from "./editor.js";
 import { clearImageCache } from "./markdown-decorations.js";
 import {
   openFile,
@@ -14,20 +20,23 @@ import {
   getSysConfig,
   setSysConfig,
 } from "./ipc.js";
+import { initTracker, renderTracker } from "./tracker.js";
 import "./style.css";
 
 const { open, ask } = window.__TAURI__.dialog;
 
-const state = { 
-  currentPath: null, 
+const state = {
+  currentPath: null,
   vaultRoot: null,
   selectedSidebarPath: null, // Track which sidebar item is selected
   selectedSidebarIsDir: false, // Track if selection is a folder
   modalType: null, // 'file', 'folder', 'rename'
-  modalTarget: null 
+  modalTarget: null,
+  isTrackerOpen: false,
 };
 
 const cmHost = document.getElementById("cm-host");
+const trackerHost = document.getElementById("tracker-host");
 const imagePreview = document.getElementById("image-preview");
 const fileList = document.getElementById("file-list");
 const backlinksList = document.getElementById("backlinks-list");
@@ -70,10 +79,17 @@ async function init() {
   } catch (err) {
     console.warn("Workspace cache miss:", err);
   }
+
+  // Initialize Tracker Native UI
+  initTracker(trackerHost);
+
   // ── Buttons ──────────────────────────────────────────────
   document
     .getElementById("btn-open-folder")
     ?.addEventListener("click", handleOpenFolder);
+  document
+    .getElementById("btn-open-tracker")
+    ?.addEventListener("click", handleOpenTracker);
   document
     .getElementById("btn-open-welcome")
     ?.addEventListener("click", handleOpenFolder);
@@ -123,103 +139,111 @@ async function init() {
   });
 
   // ── Global shortcuts ────────────────────────────────────
-  window.addEventListener("keydown", (e) => {
-    const mod = e.ctrlKey || e.metaKey;
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      const mod = e.ctrlKey || e.metaKey;
 
-    // Ctrl+O — Open folder
-    if (mod && e.key.toLowerCase() === "o") {
-      e.preventDefault();
-      e.stopPropagation();
-      handleOpenFolder();
-      return;
-    }
-
-    // Ctrl+N — New file
-    if (mod && e.key.toLowerCase() === "n") {
-      e.preventDefault();
-      e.stopPropagation();
-      showNameModal("file");
-      return;
-    }
-
-    // Ctrl+Shift+F — Vault search
-    if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSearchOverlay();
-      return;
-    }
-
-    // Ctrl+\ — Toggle sidebar
-    if (mod && e.key === "\\") {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSidebar();
-      return;
-    }
-
-    // Ctrl+Shift+B — Toggle backlinks
-    if (mod && e.shiftKey && e.key.toLowerCase() === "b") {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleBacklinks();
-      return;
-    }
-
-    // Ctrl+/ — Toggle shortcuts overlay
-    if (mod && e.key === "/") {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleShortcutsOverlay();
-      return;
-    }
-
-    // Delete — Delete selected file/folder
-    if (e.key === "Delete" && state.selectedSidebarPath) {
-      const isInputFocused = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
-      
-      if (!isInputFocused && !hasFocus(editor)) {
+      // Ctrl+O — Open folder
+      if (mod && e.key.toLowerCase() === "o") {
         e.preventDefault();
         e.stopPropagation();
-        handleDelete(state.selectedSidebarPath);
+        handleOpenFolder();
         return;
       }
-    }
 
-    // F2 — Rename selected file/folder
-    if (e.key === "F2" && state.selectedSidebarPath) {
-      const isInputFocused = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
+      // Ctrl+N — New file
+      if (mod && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        e.stopPropagation();
+        showNameModal("file");
+        return;
+      }
 
-      if (!isInputFocused) {
+      // Ctrl+Shift+F — Vault search
+      if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         e.stopPropagation();
-        showNameModal("rename", state.selectedSidebarPath);
+        toggleSearchOverlay();
         return;
       }
-    }
 
-    // Escape — close overlays
-    if (e.key === "Escape") {
-      if (!shortcutsOverlay.classList.contains("hidden")) {
+      // Ctrl+\ — Toggle sidebar
+      if (mod && e.key === "\\") {
         e.preventDefault();
         e.stopPropagation();
-        hideShortcutsOverlay();
+        toggleSidebar();
         return;
       }
-      if (!nameInputModal.classList.contains("hidden")) {
+
+      // Ctrl+Shift+B — Toggle backlinks
+      if (mod && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         e.stopPropagation();
-        hideNameModal();
+        toggleBacklinks();
         return;
       }
-      if (!searchOverlay.classList.contains("hidden")) {
+
+      // Ctrl+/ — Toggle shortcuts overlay
+      if (mod && e.key === "/") {
         e.preventDefault();
         e.stopPropagation();
-        hideSearchOverlay();
+        toggleShortcutsOverlay();
         return;
       }
-    }
-  }, true); // Use capture phase
+
+      // Delete — Delete selected file/folder
+      if (e.key === "Delete" && state.selectedSidebarPath) {
+        const isInputFocused = ["INPUT", "TEXTAREA"].includes(
+          document.activeElement.tagName,
+        );
+
+        if (!isInputFocused && !hasFocus(editor)) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleDelete(state.selectedSidebarPath);
+          return;
+        }
+      }
+
+      // F2 — Rename selected file/folder
+      if (e.key === "F2" && state.selectedSidebarPath) {
+        const isInputFocused = ["INPUT", "TEXTAREA"].includes(
+          document.activeElement.tagName,
+        );
+
+        if (!isInputFocused) {
+          e.preventDefault();
+          e.stopPropagation();
+          showNameModal("rename", state.selectedSidebarPath);
+          return;
+        }
+      }
+
+      // Escape — close overlays
+      if (e.key === "Escape") {
+        if (!shortcutsOverlay.classList.contains("hidden")) {
+          e.preventDefault();
+          e.stopPropagation();
+          hideShortcutsOverlay();
+          return;
+        }
+        if (!nameInputModal.classList.contains("hidden")) {
+          e.preventDefault();
+          e.stopPropagation();
+          hideNameModal();
+          return;
+        }
+        if (!searchOverlay.classList.contains("hidden")) {
+          e.preventDefault();
+          e.stopPropagation();
+          hideSearchOverlay();
+          return;
+        }
+      }
+    },
+    true,
+  ); // Use capture phase
 
   // ── Wikilink clicks ─────────────────────────────────────
   cmHost.addEventListener("click", (e) => {
@@ -345,11 +369,13 @@ async function handleOpenMdFile(relativePath) {
     state.currentPath = relativePath;
     state.selectedSidebarPath = relativePath; // Sync selection with open file
     state.selectedSidebarIsDir = false;
+    state.isTrackerOpen = false;
     await setSysConfig("last_file", relativePath);
     // Hide image preview, show editor
     imagePreview.classList.add("hidden");
     cmHost.classList.remove("hidden");
     welcomeScreen.classList.add("hidden");
+    trackerHost.classList.add("hidden");
     // Update the current file path facet for relative image resolution
     setCurrentFilePath(editor, relativePath);
     setContent(editor, content);
@@ -360,6 +386,20 @@ async function handleOpenMdFile(relativePath) {
   } catch (err) {
     console.error("Open file:", err);
   }
+}
+
+async function handleOpenTracker() {
+  state.isTrackerOpen = true;
+  state.selectedSidebarPath = null;
+  state.currentPath = "Study Tracker";
+  welcomeScreen.classList.add("hidden");
+  cmHost.classList.add("hidden");
+  trackerHost.classList.remove("hidden");
+  updateSidebarSelection();
+  updateToolbarFilename();
+
+  // Render the tracker view whenever opened
+  await renderTracker();
 }
 
 async function handleOpenImageFile(relativePath) {
@@ -456,7 +496,7 @@ async function handleCreateFolder() {
 async function handleRename() {
   const newName = nameInputField.value.trim();
   if (!newName || !state.modalTarget) return;
-  
+
   const oldPath = state.modalTarget;
   const parts = oldPath.split("/");
   parts[parts.length - 1] = newName;
@@ -510,7 +550,7 @@ function showNameModal(type, target = null) {
   if (!state.vaultRoot) return;
   state.modalType = type;
   state.modalTarget = target;
-  
+
   if (type === "file") {
     nameInputTitle.textContent = "Create New File";
     nameInputField.placeholder = "filename.md";
@@ -524,7 +564,7 @@ function showNameModal(type, target = null) {
     const currentName = target.split("/").pop();
     nameInputField.value = currentName;
   }
-  
+
   nameInputModal.classList.remove("hidden");
   setTimeout(() => nameInputField.focus(), 50);
 }
@@ -601,7 +641,8 @@ function renderTreeNodes(node, container, level = 0) {
     // Reusable delete button for sidebar items
     function createDeleteBtn(path) {
       const btn = document.createElement("button");
-      btn.className = "sidebar-delete-btn material-symbols-outlined !text-[14px] p-1 rounded-md opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-[#ee7d77] hover:bg-[#ee7d77]/10 transition-all duration-150 flex-shrink-0";
+      btn.className =
+        "sidebar-delete-btn material-symbols-outlined !text-[14px] p-1 rounded-md opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-[#ee7d77] hover:bg-[#ee7d77]/10 transition-all duration-150 flex-shrink-0";
       btn.textContent = "delete";
       btn.title = "Delete";
       btn.addEventListener("click", (e) => {
@@ -622,7 +663,7 @@ function renderTreeNodes(node, container, level = 0) {
       summary.setAttribute("data-path", child.path);
       summary.setAttribute("tabindex", "0");
       summary.style.paddingLeft = `${8 + level * 12}px`;
-      
+
       const label = document.createElement("div");
       label.className = "flex items-center gap-3 overflow-hidden";
       label.innerHTML = `<span class="material-symbols-outlined !text-[14px]">folder</span> <span class="truncate">${child.name}</span>`;
@@ -649,14 +690,14 @@ function renderTreeNodes(node, container, level = 0) {
       el.setAttribute("data-path", child.path);
       el.setAttribute("tabindex", "0");
       el.style.paddingLeft = `${8 + level * 12}px`;
-      
+
       const label = document.createElement("div");
       label.className = "flex items-center gap-3 overflow-hidden";
       const iconName = isImageFile(child.name) ? "image" : "draft";
       label.innerHTML = `<span class="material-symbols-outlined !text-[14px]">${iconName}</span> <span class="truncate">${child.name}</span>`;
       el.appendChild(label);
       el.appendChild(createDeleteBtn(child.path));
-      
+
       el.addEventListener("click", (e) => {
         if (isImageFile(child.path)) {
           handleOpenImageFile(child.path);
@@ -690,21 +731,41 @@ function updateSidebarSelection() {
     const path = el.getAttribute("data-path");
     const isActive = path === state.currentPath;
     const isSelected = path === state.selectedSidebarPath;
-    
+
     // Reset classes first
     el.classList.remove(
-      "text-[#b1ccc6]", "text-[#e3e5ed]", "text-[#9d9ea3]",
-      "bg-[#23262b]", "bg-[#23262b]/30", "font-medium", "font-bold",
-      "border", "border-[#45484e]/80", "border-[#45484e]/30", "border-[#b1ccc6]/30",
-      "shadow-sm"
+      "text-[#b1ccc6]",
+      "text-[#e3e5ed]",
+      "text-[#9d9ea3]",
+      "bg-[#23262b]",
+      "bg-[#23262b]/30",
+      "font-medium",
+      "font-bold",
+      "border",
+      "border-[#45484e]/80",
+      "border-[#45484e]/30",
+      "border-[#b1ccc6]/30",
+      "shadow-sm",
     );
 
     if (isSelected) {
       // Primary selection (Target for F2/Del) - Strong highlight
-      el.classList.add("text-[#e3e5ed]", "bg-[#23262b]", "font-bold", "border", "border-[#45484e]/80", "shadow-sm");
+      el.classList.add(
+        "text-[#e3e5ed]",
+        "bg-[#23262b]",
+        "font-bold",
+        "border",
+        "border-[#45484e]/80",
+        "shadow-sm",
+      );
     } else if (isActive) {
       // Active file in editor - Subtle highlight
-      el.classList.add("text-[#b1ccc6]", "font-medium", "border", "border-[#b1ccc6]/30");
+      el.classList.add(
+        "text-[#b1ccc6]",
+        "font-medium",
+        "border",
+        "border-[#b1ccc6]/30",
+      );
     } else {
       // Default state
       el.classList.add("text-[#9d9ea3]");
