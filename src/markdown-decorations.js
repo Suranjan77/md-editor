@@ -2,7 +2,7 @@
  * Markdown Decorations for CodeMirror 6
  */
 import { Decoration, WidgetType, EditorView } from "@codemirror/view";
-import { RangeSetBuilder, StateField } from "@codemirror/state";
+import { RangeSetBuilder, StateField, Facet } from "@codemirror/state";
 import { openFile } from "./ipc.js";
 import katex from "katex";
 import MarkdownIt from "markdown-it";
@@ -10,6 +10,9 @@ import hljs from "highlight.js";
 import "highlight.js/styles/atom-one-dark.css";
 
 const md = new MarkdownIt();
+
+/** Facet that holds the current file's vault-relative path (e.g. "A/notes.md"). */
+export const currentFilePath = Facet.define({ combine: (v) => v[v.length - 1] || "" });
 
 // Line Rules
 const headingLines = [
@@ -525,6 +528,10 @@ function buildDecorations(state) {
   const activeLine = doc.lineAt(cursor).number;
   let inCodeBlock = false;
 
+  // Resolve the current file's parent directory for relative image paths
+  const filePath = state.facet(currentFilePath);
+  const currentFileDir = filePath.includes("/") ? filePath.substring(0, filePath.lastIndexOf("/")) : "";
+
   // Phase 1: Identify all multiline Live Preview structural blocks
   const blocks = findBlocks(doc);
   const passState = { math: 0, code: 0, img: 0 };
@@ -644,6 +651,7 @@ function buildDecorations(state) {
         isActive,
         selection,
         passState,
+        currentFileDir,
       );
       continue;
     }
@@ -673,6 +681,7 @@ function buildDecorations(state) {
         isActive,
         selection,
         passState,
+        currentFileDir,
       );
       continue;
     }
@@ -703,6 +712,7 @@ function buildDecorations(state) {
         isActive,
         selection,
         passState,
+        currentFileDir,
       );
       continue;
     }
@@ -720,19 +730,20 @@ function buildDecorations(state) {
         isActive,
         selection,
         passState,
+        currentFileDir,
       );
       continue;
     }
 
     if (text.length > 0) {
-      addInline(builder, text, from, isActive, selection, passState);
+      addInline(builder, text, from, isActive, selection, passState, currentFileDir);
     }
   }
 
   return builder.finish();
 }
 
-function addInline(builder, text, offset, isActive, selection, passState) {
+function addInline(builder, text, offset, isActive, selection, passState, currentFileDir = "") {
   const mark = isActive ? markDim : markHide;
   let i = 0;
 
@@ -762,6 +773,10 @@ function addInline(builder, text, offset, isActive, selection, passState) {
                   srcUrl = url.substring(2);
                 } else if (url.startsWith("/")) {
                   srcUrl = url.substring(1);
+                }
+                // Resolve relative to current file's directory
+                if (currentFileDir && !srcUrl.startsWith("/")) {
+                  srcUrl = currentFileDir + "/" + srcUrl;
                 }
                 is_local = true;
               }
