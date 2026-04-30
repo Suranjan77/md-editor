@@ -536,7 +536,7 @@ function buildDecorations(state) {
   const blocks = findBlocks(doc);
   const passState = { math: 0, code: 0, img: 0 };
 
-  // Phase 2: Process document lines sequentially, collapsing inactive blocks to HTML Native widgets
+  // Phase 2: Process document lines sequentially
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     const text = line.text;
@@ -550,11 +550,12 @@ function buildDecorations(state) {
       const isBlockActive = cursor >= block.from && cursor <= block.to;
 
       if (!isBlockActive) {
-        // Return a fully-rendered block replacement widget if cursor is outside
         if (i === block.startLine) {
+          if (block.type === "math") passState.math++;
+          else if (block.type === "code") passState.code++;
+          
           let widgetDeco;
           if (block.type === "math") {
-            passState.math++;
             widgetDeco = Decoration.replace({
               widget: new MathBlockWidget(block.content, passState.math),
               block: true,
@@ -565,7 +566,6 @@ function buildDecorations(state) {
               block: true,
             });
           } else if (block.type === "code") {
-            passState.code++;
             widgetDeco = Decoration.replace({
               widget: new CodeBlockWidget(
                 block.content,
@@ -639,15 +639,27 @@ function buildDecorations(state) {
       }
     }
 
-    const hm = text.match(/^(#{1,6})\s/);
+    const hm = text.match(/^(#{1,6})\s(.*)$/);
     if (hm) {
       const level = hm[1].length;
-      builder.add(from, from, headingLines[level - 1]);
-      safeMark(builder, from, from + hm[0].length, mark);
+      const headingText = hm[2].trim();
+      const slug = headingText.toLowerCase().replace(/[^\w\-]+/g, '-').replace(/^-+|-+$/g, '');
+      
+      if (slug) {
+        builder.add(from, from, Decoration.line({ 
+          class: `md-h${level}-line`,
+          attributes: { id: slug }
+        }));
+      } else {
+        builder.add(from, from, headingLines[level - 1]);
+      }
+      
+      const prefixLength = hm[1].length + 1;
+      safeMark(builder, from, from + prefixLength, mark);
       addInline(
         builder,
-        text.slice(hm[0].length),
-        from + hm[0].length,
+        text.slice(prefixLength),
+        from + prefixLength,
         isActive,
         selection,
         passState,
@@ -988,4 +1000,63 @@ const blockDecoField = StateField.define({
 
 export function markdownDecorations() {
   return blockDecoField;
+}
+
+export function findIdPosition(doc, id) {
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    const hm = line.text.match(/^(#{1,6})\s(.*)$/);
+    if (hm) {
+      const slug = hm[2].trim().toLowerCase().replace(/[^\w\-]+/g, '-').replace(/^-+|-+$/g, '');
+      if (slug === id) return line.from;
+    }
+  }
+
+  const blocks = findBlocks(doc);
+  let mathSeq = 0;
+  let codeSeq = 0;
+  let imgSeq = 0;
+
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    const block = blocks.find(b => i >= b.startLine && i <= b.endLine);
+    
+    if (block && i === block.startLine) {
+      if (block.type === "math") {
+        mathSeq++;
+        if (`equation-${mathSeq}` === id) return block.from;
+        i = block.endLine; // skip block contents
+        continue;
+      } else if (block.type === "code") {
+        codeSeq++;
+        if (`listing-${codeSeq}` === id) return block.from;
+        i = block.endLine;
+        continue;
+      } else if (block.type === "table") {
+        i = block.endLine;
+        continue;
+      }
+    }
+    
+    if (!block) {
+      const text = line.text;
+      let j = 0;
+      while (j < text.length) {
+        if (text[j] === "!" && text[j + 1] === "[") {
+          const altEnd = text.indexOf("]", j + 2);
+          if (altEnd !== -1 && text[altEnd + 1] === "(") {
+            const urlEnd = text.indexOf(")", altEnd + 2);
+            if (urlEnd !== -1) {
+              imgSeq++;
+              if (`figure-${imgSeq}` === id) return line.from + j;
+              j = urlEnd + 1;
+              continue;
+            }
+          }
+        }
+        j++;
+      }
+    }
+  }
+  return null;
 }
