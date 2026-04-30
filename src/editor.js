@@ -6,8 +6,9 @@ import {
   keymap,
   highlightActiveLine,
   drawSelection,
+  Decoration
 } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, StateEffect, StateField } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import {
   defaultKeymap,
@@ -27,7 +28,7 @@ import {
   replaceAll,
   closeSearchPanel,
 } from "@codemirror/search";
-import { markdownDecorations, currentFilePath } from "./markdown-decorations.js";
+import { markdownDecorations, currentFilePath, findIdPosition } from "./markdown-decorations.js";
 import { mathTooltip } from "./math-tooltip.js";
 
 // ── Custom Search Panel ─────────────────────────────────────────────
@@ -548,6 +549,27 @@ const editorTheme = EditorView.theme(
 
 const filePathCompartment = new Compartment();
 
+// ── Custom Highlight Effect ─────────────────────────────────────────
+export const highlightEffect = StateEffect.define();
+const highlightMark = Decoration.line({ 
+  class: "ring-2 ring-[#b1ccc6] transition-all duration-300 bg-[#b1ccc6]/10" 
+});
+
+const highlightField = StateField.define({
+  create() { return Decoration.none; },
+  update(decos, tr) {
+    decos = decos.map(tr.changes);
+    for (let e of tr.effects) {
+      if (e.is(highlightEffect)) {
+        if (e.value === null) return Decoration.none;
+        return Decoration.set([highlightMark.range(e.value)]);
+      }
+    }
+    return decos;
+  },
+  provide: f => EditorView.decorations.from(f)
+});
+
 export function createEditor(parent, onSave) {
   const view = new EditorView({
     state: EditorState.create({
@@ -555,6 +577,7 @@ export function createEditor(parent, onSave) {
       extensions: [
         markdown(),
         markdownDecorations(),
+        highlightField,
         filePathCompartment.of(currentFilePath.of("")),
         mathTooltip(),
         history(),
@@ -609,4 +632,25 @@ export function getContent(view) {
 
 export function hasFocus(view) {
   return view.hasFocus;
+}
+
+export function scrollToId(view, id) {
+  const pos = findIdPosition(view.state.doc, id);
+  if (pos !== null) {
+    view.dispatch({
+      effects: [
+        EditorView.scrollIntoView(pos, { y: "center", yMargin: 50 }),
+        highlightEffect.of(pos)
+      ]
+    });
+    
+    // Clear the highlight after 1 second
+    setTimeout(() => {
+      view.dispatch({
+        effects: highlightEffect.of(null)
+      });
+    }, 1000);
+    return true;
+  }
+  return false;
 }

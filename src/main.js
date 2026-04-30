@@ -4,6 +4,7 @@ import {
   getContent,
   hasFocus,
   setCurrentFilePath,
+  scrollToId,
 } from "./editor.js";
 import { clearImageCache } from "./markdown-decorations.js";
 import {
@@ -252,6 +253,17 @@ async function init() {
       let text = wl.textContent;
       if (text) {
         text = text.split("|")[0].trim(); // Strip alias from [[page|alias]]
+        
+        // Handle internal links
+        if (text.startsWith("#")) {
+          const id = text.slice(1);
+          const found = scrollToId(editor, id);
+          if (!found) {
+            showToast(`Target "${text}" not found in document`, "error");
+          }
+          return;
+        }
+
         handleOpenMdFile(text);
       }
     }
