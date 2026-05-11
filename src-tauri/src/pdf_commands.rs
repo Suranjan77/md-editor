@@ -16,10 +16,20 @@ use crate::commands::AppState;
 // ── Shared Types ────────────────────────────────────────────────────
 
 #[derive(Serialize)]
+pub struct TocEntry {
+    pub title: String,
+    pub page_index: Option<u32>,
+    pub children: Vec<TocEntry>,
+}
+
+#[derive(Serialize)]
 pub struct PdfMetadata {
     pub total_pages: u32,
+    pub page_width: f32,
+    pub page_height: f32,
     pub title: Option<String>,
     pub author: Option<String>,
+    pub toc: Vec<TocEntry>,
 }
 
 #[derive(Serialize)]
@@ -183,6 +193,64 @@ pub fn render_page_to_png(
     Ok(buf.into_inner())
 }
 
+// ── Helper: Extract bookmarks as TOC ────────────────────────────────
+
+fn extract_bookmarks(document: &PdfDocument) -> Vec<TocEntry> {
+    let bookmarks = document.bookmarks();
+    let mut root_entries = Vec::new();
+
+    // pdfium-render iterates bookmarks in a flat manner via iter()
+    // We need to build the tree using depth information
+    struct StackEntry {
+        entry: TocEntry,
+        depth: u16,
+    }
+
+    let mut stack: Vec<StackEntry> = Vec::new();
+
+    for bookmark in bookmarks.iter() {
+        let title = bookmark.title().unwrap_or_default();
+        let depth = bookmark.depth();
+
+        let page_index = bookmark.destination()
+            .and_then(|dest| dest.page_index().ok())
+            .map(|idx| idx as u32);
+
+        let new_entry = TocEntry {
+            title,
+            page_index,
+            children: Vec::new(),
+        };
+
+        // Pop stack entries that are at the same or deeper depth
+        while let Some(top) = stack.last() {
+            if top.depth >= depth {
+                let popped = stack.pop().unwrap();
+                if let Some(parent) = stack.last_mut() {
+                    parent.entry.children.push(popped.entry);
+                } else {
+                    root_entries.push(popped.entry);
+                }
+            } else {
+                break;
+            }
+        }
+
+        stack.push(StackEntry { entry: new_entry, depth });
+    }
+
+    // Flush remaining stack
+    while let Some(popped) = stack.pop() {
+        if let Some(parent) = stack.last_mut() {
+            parent.entry.children.push(popped.entry);
+        } else {
+            root_entries.push(popped.entry);
+        }
+    }
+
+    root_entries
+}
+
 // ── Tauri Commands ──────────────────────────────────────────────────
 
 #[tauri::command]
@@ -211,18 +279,27 @@ pub fn open_pdf(path: String, state: State<'_, AppState>) -> Result<PdfMetadata,
 
     let abs_path_str = abs_path.to_string_lossy().to_string();
 
-    // Verify it's a valid PDF by opening it
-    let (total_pages, title, author) = with_pdfium(|pdfium| {
+    // Verify it's a valid PDF by opening it and extract metadata
+    let (total_pages, page_width, page_height, title, author, toc) = with_pdfium(|pdfium| {
         let document = pdfium
             .load_pdf_from_file(&abs_path_str, None)
             .map_err(|e| format!("Failed to open PDF: {}", e))?;
 
-        let meta = document.metadata();
-        Ok((
-            document.pages().len() as u32,
-            None,
-            None,
-        ))
+        let total_pages = document.pages().len() as u32;
+
+        // Get page dimensions from the first page (default to A4 if no pages)
+        let (pw, ph) = if total_pages > 0 {
+            let first_page = document.pages().get(0)
+                .map_err(|e| format!("Failed to get first page: {}", e))?;
+            (first_page.width().value, first_page.height().value)
+        } else {
+            (612.0, 792.0) // A4 default in points
+        };
+
+        // Extract TOC from bookmarks
+        let toc = extract_bookmarks(&document);
+
+        Ok((total_pages, pw, ph, None, None, toc))
     })?;
 
     // Update PDF state
@@ -231,8 +308,11 @@ pub fn open_pdf(path: String, state: State<'_, AppState>) -> Result<PdfMetadata,
 
     Ok(PdfMetadata {
         total_pages,
+        page_width,
+        page_height,
         title,
         author,
+        toc,
     })
 }
 

@@ -55,7 +55,9 @@ pub fn setup_pdfium() -> PathBuf {
         .unwrap_or_else(|| out_path.clone());
 
     let cache_dir = target_dir.join("pdfium").join(platform_slug);
-    let lib_path = cache_dir.join("lib").join(lib_filename);
+    // On Windows, the DLL is in bin/, on other platforms it's in lib/
+    let lib_subdir = if target_os == "windows" { "bin" } else { "lib" };
+    let lib_path = cache_dir.join(lib_subdir).join(lib_filename);
 
     // If already downloaded, skip
     if lib_path.exists() {
@@ -125,7 +127,9 @@ pub fn setup_pdfium() -> PathBuf {
 
 /// Copy the PDFium shared library to a known location for Tauri resource bundling.
 fn setup_resource_copy(cache_dir: &Path, lib_filename: &str) {
-    let lib_src = cache_dir.join("lib").join(lib_filename);
+    // On Windows, the DLL is in bin/, on other platforms it's in lib/
+    let lib_subdir = if lib_filename.ends_with(".dll") { "bin" } else { "lib" };
+    let lib_src = cache_dir.join(lib_subdir).join(lib_filename);
     if !lib_src.exists() {
         println!("cargo:warning=PDFium library not found at {}", lib_src.display());
         return;
