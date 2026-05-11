@@ -22,7 +22,9 @@ import {
   setSysConfig,
 } from "./ipc.js";
 import { initTracker, renderTracker } from "./tracker.js";
+import { initPdfViewer, openPdfFile, closePdfViewer, isPdfViewerActive } from "./pdf-viewer.js";
 import "./style.css";
+import "./pdf-viewer.css";
 
 const { open, ask } = window.__TAURI__.dialog;
 
@@ -38,6 +40,7 @@ const state = {
 
 const cmHost = document.getElementById("cm-host");
 const trackerHost = document.getElementById("tracker-host");
+const pdfViewerHost = document.getElementById("pdf-viewer-host");
 const imagePreview = document.getElementById("image-preview");
 const fileList = document.getElementById("file-list");
 const backlinksList = document.getElementById("backlinks-list");
@@ -63,6 +66,10 @@ function isImageFile(filename) {
   return IMAGE_EXTENSIONS.includes(ext);
 }
 
+function isPdfFile(filename) {
+  return filename.split(".").pop().toLowerCase() === "pdf";
+}
+
 async function init() {
   try {
     const lastRoot = await getSysConfig("last_vault_root");
@@ -83,6 +90,9 @@ async function init() {
 
   // Initialize Tracker Native UI
   initTracker(trackerHost);
+
+  // Initialize PDF Viewer
+  initPdfViewer(pdfViewerHost);
 
   // ── Buttons ──────────────────────────────────────────────
   document
@@ -383,8 +393,11 @@ async function handleOpenMdFile(relativePath) {
     state.selectedSidebarIsDir = false;
     state.isTrackerOpen = false;
     await setSysConfig("last_file", relativePath);
-    // Hide image preview, show editor
+    // Close PDF if it was open
+    if (isPdfViewerActive()) await closePdfViewer();
+    // Hide all other views, show editor
     imagePreview.classList.add("hidden");
+    pdfViewerHost.classList.add("hidden");
     cmHost.classList.remove("hidden");
     welcomeScreen.classList.add("hidden");
     trackerHost.classList.add("hidden");
@@ -404,14 +417,44 @@ async function handleOpenTracker() {
   state.isTrackerOpen = true;
   state.selectedSidebarPath = null;
   state.currentPath = "Study Tracker";
+  // Close PDF if it was open
+  if (isPdfViewerActive()) await closePdfViewer();
   welcomeScreen.classList.add("hidden");
   cmHost.classList.add("hidden");
+  pdfViewerHost.classList.add("hidden");
+  imagePreview.classList.add("hidden");
   trackerHost.classList.remove("hidden");
   updateSidebarSelection();
   updateToolbarFilename();
 
   // Render the tracker view whenever opened
   await renderTracker();
+}
+
+async function handleOpenPdfFile(relativePath) {
+  try {
+    state.currentPath = relativePath;
+    state.selectedSidebarPath = relativePath;
+    state.selectedSidebarIsDir = false;
+    state.isTrackerOpen = false;
+
+    // Hide all other views, show PDF viewer
+    cmHost.classList.add("hidden");
+    imagePreview.classList.add("hidden");
+    trackerHost.classList.add("hidden");
+    welcomeScreen.classList.add("hidden");
+    pdfViewerHost.classList.remove("hidden");
+
+    updateSidebarSelection();
+    updateToolbarFilename();
+
+    // Open the PDF in the viewer
+    await openPdfFile(relativePath);
+    pdfViewerHost.focus();
+  } catch (err) {
+    console.error("Open PDF:", err);
+    showToast(`Failed to open PDF: ${err}`, "error");
+  }
 }
 
 async function handleOpenImageFile(relativePath) {
@@ -427,9 +470,14 @@ async function handleOpenImageFile(relativePath) {
     state.selectedSidebarPath = relativePath;
     state.selectedSidebarIsDir = false;
 
-    // Hide editor, show image preview
+    // Close PDF if it was open
+    if (isPdfViewerActive()) await closePdfViewer();
+
+    // Hide all other views, show image preview
     cmHost.classList.add("hidden");
     welcomeScreen.classList.add("hidden");
+    pdfViewerHost.classList.add("hidden");
+    trackerHost.classList.add("hidden");
     imagePreview.classList.remove("hidden");
     imagePreview.innerHTML = `
       <div class="image-preview-inner">
@@ -705,13 +753,15 @@ function renderTreeNodes(node, container, level = 0) {
 
       const label = document.createElement("div");
       label.className = "flex items-center gap-3 overflow-hidden";
-      const iconName = isImageFile(child.name) ? "image" : "draft";
+      const iconName = isPdfFile(child.name) ? "picture_as_pdf" : isImageFile(child.name) ? "image" : "draft";
       label.innerHTML = `<span class="material-symbols-outlined !text-[14px]">${iconName}</span> <span class="truncate">${child.name}</span>`;
       el.appendChild(label);
       el.appendChild(createDeleteBtn(child.path));
 
       el.addEventListener("click", (e) => {
-        if (isImageFile(child.path)) {
+        if (isPdfFile(child.path)) {
+          handleOpenPdfFile(child.path);
+        } else if (isImageFile(child.path)) {
           handleOpenImageFile(child.path);
         } else {
           handleOpenMdFile(child.path);

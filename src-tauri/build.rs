@@ -1,3 +1,7 @@
+#[path = "build_pdfium.rs"]
+mod build_pdfium;
+
 fn main() {
-    tauri_build::build()
+    build_pdfium::setup_pdfium();
+    tauri_build::build();
 }

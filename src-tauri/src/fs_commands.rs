@@ -154,7 +154,7 @@ fn list_vault_recursive(
             list_vault_recursive(root, &path, entries)?;
         } else if path
             .extension()
-            .map(|e| e == "md" || e == "markdown" || is_image(&e.to_str().unwrap()))
+            .map(|e| e == "md" || e == "markdown" || e == "pdf" || is_image(&e.to_str().unwrap()))
             .unwrap_or(false)
         {
             entries.push(FileEntry {

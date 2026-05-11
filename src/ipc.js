@@ -52,3 +52,27 @@ export async function getSysConfig(key) {
 export async function setSysConfig(key, value) {
   return await invoke("set_sys_config", { key, value });
 }
+
+// ── PDF Commands ────────────────────────────────────────────────────
+
+export async function openPdf(path) {
+  return await invoke("open_pdf", { path });
+}
+
+export async function closePdf() {
+  return await invoke("close_pdf");
+}
+
+
+
+export async function getPageLinks(pageIndex) {
+  return await invoke("get_page_links", { pageIndex });
+}
+
+export async function getLinkPreview(destPage, destY) {
+  return await invoke("get_link_preview", { destPage, destY });
+}
+
+export async function searchPdf(query) {
+  return await invoke("search_pdf", { query });
+}
