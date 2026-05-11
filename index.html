@@ -184,6 +184,13 @@
                     class="flex-grow w-full h-full relative z-10 overflow-y-auto hidden custom-scrollbar bg-[#121316] text-[#e3e5ed]"
                 ></div>
 
+                <!-- PDF Viewer -->
+                <div
+                    id="pdf-viewer-host"
+                    class="flex-grow w-full h-full relative z-10 overflow-hidden hidden bg-[#0d0e10]"
+                    tabindex="-1"
+                ></div>
+
                 <!-- Welcome Screen -->
                 <div
                     id="welcome-screen"
@@ -411,6 +418,15 @@
                             <span
                                 class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
                                 >Ctrl+B</span
+                            >
+                        </div>
+                        <div
+                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
+                        >
+                            <span>PDF: Contents</span>
+                            <span
+                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
+                                >Ctrl+T</span
                             >
                         </div>
                     </div>

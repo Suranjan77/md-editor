@@ -27,6 +27,9 @@
   },
   "bundle": {
     "active": false,
+    "resources": {
+      "pdfium/*": "./"
+    },
     "icon": [
       "icons/icon.png",
       "icons/icon.ico",

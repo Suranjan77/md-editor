@@ -8,11 +8,13 @@ use rusqlite::Connection;
 use crate::file_index::FileIndex;
 use crate::fs_commands;
 use crate::ipc_types::{FileEntry, SearchResult};
+use crate::pdf_commands::PdfState;
 
 pub struct AppState {
     pub vault_root: Mutex<Option<PathBuf>>,
     pub file_index: Mutex<FileIndex>,
     pub db: Mutex<Connection>,
+    pub pdf_state: Mutex<PdfState>,
 }
 
 impl AppState {
@@ -68,6 +70,7 @@ impl AppState {
             vault_root: Mutex::new(None),
             file_index: Mutex::new(FileIndex::new(PathBuf::new())),
             db: Mutex::new(db),
+            pdf_state: Mutex::new(PdfState::new()),
         }
     }
 }
