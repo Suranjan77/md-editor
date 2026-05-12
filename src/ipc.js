@@ -67,6 +67,10 @@ export async function setPdfRenderGeneration(generation) {
   return await invoke("set_pdf_render_generation", { generation });
 }
 
+export async function getPdfPageImage(pageIndex, scale, generation) {
+  return await invoke("get_pdf_page_image", { pageIndex, scale, generation });
+}
+
 export async function getPageLinks(pageIndex) {
   return await invoke("get_page_links", { pageIndex });
 }

@@ -3,6 +3,8 @@
     windows_subsystem = "windows"
 )]
 
+use tauri::Manager;
+
 fn main() {
     #[cfg(target_os = "linux")]
     {
@@ -13,6 +15,12 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .setup(|app| {
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                std::env::set_var("PDFIUM_RESOURCE_DIR", resource_dir);
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .register_asynchronous_uri_scheme_protocol("md-pdf", |ctx, request, responder| {
@@ -92,6 +100,7 @@ fn main() {
             md_editor_lib::pdf_commands::open_pdf,
             md_editor_lib::pdf_commands::close_pdf,
             md_editor_lib::pdf_commands::set_pdf_render_generation,
+            md_editor_lib::pdf_commands::get_pdf_page_image,
             md_editor_lib::pdf_commands::get_page_links,
             md_editor_lib::pdf_commands::get_link_preview,
             md_editor_lib::pdf_commands::search_pdf,

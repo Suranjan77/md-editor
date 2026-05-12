@@ -18,6 +18,9 @@ lru = "0.18.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+ureq = { version = "3.3.0", default-features = true }
+flate2 = "1"
+tar = "0.4"
 
 [lib]
 name = "md_editor_lib"
