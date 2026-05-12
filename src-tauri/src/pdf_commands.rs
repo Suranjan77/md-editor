@@ -1,14 +1,16 @@
+use std::ffi::c_int;
+use std::fs;
 use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use image::ImageFormat;
 use lru::LruCache;
 use pdfium_render::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{Manager, State};
 
 use crate::commands::AppState;
@@ -69,6 +71,7 @@ type PageCacheKey = (String, u32, u32);
 
 pub struct PdfState {
     pub current_path: Option<String>,
+    pub current_bytes: Option<Arc<Vec<u8>>>,
     pub page_cache: LruCache<PageCacheKey, Vec<u8>>,
 }
 
@@ -76,6 +79,7 @@ impl PdfState {
     pub fn new() -> Self {
         Self {
             current_path: None,
+            current_bytes: None,
             page_cache: LruCache::new(NonZeroUsize::new(50).unwrap()),
         }
     }
@@ -87,17 +91,18 @@ thread_local! {
     static LOCAL_PDFIUM: std::cell::RefCell<Option<Pdfium>> = std::cell::RefCell::new(None);
 }
 
-// Prevent concurrent calls to FPDF_InitLibrary which crash PDFium
-static INIT_MUTEX: Mutex<()> = Mutex::new(());
+// PDFium has process-global state and can return opaque internal errors when
+// multiple documents/pages are opened or rendered concurrently.
+static PDFIUM_MUTEX: Mutex<()> = Mutex::new(());
 
 fn with_pdfium<F, R>(f: F) -> Result<R, String>
 where
     F: FnOnce(&Pdfium) -> Result<R, String>,
 {
     LOCAL_PDFIUM.with(|cell| {
+        let _guard = PDFIUM_MUTEX.lock().unwrap();
         let mut pdfium_opt = cell.borrow_mut();
         if pdfium_opt.is_none() {
-            let _guard = INIT_MUTEX.lock().unwrap();
             *pdfium_opt = Some(init_pdfium()?);
         }
         f(pdfium_opt.as_ref().unwrap())
@@ -109,17 +114,26 @@ where
 fn init_pdfium() -> Result<Pdfium, String> {
     let bind_paths = get_pdfium_bind_paths();
 
-    let mut bindings = None;
+    let mut errors = Vec::new();
     for path in bind_paths {
-        if let Ok(b) = Pdfium::bind_to_library(path.to_str().unwrap()) {
-            bindings = Some(b);
-            break;
+        if !path.exists() {
+            errors.push(format!("{}: not found", path.display()));
+            continue;
+        }
+
+        match Pdfium::bind_to_library(&path) {
+            Ok(bindings) => return Ok(Pdfium::new(bindings)),
+            Err(PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => {
+                return Ok(Pdfium::default());
+            }
+            Err(err) => errors.push(format!("{}: {}", path.display(), err)),
         }
     }
 
-    let bindings = bindings.ok_or("Could not bind to Pdfium library. Ensure it is placed next to the executable or in the target directory.")?;
-
-    Ok(Pdfium::new(bindings))
+    Err(format!(
+        "Could not bind to Pdfium library. Tried: {}",
+        errors.join("; ")
+    ))
 }
 
 fn get_pdfium_bind_paths() -> Vec<PathBuf> {
@@ -141,12 +155,22 @@ fn get_pdfium_bind_paths() -> Vec<PathBuf> {
         }
     }
 
-    // 2. In the src-tauri/pdfium/ directory (development mode)
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        paths.push(PathBuf::from(&manifest_dir).join("pdfium").join(lib_name));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // 2. In the src-tauri/pdfium/ directory (development mode). Use Cargo's
+    // compile-time manifest path; CARGO_MANIFEST_DIR is not guaranteed at runtime.
+    paths.push(manifest_dir.join("pdfium").join(lib_name));
+
+    // 3. In Cargo target output directories used by the build script.
+    if let Some(target_profile_dir) = option_env!("PDFIUM_TARGET_PROFILE_DIR") {
+        paths.push(PathBuf::from(target_profile_dir).join(lib_name));
+    }
+    if let Some(target_dir) = option_env!("PDFIUM_TARGET_DIR") {
+        paths.push(PathBuf::from(target_dir).join("debug").join(lib_name));
+        paths.push(PathBuf::from(target_dir).join("release").join(lib_name));
     }
 
-    // 3. Current directory
+    // 4. Current directory
     paths.push(PathBuf::from(lib_name));
 
     paths
@@ -156,17 +180,17 @@ fn get_pdfium_bind_paths() -> Vec<PathBuf> {
 
 pub fn render_page_to_png(
     pdfium: &Pdfium,
-    path: &str,
+    bytes: &[u8],
     page_index: u32,
     scale: f32,
 ) -> Result<Vec<u8>, String> {
     let document = pdfium
-        .load_pdf_from_file(path, None)
+        .load_pdf_from_byte_slice(bytes, None)
         .map_err(|e| format!("Failed to open PDF: {}", e))?;
 
     let page = document
         .pages()
-        .get(page_index as u16)
+        .get(page_index as c_int)
         .map_err(|e| format!("Failed to get page {}: {}", page_index, e))?;
 
     let width = (page.width().value * scale) as u32;
@@ -182,81 +206,55 @@ pub fn render_page_to_png(
         )
         .map_err(|e| format!("Failed to render page: {}", e))?;
 
-    let dynamic_image = bitmap
-        .as_image();
+    let dynamic_image = bitmap.as_image();
 
-    let mut buf = Cursor::new(Vec::new());
-    dynamic_image
-        .write_to(&mut buf, ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode page as PNG: {}", e))?;
+    match dynamic_image {
+        Ok(dynamic_image) => {
+            let mut buf = Cursor::new(Vec::new());
+            dynamic_image
+                .write_to(&mut buf, ImageFormat::Png)
+                .map_err(|e| format!("Failed to encode page as PNG: {}", e))?;
 
-    Ok(buf.into_inner())
+            Ok(buf.into_inner())
+        }
+        Err(e) => Err(format!("Failed to render page: {}", e)),
+    }
 }
 
 // ── Helper: Extract bookmarks as TOC ────────────────────────────────
+pub fn extract_bookmarks(document: &PdfDocument) -> Vec<TocEntry> {
+    let bookmarks: Vec<PdfBookmark> = document.bookmarks().iter().collect();
+    parse_bookmarks(&bookmarks)
+}
 
-fn extract_bookmarks(document: &PdfDocument) -> Vec<TocEntry> {
-    let bookmarks = document.bookmarks();
-    let mut root_entries = Vec::new();
-
-    // pdfium-render iterates bookmarks in a flat manner via iter()
-    // We need to build the tree using depth information
-    struct StackEntry {
-        entry: TocEntry,
-        depth: u16,
-    }
-
-    let mut stack: Vec<StackEntry> = Vec::new();
+fn parse_bookmarks(bookmarks: &Vec<PdfBookmark>) -> Vec<TocEntry> {
+    let mut entries = Vec::new();
 
     for bookmark in bookmarks.iter() {
         let title = bookmark.title().unwrap_or_default();
-        let depth = bookmark.depth();
 
-        let page_index = bookmark.destination()
+        let page_index = bookmark
+            .destination()
             .and_then(|dest| dest.page_index().ok())
             .map(|idx| idx as u32);
 
-        let new_entry = TocEntry {
+        let child_bookmarks = bookmark.iter_direct_children().collect();
+        let children = parse_bookmarks(&child_bookmarks);
+
+        entries.push(TocEntry {
             title,
             page_index,
-            children: Vec::new(),
-        };
-
-        // Pop stack entries that are at the same or deeper depth
-        while let Some(top) = stack.last() {
-            if top.depth >= depth {
-                let popped = stack.pop().unwrap();
-                if let Some(parent) = stack.last_mut() {
-                    parent.entry.children.push(popped.entry);
-                } else {
-                    root_entries.push(popped.entry);
-                }
-            } else {
-                break;
-            }
-        }
-
-        stack.push(StackEntry { entry: new_entry, depth });
+            children,
+        });
     }
 
-    // Flush remaining stack
-    while let Some(popped) = stack.pop() {
-        if let Some(parent) = stack.last_mut() {
-            parent.entry.children.push(popped.entry);
-        } else {
-            root_entries.push(popped.entry);
-        }
-    }
-
-    root_entries
+    entries
 }
 
 // ── Tauri Commands ──────────────────────────────────────────────────
 
 #[tauri::command]
 pub fn open_pdf(path: String, state: State<'_, AppState>) -> Result<PdfMetadata, String> {
-    let mut pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
-
     let vault_root = {
         let vr = state.vault_root.lock().map_err(|e| e.to_string())?;
         vr.clone()
@@ -278,18 +276,23 @@ pub fn open_pdf(path: String, state: State<'_, AppState>) -> Result<PdfMetadata,
     }
 
     let abs_path_str = abs_path.to_string_lossy().to_string();
+    let pdf_bytes = Arc::new(
+        fs::read(&abs_path).map_err(|e| format!("Failed to read PDF {}: {}", abs_path_str, e))?,
+    );
 
     // Verify it's a valid PDF by opening it and extract metadata
     let (total_pages, page_width, page_height, title, author, toc) = with_pdfium(|pdfium| {
         let document = pdfium
-            .load_pdf_from_file(&abs_path_str, None)
+            .load_pdf_from_byte_slice(pdf_bytes.as_slice(), None)
             .map_err(|e| format!("Failed to open PDF: {}", e))?;
 
         let total_pages = document.pages().len() as u32;
 
         // Get page dimensions from the first page (default to A4 if no pages)
         let (pw, ph) = if total_pages > 0 {
-            let first_page = document.pages().get(0)
+            let first_page = document
+                .pages()
+                .get(0)
                 .map_err(|e| format!("Failed to get first page: {}", e))?;
             (first_page.width().value, first_page.height().value)
         } else {
@@ -303,7 +306,9 @@ pub fn open_pdf(path: String, state: State<'_, AppState>) -> Result<PdfMetadata,
     })?;
 
     // Update PDF state
+    let mut pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
     pdf_state.current_path = Some(abs_path_str);
+    pdf_state.current_bytes = Some(pdf_bytes);
     pdf_state.page_cache.clear();
 
     Ok(PdfMetadata {
@@ -320,6 +325,7 @@ pub fn open_pdf(path: String, state: State<'_, AppState>) -> Result<PdfMetadata,
 pub fn close_pdf(state: State<'_, AppState>) -> Result<(), String> {
     let mut pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
     pdf_state.current_path = None;
+    pdf_state.current_bytes = None;
     pdf_state.page_cache.clear();
     Ok(())
 }
@@ -331,13 +337,18 @@ pub fn get_pdf_page_bytes(
     page_index: u32,
     scale: f32,
 ) -> Result<Vec<u8>, String> {
-    let state = app_handle.state::<crate::commands::AppState>();
-    
-    let (path, cache_key) = {
+    let state = app_handle.state::<AppState>();
+
+    let (bytes, cache_key) = {
         let mut pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
-        
+
         let path = pdf_state
             .current_path
+            .as_ref()
+            .ok_or("No PDF is currently open")?
+            .clone();
+        let bytes = pdf_state
+            .current_bytes
             .as_ref()
             .ok_or("No PDF is currently open")?
             .clone();
@@ -348,17 +359,20 @@ pub fn get_pdf_page_bytes(
         if let Some(cached) = pdf_state.page_cache.get(&cache_key) {
             return Ok(cached.clone());
         }
-        
-        (path, cache_key)
+
+        (bytes, cache_key)
     }; // Lock is dropped here so other threads can process requests!
 
     // Render the page
-    let png_bytes = with_pdfium(|pdfium| {
-        render_page_to_png(pdfium, &path, page_index, scale)
-    })?;
+    let png_bytes =
+        with_pdfium(|pdfium| render_page_to_png(pdfium, bytes.as_slice(), page_index, scale))?;
 
     // Re-acquire lock to store in cache
     if let Ok(mut pdf_state) = state.pdf_state.lock() {
+        let cache_capacity = if scale >= 3.0 { 8 } else { 50 };
+        pdf_state
+            .page_cache
+            .resize(NonZeroUsize::new(cache_capacity).unwrap());
         pdf_state.page_cache.put(cache_key, png_bytes.clone());
     }
 
@@ -370,23 +384,23 @@ pub fn get_page_links(
     page_index: u32,
     state: State<'_, AppState>,
 ) -> Result<Vec<LinkInfo>, String> {
-    let path = {
+    let bytes = {
         let pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
         pdf_state
-            .current_path
+            .current_bytes
             .as_ref()
             .ok_or("No PDF is currently open")?
             .clone()
     }; // Lock dropped here
-    
+
     let links = with_pdfium(|pdfium| {
         let document = pdfium
-            .load_pdf_from_file(&path, None)
+            .load_pdf_from_byte_slice(bytes.as_slice(), None)
             .map_err(|e| format!("Failed to open PDF: {}", e))?;
 
         let page = document
             .pages()
-            .get(page_index as u16)
+            .get(page_index as c_int)
             .map_err(|e| format!("Failed to get page {}: {}", page_index, e))?;
 
         let page_height = page.height().value;
@@ -415,9 +429,11 @@ pub fn get_page_links(
             let extract_dest = |dest: &PdfDestination, page_h: f32| -> (Option<u32>, Option<f32>) {
                 let page = dest.page_index().ok().map(|i| i as u32);
                 let y = match dest.view_settings() {
-                    Ok(PdfDestinationViewSettings::SpecificCoordinatesAndZoom(_, Some(y_pts), _)) => {
-                        Some(page_h - y_pts.value)
-                    }
+                    Ok(PdfDestinationViewSettings::SpecificCoordinatesAndZoom(
+                        _,
+                        Some(y_pts),
+                        _,
+                    )) => Some(page_h - y_pts.value),
                     Ok(PdfDestinationViewSettings::FitPageHorizontallyToWindow(Some(y_pts))) => {
                         Some(page_h - y_pts.value)
                     }
@@ -477,23 +493,23 @@ pub fn get_link_preview(
     dest_y: Option<f32>,
     state: State<'_, AppState>,
 ) -> Result<LinkPreviewResult, String> {
-    let path = {
+    let bytes = {
         let pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
         pdf_state
-            .current_path
+            .current_bytes
             .as_ref()
             .ok_or("No PDF is currently open")?
             .clone()
     }; // Lock dropped here
-    
+
     let result = with_pdfium(|pdfium| {
         let document = pdfium
-            .load_pdf_from_file(&path, None)
+            .load_pdf_from_byte_slice(bytes.as_slice(), None)
             .map_err(|e| format!("Failed to open PDF: {}", e))?;
 
         let page = document
             .pages()
-            .get(dest_page as u16)
+            .get(dest_page as c_int)
             .map_err(|e| format!("Failed to get page {}: {}", dest_page, e))?;
 
         // Render the full page at 2x scale for a crisp preview
@@ -513,51 +529,53 @@ pub fn get_link_preview(
 
         let dynamic_image = bitmap.as_image();
 
-        // Use the destination y-coordinate (in screen coords) if available,
-        // otherwise default to the top of the page
-        let target_y = dest_y.unwrap_or(0.0);
+        match dynamic_image {
+            Ok(dynamic_image) => {
+                // Use the destination y-coordinate (in screen coords) if available,
+                // otherwise default to the top of the page
+                let target_y = dest_y.unwrap_or(0.0);
 
-        // Crop full page width, centered vertically on the destination position
-        let v_padding = 150.0 * scale;
-        let crop_x = 0_u32;
-        let center_y_scaled = target_y * scale;
-        let crop_y = (center_y_scaled - v_padding).max(0.0) as u32;
-        let crop_h = (v_padding * 2.0).min((full_height - crop_y) as f32) as u32;
-        let crop_w = full_width;
+                // Crop full page width, centered vertically on the destination position
+                let v_padding = 150.0 * scale;
+                let crop_x = 0_u32;
+                let center_y_scaled = target_y * scale;
+                let crop_y = (center_y_scaled - v_padding).max(0.0) as u32;
+                let crop_h = (v_padding * 2.0).min((full_height - crop_y) as f32) as u32;
+                let crop_w = full_width;
 
-        // Compute where the target center falls within the crop (0.0 to 1.0)
-        let target_center_in_crop = center_y_scaled - crop_y as f32;
-        let center_ratio = if crop_h > 0 {
-            (target_center_in_crop / crop_h as f32).clamp(0.0, 1.0)
-        } else {
-            0.5
-        };
+                // Compute where the target center falls within the crop (0.0 to 1.0)
+                let target_center_in_crop = center_y_scaled - crop_y as f32;
+                let center_ratio = if crop_h > 0 {
+                    (target_center_in_crop / crop_h as f32).clamp(0.0, 1.0)
+                } else {
+                    0.5
+                };
 
-        let cropped = dynamic_image.crop_imm(crop_x, crop_y, crop_w.max(1), crop_h.max(1));
+                let cropped = dynamic_image.crop_imm(crop_x, crop_y, crop_w.max(1), crop_h.max(1));
 
-        let mut buf = Cursor::new(Vec::new());
-        cropped
-            .write_to(&mut buf, ImageFormat::Png)
-            .map_err(|e| format!("Failed to encode preview as PNG: {}", e))?;
+                let mut buf = Cursor::new(Vec::new());
+                cropped
+                    .write_to(&mut buf, ImageFormat::Png)
+                    .map_err(|e| format!("Failed to encode preview as PNG: {}", e))?;
 
-        Ok(LinkPreviewResult {
-            image: BASE64.encode(buf.into_inner()),
-            center_ratio,
-        })
+                Ok(LinkPreviewResult {
+                    image: BASE64.encode(buf.into_inner()),
+                    center_ratio,
+                })
+            }
+            Err(e) => Err(e.to_string()),
+        }
     })?;
 
     Ok(result)
 }
 
 #[tauri::command]
-pub fn search_pdf(
-    query: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<SearchHit>, String> {
-    let path = {
+pub fn search_pdf(query: String, state: State<'_, AppState>) -> Result<Vec<SearchHit>, String> {
+    let bytes = {
         let pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
         pdf_state
-            .current_path
+            .current_bytes
             .as_ref()
             .ok_or("No PDF is currently open")?
             .clone()
@@ -565,16 +583,18 @@ pub fn search_pdf(
 
     let hits = with_pdfium(|pdfium| {
         let document = pdfium
-            .load_pdf_from_file(&path, None)
+            .load_pdf_from_byte_slice(bytes.as_slice(), None)
             .map_err(|e| format!("Failed to open PDF: {}", e))?;
 
         let query_lower = query.to_lowercase();
         let mut hits = Vec::new();
 
         for (page_idx, page) in document.pages().iter().enumerate() {
-            let text = page.text().map_err(|e| format!("Failed to extract text from page {}: {}", page_idx, e))?;
+            let text = page
+                .text()
+                .map_err(|e| format!("Failed to extract text from page {}: {}", page_idx, e))?;
             let page_text = text.all();
-            
+
             if page_text.to_lowercase().contains(&query_lower) {
                 // Find the matching line/context
                 for line in page_text.lines() {
