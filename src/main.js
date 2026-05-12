@@ -21,10 +21,7 @@ import {
   getSysConfig,
   setSysConfig,
 } from "./ipc.js";
-import { initTracker, renderTracker } from "./tracker.js";
-import { initPdfViewer, openPdfFile, closePdfViewer, isPdfViewerActive } from "./pdf-viewer.js";
 import "./style.css";
-import "./pdf-viewer.css";
 
 const { open, ask } = window.__TAURI__.dialog;
 
@@ -60,6 +57,30 @@ const toastContainer = document.getElementById("toast-container");
 
 const editor = createEditor(cmHost, handleSave);
 
+let trackerModule = null;
+let pdfViewerModule = null;
+
+async function getTrackerModule() {
+  if (!trackerModule) {
+    trackerModule = await import("./tracker.js");
+    trackerModule.initTracker(trackerHost);
+  }
+  return trackerModule;
+}
+
+async function getPdfViewerModule() {
+  if (!pdfViewerModule) {
+    pdfViewerModule = await import("./pdf-viewer.js");
+    pdfViewerModule.initPdfViewer(pdfViewerHost);
+  }
+  return pdfViewerModule;
+}
+
+async function closeActivePdfViewer() {
+  if (!pdfViewerModule || !pdfViewerModule.isPdfViewerActive()) return;
+  await pdfViewerModule.closePdfViewer();
+}
+
 const IMAGE_EXTENSIONS = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
 function isImageFile(filename) {
   const ext = filename.split(".").pop().toLowerCase();
@@ -87,12 +108,6 @@ async function init() {
   } catch (err) {
     console.warn("Workspace cache miss:", err);
   }
-
-  // Initialize Tracker Native UI
-  initTracker(trackerHost);
-
-  // Initialize PDF Viewer
-  initPdfViewer(pdfViewerHost);
 
   // ── Buttons ──────────────────────────────────────────────
   document
@@ -394,7 +409,7 @@ async function handleOpenMdFile(relativePath) {
     state.isTrackerOpen = false;
     await setSysConfig("last_file", relativePath);
     // Close PDF if it was open
-    if (isPdfViewerActive()) await closePdfViewer();
+    await closeActivePdfViewer();
     // Hide all other views, show editor
     imagePreview.classList.add("hidden");
     pdfViewerHost.classList.add("hidden");
@@ -418,7 +433,7 @@ async function handleOpenTracker() {
   state.selectedSidebarPath = null;
   state.currentPath = "Study Tracker";
   // Close PDF if it was open
-  if (isPdfViewerActive()) await closePdfViewer();
+  await closeActivePdfViewer();
   welcomeScreen.classList.add("hidden");
   cmHost.classList.add("hidden");
   pdfViewerHost.classList.add("hidden");
@@ -428,7 +443,8 @@ async function handleOpenTracker() {
   updateToolbarFilename();
 
   // Render the tracker view whenever opened
-  await renderTracker();
+  const tracker = await getTrackerModule();
+  await tracker.renderTracker();
 }
 
 async function handleOpenPdfFile(relativePath) {
@@ -449,7 +465,8 @@ async function handleOpenPdfFile(relativePath) {
     updateToolbarFilename();
 
     // Open the PDF in the viewer
-    await openPdfFile(relativePath);
+    const pdfViewer = await getPdfViewerModule();
+    await pdfViewer.openPdfFile(relativePath);
     pdfViewerHost.focus();
   } catch (err) {
     console.error("Open PDF:", err);
@@ -471,7 +488,7 @@ async function handleOpenImageFile(relativePath) {
     state.selectedSidebarIsDir = false;
 
     // Close PDF if it was open
-    if (isPdfViewerActive()) await closePdfViewer();
+    await closeActivePdfViewer();
 
     // Hide all other views, show image preview
     cmHost.classList.add("hidden");
