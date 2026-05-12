@@ -100,7 +100,7 @@ fn main() {
             md_editor_lib::pdf_commands::open_pdf,
             md_editor_lib::pdf_commands::close_pdf,
             md_editor_lib::pdf_commands::set_pdf_render_generation,
-            md_editor_lib::pdf_commands::get_pdf_page_image,
+            md_editor_lib::pdf_commands::get_pdf_page_bitmap,
             md_editor_lib::pdf_commands::get_page_links,
             md_editor_lib::pdf_commands::get_link_preview,
             md_editor_lib::pdf_commands::search_pdf,

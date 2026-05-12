@@ -15,7 +15,7 @@ import {
   closePdf,
   setPdfRenderGeneration,
   getPageLinks,
-  getPdfPageImage,
+  getPdfPageBitmap,
   getLinkPreview,
   searchPdf,
   getPdfiumDiagnostics,
@@ -43,7 +43,7 @@ let previewTooltip = null;
 const SCALE_STEP = 0.25;
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 4.0;
-const OBSERVER_MARGIN = "800px"; // Pre-load pages before they enter viewport
+const OBSERVER_MARGIN = "200px"; // Pre-load pages 200px before they enter viewport
 const HIGH_ZOOM_THRESHOLD = 3.0;
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -294,8 +294,7 @@ async function renderPage(pageIndex) {
 }
 
 function maxActiveRenderRequests() {
-  if (currentScale >= HIGH_ZOOM_THRESHOLD) return 1;
-  return Math.min(6, Math.max(3, navigator.hardwareConcurrency || 4));
+  return currentScale >= HIGH_ZOOM_THRESHOLD ? 1 : 2;
 }
 
 function processRenderQueue() {
@@ -343,11 +342,13 @@ async function renderPageNow(pageIndex, generation) {
     // Convert scale to integer percentage
     const scaleInt = Math.round(currentScale * 100);
 
-    const imageDataUrl = await getPdfPageImage(pageIndex, scaleInt / 100, generation);
+    const imageBytes = await getPdfPageBitmap(pageIndex, scaleInt / 100, generation);
+    const blob = new Blob([new Uint8Array(imageBytes)], { type: "image/png" });
+    const objectUrl = URL.createObjectURL(blob);
     await new Promise((resolve, reject) => {
       img.onload = resolve;
-      img.onerror = () => reject(new Error("Image failed to load from backend image data"));
-      img.src = imageDataUrl;
+      img.onerror = () => reject(new Error("Image failed to load from backend bitmap data"));
+      img.src = objectUrl;
     });
 
     if (generation !== renderGeneration) return;
@@ -359,6 +360,8 @@ async function renderPageNow(pageIndex, generation) {
     // Replace loading spinner with rendered image
     canvas.innerHTML = "";
     canvas.appendChild(img);
+
+    requestAnimationFrame(() => URL.revokeObjectURL(objectUrl));
 
     wrapper.setAttribute("data-rendered-scale", String(currentScale));
 
