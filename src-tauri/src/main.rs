@@ -19,7 +19,7 @@ fn main() {
             let app_handle = ctx.app_handle().clone();
 
             tauri::async_runtime::spawn_blocking(move || {
-                // Parse URI: md-pdf://localhost/page_index/scale
+                // Parse URI: md-pdf://localhost/page_index/scale/render_generation
                 let uri = request.uri().path();
                 let parts: Vec<&str> = uri.trim_start_matches('/').split('/').collect();
 
@@ -28,11 +28,13 @@ fn main() {
                         (parts[0].parse::<u32>(), parts[1].parse::<u32>())
                     {
                         let scale = scale_int as f32 / 100.0;
+                        let generation = parts.get(2).and_then(|part| part.parse::<u64>().ok());
 
                         match md_editor_lib::pdf_commands::get_pdf_page_bytes(
                             &app_handle,
                             page_index,
                             scale,
+                            generation,
                         ) {
                             Ok(bytes) => {
                                 let response = tauri::http::Response::builder()
@@ -89,9 +91,11 @@ fn main() {
             md_editor_lib::tracker_commands::set_tracker_kv,
             md_editor_lib::pdf_commands::open_pdf,
             md_editor_lib::pdf_commands::close_pdf,
+            md_editor_lib::pdf_commands::set_pdf_render_generation,
             md_editor_lib::pdf_commands::get_page_links,
             md_editor_lib::pdf_commands::get_link_preview,
             md_editor_lib::pdf_commands::search_pdf,
+            md_editor_lib::pdf_commands::get_pdfium_diagnostics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

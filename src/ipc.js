@@ -63,7 +63,9 @@ export async function closePdf() {
   return await invoke("close_pdf");
 }
 
-
+export async function setPdfRenderGeneration(generation) {
+  return await invoke("set_pdf_render_generation", { generation });
+}
 
 export async function getPageLinks(pageIndex) {
   return await invoke("get_page_links", { pageIndex });
@@ -75,4 +77,8 @@ export async function getLinkPreview(destPage, destY) {
 
 export async function searchPdf(query) {
   return await invoke("search_pdf", { query });
+}
+
+export async function getPdfiumDiagnostics() {
+  return await invoke("get_pdfium_diagnostics");
 }
