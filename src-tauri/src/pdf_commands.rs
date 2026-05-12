@@ -476,14 +476,13 @@ pub fn get_pdf_page_bytes(
 }
 
 #[tauri::command]
-pub fn get_pdf_page_image(
+pub fn get_pdf_page_bitmap(
     app_handle: tauri::AppHandle,
     page_index: u32,
     scale: f32,
     generation: Option<u64>,
-) -> Result<String, String> {
-    let bytes = get_pdf_page_bytes(&app_handle, page_index, scale, generation)?;
-    Ok(format!("data:image/png;base64,{}", BASE64.encode(bytes)))
+) -> Result<Vec<u8>, String> {
+    get_pdf_page_bytes(&app_handle, page_index, scale, generation)
 }
 
 #[tauri::command]
