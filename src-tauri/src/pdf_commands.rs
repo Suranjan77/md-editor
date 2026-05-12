@@ -166,7 +166,41 @@ fn get_pdfium_bind_paths() -> Vec<PathBuf> {
         if let Some(exe_dir) = exe_path.parent() {
             paths.push(exe_dir.join(lib_name));
             paths.push(exe_dir.join("pdfium").join(lib_name));
+
+            // Tauri bundle resource layouts can place resources in a sibling
+            // `resources/` directory (Windows/Linux) or inside the app bundle.
+            paths.push(exe_dir.join("resources").join(lib_name));
+            paths.push(exe_dir.join("resources").join("pdfium").join(lib_name));
+            paths.push(
+                exe_dir
+                    .join("..")
+                    .join("Resources")
+                    .join(lib_name)
+                    .canonicalize()
+                    .unwrap_or_else(|_| exe_dir.join("..").join("Resources").join(lib_name)),
+            );
+            paths.push(
+                exe_dir
+                    .join("..")
+                    .join("Resources")
+                    .join("pdfium")
+                    .join(lib_name)
+                    .canonicalize()
+                    .unwrap_or_else(|_| {
+                        exe_dir
+                            .join("..")
+                            .join("Resources")
+                            .join("pdfium")
+                            .join(lib_name)
+                    }),
+            );
         }
+    }
+
+    if let Some(resource_dir) = std::env::var_os("PDFIUM_RESOURCE_DIR") {
+        let resource_dir = PathBuf::from(resource_dir);
+        paths.push(resource_dir.join(lib_name));
+        paths.push(resource_dir.join("pdfium").join(lib_name));
     }
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -439,6 +473,17 @@ pub fn get_pdf_page_bytes(
     }
 
     Ok(png_bytes)
+}
+
+#[tauri::command]
+pub fn get_pdf_page_image(
+    app_handle: tauri::AppHandle,
+    page_index: u32,
+    scale: f32,
+    generation: Option<u64>,
+) -> Result<String, String> {
+    let bytes = get_pdf_page_bytes(&app_handle, page_index, scale, generation)?;
+    Ok(format!("data:image/png;base64,{}", BASE64.encode(bytes)))
 }
 
 #[tauri::command]
