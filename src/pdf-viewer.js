@@ -28,6 +28,9 @@ let currentPath = null;
 let pageElements = [];
 let observer = null;
 let loadingPages = new Set();
+let renderQueue = [];
+let activeRenderCount = 0;
+let renderGeneration = 0;
 let tocVisible = false;
 let searchVisible = false;
 let linkOverlays = new Map(); // pageIndex -> [{bbox, destPage, uri, el}]
@@ -37,6 +40,7 @@ const SCALE_STEP = 0.25;
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 4.0;
 const OBSERVER_MARGIN = "200px"; // Pre-load pages 200px before they enter viewport
+const HIGH_ZOOM_THRESHOLD = 3.0;
 
 // ── Public API ──────────────────────────────────────────────────────
 
@@ -146,6 +150,9 @@ export async function openPdfFile(relativePath) {
   pagesContainer.innerHTML = "";
   pageElements = [];
   loadingPages.clear();
+  renderQueue = [];
+  activeRenderCount = 0;
+  renderGeneration++;
   linkOverlays.clear();
 
   // Disconnect old observer
@@ -222,6 +229,9 @@ export async function closePdfViewer() {
   currentPath = null;
   pageElements = [];
   loadingPages.clear();
+  renderQueue = [];
+  activeRenderCount = 0;
+  renderGeneration++;
   linkOverlays.clear();
   if (pagesContainer) pagesContainer.innerHTML = "";
   hideToc();
@@ -249,7 +259,7 @@ function setupObserver() {
     },
     {
       root: container.querySelector("#pdf-scroll-area"),
-      rootMargin: OBSERVER_MARGIN,
+      rootMargin: currentScale >= HIGH_ZOOM_THRESHOLD ? "0px" : OBSERVER_MARGIN,
     }
   );
 
@@ -267,19 +277,68 @@ async function renderPage(pageIndex) {
   if (renderedScale === String(currentScale)) return;
 
   loadingPages.add(pageIndex);
+  if (!renderQueue.includes(pageIndex)) {
+    renderQueue.push(pageIndex);
+  }
+  processRenderQueue();
+}
+
+function maxActiveRenderRequests() {
+  return currentScale >= HIGH_ZOOM_THRESHOLD ? 1 : 2;
+}
+
+function processRenderQueue() {
+  while (activeRenderCount < maxActiveRenderRequests() && renderQueue.length > 0) {
+    const pageIndex = renderQueue.shift();
+    if (!shouldRenderQueuedPage(pageIndex)) {
+      loadingPages.delete(pageIndex);
+      continue;
+    }
+
+    activeRenderCount++;
+    renderPageNow(pageIndex, renderGeneration).finally(() => {
+      activeRenderCount = Math.max(0, activeRenderCount - 1);
+      processRenderQueue();
+    });
+  }
+}
+
+function shouldRenderQueuedPage(pageIndex) {
+  if (currentScale < HIGH_ZOOM_THRESHOLD) return true;
+
+  const wrapper = pageElements[pageIndex];
+  const scrollArea = container?.querySelector("#pdf-scroll-area");
+  if (!wrapper || !scrollArea) return false;
+
+  const pageRect = wrapper.getBoundingClientRect();
+  const scrollRect = scrollArea.getBoundingClientRect();
+
+  return pageRect.bottom > scrollRect.top && pageRect.top < scrollRect.bottom;
+}
+
+async function renderPageNow(pageIndex, generation) {
+  const wrapper = pageElements[pageIndex];
+  if (!wrapper) {
+    loadingPages.delete(pageIndex);
+    return;
+  }
+
+  loadingPages.add(pageIndex);
 
   try {
     const canvas = wrapper.querySelector(".pdf-page-canvas");
     const img = document.createElement("img");
-    
+
     // Convert scale to integer percentage
     const scaleInt = Math.round(currentScale * 100);
-    
+
     await new Promise((resolve, reject) => {
       img.onload = resolve;
       img.onerror = () => reject(new Error("Image failed to load from custom URI"));
       img.src = `md-pdf://localhost/${pageIndex}/${scaleInt}`;
     });
+
+    if (generation !== renderGeneration) return;
 
     img.className = "pdf-page-img";
     img.alt = `Page ${pageIndex + 1}`;
@@ -294,6 +353,7 @@ async function renderPage(pageIndex) {
     // Load link overlays for this page
     loadPageLinks(pageIndex, canvas);
   } catch (err) {
+    if (generation !== renderGeneration) return;
     console.error(`Failed to render page ${pageIndex}:`, err);
     const canvas = wrapper.querySelector(".pdf-page-canvas");
     canvas.innerHTML = `<div class="pdf-page-error">Failed to render</div>`;
@@ -427,6 +487,7 @@ function zoomFitWidth() {
 
 function setScale(newScale) {
   currentScale = Math.round(newScale * 100) / 100;
+  renderGeneration++;
   updateZoomLabel();
   reRenderAll();
 }
@@ -447,6 +508,7 @@ function reRenderAll() {
   });
 
   loadingPages.clear();
+  renderQueue = [];
   linkOverlays.clear();
 
   // Re-observe to trigger rendering for visible pages

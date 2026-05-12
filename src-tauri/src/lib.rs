@@ -6,4 +6,3 @@ pub mod pdf_commands;
 pub mod tracker_commands;
 
 pub use commands::AppState;
-mod test_pdfium_sync;
