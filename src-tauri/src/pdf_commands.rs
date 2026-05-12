@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::ffi::c_int;
 use std::fs;
 use std::io::Cursor;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -32,9 +33,10 @@ pub struct PdfMetadata {
     pub title: Option<String>,
     pub author: Option<String>,
     pub toc: Vec<TocEntry>,
+    pub render_generation: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct PdfRect {
     pub x: f32,
     pub y: f32,
@@ -42,7 +44,7 @@ pub struct PdfRect {
     pub height: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct LinkInfo {
     pub bbox: PdfRect,
     pub dest_page: Option<u32>,
@@ -62,6 +64,14 @@ pub struct LinkPreviewResult {
     pub center_ratio: f32,
 }
 
+#[derive(Serialize)]
+pub struct PdfiumDiagnostics {
+    pub available: bool,
+    pub selected_path: Option<String>,
+    pub attempted_paths: Vec<String>,
+    pub error: Option<String>,
+}
+
 // ── Cache Key ───────────────────────────────────────────────────────
 
 /// Key for the rendered page cache: (file_path, page_index, scale_percent)
@@ -73,6 +83,8 @@ pub struct PdfState {
     pub current_path: Option<String>,
     pub current_bytes: Option<Arc<Vec<u8>>>,
     pub page_cache: LruCache<PageCacheKey, Vec<u8>>,
+    pub link_cache: HashMap<u32, Vec<LinkInfo>>,
+    pub render_generation: u64,
 }
 
 impl PdfState {
@@ -81,6 +93,8 @@ impl PdfState {
             current_path: None,
             current_bytes: None,
             page_cache: LruCache::new(NonZeroUsize::new(50).unwrap()),
+            link_cache: HashMap::new(),
+            render_generation: 0,
         }
     }
 }
@@ -174,6 +188,25 @@ fn get_pdfium_bind_paths() -> Vec<PathBuf> {
     paths.push(PathBuf::from(lib_name));
 
     paths
+}
+
+fn resolve_pdfium_library_path() -> Result<PathBuf, String> {
+    let mut errors = Vec::new();
+
+    for path in get_pdfium_bind_paths() {
+        if !path.exists() {
+            errors.push(format!("{}: not found", path.display()));
+            continue;
+        }
+
+        return Ok(path);
+    }
+
+    Err(errors.join("; "))
+}
+
+fn path_display(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }
 
 // ── Helper: Render a page to PNG bytes ──────────────────────────────
@@ -307,9 +340,12 @@ pub fn open_pdf(path: String, state: State<'_, AppState>) -> Result<PdfMetadata,
 
     // Update PDF state
     let mut pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
+    pdf_state.render_generation = pdf_state.render_generation.wrapping_add(1);
+    let render_generation = pdf_state.render_generation;
     pdf_state.current_path = Some(abs_path_str);
     pdf_state.current_bytes = Some(pdf_bytes);
     pdf_state.page_cache.clear();
+    pdf_state.link_cache.clear();
 
     Ok(PdfMetadata {
         total_pages,
@@ -318,6 +354,7 @@ pub fn open_pdf(path: String, state: State<'_, AppState>) -> Result<PdfMetadata,
         title,
         author,
         toc,
+        render_generation,
     })
 }
 
@@ -327,6 +364,20 @@ pub fn close_pdf(state: State<'_, AppState>) -> Result<(), String> {
     pdf_state.current_path = None;
     pdf_state.current_bytes = None;
     pdf_state.page_cache.clear();
+    pdf_state.link_cache.clear();
+    pdf_state.render_generation = pdf_state.render_generation.wrapping_add(1);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_pdf_render_generation(
+    generation: u64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
+    if generation > pdf_state.render_generation {
+        pdf_state.render_generation = generation;
+    }
     Ok(())
 }
 
@@ -336,6 +387,7 @@ pub fn get_pdf_page_bytes(
     app_handle: &tauri::AppHandle,
     page_index: u32,
     scale: f32,
+    generation: Option<u64>,
 ) -> Result<Vec<u8>, String> {
     let state = app_handle.state::<AppState>();
 
@@ -347,6 +399,11 @@ pub fn get_pdf_page_bytes(
             .as_ref()
             .ok_or("No PDF is currently open")?
             .clone();
+        if let Some(generation) = generation {
+            if generation != pdf_state.render_generation {
+                return Err("Stale PDF render request".to_string());
+            }
+        }
         let bytes = pdf_state
             .current_bytes
             .as_ref()
@@ -369,6 +426,11 @@ pub fn get_pdf_page_bytes(
 
     // Re-acquire lock to store in cache
     if let Ok(mut pdf_state) = state.pdf_state.lock() {
+        if let Some(generation) = generation {
+            if generation != pdf_state.render_generation {
+                return Ok(png_bytes);
+            }
+        }
         let cache_capacity = if scale >= 3.0 { 8 } else { 50 };
         pdf_state
             .page_cache
@@ -386,6 +448,9 @@ pub fn get_page_links(
 ) -> Result<Vec<LinkInfo>, String> {
     let bytes = {
         let pdf_state = state.pdf_state.lock().map_err(|e| e.to_string())?;
+        if let Some(cached) = pdf_state.link_cache.get(&page_index) {
+            return Ok(cached.clone());
+        }
         pdf_state
             .current_bytes
             .as_ref()
@@ -483,6 +548,10 @@ pub fn get_page_links(
 
         Ok(links)
     })?;
+
+    if let Ok(mut pdf_state) = state.pdf_state.lock() {
+        pdf_state.link_cache.insert(page_index, links.clone());
+    }
 
     Ok(links)
 }
@@ -612,4 +681,27 @@ pub fn search_pdf(query: String, state: State<'_, AppState>) -> Result<Vec<Searc
     })?;
 
     Ok(hits)
+}
+
+#[tauri::command]
+pub fn get_pdfium_diagnostics() -> PdfiumDiagnostics {
+    let attempted_paths: Vec<String> = get_pdfium_bind_paths()
+        .iter()
+        .map(|path| path_display(path))
+        .collect();
+
+    match resolve_pdfium_library_path() {
+        Ok(path) => PdfiumDiagnostics {
+            available: true,
+            selected_path: Some(path_display(&path)),
+            attempted_paths,
+            error: None,
+        },
+        Err(error) => PdfiumDiagnostics {
+            available: false,
+            selected_path: None,
+            attempted_paths,
+            error: Some(error),
+        },
+    }
 }

@@ -1,7 +1,13 @@
 import { showTooltip } from "@codemirror/view";
 import { StateField } from "@codemirror/state";
-import katex from "katex";
 import { findBlocks } from "./markdown-decorations.js";
+
+let katexPromise = null;
+
+function loadKatex() {
+  if (!katexPromise) katexPromise = import("katex").then((mod) => mod.default);
+  return katexPromise;
+}
 
 export function mathTooltip() {
   return mathTooltipField;
@@ -107,15 +113,19 @@ function createTooltip(pos, mathText, isBlock) {
     create: () => {
       const dom = document.createElement("div");
       dom.className = "cm-tooltip-math";
-      try {
-        katex.render(mathText, dom, {
-          displayMode: isBlock,
-          throwOnError: false,
-          output: "html",
+      dom.textContent = mathText;
+      loadKatex()
+        .then((katex) => {
+          dom.textContent = "";
+          katex.render(mathText, dom, {
+            displayMode: isBlock,
+            throwOnError: false,
+            output: "html",
+          });
+        })
+        .catch(() => {
+          dom.textContent = mathText;
         });
-      } catch (e) {
-        dom.textContent = mathText;
-      }
       return { dom };
     },
   };

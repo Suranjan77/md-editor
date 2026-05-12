@@ -4,12 +4,48 @@
 import { Decoration, WidgetType, EditorView } from "@codemirror/view";
 import { RangeSetBuilder, StateField, Facet } from "@codemirror/state";
 import { openFile } from "./ipc.js";
-import katex from "katex";
-import MarkdownIt from "markdown-it";
-import hljs from "highlight.js";
-import "highlight.js/styles/atom-one-dark.css";
 
-const md = new MarkdownIt();
+let katexPromise = null;
+let markdownItPromise = null;
+let highlightPromise = null;
+
+function loadKatex() {
+  if (!katexPromise) katexPromise = import("katex").then((mod) => mod.default);
+  return katexPromise;
+}
+
+function loadMarkdownIt() {
+  if (!markdownItPromise) {
+    markdownItPromise = import("markdown-it").then((mod) => new mod.default());
+  }
+  return markdownItPromise;
+}
+
+function loadHighlightJs() {
+  if (!highlightPromise) {
+    highlightPromise = Promise.all([
+      import("highlight.js"),
+      import("highlight.js/styles/atom-one-dark.css"),
+    ]).then(([mod]) => mod.default);
+  }
+  return highlightPromise;
+}
+
+function renderMath(element, mathText, displayMode) {
+  element.textContent = mathText;
+  loadKatex()
+    .then((katex) => {
+      element.textContent = "";
+      katex.render(mathText, element, {
+        displayMode,
+        throwOnError: false,
+        output: "html",
+      });
+    })
+    .catch(() => {
+      element.textContent = mathText;
+    });
+}
 
 /** Facet that holds the current file's vault-relative path (e.g. "A/notes.md"). */
 export const currentFilePath = Facet.define({ combine: (v) => v[v.length - 1] || "" });
@@ -216,14 +252,7 @@ class MathBlockWidget extends WidgetType {
       "md-math-eq-wrapper flex items-center justify-center relative w-full";
 
     const mathContent = document.createElement("div");
-    try {
-      katex.render(this.mathText, mathContent, {
-        displayMode: true,
-        throwOnError: false,
-        output: "html",
-      });    } catch (e) {
-      mathContent.textContent = this.mathText;
-    }
+    renderMath(mathContent, this.mathText, true);
 
     const number = document.createElement("div");
     number.className =
@@ -260,15 +289,7 @@ class MathInlineWidget extends WidgetType {
   toDOM(view) {
     const span = document.createElement("span");
     span.className = "md-math-render-inline";
-    try {
-      katex.render(this.mathText, span, {
-        displayMode: false,
-        throwOnError: false,
-        output: "html",
-      });
-    } catch (e) {
-      span.textContent = this.mathText;
-    }
+    renderMath(span, this.mathText, false);
 
     span.onmousedown = (e) => {
       if (view) {
@@ -338,17 +359,18 @@ class CodeBlockWidget extends WidgetType {
     header.textContent = `Listing ${this.seq}`;
 
     const code = document.createElement("code");
-
-    if (this.lang && hljs.getLanguage(this.lang)) {
-      try {
-        code.innerHTML = hljs.highlight(this.codeText, {
-          language: this.lang,
-        }).value;
-      } catch (e) {
-        code.textContent = this.codeText;
-      }
-    } else {
-      code.textContent = this.codeText;
+    code.textContent = this.codeText;
+    if (this.lang) {
+      loadHighlightJs()
+        .then((hljs) => {
+          if (!hljs.getLanguage(this.lang)) return;
+          code.innerHTML = hljs.highlight(this.codeText, {
+            language: this.lang,
+          }).value;
+        })
+        .catch(() => {
+          code.textContent = this.codeText;
+        });
     }
     pre.appendChild(header);
     pre.appendChild(code);
@@ -380,13 +402,19 @@ class TableBlockWidget extends WidgetType {
     const div = document.createElement("div");
     div.className = "md-table-render-block";
     
-    let html = md.render(this.mdText);
-    // Add support for wikilinks and task checkboxes inside tables
-    html = html.replace(/\[\[(.*?)\]\]/g, '<span class="cm-wikilink">[[$1]]</span>');
-    html = html.replace(/\[([xX])\]/g, '<span class="md-task-checkbox checked">✓</span>');
-    html = html.replace(/\[ \]/g, '<span class="md-task-checkbox"></span>');
-    
-    div.innerHTML = html;
+    div.textContent = this.mdText;
+    loadMarkdownIt()
+      .then((md) => {
+        let html = md.render(this.mdText);
+        // Add support for wikilinks and task checkboxes inside tables
+        html = html.replace(/\[\[(.*?)\]\]/g, '<span class="cm-wikilink">[[$1]]</span>');
+        html = html.replace(/\[([xX])\]/g, '<span class="md-task-checkbox checked">✓</span>');
+        html = html.replace(/\[ \]/g, '<span class="md-task-checkbox"></span>');
+        div.innerHTML = html;
+      })
+      .catch(() => {
+        div.textContent = this.mdText;
+      });
 
     div.onmousedown = (e) => {
       if (view) {

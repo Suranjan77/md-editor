@@ -13,10 +13,13 @@
 import {
   openPdf,
   closePdf,
+  setPdfRenderGeneration,
   getPageLinks,
   getLinkPreview,
   searchPdf,
+  getPdfiumDiagnostics,
 } from "./ipc.js";
+import "./pdf-viewer.css";
 
 // ── State ───────────────────────────────────────────────────────────
 
@@ -160,7 +163,13 @@ export async function openPdfFile(relativePath) {
 
   try {
     metadata = await openPdf(relativePath);
+    if (typeof metadata.render_generation === "number") {
+      renderGeneration = metadata.render_generation;
+    }
   } catch (err) {
+    getPdfiumDiagnostics()
+      .then((diagnostics) => console.warn("PDFium diagnostics:", diagnostics))
+      .catch(() => {});
     pagesContainer.innerHTML = `
       <div class="pdf-error">
         <span class="material-symbols-outlined">error</span>
@@ -335,7 +344,7 @@ async function renderPageNow(pageIndex, generation) {
     await new Promise((resolve, reject) => {
       img.onload = resolve;
       img.onerror = () => reject(new Error("Image failed to load from custom URI"));
-      img.src = `md-pdf://localhost/${pageIndex}/${scaleInt}`;
+      img.src = `md-pdf://localhost/${pageIndex}/${scaleInt}/${generation}`;
     });
 
     if (generation !== renderGeneration) return;
@@ -487,9 +496,16 @@ function zoomFitWidth() {
 
 function setScale(newScale) {
   currentScale = Math.round(newScale * 100) / 100;
-  renderGeneration++;
+  const generation = renderGeneration + 1;
+  renderGeneration = generation;
+  setPdfRenderGeneration(renderGeneration).catch((err) => {
+    console.warn("Failed to update PDF render generation:", err);
+  }).finally(() => {
+    if (generation === renderGeneration) {
+      reRenderAll();
+    }
+  });
   updateZoomLabel();
-  reRenderAll();
 }
 
 function reRenderAll() {
