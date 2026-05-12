@@ -32,7 +32,10 @@ pub fn setup_pdfium() -> PathBuf {
         ("macos", "x86_64") => "mac-x64",
         ("macos", "aarch64") => "mac-arm64",
         _ => {
-            println!("cargo:warning=Unsupported platform {}-{} for PDFium, skipping download", target_os, target_arch);
+            println!(
+                "cargo:warning=Unsupported platform {}-{} for PDFium, skipping download",
+                target_os, target_arch
+            );
             // Return a dummy path; the app will fail gracefully at runtime
             return PathBuf::from("pdfium_not_available");
         }
@@ -53,6 +56,12 @@ pub fn setup_pdfium() -> PathBuf {
         .find(|p| p.file_name().map_or(false, |n| n == "target"))
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| out_path.clone());
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let profile_dir = out_path
+        .ancestors()
+        .find(|p| p.file_name().map_or(false, |n| n == profile.as_str()))
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| target_dir.join(&profile));
 
     let cache_dir = target_dir.join("pdfium").join(platform_slug);
     // On Windows, the DLL is in bin/, on other platforms it's in lib/
@@ -61,8 +70,12 @@ pub fn setup_pdfium() -> PathBuf {
 
     // If already downloaded, skip
     if lib_path.exists() {
-        println!("cargo:warning=PDFium already cached at {}", lib_path.display());
-        setup_resource_copy(&cache_dir, lib_filename);
+        println!(
+            "cargo:warning=PDFium already cached at {}",
+            lib_path.display()
+        );
+        setup_resource_copy(&cache_dir, &profile_dir, lib_filename);
+        emit_pdfium_paths(&target_dir, &profile_dir);
         return cache_dir;
     }
 
@@ -103,12 +116,20 @@ pub fn setup_pdfium() -> PathBuf {
 
     // Extract using tar
     let status = Command::new("tar")
-        .args(["xzf", archive_path.to_str().unwrap(), "-C", cache_dir.to_str().unwrap()])
+        .args([
+            "xzf",
+            archive_path.to_str().unwrap(),
+            "-C",
+            cache_dir.to_str().unwrap(),
+        ])
         .status();
 
     match status {
         Ok(s) if s.success() => {
-            println!("cargo:warning=PDFium extracted successfully to {}", cache_dir.display());
+            println!(
+                "cargo:warning=PDFium extracted successfully to {}",
+                cache_dir.display()
+            );
         }
         Ok(s) => {
             println!("cargo:warning=tar exited with status {}", s);
@@ -121,17 +142,25 @@ pub fn setup_pdfium() -> PathBuf {
     // Clean up the archive
     let _ = fs::remove_file(&archive_path);
 
-    setup_resource_copy(&cache_dir, lib_filename);
+    setup_resource_copy(&cache_dir, &profile_dir, lib_filename);
+    emit_pdfium_paths(&target_dir, &profile_dir);
     cache_dir
 }
 
 /// Copy the PDFium shared library to a known location for Tauri resource bundling.
-fn setup_resource_copy(cache_dir: &Path, lib_filename: &str) {
+fn setup_resource_copy(cache_dir: &Path, profile_dir: &Path, lib_filename: &str) {
     // On Windows, the DLL is in bin/, on other platforms it's in lib/
-    let lib_subdir = if lib_filename.ends_with(".dll") { "bin" } else { "lib" };
+    let lib_subdir = if lib_filename.ends_with(".dll") {
+        "bin"
+    } else {
+        "lib"
+    };
     let lib_src = cache_dir.join(lib_subdir).join(lib_filename);
     if !lib_src.exists() {
-        println!("cargo:warning=PDFium library not found at {}", lib_src.display());
+        println!(
+            "cargo:warning=PDFium library not found at {}",
+            lib_src.display()
+        );
         return;
     }
 
@@ -141,11 +170,44 @@ fn setup_resource_copy(cache_dir: &Path, lib_filename: &str) {
     fs::create_dir_all(&resource_dir).expect("Failed to create pdfium resource directory");
 
     let lib_dst = resource_dir.join(lib_filename);
-    if !lib_dst.exists() || fs::metadata(&lib_src).unwrap().len() != fs::metadata(&lib_dst).map(|m| m.len()).unwrap_or(0) {
+    if !lib_dst.exists()
+        || fs::metadata(&lib_src).unwrap().len()
+            != fs::metadata(&lib_dst).map(|m| m.len()).unwrap_or(0)
+    {
         fs::copy(&lib_src, &lib_dst).expect("Failed to copy PDFium library to resource directory");
-        println!("cargo:warning=Copied PDFium library to {}", lib_dst.display());
+        println!(
+            "cargo:warning=Copied PDFium library to {}",
+            lib_dst.display()
+        );
+    }
+
+    // Copy next to the Cargo-built executable as well. This is the first
+    // runtime path checked by the PDF renderer and works for `cargo tauri dev`.
+    fs::create_dir_all(profile_dir).expect("Failed to create Cargo profile directory");
+    let profile_lib_dst = profile_dir.join(lib_filename);
+    if !profile_lib_dst.exists()
+        || fs::metadata(&lib_src).unwrap().len()
+            != fs::metadata(&profile_lib_dst).map(|m| m.len()).unwrap_or(0)
+    {
+        fs::copy(&lib_src, &profile_lib_dst)
+            .expect("Failed to copy PDFium library to Cargo profile directory");
+        println!(
+            "cargo:warning=Copied PDFium library to {}",
+            profile_lib_dst.display()
+        );
     }
 
     // Tell Cargo to add the library directory to the linker search path
-    println!("cargo:rustc-link-search=native={}", cache_dir.join("lib").display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        cache_dir.join("lib").display()
+    );
+}
+
+fn emit_pdfium_paths(target_dir: &Path, profile_dir: &Path) {
+    println!("cargo:rustc-env=PDFIUM_TARGET_DIR={}", target_dir.display());
+    println!(
+        "cargo:rustc-env=PDFIUM_TARGET_PROFILE_DIR={}",
+        profile_dir.display()
+    );
 }
