@@ -22,7 +22,8 @@
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.40",
-    "markdown-it": "^14.1.1"
+    "markdown-it": "^14.1.1",
+    "split.js": "^1.6.5"
   },
   "devDependencies": {
     "@tailwindcss/container-queries": "^0.1.1",

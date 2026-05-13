@@ -6,6 +6,7 @@ import {
   setCurrentFilePath,
   scrollToId,
 } from "./editor.js";
+import Split from "split.js";
 import { clearImageCache } from "./markdown-decorations.js";
 import {
   openFile,
@@ -33,6 +34,8 @@ const state = {
   modalType: null, // 'file', 'folder', 'rename'
   modalTarget: null,
   isTrackerOpen: false,
+  isSplitView: false,
+  splitInstance: null,
 };
 
 const cmHost = document.getElementById("cm-host");
@@ -102,7 +105,13 @@ async function init() {
 
       const lastFile = await getSysConfig("last_file");
       if (lastFile) {
-        await handleOpenMdFile(lastFile);
+        if (isPdfFile(lastFile)) {
+          await handleOpenPdfFile(lastFile);
+        } else if (isImageFile(lastFile)) {
+          await handleOpenImageFile(lastFile);
+        } else {
+          await handleOpenMdFile(lastFile);
+        }
       }
     }
   } catch (err) {
@@ -135,6 +144,9 @@ async function init() {
   document
     .getElementById("btn-toggle-backlinks")
     ?.addEventListener("click", toggleBacklinks);
+  document
+    .getElementById("btn-split-view")
+    ?.addEventListener("click", toggleSplitView);
 
   // ── Collapse chevron buttons ─────────────────────────────
   const btnCollapseSidebar = document.getElementById("btn-collapse-sidebar");
@@ -304,6 +316,48 @@ function toggleBacklinks() {
   backlinksPane.classList.toggle("collapsed");
 }
 
+function toggleSplitView() {
+  state.isSplitView = !state.isSplitView;
+  const btn = document.getElementById("btn-split-view");
+  if (state.isSplitView) {
+    btn.classList.add("text-primary", "bg-[#23262b]");
+    
+    // Show both
+    cmHost.classList.remove("hidden");
+    pdfViewerHost.classList.remove("hidden");
+    
+    // Hide others
+    imagePreview.classList.add("hidden");
+    trackerHost.classList.add("hidden");
+    welcomeScreen.classList.add("hidden");
+    
+    // Init split
+    state.splitInstance = Split(['#cm-host', '#pdf-viewer-host'], {
+      sizes: [50, 50],
+      minSize: 200,
+      gutterSize: 4,
+      cursor: 'col-resize'
+    });
+  } else {
+    btn.classList.remove("text-primary", "bg-[#23262b]");
+    
+    if (state.splitInstance) {
+      state.splitInstance.destroy();
+      state.splitInstance = null;
+    }
+    
+    // Clean up inline widths
+    cmHost.style.width = '';
+    pdfViewerHost.style.width = '';
+    
+    if (state.currentPath && isPdfFile(state.currentPath)) {
+      cmHost.classList.add("hidden");
+    } else {
+      pdfViewerHost.classList.add("hidden");
+    }
+  }
+}
+
 // ── Shortcuts overlay ───────────────────────────────────────────────
 function toggleShortcutsOverlay() {
   shortcutsOverlay.classList.toggle("hidden");
@@ -408,11 +462,13 @@ async function handleOpenMdFile(relativePath) {
     state.selectedSidebarIsDir = false;
     state.isTrackerOpen = false;
     await setSysConfig("last_file", relativePath);
-    // Close PDF if it was open
-    await closeActivePdfViewer();
+    // Close PDF if it was open, UNLESS split view is active
+    if (!state.isSplitView) {
+      await closeActivePdfViewer();
+      pdfViewerHost.classList.add("hidden");
+    }
     // Hide all other views, show editor
     imagePreview.classList.add("hidden");
-    pdfViewerHost.classList.add("hidden");
     cmHost.classList.remove("hidden");
     welcomeScreen.classList.add("hidden");
     trackerHost.classList.add("hidden");
@@ -453,9 +509,12 @@ async function handleOpenPdfFile(relativePath) {
     state.selectedSidebarPath = relativePath;
     state.selectedSidebarIsDir = false;
     state.isTrackerOpen = false;
+    await setSysConfig("last_file", relativePath);
 
     // Hide all other views, show PDF viewer
-    cmHost.classList.add("hidden");
+    if (!state.isSplitView) {
+      cmHost.classList.add("hidden");
+    }
     imagePreview.classList.add("hidden");
     trackerHost.classList.add("hidden");
     welcomeScreen.classList.add("hidden");
@@ -486,6 +545,7 @@ async function handleOpenImageFile(relativePath) {
     state.currentPath = null; // Not an editable file
     state.selectedSidebarPath = relativePath;
     state.selectedSidebarIsDir = false;
+    await setSysConfig("last_file", relativePath);
 
     // Close PDF if it was open
     await closeActivePdfViewer();

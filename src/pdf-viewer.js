@@ -19,6 +19,8 @@ import {
   getLinkPreview,
   searchPdf,
   getPdfiumDiagnostics,
+  getSysConfig,
+  setSysConfig,
 } from "./ipc.js";
 import "./pdf-viewer.css";
 
@@ -181,8 +183,21 @@ export async function openPdfFile(relativePath) {
     return;
   }
 
+  let initialPage = 0;
+  try {
+    const savedPageStr = await getSysConfig("pdf_page_" + relativePath);
+    if (savedPageStr) {
+      const savedPage = parseInt(savedPageStr, 10);
+      if (!isNaN(savedPage) && savedPage >= 0 && savedPage < metadata.total_pages) {
+        initialPage = savedPage;
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to restore PDF page:", err);
+  }
+
   updateZoomLabel();
-  updatePageInfo(0);
+  updatePageInfo(initialPage);
 
   // Build TOC
   renderToc(metadata.toc);
@@ -221,6 +236,10 @@ export async function openPdfFile(relativePath) {
 
   // Set up IntersectionObserver for virtual rendering
   setupObserver();
+
+  if (initialPage > 0) {
+    setTimeout(() => scrollToPage(initialPage), 50);
+  }
 }
 
 /**
@@ -727,6 +746,11 @@ function updatePageInfo(pageIndex) {
   const info = container.querySelector("#pdf-page-info");
   if (info && metadata) {
     info.textContent = `${pageIndex + 1} / ${metadata.total_pages}`;
+  }
+  if (currentPath) {
+    setSysConfig("pdf_page_" + currentPath, String(pageIndex)).catch(err => {
+      console.warn("Failed to save PDF page:", err);
+    });
   }
 }
 
