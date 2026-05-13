@@ -1,8 +1,17 @@
 # Todo items
 ---
 
-## Overall application
-[ ] Vertical Split pane view feature needs to be added, Justification: User wants to view pdf file in one pane and write notes in markdown editor in another pane.
+## 1. PDF Viewer
+[x] Remember last viewed pdf and page, (save the information in the sqlite db). Since, the application is used from portable device, the path to the files will keep on changing, so we will have to use some kind of relative path or just save the file name and page number. Last opened file might be pdf or markdown or images, which needs to be considered.
 
-## PDF Viewer
-[ ] Remember last viewed pdf and page, (save the information in the sqlite db).
+## 2. Overall application
+[x] Vertical Split pane view feature needs to be added, Justification: User wants to view pdf file in one pane and write notes in markdown editor in another pane. Lightweight library must be used with minimal features.
+
+## 3. UI/UX improvements
+[ ] The user experience right now is not that great, its confusing sometimes, the UI needs to be analysed and a plan needs to be created for improvements.
+
+## 4. Documentation
+[ ] A feature list and user guide needs to be created.
+
+## 5. Ready the application for version 1.0.0
+[ ] Check for memory leaks and other performance issues.

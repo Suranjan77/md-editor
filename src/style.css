@@ -331,4 +331,18 @@
     word-break: break-all;
 }
 
-
+/* ── Split.js ──────────────────────────────────────────────────────── */
+.gutter {
+    background-color: var(--bg-tertiary);
+    background-repeat: no-repeat;
+    background-position: 50%;
+    cursor: col-resize;
+    z-index: 50;
+    transition: background-color 0.2s ease;
+}
+.gutter.gutter-horizontal {
+    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjP5GEQBg/QBE1QoVv0n26QAAAABJRU5ErkJggg==');
+}
+.gutter:hover, .gutter:active {
+    background-color: var(--border);
+}
