@@ -43,7 +43,7 @@
             <!-- Ghost Sidebar -->
             <aside
                 id="sidebar"
-                class="bg-slate-900 dark:bg-[#181a1d] text-[#b1ccc6] font-['Inter'] antialiased leading-[1.6] tracking-tight h-screen w-[240px] transition-all duration-300 ease-in-out overflow-hidden sticky left-0 top-0 flex flex-col py-8 px-2 z-50 group border-r border-[#45484e]/20 shrink-0"
+                class="bg-slate-900 dark:bg-[#181a1d] text-[#b1ccc6] font-['Inter'] antialiased leading-[1.6] tracking-tight h-screen w-[260px] transition-all duration-300 ease-in-out overflow-hidden sticky left-0 top-0 flex flex-col py-8 px-2 z-50 group border-r border-[#45484e]/20 shrink-0"
             >
                 <div
                     class="flex items-center gap-4 px-3 mb-10 overflow-hidden whitespace-nowrap"
@@ -60,6 +60,7 @@
                     <!-- Vault/Folder Button -->
                     <div
                         id="btn-open-folder"
+                        title="Open vault folder (Ctrl/Cmd + O)"
                         class="flex items-center gap-4 p-3 rounded-xl text-[#b1ccc6] font-semibold hover:bg-[#23262b] transition-all cursor-pointer overflow-hidden whitespace-nowrap mx-1"
                     >
                         <span
@@ -73,6 +74,7 @@
                     <!-- Study Tracker Button -->
                     <div
                         id="btn-open-tracker"
+                        title="Open study tracker"
                         class="flex items-center gap-4 p-3 rounded-xl text-[#b1ccc6] font-semibold hover:bg-[#23262b] transition-all cursor-pointer overflow-hidden whitespace-nowrap mx-1"
                     >
                         <span
@@ -88,7 +90,7 @@
                     <!-- File Tree Injection Point -->
                     <div
                         id="file-list"
-                        class="flex flex-col w-[200px] transition-opacity max-h-[50vh] overflow-y-auto mt-2 mb-4 px-1 gap-1"
+                        class="flex flex-col w-[200px] transition-opacity max-h-[65vh] overflow-y-auto mt-2 mb-4 px-1 gap-1"
                     >
                         <div
                             class="empty-state text-[11px] text-secondary opacity-50 px-2 italic"
@@ -132,11 +134,13 @@
                 <!-- TopAppBar -->
                 <header
                     id="toolbar"
-                    class="flex justify-between items-center w-full px-12 h-16 bg-[#121316] text-[#b1ccc6] font-['Inter'] text-sm font-medium z-20 shrink-0"
+                    class="flex justify-between items-center w-full px-8 h-16 bg-[#121316]/95 text-[#b1ccc6] font-['Inter'] text-sm font-medium z-20 shrink-0"
                 >
                     <div class="flex items-center gap-4">
                         <button
                             id="btn-toggle-sidebar"
+                            title="Toggle sidebar (Ctrl/Cmd + \)"
+                            aria-label="Toggle sidebar"
                             class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center"
                         >
                             <span
@@ -148,15 +152,18 @@
                         <div class="flex items-center gap-3">
                             <span
                                 id="toolbar-filename"
-                                class="text-[#e3e5ed] font-bold"
-                            ></span>
+                                class="text-[#e3e5ed] font-bold max-w-[50vw] truncate"
+                                title="No file open"
+                            >No file open</span>
+                            
                         </div>
                     </div>
-                    <div class="flex items-center gap-6">
+                    <div class="flex items-center gap-3">
                         <button
                             id="btn-split-view"
                             class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center p-2 rounded-full"
-                            title="Split View"
+                            title="Toggle split view"
+                            aria-label="Toggle split view"
                         >
                             <span
                                 class="material-symbols-outlined text-lg"
@@ -166,6 +173,8 @@
                         </button>
                         <button
                             id="btn-toggle-backlinks"
+                            title="Toggle backlinks (Ctrl/Cmd + Shift + B)"
+                            aria-label="Toggle backlinks"
                             class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center p-2 rounded-full"
                         >
                             <span
@@ -182,7 +191,7 @@
                     <!-- Editor canvas -->
                     <div
                         id="cm-host"
-                        class="w-full h-full relative overflow-hidden outline-none"
+                        class="w-full h-full relative overflow-hidden outline-none px-2 pb-2"
                     ></div>
 
                     <!-- Image Preview (shown when an image file is selected) -->

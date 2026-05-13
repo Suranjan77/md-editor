@@ -9,9 +9,12 @@
 
 ## 3. UI/UX improvements
 [ ] The user experience right now is not that great, its confusing sometimes, the UI needs to be analysed and a plan needs to be created for improvements.
+- Progress: Added `docs/UI_UX_PLAN.md` with a phased roadmap and success metrics.
 
 ## 4. Documentation
-[ ] A feature list and user guide needs to be created.
+[x] A feature list and user guide needs to be created.
+- Completed: Added `docs/FEATURES.md` and `docs/USER_GUIDE.md`.
 
 ## 5. Ready the application for version 1.0.0
 [ ] Check for memory leaks and other performance issues.
+- Progress: Added lightweight readiness script `npm run perf:check` (`scripts/perf-check.mjs`) to run build and tests consistently.
