@@ -346,3 +346,62 @@
 .gutter:hover, .gutter:active {
     background-color: var(--border);
 }
+
+/* ── UX Refresh: Navigation + Top Bar ─────────────────────────────── */
+#toolbar {
+    border-bottom: 1px solid rgba(69, 72, 78, 0.35);
+    backdrop-filter: blur(8px);
+}
+
+#sidebar {
+    background: linear-gradient(180deg, #15181c 0%, #111318 100%);
+}
+
+#file-list {
+    width: 100%;
+}
+
+#file-list .file-item,
+#file-list summary.file-item {
+    min-height: 36px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+}
+
+#file-list .file-item:hover,
+#file-list summary.file-item:hover {
+    background: rgba(177, 204, 198, 0.08) !important;
+    border-color: rgba(177, 204, 198, 0.18) !important;
+}
+
+#file-list .file-item:focus,
+#file-list summary.file-item:focus {
+    box-shadow: 0 0 0 2px rgba(177, 204, 198, 0.2);
+}
+
+#btn-new-file,
+#btn-new-folder {
+    border-radius: 10px !important;
+    font-size: 11px !important;
+    letter-spacing: 0.1em;
+    background: rgba(24, 26, 29, 0.6);
+}
+
+#btn-new-file:hover,
+#btn-new-folder:hover {
+    border-color: rgba(177, 204, 198, 0.5) !important;
+    background: rgba(177, 204, 198, 0.12) !important;
+}
+
+#toolbar-filename {
+    font-size: 18px;
+    letter-spacing: 0.01em;
+}
+
+#views-container {
+    background: radial-gradient(circle at top left, rgba(60, 76, 96, 0.09), transparent 45%), #0f1115;
+}
+
+#backlinks-pane {
+    border-left-color: rgba(69, 72, 78, 0.35) !important;
+}
