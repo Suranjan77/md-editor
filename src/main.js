@@ -724,7 +724,7 @@ async function updateBacklinks(path) {
     const links = await getBacklinks(path);
     backlinksList.innerHTML = "";
     if (!links.length) {
-      backlinksList.innerHTML = '<div class="empty-state">No backlinks</div>';
+      backlinksList.innerHTML = '<div class="empty-state text-[11px] text-[#9d9ea3] opacity-70 px-2 italic">No backlinks for this note yet.</div>';
       return;
     }
     links.forEach((absPath, idx) => {
@@ -857,7 +857,7 @@ function renderTreeNodes(node, container, level = 0) {
 function renderFileList(entries) {
   fileList.innerHTML = "";
   if (!entries.length) {
-    fileList.innerHTML = '<div class="empty-state">No markdown files</div>';
+    fileList.innerHTML = '<div class="empty-state text-[11px] text-[#9d9ea3] opacity-70 px-2 italic">No files found in this vault yet. Create one with New File.</div>';
     return;
   }
   const tree = buildTree(entries);
@@ -915,9 +915,22 @@ function updateSidebarSelection() {
 function updateToolbarFilename(overridePath) {
   const el = document.getElementById("toolbar-filename");
   const path = overridePath || state.currentPath;
-  if (el && path) {
-    el.textContent = path;
+
+  if (!el) return;
+
+  if (!path) {
+    el.textContent = "No file open";
+    el.title = "No file open";
+    return;
   }
+
+  const normalizedPath = path.replace(/\\/g, "/");
+  const segments = normalizedPath.split("/").filter(Boolean);
+  const filename = segments[segments.length - 1] || normalizedPath;
+  const parent = segments.length > 1 ? segments[segments.length - 2] : "";
+
+  el.textContent = parent ? `${parent}/${filename}` : filename;
+  el.title = path;
 }
 
 // ── Toast notification ──────────────────────────────────────────────
@@ -934,5 +947,7 @@ function showToast(message, type = "info") {
     setTimeout(() => toast.remove(), 300);
   }, 2000);
 }
+
+updateToolbarFilename();
 
 init();
