@@ -154,6 +154,17 @@
                     </div>
                     <div class="flex items-center gap-6">
                         <button
+                            id="btn-split-view"
+                            class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center p-2 rounded-full"
+                            title="Split View"
+                        >
+                            <span
+                                class="material-symbols-outlined text-lg"
+                                data-icon="vertical_split"
+                                >vertical_split</span
+                            >
+                        </button>
+                        <button
                             id="btn-toggle-backlinks"
                             class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center p-2 rounded-full"
                         >
@@ -166,30 +177,33 @@
                     </div>
                 </header>
 
-                <!-- Editor canvas -->
-                <div
-                    id="cm-host"
-                    class="flex-grow w-full h-full relative z-10 overflow-hidden outline-none"
-                ></div>
+                <!-- Views Container -->
+                <div id="views-container" class="flex-grow w-full relative z-10 flex flex-row overflow-hidden">
+                    <!-- Editor canvas -->
+                    <div
+                        id="cm-host"
+                        class="w-full h-full relative overflow-hidden outline-none"
+                    ></div>
 
-                <!-- Image Preview (shown when an image file is selected) -->
-                <div
-                    id="image-preview"
-                    class="hidden flex-grow w-full h-full relative z-10 overflow-auto flex items-center justify-center"
-                ></div>
+                    <!-- Image Preview (shown when an image file is selected) -->
+                    <div
+                        id="image-preview"
+                        class="hidden w-full h-full relative overflow-auto flex items-center justify-center"
+                    ></div>
 
-                <!-- Tracker canvas -->
-                <div
-                    id="tracker-host"
-                    class="flex-grow w-full h-full relative z-10 overflow-y-auto hidden custom-scrollbar bg-[#121316] text-[#e3e5ed]"
-                ></div>
+                    <!-- Tracker canvas -->
+                    <div
+                        id="tracker-host"
+                        class="w-full h-full relative overflow-y-auto hidden custom-scrollbar bg-[#121316] text-[#e3e5ed]"
+                    ></div>
 
-                <!-- PDF Viewer -->
-                <div
-                    id="pdf-viewer-host"
-                    class="flex-grow w-full h-full relative z-10 overflow-hidden hidden bg-[#0d0e10]"
-                    tabindex="-1"
-                ></div>
+                    <!-- PDF Viewer -->
+                    <div
+                        id="pdf-viewer-host"
+                        class="w-full h-full relative overflow-hidden hidden bg-[#0d0e10]"
+                        tabindex="-1"
+                    ></div>
+                </div>
 
                 <!-- Welcome Screen -->
                 <div
