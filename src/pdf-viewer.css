@@ -21,9 +21,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  height: 44px;
-  background: #181a1d;
-  border-bottom: 1px solid rgba(69, 72, 78, 0.3);
+  height: 48px;
+  background: rgba(18, 19, 22, 0.92);
+  border-bottom: 1px solid rgba(69, 72, 78, 0.35);
+  backdrop-filter: blur(8px);
   flex-shrink: 0;
   z-index: 10;
 }
@@ -44,36 +45,45 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: #9d9ea3;
+  color: var(--text-muted, #9d9ea3);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition:
+    color 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .pdf-tool-btn:hover {
-  background: #23262b;
-  color: #b1ccc6;
+  background: var(--accent-dim, rgba(177, 204, 198, 0.1));
+  color: var(--accent, #b1ccc6);
+}
+
+.pdf-tool-btn.is-active {
+  background: var(--accent-dim, rgba(177, 204, 198, 0.1));
+  border-color: rgba(177, 204, 198, 0.25);
+  color: var(--accent, #b1ccc6);
 }
 
 .pdf-tool-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.96);
 }
 
 .pdf-tool-btn .material-symbols-outlined {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .pdf-tool-btn-sm {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
 }
 
 .pdf-tool-btn-sm .material-symbols-outlined {
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .pdf-zoom-label {

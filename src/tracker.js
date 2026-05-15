@@ -51,28 +51,22 @@ export async function renderTracker() {
   }
 
   host.innerHTML = `
-    <div class="w-full max-w-6xl mx-auto p-8 font-sans animate-in fade-in duration-500 pb-32">
-      <!-- Header -->
-      <header class="flex items-end justify-between mb-12 border-b border-[var(--border)] pb-6">
-        <div>
-          <h1 class="text-3xl font-extrabold text-[var(--accent)] tracking-tight mb-2">Efficient AI Curriculum</h1>
-          <p class="text-[var(--text-muted)] font-medium tracking-wide uppercase text-[11px]">Study & Progress Tracker</p>
-        </div>
+    <div class="tracker-shell">
+      <header class="tracker-header">
+        <h1 class="tracker-title">Study Tracker</h1>
+        <p class="tracker-subtitle">Efficient AI Curriculum</p>
       </header>
 
-      <!-- Navigation -->
-      <nav class="flex gap-2 mb-10 overflow-x-auto pb-2 border-b border-[var(--border-subtle)] pb-4">
+      <nav class="tracker-nav" aria-label="Tracker sections">
         ${renderTabButton('dashboard', 'grid_view', 'Dashboard')}
-        ${renderTabButton('log', 'history', 'Study Log')}
+        ${renderTabButton('log', 'history', 'Log')}
         ${renderTabButton('projects', 'rocket_launch', 'Projects')}
-        ${renderTabButton('gates', 'fact_check', 'Evaluation Gates')}
-        ${renderTabButton('reading', 'menu_book', 'Reading List')}
-        <div class="flex-grow"></div>
+        ${renderTabButton('gates', 'fact_check', 'Gates')}
+        ${renderTabButton('reading', 'menu_book', 'Reading')}
         ${renderTabButton('config', 'settings', 'Config')}
       </nav>
 
-      <!-- Tab Content Area -->
-      <main id="tracker-content-area" class="relative">
+      <main id="tracker-content-area">
         ${renderCurrentTab()}
       </main>
     </div>
@@ -81,12 +75,9 @@ export async function renderTracker() {
 
 function renderTabButton(id, icon, label) {
   const isActive = state.currentTab === id;
-  const activeClass = isActive
-    ? 'bg-[var(--accent-dim)] text-[var(--accent)] border-[var(--accent)] ring-1 ring-[var(--accent-glow)] shadow-[0_0_15px_var(--accent-glow)]'
-    : 'bg-[var(--bg-secondary)] text-[var(--text-muted)] border-[var(--border-subtle)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--accent)]';
   return `
-    <button data-action="switch-tab" data-target="${id}" class="flex items-center gap-2 px-6 py-2.5 rounded-lg border transition-all duration-300 font-semibold text-[13px] cursor-pointer whitespace-nowrap ${activeClass}">
-      <span class="material-symbols-outlined !text-[18px]">${icon}</span>
+    <button type="button" data-action="switch-tab" data-target="${id}" class="tracker-tab${isActive ? ' is-active' : ''}">
+      <span class="material-symbols-outlined">${icon}</span>
       ${label}
     </button>
   `;
@@ -124,22 +115,22 @@ function renderDashboard() {
   });
 
   return `
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10 animate-in slide-in-from-bottom-4 duration-500 fade-in">
+    <div class="tracker-kpi-grid">
       ${renderKpiCard('Total Study Hours', `${totalHours} h`, 'schedule')}
       ${renderKpiCard('Projects Finished', `${doneProjects} / ${schema.PROJECTS.length}`, 'rocket_launch')}
       ${renderKpiCard('Gates Passed', `${doneItems} / ${totalItems}`, 'done_all')}
       ${renderKpiCard('Overall Progress', `${projPct}%`, 'trending_up')}
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in slide-in-from-bottom-8 duration-700 fade-in">
-      <div class="lg:col-span-2 bg-[var(--bg-secondary)] rounded-2xl border border-[var(--border)] p-8">
-        <h3 class="text-lg font-bold text-[var(--text-primary)] mb-6 flex items-center gap-2"><span class="material-symbols-outlined text-[var(--accent)]">bar_chart</span> Weekly Activity</h3>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="lg:col-span-2 tracker-card">
+        <h3 class="tracker-card-title"><span class="material-symbols-outlined">bar_chart</span> Weekly Activity</h3>
         <div class="h-64 flex items-end gap-2" id="activity-chart">
           ${renderActivityChartBars()}
         </div>
       </div>
-      <div class="bg-[var(--bg-secondary)] rounded-2xl border border-[var(--border)] p-8 flex flex-col">
-        <h3 class="text-lg font-bold text-[var(--text-primary)] mb-6 flex items-center gap-2"><span class="material-symbols-outlined text-[var(--success)]">history</span> Recent Feed</h3>
+      <div class="tracker-card flex flex-col">
+        <h3 class="tracker-card-title"><span class="material-symbols-outlined" style="color:var(--success)">history</span> Recent Feed</h3>
         <div class="flex-grow overflow-y-auto pr-2 space-y-4 custom-scrollbar">
           ${renderActivityFeed()}
         </div>
@@ -199,13 +190,13 @@ function renderActivityFeed() {
 
 function renderKpiCard(title, value, icon) {
   return `
-    <div class="bg-[var(--bg-secondary)] rounded-2xl border border-[var(--border)] p-6 flex items-center gap-5 shadow-md">
-      <div class="w-12 h-12 rounded-xl flex items-center justify-center bg-[var(--bg-tertiary)] text-[var(--accent)]">
-        <span class="material-symbols-outlined !text-[24px]">${icon}</span>
+    <div class="tracker-kpi">
+      <div class="tracker-kpi-icon">
+        <span class="material-symbols-outlined">${icon}</span>
       </div>
       <div>
-        <div class="text-2xl font-black font-mono text-[var(--text-primary)]">${value}</div>
-        <div class="text-[var(--text-muted)] text-[11px] uppercase tracking-wider font-semibold mt-1">${title}</div>
+        <div class="tracker-kpi-value">${value}</div>
+        <div class="tracker-kpi-label">${title}</div>
       </div>
     </div>
   `;
