@@ -66,6 +66,14 @@ impl AppState {
             []
         ).expect("Failed to create tracker_kv");
 
+        db.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS file_search USING fts5(
+                path,
+                content
+            )",
+            []
+        ).expect("Failed to create file_search fts table");
+
         AppState {
             vault_root: Mutex::new(None),
             file_index: Mutex::new(FileIndex::new(PathBuf::new())),
@@ -104,6 +112,11 @@ pub fn save_file(path: String, content: String, state: State<'_, AppState>) -> R
     let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
     index.update_file(&abs_path, &content);
 
+    // Update FTS index
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM file_search WHERE path = ?1", rusqlite::params![&path]).ok();
+    db.execute("INSERT INTO file_search (path, content) VALUES (?1, ?2)", rusqlite::params![&path, &content]).ok();
+
     Ok(())
 }
 
@@ -134,10 +147,11 @@ pub fn rename_file(old_path: String, new_path: String, state: State<'_, AppState
     if abs_old_path.is_file() && abs_old_path.extension().map_or(false, |e| e == "md") {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         index.remove_file(&abs_old_path);
-        // We'll update the new path when it's opened or saved, 
-        // but for now let's just make sure the old one is gone.
-    }
 
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute("DELETE FROM file_search WHERE path = ?1", rusqlite::params![&old_path]).ok();
+        // The new path will be added when it's opened or saved next time.
+    }
     fs_commands::rename_file(&abs_old_path, &abs_new_path)
 }
 
@@ -150,6 +164,9 @@ pub fn delete_file(path: String, state: State<'_, AppState>) -> Result<(), Strin
     if abs_path.is_file() {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         index.remove_file(&abs_path);
+
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute("DELETE FROM file_search WHERE path = ?1", rusqlite::params![&path]).ok();
     }
 
     fs_commands::delete_entry(&abs_path)
@@ -178,9 +195,15 @@ pub fn set_vault_root(path: String, state: State<'_, AppState>) -> Result<Vec<Fi
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         *index = FileIndex::new(root.clone());
         let md_files = fs_commands::list_all_md_files(&root)?;
+        
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute("DELETE FROM file_search", []).ok();
+        
         for path in md_files {
             if let Ok(content) = fs_commands::read_file(&path) {
                 index.update_file(&path, &content);
+                let rel_path = path.strip_prefix(&root).unwrap_or(&path).to_string_lossy().to_string();
+                db.execute("INSERT INTO file_search (path, content) VALUES (?1, ?2)", rusqlite::params![&rel_path, &content]).ok();
             }
         }
     }
@@ -190,9 +213,29 @@ pub fn set_vault_root(path: String, state: State<'_, AppState>) -> Result<Vec<Fi
 
 #[tauri::command]
 pub fn search_vault(query: String, state: State<'_, AppState>) -> Result<Vec<SearchResult>, String> {
-    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    fs_commands::search_vault(vault_root, &query)
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    
+    let fts_query = format!("\"{}\"", query.replace("\"", "\"\""));
+    
+    let mut stmt = db.prepare(
+        "SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15) FROM file_search WHERE content MATCH ?1 ORDER BY rank LIMIT 100"
+    ).map_err(|e| e.to_string())?;
+    
+    let rows = stmt.query_map(rusqlite::params![&fts_query], |row| {
+        Ok(SearchResult {
+            path: row.get(0)?,
+            line: 1,
+            context: row.get(1)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        if let Ok(r) = row {
+            results.push(r);
+        }
+    }
+    Ok(results)
 }
 
 #[tauri::command]
@@ -239,4 +282,13 @@ pub fn set_sys_config(
         rusqlite::params![&key, &value],
     ).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub fn read_image_bytes(app_handle: &tauri::AppHandle, path: &str) -> Result<Vec<u8>, String> {
+    use tauri::Manager;
+    let state = app_handle.state::<AppState>();
+    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
+    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let abs_path = fs_commands::resolve_vault_path(vault_root, path);
+    fs_commands::read_image(&abs_path)
 }

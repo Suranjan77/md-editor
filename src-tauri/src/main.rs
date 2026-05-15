@@ -76,6 +76,33 @@ fn main() {
                 responder.respond(response);
             });
         })
+        .register_asynchronous_uri_scheme_protocol("md-img", |ctx, request, responder| {
+            let app_handle = ctx.app_handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let uri = request.uri().path();
+                let relative_path = uri.trim_start_matches('/');
+                match md_editor_lib::commands::read_image_bytes(&app_handle, relative_path) {
+                    Ok(bytes) => {
+                        let ext = relative_path.split('.').last().unwrap_or("png").to_lowercase();
+                        let mime = if ext == "svg" { "image/svg+xml" } else { &format!("image/{}", ext) };
+                        let response = tauri::http::Response::builder()
+                            .header("Content-Type", mime)
+                            .header("Access-Control-Allow-Origin", "*")
+                            .body(bytes)
+                            .unwrap();
+                        responder.respond(response);
+                    }
+                    Err(e) => {
+                        eprintln!("Error loading image {}: {}", relative_path, e);
+                        let response = tauri::http::Response::builder()
+                            .status(404)
+                            .body(Vec::new())
+                            .unwrap();
+                        responder.respond(response);
+                    }
+                }
+            });
+        })
         .manage(md_editor_lib::AppState::new())
         .invoke_handler(tauri::generate_handler![
             md_editor_lib::commands::open_file,
