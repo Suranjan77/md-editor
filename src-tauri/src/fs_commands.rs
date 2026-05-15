@@ -30,7 +30,7 @@ pub fn search_vault(root: &Path, query: &str) -> Result<Vec<SearchResult>, Strin
     Ok(results)
 }
 
-fn list_all_md_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn list_all_md_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     list_all_md_files_recursive(root, &mut files)?;
     Ok(files)
@@ -154,7 +154,7 @@ fn list_vault_recursive(
             list_vault_recursive(root, &path, entries)?;
         } else if path
             .extension()
-            .map(|e| e == "md" || e == "markdown" || is_image(&e.to_str().unwrap()))
+            .map(|e| e == "md" || e == "markdown" || e == "pdf" || is_image(&e.to_str().unwrap()))
             .unwrap_or(false)
         {
             entries.push(FileEntry {
