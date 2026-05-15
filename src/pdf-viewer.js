@@ -361,12 +361,11 @@ async function renderPageNow(pageIndex, generation) {
     // Convert scale to integer percentage
     const scaleInt = Math.round(currentScale * 100);
 
-    const imageBytes = await getPdfPageBitmap(pageIndex, scaleInt / 100, generation);
-    const blob = new Blob([new Uint8Array(imageBytes)], { type: "image/png" });
-    const objectUrl = URL.createObjectURL(blob);
+    const objectUrl = `md-pdf://localhost/${pageIndex}/${scaleInt}/${generation}`;
+    
     await new Promise((resolve, reject) => {
       img.onload = resolve;
-      img.onerror = () => reject(new Error("Image failed to load from backend bitmap data"));
+      img.onerror = () => reject(new Error("Image failed to load from md-pdf protocol"));
       img.src = objectUrl;
     });
 
@@ -379,8 +378,6 @@ async function renderPageNow(pageIndex, generation) {
     // Replace loading spinner with rendered image
     canvas.innerHTML = "";
     canvas.appendChild(img);
-
-    requestAnimationFrame(() => URL.revokeObjectURL(objectUrl));
 
     wrapper.setAttribute("data-rendered-scale", String(currentScale));
 
