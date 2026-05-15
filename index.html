@@ -8,420 +8,369 @@
         <link href="./static/jetbrains_mono.css" rel="stylesheet" />
         <link href="./static/material.css" rel="stylesheet" />
         <link href="./static/katex.min.css" rel="stylesheet" />
-        <style>
-            .material-symbols-outlined {
-                font-variation-settings:
-                    "FILL" 0,
-                    "wght" 300,
-                    "GRAD" 0,
-                    "opsz" 24;
-            }
-
-            .signature-glow:hover {
-                box-shadow: 0 0 20px rgba(177, 204, 198, 0.15);
-            }
-
-            ::-webkit-scrollbar {
-                width: 4px;
-            }
-
-            ::-webkit-scrollbar-track {
-                background: transparent;
-            }
-
-            ::-webkit-scrollbar-thumb {
-                background: #23262b;
-                border-radius: 10px;
-            }
-        </style>
     </head>
 
-    <body
-        class="bg-[#0d0e10] text-[#e3e5ed] font-body selection:bg-primary-container selection:text-primary"
-    >
-        <div class="flex h-screen overflow-hidden" id="app">
-            <!-- Ghost Sidebar -->
-            <aside
-                id="sidebar"
-                class="bg-slate-900 dark:bg-[#181a1d] text-[#b1ccc6] font-['Inter'] antialiased leading-[1.6] tracking-tight h-screen w-[240px] transition-all duration-300 ease-in-out overflow-hidden sticky left-0 top-0 flex flex-col py-8 px-2 z-50 group border-r border-[#45484e]/20 shrink-0"
-            >
-                <div
-                    class="flex items-center gap-4 px-3 mb-10 overflow-hidden whitespace-nowrap"
-                >
-                    <div class="flex flex-col transition-opacity duration-300">
+    <body class="app-body">
+        <div class="app-shell" id="app">
+            <!-- Vault sidebar -->
+            <aside id="sidebar" class="app-sidebar">
+                <header class="sidebar-header">
+                    <div class="sidebar-brand">
                         <span
-                            class="text-sm font-bold tracking-[0.1em] uppercase text-[#9d9ea3]"
-                            >MD Editor</span
+                            class="material-symbols-outlined sidebar-brand-icon"
+                            aria-hidden="true"
+                            >description</span
                         >
-                    </div>
-                </div>
-
-                <nav class="flex flex-col gap-2 flex-grow">
-                    <!-- Vault/Folder Button -->
-                    <div
-                        id="btn-open-folder"
-                        class="flex items-center gap-4 p-3 rounded-xl text-[#b1ccc6] font-semibold hover:bg-[#23262b] transition-all cursor-pointer overflow-hidden whitespace-nowrap mx-1"
-                    >
-                        <span
-                            class="material-symbols-outlined flex-shrink-0 text-xl"
-                            data-icon="folder_open"
-                            >folder_open</span
-                        >
-                        <span class="text-sm transition-opacity">Vault</span>
-                    </div>
-
-                    <!-- Study Tracker Button -->
-                    <div
-                        id="btn-open-tracker"
-                        class="flex items-center gap-4 p-3 rounded-xl text-[#b1ccc6] font-semibold hover:bg-[#23262b] transition-all cursor-pointer overflow-hidden whitespace-nowrap mx-1"
-                    >
-                        <span
-                            class="material-symbols-outlined flex-shrink-0 text-xl"
-                            data-icon="school"
-                            >school</span
-                        >
-                        <span class="text-sm transition-opacity"
-                            >Study Tracker</span
-                        >
-                    </div>
-
-                    <!-- File Tree Injection Point -->
-                    <div
-                        id="file-list"
-                        class="flex flex-col w-[200px] transition-opacity max-h-[50vh] overflow-y-auto mt-2 mb-4 px-1 gap-1"
-                    >
-                        <div
-                            class="empty-state text-[11px] text-secondary opacity-50 px-2 italic"
-                        >
-                            Open a folder to start
+                        <div class="sidebar-brand-text">
+                            <span id="vault-label" class="sidebar-vault-name"
+                                >MD Editor</span
+                            >
+                            <span id="vault-path" class="sidebar-vault-path"
+                                >No vault open</span
+                            >
                         </div>
                     </div>
-                </nav>
+                </header>
+
+                <div class="sidebar-actions" role="toolbar" aria-label="Vault actions">
+                    <button
+                        type="button"
+                        id="btn-open-folder"
+                        class="sidebar-action-btn"
+                        title="Open vault (Ctrl+O)"
+                        aria-label="Open vault"
+                    >
+                        <span class="material-symbols-outlined" data-icon="folder_open"
+                            >folder_open</span
+                        >
+                    </button>
+                    <button
+                        type="button"
+                        id="btn-vault-search"
+                        class="sidebar-action-btn"
+                        title="Search vault (Ctrl+Shift+F)"
+                        aria-label="Search vault"
+                    >
+                        <span class="material-symbols-outlined" data-icon="search"
+                            >search</span
+                        >
+                    </button>
+                    <button
+                        type="button"
+                        id="btn-new-file"
+                        class="sidebar-action-btn"
+                        title="New file (Ctrl+N)"
+                        aria-label="New file"
+                    >
+                        <span class="material-symbols-outlined" data-icon="note_add"
+                            >note_add</span
+                        >
+                    </button>
+                    <button
+                        type="button"
+                        id="btn-new-folder"
+                        class="sidebar-action-btn"
+                        title="New folder"
+                        aria-label="New folder"
+                    >
+                        <span class="material-symbols-outlined" data-icon="create_new_folder"
+                            >create_new_folder</span
+                        >
+                    </button>
+                    <button
+                        type="button"
+                        id="btn-open-tracker"
+                        class="sidebar-action-btn"
+                        title="Study tracker"
+                        aria-label="Study tracker"
+                    >
+                        <span class="material-symbols-outlined" data-icon="school"
+                            >school</span
+                        >
+                    </button>
+                </div>
 
                 <div
-                    class="mt-auto px-2 overflow-hidden w-full flex flex-col gap-2"
+                    id="file-list"
+                    class="sidebar-files custom-scrollbar"
+                    role="tree"
+                    aria-label="Vault files"
                 >
-                    <div
-                        id="btn-new-file"
-                        class="w-[200px] py-3 border border-outline-variant/20 rounded-lg text-center text-[10px] font-bold uppercase tracking-widest text-[#b1ccc6] cursor-pointer hover:bg-primary-container transition-colors whitespace-nowrap"
-                    >
-                        <span
-                            class="material-symbols-outlined align-middle !text-[12px] mr-1"
-                            data-icon="add"
-                            >add</span
-                        >New File
-                    </div>
-                    <div
-                        id="btn-new-folder"
-                        class="w-[200px] py-3 border border-outline-variant/20 rounded-lg text-center text-[10px] font-bold uppercase tracking-widest text-[#b1ccc6] cursor-pointer hover:bg-primary-container transition-colors whitespace-nowrap"
-                    >
-                        <span
-                            class="material-symbols-outlined align-middle !text-[12px] mr-1"
-                            data-icon="create_new_folder"
-                            >create_new_folder</span
-                        >New Folder
+                    <div class="empty-state sidebar-empty">
+                        Open a vault to browse files
                     </div>
                 </div>
             </aside>
 
-            <!-- Main Content Area -->
-            <main
-                class="flex-grow flex flex-col bg-[#121316] relative transition-all duration-300 min-w-0"
-                id="editor-container"
-            >
-                <!-- TopAppBar -->
-                <header
-                    id="toolbar"
-                    class="flex justify-between items-center w-full px-12 h-16 bg-[#121316] text-[#b1ccc6] font-['Inter'] text-sm font-medium z-20 shrink-0"
-                >
-                    <div class="flex items-center gap-4">
+            <!-- Editor column -->
+            <main class="app-main" id="editor-container">
+                <header id="toolbar" class="app-toolbar">
+                    <div class="toolbar-start">
                         <button
+                            type="button"
                             id="btn-toggle-sidebar"
-                            class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center"
+                            class="toolbar-icon-btn"
+                            title="Toggle sidebar (Ctrl+\)"
+                            aria-label="Toggle sidebar"
+                            aria-pressed="true"
                         >
-                            <span
-                                class="material-symbols-outlined text-lg"
-                                data-icon="menu"
-                                >menu</span
+                            <span class="material-symbols-outlined" data-icon="side_navigation"
+                                >side_navigation</span
                             >
                         </button>
-                        <div class="flex items-center gap-3">
+                        <div class="toolbar-doc">
                             <span
                                 id="toolbar-filename"
-                                class="text-[#e3e5ed] font-bold"
-                            ></span>
+                                class="toolbar-filename"
+                                title="No file open"
+                                >No file open</span
+                            >
+                            <span id="toolbar-status" class="toolbar-status"></span>
                         </div>
                     </div>
-                    <div class="flex items-center gap-6">
+                    <div class="toolbar-end">
                         <button
-                            id="btn-toggle-backlinks"
-                            class="text-[#9d9ea3] hover:text-[#b1ccc6] transition-colors flex items-center p-2 rounded-full"
+                            type="button"
+                            id="btn-focus-mode"
+                            class="toolbar-icon-btn"
+                            title="Focus mode (Ctrl+Shift+E)"
+                            aria-label="Focus mode"
+                            aria-pressed="false"
                         >
-                            <span
-                                class="material-symbols-outlined text-lg"
-                                data-icon="tab"
-                                >tab</span
+                            <span class="material-symbols-outlined" data-icon="center_focus_strong"
+                                >center_focus_strong</span
+                            >
+                        </button>
+                        <button
+                            type="button"
+                            id="btn-split-view"
+                            class="toolbar-icon-btn"
+                            title="Split editor and PDF"
+                            aria-label="Toggle split view"
+                        >
+                            <span class="material-symbols-outlined" data-icon="vertical_split"
+                                >vertical_split</span
+                            >
+                        </button>
+                        <button
+                            type="button"
+                            id="btn-toggle-backlinks"
+                            class="toolbar-icon-btn"
+                            title="Backlinks (Ctrl+Shift+B)"
+                            aria-label="Toggle backlinks"
+                            aria-pressed="false"
+                        >
+                            <span class="material-symbols-outlined" data-icon="link"
+                                >link</span
+                            >
+                        </button>
+                        <button
+                            type="button"
+                            id="btn-shortcuts"
+                            class="toolbar-icon-btn"
+                            title="Keyboard shortcuts (Ctrl+/)"
+                            aria-label="Keyboard shortcuts"
+                        >
+                            <span class="material-symbols-outlined" data-icon="keyboard"
+                                >keyboard</span
                             >
                         </button>
                     </div>
                 </header>
 
-                <!-- Editor canvas -->
                 <div
-                    id="cm-host"
-                    class="flex-grow w-full h-full relative z-10 overflow-hidden outline-none"
-                ></div>
-
-                <!-- Image Preview (shown when an image file is selected) -->
-                <div
-                    id="image-preview"
-                    class="hidden flex-grow w-full h-full relative z-10 overflow-auto flex items-center justify-center"
-                ></div>
-
-                <!-- Tracker canvas -->
-                <div
-                    id="tracker-host"
-                    class="flex-grow w-full h-full relative z-10 overflow-y-auto hidden custom-scrollbar bg-[#121316] text-[#e3e5ed]"
-                ></div>
-
-                <!-- Welcome Screen -->
-                <div
-                    id="welcome-screen"
-                    class="absolute inset-0 flex flex-col items-center justify-center p-8 bg-[#121316] z-10 transition-opacity"
+                    id="views-container"
+                    class="views-container"
                 >
-                    <div class="text-center max-w-2xl mb-24">
-                        <h2
-                            class="text-6xl font-extrabold tracking-tight text-[#e3e5ed] mb-4"
+                    <div id="cm-host" class="view-pane view-editor"></div>
+                    <div id="image-preview" class="view-pane view-image hidden"></div>
+                    <div
+                        id="tracker-host"
+                        class="view-pane view-tracker hidden custom-scrollbar"
+                    ></div>
+                    <div
+                        id="pdf-viewer-host"
+                        class="view-pane view-pdf hidden"
+                        tabindex="-1"
+                    ></div>
+                </div>
+
+                <div id="welcome-screen" class="welcome-screen">
+                    <div class="welcome-card">
+                        <span
+                            class="material-symbols-outlined welcome-icon"
+                            aria-hidden="true"
+                            >edit_note</span
                         >
-                            MD Editor
-                        </h2>
-                        <p
-                            class="text-lg text-[#9d9ea3] leading-[1.6] opacity-80"
-                        >
-                            A magical Markdown writing experience<br />
+                        <h1 class="welcome-title">MD Editor</h1>
+                        <p class="welcome-lead">
+                            A focused vault for markdown notes, PDFs, and study tracking.
+                        </p>
+                        <button type="button" id="btn-open-welcome" class="welcome-cta">
+                            <span class="material-symbols-outlined" data-icon="folder_open"
+                                >folder_open</span
+                            >
+                            Open vault
+                        </button>
+                        <p class="welcome-hint">
+                            <kbd>Ctrl</kbd>+<kbd>P</kbd> commands ·
+                            <kbd>Ctrl</kbd>+<kbd>O</kbd> open vault ·
+                            <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> focus
                         </p>
                     </div>
-
-                    <button
-                        id="btn-open-welcome"
-                        class="group relative px-8 py-4 bg-[#334b47] text-[#bbd6d0] rounded-xl font-medium transition-all hover:scale-[1.02] active:scale-[0.98] mb-16 signature-glow flex items-center gap-3"
-                    >
-                        <span
-                            class="material-symbols-outlined"
-                            data-icon="margin"
-                            >margin</span
-                        >
-                        <span>Open Workspace</span>
-                    </button>
                 </div>
             </main>
 
-            <!-- Contextual Sidebar (Right Panel) -->
+            <!-- Backlinks -->
             <aside
                 id="backlinks-pane"
-                class="bg-[#181a1d] dark:bg-[#181a1d] text-[#b1ccc6] font-['Inter'] text-xs uppercase tracking-[0.1em] h-screen w-[280px] sticky right-0 top-0 flex flex-col p-6 z-30 transition-all duration-300 border-l border-[#45484e]/20 shrink-0 collapsed"
+                class="app-backlinks collapsed"
+                aria-label="Backlinks"
             >
-                <div class="mb-10">
-                    <h2 class="text-[#9d9ea3] font-bold mb-1">Backlinks</h2>
-                    <p
-                        class="text-[10px] opacity-40 lowercase tracking-normal italic"
-                    >
-                        Contextual References
-                    </p>
-                </div>
-
-                <div class="flex-1 overflow-y-auto w-full">
-                    <div id="backlinks-list" class="space-y-4 pr-2">
-                        <div
-                            class="empty-state text-[10px] text-[#9d9ea3] opacity-40 italic mt-6 text-center"
-                        >
-                            No linked references found.
-                        </div>
+                <header class="backlinks-header">
+                    <h2 class="backlinks-title">Backlinks</h2>
+                    <span id="backlinks-count" class="backlinks-count hidden">0</span>
+                </header>
+                <div id="backlinks-list" class="backlinks-list custom-scrollbar">
+                    <div class="empty-state backlinks-empty">
+                        Links to this note appear here.
                     </div>
                 </div>
             </aside>
 
-            <!-- OVERLAYS -->
-
-            <!-- Generic Name Input Modal -->
-            <div
-                id="name-input-modal"
-                class="fixed inset-0 bg-[#0d0e10]/80 backdrop-blur-sm flex items-center justify-center z-[100] hidden"
-            >
-                <div
-                    class="bg-[#181a1d] border border-[#45484e]/50 rounded-2xl p-8 min-w-[360px] shadow-2xl"
-                >
-                    <h3
-                        id="name-input-title"
-                        class="text-lg text-[#e3e5ed] font-bold mb-6"
-                    >
-                        Create New File
-                    </h3>
+            <!-- Modals -->
+            <div id="name-input-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+                <div class="modal-card modal-card-sm">
+                    <h3 id="name-input-title" class="modal-title">Create new file</h3>
                     <input
                         type="text"
                         id="name-input-field"
-                        class="w-full bg-[#0d0e10] border border-[#45484e] rounded-xl px-4 py-3 text-[#e3e5ed] mb-6 focus:outline-none focus:border-[#b1ccc6] font-mono text-sm"
-                        placeholder="Name..."
+                        class="modal-input"
+                        placeholder="Name…"
+                        autocomplete="off"
                     />
-                    <div class="flex justify-end gap-3">
-                        <button
-                            id="btn-cancel-name"
-                            class="px-5 py-2.5 rounded-xl text-[#9d9ea3] hover:bg-[#23262b] transition-colors font-medium text-sm"
-                        >
+                    <div class="modal-actions">
+                        <button type="button" id="btn-cancel-name" class="btn-ghost">
                             Cancel
                         </button>
-                        <button
-                            id="btn-confirm-name"
-                            class="px-5 py-2.5 rounded-xl bg-[#334b47] text-[#bbd6d0] hover:brightness-110 transition-colors font-medium text-sm"
-                        >
+                        <button type="button" id="btn-confirm-name" class="btn-primary">
                             Confirm
                         </button>
                     </div>
                 </div>
             </div>
 
-            <!-- Search Overlay -->
-            <div
-                id="search-overlay"
-                class="fixed inset-0 bg-[#0d0e10]/80 backdrop-blur-md flex items-center justify-center z-[100] hidden"
-            >
-                <div
-                    class="bg-[#181a1d] border border-[#45484e]/50 rounded-2xl p-10 min-w-[600px] max-w-[800px] h-[600px] flex flex-col shadow-2xl"
-                >
-                    <h3
-                        class="text-lg text-[#e3e5ed] font-bold mb-6 flex items-center gap-3 opacity-80"
-                    >
-                        <span class="material-symbols-outlined text-[#b1ccc6]"
-                            >search</span
-                        >
-                        Vault Search
-                    </h3>
+            <div id="search-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+                <div class="modal-card modal-card-lg">
+                    <header class="modal-search-header">
+                        <span class="material-symbols-outlined" aria-hidden="true">search</span>
+                        <h3 class="modal-title">Search vault</h3>
+                    </header>
                     <input
-                        type="text"
+                        type="search"
                         id="search-input"
-                        class="w-full bg-[#0d0e10] border border-[#45484e] rounded-xl px-4 py-3 text-[#e3e5ed] mb-6 focus:outline-none focus:border-[#b1ccc6] font-sans text-sm"
-                        placeholder="Search for text across all files..."
+                        class="modal-input"
+                        placeholder="Search note contents…"
+                        autocomplete="off"
                     />
                     <div
                         id="search-results"
-                        class="flex-grow overflow-y-auto space-y-2 pr-2 custom-scrollbar"
+                        class="search-results custom-scrollbar"
                     >
-                        <div
-                            class="empty-state text-[13px] text-[#9d9ea3] opacity-40 italic mt-6 text-center"
-                        >
-                            Start typing to search...
-                        </div>
+                        <div class="empty-state">Type at least 2 characters…</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Shortcuts Overlay -->
             <div
                 id="shortcuts-overlay"
-                class="fixed inset-0 bg-[#0d0e10]/80 backdrop-blur-md flex items-center justify-center z-[100] hidden cursor-pointer"
+                class="modal-overlay hidden"
+                role="dialog"
+                aria-modal="true"
             >
-                <div
-                    class="bg-[#181a1d] border border-[#45484e]/50 rounded-2xl p-10 min-w-[480px] shadow-2xl cursor-default"
-                >
-                    <h3
-                        class="text-lg text-[#e3e5ed] font-bold mb-8 flex items-center gap-3 opacity-80"
-                    >
-                        <span class="material-symbols-outlined text-[#b1ccc6]"
-                            >keyboard</span
-                        >
-                        Shortcuts
-                    </h3>
-                    <div class="grid grid-cols-2 gap-y-6 gap-x-12">
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>Open Folder</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >Ctrl+O</span
-                            >
+                <div class="modal-card modal-card-md shortcuts-card">
+                    <header class="modal-search-header">
+                        <span class="material-symbols-outlined" aria-hidden="true">keyboard</span>
+                        <h3 class="modal-title">Shortcuts</h3>
+                    </header>
+                    <dl class="shortcuts-grid">
+                        <div class="shortcut-row">
+                            <dt>Open vault</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>O</kbd></dd>
                         </div>
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>New File</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >Ctrl+N</span
-                            >
+                        <div class="shortcut-row">
+                            <dt>New file</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>N</kbd></dd>
                         </div>
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>Vault Search</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >Ctrl+Shift+F</span
-                            >
+                        <div class="shortcut-row">
+                            <dt>Command palette</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>P</kbd></dd>
                         </div>
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>Toggle Sidebar</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >Ctrl+\</span
-                            >
+                        <div class="shortcut-row">
+                            <dt>Vault search</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></dd>
                         </div>
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>Toggle Backlinks</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >Ctrl+Shift+B</span
-                            >
+                        <div class="shortcut-row">
+                            <dt>Focus mode</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></dd>
                         </div>
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>Shortcuts Menu</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >Ctrl+/</span
-                            >
+                        <div class="shortcut-row">
+                            <dt>Toggle sidebar</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>\</kbd></dd>
                         </div>
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>Rename Item</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >F2</span
-                            >
+                        <div class="shortcut-row">
+                            <dt>Backlinks</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></dd>
                         </div>
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>Delete Item</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >Del</span
-                            >
+                        <div class="shortcut-row">
+                            <dt>Shortcuts</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>/</kbd></dd>
                         </div>
-                        <div
-                            class="flex justify-between items-center text-sm text-[#9d9ea3]"
-                        >
-                            <span>Format Bold</span>
-                            <span
-                                class="bg-[#23262b] px-2 py-1 rounded text-xs font-mono font-bold"
-                                >Ctrl+B</span
-                            >
+                        <div class="shortcut-row">
+                            <dt>Rename</dt>
+                            <dd><kbd>F2</kbd></dd>
                         </div>
-                    </div>
+                        <div class="shortcut-row">
+                            <dt>Delete</dt>
+                            <dd><kbd>Del</kbd></dd>
+                        </div>
+                        <div class="shortcut-row">
+                            <dt>Bold</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>B</kbd></dd>
+                        </div>
+                        <div class="shortcut-row">
+                            <dt>PDF contents</dt>
+                            <dd><kbd>Ctrl</kbd>+<kbd>T</kbd></dd>
+                        </div>
+                    </dl>
                 </div>
             </div>
 
-            <!-- Toasts -->
             <div
-                id="toast-container"
-                class="fixed bottom-8 right-8 z-[200] flex flex-col gap-3 pointer-events-none"
-            ></div>
+                id="command-palette"
+                class="command-palette-overlay hidden"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Command palette"
+            >
+                <div class="command-palette">
+                    <input
+                        type="text"
+                        id="command-palette-input"
+                        class="command-palette-input"
+                        placeholder="Type a command…"
+                        autocomplete="off"
+                        spellcheck="false"
+                    />
+                    <div
+                        id="command-palette-list"
+                        class="command-palette-list custom-scrollbar"
+                        role="listbox"
+                    ></div>
+                </div>
+            </div>
+
+            <div id="toast-container" class="toast-container" aria-live="polite"></div>
         </div>
         <script type="module" src="/src/main.js"></script>
     </body>
