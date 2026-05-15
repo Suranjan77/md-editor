@@ -30,7 +30,7 @@ pub fn search_vault(root: &Path, query: &str) -> Result<Vec<SearchResult>, Strin
     Ok(results)
 }
 
-fn list_all_md_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn list_all_md_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     list_all_md_files_recursive(root, &mut files)?;
     Ok(files)

@@ -23,6 +23,14 @@ import {
   setSysConfig,
 } from "./ipc.js";
 import "./style.css";
+import {
+  initCommandPalette,
+  setCommandPaletteCommands,
+  showCommandPalette,
+  hideCommandPalette,
+  toggleCommandPalette,
+  isCommandPaletteOpen,
+} from "./command-palette.js";
 
 const { open, ask } = window.__TAURI__.dialog;
 
@@ -36,6 +44,8 @@ const state = {
   isTrackerOpen: false,
   isSplitView: false,
   splitInstance: null,
+  focusModePinned: false,
+  panelSnapshot: null,
 };
 
 const cmHost = document.getElementById("cm-host");
@@ -57,6 +67,17 @@ const searchInput = document.getElementById("search-input");
 const searchResults = document.getElementById("search-results");
 const shortcutsOverlay = document.getElementById("shortcuts-overlay");
 const toastContainer = document.getElementById("toast-container");
+const vaultLabel = document.getElementById("vault-label");
+const vaultPathEl = document.getElementById("vault-path");
+const toolbarStatus = document.getElementById("toolbar-status");
+const backlinksCount = document.getElementById("backlinks-count");
+const btnToggleSidebar = document.getElementById("btn-toggle-sidebar");
+const btnToggleBacklinks = document.getElementById("btn-toggle-backlinks");
+const btnOpenTracker = document.getElementById("btn-open-tracker");
+const btnVaultSearch = document.getElementById("btn-vault-search");
+const btnShortcuts = document.getElementById("btn-shortcuts");
+const btnFocusMode = document.getElementById("btn-focus-mode");
+const appShell = document.getElementById("app");
 
 const editor = createEditor(cmHost, handleSave);
 
@@ -99,6 +120,7 @@ async function init() {
     const lastRoot = await getSysConfig("last_vault_root");
     if (lastRoot) {
       state.vaultRoot = lastRoot;
+      updateVaultChrome(lastRoot);
       const entries = await setVaultRoot(lastRoot);
       renderFileList(entries);
       welcomeScreen.classList.add("hidden");
@@ -147,17 +169,12 @@ async function init() {
   document
     .getElementById("btn-split-view")
     ?.addEventListener("click", toggleSplitView);
+  btnVaultSearch?.addEventListener("click", showSearchOverlay);
+  btnShortcuts?.addEventListener("click", toggleShortcutsOverlay);
+  btnFocusMode?.addEventListener("click", toggleFocusModePinned);
 
-  // ── Collapse chevron buttons ─────────────────────────────
-  const btnCollapseSidebar = document.getElementById("btn-collapse-sidebar");
-  if (btnCollapseSidebar)
-    btnCollapseSidebar.addEventListener("click", toggleSidebar);
-
-  const btnCollapseBacklinks = document.getElementById(
-    "btn-collapse-backlinks",
-  );
-  if (btnCollapseBacklinks)
-    btnCollapseBacklinks.addEventListener("click", toggleBacklinks);
+  initCommandPalette({ onExecute: runCommand });
+  registerCommands();
 
   // ── Shortcuts overlay close on click outside ─────────────
   shortcutsOverlay.addEventListener("click", (e) => {
@@ -230,6 +247,22 @@ async function init() {
         return;
       }
 
+      // Ctrl+P — Command palette
+      if (mod && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleCommandPalette();
+        return;
+      }
+
+      // Ctrl+Shift+E — Focus mode
+      if (mod && e.shiftKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleFocusModePinned();
+        return;
+      }
+
       // Delete — Delete selected file/folder
       if (e.key === "Delete" && state.selectedSidebarPath) {
         const isInputFocused = ["INPUT", "TEXTAREA"].includes(
@@ -260,6 +293,18 @@ async function init() {
 
       // Escape — close overlays
       if (e.key === "Escape") {
+        if (isCommandPaletteOpen()) {
+          e.preventDefault();
+          e.stopPropagation();
+          hideCommandPalette();
+          return;
+        }
+        if (state.focusModePinned) {
+          e.preventDefault();
+          e.stopPropagation();
+          exitFocusMode(true);
+          return;
+        }
         if (!shortcutsOverlay.classList.contains("hidden")) {
           e.preventDefault();
           e.stopPropagation();
@@ -308,19 +353,200 @@ async function init() {
 }
 
 // ── Panel toggles ───────────────────────────────────────────────────
+function syncPanelToggleButtons() {
+  const sidebarOpen = !sidebar.classList.contains("collapsed");
+  const backlinksOpen = !backlinksPane.classList.contains("collapsed");
+  btnToggleSidebar?.classList.toggle("is-active", sidebarOpen);
+  btnToggleSidebar?.setAttribute("aria-pressed", String(sidebarOpen));
+  btnToggleBacklinks?.classList.toggle("is-active", backlinksOpen);
+  btnToggleBacklinks?.setAttribute("aria-pressed", String(backlinksOpen));
+}
+
 function toggleSidebar() {
+  if (state.focusModePinned) exitFocusMode(true);
   sidebar.classList.toggle("collapsed");
+  syncPanelToggleButtons();
 }
 
 function toggleBacklinks() {
+  if (state.focusModePinned) exitFocusMode(true);
   backlinksPane.classList.toggle("collapsed");
+  syncPanelToggleButtons();
+}
+
+function snapshotPanels() {
+  return {
+    sidebarCollapsed: sidebar.classList.contains("collapsed"),
+    backlinksCollapsed: backlinksPane.classList.contains("collapsed"),
+  };
+}
+
+function applyFocusModePanels() {
+  sidebar.classList.add("collapsed");
+  backlinksPane.classList.add("collapsed");
+  appShell?.classList.add("focus-mode");
+  btnFocusMode?.classList.add("is-active");
+  btnFocusMode?.setAttribute("aria-pressed", "true");
+  syncPanelToggleButtons();
+}
+
+function restoreFocusModePanels(snapshot) {
+  if (!snapshot) return;
+  sidebar.classList.toggle("collapsed", snapshot.sidebarCollapsed);
+  backlinksPane.classList.toggle("collapsed", snapshot.backlinksCollapsed);
+  appShell?.classList.remove("focus-mode");
+  btnFocusMode?.classList.remove("is-active");
+  btnFocusMode?.setAttribute("aria-pressed", "false");
+  syncPanelToggleButtons();
+}
+
+function exitFocusMode(clearPinned = false) {
+  if (clearPinned) state.focusModePinned = false;
+  if (state.panelSnapshot) {
+    restoreFocusModePanels(state.panelSnapshot);
+    state.panelSnapshot = null;
+  } else {
+    appShell?.classList.remove("focus-mode");
+    btnFocusMode?.classList.remove("is-active");
+    btnFocusMode?.setAttribute("aria-pressed", "false");
+    syncPanelToggleButtons();
+  }
+}
+
+function toggleFocusModePinned() {
+  if (state.focusModePinned) {
+    exitFocusMode(true);
+    return;
+  }
+  state.focusModePinned = true;
+  if (!state.panelSnapshot) state.panelSnapshot = snapshotPanels();
+  applyFocusModePanels();
+  editor.focus();
+}
+
+function registerCommands() {
+  setCommandPaletteCommands([
+    {
+      id: "open-vault",
+      label: "Open vault",
+      icon: "folder_open",
+      shortcut: "Ctrl+O",
+      keywords: "folder workspace",
+    },
+    {
+      id: "new-file",
+      label: "New file",
+      icon: "note_add",
+      shortcut: "Ctrl+N",
+      keywords: "create note markdown",
+      when: () => !!state.vaultRoot,
+    },
+    {
+      id: "new-folder",
+      label: "New folder",
+      icon: "create_new_folder",
+      keywords: "create directory",
+      when: () => !!state.vaultRoot,
+    },
+    {
+      id: "search",
+      label: "Search vault",
+      icon: "search",
+      shortcut: "Ctrl+Shift+F",
+      keywords: "find",
+      when: () => !!state.vaultRoot,
+    },
+    {
+      id: "tracker",
+      label: "Study tracker",
+      icon: "school",
+      keywords: "curriculum progress",
+    },
+    {
+      id: "toggle-sidebar",
+      label: "Toggle sidebar",
+      icon: "side_navigation",
+      shortcut: "Ctrl+\\",
+    },
+    {
+      id: "toggle-backlinks",
+      label: "Toggle backlinks",
+      icon: "link",
+      shortcut: "Ctrl+Shift+B",
+      when: () => !!state.currentPath && state.currentPath.endsWith(".md"),
+    },
+    {
+      id: "focus-mode",
+      label: "Focus mode",
+      icon: "center_focus_strong",
+      shortcut: "Ctrl+Shift+E",
+    },
+    {
+      id: "shortcuts",
+      label: "Keyboard shortcuts",
+      icon: "keyboard",
+      shortcut: "Ctrl+/",
+    },
+  ]);
+}
+
+function runCommand(id) {
+  switch (id) {
+    case "open-vault":
+      handleOpenFolder();
+      break;
+    case "new-file":
+      showNameModal("file");
+      break;
+    case "new-folder":
+      showNameModal("folder");
+      break;
+    case "search":
+      showSearchOverlay();
+      break;
+    case "tracker":
+      handleOpenTracker();
+      break;
+    case "toggle-sidebar":
+      toggleSidebar();
+      break;
+    case "toggle-backlinks":
+      toggleBacklinks();
+      break;
+    case "focus-mode":
+      toggleFocusModePinned();
+      break;
+    case "shortcuts":
+      toggleShortcutsOverlay();
+      break;
+    default:
+      break;
+  }
+}
+
+function setTrackerNavActive(active) {
+  btnOpenTracker?.classList.toggle("is-active", active);
+}
+
+function updateVaultChrome(rootPath) {
+  if (!vaultLabel || !vaultPathEl) return;
+  if (!rootPath) {
+    vaultLabel.textContent = "MD Editor";
+    vaultPathEl.textContent = "No vault open";
+    return;
+  }
+  const normalized = rootPath.replace(/\\/g, "/");
+  const name = normalized.split("/").filter(Boolean).pop() || normalized;
+  vaultLabel.textContent = name;
+  vaultPathEl.textContent = normalized;
+  vaultPathEl.title = normalized;
 }
 
 function toggleSplitView() {
   state.isSplitView = !state.isSplitView;
   const btn = document.getElementById("btn-split-view");
   if (state.isSplitView) {
-    btn.classList.add("text-primary", "bg-[#23262b]");
+    btn?.classList.add("is-active");
     
     // Show both
     cmHost.classList.remove("hidden");
@@ -339,7 +565,7 @@ function toggleSplitView() {
       cursor: 'col-resize'
     });
   } else {
-    btn.classList.remove("text-primary", "bg-[#23262b]");
+    btn?.classList.remove("is-active");
     
     if (state.splitInstance) {
       state.splitInstance.destroy();
@@ -400,6 +626,12 @@ async function handleSearch() {
 
 function renderSearchResults(results) {
   searchResults.innerHTML = "";
+  const query = searchInput.value.trim();
+  if (query.length < 2) {
+    searchResults.innerHTML =
+      '<div class="empty-state">Type at least 2 characters…</div>';
+    return;
+  }
   if (results.length === 0) {
     searchResults.innerHTML =
       '<div class="empty-state">No results found.</div>';
@@ -408,14 +640,13 @@ function renderSearchResults(results) {
 
   results.forEach((res) => {
     const item = document.createElement("div");
-    item.className =
-      "p-3 rounded-lg hover:bg-[#23262b] cursor-pointer transition-colors border border-transparent hover:border-[#45484e]/30";
+    item.className = "search-result-item";
     item.innerHTML = `
-      <div class="flex justify-between items-center mb-1">
-        <span class="text-sm font-bold text-[#b1ccc6]">${res.path}</span>
-        <span class="text-[10px] text-[#9d9ea3]">Line ${res.line}</span>
+      <div class="flex justify-between items-center gap-2">
+        <span class="search-result-path">${res.path}</span>
+        <span class="search-result-meta">Line ${res.line}</span>
       </div>
-      <div class="text-[12px] text-[#e3e5ed] opacity-70 truncate">${res.context}</div>
+      <div class="search-result-context">${res.context}</div>
     `;
     item.addEventListener("click", () => {
       handleOpenMdFile(res.path);
@@ -441,6 +672,7 @@ async function handleOpenFolder() {
       state.vaultRoot = selected;
       clearImageCache(); // Free old blob URLs before switching vaults
       await setSysConfig("last_vault_root", selected);
+      updateVaultChrome(selected);
       const entries = await setVaultRoot(selected);
       renderFileList(entries);
       welcomeScreen.classList.add("hidden");
@@ -461,6 +693,7 @@ async function handleOpenMdFile(relativePath) {
     state.selectedSidebarPath = relativePath; // Sync selection with open file
     state.selectedSidebarIsDir = false;
     state.isTrackerOpen = false;
+    setTrackerNavActive(false);
     await setSysConfig("last_file", relativePath);
     // Close PDF if it was open, UNLESS split view is active
     if (!state.isSplitView) {
@@ -485,6 +718,7 @@ async function handleOpenMdFile(relativePath) {
 }
 
 async function handleOpenTracker() {
+  exitFocusMode(true);
   state.isTrackerOpen = true;
   state.selectedSidebarPath = null;
   state.currentPath = "Study Tracker";
@@ -495,6 +729,7 @@ async function handleOpenTracker() {
   pdfViewerHost.classList.add("hidden");
   imagePreview.classList.add("hidden");
   trackerHost.classList.remove("hidden");
+  setTrackerNavActive(true);
   updateSidebarSelection();
   updateToolbarFilename();
 
@@ -505,10 +740,12 @@ async function handleOpenTracker() {
 
 async function handleOpenPdfFile(relativePath) {
   try {
+    exitFocusMode(true);
     state.currentPath = relativePath;
     state.selectedSidebarPath = relativePath;
     state.selectedSidebarIsDir = false;
     state.isTrackerOpen = false;
+    setTrackerNavActive(false);
     await setSysConfig("last_file", relativePath);
 
     // Hide all other views, show PDF viewer
@@ -535,6 +772,7 @@ async function handleOpenPdfFile(relativePath) {
 
 async function handleOpenImageFile(relativePath) {
   try {
+    exitFocusMode(true);
     const bytes = await openFile(relativePath);
     const ext = relativePath.split(".").pop().toLowerCase();
     const uint8Array = new Uint8Array(bytes);
@@ -545,6 +783,8 @@ async function handleOpenImageFile(relativePath) {
     state.currentPath = null; // Not an editable file
     state.selectedSidebarPath = relativePath;
     state.selectedSidebarIsDir = false;
+    state.isTrackerOpen = false;
+    setTrackerNavActive(false);
     await setSysConfig("last_file", relativePath);
 
     // Close PDF if it was open
@@ -719,22 +959,37 @@ function handleNameModalConfirm() {
   else if (state.modalType === "rename") handleRename();
 }
 
+function toVaultRelative(absPath) {
+  if (!state.vaultRoot) return absPath;
+  const root = state.vaultRoot.replace(/\\/g, "/").replace(/\/$/, "");
+  const abs = absPath.replace(/\\/g, "/");
+  if (abs.startsWith(`${root}/`)) return abs.slice(root.length + 1);
+  return absPath;
+}
+
 async function updateBacklinks(path) {
   try {
     const links = await getBacklinks(path);
     backlinksList.innerHTML = "";
+    if (backlinksCount) {
+      if (links.length) {
+        backlinksCount.textContent = String(links.length);
+        backlinksCount.classList.remove("hidden");
+      } else {
+        backlinksCount.classList.add("hidden");
+      }
+    }
     if (!links.length) {
-      backlinksList.innerHTML = '<div class="empty-state text-[11px] text-[#9d9ea3] opacity-70 px-2 italic">No backlinks for this note yet.</div>';
+      backlinksList.innerHTML =
+        '<div class="empty-state backlinks-empty">Links to this note appear here.</div>';
       return;
     }
-    links.forEach((absPath, idx) => {
-      const rel = state.vaultRoot
-        ? absPath.replace(state.vaultRoot, "").replace(/^[\\/]/, "")
-        : absPath;
-      const el = document.createElement("div");
-      el.className =
-        "backlink-item flex flex-col gap-1 p-3 bg-[#23262b]/50 hover:bg-[#23262b] border border-[#45484e]/30 rounded-xl transition-all cursor-pointer group mb-3";
-      el.innerHTML = `<span class="text-on-surface text-[11px] font-medium tracking-normal normal-case group-hover:text-primary transition-colors">${rel}</span>`;
+    links.forEach((absPath) => {
+      const rel = toVaultRelative(absPath);
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "backlink-item";
+      el.textContent = rel;
       el.addEventListener("click", () => handleOpenMdFile(rel));
       backlinksList.appendChild(el);
     });
@@ -779,7 +1034,7 @@ function renderTreeNodes(node, container, level = 0) {
     function createDeleteBtn(path) {
       const btn = document.createElement("button");
       btn.className =
-        "sidebar-delete-btn material-symbols-outlined !text-[14px] p-1 rounded-md opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-[#ee7d77] hover:bg-[#ee7d77]/10 transition-all duration-150 flex-shrink-0";
+        "sidebar-delete-btn material-symbols-outlined flex-shrink-0";
       btn.textContent = "delete";
       btn.title = "Delete";
       btn.addEventListener("click", (e) => {
@@ -857,7 +1112,8 @@ function renderTreeNodes(node, container, level = 0) {
 function renderFileList(entries) {
   fileList.innerHTML = "";
   if (!entries.length) {
-    fileList.innerHTML = '<div class="empty-state text-[11px] text-[#9d9ea3] opacity-70 px-2 italic">No files found in this vault yet. Create one with New File.</div>';
+    fileList.innerHTML =
+      '<div class="empty-state sidebar-empty">No files yet — use New file above.</div>';
     return;
   }
   const tree = buildTree(entries);
@@ -921,25 +1177,31 @@ function updateToolbarFilename(overridePath) {
   if (!path) {
     el.textContent = "No file open";
     el.title = "No file open";
+    if (toolbarStatus) toolbarStatus.textContent = "";
     return;
   }
 
   const normalizedPath = path.replace(/\\/g, "/");
   const segments = normalizedPath.split("/").filter(Boolean);
   const filename = segments[segments.length - 1] || normalizedPath;
-  const parent = segments.length > 1 ? segments[segments.length - 2] : "";
+  const parent = segments.length > 1 ? segments.slice(0, -1).join("/") : "";
 
-  el.textContent = parent ? `${parent}/${filename}` : filename;
-  el.title = path;
+  el.textContent = filename;
+  el.title = normalizedPath;
+  if (toolbarStatus) {
+    toolbarStatus.textContent =
+      state.isTrackerOpen
+        ? "Study tracker"
+        : parent || (state.vaultRoot ? "Vault root" : "");
+  }
 }
 
 // ── Toast notification ──────────────────────────────────────────────
 function showToast(message, type = "info") {
   const toast = document.createElement("div");
-  const border = type === "success" ? "border-[#b1ccc6]" : "border-[#45484e]";
-  toast.className = `toast px-5 py-3 bg-[#181a1d] text-[#e3e5ed] text-xs font-medium rounded-xl shadow-2xl border ${border} flex items-center gap-3 w-max`;
+  toast.className = `toast${type === "success" ? " toast--success" : ""}`;
   const icons = { success: "check_circle", info: "info", error: "error" };
-  toast.innerHTML = `<span class="material-symbols-outlined !text-[16px] ${type === "success" ? "text-[#b1ccc6]" : ""}">${icons[type] || icons.info}</span> ${message}`;
+  toast.innerHTML = `<span class="material-symbols-outlined" style="font-size:16px">${icons[type] || icons.info}</span> ${message}`;
   toastContainer.appendChild(toast);
 
   setTimeout(() => {
@@ -949,5 +1211,6 @@ function showToast(message, type = "info") {
 }
 
 updateToolbarFilename();
+syncPanelToggleButtons();
 
 init();
