@@ -564,20 +564,30 @@ function updateZoomLabel() {
 
 // ── TOC ─────────────────────────────────────────────────────────────
 
+function syncPdfToolbarState() {
+  const tocBtn = container?.querySelector("#pdf-toc-btn");
+  const searchBtn = container?.querySelector("#pdf-search-btn");
+  tocBtn?.classList.toggle("is-active", tocVisible);
+  searchBtn?.classList.toggle("is-active", searchVisible);
+}
+
 function toggleToc() {
   tocVisible = !tocVisible;
   const panel = container.querySelector("#pdf-toc-panel");
   if (tocVisible) {
     panel.classList.remove("hidden");
+    hideSearch();
   } else {
     panel.classList.add("hidden");
   }
+  syncPdfToolbarState();
 }
 
 function hideToc() {
   tocVisible = false;
   const panel = container?.querySelector("#pdf-toc-panel");
   if (panel) panel.classList.add("hidden");
+  syncPdfToolbarState();
 }
 
 function renderToc(toc) {
@@ -663,10 +673,12 @@ function toggleSearch() {
   const bar = container.querySelector("#pdf-search-bar");
   if (searchVisible) {
     bar.classList.remove("hidden");
+    hideToc();
     container.querySelector("#pdf-search-input").focus();
   } else {
     hideSearch();
   }
+  syncPdfToolbarState();
 }
 
 function hideSearch() {
@@ -677,6 +689,7 @@ function hideSearch() {
   searchResultIndex = -1;
   const count = container?.querySelector("#pdf-search-count");
   if (count) count.textContent = "";
+  syncPdfToolbarState();
 }
 
 async function handlePdfSearch() {

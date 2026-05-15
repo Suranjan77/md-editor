@@ -177,6 +177,12 @@ pub fn set_vault_root(path: String, state: State<'_, AppState>) -> Result<Vec<Fi
     {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         *index = FileIndex::new(root.clone());
+        let md_files = fs_commands::list_all_md_files(&root)?;
+        for path in md_files {
+            if let Ok(content) = fs_commands::read_file(&path) {
+                index.update_file(&path, &content);
+            }
+        }
     }
 
     fs_commands::list_vault(&root)
