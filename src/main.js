@@ -36,6 +36,8 @@ const { open, ask } = window.__TAURI__.dialog;
 
 const state = {
   currentPath: null,
+  activeMdPath: null,
+  activePdfPath: null,
   vaultRoot: null,
   selectedSidebarPath: null, // Track which sidebar item is selected
   selectedSidebarIsDir: false, // Track if selection is a folder
@@ -690,6 +692,7 @@ async function handleOpenMdFile(relativePath) {
       return new TextDecoder().decode(new Uint8Array(c));
     });
     state.currentPath = relativePath;
+    state.activeMdPath = relativePath;
     state.selectedSidebarPath = relativePath; // Sync selection with open file
     state.selectedSidebarIsDir = false;
     state.isTrackerOpen = false;
@@ -742,6 +745,7 @@ async function handleOpenPdfFile(relativePath) {
   try {
     exitFocusMode(true);
     state.currentPath = relativePath;
+    state.activePdfPath = relativePath;
     state.selectedSidebarPath = relativePath;
     state.selectedSidebarIsDir = false;
     state.isTrackerOpen = false;
@@ -773,12 +777,7 @@ async function handleOpenPdfFile(relativePath) {
 async function handleOpenImageFile(relativePath) {
   try {
     exitFocusMode(true);
-    const bytes = await openFile(relativePath);
-    const ext = relativePath.split(".").pop().toLowerCase();
-    const uint8Array = new Uint8Array(bytes);
-    const mimeType = ext === "svg" ? "image/svg+xml" : `image/${ext}`;
-    const blob = new Blob([uint8Array], { type: mimeType });
-    const url = URL.createObjectURL(blob);
+    const url = `md-img://localhost/${relativePath}`;
 
     state.currentPath = null; // Not an editable file
     state.selectedSidebarPath = relativePath;
@@ -811,9 +810,9 @@ async function handleOpenImageFile(relativePath) {
 }
 
 async function handleSave() {
-  if (!state.currentPath) return;
+  if (!state.activeMdPath) return;
   try {
-    await saveFile(state.currentPath, getContent(editor));
+    await saveFile(state.activeMdPath, getContent(editor));
     showToast("Saved", "success");
   } catch (err) {
     console.error("Save:", err);
@@ -886,8 +885,14 @@ async function handleRename() {
     renderFileList(entries);
     if (state.currentPath === oldPath) {
       state.currentPath = newPath;
-      updateToolbarFilename();
     }
+    if (state.activeMdPath === oldPath) {
+      state.activeMdPath = newPath;
+    }
+    if (state.activePdfPath === oldPath) {
+      state.activePdfPath = newPath;
+    }
+    updateToolbarFilename();
     state.selectedSidebarPath = newPath;
     updateSidebarSelection();
   } catch (err) {
@@ -905,12 +910,31 @@ async function handleDelete(path) {
   try {
     await deleteFile(path);
     // Clear editor if the deleted item is the current file or its parent folder
+    let changed = false;
     if (
       state.currentPath &&
       (state.currentPath === path || state.currentPath.startsWith(path + "/"))
     ) {
       state.currentPath = null;
+      changed = true;
+    }
+    if (
+      state.activeMdPath &&
+      (state.activeMdPath === path || state.activeMdPath.startsWith(path + "/"))
+    ) {
+      state.activeMdPath = null;
       setContent(editor, "");
+      changed = true;
+    }
+    if (
+      state.activePdfPath &&
+      (state.activePdfPath === path || state.activePdfPath.startsWith(path + "/"))
+    ) {
+      state.activePdfPath = null;
+      changed = true;
+    }
+
+    if (changed) {
       updateToolbarFilename();
     }
     if (state.selectedSidebarPath === path) {
@@ -1124,7 +1148,7 @@ function renderFileList(entries) {
 function updateSidebarSelection() {
   document.querySelectorAll(".file-item").forEach((el) => {
     const path = el.getAttribute("data-path");
-    const isActive = path === state.currentPath;
+    const isActive = path === state.activeMdPath || path === state.activePdfPath;
     const isSelected = path === state.selectedSidebarPath;
 
     // Reset classes first

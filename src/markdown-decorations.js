@@ -1,7 +1,7 @@
 /**
  * Markdown Decorations for CodeMirror 6
  */
-import { Decoration, WidgetType, EditorView } from "@codemirror/view";
+import { Decoration, WidgetType, EditorView, ViewPlugin } from "@codemirror/view";
 import { RangeSetBuilder, StateField, Facet } from "@codemirror/state";
 import { openFile } from "./ipc.js";
 
@@ -156,25 +156,7 @@ class ImageWidget extends WidgetType {
     container.appendChild(img);
 
     if (this.is_local) {
-      if (!imageWidgetImageCache.has(this.src)) {
-        const imageFetch = openFile(this.src)
-          .then((bytes) => {
-            const img_ext = this.src.substring(this.src.lastIndexOf(".") + 1);
-            const uint8Array = new Uint8Array(bytes);
-            const blob = new Blob([uint8Array], { type: `image/${img_ext}` });
-            return URL.createObjectURL(blob);
-          })
-          .catch((err) => {
-            console.error("Failed to fetch local image:", err);
-            return "";
-          });
-
-        imageWidgetImageCache.set(this.src, imageFetch);
-      }
-
-      imageWidgetImageCache.get(this.src).then((imageUrl) => {
-        if (imageUrl) img.src = imageUrl;
-      });
+      img.src = `md-img://localhost/${this.src}`;
     } else {
       img.src = this.src;
     }
