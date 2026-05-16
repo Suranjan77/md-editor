@@ -1,0 +1,12 @@
+pub mod sidebar;
+pub mod toolbar;
+pub mod welcome;
+pub mod backlinks;
+pub mod search;
+pub mod pdf_viewer;
+pub mod tracker;
+pub mod modals;
+pub mod command_palette;
+pub mod toast;
+pub mod toc;
+pub mod interactive_pdf;
