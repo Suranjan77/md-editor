@@ -40,9 +40,12 @@ pub enum Message {
     PdfPageChanged(u16),
     PdfZoomChanged(f32),
     PdfLoaded(u16), // Total pages
-    PdfRendered(u16, image::DynamicImage),
-    PdfRenderFailed(u16),
-    PdfScrolled { y: f32, viewport_height: f32 },
+    PdfRendered(u64, u16, image::DynamicImage),
+    PdfRenderFailed(u64, u16),
+    PdfScrolled {
+        y: f32,
+        viewport_height: f32,
+    },
     PdfLeftClicked(u16, f32, f32),
     PdfRightClicked(u16, f32, f32),
     PdfTocLoaded(Vec<md_editor_core::pdf::TocEntry>),
@@ -56,11 +59,20 @@ pub enum Message {
     TrackerStop,
     TrackerSave(f32, String), // hours, notes
     TrackerLoaded(Vec<md_editor_core::tracker::StudySession>),
+    TrackerTabSelected(TrackerTab),
+    TrackerProjectStatusChanged(String, String),
+    TrackerGateToggled(String, usize),
+    TrackerReadingToggled(String, usize),
+    TrackerConfigChanged(String),
+    TrackerConfigSave,
 
     // ── Toast ───────────────────────────────────────────────────
     ToastShow(String),
     ToastHide,
-    MathRendered(String, Result<(iced::widget::image::Handle, f32, f32), String>),
+    MathRendered(
+        String,
+        Result<(iced::widget::image::Handle, f32, f32), String>,
+    ),
 
     // ── System ───────────────────────────────────────────────────
     Tick,
@@ -68,6 +80,21 @@ pub enum Message {
     FocusModeToggle,
     ToggleTOC,
     TocClicked(usize),
+    SplitViewToggle,
+    SplitViewDragStart,
+    SplitViewDragging(f32),
+    SplitViewDragEnd,
+    WindowResized(f32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackerTab {
+    Dashboard,
+    Log,
+    Projects,
+    Gates,
+    Reading,
+    Config,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +108,7 @@ pub enum Shortcut {
     ToggleBacklinks,
     FocusMode,
     TableOfContents,
+    Escape,
 }
 
 #[derive(Debug, Clone)]

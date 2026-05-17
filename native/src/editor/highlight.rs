@@ -40,7 +40,7 @@ impl StyledSpan {
             color: theme::TEXT_PRIMARY,
             bold: false,
             italic: false,
-            font_size: 14.0,
+            font_size: 17.0,
             is_code: false,
             is_link: false,
             link_target: None,
@@ -176,7 +176,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                     display_text: Some(String::new()),
                     color: theme::TEXT_MUTED,
                     is_syntax: true,
-                    font_size: 13.0,
+                    font_size: 14.0,
                     is_code: true,
                     ..StyledSpan::plain("")
                 });
@@ -185,48 +185,70 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             }
         }
 
-        // Math block fences
-        if trimmed.starts_with("$$") {
-            if in_math_block {
-                // Closing fence
+        // Math block fences. Keep this narrow so ordinary markdown/HTML is not
+        // accidentally promoted to a math block.
+        if in_math_block && is_obvious_markdown_boundary(trimmed) {
+            in_math_block = false;
+            block_id += 1;
+        }
+
+        if in_math_block && (trimmed.starts_with("$$") || is_math_end(trimmed)) {
+            let mut sl = StyledLine::new();
+            sl.is_math_block = true;
+            sl.is_block_fence = true;
+            sl.block_id = current_block_id;
+            sl.spans.push(StyledSpan {
+                text: raw_line.to_string(),
+                display_text: Some(String::new()),
+                color: theme::SUCCESS,
+                is_syntax: true,
+                is_math: true,
+                font_size: 16.0,
+                ..StyledSpan::plain("")
+            });
+            lines.push(sl);
+            in_math_block = false;
+            block_id += 1;
+            continue;
+        }
+
+        if trimmed.starts_with("$$") || is_math_begin(trimmed) {
+            if let Some(inline_math) = single_line_display_math(trimmed) {
+                block_id += 1;
                 let mut sl = StyledLine::new();
                 sl.is_math_block = true;
-                sl.is_block_fence = true;
-                sl.block_id = current_block_id;
+                sl.block_id = block_id;
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
-                    display_text: Some(String::new()),
-                    color: theme::SUCCESS,
-                    is_syntax: true,
+                    display_text: Some(inline_math.to_string()),
+                    color: theme::TEXT_PRIMARY,
+                    italic: true,
+                    font_size: 16.0,
                     is_math: true,
-                    font_size: 14.0,
-                    ..StyledSpan::plain("")
-                });
-                lines.push(sl);
-                in_math_block = false;
-                block_id += 1;
-                continue;
-            } else {
-                // Opening fence
-                block_id += 1;
-                current_block_id = block_id;
-                in_math_block = true;
-                let mut sl = StyledLine::new();
-                sl.is_math_block = true;
-                sl.is_block_fence = true;
-                sl.block_id = current_block_id;
-                sl.spans.push(StyledSpan {
-                    text: raw_line.to_string(),
-                    display_text: Some(String::new()),
-                    color: theme::SUCCESS,
-                    is_syntax: true,
-                    is_math: true,
-                    font_size: 14.0,
                     ..StyledSpan::plain("")
                 });
                 lines.push(sl);
                 continue;
             }
+
+            block_id += 1;
+            current_block_id = block_id;
+            in_math_block = true;
+            let mut sl = StyledLine::new();
+            sl.is_math_block = true;
+            sl.is_block_fence = true;
+            sl.block_id = current_block_id;
+            sl.spans.push(StyledSpan {
+                text: raw_line.to_string(),
+                display_text: Some(String::new()),
+                color: theme::SUCCESS,
+                is_syntax: true,
+                is_math: true,
+                font_size: 16.0,
+                ..StyledSpan::plain("")
+            });
+            lines.push(sl);
+            continue;
         }
 
         // Inside code block
@@ -239,7 +261,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 text: raw_line.to_string(),
                 display_text: None,
                 color: theme::TEXT_PRIMARY,
-                font_size: 13.0,
+                font_size: 14.0,
                 is_code: true,
                 ..StyledSpan::plain("")
             });
@@ -257,7 +279,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 display_text: None,
                 color: theme::TEXT_PRIMARY,
                 italic: true,
-                font_size: 14.0,
+                font_size: 16.0,
                 is_math: true,
                 ..StyledSpan::plain("")
             });
@@ -275,17 +297,24 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             let mut sl = StyledLine::new();
             sl.is_table_row = true;
             sl.block_id = current_block_id;
-            
+
             // Check if it's a separator line like |---|---|
-            let is_separator = trimmed.chars().all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
+            let is_separator = trimmed
+                .chars()
+                .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
             if is_separator {
                 // We can mark this as an empty row or skip spans, but let's just make it a row
-                sl.spans.push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 14.0));
+                sl.spans
+                    .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
             } else {
                 let mut parts = trimmed.split('|').collect::<Vec<_>>();
-                if parts.first() == Some(&"") { parts.remove(0); }
-                if parts.last() == Some(&"") { parts.pop(); }
-                
+                if parts.first() == Some(&"") {
+                    parts.remove(0);
+                }
+                if parts.last() == Some(&"") {
+                    parts.pop();
+                }
+
                 for part in parts {
                     let mut cell_spans = Vec::new();
                     parse_inline_spans(part.trim(), &mut cell_spans);
@@ -304,6 +333,64 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
         lines.push(sl);
     }
 
+    // Consolidated math block processing
+    let mut idx = 0;
+    while idx < lines.len() {
+        if lines[idx].is_math_block && lines[idx].is_block_fence && lines[idx].block_id > 0 {
+            let block_id = lines[idx].block_id;
+            let mut j = idx + 1;
+            let mut math_lines = Vec::new();
+
+            // If the opening fence has some math content (like \begin{align}), include it.
+            let first_trimmed = lines[idx]
+                .spans
+                .first()
+                .map(|s| s.text.trim())
+                .unwrap_or("");
+            if first_trimmed.starts_with("\\begin{") {
+                math_lines.push(first_trimmed);
+            }
+
+            while j < lines.len() && lines[j].block_id == block_id {
+                if !lines[j].is_block_fence {
+                    if let Some(span) = lines[j].spans.first() {
+                        math_lines.push(span.text.as_str());
+                    }
+                } else {
+                    // If the closing fence is \end{...}, include it.
+                    let last_trimmed = lines[j].spans.first().map(|s| s.text.trim()).unwrap_or("");
+                    if last_trimmed.starts_with("\\end{") {
+                        math_lines.push(last_trimmed);
+                    }
+                }
+                j += 1;
+            }
+
+            // Consolidate the math lines
+            let consolidated_math = math_lines.join("\n");
+
+            if !consolidated_math.is_empty() {
+                if let Some(span) = lines[idx].spans.first_mut() {
+                    span.display_text = Some(consolidated_math);
+                    span.is_syntax = false;
+                    span.is_math = true;
+                    span.font_size = 16.0;
+                }
+            }
+
+            for hidden_idx in idx + 1..j {
+                for span in &mut lines[hidden_idx].spans {
+                    span.display_text = Some(String::new());
+                    span.is_syntax = true;
+                }
+            }
+
+            idx = j;
+        } else {
+            idx += 1;
+        }
+    }
+
     lines
 }
 
@@ -313,7 +400,11 @@ fn highlight_line(line: &str) -> StyledLine {
 
     // Headings
     if let Some(level) = detect_heading(trimmed) {
-        let prefix_len = level as usize + 1;
+        let prefix_len = if trimmed.chars().nth(level as usize) == Some(' ') {
+            level as usize + 1
+        } else {
+            level as usize
+        };
         let display = if trimmed.len() > prefix_len {
             &trimmed[prefix_len..]
         } else {
@@ -390,13 +481,24 @@ fn highlight_line(line: &str) -> StyledLine {
     }
 
     // Task list items (must check before regular list items)
-    if trimmed.starts_with("- [ ] ") || trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ") {
+    if trimmed.starts_with("- [ ] ")
+        || trimmed.starts_with("- [x] ")
+        || trimmed.starts_with("- [X] ")
+    {
         let checkbox_end = line.len() - trimmed.len() + 6;
         let is_checked = trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]");
         sl.spans.push(StyledSpan {
             text: line[..(line.len() - trimmed.len() + 6)].to_string(),
-            display_text: Some(if is_checked { "☑ ".to_string() } else { "☐ ".to_string() }),
-            color: if is_checked { theme::ACCENT } else { theme::TEXT_MUTED },
+            display_text: Some(if is_checked {
+                "☑ ".to_string()
+            } else {
+                "☐ ".to_string()
+            }),
+            color: if is_checked {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            },
             is_checkbox: true,
             is_checked,
             ..StyledSpan::plain("")
@@ -450,87 +552,111 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
     while i < len {
         // Inline code
         if chars[i] == '`' {
-            if !current.is_empty() { spans.push(StyledSpan::plain(&current)); current.clear(); }
+            if !current.is_empty() {
+                spans.push(StyledSpan::plain(&current));
+                current.clear();
+            }
             if let Some(end) = find_char(&chars, i + 1, '`') {
                 let code_text: String = chars[i + 1..end].iter().collect();
                 // Opening backtick — syntax marker
-                spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 13.0));
+                spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 14.0));
                 // Code content
                 spans.push(StyledSpan {
                     text: code_text,
                     display_text: None,
                     color: theme::ACCENT_SECONDARY,
-                    font_size: 13.0,
+                    font_size: 14.0,
                     is_code: true,
                     ..StyledSpan::plain("")
                 });
                 // Closing backtick — syntax marker
-                spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 13.0));
-                i = end + 1; continue;
+                spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 14.0));
+                i = end + 1;
+                continue;
             }
         }
 
         // Bold **text**
         if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
-            if !current.is_empty() { spans.push(StyledSpan::plain(&current)); current.clear(); }
+            if !current.is_empty() {
+                spans.push(StyledSpan::plain(&current));
+                current.clear();
+            }
             if let Some(end) = find_double(&chars, i + 2, '*') {
                 let bold_text: String = chars[i + 2..end].iter().collect();
                 // Opening ** — syntax marker
-                spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 14.0));
+                spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
                 // Bold text
                 spans.push(StyledSpan {
-                    text: bold_text, color: theme::TEXT_PRIMARY,
-                    bold: true, font_size: 14.0,
+                    text: bold_text,
+                    color: theme::TEXT_PRIMARY,
+                    bold: true,
+                    font_size: 16.0,
                     ..StyledSpan::plain("")
                 });
                 // Closing ** — syntax marker
-                spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 14.0));
-                i = end + 2; continue;
+                spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
+                i = end + 2;
+                continue;
             }
         }
 
         // Italic *text*  (single *, not **)
         if chars[i] == '*' && (i + 1 >= len || chars[i + 1] != '*') {
-            if !current.is_empty() { spans.push(StyledSpan::plain(&current)); current.clear(); }
+            if !current.is_empty() {
+                spans.push(StyledSpan::plain(&current));
+                current.clear();
+            }
             if let Some(end) = find_char(&chars, i + 1, '*') {
                 let italic_text: String = chars[i + 1..end].iter().collect();
-                spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 14.0));
+                spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
                 spans.push(StyledSpan {
-                    text: italic_text, color: theme::TEXT_PRIMARY,
-                    italic: true, font_size: 14.0,
+                    text: italic_text,
+                    color: theme::TEXT_PRIMARY,
+                    italic: true,
+                    font_size: 16.0,
                     ..StyledSpan::plain("")
                 });
-                spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 14.0));
-                i = end + 1; continue;
+                spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
+                i = end + 1;
+                continue;
             }
         }
 
         // Wikilink [[target|display]]
         if i + 1 < len && chars[i] == '[' && chars[i + 1] == '[' {
-            if !current.is_empty() { spans.push(StyledSpan::plain(&current)); current.clear(); }
+            if !current.is_empty() {
+                spans.push(StyledSpan::plain(&current));
+                current.clear();
+            }
             if let Some(end) = find_double(&chars, i + 2, ']') {
                 let link_text: String = chars[i + 2..end].iter().collect();
                 let parts: Vec<&str> = link_text.split('|').collect();
                 let target = parts[0];
                 let display = parts.get(1).unwrap_or(&target);
                 // [[ — syntax marker
-                spans.push(StyledSpan::syntax("[[", theme::TEXT_MUTED, 14.0));
+                spans.push(StyledSpan::syntax("[[", theme::TEXT_MUTED, 16.0));
                 spans.push(StyledSpan {
                     text: link_text.clone(),
                     display_text: Some(display.to_string()),
                     color: theme::ACCENT,
-                    is_link: true, link_target: Some(target.to_string()),
+                    is_link: true,
+                    link_target: Some(target.to_string()),
                     ..StyledSpan::plain("")
                 });
                 // ]] — syntax marker
-                spans.push(StyledSpan::syntax("]]", theme::TEXT_MUTED, 14.0));
-                i = end + 2; continue;
+                spans.push(StyledSpan::syntax("]]", theme::TEXT_MUTED, 16.0));
+                i = end + 2;
+                continue;
             }
         }
 
         // Markdown link [text](url)
         if chars[i] == '[' && (i == 0 || chars[i - 1] != '!') {
-            if !current.is_empty() { spans.push(StyledSpan::plain(&current)); current.clear(); }
+            if !current.is_empty() {
+                spans.push(StyledSpan::plain(&current));
+                current.clear();
+            }
             if let Some(end_text) = find_char(&chars, i + 1, ']') {
                 if end_text + 1 < len && chars[end_text + 1] == '(' {
                     if let Some(end_url) = find_char(&chars, end_text + 2, ')') {
@@ -542,10 +668,12 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                             text: raw,
                             display_text: Some(link_display.clone()),
                             color: theme::ACCENT,
-                            is_link: true, link_target: Some(url),
+                            is_link: true,
+                            link_target: Some(url),
                             ..StyledSpan::plain("")
                         });
-                        i = end_url + 1; continue;
+                        i = end_url + 1;
+                        continue;
                     }
                 }
             }
@@ -553,22 +681,31 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
 
         // Inline math $...$
         if chars[i] == '$' && (i + 1 < len && chars[i + 1] != '$') {
-            if !current.is_empty() { spans.push(StyledSpan::plain(&current)); current.clear(); }
+            if !current.is_empty() {
+                spans.push(StyledSpan::plain(&current));
+                current.clear();
+            }
             if let Some(end) = find_char(&chars, i + 1, '$') {
                 let math_raw: String = chars[i..=end].iter().collect();
                 spans.push(StyledSpan {
-                    text: math_raw, color: theme::TEXT_PRIMARY,
-                    italic: true, font_size: 14.0,
+                    text: math_raw,
+                    color: theme::TEXT_PRIMARY,
+                    italic: true,
+                    font_size: 16.0,
                     is_math: true,
                     ..StyledSpan::plain("")
                 });
-                i = end + 1; continue;
+                i = end + 1;
+                continue;
             }
         }
 
         // Image: ![alt](url)
         if i + 1 < len && chars[i] == '!' && chars[i + 1] == '[' {
-            if !current.is_empty() { spans.push(StyledSpan::plain(&current)); current.clear(); }
+            if !current.is_empty() {
+                spans.push(StyledSpan::plain(&current));
+                current.clear();
+            }
             if let Some(end_alt) = find_char(&chars, i + 2, ']') {
                 if end_alt + 1 < len && chars[end_alt + 1] == '(' {
                     if let Some(end_url) = find_char(&chars, end_alt + 2, ')') {
@@ -579,13 +716,15 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                             text: raw,
                             display_text: Some(String::new()), // hidden in preview, image is drawn separately
                             color: theme::WARNING,
-                            italic: true, font_size: 13.0,
+                            italic: true,
+                            font_size: 14.0,
                             is_image: true,
                             image_path: Some(url),
                             image_alt: Some(alt_text),
                             ..StyledSpan::plain("")
                         });
-                        i = end_url + 1; continue;
+                        i = end_url + 1;
+                        continue;
                     }
                 }
             }
@@ -594,17 +733,103 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
         current.push(chars[i]);
         i += 1;
     }
-    if !current.is_empty() { spans.push(StyledSpan::plain(&current)); }
+    if !current.is_empty() {
+        spans.push(StyledSpan::plain(&current));
+    }
 }
 
 fn detect_heading(trimmed: &str) -> Option<u8> {
-    if trimmed.starts_with("###### ") { return Some(6); }
-    if trimmed.starts_with("##### ") { return Some(5); }
-    if trimmed.starts_with("#### ") { return Some(4); }
-    if trimmed.starts_with("### ") { return Some(3); }
-    if trimmed.starts_with("## ") { return Some(2); }
-    if trimmed.starts_with("# ") { return Some(1); }
+    let heading_without_required_space = |prefix: &str| {
+        trimmed.starts_with(prefix)
+            && trimmed
+                .chars()
+                .nth(prefix.len())
+                .map(|c| !c.is_whitespace() && c != '#')
+                .unwrap_or(false)
+    };
+    if trimmed.starts_with("###### ") {
+        return Some(6);
+    }
+    if trimmed.starts_with("##### ") {
+        return Some(5);
+    }
+    if trimmed.starts_with("#### ") {
+        return Some(4);
+    }
+    if trimmed.starts_with("### ") {
+        return Some(3);
+    }
+    if trimmed.starts_with("## ") {
+        return Some(2);
+    }
+    if trimmed.starts_with("# ") {
+        return Some(1);
+    }
+    if heading_without_required_space("######") {
+        return Some(6);
+    }
+    if heading_without_required_space("#####") {
+        return Some(5);
+    }
+    if heading_without_required_space("####") {
+        return Some(4);
+    }
+    if heading_without_required_space("###") {
+        return Some(3);
+    }
+    if heading_without_required_space("##") {
+        return Some(2);
+    }
+    if heading_without_required_space("#") {
+        return Some(1);
+    }
     None
+}
+
+fn is_math_begin(trimmed: &str) -> bool {
+    trimmed == "\\[" || math_env(trimmed, "\\begin{").is_some()
+}
+
+fn is_math_end(trimmed: &str) -> bool {
+    trimmed == "\\]" || math_env(trimmed, "\\end{").is_some()
+}
+
+fn math_env<'a>(trimmed: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = trimmed.strip_prefix(prefix)?;
+    let end = rest.find('}')?;
+    let env = &rest[..end];
+    match env {
+        "equation" | "equation*" | "align" | "align*" | "aligned" | "gather" | "gather*"
+        | "multline" | "multline*" | "split" | "cases" | "matrix" | "pmatrix" | "bmatrix"
+        | "vmatrix" | "Vmatrix" => Some(env),
+        _ => None,
+    }
+}
+
+fn single_line_display_math(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.strip_prefix("$$")?;
+    let end = rest.rfind("$$")?;
+    if end == 0 && rest.trim() == "$$" {
+        return None;
+    }
+    let math = rest[..end].trim();
+    if math.is_empty() {
+        None
+    } else {
+        Some(math)
+    }
+}
+
+fn is_obvious_markdown_boundary(trimmed: &str) -> bool {
+    if trimmed.is_empty() {
+        return false;
+    }
+    detect_heading(trimmed).is_some()
+        || trimmed.starts_with("- ")
+        || trimmed.starts_with("* ")
+        || trimmed.starts_with("+ ")
+        || detect_numbered_list(trimmed).is_some()
+        || trimmed.starts_with("![")
 }
 
 fn detect_numbered_list(trimmed: &str) -> Option<usize> {
@@ -623,17 +848,70 @@ fn detect_numbered_list(trimmed: &str) -> Option<usize> {
 
 fn heading_size(level: u8) -> f32 {
     match level {
-        1 => 28.0, 2 => 22.0, 3 => 18.0, 4 => 16.0, 5 => 15.0, _ => 14.0,
+        1 => 34.0,
+        2 => 28.0,
+        3 => 23.0,
+        4 => 20.0,
+        5 => 18.0,
+        _ => 17.0,
     }
 }
 
 fn find_char(chars: &[char], start: usize, target: char) -> Option<usize> {
-    for i in start..chars.len() { if chars[i] == target { return Some(i); } }
+    for i in start..chars.len() {
+        if chars[i] == target {
+            return Some(i);
+        }
+    }
     None
 }
 
 fn find_double(chars: &[char], start: usize, target: char) -> Option<usize> {
-    if start + 1 >= chars.len() { return None; }
-    for i in start..chars.len() - 1 { if chars[i] == target && chars[i + 1] == target { return Some(i); } }
+    if start + 1 >= chars.len() {
+        return None;
+    }
+    for i in start..chars.len() - 1 {
+        if chars[i] == target && chars[i + 1] == target {
+            return Some(i);
+        }
+    }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::highlight_markdown;
+
+    #[test]
+    fn heading_is_not_math() {
+        let lines = highlight_markdown("# Heading");
+        assert!(lines[0].spans.iter().any(|span| span.is_heading));
+        assert!(!lines[0].is_math_block);
+    }
+
+    #[test]
+    fn align_environment_is_one_math_block() {
+        let lines = highlight_markdown("\\begin{align}\na &= b\n\\end{align}\n# Next");
+        assert!(lines[0].is_math_block);
+        assert_eq!(lines[0].block_id, lines[1].block_id);
+        assert_eq!(lines[1].block_id, lines[2].block_id);
+        assert!(!lines[3].is_math_block);
+        assert!(lines[3].spans.iter().any(|span| span.is_heading));
+    }
+
+    #[test]
+    fn unknown_begin_environment_is_plain_text() {
+        let lines = highlight_markdown("\\begin{note}\n# Still heading");
+        assert!(!lines[0].is_math_block);
+        assert!(lines[1].spans.iter().any(|span| span.is_heading));
+    }
+
+    #[test]
+    fn single_line_display_math_does_not_swallow_following_heading() {
+        let lines = highlight_markdown("$$a=b$$\n##Change of Basis\nPlain text");
+        assert!(lines[0].is_math_block);
+        assert!(!lines[1].is_math_block);
+        assert!(lines[1].spans.iter().any(|span| span.is_heading));
+        assert!(!lines[2].is_math_block);
+    }
 }

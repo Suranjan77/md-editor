@@ -121,6 +121,19 @@ pub fn view_continuous<'a>(
     zoom: f32,
     dimensions: &'a [Option<(u32, u32)>],
 ) -> Element<'a, Message, Theme, Renderer> {
+    if pages.is_empty() {
+        return container(text("Loading PDF...").color(theme::TEXT_MUTED).size(14))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                ..Default::default()
+            })
+            .into();
+    }
+
     let mut page_list = column![].spacing(20).padding(20).align_x(Alignment::Center)
         .width(Length::Fill)
         .height(Length::Shrink);
@@ -149,8 +162,8 @@ pub fn view_continuous<'a>(
         } else {
             page_list = page_list.push(
                 container(text(format!("Loading Page {}...", i + 1)).color(theme::TEXT_MUTED))
-                    .width(Length::Fixed(800.0 * zoom))
-                    .height(Length::Fixed(1100.0 * zoom))
+                    .width(Length::Fixed(612.0 * zoom))
+                    .height(Length::Fixed(792.0 * zoom))
                     .center_x(Length::Fill)
                     .center_y(Length::Fill)
             );

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use iced::widget::{button, column, container, row, scrollable, text, Column, Space};
+use iced::widget::{button, column, container, row, scrollable, text, tooltip, Column, Space};
 use iced::{Alignment, Element, Length, Theme, Renderer, Color, Border, Background};
 
 use crate::messages::Message;
@@ -113,6 +113,15 @@ fn render_tree_level<'a>(
             .width(Length::Fill)
             .style(style);
 
+        let delete_btn = tooltip(
+            button(text("×").size(13).color(theme::TEXT_MUTED))
+                .on_press(Message::DeleteFileDialog(path.clone()))
+                .padding([4, 6])
+                .style(button::text),
+            "Delete",
+            tooltip::Position::FollowCursor,
+        );
+
         // Add a small indicator for active file
         let item = if is_active {
             row![
@@ -122,10 +131,11 @@ fn render_tree_level<'a>(
                         border: Border { radius: 1.0.into(), ..Default::default() },
                         ..Default::default()
                     }),
-                btn
+                btn,
+                delete_btn
             ].spacing(0).align_y(Alignment::Center).into()
         } else {
-            btn.into()
+            row![btn, delete_btn].spacing(0).align_y(Alignment::Center).into()
         };
 
         elements.push(item);
@@ -157,14 +167,14 @@ pub fn view<'a>(
     let header = row![
         text("EXPLORER").size(11).color(theme::TEXT_MUTED).font(iced::Font::default()),
         Space::new().width(Length::Fill),
-        button(text("+").size(14))
+        tooltip(button(text("+").size(14).color(theme::TEXT_MUTED))
             .on_press(Message::CreateFileDialog)
             .padding([4, 8])
-            .style(button::text),
-        button(text("󰉋").size(14)) // Folder icon
+            .style(button::text), "New file", tooltip::Position::FollowCursor),
+        tooltip(button(text("▣").size(14).color(theme::TEXT_MUTED))
             .on_press(Message::CreateFolderDialog)
             .padding([4, 8])
-            .style(button::text),
+            .style(button::text), "New folder", tooltip::Position::FollowCursor),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
