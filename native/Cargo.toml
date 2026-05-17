@@ -1,7 +1,7 @@
 [package]
 name = "md-editor-native"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [[bin]]
 name = "md-editor"
@@ -10,24 +10,14 @@ path = "src/main.rs"
 [dependencies]
 md-editor-core = { path = "../core" }
 iced = { version = "0.14", features = ["canvas", "image", "advanced", "tokio"] }
-rfd = "0.15"
-arboard = "3"
+rfd = "0.17.2"
 ropey = "1.6"
-pulldown-cmark = "0.12"
 image = "0.25"
 chrono = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
+syntect = "5"
 ratex-render = { version = "0.1.7", features = ["embed-fonts"] }
-ratex-lexer = "0.1.7"
 ratex-parser = "0.1.7"
 ratex-layout = "0.1.7"
-ratex-font-loader = { version = "0.1.7", features = ["embed-fonts"] }
-ratex-katex-fonts = "0.1.7"
 ratex-types = "0.1.7"
-resvg = "0.47.0"
-tiny-skia = "0.12.0"
-usvg = "0.47.0"
-
-[dev-dependencies]
-tempfile = "3.8"

@@ -102,18 +102,18 @@ fn line_height_for(
             }
 
             if seen_math_blocks.insert(line.block_id) {
-                let mut max_h: f32 = 50.0;
+                let mut max_h: f32 = 72.0;
                 for span in &line.spans {
                     let tex = span.visible_text(false).trim_matches('$').trim();
                     if let Some((_, _, h)) = math_cache.get(tex) {
-                        max_h = max_h.max(*h * 1.2 + 32.0); // extra padding for equation spacing
+                        max_h = max_h.max(*h * 1.2 + 48.0);
                     } else if !tex.is_empty() {
                         let visual_lines = tex
                             .lines()
-                            .map(|line| (line.chars().count() as f32 / 90.0).ceil().max(1.0))
+                            .map(|line| (line.chars().count() as f32 / 72.0).ceil().max(1.0))
                             .sum::<f32>()
                             .max(1.0);
-                        max_h = max_h.max(visual_lines * BASE_LINE_HEIGHT + 28.0);
+                        max_h = max_h.max(visual_lines * BASE_LINE_HEIGHT + 48.0);
                     }
                 }
                 return max_h;
@@ -122,13 +122,45 @@ fn line_height_for(
             }
         }
     }
+    if line.is_code_block {
+        let char_count = line
+            .spans
+            .iter()
+            .map(|s| s.visible_text(is_editing).chars().count())
+            .sum::<usize>() as f32;
+        let available_chars = ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT - 32.0).max(120.0)
+            / (15.0 * 0.6))
+            .max(12.0);
+        let visual_lines = (char_count / available_chars).ceil().max(1.0);
+        return visual_lines * 24.0 + 12.0;
+    }
     if line.is_table_row {
-        return BASE_LINE_HEIGHT + 12.0;
+        return 34.0;
+    }
+    if !line.is_math_block && line.spans.iter().any(|s| s.is_math) {
+        let max_font = line
+            .spans
+            .iter()
+            .map(|s| s.font_size)
+            .fold(17.0_f32, f32::max);
+        let char_count = line
+            .spans
+            .iter()
+            .map(|s| s.visible_text(false).chars().count())
+            .sum::<usize>() as f32;
+        let available_chars = ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0)
+            / (max_font * 0.55))
+            .max(12.0);
+        let visual_lines = (char_count / available_chars).ceil().max(1.0);
+        return visual_lines * BASE_LINE_HEIGHT + 10.0;
     }
     if !line.is_code_block
         && !line.is_table_row
         && !line.is_blockquote
-        && !line.spans.iter().any(|s| s.is_image || s.is_math || s.is_checkbox)
+        && !line
+            .spans
+            .iter()
+            .any(|s| s.is_image || s.is_math || s.is_checkbox)
     {
         let max_font = line
             .spans
@@ -140,7 +172,9 @@ fn line_height_for(
             .iter()
             .map(|s| s.visible_text(false).chars().count())
             .sum::<usize>() as f32;
-        let available_chars = ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0) / (max_font * 0.55)).max(12.0);
+        let available_chars = ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0)
+            / (max_font * 0.55))
+            .max(12.0);
         let visual_lines = (char_count / available_chars).ceil().max(1.0);
         return if max_font > 18.0 {
             visual_lines * (max_font * 1.35).max(BASE_LINE_HEIGHT)
@@ -148,16 +182,24 @@ fn line_height_for(
             visual_lines * BASE_LINE_HEIGHT
         };
     }
-    // For headings, use 1.6× the font size so larger headings get more space
+    // Mixed inline content is drawn span-by-span, so reserve space for wrapping here too.
     let max_font = line
         .spans
         .iter()
         .map(|s| s.font_size)
         .fold(14.0_f32, f32::max);
+    let char_count = line
+        .spans
+        .iter()
+        .map(|s| s.visible_text(is_editing).chars().count())
+        .sum::<usize>() as f32;
+    let available_chars =
+        ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0) / (max_font * 0.55)).max(12.0);
+    let visual_lines = (char_count / available_chars).ceil().max(1.0);
     if max_font > 15.0 {
-        (max_font * 1.6).max(BASE_LINE_HEIGHT)
+        visual_lines * (max_font * 1.6).max(BASE_LINE_HEIGHT)
     } else {
-        BASE_LINE_HEIGHT
+        visual_lines * BASE_LINE_HEIGHT
     }
 }
 
@@ -201,6 +243,113 @@ where
         wrapping: iced::advanced::text::Wrapping::None,
     });
     paragraph.min_bounds().width
+}
+
+fn visual_line_step(font_size: f32) -> f32 {
+    (font_size * 1.45).max(BASE_LINE_HEIGHT)
+}
+
+fn draw_text_chunk<R>(
+    renderer: &mut R,
+    content: &str,
+    x: f32,
+    y: f32,
+    max_width: f32,
+    font_size: f32,
+    font: iced::Font,
+    color: Color,
+    viewport: &Rectangle,
+) where
+    R: renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    renderer.fill_text(
+        iced::advanced::text::Text {
+            content: content.to_string(),
+            bounds: Size::new(max_width.max(1.0), visual_line_step(font_size)),
+            size: font_size.into(),
+            line_height: iced::advanced::text::LineHeight::default(),
+            font,
+            align_x: iced::alignment::Horizontal::Left.into(),
+            align_y: iced::alignment::Vertical::Top.into(),
+            shaping: iced::advanced::text::Shaping::Basic,
+            wrapping: iced::advanced::text::Wrapping::None,
+        },
+        Point::new(x, y + (BASE_LINE_HEIGHT - font_size) / 2.0),
+        color,
+        *viewport,
+    );
+}
+
+fn draw_wrapped_text<R>(
+    renderer: &mut R,
+    text: &str,
+    x: &mut f32,
+    y: &mut f32,
+    line_start_x: f32,
+    line_right_x: f32,
+    font_size: f32,
+    font: iced::Font,
+    color: Color,
+    viewport: &Rectangle,
+) where
+    R: renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    let step = visual_line_step(font_size);
+    let mut token = String::new();
+    let mut flush = |token: &mut String, x: &mut f32, y: &mut f32| {
+        if token.is_empty() {
+            return;
+        }
+        let width = measure_width::<R>(token, font_size, font);
+        if *x > line_start_x && *x + width > line_right_x {
+            *y += step;
+            *x = line_start_x;
+        }
+        if width <= (line_right_x - line_start_x).max(1.0) {
+            draw_text_chunk(
+                renderer,
+                token,
+                *x,
+                *y,
+                line_right_x - *x,
+                font_size,
+                font,
+                color,
+                viewport,
+            );
+            *x += width;
+        } else {
+            for ch in token.chars() {
+                let ch_text = ch.to_string();
+                let ch_w = measure_width::<R>(&ch_text, font_size, font);
+                if *x > line_start_x && *x + ch_w > line_right_x {
+                    *y += step;
+                    *x = line_start_x;
+                }
+                draw_text_chunk(
+                    renderer,
+                    &ch_text,
+                    *x,
+                    *y,
+                    line_right_x - *x,
+                    font_size,
+                    font,
+                    color,
+                    viewport,
+                );
+                *x += ch_w;
+            }
+        }
+        token.clear();
+    };
+
+    for ch in text.chars() {
+        token.push(ch);
+        if ch.is_whitespace() {
+            flush(&mut token, x, y);
+        }
+    }
+    flush(&mut token, x, y);
 }
 
 fn normalized_selection(
@@ -408,16 +557,16 @@ where
                     theme::ACCENT_DIM,
                 );
             } else if meta.is_table && !meta.is_editing {
-                let table_width = meta.col_widths.iter().sum::<f32>();
-                let table_x = bounds.x
-                    + TEXT_X_OFFSET
-                    + ((bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - table_width).max(0.0) / 2.0);
+                let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
+                let table_width = meta.col_widths.iter().sum::<f32>().min(available_w);
+                let table_x =
+                    bounds.x + TEXT_X_OFFSET + ((available_w - table_width).max(0.0) / 2.0);
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: Rectangle {
-                            x: table_x - 8.0,
+                            x: table_x - 6.0,
                             y: meta.y,
-                            width: table_width + 16.0,
+                            width: table_width + 12.0,
                             height: meta.height,
                         },
                         border: iced::Border {
@@ -463,7 +612,6 @@ where
         }
 
         let mut y = bounds.y + TOP_PAD;
-        let mut table_counter = 0;
         let mut last_table_block = None;
 
         let mut seen_math_blocks_draw = std::collections::HashSet::new();
@@ -524,18 +672,23 @@ where
                     };
 
                     if from_col < to_col {
-                        let select_x =
-                            bounds.x + TEXT_X_OFFSET + self.x_for_col::<R>(i, from_col, is_editing);
-                        let select_w = (self.x_for_col::<R>(i, to_col, is_editing)
-                            - self.x_for_col::<R>(i, from_col, is_editing))
-                        .max(3.0);
+                        let (from_x, from_y) =
+                            self.position_for_col::<R>(i, from_col, bounds.width, is_editing);
+                        let (to_x, to_y) =
+                            self.position_for_col::<R>(i, to_col, bounds.width, is_editing);
+                        let select_x = bounds.x + TEXT_X_OFFSET + from_x;
+                        let select_w = if (to_y - from_y).abs() < 1.0 {
+                            (to_x - from_x).max(3.0)
+                        } else {
+                            (bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - from_x).max(3.0)
+                        };
                         renderer.fill_quad(
                             renderer::Quad {
                                 bounds: Rectangle {
                                     x: select_x,
-                                    y: y + 4.0,
+                                    y: y + from_y + 4.0,
                                     width: select_w,
-                                    height: (lh - 8.0).max(16.0),
+                                    height: (BASE_LINE_HEIGHT - 8.0).max(16.0),
                                 },
                                 border: iced::Border {
                                     radius: 3.0.into(),
@@ -577,7 +730,18 @@ where
                 && !line.is_math_block
                 && !line.is_table_row
                 && !line.is_blockquote
-                && !line.spans.iter().any(|s| s.is_image || s.is_math || s.is_checkbox)
+                && line.spans.iter().all(|span| {
+                    !span.bold
+                        && !span.italic
+                        && !span.is_code
+                        && !span.is_link
+                        && !span.is_syntax
+                        && span.display_text.is_none()
+                })
+                && !line
+                    .spans
+                    .iter()
+                    .any(|s| s.is_image || s.is_math || s.is_checkbox)
             {
                 let content = line
                     .spans
@@ -627,42 +791,54 @@ where
 
             // (Block backgrounds removed from per-line loop)
 
+            if line.is_code_block && !line.is_math_block {
+                let content = line
+                    .spans
+                    .iter()
+                    .map(|span| span.visible_text(is_editing))
+                    .collect::<String>();
+                renderer.fill_text(
+                    iced::advanced::text::Text {
+                        content,
+                        bounds: Size::new(
+                            (bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - 24.0).max(120.0),
+                            lh,
+                        ),
+                        size: 15.0.into(),
+                        line_height: iced::advanced::text::LineHeight::Relative(1.45),
+                        font: iced::Font::MONOSPACE,
+                        align_x: iced::alignment::Horizontal::Left.into(),
+                        align_y: iced::alignment::Vertical::Top.into(),
+                        shaping: iced::advanced::text::Shaping::Basic,
+                        wrapping: iced::advanced::text::Wrapping::WordOrGlyph,
+                    },
+                    Point::new(bounds.x + TEXT_X_OFFSET, y + 8.0),
+                    theme::TEXT_SECONDARY,
+                    *viewport,
+                );
+                y += lh;
+                continue;
+            }
+
             // ── table rendering ──────────────────────────────────
             if line.is_table_row && !is_editing {
                 if last_table_block != Some(line.block_id) {
-                    table_counter += 1;
                     last_table_block = Some(line.block_id);
-                    let caption = format!("Table {}", table_counter);
-                    let caption_w = measure_width::<R>(&caption, 13.0, iced::Font::DEFAULT);
-                    let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
-                    renderer.fill_text(
-                        iced::advanced::text::Text {
-                            content: caption,
-                            bounds: Size::new(caption_w, 20.0),
-                            size: 13.0.into(),
-                            line_height: iced::advanced::text::LineHeight::default(),
-                            font: iced::Font::DEFAULT,
-                            align_x: iced::alignment::Horizontal::Left.into(),
-                            align_y: iced::alignment::Vertical::Top.into(),
-                            shaping: iced::advanced::text::Shaping::Basic,
-                            wrapping: iced::advanced::text::Wrapping::None,
-                        },
-                        Point::new(bounds.x + TEXT_X_OFFSET + (available_w - caption_w) / 2.0, y + 4.0),
-                        theme::TEXT_MUTED,
-                        *viewport,
-                    );
                 }
 
                 if let Some(meta) = blocks.get(&line.block_id) {
-                    let table_width: f32 = meta.col_widths.iter().sum();
-                    let table_x = bounds.x
-                        + TEXT_X_OFFSET
-                        + ((bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - table_width).max(0.0) / 2.0);
-                    let is_first_table_row = last_table_block == Some(line.block_id)
-                        && table_counter > 0
-                        && (y - meta.y).abs() < 1.0;
-                    let row_y = if is_first_table_row { y + 24.0 } else { y };
-                    let row_h = if is_first_table_row { (lh - 24.0).max(BASE_LINE_HEIGHT) } else { lh };
+                    let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
+                    let raw_table_width: f32 = meta.col_widths.iter().sum();
+                    let table_width = raw_table_width.min(available_w);
+                    let col_scale = if raw_table_width > available_w && raw_table_width > 0.0 {
+                        available_w / raw_table_width
+                    } else {
+                        1.0
+                    };
+                    let table_x =
+                        bounds.x + TEXT_X_OFFSET + ((available_w - table_width).max(0.0) / 2.0);
+                    let row_y = y;
+                    let row_h = lh;
                     let mut cx = table_x;
 
                     // Is this a separator row? We can check if it has spans with only `-` or `|` or just check table_cells
@@ -678,7 +854,7 @@ where
                                 },
                                 ..Default::default()
                             },
-                            theme::BORDER,
+                            theme::BORDER_SUBTLE,
                         );
                         y += lh;
                         continue;
@@ -688,26 +864,26 @@ where
                         if c_idx >= meta.col_widths.len() {
                             break;
                         }
-                        let cw = meta.col_widths[c_idx];
+                        let cw = (meta.col_widths[c_idx] * col_scale).max(42.0);
 
                         // Draw Vertical Separator
                         if c_idx > 0 {
                             renderer.fill_quad(
                                 renderer::Quad {
                                     bounds: Rectangle {
-                                        x: cx - 4.0,
+                                        x: cx - 3.0,
                                         y: row_y,
                                         width: 1.0,
                                         height: row_h,
                                     },
                                     ..Default::default()
                                 },
-                                theme::BORDER,
+                                theme::BORDER_SUBTLE,
                             );
                         }
 
                         // Draw Cell Spans
-                        let mut px = cx + 8.0;
+                        let mut px = cx + 7.0;
                         for span in cell {
                             let text = span.visible_text(false);
                             if text.is_empty() {
@@ -721,14 +897,14 @@ where
                             renderer.fill_text(
                                 iced::advanced::text::Text {
                                     content: text.to_string(),
-                                    bounds: Size::new(cw - 16.0, row_h),
+                                    bounds: Size::new(cw - 14.0, row_h),
                                     size: fs.into(),
                                     line_height: iced::advanced::text::LineHeight::default(),
                                     font,
                                     align_x: iced::alignment::Horizontal::Left.into(),
                                     align_y: iced::alignment::Vertical::Top.into(),
                                     shaping: iced::advanced::text::Shaping::Basic,
-                                    wrapping: iced::advanced::text::Wrapping::None,
+                                    wrapping: iced::advanced::text::Wrapping::WordOrGlyph,
                                 },
                                 Point::new(px, ty),
                                 span.color,
@@ -746,6 +922,7 @@ where
 
             // ── spans ────────────────────────────────────────────
             let mut x = bounds.x + TEXT_X_OFFSET;
+            let mut line_draw_y = y;
 
             for span in &line.spans {
                 let font = span_font(span, line);
@@ -783,8 +960,8 @@ where
                                 image_counter,
                                 span.image_alt.as_deref().unwrap_or("")
                             );
-                            let caption_w = measure_width::<R>(&caption, 13.0, iced::Font::DEFAULT)
-                                .min(draw_w);
+                            let caption_w =
+                                measure_width::<R>(&caption, 13.0, iced::Font::DEFAULT).min(draw_w);
                             renderer.fill_text(
                                 iced::advanced::text::Text {
                                     content: caption,
@@ -843,16 +1020,25 @@ where
                             if is_editing {
                                 // Skip drawing image, will draw text
                             } else {
+                                let line_start_x = bounds.x + TEXT_X_OFFSET;
+                                let line_right_x = bounds.x + bounds.width - MARGIN_RIGHT;
                                 let mut draw_x = x;
                                 if line.is_math_block {
                                     equation_counter += 1;
                                     draw_x =
                                         bounds.x + TEXT_X_OFFSET + (available_w - draw_w) / 2.0;
+                                } else if draw_x > line_start_x && draw_x + draw_w > line_right_x {
+                                    line_draw_y += BASE_LINE_HEIGHT;
+                                    draw_x = line_start_x;
+                                    x = line_start_x;
+                                }
 
+                                if line.is_math_block {
                                     // Equation number right aligned
                                     let eq_num = format!("({})", equation_counter);
-                                    let eq_w = measure_width::<R>(&eq_num, 14.0, iced::Font::DEFAULT);
-                                    let eq_y = y + (lh - draw_h) / 2.0; // center with the equation
+                                    let eq_w =
+                                        measure_width::<R>(&eq_num, 14.0, iced::Font::DEFAULT);
+                                    let eq_y = line_draw_y + (lh - draw_h) / 2.0; // center with the equation
                                     renderer.fill_text(
                                         iced::advanced::text::Text {
                                             content: eq_num,
@@ -879,7 +1065,11 @@ where
                                     iced::advanced::image::Image::new(handle.clone()),
                                     Rectangle {
                                         x: draw_x,
-                                        y: y + (lh - draw_h) / 2.0,
+                                        y: if line.is_math_block {
+                                            line_draw_y + (lh - draw_h) / 2.0
+                                        } else {
+                                            line_draw_y + (BASE_LINE_HEIGHT - draw_h) / 2.0 - 1.0
+                                        },
                                         width: draw_w,
                                         height: draw_h,
                                     },
@@ -900,7 +1090,7 @@ where
                     if line.is_math_block && !is_editing && !tex.is_empty() {
                         equation_counter += 1;
                         let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
-                        let mut text_y = y + 14.0;
+                        let mut text_y = line_draw_y + 18.0;
                         for raw_math_line in tex.lines() {
                             let line_w =
                                 measure_width::<R>(raw_math_line, 16.0, iced::Font::MONOSPACE)
@@ -953,7 +1143,6 @@ where
 
                 // ── text span ────────────────────────────────────
                 let fs = span.font_size;
-                let ty = y + (lh - fs) / 2.0;
                 let display_text = span.visible_text(is_editing);
                 if display_text.is_empty() {
                     continue;
@@ -962,7 +1151,7 @@ where
                 if span.is_checkbox && !is_editing {
                     // Draw a premium custom checkbox quad!
                     let box_size = 18.0;
-                    let box_y = y + (lh - box_size) / 2.0;
+                    let box_y = line_draw_y + (BASE_LINE_HEIGHT - box_size) / 2.0;
                     let box_rect = Rectangle {
                         x,
                         y: box_y,
@@ -1039,32 +1228,26 @@ where
                     continue;
                 }
 
-                renderer.fill_text(
-                    iced::advanced::text::Text {
-                        content: display_text.to_string(),
-                        bounds: Size::new(f32::INFINITY, lh),
-                        size: fs.into(),
-                        line_height: iced::advanced::text::LineHeight::default(),
-                        font,
-                        align_x: iced::alignment::Horizontal::Left.into(),
-                        align_y: iced::alignment::Vertical::Top.into(),
-                        shaping: iced::advanced::text::Shaping::Basic,
-                        wrapping: iced::advanced::text::Wrapping::None,
-                    },
-                    Point::new(x, ty),
+                draw_wrapped_text::<R>(
+                    renderer,
+                    display_text,
+                    &mut x,
+                    &mut line_draw_y,
+                    bounds.x + TEXT_X_OFFSET,
+                    bounds.x + bounds.width - MARGIN_RIGHT,
+                    fs,
+                    font,
                     span.color,
-                    *viewport,
+                    viewport,
                 );
-
-                x += measure_width::<R>(display_text, fs, font);
             }
 
             // ── cursor ───────────────────────────────────────────
             if focused && i == self.buffer.cursor_line {
-                let cx = self.cursor_x_offset::<R>(i);
+                let (cx, cy) = self.cursor_position::<R>(i, bounds.width);
                 let cursor_h = lh.min(20.0);
                 let cursor_x = bounds.x + TEXT_X_OFFSET + cx;
-                let cursor_y = y + (lh - cursor_h) / 2.0;
+                let cursor_y = y + cy + (BASE_LINE_HEIGHT - cursor_h) / 2.0;
 
                 renderer.fill_quad(
                     renderer::Quad {
@@ -1268,13 +1451,55 @@ where
 // ── Private helpers on Editor ────────────────────────────────────────
 
 impl<'a, Message> Editor<'a, Message> {
-    fn x_for_col<R>(&self, line_idx: usize, col: usize, _is_editing: bool) -> f32
+    fn position_for_col<R>(
+        &self,
+        line_idx: usize,
+        col: usize,
+        available_width: f32,
+        is_editing: bool,
+    ) -> (f32, f32)
     where
         R: iced::advanced::text::Renderer<Font = iced::Font>,
     {
-        let text = self.buffer.line_text(line_idx);
-        let partial: String = text.chars().take(col).collect();
-        measure_width::<R>(&partial, 17.0, iced::Font::DEFAULT)
+        let Some(line) = self.lines.get(line_idx) else {
+            return (0.0, 0.0);
+        };
+        let max_w = (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
+        let mut x = 0.0_f32;
+        let mut y = 0.0_f32;
+        let mut source_col = 0usize;
+
+        for span in &line.spans {
+            let font = span_font(span, line);
+            let display = span.visible_text(is_editing);
+            if display.is_empty() {
+                source_col += span.text.chars().count();
+                continue;
+            }
+            let step = visual_line_step(span.font_size);
+            for ch in display.chars() {
+                if source_col >= col {
+                    return (x, y);
+                }
+                let ch_text = ch.to_string();
+                let w = if span.is_checkbox && !is_editing {
+                    26.0
+                } else {
+                    measure_width::<R>(&ch_text, span.font_size, font)
+                };
+                if x > 0.0 && x + w > max_w {
+                    y += step;
+                    x = 0.0;
+                }
+                x += w;
+                source_col += 1;
+            }
+            let raw_len = span.text.chars().count();
+            if raw_len > display.chars().count() {
+                source_col = source_col.max(raw_len);
+            }
+        }
+        (x, y)
     }
 
     fn selected_text(&self, state: &State) -> Option<String> {
@@ -1303,48 +1528,24 @@ impl<'a, Message> Editor<'a, Message> {
             }
         }
 
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
+        if out.is_empty() { None } else { Some(out) }
     }
 
-    /// Compute the x‑offset of the cursor in pixels (relative to TEXT_X_OFFSET).
-    fn cursor_x_offset<R>(&self, line_idx: usize) -> f32
+    fn cursor_position<R>(&self, line_idx: usize, available_width: f32) -> (f32, f32)
     where
         R: iced::advanced::text::Renderer<Font = iced::Font>,
     {
         let Some(line) = self.lines.get(line_idx) else {
-            return 0.0;
+            return (0.0, 0.0);
         };
-        let mut chars_left = self.buffer.cursor_col;
-        let mut x = 0.0_f32;
         let is_editing =
             Some(line.block_id) == self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
-
-        for span in &line.spans {
-            let font = span_font(span, line);
-            let display_text = span.visible_text(is_editing);
-            if display_text.is_empty() {
-                continue;
-            }
-            let span_chars: Vec<char> = display_text.chars().collect();
-            let source_chars: Vec<char> = span.text.chars().collect();
-
-            // This is a rough approximation since display chars might not match source chars 1:1
-            // A perfect implementation would map source offsets to display offsets.
-            // For now, if we're in preview mode and characters are hidden, the cursor offset will just be at the end of the span
-            if chars_left <= source_chars.len() {
-                let display_idx = chars_left.min(span_chars.len());
-                let partial: String = span_chars[..display_idx].iter().collect();
-                x += measure_width::<R>(&partial, span.font_size, font);
-                break;
-            }
-            x += measure_width::<R>(display_text, span.font_size, font);
-            chars_left -= source_chars.len();
-        }
-        x
+        self.position_for_col::<R>(
+            line_idx,
+            self.buffer.cursor_col,
+            available_width,
+            is_editing,
+        )
     }
 
     /// Convert a click position (relative to widget bounds) into (line, col).
@@ -1389,26 +1590,32 @@ impl<'a, Message> Editor<'a, Message> {
             return (line_idx, 0);
         }
 
-        let mut x_acc = 0.0_f32;
-        let mut col = 0;
         let is_editing = focused && Some(line.block_id) == active_block_id;
+        let max_w = (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
+        let mut x_acc = 0.0_f32;
+        let mut y_acc_line = 0.0_f32;
+        let mut col = 0;
         for span in &line.spans {
             let font = span_font(span, line);
-            let chars: Vec<char> = span.text.chars().collect();
-
-            if span.is_checkbox && !is_editing {
-                let cw = 26.0;
-                if click_x < x_acc + cw * 0.6 {
-                    return (line_idx, col);
-                }
-                x_acc += cw;
-                col += chars.len();
+            let display = span.visible_text(is_editing);
+            if display.is_empty() {
+                col += span.text.chars().count();
                 continue;
             }
 
-            for j in 0..chars.len() {
-                let cw = measure_width::<R>(&chars[j].to_string(), span.font_size, font);
-                if click_x < x_acc + cw * 0.6 {
+            let step = visual_line_step(span.font_size);
+            for ch in display.chars() {
+                let ch_text = ch.to_string();
+                let cw = if span.is_checkbox && !is_editing {
+                    26.0
+                } else {
+                    measure_width::<R>(&ch_text, span.font_size, font)
+                };
+                if x_acc > 0.0 && x_acc + cw > max_w {
+                    y_acc_line += step;
+                    x_acc = 0.0;
+                }
+                if pos.y - y_acc < y_acc_line + step && click_x < x_acc + cw * 0.6 {
                     return (line_idx, col);
                 }
                 x_acc += cw;

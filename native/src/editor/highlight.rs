@@ -1,4 +1,5 @@
 use iced::Color;
+use std::sync::OnceLock;
 
 use crate::theme;
 
@@ -125,6 +126,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
     let mut in_table = false;
     let mut block_id: usize = 0;
     let mut current_block_id: usize = 0;
+    let mut code_highlighter: Option<syntect::easy::HighlightLines<'static>> = None;
 
     for raw_line in text.split('\n') {
         let trimmed = raw_line.trim();
@@ -154,6 +156,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 lines.push(sl);
                 in_code_block = false;
                 code_lang = None;
+                code_highlighter = None;
                 block_id += 1;
                 continue;
             } else {
@@ -166,6 +169,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 } else {
                     None
                 };
+                code_highlighter = make_code_highlighter(code_lang.as_deref());
                 let mut sl = StyledLine::new();
                 sl.is_code_block = true;
                 sl.is_block_fence = true;
@@ -257,14 +261,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.is_code_block = true;
             sl.block_id = current_block_id;
             sl.code_block_lang = code_lang.clone();
-            sl.spans.push(StyledSpan {
-                text: raw_line.to_string(),
-                display_text: None,
-                color: theme::TEXT_PRIMARY,
-                font_size: 14.0,
-                is_code: true,
-                ..StyledSpan::plain("")
-            });
+            sl.spans = highlight_code_spans(raw_line, &mut code_highlighter, code_lang.as_deref());
             lines.push(sl);
             continue;
         }
@@ -878,6 +875,81 @@ fn find_double(chars: &[char], start: usize, target: char) -> Option<usize> {
     None
 }
 
+fn highlight_code_spans(
+    line: &str,
+    highlighter: &mut Option<syntect::easy::HighlightLines<'static>>,
+    lang: Option<&str>,
+) -> Vec<StyledSpan> {
+    let Some((syntax_set, _)) = syntect_defaults() else {
+        return vec![code_span(line, theme::TEXT_PRIMARY)];
+    };
+
+    if highlighter.is_none() {
+        *highlighter = make_code_highlighter(lang);
+    }
+
+    let Some(highlighter) = highlighter.as_mut() else {
+        return vec![code_span(line, theme::TEXT_PRIMARY)];
+    };
+
+    match highlighter.highlight_line(line, syntax_set) {
+        Ok(regions) => {
+            let spans = regions
+                .into_iter()
+                .filter(|(_, text)| !text.is_empty())
+                .map(|(style, text)| {
+                    let fg = style.foreground;
+                    code_span(
+                        text,
+                        Color::from_rgba8(fg.r, fg.g, fg.b, (fg.a as f32) / 255.0),
+                    )
+                })
+                .collect::<Vec<_>>();
+            if spans.is_empty() {
+                vec![code_span(line, theme::TEXT_PRIMARY)]
+            } else {
+                spans
+            }
+        }
+        Err(_) => vec![code_span(line, theme::TEXT_PRIMARY)],
+    }
+}
+
+fn make_code_highlighter(lang: Option<&str>) -> Option<syntect::easy::HighlightLines<'static>> {
+    let (syntax_set, theme_set) = syntect_defaults()?;
+    let syntax = lang
+        .and_then(|lang| syntax_set.find_syntax_by_token(lang))
+        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+    let theme = theme_set
+        .themes
+        .get("base16-ocean.dark")
+        .or_else(|| theme_set.themes.values().next())?;
+    Some(syntect::easy::HighlightLines::new(syntax, theme))
+}
+
+fn code_span(text: &str, color: Color) -> StyledSpan {
+    StyledSpan {
+        text: text.to_string(),
+        display_text: None,
+        color,
+        font_size: 14.0,
+        is_code: true,
+        ..StyledSpan::plain("")
+    }
+}
+
+fn syntect_defaults(
+) -> Option<&'static (syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> {
+    static DEFAULTS: OnceLock<(syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> =
+        OnceLock::new();
+    Some(DEFAULTS.get_or_init(|| {
+        (
+            syntect::parsing::SyntaxSet::load_defaults_newlines(),
+            syntect::highlighting::ThemeSet::load_defaults(),
+        )
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::highlight_markdown;
@@ -913,5 +985,64 @@ mod tests {
         assert!(!lines[1].is_math_block);
         assert!(lines[1].spans.iter().any(|span| span.is_heading));
         assert!(!lines[2].is_math_block);
+    }
+
+    #[test]
+    fn inline_basic_markdown_flags_only_target_spans() {
+        let lines = highlight_markdown("plain **bold** *italic* `code` [link](note.md)");
+        let line = &lines[0];
+
+        let bold = line.spans.iter().find(|span| span.text == "bold").unwrap();
+        assert!(bold.bold);
+        assert!(!bold.italic);
+
+        let italic = line
+            .spans
+            .iter()
+            .find(|span| span.text == "italic")
+            .unwrap();
+        assert!(italic.italic);
+        assert!(!italic.bold);
+
+        let code = line.spans.iter().find(|span| span.text == "code").unwrap();
+        assert!(code.is_code);
+
+        let link = line
+            .spans
+            .iter()
+            .find(|span| span.link_target.as_deref() == Some("note.md"))
+            .unwrap();
+        assert!(link.is_link);
+        assert_eq!(link.visible_text(false), "link");
+
+        let plain = line
+            .spans
+            .iter()
+            .find(|span| span.text == "plain ")
+            .unwrap();
+        assert!(!plain.bold);
+        assert!(!plain.italic);
+    }
+
+    #[test]
+    fn block_markdown_types_are_detected() {
+        let lines = highlight_markdown("> quote\n- [ ] task\n---\n| A | B |\n|---|---|\n| 1 | 2 |");
+
+        assert!(lines[0].is_blockquote);
+        assert!(lines[1].spans.iter().any(|span| span.is_checkbox));
+        assert!(lines[2].spans.iter().any(|span| span.is_rule));
+        assert!(lines[3].is_table_row);
+        assert_eq!(lines[3].table_cells.len(), 2);
+        assert!(lines[4].is_table_row);
+        assert!(lines[5].is_table_row);
+    }
+
+    #[test]
+    fn fenced_code_uses_language_and_colored_spans() {
+        let lines = highlight_markdown("```rust\nlet x = 1;\n```");
+        assert!(lines[1].is_code_block);
+        assert_eq!(lines[1].code_block_lang.as_deref(), Some("rust"));
+        assert!(lines[1].spans.iter().all(|span| span.is_code));
+        assert!(lines[1].spans.len() > 1);
     }
 }

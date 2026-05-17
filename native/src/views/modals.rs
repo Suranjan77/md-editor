@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Alignment, Element, Length, Theme, Renderer};
+use iced::{Alignment, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
@@ -7,7 +7,6 @@ use crate::theme;
 pub enum ModalType {
     CreateFile,
     CreateFolder,
-    Rename(String), // old path
     Delete(String), // path
 }
 
@@ -18,34 +17,30 @@ pub fn view<'a>(
     let title = match modal_type {
         ModalType::CreateFile => "Create New File",
         ModalType::CreateFolder => "Create New Folder",
-        ModalType::Rename(_) => "Rename",
         ModalType::Delete(_) => "Delete Confirmation",
     };
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
-        ModalType::Delete(path) => {
-            column![
-                text(format!("Are you sure you want to delete '{}'?", path))
-                    .color(theme::TEXT_PRIMARY),
-                text("This action cannot be undone.")
-                    .size(12)
-                    .color(theme::TEXT_MUTED),
-                row![
-                    button(text("Cancel").size(14))
-                        .on_press(Message::NameModalCancel)
-                        .padding([8, 20])
-                        .style(button::text),
-                    button(text("Delete").size(14))
-                        .on_press(Message::DeleteFile(path.clone()))
-                        .padding([8, 20])
-                        .style(button::secondary),
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center)
+        ModalType::Delete(path) => column![
+            text(format!("Are you sure you want to delete '{}'?", path)).color(theme::TEXT_PRIMARY),
+            text("This action cannot be undone.")
+                .size(12)
+                .color(theme::TEXT_MUTED),
+            row![
+                button(text("Cancel").size(14))
+                    .on_press(Message::NameModalCancel)
+                    .padding([8, 20])
+                    .style(button::text),
+                button(text("Delete").size(14))
+                    .on_press(Message::DeleteFile(path.clone()))
+                    .padding([8, 20])
+                    .style(button::secondary),
             ]
-            .spacing(20)
-            .into()
-        }
+            .spacing(10)
+            .align_y(Alignment::Center)
+        ]
+        .spacing(20)
+        .into(),
         _ => {
             column![
                 text(title).size(18).color(theme::TEXT_PRIMARY),
@@ -82,14 +77,16 @@ pub fn view<'a>(
                     radius: 8.0.into(),
                 },
                 ..Default::default()
-            })
+            }),
     )
     .width(Length::Fill)
     .height(Length::Fill)
     .center_x(Length::Fill)
     .center_y(Length::Fill)
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.7))),
+        background: Some(iced::Background::Color(iced::Color::from_rgba(
+            0.0, 0.0, 0.0, 0.7,
+        ))),
         ..Default::default()
     })
     .into()
