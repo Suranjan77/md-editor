@@ -15,19 +15,23 @@ pub enum Message {
     SearchOpen,
     SearchClose,
     SearchQueryChanged(String),
+    SearchReplaceChanged(String),
+    SearchRegexToggled(bool),
+    SearchMatchCaseToggled(bool),
+    SearchReplaceAll,
     SearchResultClicked(String),
     CommandPaletteOpen,
     CommandPaletteQueryChanged(String),
     CommandPaletteCommandClicked(Shortcut),
     NameModalInputChanged(String),
     NameModalSubmit(String),
+    NameModalSubmitCurrent,
     NameModalCancel,
     DeleteFile(String),
     DeleteFileDialog(String),
 
     // ── Editor ───────────────────────────────────────────────────
-    EditorAction(EditorAction),
-    EditorContentChanged(String),
+    EditorCommand(crate::editor::buffer::EditorCommand),
     EditorSave,
     EditorCheckboxToggle(usize),
     EditorCursorMove(usize, usize),
@@ -46,6 +50,8 @@ pub enum Message {
     PdfRightClicked(u16, f32, f32),
     PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
     PdfPageLinksLoaded(u16, Vec<md_editor_core::pdf::LinkInfo>),
+    PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
+    PdfSearchResultClicked(u16),
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
     ClosePdfLinkPreview,
 
@@ -59,6 +65,11 @@ pub enum Message {
     TrackerReadingToggled(String, usize),
     TrackerConfigEdited(iced::widget::text_editor::Action),
     TrackerConfigSave,
+    TrackerManualDateChanged(String),
+    TrackerManualHoursChanged(String),
+    TrackerManualNotesChanged(String),
+    TrackerManualAdd,
+    TrackerSessionDelete(i64),
 
     // ── Toast ───────────────────────────────────────────────────
     ToastHide,
@@ -103,18 +114,4 @@ pub enum Shortcut {
     StudyTracker,
     SplitView,
     Escape,
-}
-
-#[derive(Debug, Clone)]
-pub enum EditorAction {
-    MoveUp,
-    MoveDown,
-    MoveLeft,
-    MoveRight,
-    MoveHome,
-    MoveEnd,
-    Backspace,
-    Delete,
-    Undo,
-    Redo,
 }
