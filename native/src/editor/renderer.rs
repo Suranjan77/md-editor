@@ -1639,3 +1639,253 @@ where
         Self::new(editor)
     }
 }
+
+// ── Tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::buffer::DocBuffer;
+    use crate::editor::highlight::{StyledLine, StyledSpan};
+    use std::collections::HashMap;
+
+    fn make_line(block_id: usize, spans: Vec<StyledSpan>) -> StyledLine {
+        let mut line = StyledLine::new();
+        line.block_id = block_id;
+        line.spans = spans;
+        line
+    }
+
+    #[test]
+    fn test_normalized_selection_combinatorics() {
+        // Run thousands of combinations of boundary cases for selections
+        for anchor_line in 0..15 {
+            for anchor_col in 0..10 {
+                for focus_line in 0..15 {
+                    for focus_col in 0..10 {
+                        let norm = normalized_selection(Some((anchor_line, anchor_col)), Some((focus_line, focus_col)));
+                        if (anchor_line, anchor_col) == (focus_line, focus_col) {
+                            assert!(norm.is_none());
+                        } else {
+                            let (start, end) = norm.unwrap();
+                            assert!(start <= end);
+                            if anchor_line < focus_line {
+                                assert_eq!(start, (anchor_line, anchor_col));
+                                assert_eq!(end, (focus_line, focus_col));
+                            } else if anchor_line > focus_line {
+                                assert_eq!(start, (focus_line, focus_col));
+                                assert_eq!(end, (anchor_line, anchor_col));
+                            } else {
+                                assert_eq!(start, (anchor_line, anchor_col.min(focus_col)));
+                                assert_eq!(end, (anchor_line, anchor_col.max(focus_col)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        assert!(normalized_selection(None, None).is_none());
+        assert!(normalized_selection(Some((1, 1)), None).is_none());
+        assert!(normalized_selection(None, Some((2, 2))).is_none());
+    }
+
+    #[test]
+    fn test_editor_selected_text_extraction() {
+        let buffer = DocBuffer::from_text("line one\nline two\nline three\nline four");
+        let lines: Vec<StyledLine> = vec![
+            make_line(1, vec![StyledSpan::plain("line one")]),
+            make_line(2, vec![StyledSpan::plain("line two")]),
+            make_line(3, vec![StyledSpan::plain("line three")]),
+            make_line(4, vec![StyledSpan::plain("line four")]),
+        ];
+        
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        
+        let editor = Editor::new(
+            &buffer,
+            &lines,
+            &image_cache,
+            &math_cache,
+            |_| (),
+            |_, _| (),
+            |_| (),
+            |_| (),
+            |_| (),
+        );
+
+        // Perform combinatorial selections over the entire document
+        for start_line in 0..4 {
+            for start_col in 0..10 {
+                for end_line in 0..4 {
+                    for end_col in 0..10 {
+                        let state = State {
+                            is_dragging: false,
+                            is_focused: true,
+                            modifiers: keyboard::Modifiers::default(),
+                            selection_anchor: Some((start_line, start_col)),
+                            selection_focus: Some((end_line, end_col)),
+                        };
+
+                        let sel = editor.selected_text(&state);
+                        if let Some(((s_l, s_c), (e_l, e_c))) = normalized_selection(Some((start_line, start_col)), Some((end_line, end_col))) {
+                            let mut manual = String::new();
+                            for l in s_l..=e_l {
+                                let content = buffer.line_text(l);
+                                let from = if l == s_l { s_c.min(content.chars().count()) } else { 0 };
+                                let to = if l == e_l { e_c.min(content.chars().count()) } else { content.chars().count() };
+                                if from < to {
+                                    manual.push_str(&content.chars().skip(from).take(to - from).collect::<String>());
+                                }
+                                if l != e_l {
+                                    manual.push('\n');
+                                }
+                            }
+                            if manual.is_empty() {
+                                assert!(sel.is_none());
+                            } else {
+                                assert_eq!(sel.unwrap(), manual);
+                            }
+                        } else {
+                            assert!(sel.is_none());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_renderer_line_height_permutations() {
+        let mut lines = Vec::new();
+        
+        // 1. Plain text line
+        lines.push(make_line(1, vec![StyledSpan::plain("Hello world")]));
+
+        // 2. Code block line
+        let mut code_line = make_line(2, vec![StyledSpan {
+            text: "let x = 10;".to_string(),
+            is_code: true,
+            ..StyledSpan::plain("")
+        }]);
+        code_line.is_code_block = true;
+        lines.push(code_line);
+
+        // 3. Math block line (not editing)
+        let mut math_line = make_line(3, vec![StyledSpan {
+            text: "$$ E = mc^2 $$".to_string(),
+            is_math: true,
+            ..StyledSpan::plain("")
+        }]);
+        math_line.is_math_block = true;
+        lines.push(math_line);
+
+        // 4. Table row
+        let mut table_line = make_line(4, vec![]);
+        table_line.is_table_row = true;
+        table_line.table_cells = vec![
+            vec![StyledSpan::plain("Col A")],
+            vec![StyledSpan::plain("Col B")],
+        ];
+        lines.push(table_line);
+
+        // 5. Image line
+        let img_line = make_line(5, vec![StyledSpan {
+            text: "![alt](image.png)".to_string(),
+            is_image: true,
+            image_path: Some("image.png".to_string()),
+            ..StyledSpan::plain("")
+        }]);
+        lines.push(img_line);
+
+        // 6. Deep quote line
+        let mut quote_line = make_line(6, vec![StyledSpan::plain("A quote")]);
+        quote_line.is_blockquote = true;
+        lines.push(quote_line);
+
+        let mut image_cache = HashMap::new();
+        let mut math_cache = HashMap::new();
+
+        image_cache.insert("image.png".to_string(), (iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]), 400.0, 300.0));
+        math_cache.insert("E = mc^2".to_string(), (iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]), 200.0, 50.0));
+
+        let widths = vec![100.0, 200.0, 400.0, 600.0, 800.0, 1000.0, 1200.0];
+        let mut seen_math_blocks = std::collections::HashSet::new();
+
+        for &width in &widths {
+            for &is_editing in &[true, false] {
+                for line in &lines {
+                    seen_math_blocks.clear();
+                    let h = line_height_for(
+                        line,
+                        &image_cache,
+                        &math_cache,
+                        width,
+                        is_editing,
+                        &mut seen_math_blocks,
+                    );
+                    
+                    assert!(h >= 0.0);
+                    
+                    if line.is_table_row {
+                        assert_eq!(h, 34.0);
+                    } else if line.is_math_block && is_editing {
+                        assert_eq!(h, BASE_LINE_HEIGHT);
+                    } else if line.is_blockquote {
+                        assert!(h > 0.0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_renderer_total_height_accumulation() {
+        let mut lines = Vec::new();
+        for i in 1..=200 {
+            lines.push(make_line(i, vec![StyledSpan::plain("Hello accumulated document")]));
+        }
+
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+
+        // 1. Verify adding lines monotonically increases total height
+        let h1 = total_height(&lines[0..50], &image_cache, &math_cache, 800.0, None, false);
+        let h2 = total_height(&lines[0..100], &image_cache, &math_cache, 800.0, None, false);
+        let h3 = total_height(&lines[0..200], &image_cache, &math_cache, 800.0, None, false);
+
+        assert!(h2 > h1);
+        assert!(h3 > h2);
+
+        // 2. Verify width decreases wrapping space and monotonically increases total height
+        let h_wide = total_height(&lines, &image_cache, &math_cache, 1000.0, None, false);
+        let h_narrow = total_height(&lines, &image_cache, &math_cache, 200.0, None, false);
+
+        assert!(h_narrow >= h_wide);
+    }
+
+    #[test]
+    fn test_bug_finder_renderer_extreme_dimensions() {
+        let line = make_line(1, vec![StyledSpan::plain("Wrap this extremely long sentence with extreme layout boundary dimensions to find bugs.")]);
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let mut seen_math_blocks = std::collections::HashSet::new();
+
+        // Extreme layout widths (0, negative, infinite, sub-pixel)
+        let extreme_widths = vec![0.0, -100.0, -0.0001, 0.0001, f32::INFINITY, f32::NEG_INFINITY];
+        for &width in &extreme_widths {
+            seen_math_blocks.clear();
+            let h = line_height_for(
+                &line,
+                &image_cache,
+                &math_cache,
+                width,
+                false,
+                &mut seen_math_blocks,
+            );
+            assert!(h >= 0.0);
+        }
+    }
+}
+

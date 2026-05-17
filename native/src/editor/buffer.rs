@@ -336,4 +336,151 @@ mod tests {
         assert_eq!(buffer.cursor_line, 0);
         assert_eq!(buffer.cursor_col, 5);
     }
+
+    #[test]
+    fn test_buffer_state_machine_fuzzing() {
+        let mut buffer = DocBuffer::new();
+        let mut seed = 12345u64;
+        let mut next_rng = |modulus: usize| -> usize {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed as usize) % modulus
+        };
+
+        // We run 1000 sequential actions and verify buffer invariants at every single step!
+        for _ in 0..1000 {
+            let action = next_rng(10);
+            match action {
+                0 => {
+                    // Insert standard text
+                    let words = vec!["hello", "world", "rust", "iced", "buffer", "rope", "🦀", "\n", "\nnew line\n"];
+                    let word = words[next_rng(words.len())];
+                    buffer.insert_at_cursor(word);
+                }
+                1 => {
+                    // Backspace
+                    buffer.backspace();
+                }
+                2 => {
+                    // Delete
+                    buffer.delete();
+                }
+                3 => {
+                    // Move cursor left
+                    buffer.move_cursor_left();
+                }
+                4 => {
+                    // Move cursor right
+                    buffer.move_cursor_right();
+                }
+                5 => {
+                    // Move cursor up
+                    buffer.move_cursor_up();
+                }
+                6 => {
+                    // Move cursor down
+                    buffer.move_cursor_down();
+                }
+                7 => {
+                    // Move cursor home/end
+                    if next_rng(2) == 0 {
+                        buffer.move_cursor_home();
+                    } else {
+                        buffer.move_cursor_end();
+                    }
+                }
+                8 => {
+                    // Undo
+                    buffer.undo();
+                }
+                9 => {
+                    // Redo
+                    buffer.redo();
+                }
+                _ => unreachable!(),
+            }
+
+            // Assert Invariants at each step:
+            let line_count = buffer.line_count();
+            assert!(line_count > 0, "Buffer line count must always be at least 1");
+            
+            // Cursor line must always be in-bounds
+            assert!(
+                buffer.cursor_line < line_count,
+                "Cursor line {} out of bounds for line count {}",
+                buffer.cursor_line,
+                line_count
+            );
+
+            // Cursor col must always be in-bounds for the current line
+            let current_line_len = buffer.line_text(buffer.cursor_line).chars().count();
+            assert!(
+                buffer.cursor_col <= current_line_len,
+                "Cursor col {} out of bounds for current line len {} (line {})",
+                buffer.cursor_col,
+                current_line_len,
+                buffer.cursor_line
+            );
+        }
+    }
+
+    #[test]
+    fn test_bug_finder_utf8_char_boundaries() {
+        // Test strings with complex multi-byte characters and ZWJ emojis
+        let complex_texts = vec![
+            "👨‍👩‍👧‍👦", // ZWJ complex family emoji
+            "こんにちは", // Japanese Hiragana
+            "𠮷野家", // CJK Extension B
+            "Hello 👩‍💻 World", // Mixed ASCII and emoji
+            "🏳️‍🌈", // Rainbow flag (ZWJ sequence)
+            "\u{0000}\u{0001}\u{0007}", // Control characters / Null bytes
+        ];
+
+        for text in complex_texts {
+            let mut buffer = DocBuffer::from_text(text);
+            
+            // Perform deletions from the end to the start
+            let initial_char_count = text.chars().count();
+            for _ in 0..=initial_char_count + 5 {
+                buffer.backspace();
+                let current_text = buffer.line_text(0);
+                let _char_count = current_text.chars().count();
+            }
+            
+            // Reset buffer
+            let mut buffer = DocBuffer::from_text(text);
+            buffer.move_cursor_home();
+            // Perform delete forward
+            for _ in 0..=initial_char_count + 5 {
+                buffer.delete();
+                let _text = buffer.line_text(0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_bug_finder_empty_and_out_of_bounds_states() {
+        let mut buffer = DocBuffer::from_text("");
+        
+        // Assert empty state boundary actions do not panic
+        buffer.backspace();
+        buffer.delete();
+        buffer.move_cursor_left();
+        buffer.move_cursor_right();
+        buffer.move_cursor_up();
+        buffer.move_cursor_down();
+        buffer.move_cursor_home();
+        buffer.move_cursor_end();
+        buffer.undo();
+        buffer.redo();
+        
+        // Assert that the cursor remains strictly at (0, 0)
+        assert_eq!(buffer.cursor_line, 0);
+        assert_eq!(buffer.cursor_col, 0);
+        
+        // Assert out of bounds cursor values don't crash
+        buffer.cursor_line = 9999;
+        buffer.cursor_col = 9999;
+        let text = buffer.line_text(buffer.cursor_line);
+        assert!(text.is_empty());
+    }
 }
