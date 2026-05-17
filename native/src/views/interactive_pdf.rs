@@ -10,6 +10,7 @@ pub struct InteractivePdf<Message> {
     handle: iced::widget::image::Handle,
     width: f32,
     height: f32,
+    on_left_click: Box<dyn Fn(f32, f32) -> Message>,
     on_right_click: Box<dyn Fn(f32, f32) -> Message>,
 }
 
@@ -18,12 +19,14 @@ impl<Message> InteractivePdf<Message> {
         handle: iced::widget::image::Handle,
         width: f32,
         height: f32,
+        on_left_click: impl Fn(f32, f32) -> Message + 'static,
         on_right_click: impl Fn(f32, f32) -> Message + 'static,
     ) -> Self {
         Self {
             handle,
             width,
             height,
+            on_left_click: Box::new(on_left_click),
             on_right_click: Box::new(on_right_click),
         }
     }
@@ -77,11 +80,17 @@ where
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event {
-            if let Some(position) = cursor.position_in(layout.bounds()) {
-                let x = position.x / self.width;
-                let y = position.y / self.height;
-                shell.publish((self.on_right_click)(x, y));
+        if let Event::Mouse(mouse::Event::ButtonPressed(button)) = event {
+            if matches!(button, mouse::Button::Left | mouse::Button::Right) {
+                if let Some(position) = cursor.position_in(layout.bounds()) {
+                    let x = position.x / self.width;
+                    let y = position.y / self.height;
+                    match button {
+                        mouse::Button::Left => shell.publish((self.on_left_click)(x, y)),
+                        mouse::Button::Right => shell.publish((self.on_right_click)(x, y)),
+                        _ => {}
+                    }
+                }
             }
         }
     }
