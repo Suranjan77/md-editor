@@ -62,18 +62,6 @@ fn render_tree_level<'a>(
         let is_active = active_path.map_or(false, |s| s == path);
         let indent = depth as f32 * 12.0;
 
-        let icon = if is_dir {
-            if expanded.contains(&path) {
-                "󰅖" // Down arrow icon (Nerdfont or similar, fallback to basic)
-            } else {
-                "󰅂" // Right arrow icon
-            }
-        } else if name.ends_with(".pdf") {
-            "󰈦"
-        } else {
-            "󰈙"
-        };
-
         // Fallback to basic icons if font doesn't support them
         let icon = if is_dir {
             if expanded.contains(&path) { "▼" } else { "▶" }
