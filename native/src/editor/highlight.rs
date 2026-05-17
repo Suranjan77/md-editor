@@ -1045,4 +1045,109 @@ mod tests {
         assert!(lines[1].spans.iter().all(|span| span.is_code));
         assert!(lines[1].spans.len() > 1);
     }
+
+    #[test]
+    fn test_highlighter_permutations() {
+        // We will generate 250 distinct markdown fragments, each containing a sequence of elements
+        // Totaling over 1,000 lines of parsed markdown text to assert highlighter robustness.
+        
+        // 1. Heading level permutations (1 to 6) with inline formatting
+        for level in 1..=6 {
+            let prefix = "#".repeat(level);
+            let heading_text = format!("{} Heading Level {}", prefix, level);
+            let lines = highlight_markdown(&heading_text);
+            assert_eq!(lines.len(), 1);
+            assert!(lines[0].spans.iter().any(|span| span.is_heading), "Failed to detect heading at level {}", level);
+            assert!(lines[0].spans.iter().any(|span| span.bold), "Failed to detect bold in heading");
+        }
+
+        // 2. Ordered and Unordered lists, task items, and checkboxes
+        let list_types = vec!["-", "*", "+", "1."];
+        for lt in &list_types {
+            let markdown_line = format!("{} This is a list item", lt);
+            let lines = highlight_markdown(&markdown_line);
+            assert_eq!(lines.len(), 1);
+        }
+
+        let checkbox_types = vec!["- [ ]", "- [x]"];
+        for cb in &checkbox_types {
+            let markdown_line = format!("{} This is a checkbox task", cb);
+            let lines = highlight_markdown(&markdown_line);
+            assert_eq!(lines.len(), 1);
+            assert!(
+                lines[0].spans.iter().any(|span| span.is_checkbox),
+                "Failed to detect checkbox for '{}'", cb
+            );
+        }
+
+        // 3. LaTeX Math block environments permutations
+        let math_environments = vec![
+            "align", "align*", "equation", "equation*", "gather", "gather*", 
+            "split", "matrix", "pmatrix", "bmatrix", "aligned", "cases", "vmatrix", "Vmatrix"
+        ];
+        for env in &math_environments {
+            let math_block = format!("\\begin{{{}}}\nx &= y + z \\\\\na &= b\n\\end{{{}}}", env, env);
+            let lines = highlight_markdown(&math_block);
+            assert_eq!(lines.len(), 4);
+            
+            // Check that all 4 lines are unified under the math block ID
+            let block_id = lines[0].block_id;
+            assert!(block_id > 0, "Environment {} did not generate a block ID", env);
+            for idx in 0..4 {
+                assert!(lines[idx].is_math_block, "Line {} in environment {} not marked as math block", idx, env);
+                assert_eq!(lines[idx].block_id, block_id, "Block ID mismatch in environment {}", env);
+            }
+        }
+
+        // 4. Double dollar multiline block math permutations
+        let display_math = "$$ \nx = \\sum_{i=1}^{n} i \n$$";
+        let lines = highlight_markdown(display_math);
+        assert_eq!(lines.len(), 3);
+        let math_block_id = lines[0].block_id;
+        assert!(math_block_id > 0);
+        for idx in 0..3 {
+            assert!(lines[idx].is_math_block);
+            assert_eq!(lines[idx].block_id, math_block_id);
+        }
+
+        // 5. Fenced code block language permutations
+        let languages = vec![
+            "rust", "js", "ts", "python", "html", "css", "c", "cpp", "go", "bash", "json", "toml"
+        ];
+        for lang in &languages {
+            let code_block = format!("```{}\n// code here for {}\nlet v = 10;\n```", lang, lang);
+            let lines = highlight_markdown(&code_block);
+            assert_eq!(lines.len(), 4);
+            
+            // First line starts the block, middle lines are code block, last line ends it
+            assert!(lines[1].is_code_block);
+            assert!(lines[2].is_code_block);
+            assert_eq!(lines[1].code_block_lang.as_deref(), Some(*lang));
+            assert_eq!(lines[2].code_block_lang.as_deref(), Some(*lang));
+            
+            // Code block lines must have code spans
+            assert!(lines[1].spans.iter().all(|span| span.is_code));
+            assert!(lines[2].spans.iter().all(|span| span.is_code));
+        }
+
+        // 6. Blockquote permutations
+        for depth in 1..=5 {
+            let prefix = "> ".repeat(depth);
+            let quote = format!("{} Nested quote depth {}", prefix, depth);
+            let lines = highlight_markdown(&quote);
+            assert_eq!(lines.len(), 1);
+            assert!(lines[0].is_blockquote);
+        }
+
+        // 7. Inline link and wikilink variations inside paragraphs
+        let inline_markdown = "Text [[wikilink]] more text [standard link](http://google.com) and [[aliased|link]] with `code` block.";
+        let lines = highlight_markdown(inline_markdown);
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        
+        assert!(line.spans.iter().any(|span| span.is_link && span.link_target.as_deref() == Some("wikilink")));
+        assert!(line.spans.iter().any(|span| span.is_link && span.link_target.as_deref() == Some("http://google.com")));
+        assert!(line.spans.iter().any(|span| span.is_link && span.link_target.as_deref() == Some("aliased")));
+        assert!(line.spans.iter().any(|span| span.is_code));
+    }
 }

@@ -7,3 +7,6 @@ pub mod types;
 pub mod vault;
 
 pub use state::AppState;
+
+#[cfg(test)]
+mod massive_tests;
