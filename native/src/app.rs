@@ -8,15 +8,23 @@ use image::GenericImageView;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::editor::buffer::DocBuffer;
+use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
-use crate::messages::EditorAction;
 use crate::messages::{Message, Shortcut, TrackerTab};
 use crate::theme as app_theme;
 use crate::views;
 use std::collections::HashSet;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
+
+pub(crate) fn is_supported_image_path(path: &str) -> bool {
+    path.ends_with(".png")
+        || path.ends_with(".jpg")
+        || path.ends_with(".jpeg")
+        || path.ends_with(".gif")
+        || path.ends_with(".bmp")
+        || path.ends_with(".webp")
+}
 
 pub struct MdEditor {
     state: Arc<md_editor_core::state::AppState>,
@@ -40,6 +48,8 @@ pub struct MdEditor {
     pdf_pages: Vec<Option<iced::widget::image::Handle>>,
     pdf_dimensions: Vec<Option<(u32, u32)>>,
     active_pdf_path: Option<String>,
+    active_image_path: Option<String>,
+    active_image: Option<(iced::widget::image::Handle, f32, f32)>,
     pdf_scroll_y: f32,
     pdf_page_links: std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
     pdf_link_preview: Option<iced::widget::image::Handle>,
@@ -55,6 +65,9 @@ pub struct MdEditor {
     tracker_tab: TrackerTab,
     tracker_config_json: String,
     tracker_config_content: text_editor::Content,
+    tracker_manual_date: String,
+    tracker_manual_hours: String,
+    tracker_manual_notes: String,
 
     // Modal state
     active_modal: Option<views::modals::ModalType>,
@@ -71,7 +84,12 @@ pub struct MdEditor {
     // Search
     search_visible: bool,
     search_query: String,
+    search_replace: String,
+    search_regex: bool,
+    search_match_case: bool,
     search_results: Vec<md_editor_core::types::SearchResult>,
+    pdf_search_results: Vec<md_editor_core::pdf::PdfSearchMatch>,
+    pdf_search_error: Option<String>,
 
     // TOC
     toc_visible: bool,
@@ -117,6 +135,8 @@ impl MdEditor {
             pdf_pages: Vec::new(),
             pdf_dimensions: Vec::new(),
             active_pdf_path: None,
+            active_image_path: None,
+            active_image: None,
             pdf_scroll_y: 0.0,
             pdf_page_links: std::collections::HashMap::new(),
             pdf_link_preview: None,
@@ -134,6 +154,9 @@ impl MdEditor {
             tracker_tab: TrackerTab::Dashboard,
             tracker_config_json,
             tracker_config_content: text_editor::Content::with_text(""),
+            tracker_manual_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+            tracker_manual_hours: String::new(),
+            tracker_manual_notes: String::new(),
             active_modal: None,
             modal_input: String::new(),
             command_palette_visible: false,
@@ -142,7 +165,12 @@ impl MdEditor {
             toast: None,
             search_visible: false,
             search_query: String::new(),
+            search_replace: String::new(),
+            search_regex: false,
+            search_match_case: false,
             search_results: Vec::new(),
+            pdf_search_results: Vec::new(),
+            pdf_search_error: None,
             toc_visible: false,
             toc_entries: Vec::new(),
             image_cache: std::collections::HashMap::new(),
@@ -168,7 +196,11 @@ impl MdEditor {
         format!(
             "{}Antigravity — {}",
             if self.buffer.dirty { "● " } else { "" },
-            self.active_path.as_deref().unwrap_or("New File")
+            self.active_path
+                .as_deref()
+                .or(self.active_pdf_path.as_deref())
+                .or(self.active_image_path.as_deref())
+                .unwrap_or("New File")
         )
     }
 
@@ -183,6 +215,9 @@ impl MdEditor {
                     // Escape key — close overlays
                     if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) {
                         return Message::KeyboardShortcut(Shortcut::Escape);
+                    }
+                    if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) {
+                        return Message::NameModalSubmitCurrent;
                     }
                     if modifiers.command() || modifiers.control() {
                         match key {
@@ -269,13 +304,16 @@ impl MdEditor {
             }
             Message::SidebarFileClicked(path) => {
                 self.selected_path = Some(path.clone());
-                if path.ends_with(".md") || path.ends_with(".markdown") {
+                let lower = path.to_lowercase();
+                if lower.ends_with(".md") || lower.ends_with(".markdown") {
                     self.showing_pdf = false;
                     self.open_file(&path)
-                } else if path.ends_with(".pdf") {
+                } else if lower.ends_with(".pdf") {
                     self.active_pdf_path = Some(path.clone());
                     self.showing_pdf = true;
                     self.open_pdf(&path)
+                } else if is_supported_image_path(&lower) {
+                    self.open_image(&path)
                 } else {
                     Task::none()
                 }
@@ -310,6 +348,17 @@ impl MdEditor {
                 self.active_modal = None;
                 self.modal_input.clear();
                 Task::none()
+            }
+            Message::NameModalSubmitCurrent => {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::CreateFile)
+                        | Some(views::modals::ModalType::CreateFolder)
+                ) {
+                    Task::done(Message::NameModalSubmit(self.modal_input.clone()))
+                } else {
+                    Task::none()
+                }
             }
             Message::NameModalSubmit(input) => {
                 let name = input.trim();
@@ -370,71 +419,12 @@ impl MdEditor {
                 Task::none()
             }
 
-            Message::EditorContentChanged(c) => {
-                self.buffer.insert_at_cursor(&c);
-                self.highlight_all();
-                self.load_images();
-                let math_task = self.load_math();
-                self.toc_entries = views::toc::get_toc(&self.buffer.text());
-                math_task
-            }
+            Message::EditorCommand(command) => self.run_editor_command(command),
             Message::MathRendered(tex, res) => {
                 if let Ok(tuple) = res {
                     self.math_cache.insert(tex, tuple);
                 }
                 Task::none()
-            }
-            Message::EditorAction(action) => {
-                let changed = match action {
-                    EditorAction::Backspace => {
-                        self.buffer.backspace();
-                        true
-                    }
-                    EditorAction::MoveLeft => {
-                        self.buffer.move_cursor_left();
-                        false
-                    }
-                    EditorAction::MoveRight => {
-                        self.buffer.move_cursor_right();
-                        false
-                    }
-                    EditorAction::MoveUp => {
-                        self.buffer.move_cursor_up();
-                        false
-                    }
-                    EditorAction::MoveDown => {
-                        self.buffer.move_cursor_down();
-                        false
-                    }
-                    EditorAction::MoveHome => {
-                        self.buffer.move_cursor_home();
-                        false
-                    }
-                    EditorAction::MoveEnd => {
-                        self.buffer.move_cursor_end();
-                        false
-                    }
-                    EditorAction::Delete => {
-                        self.buffer.delete();
-                        true
-                    }
-                    EditorAction::Undo => {
-                        self.buffer.undo();
-                        true
-                    }
-                    EditorAction::Redo => {
-                        self.buffer.redo();
-                        true
-                    }
-                };
-                self.highlight_all();
-                if changed {
-                    self.load_images();
-                    self.toc_entries = views::toc::get_toc(&self.buffer.text());
-                    self.load_math()
-                } else {
-                    Task::none()
-                }
             }
             Message::EditorSave => {
                 if let Some(path) = &self.active_path {
@@ -446,25 +436,10 @@ impl MdEditor {
                 Task::none()
             }
             Message::EditorCheckboxToggle(line_idx) => {
-                let text = self.buffer.text();
-                let mut lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
-                if let Some(line) = lines.get_mut(line_idx) {
-                    let indent_len = line.len() - line.trim_start().len();
-                    let marker = &line[indent_len..];
-                    if marker.starts_with("- [ ]") {
-                        line.replace_range(indent_len..indent_len + 5, "- [x]");
-                    } else if marker.starts_with("- [x]") || marker.starts_with("- [X]") {
-                        line.replace_range(indent_len..indent_len + 5, "- [ ]");
-                    }
-                }
-                let new_content = lines.join("\n");
-                self.buffer.set_text(&new_content);
-                self.highlight_all();
-                Task::none()
+                self.run_editor_command(EditorCommand::ToggleCheckbox { line: line_idx })
             }
             Message::EditorCursorMove(line, col) => {
-                self.buffer.set_cursor(line, col);
-                Task::none()
+                self.run_editor_command(EditorCommand::SetCursor { line, col })
             }
 
             Message::PdfLoaded(generation, pages) => {
@@ -813,10 +788,65 @@ impl MdEditor {
                 }
                 Task::none()
             }
+            Message::TrackerManualDateChanged(value) => {
+                self.tracker_manual_date = value;
+                Task::none()
+            }
+            Message::TrackerManualHoursChanged(value) => {
+                self.tracker_manual_hours = value;
+                Task::none()
+            }
+            Message::TrackerManualNotesChanged(value) => {
+                self.tracker_manual_notes = value;
+                Task::none()
+            }
+            Message::TrackerManualAdd => {
+                match self.tracker_manual_hours.trim().parse::<f32>() {
+                    Ok(hours) if hours > 0.0 => {
+                        let session = md_editor_core::tracker::StudySession {
+                            id: 0,
+                            date: self.tracker_manual_date.trim().to_string(),
+                            hours,
+                            activity_type: "Manual".to_string(),
+                            phase: "Manual".to_string(),
+                            notes: (!self.tracker_manual_notes.trim().is_empty())
+                                .then(|| self.tracker_manual_notes.trim().to_string()),
+                        };
+                        match md_editor_core::tracker::save_session(&self.state, session) {
+                            Ok(()) => {
+                                self.tracker_sessions =
+                                    md_editor_core::tracker::get_sessions(&self.state)
+                                        .unwrap_or_default();
+                                self.tracker_manual_hours.clear();
+                                self.tracker_manual_notes.clear();
+                                self.toast = Some("Manual study session added".to_string());
+                            }
+                            Err(err) => self.toast = Some(err),
+                        }
+                    }
+                    _ => self.toast = Some("Enter a positive hour value".to_string()),
+                }
+                Task::none()
+            }
+            Message::TrackerSessionDelete(id) => {
+                match md_editor_core::tracker::delete_session(&self.state, id) {
+                    Ok(()) => {
+                        self.tracker_sessions =
+                            md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
+                        self.toast = Some("Session deleted".to_string());
+                    }
+                    Err(err) => self.toast = Some(err),
+                }
+                Task::none()
+            }
 
             Message::SearchOpen => {
                 self.search_visible = true;
-                Task::none()
+                if self.active_pdf_path.is_some() && !self.search_query.trim().is_empty() {
+                    self.search_pdf()
+                } else {
+                    Task::none()
+                }
             }
             Message::SearchClose => {
                 self.search_visible = false;
@@ -824,12 +854,72 @@ impl MdEditor {
             }
             Message::SearchQueryChanged(q) => {
                 self.search_query = q.clone();
-                if q.len() > 2 {
+                self.pdf_search_error = None;
+                if q.len() > 2 && !self.search_regex {
                     if let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q) {
                         self.search_results = res;
                     }
+                } else {
+                    self.search_results.clear();
+                }
+                if self.active_pdf_path.is_some() && q.len() > 1 {
+                    self.search_pdf()
+                } else {
+                    self.pdf_search_results.clear();
+                    Task::none()
+                }
+            }
+            Message::SearchReplaceChanged(replace) => {
+                self.search_replace = replace;
+                Task::none()
+            }
+            Message::SearchRegexToggled(value) => {
+                self.search_regex = value;
+                if self.active_pdf_path.is_some() && self.search_query.len() > 1 {
+                    self.search_pdf()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::SearchMatchCaseToggled(value) => {
+                self.search_match_case = value;
+                if self.active_pdf_path.is_some() && self.search_query.len() > 1 {
+                    self.search_pdf()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::SearchReplaceAll => {
+                match self.replace_all_in_current_document() {
+                    Ok(count) => self.toast = Some(format!("Replaced {} matches", count)),
+                    Err(err) => self.toast = Some(err),
                 }
                 Task::none()
+            }
+            Message::PdfSearchResult(Ok(results)) => {
+                self.pdf_search_error = None;
+                self.pdf_search_results = results;
+                Task::none()
+            }
+            Message::PdfSearchResult(Err(err)) => {
+                self.pdf_search_results.clear();
+                self.pdf_search_error = Some(err);
+                Task::none()
+            }
+            Message::PdfSearchResultClicked(page) => {
+                self.search_visible = false;
+                self.pdf_current_page = page.min(self.pdf_total_pages.saturating_sub(1));
+                let scroll_y = self.pdf_page_offset(self.pdf_current_page);
+                Task::batch(vec![
+                    self.render_visible_pdf_pages(),
+                    operation::scroll_to(
+                        iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                        AbsoluteOffset {
+                            x: 0.0,
+                            y: scroll_y,
+                        },
+                    ),
+                ])
             }
             Message::SearchResultClicked(path) => {
                 self.search_visible = false;
@@ -959,7 +1049,9 @@ impl MdEditor {
 
         let toolbar = views::toolbar::view(
             self.active_path.as_deref(),
-            self.active_pdf_path.as_deref(),
+            self.active_pdf_path
+                .as_deref()
+                .or(self.active_image_path.as_deref()),
             None,
             self.sidebar_visible,
             self.backlinks_visible,
@@ -972,7 +1064,10 @@ impl MdEditor {
         let sidebar = views::sidebar::view(
             &self.vault_entries,
             self.selected_path.as_deref(),
-            self.active_path.as_deref(),
+            self.active_path
+                .as_deref()
+                .or(self.active_pdf_path.as_deref())
+                .or(self.active_image_path.as_deref()),
             &self.expanded_folders,
             !self.sidebar_visible,
         );
@@ -983,9 +1078,7 @@ impl MdEditor {
                 &self.highlighted_lines,
                 &self.image_cache,
                 &self.math_cache,
-                Message::EditorContentChanged,
-                Message::EditorCursorMove,
-                Message::EditorAction,
+                Message::EditorCommand,
                 Message::SidebarFileClicked,
                 Message::EditorCheckboxToggle,
             ))
@@ -1024,6 +1117,35 @@ impl MdEditor {
         } else {
             container(Space::new()).width(Length::Fixed(0.0)).into()
         };
+
+        let image_view: Element<Message, Theme, iced::Renderer> =
+            if let Some((handle, width, height)) = &self.active_image {
+                let label = self.active_image_path.as_deref().unwrap_or("Image");
+                container(
+                    column![
+                        text(label).size(13).color(app_theme::TEXT_MUTED),
+                        iced::widget::image(handle.clone())
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .content_fit(iced::ContentFit::Contain),
+                        text(format!("{:.0} x {:.0}", width, height))
+                            .size(11)
+                            .color(app_theme::TEXT_MUTED),
+                    ]
+                    .spacing(12)
+                    .align_x(Alignment::Center)
+                    .padding(24),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(app_theme::BG_PRIMARY)),
+                    ..Default::default()
+                })
+                .into()
+            } else {
+                container(Space::new()).width(Length::Fixed(0.0)).into()
+            };
 
         let main_content: Element<Message, Theme, iced::Renderer> = if self.split_view_active
             && self.active_path.is_some()
@@ -1064,6 +1186,8 @@ impl MdEditor {
             .into()
         } else if self.showing_pdf && self.active_pdf_path.is_some() {
             pdf_view
+        } else if self.active_image.is_some() {
+            image_view
         } else {
             editor_view.into()
         };
@@ -1090,7 +1214,13 @@ impl MdEditor {
             layers.push(
                 container(views::search::view(
                     &self.search_query,
+                    &self.search_replace,
+                    self.search_regex,
+                    self.search_match_case,
+                    self.current_document_match_count(),
                     &self.search_results,
+                    &self.pdf_search_results,
+                    self.pdf_search_error.as_deref(),
                     true,
                 ))
                 .width(Length::Fill)
@@ -1140,6 +1270,9 @@ impl MdEditor {
                     &self.tracker_kv,
                     self.tracker_tab,
                     &self.tracker_config_content,
+                    &self.tracker_manual_date,
+                    &self.tracker_manual_hours,
+                    &self.tracker_manual_notes,
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -1248,6 +1381,8 @@ impl MdEditor {
             if let Ok(content) = String::from_utf8(bytes) {
                 self.buffer = DocBuffer::from_text(&content);
                 self.active_path = Some(path.to_string());
+                self.active_image_path = None;
+                self.active_image = None;
                 self.showing_pdf = false;
                 self.toc_entries = views::toc::get_toc(&content);
                 self.highlighted_lines = highlight::highlight_markdown(&content);
@@ -1268,6 +1403,8 @@ impl MdEditor {
         };
         let path_str = abs_path.to_string_lossy().to_string();
         self.active_pdf_path = Some(path.to_string());
+        self.active_image_path = None;
+        self.active_image = None;
         self.showing_pdf = true;
         self.pdf_current_page = 0;
         self.pdf_fit_to_width = true;
@@ -1298,6 +1435,35 @@ impl MdEditor {
                 move |res| Message::PdfTocLoaded(generation, res.unwrap_or_default()),
             ),
         ])
+    }
+
+    fn open_image(&mut self, path: &str) -> Task<Message> {
+        let Some(abs_path) = self.resolve_active_path(path) else {
+            self.toast = Some("Open a vault before opening an image".to_string());
+            return Task::none();
+        };
+
+        match image::open(&abs_path) {
+            Ok(img) => {
+                let (width, height) = img.dimensions();
+                let handle = iced::widget::image::Handle::from_rgba(
+                    width,
+                    height,
+                    img.into_rgba8().into_raw(),
+                );
+                self.active_image_path = Some(path.to_string());
+                self.active_image = Some((handle, width as f32, height as f32));
+                self.active_path = None;
+                self.active_pdf_path = None;
+                self.showing_pdf = false;
+                self.toc_entries.clear();
+                self.backlinks.clear();
+            }
+            Err(err) => {
+                self.toast = Some(format!("Could not open image: {err}"));
+            }
+        }
+        Task::none()
     }
 
     fn render_pdf_page(&self, page: u16) -> Task<Message> {
@@ -1517,6 +1683,114 @@ impl MdEditor {
 
     fn highlight_all(&mut self) {
         self.highlighted_lines = highlight::highlight_markdown(&self.buffer.text());
+    }
+
+    fn current_document_match_count(&self) -> usize {
+        let query = self.search_query.as_str();
+        if query.is_empty() || self.active_path.is_none() {
+            return 0;
+        }
+        let text = self.buffer.text();
+        if self.search_regex {
+            regex::RegexBuilder::new(query)
+                .case_insensitive(!self.search_match_case)
+                .build()
+                .map(|re| re.find_iter(&text).count())
+                .unwrap_or(0)
+        } else if self.search_match_case {
+            text.match_indices(query).count()
+        } else {
+            text.to_lowercase()
+                .match_indices(&query.to_lowercase())
+                .count()
+        }
+    }
+
+    fn replace_all_in_current_document(&mut self) -> Result<usize, String> {
+        if self.active_path.is_none() {
+            return Err("Open a markdown file before replacing text".to_string());
+        }
+        if self.search_query.is_empty() {
+            return Err("Search query is empty".to_string());
+        }
+
+        let text = self.buffer.text();
+        let (new_text, count) = if self.search_regex {
+            let re = regex::RegexBuilder::new(&self.search_query)
+                .case_insensitive(!self.search_match_case)
+                .build()
+                .map_err(|err| format!("Invalid regex: {err}"))?;
+            let count = re.find_iter(&text).count();
+            (
+                re.replace_all(&text, self.search_replace.as_str())
+                    .to_string(),
+                count,
+            )
+        } else if self.search_match_case {
+            let count = text.match_indices(&self.search_query).count();
+            (
+                text.replace(&self.search_query, &self.search_replace),
+                count,
+            )
+        } else {
+            let re = regex::RegexBuilder::new(&regex::escape(&self.search_query))
+                .case_insensitive(true)
+                .build()
+                .map_err(|err| err.to_string())?;
+            let count = re.find_iter(&text).count();
+            (
+                re.replace_all(&text, self.search_replace.as_str())
+                    .to_string(),
+                count,
+            )
+        };
+
+        if count > 0 {
+            self.buffer.set_text(&new_text);
+            self.highlight_all();
+            self.load_images();
+            self.toc_entries = views::toc::get_toc(&self.buffer.text());
+        }
+        Ok(count)
+    }
+
+    fn search_pdf(&self) -> Task<Message> {
+        let Some(path) = &self.active_pdf_path else {
+            return Task::none();
+        };
+        let Some(abs_path) = self.resolve_active_path(path) else {
+            return Task::none();
+        };
+        let query = self.search_query.clone();
+        let regex = self.search_regex;
+        let match_case = self.search_match_case;
+        let _state = self.state.clone();
+        let path_str = abs_path.to_string_lossy().to_string();
+        Task::perform(
+            async move {
+                let Some(renderer) = _state.pdf_renderer.as_ref() else {
+                    return Err(
+                        "PDF search is unavailable because PDFium is not loaded".to_string()
+                    );
+                };
+                renderer.search_text(&path_str, &query, regex, match_case)
+            },
+            Message::PdfSearchResult,
+        )
+    }
+
+    fn run_editor_command(&mut self, command: EditorCommand) -> Task<Message> {
+        let result = self.buffer.execute(command);
+        if result.projection_changed {
+            self.highlight_all();
+        }
+        if result.text_changed {
+            self.load_images();
+            self.toc_entries = views::toc::get_toc(&self.buffer.text());
+            self.load_math()
+        } else {
+            Task::none()
+        }
     }
 
     fn load_images(&mut self) {

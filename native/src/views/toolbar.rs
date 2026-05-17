@@ -1,4 +1,4 @@
-use iced::widget::{button, container, row, text, tooltip, Button, Space};
+use iced::widget::{Button, Space, button, container, row, text};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
@@ -54,47 +54,31 @@ pub fn view<'a>(
     };
 
     let actions = row![
-        tooltip(
-            button(text("⌕").size(15).color(theme::TEXT_MUTED))
-                .on_press(Message::SearchOpen)
-                .padding(8)
-                .style(button::text),
-            "Search",
-            tooltip::Position::FollowCursor
-        ),
-        tooltip(
-            button(text("⌘").size(14).color(theme::TEXT_MUTED))
-                .on_press(Message::CommandPaletteOpen)
-                .padding(8)
-                .style(button::text),
-            "Command palette",
-            tooltip::Position::FollowCursor
-        ),
-        tooltip(
-            button(text("☰").size(14).color(if toc_visible {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            }))
-            .on_press(Message::ToggleTOC)
+        button(text("⌕").size(15).color(theme::TEXT_MUTED))
+            .on_press(Message::SearchOpen)
             .padding(8)
             .style(button::text),
-            "Table of contents",
-            tooltip::Position::FollowCursor
-        ),
+        button(text("⌘").size(14).color(theme::TEXT_MUTED))
+            .on_press(Message::CommandPaletteOpen)
+            .padding(8)
+            .style(button::text),
+        button(text("☰").size(14).color(if toc_visible {
+            theme::ACCENT
+        } else {
+            theme::TEXT_MUTED
+        }))
+        .on_press(Message::ToggleTOC)
+        .padding(8)
+        .style(button::text),
         split_button,
-        tooltip(
-            button(text("◷").size(14).color(if tracker_visible {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            }))
-            .on_press(Message::TrackerToggle)
-            .padding(8)
-            .style(button::text),
-            "Study tracker",
-            tooltip::Position::FollowCursor
-        ),
+        button(text("◷").size(14).color(if tracker_visible {
+            theme::ACCENT
+        } else {
+            theme::TEXT_MUTED
+        }))
+        .on_press(Message::TrackerToggle)
+        .padding(8)
+        .style(button::text),
     ]
     .spacing(4);
 

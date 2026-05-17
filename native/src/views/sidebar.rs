@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
-use iced::widget::{button, column, container, row, scrollable, text, tooltip, Column, Space};
-use iced::{Alignment, Element, Length, Theme, Renderer, Color, Border, Background};
+use iced::advanced::text::Wrapping;
+use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
+use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
@@ -28,7 +29,11 @@ fn render_tree_level<'a>(
         let relative = if prefix.is_empty() {
             &entry.path
         } else {
-            entry.path.strip_prefix(prefix).unwrap().trim_start_matches('/')
+            entry
+                .path
+                .strip_prefix(prefix)
+                .unwrap()
+                .trim_start_matches('/')
         };
 
         let first_part = relative.split('/').next().unwrap();
@@ -64,11 +69,17 @@ fn render_tree_level<'a>(
 
         // Fallback to basic icons if font doesn't support them
         let icon = if is_dir {
-            if expanded.contains(&path) { "▼" } else { "▶" }
-        } else if name.ends_with(".pdf") {
-            "PDF"
+            if expanded.contains(&path) {
+                "▼"
+            } else {
+                "▶"
+            }
+        } else if name.to_lowercase().ends_with(".pdf") {
+            "□"
+        } else if crate::app::is_supported_image_path(&name.to_lowercase()) {
+            "◇"
         } else {
-            " "
+            "•"
         };
 
         let name_color = if is_active {
@@ -82,7 +93,11 @@ fn render_tree_level<'a>(
         let content = row![
             Space::new().width(Length::Fixed(indent)),
             text(icon).size(10).color(theme::TEXT_MUTED),
-            text(name).size(13).color(name_color),
+            text(name)
+                .size(13)
+                .color(name_color)
+                .wrapping(Wrapping::WordOrGlyph)
+                .width(Length::Fill),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -113,36 +128,51 @@ fn render_tree_level<'a>(
             .width(Length::Fill)
             .style(style);
 
-        let delete_btn = tooltip(
-            button(text("×").size(13).color(theme::TEXT_MUTED))
-                .on_press(Message::DeleteFileDialog(path.clone()))
-                .padding([4, 6])
-                .style(button::text),
-            "Delete",
-            tooltip::Position::FollowCursor,
-        );
+        let delete_btn = button(text("×").size(13).color(theme::TEXT_MUTED))
+            .on_press(Message::DeleteFileDialog(path.clone()))
+            .padding([4, 6])
+            .style(button::text);
 
         // Add a small indicator for active file
         let item = if is_active {
             row![
-                container(Space::new().width(Length::Fixed(2.0)).height(Length::Fixed(16.0)))
-                    .style(|_| container::Style {
-                        background: Some(Background::Color(theme::ACCENT)),
-                        border: Border { radius: 1.0.into(), ..Default::default() },
+                container(
+                    Space::new()
+                        .width(Length::Fixed(2.0))
+                        .height(Length::Fixed(16.0))
+                )
+                .style(|_| container::Style {
+                    background: Some(Background::Color(theme::ACCENT)),
+                    border: Border {
+                        radius: 1.0.into(),
                         ..Default::default()
-                    }),
+                    },
+                    ..Default::default()
+                }),
                 btn,
                 delete_btn
-            ].spacing(0).align_y(Alignment::Center).into()
+            ]
+            .spacing(0)
+            .align_y(Alignment::Center)
+            .into()
         } else {
-            row![btn, delete_btn].spacing(0).align_y(Alignment::Center).into()
+            row![btn, delete_btn]
+                .spacing(0)
+                .align_y(Alignment::Center)
+                .into()
         };
 
         elements.push(item);
 
         if is_dir && expanded.contains(&path) {
-            let child_elements =
-                render_tree_level(entries, &path, depth + 1, selected_path, active_path, expanded);
+            let child_elements = render_tree_level(
+                entries,
+                &path,
+                depth + 1,
+                selected_path,
+                active_path,
+                expanded,
+            );
             elements.extend(child_elements);
         }
     }
@@ -159,34 +189,35 @@ pub fn view<'a>(
     collapsed: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
     if collapsed {
-        return container(Space::new())
-            .width(Length::Fixed(0.0))
-            .into();
+        return container(Space::new()).width(Length::Fixed(0.0)).into();
     }
 
     let header = row![
-        text("EXPLORER").size(11).color(theme::TEXT_MUTED).font(iced::Font::default()),
+        text("EXPLORER")
+            .size(11)
+            .color(theme::TEXT_MUTED)
+            .font(iced::Font::default()),
         Space::new().width(Length::Fill),
-        tooltip(button(text("+").size(14).color(theme::TEXT_MUTED))
+        button(text("+").size(14).color(theme::TEXT_MUTED))
             .on_press(Message::CreateFileDialog)
             .padding([4, 8])
-            .style(button::text), "New file", tooltip::Position::FollowCursor),
-        tooltip(button(text("▣").size(14).color(theme::TEXT_MUTED))
+            .style(button::text),
+        button(text("▣").size(14).color(theme::TEXT_MUTED))
             .on_press(Message::CreateFolderDialog)
             .padding([4, 8])
-            .style(button::text), "New folder", tooltip::Position::FollowCursor),
+            .style(button::text),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
     .padding([12, 16]);
 
-    let tree_elements = render_tree_level(entries, "", 0, selected_path, active_path, expanded_folders);
+    let tree_elements =
+        render_tree_level(entries, "", 0, selected_path, active_path, expanded_folders);
     let file_list = Column::with_children(tree_elements).spacing(2);
 
     let content = column![
         header,
-        scrollable(file_list.padding([0, 4]))
-            .height(Length::Fill)
+        scrollable(file_list.padding([0, 4])).height(Length::Fill)
     ]
     .width(Length::Fixed(260.0));
 
