@@ -2262,6 +2262,7 @@ dependencies = [
  "ratex-parser",
  "ratex-render",
  "ratex-types",
+ "regex",
  "rfd",
  "ropey",
  "serde",

@@ -810,11 +810,7 @@ fn single_line_display_math(trimmed: &str) -> Option<&str> {
         return None;
     }
     let math = rest[..end].trim();
-    if math.is_empty() {
-        None
-    } else {
-        Some(math)
-    }
+    if math.is_empty() { None } else { Some(math) }
 }
 
 fn is_obvious_markdown_boundary(trimmed: &str) -> bool {
@@ -938,8 +934,8 @@ fn code_span(text: &str, color: Color) -> StyledSpan {
     }
 }
 
-fn syntect_defaults(
-) -> Option<&'static (syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> {
+fn syntect_defaults()
+-> Option<&'static (syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> {
     static DEFAULTS: OnceLock<(syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> =
         OnceLock::new();
     Some(DEFAULTS.get_or_init(|| {
@@ -1047,18 +1043,91 @@ mod tests {
     }
 
     #[test]
+    fn code_fences_hide_markers_only_in_preview() {
+        let lines = highlight_markdown("```rust\nfn main() {}\n```");
+        assert!(lines[0].is_block_fence);
+        assert!(lines[2].is_block_fence);
+        assert_eq!(lines[0].spans[0].visible_text(false), "");
+        assert_eq!(lines[0].spans[0].visible_text(true), "```rust");
+        assert_eq!(lines[2].spans[0].visible_text(false), "");
+        assert_eq!(lines[2].spans[0].visible_text(true), "```");
+    }
+
+    #[test]
+    fn code_highlighting_preserves_full_source_text() {
+        let source = "let answer: usize = 42;";
+        let lines = highlight_markdown(&format!("```rust\n{source}\n```"));
+        let rendered = lines[1]
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>();
+        assert_eq!(rendered, source);
+        assert!(lines[1].spans.iter().all(|span| span.is_code));
+        assert!(
+            lines[1]
+                .spans
+                .iter()
+                .any(|span| span.color != crate::theme::TEXT_PRIMARY)
+        );
+    }
+
+    #[test]
+    fn unterminated_code_block_keeps_all_remaining_lines_editable_as_code() {
+        let lines = highlight_markdown("```json\n{\"a\": 1}\n# not a heading");
+        assert_eq!(lines.len(), 3);
+        assert!(lines.iter().all(|line| line.is_code_block));
+        assert_eq!(lines[1].code_block_lang.as_deref(), Some("json"));
+        assert!(!lines[2].spans.iter().any(|span| span.is_heading));
+    }
+
+    #[test]
+    fn table_separator_has_no_cells_but_preserves_raw_edit_text() {
+        let lines = highlight_markdown("| A | B |\n|:--|--:|\n| 1 | **two** |");
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].table_cells.len(), 2);
+        assert!(lines[1].is_table_row);
+        assert!(lines[1].table_cells.is_empty());
+        assert_eq!(lines[1].spans[0].visible_text(true), "|:--|--:|");
+        assert_eq!(lines[1].spans[0].visible_text(false), "");
+        assert_eq!(lines[2].table_cells.len(), 2);
+        assert!(lines[2].table_cells[1].iter().any(|span| span.bold));
+    }
+
+    #[test]
+    fn malformed_inline_markdown_remains_plain_text() {
+        let lines = highlight_markdown("bad **bold and [link](missing and `code");
+        let text = lines[0]
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>();
+        assert_eq!(text, "bad **bold and [link](missing and `code");
+        assert!(!lines[0].spans.iter().any(|span| span.bold));
+        assert!(!lines[0].spans.iter().any(|span| span.is_link));
+        assert!(!lines[0].spans.iter().any(|span| span.is_code));
+    }
+
+    #[test]
     fn test_highlighter_permutations() {
         // We will generate 250 distinct markdown fragments, each containing a sequence of elements
         // Totaling over 1,000 lines of parsed markdown text to assert highlighter robustness.
-        
+
         // 1. Heading level permutations (1 to 6) with inline formatting
         for level in 1..=6 {
             let prefix = "#".repeat(level);
             let heading_text = format!("{} Heading Level {}", prefix, level);
             let lines = highlight_markdown(&heading_text);
             assert_eq!(lines.len(), 1);
-            assert!(lines[0].spans.iter().any(|span| span.is_heading), "Failed to detect heading at level {}", level);
-            assert!(lines[0].spans.iter().any(|span| span.bold), "Failed to detect bold in heading");
+            assert!(
+                lines[0].spans.iter().any(|span| span.is_heading),
+                "Failed to detect heading at level {}",
+                level
+            );
+            assert!(
+                lines[0].spans.iter().any(|span| span.bold),
+                "Failed to detect bold in heading"
+            );
         }
 
         // 2. Ordered and Unordered lists, task items, and checkboxes
@@ -1076,26 +1145,54 @@ mod tests {
             assert_eq!(lines.len(), 1);
             assert!(
                 lines[0].spans.iter().any(|span| span.is_checkbox),
-                "Failed to detect checkbox for '{}'", cb
+                "Failed to detect checkbox for '{}'",
+                cb
             );
         }
 
         // 3. LaTeX Math block environments permutations
         let math_environments = vec![
-            "align", "align*", "equation", "equation*", "gather", "gather*", 
-            "split", "matrix", "pmatrix", "bmatrix", "aligned", "cases", "vmatrix", "Vmatrix"
+            "align",
+            "align*",
+            "equation",
+            "equation*",
+            "gather",
+            "gather*",
+            "split",
+            "matrix",
+            "pmatrix",
+            "bmatrix",
+            "aligned",
+            "cases",
+            "vmatrix",
+            "Vmatrix",
         ];
         for env in &math_environments {
-            let math_block = format!("\\begin{{{}}}\nx &= y + z \\\\\na &= b\n\\end{{{}}}", env, env);
+            let math_block = format!(
+                "\\begin{{{}}}\nx &= y + z \\\\\na &= b\n\\end{{{}}}",
+                env, env
+            );
             let lines = highlight_markdown(&math_block);
             assert_eq!(lines.len(), 4);
-            
+
             // Check that all 4 lines are unified under the math block ID
             let block_id = lines[0].block_id;
-            assert!(block_id > 0, "Environment {} did not generate a block ID", env);
+            assert!(
+                block_id > 0,
+                "Environment {} did not generate a block ID",
+                env
+            );
             for idx in 0..4 {
-                assert!(lines[idx].is_math_block, "Line {} in environment {} not marked as math block", idx, env);
-                assert_eq!(lines[idx].block_id, block_id, "Block ID mismatch in environment {}", env);
+                assert!(
+                    lines[idx].is_math_block,
+                    "Line {} in environment {} not marked as math block",
+                    idx, env
+                );
+                assert_eq!(
+                    lines[idx].block_id, block_id,
+                    "Block ID mismatch in environment {}",
+                    env
+                );
             }
         }
 
@@ -1112,19 +1209,19 @@ mod tests {
 
         // 5. Fenced code block language permutations
         let languages = vec![
-            "rust", "js", "ts", "python", "html", "css", "c", "cpp", "go", "bash", "json", "toml"
+            "rust", "js", "ts", "python", "html", "css", "c", "cpp", "go", "bash", "json", "toml",
         ];
         for lang in &languages {
             let code_block = format!("```{}\n// code here for {}\nlet v = 10;\n```", lang, lang);
             let lines = highlight_markdown(&code_block);
             assert_eq!(lines.len(), 4);
-            
+
             // First line starts the block, middle lines are code block, last line ends it
             assert!(lines[1].is_code_block);
             assert!(lines[2].is_code_block);
             assert_eq!(lines[1].code_block_lang.as_deref(), Some(*lang));
             assert_eq!(lines[2].code_block_lang.as_deref(), Some(*lang));
-            
+
             // Code block lines must have code spans
             assert!(lines[1].spans.iter().all(|span| span.is_code));
             assert!(lines[2].spans.iter().all(|span| span.is_code));
@@ -1144,10 +1241,22 @@ mod tests {
         let lines = highlight_markdown(inline_markdown);
         assert_eq!(lines.len(), 1);
         let line = &lines[0];
-        
-        assert!(line.spans.iter().any(|span| span.is_link && span.link_target.as_deref() == Some("wikilink")));
-        assert!(line.spans.iter().any(|span| span.is_link && span.link_target.as_deref() == Some("http://google.com")));
-        assert!(line.spans.iter().any(|span| span.is_link && span.link_target.as_deref() == Some("aliased")));
+
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.is_link && span.link_target.as_deref() == Some("wikilink"))
+        );
+        assert!(
+            line.spans.iter().any(
+                |span| span.is_link && span.link_target.as_deref() == Some("http://google.com")
+            )
+        );
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.is_link && span.link_target.as_deref() == Some("aliased"))
+        );
         assert!(line.spans.iter().any(|span| span.is_code));
     }
 }

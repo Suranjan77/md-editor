@@ -1,6 +1,6 @@
 use iced::advanced::text::Wrapping;
 use iced::widget::{
-    Space, button, checkbox, column, container, row, scrollable, text, text_editor,
+    Space, button, checkbox, column, container, row, scrollable, text, text_editor, text_input,
 };
 use iced::{Alignment, Background, Element, Length, Renderer, Theme};
 
@@ -504,6 +504,9 @@ pub fn view<'a>(
     kv: &'a std::collections::HashMap<String, String>,
     active_tab: TrackerTab,
     config_json: &'a text_editor::Content,
+    manual_date: &'a str,
+    manual_hours: &'a str,
+    manual_notes: &'a str,
 ) -> Element<'a, Message, Theme, Renderer> {
     if !visible {
         return container(text("")).width(Length::Fixed(0.0)).into();
@@ -616,7 +619,7 @@ pub fn view<'a>(
 
     let body = match active_tab {
         TrackerTab::Dashboard => dashboard_body(sessions, running_status, controls, tracker_config),
-        TrackerTab::Log => log_body(sessions),
+        TrackerTab::Log => log_body(sessions, manual_date, manual_hours, manual_notes),
         TrackerTab::Projects => projects_body(kv, tracker_config.projects),
         TrackerTab::Gates => gates_body(kv, tracker_config.gates),
         TrackerTab::Reading => reading_body(kv, tracker_config.reading),
@@ -697,13 +700,38 @@ fn dashboard_body<'a>(
     .into()
 }
 
-fn log_body<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme, Renderer> {
+fn log_body<'a>(
+    sessions: &'a [StudySession],
+    manual_date: &'a str,
+    manual_hours: &'a str,
+    manual_notes: &'a str,
+) -> Element<'a, Message, Theme, Renderer> {
     container(
         column![
             text("Session Log")
                 .size(15)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
+            row![
+                text_input("YYYY-MM-DD", manual_date)
+                    .on_input(Message::TrackerManualDateChanged)
+                    .padding(8)
+                    .width(Length::FillPortion(2)),
+                text_input("Hours", manual_hours)
+                    .on_input(Message::TrackerManualHoursChanged)
+                    .padding(8)
+                    .width(Length::FillPortion(1)),
+                text_input("Notes", manual_notes)
+                    .on_input(Message::TrackerManualNotesChanged)
+                    .padding(8)
+                    .width(Length::FillPortion(3)),
+                button(text("Add").size(12).font(BOLD))
+                    .on_press(Message::TrackerManualAdd)
+                    .padding([8, 12])
+                    .style(button::primary),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
             sessions_list(sessions),
         ]
         .spacing(12),
@@ -748,7 +776,12 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme
                         .size(11)
                         .color(theme::ACCENT)
                         .font(BOLD),
+                    button(text("Delete").size(11).color(theme::TEXT_MUTED))
+                        .on_press(Message::TrackerSessionDelete(session.id))
+                        .padding([5, 8])
+                        .style(button::text),
                 ]
+                .spacing(8)
                 .align_y(Alignment::Center)
                 .padding(8),
             )

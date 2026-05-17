@@ -31,6 +31,12 @@ pub struct LinkPreviewResult {
     pub center_ratio: f32,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PdfSearchMatch {
+    pub page_index: u16,
+    pub context: String,
+}
+
 pub struct PdfState {
     pub current_page: u16,
     pub total_pages: u16,
@@ -78,6 +84,13 @@ enum PdfCommand {
         String,
         u16,
         std::sync::mpsc::SyncSender<Result<Vec<LinkInfo>, String>>,
+    ),
+    SearchText(
+        String,
+        String,
+        bool,
+        bool,
+        std::sync::mpsc::SyncSender<Result<Vec<PdfSearchMatch>, String>>,
     ),
     RenderLinkPreview(
         String,
@@ -306,6 +319,85 @@ impl PdfRenderer {
                         })();
                         let _ = resp.send(res);
                     }
+                    PdfCommand::SearchText(path, query, regex, match_case, resp) => {
+                        let res = (|| {
+                            if query.trim().is_empty() {
+                                return Ok(Vec::new());
+                            }
+                            if current_document
+                                .as_ref()
+                                .map(|(p, _)| p != &path)
+                                .unwrap_or(true)
+                            {
+                                let doc = pdfium
+                                    .load_pdf_from_file(&path, None)
+                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                current_document = Some((path.clone(), doc));
+                            }
+                            let Some((_, doc)) = current_document.as_ref() else {
+                                return Err("PDF document was not loaded".to_string());
+                            };
+
+                            let re = if regex {
+                                Some(
+                                    regex::RegexBuilder::new(&query)
+                                        .case_insensitive(!match_case)
+                                        .build()
+                                        .map_err(|err| {
+                                            format!("Invalid PDF search regex: {err}")
+                                        })?,
+                                )
+                            } else {
+                                None
+                            };
+                            let needle = if match_case {
+                                query.clone()
+                            } else {
+                                query.to_lowercase()
+                            };
+                            let mut matches = Vec::new();
+                            for index in 0..doc.pages().len() {
+                                let page = doc.pages().get(index).map_err(|e| e.to_string())?;
+                                let page_text = page.text().map_err(|e| e.to_string())?.to_string();
+                                let found = if let Some(re) = &re {
+                                    re.find(&page_text).map(|found| {
+                                        (found.start(), found.as_str().chars().count())
+                                    })
+                                } else {
+                                    let haystack = if match_case {
+                                        page_text.clone()
+                                    } else {
+                                        page_text.to_lowercase()
+                                    };
+                                    haystack
+                                        .find(&needle)
+                                        .map(|pos| (pos, needle.chars().count()))
+                                };
+                                if let Some((pos, match_len)) = found {
+                                    let match_char = page_text[..pos].chars().count();
+                                    let start = match_char.saturating_sub(48);
+                                    let take = match_len + 96;
+                                    let context = page_text
+                                        .chars()
+                                        .skip(start)
+                                        .take(take)
+                                        .collect::<String>()
+                                        .split_whitespace()
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
+                                    matches.push(PdfSearchMatch {
+                                        page_index: index as u16,
+                                        context,
+                                    });
+                                    if matches.len() >= 100 {
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(matches)
+                        })();
+                        let _ = resp.send(res);
+                    }
                     PdfCommand::RenderLinkPreview(path, index, dest_y, resp) => {
                         let res = (|| {
                             if current_document
@@ -426,6 +518,26 @@ impl PdfRenderer {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetLinks(path.to_string(), page_index, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())?
+    }
+
+    pub fn search_text(
+        &self,
+        path: &str,
+        query: &str,
+        regex: bool,
+        match_case: bool,
+    ) -> Result<Vec<PdfSearchMatch>, String> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::SearchText(
+                path.to_string(),
+                query.to_string(),
+                regex,
+                match_case,
+                tx,
+            ))
             .map_err(|e| e.to_string())?;
         rx.recv().map_err(|e| e.to_string())?
     }
