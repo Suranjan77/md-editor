@@ -41,7 +41,14 @@ pub enum Message {
     PdfZoomChanged(f32),
     PdfLoaded(u16), // Total pages
     PdfRendered(u16, image::DynamicImage),
-    PdfRightClicked(f32, f32),
+    PdfRenderFailed(u16),
+    PdfScrolled { y: f32, viewport_height: f32 },
+    PdfLeftClicked(u16, f32, f32),
+    PdfRightClicked(u16, f32, f32),
+    PdfTocLoaded(Vec<md_editor_core::pdf::TocEntry>),
+    PdfPageLinksLoaded(u16, Vec<md_editor_core::pdf::LinkInfo>),
+    PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
+    ClosePdfLinkPreview,
 
     // ── Tracker ──────────────────────────────────────────────────
     TrackerToggle,
@@ -53,12 +60,14 @@ pub enum Message {
     // ── Toast ───────────────────────────────────────────────────
     ToastShow(String),
     ToastHide,
+    MathRendered(String, Result<(iced::widget::image::Handle, f32, f32), String>),
 
     // ── System ───────────────────────────────────────────────────
     Tick,
     KeyboardShortcut(Shortcut),
     FocusModeToggle,
     ToggleTOC,
+    TocClicked(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

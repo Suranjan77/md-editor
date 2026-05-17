@@ -6,9 +6,12 @@ use crate::theme;
 
 pub fn view<'a>(
     active_path: Option<&'a str>,
+    active_pdf_path: Option<&'a str>,
     _sync_status: Option<&'a str>,
     sidebar_visible: bool,
     backlinks_visible: bool,
+    tracker_visible: bool,
+    toc_visible: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
     let sidebar_toggle: Button<'_, Message, Theme, Renderer> = button(
         text("≡")
@@ -19,7 +22,7 @@ pub fn view<'a>(
     .padding(8)
     .style(button::text);
 
-    let path_display = if let Some(path) = active_path {
+    let path_display = if let Some(path) = active_path.or(active_pdf_path) {
         row![
             text(path).size(13).color(theme::TEXT_PRIMARY).font(iced::Font::default()),
             text(" • Saved").size(11).color(theme::TEXT_MUTED),
@@ -33,6 +36,14 @@ pub fn view<'a>(
     let actions = row![
         button(text("🔍").size(14))
             .on_press(Message::SearchOpen)
+            .padding(8)
+            .style(button::text),
+        button(text("☰").size(14).color(if toc_visible { theme::ACCENT } else { theme::TEXT_MUTED }))
+            .on_press(Message::ToggleTOC)
+            .padding(8)
+            .style(button::text),
+        button(text("◷").size(14).color(if tracker_visible { theme::ACCENT } else { theme::TEXT_MUTED }))
+            .on_press(Message::TrackerToggle)
             .padding(8)
             .style(button::text),
         button(text("🔔").size(14).color(if backlinks_visible { theme::ACCENT } else { theme::TEXT_MUTED }))

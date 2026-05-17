@@ -1,4 +1,5 @@
-use iced::widget::{column, container, row, scrollable, stack, Space};
+use iced::widget::{column, container, row, stack, Space, scrollable};
+use iced::widget::operation::{self, AbsoluteOffset};
 use iced::{Alignment, Element, Length, Theme, Subscription, Task};
 
 use std::collections::BTreeSet;
@@ -11,6 +12,9 @@ use crate::editor::highlight;
 use crate::messages::{Message, Shortcut};
 use crate::theme as app_theme;
 use crate::views;
+use std::collections::HashSet;
+
+const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 
 pub struct MdEditor {
     state: Arc<md_editor_core::state::AppState>,
@@ -34,14 +38,28 @@ pub struct MdEditor {
     pdf_pages: Vec<Option<iced::widget::image::Handle>>,
     pdf_dimensions: Vec<Option<(u32, u32)>>,
     active_pdf_path: Option<String>,
+    pdf_scroll_y: f32,
+    pdf_page_links: std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
+    pdf_link_preview: Option<iced::widget::image::Handle>,
+
+    // Study tracker
+    tracker_visible: bool,
+    tracker_running: bool,
+    tracker_started_at: Option<std::time::Instant>,
+    tracker_sessions: Vec<md_editor_core::tracker::StudySession>,
 
     // Modal state
+    #[allow(dead_code)]
     active_modal: Option<views::modals::ModalType>,
+    #[allow(dead_code)]
     modal_input: String,
 
     // Command palette
+    #[allow(dead_code)]
     command_palette_visible: bool,
+    #[allow(dead_code)]
     command_palette_query: String,
+    #[allow(dead_code)]
     commands: Vec<views::command_palette::Command>,
 
     // Toast
@@ -55,14 +73,16 @@ pub struct MdEditor {
     // TOC
     toc_visible: bool,
     toc_entries: Vec<views::toc::TocEntry>,
-    image_cache: std::collections::HashMap<String, iced::widget::image::Handle>,
-    math_cache: std::collections::HashMap<String, iced::widget::image::Handle>,
+    image_cache: std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    math_cache: std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    pdf_pending_pages: HashSet<u16>,
 }
 
 impl MdEditor {
     pub fn new() -> (Self, Task<Message>) {
         let state = Arc::new(md_editor_core::state::AppState::new());
         let last_vault = md_editor_core::config::get_sys_config(&state, "last_vault").ok().flatten();
+        let tracker_sessions = md_editor_core::tracker::get_sessions(&state).unwrap_or_default();
 
         let mut app = Self {
             state,
@@ -82,6 +102,13 @@ impl MdEditor {
             pdf_pages: Vec::new(),
             pdf_dimensions: Vec::new(),
             active_pdf_path: None,
+            pdf_scroll_y: 0.0,
+            pdf_page_links: std::collections::HashMap::new(),
+            pdf_link_preview: None,
+            tracker_visible: false,
+            tracker_running: false,
+            tracker_started_at: None,
+            tracker_sessions,
             active_modal: None,
             modal_input: String::new(),
             command_palette_visible: false,
@@ -95,6 +122,7 @@ impl MdEditor {
             toc_entries: Vec::new(),
             image_cache: std::collections::HashMap::new(),
             math_cache: std::collections::HashMap::new(),
+            pdf_pending_pages: HashSet::new(),
         };
 
         if let Some(path) = last_vault {
@@ -150,7 +178,7 @@ impl MdEditor {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenVaultDialog => {
-                return Task::perform(
+                Task::perform(
                     async {
                         let folder = rfd::AsyncFileDialog::new()
                             .set_title("Open Vault Folder")
@@ -159,23 +187,25 @@ impl MdEditor {
                         folder.map(|f| f.path().to_string_lossy().to_string())
                     },
                     Message::VaultOpened,
-                );
+                )
             }
             Message::VaultOpened(Some(path)) => {
                 self.open_vault(&path);
+                Task::none()
             }
             Message::SidebarToggle => {
                 self.sidebar_visible = !self.sidebar_visible;
+                Task::none()
             }
             Message::SidebarFileClicked(path) => {
                 self.selected_path = Some(path.clone());
                 if path.ends_with(".md") || path.ends_with(".markdown") {
-                    self.active_pdf_path = None;
-                    self.open_file(&path);
+                    self.open_file(&path)
                 } else if path.ends_with(".pdf") {
-                    self.active_path = None;
                     self.active_pdf_path = Some(path.clone());
-                    return self.open_pdf(&path);
+                    self.open_pdf(&path)
+                } else {
+                    Task::none()
                 }
             }
             Message::SidebarFolderToggled(path) => {
@@ -184,6 +214,7 @@ impl MdEditor {
                 } else {
                     self.expanded_folders.insert(path);
                 }
+                Task::none()
             }
 
             Message::FileLoaded(path, content) => {
@@ -191,15 +222,23 @@ impl MdEditor {
                 self.active_path = Some(path);
                 self.highlight_all();
                 self.load_images();
-                self.load_math();
+                let math_task = self.load_math();
                 self.toc_entries = views::toc::get_toc(&self.buffer.text());
+                math_task
             }
             Message::EditorContentChanged(c) => {
                 self.buffer.insert_at_cursor(&c);
                 self.highlight_all();
                 self.load_images();
-                self.load_math();
+                let math_task = self.load_math();
                 self.toc_entries = views::toc::get_toc(&self.buffer.text());
+                math_task
+            }
+            Message::MathRendered(tex, res) => {
+                if let Ok(tuple) = res {
+                    self.math_cache.insert(tex, tuple);
+                }
+                Task::none()
             }
             Message::EditorAction(action) => {
                 match action {
@@ -215,6 +254,7 @@ impl MdEditor {
                     EditorAction::Redo => self.buffer.redo(),
                 }
                 self.highlight_all();
+                Task::none()
             }
             Message::EditorSave => {
                 if let Some(path) = &self.active_path {
@@ -223,6 +263,7 @@ impl MdEditor {
                     self.buffer.dirty = false;
                     self.toast = Some("File saved".to_string());
                 }
+                Task::none()
             }
             Message::EditorCheckboxToggle(line_idx) => {
                 let text = self.buffer.text();
@@ -237,26 +278,28 @@ impl MdEditor {
                 let new_content = lines.join("\n");
                 self.buffer.set_text(&new_content);
                 self.highlight_all();
+                Task::none()
             }
             Message::EditorCursorMove(line, col) => {
                 self.buffer.set_cursor(line, col);
+                Task::none()
             }
 
             Message::PdfLoaded(pages) => {
                 self.pdf_total_pages = pages;
                 self.pdf_pages = vec![None; pages as usize];
                 self.pdf_dimensions = vec![None; pages as usize];
-                return self.render_all_pdf_pages();
+                self.render_all_pdf_pages()
             }
             Message::PdfPageChanged(page) => {
                 self.pdf_current_page = page;
-                return self.render_current_pdf_page();
+                self.render_visible_pdf_pages()
             }
             Message::PdfZoomChanged(zoom) => {
                 self.pdf_zoom = zoom;
                 self.pdf_pages = vec![None; self.pdf_total_pages as usize];
                 self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
-                return self.render_all_pdf_pages();
+                self.render_visible_pdf_pages()
             }
             Message::PdfRendered(page, img) => {
                 let (width, height) = img.dimensions();
@@ -265,13 +308,171 @@ impl MdEditor {
                     self.pdf_pages[page as usize] = Some(handle);
                     self.pdf_dimensions[page as usize] = Some((width, height));
                 }
+                self.pdf_pending_pages.remove(&page);
+                Task::none()
             }
-            Message::PdfRightClicked(x, y) => {
-                self.toast = Some(format!("Ref Preview at {:.2}, {:.2} coming soon...", x, y));
+            Message::PdfRenderFailed(page) => {
+                self.pdf_pending_pages.remove(&page);
+                Task::none()
+            }
+            Message::TocClicked(index) => {
+                if self.active_pdf_path.is_some() {
+                    self.pdf_current_page = index as u16;
+                    let scroll_y = self.pdf_page_offset(index as u16);
+                    Task::batch(vec![
+                        self.render_visible_pdf_pages(),
+                        operation::scroll_to(
+                            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                            AbsoluteOffset { x: 0.0, y: scroll_y },
+                        ),
+                    ])
+                } else {
+                    Task::done(Message::EditorCursorMove(index, 0))
+                }
+            }
+            Message::PdfScrolled { y, viewport_height } => {
+                self.pdf_scroll_y = y;
+                let new_page = self.pdf_page_at_scroll(y + viewport_height * 0.33);
+                if new_page != self.pdf_current_page && new_page < self.pdf_total_pages {
+                    self.pdf_current_page = new_page;
+                    self.render_pdf_pages_for_viewport(y, viewport_height)
+                } else {
+                    self.render_pdf_pages_for_viewport(y, viewport_height)
+                }
+            }
+            Message::PdfLeftClicked(page_idx, x, y) => {
+                if let Some(link) = self.pdf_link_at(page_idx, x, y) {
+                    if let Some(dest_page) = link.dest_page {
+                        self.pdf_current_page = dest_page.min(u32::from(self.pdf_total_pages.saturating_sub(1))) as u16;
+                        let scroll_y = self.pdf_page_offset(self.pdf_current_page);
+                        Task::batch(vec![
+                            self.render_visible_pdf_pages(),
+                            operation::scroll_to(
+                                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                                AbsoluteOffset { x: 0.0, y: scroll_y },
+                            ),
+                        ])
+                    } else if let Some(uri) = link.uri {
+                        self.toast = Some(format!("External link: {}", uri));
+                        Task::none()
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfRightClicked(page_idx, x, y) => {
+                if let Some(link) = self.pdf_link_at(page_idx, x, y).filter(|link| link.dest_page.is_some()) {
+                    let dest_page = link.dest_page.unwrap();
+                    let dest_y = link.dest_y;
+                    let path = self.active_pdf_path.clone().unwrap_or_default();
+                    let abs_path = md_editor_core::vault::resolve_vault_path(
+                        self.state.vault_root.lock().unwrap().as_ref().unwrap(),
+                        &path
+                    ).to_string_lossy().to_string();
+                    let _state = self.state.clone();
+                    
+                    Task::perform(async move {
+                        let renderer = _state.pdf_renderer.as_ref()?;
+                        renderer.render_link_preview(&abs_path, dest_page, dest_y).ok()
+                    }, |res| Message::PdfLinkPreviewResult(res.ok_or_else(|| "Failed to preview".into())))
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfLinkPreviewResult(Ok(res)) => {
+                if let Ok(img) = image::load_from_memory(&res.image_data) {
+                    let (width, height) = img.dimensions();
+                    self.pdf_link_preview = Some(iced::widget::image::Handle::from_rgba(width, height, img.into_rgba8().into_raw()));
+                }
+                Task::none()
+            }
+            Message::PdfLinkPreviewResult(Err(e)) => {
+                self.toast = Some(format!("Preview Error: {}", e));
+                Task::none()
+            }
+            Message::ClosePdfLinkPreview => {
+                self.pdf_link_preview = None;
+                Task::none()
+            }
+            Message::PdfTocLoaded(entries) => {
+                fn flatten_pdf_toc(
+                    entries: &[md_editor_core::pdf::TocEntry],
+                    level: u8,
+                    out: &mut Vec<views::toc::TocEntry>,
+                ) {
+                    for entry in entries {
+                        out.push(views::toc::TocEntry {
+                            level,
+                            text: entry.title.clone(),
+                            line: entry.page_index.unwrap_or(0) as usize,
+                        });
+                        flatten_pdf_toc(&entry.children, (level + 1).min(6), out);
+                    }
+                }
+
+                let mut mapped = Vec::new();
+                flatten_pdf_toc(&entries, 1, &mut mapped);
+                self.toc_entries = mapped;
+                Task::none()
+            }
+            Message::PdfPageLinksLoaded(page, links) => {
+                self.pdf_page_links.insert(page, links);
+                Task::none()
             }
 
-            Message::SearchOpen => { self.search_visible = true; }
-            Message::SearchClose => { self.search_visible = false; }
+            Message::TrackerToggle => {
+                self.tracker_visible = !self.tracker_visible;
+                Task::none()
+            }
+            Message::TrackerStart => {
+                self.tracker_running = true;
+                self.tracker_started_at = Some(std::time::Instant::now());
+                self.toast = Some("Study timer started".to_string());
+                Task::none()
+            }
+            Message::TrackerStop => {
+                if let Some(started_at) = self.tracker_started_at.take() {
+                    let elapsed = started_at.elapsed();
+                    let hours = (elapsed.as_secs_f32() / 3600.0).max(0.01);
+                    let session = md_editor_core::tracker::StudySession {
+                        id: 0,
+                        date: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                        hours,
+                        activity_type: "Study".to_string(),
+                        phase: "Focus".to_string(),
+                        notes: None,
+                    };
+                    if md_editor_core::tracker::save_session(&self.state, session).is_ok() {
+                        self.tracker_sessions = md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
+                        self.toast = Some("Study session saved".to_string());
+                    }
+                }
+                self.tracker_running = false;
+                Task::none()
+            }
+            Message::TrackerSave(hours, notes) => {
+                let session = md_editor_core::tracker::StudySession {
+                    id: 0,
+                    date: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                    hours,
+                    activity_type: "Study".to_string(),
+                    phase: "Manual".to_string(),
+                    notes: if notes.trim().is_empty() { None } else { Some(notes) },
+                };
+                if md_editor_core::tracker::save_session(&self.state, session).is_ok() {
+                    self.tracker_sessions = md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
+                }
+                Task::none()
+            }
+            Message::TrackerLoaded(sessions) => {
+                self.tracker_sessions = sessions;
+                Task::none()
+            }
+
+            Message::SearchOpen => { self.search_visible = true; Task::none() }
+            Message::SearchClose => { self.search_visible = false; Task::none() }
             Message::SearchQueryChanged(q) => {
                 self.search_query = q.clone();
                 if q.len() > 2 {
@@ -279,28 +480,28 @@ impl MdEditor {
                         self.search_results = res;
                     }
                 }
+                Task::none()
             }
             Message::SearchResultClicked(path) => {
                 self.search_visible = false;
-                self.open_file(&path);
+                self.open_file(&path)
             }
 
-            Message::ToastHide => { self.toast = None; }
+            Message::ToastHide => { self.toast = None; Task::none() }
             Message::KeyboardShortcut(s) => {
                 match s {
-                    Shortcut::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
-                    Shortcut::Save => return Task::done(Message::EditorSave),
-                    Shortcut::OpenVault => return Task::done(Message::OpenVaultDialog),
-                    Shortcut::Search => { self.search_visible = true; }
-                    Shortcut::CommandPalette => { self.command_palette_visible = true; }
-                    Shortcut::TableOfContents => { self.toc_visible = !self.toc_visible; }
-                    _ => {}
+                    Shortcut::ToggleSidebar => { self.sidebar_visible = !self.sidebar_visible; Task::none() }
+                    Shortcut::Save => Task::done(Message::EditorSave),
+                    Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
+                    Shortcut::Search => { self.search_visible = true; Task::none() }
+                    Shortcut::CommandPalette => { self.command_palette_visible = true; Task::none() }
+                    Shortcut::TableOfContents => { self.toc_visible = !self.toc_visible; Task::none() }
+                    _ => Task::none(),
                 }
             }
-            Message::ToggleTOC => { self.toc_visible = !self.toc_visible; }
-            _ => {}
+            Message::ToggleTOC => { self.toc_visible = !self.toc_visible; Task::none() }
+            _ => Task::none(),
         }
-        Task::none()
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
@@ -310,9 +511,12 @@ impl MdEditor {
 
         let toolbar = views::toolbar::view(
             self.active_path.as_deref(),
+            self.active_pdf_path.as_deref(),
             None,
             self.sidebar_visible,
             self.backlinks_visible,
+            self.tracker_visible,
+            self.toc_visible,
         );
 
         let sidebar = views::sidebar::view(
@@ -343,15 +547,27 @@ impl MdEditor {
         .height(Length::Fill);
 
         let pdf_view: Element<Message, Theme, iced::Renderer> = if let Some(_) = &self.active_pdf_path {
-            scrollable(
+            let pdf_toolbar = views::pdf_viewer::toolbar(
+                self.pdf_current_page,
+                self.pdf_total_pages,
+                self.pdf_zoom,
+                self.toc_visible,
+            );
+            let pdf_pages = scrollable(
                 views::pdf_viewer::view_continuous(
                     &self.pdf_pages,
                     self.pdf_zoom,
                     &self.pdf_dimensions,
                 )
             )
-            .height(Length::Fill)
-            .into()
+            .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
+            .on_scroll(|vp| Message::PdfScrolled {
+                y: vp.absolute_offset().y,
+                viewport_height: vp.bounds().height,
+            })
+            .height(Length::Fill);
+
+            column![pdf_toolbar, pdf_pages].height(Length::Fill).into()
         } else {
             container(Space::new()).width(Length::Fixed(0.0)).into()
         };
@@ -361,6 +577,12 @@ impl MdEditor {
         } else {
             container(Space::new()).width(Length::Fixed(0.0)).into()
         };
+
+        let tracker_view = views::tracker::view(
+            self.tracker_visible,
+            self.tracker_running,
+            &self.tracker_sessions,
+        );
 
         let main_content: Element<Message, Theme, iced::Renderer> = if self.active_pdf_path.is_some() && self.active_path.is_some() {
             row![
@@ -384,7 +606,7 @@ impl MdEditor {
 
         let content = column![toolbar, main_content].height(Length::Fill);
 
-        let layout = row![sidebar, content, toc_view].height(Length::Fill);
+        let layout = row![sidebar, content, tracker_view, toc_view].height(Length::Fill);
 
         let mut layers = vec![
             container(layout)
@@ -412,6 +634,44 @@ impl MdEditor {
              );
         }
 
+        if let Some(preview_handle) = &self.pdf_link_preview {
+            let img = iced::widget::image(preview_handle.clone())
+                .width(Length::Fill)
+                .content_fit(iced::ContentFit::Contain);
+                
+            let modal = container(
+                iced::widget::column![
+                    iced::widget::row![
+                        Space::new().width(Length::Fill),
+                        iced::widget::button("✕")
+                            .on_press(Message::ClosePdfLinkPreview)
+                            .padding(8)
+                    ],
+                    container(img)
+                        .width(Length::Fixed(800.0))
+                        .height(Length::Fixed(600.0))
+                        .style(|_| container::Style {
+                            background: Some(iced::Background::Color(iced::Color::WHITE)),
+                            border: iced::Border {
+                                radius: 8.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        })
+                ]
+                .align_x(Alignment::Center)
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.8))),
+                ..Default::default()
+            });
+            layers.push(modal.into());
+        }
+
         if let Some(msg) = &self.toast {
             layers.push(
                 container(views::toast::view(msg))
@@ -434,17 +694,20 @@ impl MdEditor {
         self.vault_entries = md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
     }
 
-    fn open_file(&mut self, path: &str) {
+    fn open_file(&mut self, path: &str) -> Task<Message> {
         if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
             if let Ok(content) = String::from_utf8(bytes) {
                 self.buffer = DocBuffer::from_text(&content);
                 self.active_path = Some(path.to_string());
                 self.toc_entries = views::toc::get_toc(&content);
                 self.highlighted_lines = highlight::highlight_markdown(&content);
+                self.load_images();
+                let math_task = self.load_math();
                 self.backlinks = md_editor_core::vault::get_backlinks(&self.state, path).unwrap_or_default();
-                self.active_pdf_path = None;
+                return math_task;
             }
         }
+        Task::none()
     }
 
     fn open_pdf(&mut self, path: &str) -> Task<Message> {
@@ -457,21 +720,24 @@ impl MdEditor {
         self.pdf_current_page = 0;
         self.pdf_pages = Vec::new();
         self.pdf_dimensions = Vec::new();
+        self.pdf_pending_pages.clear();
 
         let _state = self.state.clone();
+        let _state_toc = self.state.clone();
         let path_clone = path_str.clone();
+        let path_str_toc = path_str.clone();
 
         Task::batch(vec![
             Task::perform(async move {
                 let renderer = _state.pdf_renderer.as_ref()?;
                 renderer.page_count(&path_clone).ok()
             }, |res| Message::PdfLoaded(res.unwrap_or(0))),
-            self.render_current_pdf_page(),
+            Task::perform(async move {
+                let renderer = _state_toc.pdf_renderer.as_ref()?;
+                renderer.get_toc(&path_str_toc).ok()
+            }, |res| Message::PdfTocLoaded(res.unwrap_or_default())),
+            self.render_visible_pdf_pages(),
         ])
-    }
-
-    fn render_current_pdf_page(&self) -> Task<Message> {
-        self.render_pdf_page(self.pdf_current_page)
     }
 
     fn render_pdf_page(&self, page: u16) -> Task<Message> {
@@ -483,25 +749,119 @@ impl MdEditor {
         let path_str = abs_path.to_string_lossy().to_string();
         let zoom = self.pdf_zoom;
         let _state = self.state.clone();
+        let _state_links = self.state.clone();
 
-        Task::perform(async move {
+        let render_task = Task::perform(async move {
             let renderer = _state.pdf_renderer.as_ref()?;
-            renderer.render_page(&path_str, page, zoom).ok()
+            let res = renderer.render_page(&path_str, page, zoom).map_err(|e| println!("PDF RENDER ERROR (Page {}): {}", page, e)).ok();
+            Some((page, res))
         }, move |res| {
-            if let Some(img) = res {
-                Message::PdfRendered(page, img)
+            if let Some((p, Some(img))) = res {
+                Message::PdfRendered(p, img)
+            } else if let Some((p, None)) = res {
+                Message::PdfRenderFailed(p)
             } else {
                 Message::Tick
             }
-        })
+        });
+
+        let path_str_links = abs_path.to_string_lossy().to_string();
+        let links_task = Task::perform(async move {
+            let renderer = _state_links.pdf_renderer.as_ref()?;
+            renderer.get_page_links(&path_str_links, page).ok()
+        }, move |res| {
+            Message::PdfPageLinksLoaded(page, res.unwrap_or_default())
+        });
+
+        Task::batch(vec![render_task, links_task])
     }
 
-    fn render_all_pdf_pages(&self) -> Task<Message> {
+    fn render_all_pdf_pages(&mut self) -> Task<Message> {
+        self.render_visible_pdf_pages()
+    }
+
+    fn render_visible_pdf_pages(&mut self) -> Task<Message> {
+        if self.pdf_total_pages == 0 { return Task::none(); }
+        let start = self.pdf_current_page.saturating_sub(3);
+        let end = (self.pdf_current_page + 5).min(self.pdf_total_pages.saturating_sub(1));
+        self.render_pdf_page_range(start, end)
+    }
+
+    fn render_pdf_pages_for_viewport(&mut self, scroll_y: f32, viewport_height: f32) -> Task<Message> {
+        if self.pdf_total_pages == 0 { return Task::none(); }
+
+        let first = self.pdf_page_at_scroll((scroll_y - self.estimated_pdf_page_height()).max(0.0));
+        let last = self.pdf_page_at_scroll(scroll_y + viewport_height + self.estimated_pdf_page_height());
+        self.render_pdf_page_range(
+            first.saturating_sub(2),
+            (last + 2).min(self.pdf_total_pages.saturating_sub(1)),
+        )
+    }
+
+    fn render_pdf_page_range(&mut self, start: u16, end: u16) -> Task<Message> {
         let mut tasks = Vec::new();
-        for i in 0..self.pdf_total_pages {
-            tasks.push(self.render_pdf_page(i));
+        for page_idx in start..=end {
+            if self.pdf_pages.get(page_idx as usize).map_or(true, |p| p.is_none())
+                && !self.pdf_pending_pages.contains(&page_idx)
+            {
+                self.pdf_pending_pages.insert(page_idx);
+                tasks.push(self.render_pdf_page(page_idx));
+            }
         }
+
         Task::batch(tasks)
+    }
+
+    fn estimated_pdf_page_height(&self) -> f32 {
+        let mut count = 0.0;
+        let mut total = 0.0;
+        for (_, h) in self.pdf_dimensions.iter().flatten() {
+            total += *h as f32;
+            count += 1.0;
+        }
+        if count > 0.0 { total / count } else { 1100.0 * self.pdf_zoom }
+    }
+
+    fn pdf_page_height(&self, page: u16) -> f32 {
+        self.pdf_dimensions
+            .get(page as usize)
+            .and_then(|d| d.map(|(_, h)| h as f32))
+            .unwrap_or_else(|| self.estimated_pdf_page_height())
+    }
+
+    fn pdf_page_offset(&self, page: u16) -> f32 {
+        let mut y = 20.0;
+        for idx in 0..page.min(self.pdf_total_pages) {
+            y += self.pdf_page_height(idx) + 20.0;
+        }
+        y
+    }
+
+    fn pdf_page_at_scroll(&self, scroll_y: f32) -> u16 {
+        let mut y = 20.0;
+        for idx in 0..self.pdf_total_pages {
+            let next = y + self.pdf_page_height(idx) + 20.0;
+            if scroll_y < next {
+                return idx;
+            }
+            y = next;
+        }
+        self.pdf_total_pages.saturating_sub(1)
+    }
+
+    fn pdf_link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<md_editor_core::pdf::LinkInfo> {
+        let links = self.pdf_page_links.get(&page_idx)?;
+        let dim = self.pdf_dimensions.get(page_idx as usize).and_then(|d| *d)?;
+        let real_x = (x * dim.0 as f32) / self.pdf_zoom;
+        let real_y = (y * dim.1 as f32) / self.pdf_zoom;
+
+        links.iter().find(|link| {
+            let lx = link.bbox.x;
+            let ly = link.bbox.y;
+            let lw = link.bbox.width;
+            let lh = link.bbox.height;
+            real_x >= lx && real_x <= lx + lw && real_y >= ly && real_y <= ly + lh
+        }).cloned()
     }
 
     fn highlight_all(&mut self) {
@@ -522,7 +882,7 @@ impl MdEditor {
                             if let Ok(img) = image::open(&img_path) {
                                 let (width, height) = img.dimensions();
                                 let handle = iced::widget::image::Handle::from_rgba(width, height, img.into_rgba8().into_raw());
-                                self.image_cache.insert(path.clone(), handle);
+                                self.image_cache.insert(path.clone(), (handle, width as f32, height as f32));
                             }
                         }
                     }
@@ -531,24 +891,25 @@ impl MdEditor {
         }
     }
 
-    fn load_math(&mut self) {
+    fn load_math(&self) -> Task<Message> {
+        let mut tasks = Vec::new();
         for line in &self.highlighted_lines {
             for span in &line.spans {
                 if span.is_math {
-                    let tex = span.text.trim_matches('$').trim();
-                    if !self.math_cache.contains_key(tex) {
-                        // For now, render synchronously. 
-                        // In a real app, this should be a Task.
-                        if let Some(handle) = self.render_latex_to_handle(tex) {
-                            self.math_cache.insert(tex.to_string(), handle);
-                        }
+                    let tex = span.text.trim_matches('$').trim().to_string();
+                    if !self.math_cache.contains_key(&tex) {
+                        let tex_clone = tex.clone();
+                        tasks.push(Task::perform(async move {
+                            (tex_clone.clone(), Self::render_latex_task(&tex_clone))
+                        }, |(t, r)| Message::MathRendered(t, r)));
                     }
                 }
             }
         }
+        Task::batch(tasks)
     }
 
-    fn render_latex_to_handle(&self, tex: &str) -> Option<iced::widget::image::Handle> {
+    fn render_latex_task(tex: &str) -> Result<(iced::widget::image::Handle, f32, f32), String> {
         use ratex_layout::{layout, LayoutOptions, to_display_list};
         use ratex_parser::parser::parse;
         use ratex_render::{render_to_png, RenderOptions};
@@ -557,7 +918,7 @@ impl MdEditor {
 
         let options = RenderOptions {
             font_size: 20.0,
-            padding: 5.0,
+            padding: 2.0,
             background_color: RatexColor { r: 1.0, g: 1.0, b: 1.0, a: 0.0 },
             font_dir: String::new(),
             device_pixel_ratio: 1.0,
@@ -565,23 +926,15 @@ impl MdEditor {
 
         let layout_opts = LayoutOptions::default()
             .with_style(MathStyle::Display)
-            .with_color(RatexColor::BLACK);
+            .with_color(RatexColor { r: 0.9, g: 0.9, b: 0.9, a: 1.0 });
 
-        let res = (|| {
-            let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
-            let lbox = layout(&ast, &layout_opts);
-            let display_list = to_display_list(&lbox);
-            render_to_png(&display_list, &options).map_err(|e| format!("Render error: {:?}", e))
-        })();
-
-        match res {
-            Ok(bytes) => Some(iced::widget::image::Handle::from_bytes(bytes)),
-            Err(e) => {
-                if !e.contains("Parse error") {
-                    eprintln!("LaTeX error: {}", e);
-                }
-                None
-            }
-        }
+        let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
+        let lbox = layout(&ast, &layout_opts);
+        let display_list = to_display_list(&lbox);
+        let bytes = render_to_png(&display_list, &options).map_err(|e| format!("Render error: {:?}", e))?;
+        
+        let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+        let (w, h) = img.dimensions();
+        Ok((iced::widget::image::Handle::from_bytes(bytes), w as f32, h as f32))
     }
 }

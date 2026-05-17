@@ -47,7 +47,7 @@ pub fn view<'a>(
                 .size(14)
                 .color(theme::TEXT_SECONDARY)
         )
-        .on_press(Message::EditorCursorMove(entry.line, 0))
+        .on_press(Message::TocClicked(entry.line))
         .padding([4, 8])
         .style(button::text)
         .width(Length::Fill))
