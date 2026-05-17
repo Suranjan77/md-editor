@@ -5,7 +5,6 @@ pub enum Message {
     VaultOpened(Option<String>),
     CreateFileDialog,
     CreateFolderDialog,
-    FileLoaded(String, String),
 
     // ── Sidebar ──────────────────────────────────────────────────
     SidebarToggle,
@@ -13,13 +12,11 @@ pub enum Message {
     SidebarFolderToggled(String),
 
     // ── Navigation ───────────────────────────────────────────────
-    BacklinksToggle,
     SearchOpen,
     SearchClose,
     SearchQueryChanged(String),
     SearchResultClicked(String),
     CommandPaletteOpen,
-    CommandPaletteClose,
     CommandPaletteQueryChanged(String),
     CommandPaletteCommandClicked(Shortcut),
     NameModalInputChanged(String),
@@ -27,7 +24,6 @@ pub enum Message {
     NameModalCancel,
     DeleteFile(String),
     DeleteFileDialog(String),
-    RenameFile(String),
 
     // ── Editor ───────────────────────────────────────────────────
     EditorAction(EditorAction),
@@ -37,9 +33,9 @@ pub enum Message {
     EditorCursorMove(usize, usize),
 
     // ── PDF ──────────────────────────────────────────────────────
-    PdfPageChanged(u16),
     PdfZoomChanged(f32),
-    PdfLoaded(u16), // Total pages
+    PdfFitToWidth,
+    PdfLoaded(u64, u16), // render generation, total pages
     PdfRendered(u64, u16, image::DynamicImage),
     PdfRenderFailed(u64, u16),
     PdfScrolled {
@@ -48,7 +44,7 @@ pub enum Message {
     },
     PdfLeftClicked(u16, f32, f32),
     PdfRightClicked(u16, f32, f32),
-    PdfTocLoaded(Vec<md_editor_core::pdf::TocEntry>),
+    PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
     PdfPageLinksLoaded(u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
     ClosePdfLinkPreview,
@@ -57,17 +53,14 @@ pub enum Message {
     TrackerToggle,
     TrackerStart,
     TrackerStop,
-    TrackerSave(f32, String), // hours, notes
-    TrackerLoaded(Vec<md_editor_core::tracker::StudySession>),
     TrackerTabSelected(TrackerTab),
     TrackerProjectStatusChanged(String, String),
     TrackerGateToggled(String, usize),
     TrackerReadingToggled(String, usize),
-    TrackerConfigChanged(String),
+    TrackerConfigEdited(iced::widget::text_editor::Action),
     TrackerConfigSave,
 
     // ── Toast ───────────────────────────────────────────────────
-    ToastShow(String),
     ToastHide,
     MathRendered(
         String,
@@ -77,7 +70,6 @@ pub enum Message {
     // ── System ───────────────────────────────────────────────────
     Tick,
     KeyboardShortcut(Shortcut),
-    FocusModeToggle,
     ToggleTOC,
     TocClicked(usize),
     SplitViewToggle,
@@ -108,6 +100,8 @@ pub enum Shortcut {
     ToggleBacklinks,
     FocusMode,
     TableOfContents,
+    StudyTracker,
+    SplitView,
     Escape,
 }
 

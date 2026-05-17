@@ -72,7 +72,11 @@ impl DocBuffer {
 
     pub fn line_text(&self, line: usize) -> String {
         if line < self.line_count() {
-            self.rope.line(line).to_string().trim_end_matches(['\n', '\r']).to_string()
+            self.rope
+                .line(line)
+                .to_string()
+                .trim_end_matches(['\n', '\r'])
+                .to_string()
         } else {
             String::new()
         }
@@ -81,7 +85,7 @@ impl DocBuffer {
     pub fn insert_at_cursor(&mut self, text: &str) {
         let char_off = self.cursor_to_offset();
         let byte_off = self.rope.char_to_byte(char_off);
-        
+
         self.rope.insert(char_off, text);
         self.undo_stack.push(EditOp::Insert {
             byte_offset: byte_off,
@@ -89,10 +93,19 @@ impl DocBuffer {
         });
         self.redo_stack.clear();
 
-        // Update cursor
-        if text == "\n" {
-            self.cursor_line += 1;
-            self.cursor_col = 0;
+        // Update cursor for single-character input and multi-line paste.
+        let mut lines = text.split('\n');
+        let first = lines.next().unwrap_or_default();
+        let mut line_count = 0usize;
+        let mut last_len = first.chars().count();
+        for line in lines {
+            line_count += 1;
+            last_len = line.chars().count();
+        }
+
+        if line_count > 0 {
+            self.cursor_line += line_count;
+            self.cursor_col = last_len;
         } else {
             self.cursor_col += text.chars().count();
         }
@@ -209,14 +222,24 @@ impl DocBuffer {
             EditOp::Insert { byte_offset, text } => {
                 let char_off = self.rope.byte_to_char(*byte_offset);
                 self.rope.insert(char_off, text);
+                self.set_cursor_from_char_offset(char_off + text.chars().count());
             }
             EditOp::Delete { byte_offset, text } => {
                 let char_start = self.rope.byte_to_char(*byte_offset);
                 let char_end = char_start + text.chars().count();
                 self.rope.remove(char_start..char_end);
+                self.set_cursor_from_char_offset(char_start);
             }
         }
         self.dirty = true;
+    }
+
+    fn set_cursor_from_char_offset(&mut self, char_offset: usize) {
+        let clamped = char_offset.min(self.rope.len_chars());
+        let line = self.rope.char_to_line(clamped);
+        let line_start = self.rope.line_to_char(line);
+        self.cursor_line = line;
+        self.cursor_col = clamped.saturating_sub(line_start);
     }
 
     pub fn set_cursor(&mut self, line: usize, col: usize) {
@@ -226,7 +249,13 @@ impl DocBuffer {
         self.selection = None;
     }
 
-    pub fn set_selection(&mut self, start_line: usize, start_col: usize, end_line: usize, end_col: usize) {
+    pub fn set_selection(
+        &mut self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) {
         self.selection = Some((start_line, start_col, end_line, end_col));
     }
 }
@@ -264,6 +293,33 @@ mod tests {
         assert_eq!(buffer.text(), "Line 1\n");
         assert_eq!(buffer.cursor_line, 1);
         assert_eq!(buffer.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_multiline_paste_cursor_position() {
+        let mut buffer = DocBuffer::from_text("Hello");
+        buffer.cursor_line = 0;
+        buffer.cursor_col = 5;
+        buffer.insert_at_cursor("\nworld\nagain");
+        assert_eq!(buffer.text(), "Hello\nworld\nagain");
+        assert_eq!(buffer.cursor_line, 2);
+        assert_eq!(buffer.cursor_col, 5);
+    }
+
+    #[test]
+    fn test_undo_redo_updates_cursor_position() {
+        let mut buffer = DocBuffer::from_text("Hello");
+        buffer.cursor_line = 0;
+        buffer.cursor_col = 5;
+        buffer.insert_at_cursor(" world");
+        buffer.undo();
+        assert_eq!(buffer.text(), "Hello");
+        assert_eq!(buffer.cursor_line, 0);
+        assert_eq!(buffer.cursor_col, 5);
+        buffer.redo();
+        assert_eq!(buffer.text(), "Hello world");
+        assert_eq!(buffer.cursor_line, 0);
+        assert_eq!(buffer.cursor_col, 11);
     }
 
     #[test]
