@@ -11,6 +11,12 @@ pub struct StudySession {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackerKv {
+    pub key: String,
+    pub value: String,
+}
+
 pub fn save_session(state: &AppState, session: StudySession) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute(
@@ -55,4 +61,37 @@ pub fn get_total_hours(state: &AppState) -> Result<f32, String> {
     } else {
         Ok(0.0)
     }
+}
+
+pub fn get_kv(state: &AppState) -> Result<Vec<TrackerKv>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare("SELECT key, value FROM tracker_kv ORDER BY key")
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(TrackerKv {
+                key: row.get(0)?,
+                value: row.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut results = Vec::new();
+    for row in rows.flatten() {
+        results.push(row);
+    }
+    Ok(results)
+}
+
+pub fn set_kv(state: &AppState, key: &str, value: &str) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute(
+        "INSERT INTO tracker_kv (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
