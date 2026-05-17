@@ -64,13 +64,14 @@ enum PdfCommand {
 impl PdfRenderer {
     pub fn new() -> Result<Self, String> {
         let (sender, receiver) = std::sync::mpsc::channel();
-        
+
         std::thread::spawn(move || {
-            let pdfium = match Pdfium::new(
-                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name())
-                    .expect("Failed to bind to pdfium library")
-            ) {
-                pdfium => pdfium,
+            let pdfium = match bind_pdfium() {
+                Ok(pdfium) => pdfium,
+                Err(err) => {
+                    eprintln!("Failed to bind PDFium: {err}");
+                    return;
+                }
             };
 
             let mut current_document: Option<(String, PdfDocument)> = None;
@@ -264,4 +265,52 @@ impl PdfRenderer {
         }
         entries
     }
+}
+
+fn bind_pdfium() -> Result<Pdfium, String> {
+    let lib_name = Pdfium::pdfium_platform_library_name();
+    let mut candidates = Vec::new();
+
+    if let Ok(profile_dir) = std::env::var("PDFIUM_TARGET_PROFILE_DIR") {
+        candidates.push(std::path::PathBuf::from(profile_dir).join(&lib_name));
+    }
+    if let Ok(target_dir) = std::env::var("PDFIUM_TARGET_DIR") {
+        candidates.push(
+            std::path::PathBuf::from(target_dir)
+                .join("pdfium")
+                .join(if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+                    "linux-x64"
+                } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+                    "linux-arm64"
+                } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+                    "mac-x64"
+                } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+                    "mac-arm64"
+                } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+                    "win-x64"
+                } else {
+                    "win-arm64"
+                })
+                .join(if cfg!(target_os = "windows") { "bin" } else { "lib" })
+                .join(&lib_name),
+        );
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(&lib_name));
+        }
+    }
+    candidates.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pdfium").join(&lib_name));
+
+    for candidate in candidates {
+        if candidate.exists() {
+            if let Ok(bindings) = Pdfium::bind_to_library(candidate) {
+                return Ok(Pdfium::new(bindings));
+            }
+        }
+    }
+
+    Pdfium::bind_to_library(lib_name)
+        .map(Pdfium::new)
+        .map_err(|e| format!("{e:?}"))
 }

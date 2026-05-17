@@ -1,5 +1,5 @@
 use iced::widget::{container, text};
-use iced::{Element, Length, Theme, Renderer};
+use iced::{Element, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
