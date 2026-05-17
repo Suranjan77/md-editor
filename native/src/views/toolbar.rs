@@ -54,27 +54,47 @@ pub fn view<'a>(
     };
 
     let actions = row![
-        tooltip(button(text("⌕").size(15).color(theme::TEXT_MUTED))
-            .on_press(Message::SearchOpen)
+        tooltip(
+            button(text("⌕").size(15).color(theme::TEXT_MUTED))
+                .on_press(Message::SearchOpen)
+                .padding(8)
+                .style(button::text),
+            "Search",
+            tooltip::Position::FollowCursor
+        ),
+        tooltip(
+            button(text("⌘").size(14).color(theme::TEXT_MUTED))
+                .on_press(Message::CommandPaletteOpen)
+                .padding(8)
+                .style(button::text),
+            "Command palette",
+            tooltip::Position::FollowCursor
+        ),
+        tooltip(
+            button(text("☰").size(14).color(if toc_visible {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            }))
+            .on_press(Message::ToggleTOC)
             .padding(8)
-            .style(button::text), "Search", tooltip::Position::FollowCursor),
-        tooltip(button(text("☰").size(14).color(if toc_visible {
-            theme::ACCENT
-        } else {
-            theme::TEXT_MUTED
-        }))
-        .on_press(Message::ToggleTOC)
-        .padding(8)
-        .style(button::text), "Table of contents", tooltip::Position::FollowCursor),
+            .style(button::text),
+            "Table of contents",
+            tooltip::Position::FollowCursor
+        ),
         split_button,
-        tooltip(button(text("◷").size(14).color(if tracker_visible {
-            theme::ACCENT
-        } else {
-            theme::TEXT_MUTED
-        }))
-        .on_press(Message::TrackerToggle)
-        .padding(8)
-        .style(button::text), "Study tracker", tooltip::Position::FollowCursor),
+        tooltip(
+            button(text("◷").size(14).color(if tracker_visible {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            }))
+            .on_press(Message::TrackerToggle)
+            .padding(8)
+            .style(button::text),
+            "Study tracker",
+            tooltip::Position::FollowCursor
+        ),
     ]
     .spacing(4);
 
