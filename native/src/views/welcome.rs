@@ -16,7 +16,7 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
 
     let content = column![
         logo,
-        text("Antigravity").size(42).color(theme::TEXT_PRIMARY),
+        text("Md-editor").size(42).color(theme::TEXT_PRIMARY),
         text("The ultimate markdown workspace")
             .size(16)
             .color(theme::TEXT_MUTED),

@@ -5,6 +5,81 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
+use crate::views::icons::{self, Icon};
+
+pub fn file_bar<'a>(
+    query: &'a str,
+    replace: &'a str,
+    regex: bool,
+    match_case: bool,
+    current_match_count: usize,
+    active_match_index: Option<usize>,
+) -> Element<'a, Message, Theme, Renderer> {
+    let search_input = text_input("Find in current file", query)
+        .on_input(Message::SearchQueryChanged)
+        .padding([8, 12])
+        .size(14)
+        .width(Length::FillPortion(3));
+
+    let replace_input = text_input("Replace", replace)
+        .on_input(Message::SearchReplaceChanged)
+        .padding([8, 12])
+        .size(14)
+        .width(Length::FillPortion(2));
+
+    container(
+        row![
+            icons::view(Icon::Search, theme::ACCENT, 18.0),
+            search_input,
+            replace_input,
+            button(text("Replace all").size(12))
+                .on_press(Message::SearchReplaceAll)
+                .padding([8, 12])
+                .style(button::secondary),
+            checkbox(regex)
+                .label("Regex")
+                .on_toggle(Message::SearchRegexToggled)
+                .size(14),
+            checkbox(match_case)
+                .label("Case")
+                .on_toggle(Message::SearchMatchCaseToggled)
+                .size(14),
+            button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
+                .on_press(Message::SearchPrevious)
+                .padding(8)
+                .style(button::text),
+            button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
+                .on_press(Message::SearchNext)
+                .padding(8)
+                .style(button::text),
+            text(match active_match_index {
+                Some(index) if current_match_count > 0 =>
+                    format!("{} of {}", index + 1, current_match_count),
+                _ => format!("{} matches", current_match_count),
+            })
+            .size(12)
+            .color(theme::TEXT_MUTED),
+            button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
+                .on_press(Message::SearchClose)
+                .padding(8)
+                .style(button::text),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .padding([8, 14]),
+    )
+    .width(Length::Fill)
+    .style(|_| container::Style {
+        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+        border: iced::Border {
+            color: theme::BORDER,
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
 
 /// Render the vault search overlay.
 pub fn view<'a>(
@@ -37,14 +112,15 @@ pub fn view<'a>(
         .size(13)
         .width(Length::Fill);
 
-    let close_btn = button(text("✕").size(14).color(theme::TEXT_MUTED))
+    let close_btn = button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
         .on_press(Message::SearchClose)
-        .padding([6, 10])
+        .padding(8)
         .style(button::text);
 
     let header = column![
         row![
-            text("Search").size(15).color(theme::ACCENT),
+            icons::view(Icon::Search, theme::ACCENT, 18.0),
+            text("Global search").size(15).color(theme::ACCENT),
             search_input,
             close_btn,
         ]

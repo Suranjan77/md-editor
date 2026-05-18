@@ -6,6 +6,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Them
 
 use crate::messages::Message;
 use crate::theme;
+use crate::views::icons::{self, Icon};
 
 /// Render a tree level recursively using the flat list of entries.
 fn render_tree_level<'a>(
@@ -65,21 +66,31 @@ fn render_tree_level<'a>(
     for (name, path, is_dir) in immediate_children {
         let is_selected = selected_path.map_or(false, |s| s == path);
         let is_active = active_path.map_or(false, |s| s == path);
-        let indent = depth as f32 * 12.0;
-
-        // Fallback to basic icons if font doesn't support them
-        let icon = if is_dir {
-            if expanded.contains(&path) {
-                "▼"
-            } else {
-                "▶"
-            }
-        } else if name.to_lowercase().ends_with(".pdf") {
-            "□"
-        } else if crate::app::is_supported_image_path(&name.to_lowercase()) {
-            "◇"
+        let indent = depth as f32 * 14.0;
+        let lower_name = name.to_lowercase();
+        let disclosure: Element<'_, Message, Theme, Renderer> = if is_dir {
+            icons::view(
+                if expanded.contains(&path) {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+                theme::TEXT_MUTED,
+                13.0,
+            )
         } else {
-            "•"
+            Space::new().width(Length::Fixed(13.0)).into()
+        };
+        let file_icon = if is_dir && expanded.contains(&path) {
+            Icon::FolderOpen
+        } else if is_dir {
+            Icon::Folder
+        } else if crate::app::is_supported_image_path(&lower_name) {
+            Icon::Image
+        } else if lower_name.ends_with(".md") || lower_name.ends_with(".markdown") {
+            Icon::FileText
+        } else {
+            Icon::File
         };
 
         let name_color = if is_active {
@@ -92,7 +103,8 @@ fn render_tree_level<'a>(
 
         let content = row![
             Space::new().width(Length::Fixed(indent)),
-            text(icon).size(10).color(theme::TEXT_MUTED),
+            disclosure,
+            icons::view(file_icon, name_color, 15.0),
             text(name)
                 .size(13)
                 .color(name_color)
@@ -110,10 +122,11 @@ fn render_tree_level<'a>(
 
         let style = move |theme: &Theme, status: button::Status| {
             let mut style = button::text(theme, status);
+            style.border.radius = 6.0.into();
             if is_active {
                 style.background = Some(Background::Color(theme::ACCENT_DIM));
                 style.border.color = theme::ACCENT;
-                style.border.width = 0.0;
+                style.border.width = 1.0;
             } else if is_selected {
                 style.background = Some(Background::Color(theme::BG_TERTIARY));
             } else if status == button::Status::Hovered {
@@ -124,13 +137,13 @@ fn render_tree_level<'a>(
 
         let btn = button(content)
             .on_press(msg)
-            .padding([6, 12])
+            .padding([7, 10])
             .width(Length::Fill)
             .style(style);
 
-        let delete_btn = button(text("×").size(13).color(theme::TEXT_MUTED))
+        let delete_btn = button(icons::view(Icon::Trash, theme::TEXT_MUTED, 14.0))
             .on_press(Message::DeleteFileDialog(path.clone()))
-            .padding([4, 6])
+            .padding(7)
             .style(button::text);
 
         // Add a small indicator for active file
@@ -138,8 +151,8 @@ fn render_tree_level<'a>(
             row![
                 container(
                     Space::new()
-                        .width(Length::Fixed(2.0))
-                        .height(Length::Fixed(16.0))
+                        .width(Length::Fixed(3.0))
+                        .height(Length::Fixed(22.0))
                 )
                 .style(|_| container::Style {
                     background: Some(Background::Color(theme::ACCENT)),
@@ -149,15 +162,15 @@ fn render_tree_level<'a>(
                     },
                     ..Default::default()
                 }),
-                btn,
+                container(btn).width(Length::Fill),
                 delete_btn
             ]
-            .spacing(0)
+            .spacing(4)
             .align_y(Alignment::Center)
             .into()
         } else {
             row![btn, delete_btn]
-                .spacing(0)
+                .spacing(4)
                 .align_y(Alignment::Center)
                 .into()
         };
@@ -193,18 +206,18 @@ pub fn view<'a>(
     }
 
     let header = row![
-        text("EXPLORER")
+        text("FILES")
             .size(11)
             .color(theme::TEXT_MUTED)
             .font(iced::Font::default()),
         Space::new().width(Length::Fill),
-        button(text("+").size(14).color(theme::TEXT_MUTED))
+        button(icons::view(Icon::FileText, theme::TEXT_MUTED, 16.0))
             .on_press(Message::CreateFileDialog)
-            .padding([4, 8])
+            .padding(8)
             .style(button::text),
-        button(text("▣").size(14).color(theme::TEXT_MUTED))
+        button(icons::view(Icon::Folder, theme::TEXT_MUTED, 16.0))
             .on_press(Message::CreateFolderDialog)
-            .padding([4, 8])
+            .padding(8)
             .style(button::text),
     ]
     .spacing(8)
@@ -213,11 +226,13 @@ pub fn view<'a>(
 
     let tree_elements =
         render_tree_level(entries, "", 0, selected_path, active_path, expanded_folders);
-    let file_list = Column::with_children(tree_elements).spacing(2);
+    let file_list = Column::with_children(tree_elements).spacing(3);
 
     let content = column![
         header,
-        scrollable(file_list.padding([0, 4])).height(Length::Fill)
+        container(scrollable(file_list.padding([0, 8])).height(Length::Fill))
+            .padding([0, 8])
+            .height(Length::Fill)
     ]
     .width(Length::Fixed(260.0));
 

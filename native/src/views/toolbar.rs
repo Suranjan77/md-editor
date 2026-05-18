@@ -3,6 +3,7 @@ use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
+use crate::views::icons::{self, Icon};
 
 pub fn view<'a>(
     active_path: Option<&'a str>,
@@ -15,15 +16,18 @@ pub fn view<'a>(
     split_view_active: bool,
     split_available: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
-    let sidebar_toggle: Button<'_, Message, Theme, Renderer> =
-        button(text("≡").size(20).color(if sidebar_visible {
+    let sidebar_toggle: Button<'_, Message, Theme, Renderer> = button(icons::view(
+        Icon::LayoutPanelLeft,
+        if sidebar_visible {
             theme::ACCENT
         } else {
             theme::TEXT_MUTED
-        }))
-        .on_press(Message::SidebarToggle)
-        .padding(8)
-        .style(button::text);
+        },
+        18.0,
+    ))
+    .on_press(Message::SidebarToggle)
+    .padding(8)
+    .style(button::text);
 
     let path_display = if let Some(path) = active_path.or(active_pdf_path) {
         row![
@@ -40,11 +44,15 @@ pub fn view<'a>(
     };
 
     let split_button: Element<'_, Message, Theme, Renderer> = if split_available {
-        button(text("Split").size(12).color(if split_view_active {
-            theme::ACCENT
-        } else {
-            theme::TEXT_MUTED
-        }))
+        button(icons::view(
+            Icon::Split,
+            if split_view_active {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            },
+            18.0,
+        ))
         .on_press(Message::SplitViewToggle)
         .padding(8)
         .style(button::text)
@@ -54,28 +62,36 @@ pub fn view<'a>(
     };
 
     let actions = row![
-        button(text("⌕").size(15).color(theme::TEXT_MUTED))
-            .on_press(Message::SearchOpen)
+        button(icons::view(Icon::Search, theme::TEXT_MUTED, 18.0))
+            .on_press(Message::GlobalSearchOpen)
             .padding(8)
             .style(button::text),
-        button(text("⌘").size(14).color(theme::TEXT_MUTED))
+        button(icons::view(Icon::Command, theme::TEXT_MUTED, 18.0))
             .on_press(Message::CommandPaletteOpen)
             .padding(8)
             .style(button::text),
-        button(text("☰").size(14).color(if toc_visible {
-            theme::ACCENT
-        } else {
-            theme::TEXT_MUTED
-        }))
+        button(icons::view(
+            Icon::ListTree,
+            if toc_visible {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            },
+            18.0
+        ))
         .on_press(Message::ToggleTOC)
         .padding(8)
         .style(button::text),
         split_button,
-        button(text("◷").size(14).color(if tracker_visible {
-            theme::ACCENT
-        } else {
-            theme::TEXT_MUTED
-        }))
+        button(icons::view(
+            Icon::Clock,
+            if tracker_visible {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            },
+            18.0
+        ))
         .on_press(Message::TrackerToggle)
         .padding(8)
         .style(button::text),

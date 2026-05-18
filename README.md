@@ -1,48 +1,93 @@
 # MD Editor
----
+
+MD Editor is a native desktop markdown workspace for local notes, PDFs, images, search, backlinks, and study tracking.
+
 ![Home screen](images/home_screen.png)
 
-## Have you used **Tauri**?
-If yes, this app is similar. I have a plan to add more by stealing features from **Obsidian**.
+## Simple User Brief
 
----
+Open a folder as your vault, write markdown notes, search across your work, read PDFs beside your notes, and keep everything stored as normal local files. The app is designed for research and study workflows where notes, papers, images, and progress tracking live in one desktop workspace.
 
-## How to use it?
-- Run `npm install` then `cargo tauri build` from the root folder. You might need to install tauri cli `cargo install tauri-cli`
-- Executable file for respective operating system is generated in `src-tauri/target/release/md-editor(.exe)`
-- Then figure out.
+## Highlights
 
-## Demonstration
-![Usage demo](images/demonstration.gif)
+- Local vault-based markdown editing.
+- Sidebar file/folder tree with create and delete actions.
+- Per-file search with highlighted matches and previous/next navigation.
+- Global vault and PDF search.
+- Backlinks and table of contents panels.
+- Syntax-highlighted code blocks, markdown tables, task checkboxes, images, and math rendering.
+- Built-in PDF viewer with continuous pages, fit-to-width, PDF links, and PDF text search.
+- Split view for markdown plus PDF/reference material.
+- Study tracker for sessions, reading, project stages, and tracker configuration.
+- Cross-platform native UI built with Rust and Iced.
 
----
+## Supported Platforms
 
-## Feature List
+Version 1.0 targets:
 
-### Workspace and Files
-- Open a vault folder and persist it as the last workspace.
-- Browse files and folders in a sidebar tree.
-- Create, rename, and delete files/folders from the UI.
-- Persist and restore the last opened file between sessions.
+- Windows x64 and Windows ARM64
+- Linux x64 and Linux ARM64
+- macOS Intel and Apple Silicon
 
-### Markdown Editing
-- CodeMirror-based markdown editor.
-- Save file changes to disk.
-- Internal link handling and backlink support.
-- Markdown preview-related decorations and rendering support.
+PDF support depends on PDFium. The build script downloads the matching PDFium binary for the target OS/architecture and copies the shared library next to the executable.
 
-### Search and Navigation
-- Vault-wide search overlay.
-- Backlinks pane for reference discovery.
-- Keyboard shortcuts for core actions.
+## Supported Files
 
-### Split View and Rich Content
-- Vertical split view to keep notes and reference content visible together.
-- Built-in PDF viewer.
-- Image preview for supported image formats.
-- Tracker panel for activity/notes workflows.
+- Markdown: `.md`, `.markdown`
+- PDF: `.pdf`
+- Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`
 
-### Desktop Integration
-- Tauri-based desktop shell.
-- Native dialogs for folder and file interactions.
-- SQLite-backed system configuration storage.
+## Build From Source
+
+Requirements:
+
+- Rust stable with Cargo
+- A desktop environment capable of creating native windows
+- Internet access on the first build if PDFium is not already cached
+
+Run in development:
+
+```bash
+cargo run
+```
+
+Build a release binary:
+
+```bash
+cargo build --release
+```
+
+The executable is created at:
+
+- Windows: `target\release\md-editor.exe`
+- Linux/macOS: `target/release/md-editor`
+
+The PDFium library is copied into the same Cargo profile output directory during the build.
+
+## Portability
+
+Md-editor is 100% portable. It stores all its configuration and the SQLite database in the same directory as the executable.
+
+- **Settings and State:** `md_editor_settings.sqlite` (located next to the executable).
+- **PDF Support:** The PDFium shared library (`pdfium.dll`, `libpdfium.so`, or `libpdfium.dylib`) should be placed in a `resources` folder next to the executable or in the same directory as the executable.
+
+The app does not use system-wide configuration directories like `%APPDATA%` or `~/Library/Application Support`.
+
+## Technical Overview
+
+This repository is a Rust workspace:
+
+- `core`: vault management, SQLite state, full-text search, PDF rendering, and tracker storage.
+- `native`: Iced desktop application, editor UI, custom markdown renderer, panels, and commands.
+
+Useful commands:
+
+```bash
+cargo check
+cargo test -p md-editor-native
+cargo test
+```
+
+## Feature Document
+
+See [docs/FEATURES.md](docs/FEATURES.md) for the version 1 feature document, platform support notes, architecture summary, and release readiness details.
