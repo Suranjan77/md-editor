@@ -1,0 +1,125 @@
+#[derive(Debug, Clone)]
+pub enum Message {
+    // ── Vault ────────────────────────────────────────────────────
+    OpenVaultDialog,
+    VaultOpened(Option<String>),
+    CreateFileDialog,
+    CreateFolderDialog,
+
+    // ── Sidebar ──────────────────────────────────────────────────
+    SidebarToggle,
+    SidebarFileClicked(String),
+    SidebarFolderToggled(String),
+
+    // ── Navigation ───────────────────────────────────────────────
+    GlobalSearchOpen,
+    SearchClose,
+    SearchQueryChanged(String),
+    SearchReplaceChanged(String),
+    SearchRegexToggled(bool),
+    SearchMatchCaseToggled(bool),
+    SearchPrevious,
+    SearchNext,
+    SearchReplaceAll,
+    SearchResultClicked(String),
+    CommandPaletteOpen,
+    CommandPaletteQueryChanged(String),
+    CommandPaletteCommandClicked(Shortcut),
+    NameModalInputChanged(String),
+    NameModalSubmit(String),
+    NameModalSubmitCurrent,
+    NameModalCancel,
+    DeleteFile(String),
+    DeleteFileDialog(String),
+
+    // ── Editor ───────────────────────────────────────────────────
+    EditorCommand(crate::editor::buffer::EditorCommand),
+    EditorSave,
+    EditorCheckboxToggle(usize),
+    EditorCursorMove(usize, usize),
+    EditorScrolled {
+        y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    },
+
+    // ── PDF ──────────────────────────────────────────────────────
+    PdfZoomChanged(f32),
+    PdfFitToWidth,
+    PdfLoaded(u64, u16), // render generation, total pages
+    PdfRendered(u64, u16, image::DynamicImage),
+    PdfRenderFailed(u64, u16),
+    PdfScrolled {
+        y: f32,
+        viewport_height: f32,
+    },
+    PdfLeftClicked(u16, f32, f32),
+    PdfRightClicked(u16, f32, f32),
+    PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
+    PdfPageLinksLoaded(u16, Vec<md_editor_core::pdf::LinkInfo>),
+    PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
+    PdfSearchResultClicked(u16),
+    PdfScrollBy(f32),
+    PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
+    ClosePdfLinkPreview,
+
+    // ── Tracker ──────────────────────────────────────────────────
+    TrackerToggle,
+    TrackerStart,
+    TrackerStop,
+    TrackerTabSelected(TrackerTab),
+    TrackerProjectStatusChanged(String, String),
+    TrackerGateToggled(String, usize),
+    TrackerReadingToggled(String, usize),
+    TrackerConfigEdited(iced::widget::text_editor::Action),
+    TrackerConfigSave,
+    TrackerManualDateChanged(String),
+    TrackerManualHoursChanged(String),
+    TrackerManualNotesChanged(String),
+    TrackerManualAdd,
+    TrackerSessionDelete(i64),
+
+    // ── Toast ───────────────────────────────────────────────────
+    ToastHide,
+    MathRendered(
+        String,
+        Result<(iced::widget::image::Handle, f32, f32), String>,
+    ),
+
+    // ── System ───────────────────────────────────────────────────
+    Tick,
+    KeyboardShortcut(Shortcut),
+    ToggleTOC,
+    TocClicked(usize),
+    SplitViewToggle,
+    SplitViewDragStart,
+    SplitViewDragging(f32),
+    SplitViewDragEnd,
+    WindowResized(f32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackerTab {
+    Dashboard,
+    Log,
+    Projects,
+    Gates,
+    Reading,
+    Config,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shortcut {
+    Save,
+    OpenVault,
+    NewFile,
+    Search,
+    CommandPalette,
+    ToggleSidebar,
+    ToggleBacklinks,
+    FocusMode,
+    TableOfContents,
+    StudyTracker,
+    SplitView,
+    Escape,
+}
