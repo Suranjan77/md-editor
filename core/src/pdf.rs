@@ -584,36 +584,9 @@ fn bind_pdfium() -> Result<Pdfium, String> {
     let lib_name = Pdfium::pdfium_platform_library_name();
     let mut candidates = Vec::new();
 
-    if let Ok(profile_dir) = std::env::var("PDFIUM_TARGET_PROFILE_DIR") {
-        candidates.push(std::path::PathBuf::from(profile_dir).join(&lib_name));
-    }
-    if let Ok(target_dir) = std::env::var("PDFIUM_TARGET_DIR") {
-        candidates.push(
-            std::path::PathBuf::from(target_dir)
-                .join("pdfium")
-                .join(if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-                    "linux-x64"
-                } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-                    "linux-arm64"
-                } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-                    "mac-x64"
-                } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-                    "mac-arm64"
-                } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-                    "win-x64"
-                } else {
-                    "win-arm64"
-                })
-                .join(if cfg!(target_os = "windows") {
-                    "bin"
-                } else {
-                    "lib"
-                })
-                .join(&lib_name),
-        );
-    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("resources").join(&lib_name));
             candidates.push(dir.join(&lib_name));
         }
     }

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
 use crate::editor::highlight::StyledLine;
-use crate::theme;
+use crate::{search, theme};
 
 const MARGIN_LEFT: f32 = 64.0;
 const MARGIN_RIGHT: f32 = 56.0;
@@ -26,6 +26,10 @@ pub struct Editor<'a, Message> {
     lines: &'a [StyledLine],
     image_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     math_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    search_query: &'a str,
+    search_regex: bool,
+    search_match_case: bool,
+    active_search_match: Option<(usize, usize)>,
     on_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
     on_checkbox_toggle: Box<dyn Fn(usize) -> Message + 'a>,
@@ -39,6 +43,16 @@ pub struct State {
     selection_anchor: Option<(usize, usize)>,
     selection_focus: Option<(usize, usize)>,
     block_scroll_x: HashMap<usize, f32>,
+    horizontal_scroll_drag: Option<HorizontalScrollDrag>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HorizontalScrollDrag {
+    block_id: usize,
+    viewport_x: f32,
+    viewport_w: f32,
+    content_w: f32,
+    grab_offset: f32,
 }
 
 impl<'a, Message> Editor<'a, Message> {
@@ -56,10 +70,28 @@ impl<'a, Message> Editor<'a, Message> {
             lines,
             image_cache,
             math_cache,
+            search_query: "",
+            search_regex: false,
+            search_match_case: false,
+            active_search_match: None,
             on_command: Box::new(on_command),
             on_link_click: Box::new(on_link_click),
             on_checkbox_toggle: Box::new(on_checkbox_toggle),
         }
+    }
+
+    pub fn search(
+        mut self,
+        query: &'a str,
+        regex: bool,
+        match_case: bool,
+        active_match: Option<(usize, usize)>,
+    ) -> Self {
+        self.search_query = query;
+        self.search_regex = regex;
+        self.search_match_case = match_case;
+        self.active_search_match = active_match;
+        self
     }
 }
 
@@ -471,6 +503,37 @@ fn total_height(
     h + 80.0 // bottom padding
 }
 
+pub fn line_visual_y(
+    lines: &[StyledLine],
+    image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    available_width: f32,
+    active_line: usize,
+    target_line: usize,
+    focused: bool,
+) -> f32 {
+    let active_block_id = lines.get(active_line).map(|line| line.block_id);
+    let mut y = TOP_PAD;
+    let mut seen_math_blocks = std::collections::HashSet::new();
+
+    for (idx, line) in lines.iter().enumerate() {
+        if idx >= target_line {
+            break;
+        }
+        let is_editing = focused && Some(line.block_id) == active_block_id;
+        y += line_height_for(
+            line,
+            image_cache,
+            math_cache,
+            available_width,
+            is_editing,
+            &mut seen_math_blocks,
+        );
+    }
+
+    y
+}
+
 // ── Widget impl ──────────────────────────────────────────────────────
 
 impl<'a, Message, Theme, R> Widget<Message, Theme, R> for Editor<'a, Message>
@@ -821,6 +884,50 @@ where
                 }
             }
 
+            if !self.search_query.is_empty() {
+                let line_text = self.buffer.line_text(i);
+                for line_match in search::line_matches(
+                    &line_text,
+                    self.search_query,
+                    self.search_regex,
+                    self.search_match_case,
+                ) {
+                    let from_col = line_match.start_col;
+                    let to_col = line_match.end_col;
+                    let (from_x, from_y) =
+                        self.position_for_col::<R>(i, from_col, bounds.width, is_editing);
+                    let (to_x, to_y) =
+                        self.position_for_col::<R>(i, to_col, bounds.width, is_editing);
+                    let same_visual_line = (to_y - from_y).abs() < 1.0;
+                    let highlight_w = if same_visual_line {
+                        (to_x - from_x).max(4.0)
+                    } else {
+                        (bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - from_x).max(4.0)
+                    };
+                    let active = self.active_search_match == Some((i, from_col));
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: bounds.x + TEXT_X_OFFSET + from_x,
+                                y: y + from_y + 5.0,
+                                width: highlight_w,
+                                height: (BASE_LINE_HEIGHT - 10.0).max(16.0),
+                            },
+                            border: iced::Border {
+                                radius: 3.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                        if active {
+                            Color::from_rgba(0.92, 0.70, 0.30, 0.45)
+                        } else {
+                            Color::from_rgba(0.92, 0.70, 0.30, 0.24)
+                        },
+                    );
+                }
+            }
+
             // ── horizontal rule ──────────────────────────────────
             if line.spans.iter().any(|s| s.is_rule) {
                 let rule_y = y + lh / 2.0;
@@ -993,13 +1100,14 @@ where
                 if let Some(meta) = blocks.get(&line.block_id) {
                     let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
                     let raw_table_width: f32 = meta.col_widths.iter().sum();
-                    let table_width = raw_table_width.min(available_w);
+                    let table_width = available_w;
+                    let scroll_content_width = raw_table_width.max(table_width);
                     let scroll_x = state
                         .block_scroll_x
                         .get(&line.block_id)
                         .copied()
                         .unwrap_or(0.0)
-                        .clamp(0.0, (raw_table_width - available_w).max(0.0));
+                        .clamp(0.0, (scroll_content_width - table_width).max(0.0));
                     let table_x = bounds.x + TEXT_X_OFFSET;
                     let row_y = y;
                     let row_h = lh;
@@ -1089,7 +1197,10 @@ where
                             renderer.fill_text(
                                 iced::advanced::text::Text {
                                     content: text.to_string(),
-                                    bounds: Size::new(width.max(1.0), row_h),
+                                    bounds: Size::new(
+                                        width.min((table_x + table_width - px).max(1.0)).max(1.0),
+                                        row_h,
+                                    ),
                                     size: fs.into(),
                                     line_height: iced::advanced::text::LineHeight::default(),
                                     font,
@@ -1104,7 +1215,12 @@ where
                                 } else {
                                     span.color
                                 },
-                                *viewport,
+                                Rectangle {
+                                    x: table_x,
+                                    y: row_y,
+                                    width: table_width,
+                                    height: row_h,
+                                },
                             );
                             px += width;
                         }
@@ -1117,7 +1233,7 @@ where
                         table_x,
                         table_width,
                         meta.y + meta.height - 7.0,
-                        raw_table_width,
+                        scroll_content_width,
                     );
                 }
 
@@ -1530,6 +1646,15 @@ where
             // ── mouse click ──────────────────────────────────────
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = _cursor.position_in(_layout.bounds()) {
+                    if let Some(drag) =
+                        self.horizontal_scrollbar_hit::<R>(pos, _layout.bounds().width, state)
+                    {
+                        state.horizontal_scroll_drag = Some(drag);
+                        state.is_dragging = false;
+                        shell.capture_event();
+                        return;
+                    }
+
                     let active_block_id =
                         self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
                     let (line_idx, col) = self.hit_test::<R>(
@@ -1603,8 +1728,30 @@ where
                     }
                 }
             }
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+                if state.horizontal_scroll_drag.is_some() =>
+            {
+                if let (Some(pos), Some(drag)) = (
+                    _cursor.position_in(_layout.bounds()),
+                    state.horizontal_scroll_drag,
+                ) {
+                    let track_w = drag.viewport_w.max(1.0);
+                    let thumb_w =
+                        (track_w * (drag.viewport_w / drag.content_w)).clamp(32.0, track_w);
+                    let max_scroll = (drag.content_w - drag.viewport_w).max(0.0);
+                    let track_range = (track_w - thumb_w).max(1.0);
+                    let thumb_x =
+                        (pos.x - drag.viewport_x - drag.grab_offset).clamp(0.0, track_range);
+                    state
+                        .block_scroll_x
+                        .insert(drag.block_id, (thumb_x / track_range) * max_scroll);
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+            }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 state.is_dragging = false;
+                state.horizontal_scroll_drag = None;
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 let Some(pos) = _cursor.position_in(_layout.bounds()) else {
@@ -2042,6 +2189,151 @@ impl<'a, Message> Editor<'a, Message> {
             .max((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0))
     }
 
+    fn horizontal_scrollbar_hit<R>(
+        &self,
+        pos: Point,
+        available_width: f32,
+        state: &State,
+    ) -> Option<HorizontalScrollDrag>
+    where
+        R: iced::advanced::text::Renderer<Font = iced::Font>,
+    {
+        let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
+        let focused = state.is_focused;
+        let viewport_w = (available_width - TEXT_X_OFFSET - MARGIN_RIGHT - 24.0).max(80.0);
+        let viewport_x = TEXT_X_OFFSET;
+        let mut y_acc = TOP_PAD;
+        let mut seen_math_blocks = std::collections::HashSet::new();
+        let mut block_start_y: Option<(usize, f32)> = None;
+        let mut block_height = 0.0_f32;
+
+        for line in self.lines {
+            let is_editing = focused && Some(line.block_id) == active_block_id;
+            let lh = line_height_for(
+                line,
+                self.image_cache,
+                self.math_cache,
+                available_width,
+                is_editing,
+                &mut seen_math_blocks,
+            );
+            let scrollable_block = line.is_code_block || line.is_table_row || line.is_math_block;
+
+            if scrollable_block {
+                if block_start_y
+                    .map(|(block_id, _)| block_id != line.block_id)
+                    .unwrap_or(false)
+                {
+                    if let Some(hit) = self.scrollbar_hit_for_block::<R>(
+                        pos,
+                        block_start_y.unwrap().0,
+                        block_start_y.unwrap().1,
+                        block_height,
+                        viewport_x,
+                        viewport_w,
+                        available_width,
+                        focused,
+                        state,
+                    ) {
+                        return Some(hit);
+                    }
+                    block_start_y = Some((line.block_id, y_acc));
+                    block_height = 0.0;
+                } else if block_start_y.is_none() {
+                    block_start_y = Some((line.block_id, y_acc));
+                }
+                block_height += lh;
+            } else if let Some((block_id, y)) = block_start_y.take() {
+                if let Some(hit) = self.scrollbar_hit_for_block::<R>(
+                    pos,
+                    block_id,
+                    y,
+                    block_height,
+                    viewport_x,
+                    viewport_w,
+                    available_width,
+                    focused,
+                    state,
+                ) {
+                    return Some(hit);
+                }
+                block_height = 0.0;
+            }
+
+            y_acc += lh;
+        }
+
+        if let Some((block_id, y)) = block_start_y {
+            return self.scrollbar_hit_for_block::<R>(
+                pos,
+                block_id,
+                y,
+                block_height,
+                viewport_x,
+                viewport_w,
+                available_width,
+                focused,
+                state,
+            );
+        }
+
+        None
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scrollbar_hit_for_block<R>(
+        &self,
+        pos: Point,
+        block_id: usize,
+        block_y: f32,
+        block_h: f32,
+        viewport_x: f32,
+        viewport_w: f32,
+        available_width: f32,
+        focused: bool,
+        state: &State,
+    ) -> Option<HorizontalScrollDrag>
+    where
+        R: iced::advanced::text::Renderer<Font = iced::Font>,
+    {
+        let content_w = self.block_content_width::<R>(block_id, available_width, focused);
+        if content_w <= viewport_w + 1.0 {
+            return None;
+        }
+
+        let scrollbar_y = block_y + block_h - 7.0;
+        if pos.x < viewport_x
+            || pos.x > viewport_x + viewport_w
+            || pos.y < scrollbar_y - 8.0
+            || pos.y > scrollbar_y + 10.0
+        {
+            return None;
+        }
+
+        let scroll = state
+            .block_scroll_x
+            .get(&block_id)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, (content_w - viewport_w).max(0.0));
+        let track_w = viewport_w.max(1.0);
+        let thumb_w = (track_w * (viewport_w / content_w)).clamp(32.0, track_w);
+        let thumb_x = viewport_x + ((track_w - thumb_w) * (scroll / (content_w - viewport_w)));
+        let grab_offset = if pos.x >= thumb_x && pos.x <= thumb_x + thumb_w {
+            pos.x - thumb_x
+        } else {
+            thumb_w / 2.0
+        };
+
+        Some(HorizontalScrollDrag {
+            block_id,
+            viewport_x,
+            viewport_w,
+            content_w,
+            grab_offset,
+        })
+    }
+
     /// Convert a click position (relative to widget bounds) into (line, col).
     fn hit_test<R>(
         &self,
@@ -2222,6 +2514,7 @@ mod tests {
                             selection_anchor: Some((start_line, start_col)),
                             selection_focus: Some((end_line, end_col)),
                             block_scroll_x: HashMap::new(),
+                            horizontal_scroll_drag: None,
                         };
 
                         let sel = editor.selected_text(&state);

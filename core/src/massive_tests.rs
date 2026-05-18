@@ -417,14 +417,14 @@ fn test_vault_fts5_indexing_and_search() {
     let vault_path_str = temp_dir.to_string_lossy().to_string();
 
     // 1. Create 300 markdown files with content that has specific search phrases
-    // 100 with "rust guidelines", 100 with "antigravity space", 100 with "lorem ipsum"
+    // 100 with "rust guidelines", 100 with "md-editor space", 100 with "lorem ipsum"
     for i in 0..100 {
         let path_rust = temp_dir.join(format!("rust_file_{}.md", i));
         let path_space = temp_dir.join(format!("space_file_{}.md", i));
         let path_lorem = temp_dir.join(format!("lorem_file_{}.md", i));
 
         std::fs::write(&path_rust, format!("This is standard rust coding guidelines document version {}", i)).unwrap();
-        std::fs::write(&path_space, format!("We study antigravity space propulsion using quantum dynamics version {}", i)).unwrap();
+        std::fs::write(&path_space, format!("We study md-editor space propulsion using quantum dynamics version {}", i)).unwrap();
         std::fs::write(&path_lorem, format!("Lorem ipsum dolor sit amet, consectetur adipiscing elit version {}", i)).unwrap();
     }
 
@@ -440,11 +440,11 @@ fn test_vault_fts5_indexing_and_search() {
         assert!(r.context.contains("<b>") && r.context.contains("</b>"));
     }
 
-    let results_space = search_vault(&state, "antigravity space").expect("Search failed");
+    let results_space = search_vault(&state, "md-editor space").expect("Search failed");
     assert_eq!(results_space.len(), 100);
     for r in &results_space {
         let lower_ctx = r.context.to_lowercase();
-        assert!(lower_ctx.contains("antigravity") && lower_ctx.contains("space"));
+        assert!(lower_ctx.contains("md-editor") && lower_ctx.contains("space"));
         assert!(r.context.contains("<b>") && r.context.contains("</b>"));
     }
 

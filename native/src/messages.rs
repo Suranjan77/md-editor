@@ -12,12 +12,14 @@ pub enum Message {
     SidebarFolderToggled(String),
 
     // ── Navigation ───────────────────────────────────────────────
-    SearchOpen,
+    GlobalSearchOpen,
     SearchClose,
     SearchQueryChanged(String),
     SearchReplaceChanged(String),
     SearchRegexToggled(bool),
     SearchMatchCaseToggled(bool),
+    SearchPrevious,
+    SearchNext,
     SearchReplaceAll,
     SearchResultClicked(String),
     CommandPaletteOpen,
@@ -35,6 +37,11 @@ pub enum Message {
     EditorSave,
     EditorCheckboxToggle(usize),
     EditorCursorMove(usize, usize),
+    EditorScrolled {
+        y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    },
 
     // ── PDF ──────────────────────────────────────────────────────
     PdfZoomChanged(f32),
@@ -52,6 +59,7 @@ pub enum Message {
     PdfPageLinksLoaded(u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
     PdfSearchResultClicked(u16),
+    PdfScrollBy(f32),
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
     ClosePdfLinkPreview,
 
