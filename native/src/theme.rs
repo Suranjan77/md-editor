@@ -16,8 +16,8 @@ pub const TEXT_MUTED: Color = Color::from_rgb8(157, 158, 163);    // #9d9ea3
 
 pub const ACCENT: Color = Color::from_rgb8(177, 204, 198);        // #b1ccc6
 pub const ACCENT_SECONDARY: Color = Color::from_rgb8(205, 232, 226); // #cde8e2
-pub const ACCENT_GLOW: Color = Color::from_rgba8(177, 204, 198, 0.25);
-pub const ACCENT_DIM: Color = Color::from_rgba8(177, 204, 198, 0.1);
+pub const ACCENT_GLOW: Color = Color::from_rgba8(177, 204, 198, 0.5);
+pub const ACCENT_DIM: Color = Color::from_rgba8(177, 204, 198, 0.2);
 
 pub const DANGER: Color = Color::from_rgb8(238, 125, 119);        // #ee7d77
 pub const SUCCESS: Color = Color::from_rgb8(217, 242, 210);       // #d9f2d2
