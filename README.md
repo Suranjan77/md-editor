@@ -91,3 +91,10 @@ cargo test
 ## Feature Document
 
 See [docs/FEATURES.md](docs/FEATURES.md) for the version 1 feature document, platform support notes, architecture summary, and release readiness details.
+
+## Screenshots
+![Markdown Editing window](images/markdown_window.png)
+---
+![Split View](images/split_view.png)
+---
+![Study Tracker](images/study_tracker.png)
