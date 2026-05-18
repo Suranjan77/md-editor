@@ -117,6 +117,9 @@ impl MdEditor {
         let last_vault = md_editor_core::config::get_sys_config(&state, "last_vault")
             .ok()
             .flatten();
+        let last_file = md_editor_core::config::get_sys_config(&state, "last_file")
+            .ok()
+            .flatten();
         let tracker_sessions = md_editor_core::tracker::get_sessions(&state).unwrap_or_default();
         let tracker_config_json = md_editor_core::config::get_sys_config(&state, "tracker_config")
             .ok()
@@ -197,11 +200,24 @@ impl MdEditor {
 
         app.tracker_config_content = text_editor::Content::with_text(&app.tracker_config_json);
 
+        let mut task = Task::none();
         if let Some(path) = last_vault {
             app.open_vault(&path);
+            if let Some(file_path) = last_file {
+                let lower = file_path.to_lowercase();
+                if lower.ends_with(".md") || lower.ends_with(".markdown") {
+                    task = app.open_file(&file_path);
+                } else if lower.ends_with(".pdf") {
+                    app.active_pdf_path = Some(file_path.clone());
+                    app.showing_pdf = true;
+                    task = app.open_pdf(&file_path);
+                } else if is_supported_image_path(&lower) {
+                    task = app.open_image(&file_path);
+                }
+            }
         }
 
-        (app, Task::none())
+        (app, task)
     }
 
     pub fn title(&self) -> String {
@@ -1489,6 +1505,7 @@ impl MdEditor {
             if let Ok(content) = String::from_utf8(bytes) {
                 self.buffer = DocBuffer::from_text(&content);
                 self.active_path = Some(path.to_string());
+                let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image_path = None;
                 self.active_image = None;
                 self.showing_pdf = false;
@@ -1511,6 +1528,7 @@ impl MdEditor {
         };
         let path_str = abs_path.to_string_lossy().to_string();
         self.active_pdf_path = Some(path.to_string());
+        let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
         self.showing_pdf = true;
@@ -1560,6 +1578,7 @@ impl MdEditor {
                     img.into_rgba8().into_raw(),
                 );
                 self.active_image_path = Some(path.to_string());
+                let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image = Some((handle, width as f32, height as f32));
                 self.active_path = None;
                 self.active_pdf_path = None;
