@@ -1,0 +1,19 @@
+[package]
+name = "md-editor-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core vault, search, PDF, config, and tracker services for MD Editor."
+
+[dependencies]
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+pdfium-render = { version = "0.9.1", features = ["thread_safe", "image_latest"] }
+image = "0.25"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+ureq = { version = "3.3.0", default-features = true }
+flate2 = "1"
+tar = "0.4"
