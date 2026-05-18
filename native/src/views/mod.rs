@@ -7,6 +7,7 @@ pub mod pdf_viewer;
 pub mod tracker;
 pub mod modals;
 pub mod command_palette;
+pub mod icons;
 pub mod toast;
 pub mod toc;
 pub mod interactive_pdf;

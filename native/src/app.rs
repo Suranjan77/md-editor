@@ -11,11 +11,13 @@ use std::sync::Arc;
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
 use crate::messages::{Message, Shortcut, TrackerTab};
+use crate::search::DocumentMatch;
 use crate::theme as app_theme;
 use crate::views;
 use std::collections::HashSet;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
+const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
 
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
     path.ends_with(".png")
@@ -83,10 +85,12 @@ pub struct MdEditor {
 
     // Search
     search_visible: bool,
+    file_search_visible: bool,
     search_query: String,
     search_replace: String,
     search_regex: bool,
     search_match_case: bool,
+    search_match_index: Option<usize>,
     search_results: Vec<md_editor_core::types::SearchResult>,
     pdf_search_results: Vec<md_editor_core::pdf::PdfSearchMatch>,
     pdf_search_error: Option<String>,
@@ -102,6 +106,9 @@ pub struct MdEditor {
     split_ratio: f32,
     is_resizing_split: bool,
     window_width: f32,
+    editor_scroll_y: f32,
+    editor_viewport_width: f32,
+    editor_viewport_height: f32,
 }
 
 impl MdEditor {
@@ -164,10 +171,12 @@ impl MdEditor {
             commands: views::command_palette::get_commands(),
             toast: None,
             search_visible: false,
+            file_search_visible: false,
             search_query: String::new(),
             search_replace: String::new(),
             search_regex: false,
             search_match_case: false,
+            search_match_index: None,
             search_results: Vec::new(),
             pdf_search_results: Vec::new(),
             pdf_search_error: None,
@@ -181,6 +190,9 @@ impl MdEditor {
             split_ratio: 0.5,
             is_resizing_split: false,
             window_width: 1200.0,
+            editor_scroll_y: 0.0,
+            editor_viewport_width: 900.0,
+            editor_viewport_height: 720.0,
         };
 
         app.tracker_config_content = text_editor::Content::with_text(&app.tracker_config_json);
@@ -194,7 +206,7 @@ impl MdEditor {
 
     pub fn title(&self) -> String {
         format!(
-            "{}Antigravity — {}",
+            "{}Md-editor — {}",
             if self.buffer.dirty { "● " } else { "" },
             self.active_path
                 .as_deref()
@@ -244,6 +256,21 @@ impl MdEditor {
                             }
                             _ => {}
                         }
+                    }
+                    match key {
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => {
+                            return Message::PdfScrollBy(64.0);
+                        }
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp) => {
+                            return Message::PdfScrollBy(-64.0);
+                        }
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::PageDown) => {
+                            return Message::PdfScrollBy(520.0);
+                        }
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::PageUp) => {
+                            return Message::PdfScrollBy(-520.0);
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -440,6 +467,16 @@ impl MdEditor {
             }
             Message::EditorCursorMove(line, col) => {
                 self.run_editor_command(EditorCommand::SetCursor { line, col })
+            }
+            Message::EditorScrolled {
+                y,
+                viewport_width,
+                viewport_height,
+            } => {
+                self.editor_scroll_y = y;
+                self.editor_viewport_width = viewport_width;
+                self.editor_viewport_height = viewport_height;
+                Task::none()
             }
 
             Message::PdfLoaded(generation, pages) => {
@@ -840,7 +877,7 @@ impl MdEditor {
                 Task::none()
             }
 
-            Message::SearchOpen => {
+            Message::GlobalSearchOpen => {
                 self.search_visible = true;
                 if self.active_pdf_path.is_some() && !self.search_query.trim().is_empty() {
                     self.search_pdf()
@@ -850,10 +887,12 @@ impl MdEditor {
             }
             Message::SearchClose => {
                 self.search_visible = false;
+                self.file_search_visible = false;
                 Task::none()
             }
             Message::SearchQueryChanged(q) => {
                 self.search_query = q.clone();
+                self.search_match_index = None;
                 self.pdf_search_error = None;
                 if q.len() > 2 && !self.search_regex {
                     if let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q) {
@@ -875,6 +914,7 @@ impl MdEditor {
             }
             Message::SearchRegexToggled(value) => {
                 self.search_regex = value;
+                self.search_match_index = None;
                 if self.active_pdf_path.is_some() && self.search_query.len() > 1 {
                     self.search_pdf()
                 } else {
@@ -883,12 +923,15 @@ impl MdEditor {
             }
             Message::SearchMatchCaseToggled(value) => {
                 self.search_match_case = value;
+                self.search_match_index = None;
                 if self.active_pdf_path.is_some() && self.search_query.len() > 1 {
                     self.search_pdf()
                 } else {
                     Task::none()
                 }
             }
+            Message::SearchPrevious => self.navigate_file_search(false),
+            Message::SearchNext => self.navigate_file_search(true),
             Message::SearchReplaceAll => {
                 match self.replace_all_in_current_document() {
                     Ok(count) => self.toast = Some(format!("Replaced {} matches", count)),
@@ -921,6 +964,22 @@ impl MdEditor {
                     ),
                 ])
             }
+            Message::PdfScrollBy(delta) => {
+                if self.active_pdf_path.is_none()
+                    || self.search_visible
+                    || self.file_search_visible
+                    || self.active_modal.is_some()
+                    || self.command_palette_visible
+                {
+                    return Task::none();
+                }
+                let max_y = self.pdf_total_height().max(0.0);
+                let y = (self.pdf_scroll_y + delta).clamp(0.0, max_y);
+                operation::scroll_to(
+                    iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                    AbsoluteOffset { x: 0.0, y },
+                )
+            }
             Message::SearchResultClicked(path) => {
                 self.search_visible = false;
                 self.open_file(&path)
@@ -941,6 +1000,8 @@ impl MdEditor {
                             self.modal_input.clear();
                         } else if self.tracker_visible {
                             self.tracker_visible = false;
+                        } else if self.file_search_visible {
+                            self.file_search_visible = false;
                         } else if self.search_visible {
                             self.search_visible = false;
                         } else if self.command_palette_visible {
@@ -958,7 +1019,11 @@ impl MdEditor {
                     Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
                     Shortcut::NewFile => Task::done(Message::CreateFileDialog),
                     Shortcut::Search => {
-                        self.search_visible = true;
+                        if self.active_path.is_some() {
+                            self.file_search_visible = true;
+                        } else {
+                            self.search_visible = true;
+                        }
                         Task::none()
                     }
                     Shortcut::CommandPalette => {
@@ -1072,20 +1137,63 @@ impl MdEditor {
             !self.sidebar_visible,
         );
 
-        let editor_view = scrollable(
-            container(crate::editor::renderer::Editor::new(
-                &self.buffer,
-                &self.highlighted_lines,
-                &self.image_cache,
-                &self.math_cache,
-                Message::EditorCommand,
-                Message::SidebarFileClicked,
-                Message::EditorCheckboxToggle,
-            ))
+        let active_search_match = if self.file_search_visible {
+            self.active_search_match_position()
+        } else {
+            None
+        };
+        let editor_search_query = if self.file_search_visible {
+            self.search_query.as_str()
+        } else {
+            ""
+        };
+        let editor_scroll = scrollable(
+            container(
+                crate::editor::renderer::Editor::new(
+                    &self.buffer,
+                    &self.highlighted_lines,
+                    &self.image_cache,
+                    &self.math_cache,
+                    Message::EditorCommand,
+                    Message::SidebarFileClicked,
+                    Message::EditorCheckboxToggle,
+                )
+                .search(
+                    editor_search_query,
+                    self.search_regex,
+                    self.search_match_case,
+                    active_search_match,
+                ),
+            )
             .padding(20)
             .width(Length::Fill),
         )
+        .id(iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID))
+        .on_scroll(|vp| Message::EditorScrolled {
+            y: vp.absolute_offset().y,
+            viewport_width: vp.bounds().width,
+            viewport_height: vp.bounds().height,
+        })
         .height(Length::Fill);
+
+        let editor_view: Element<Message, Theme, iced::Renderer> =
+            if self.file_search_visible && self.active_path.is_some() {
+                column![
+                    views::search::file_bar(
+                        &self.search_query,
+                        &self.search_replace,
+                        self.search_regex,
+                        self.search_match_case,
+                        self.current_document_match_count(),
+                        self.search_match_index,
+                    ),
+                    editor_scroll
+                ]
+                .height(Length::Fill)
+                .into()
+            } else {
+                editor_scroll.into()
+            };
 
         let pdf_view: Element<Message, Theme, iced::Renderer> =
             if let Some(_) = &self.active_pdf_path {
@@ -1640,6 +1748,14 @@ impl MdEditor {
         y
     }
 
+    fn pdf_total_height(&self) -> f32 {
+        let mut y = 20.0;
+        for idx in 0..self.pdf_total_pages {
+            y += self.pdf_page_height(idx) + 20.0;
+        }
+        y
+    }
+
     fn pdf_page_at_scroll(&self, scroll_y: f32) -> u16 {
         let mut y = 20.0;
         for idx in 0..self.pdf_total_pages {
@@ -1686,24 +1802,99 @@ impl MdEditor {
     }
 
     fn current_document_match_count(&self) -> usize {
-        let query = self.search_query.as_str();
-        if query.is_empty() || self.active_path.is_none() {
-            return 0;
+        self.current_document_matches().len()
+    }
+
+    fn active_search_match_position(&self) -> Option<(usize, usize)> {
+        let matches = self.current_document_matches();
+        let index = self.search_match_index?;
+        matches
+            .get(index.min(matches.len().saturating_sub(1)))
+            .map(|m| (m.line, m.start_col))
+    }
+
+    fn current_document_matches(&self) -> Vec<DocumentMatch> {
+        if self.search_query.is_empty() || self.active_path.is_none() {
+            return Vec::new();
         }
-        let text = self.buffer.text();
-        if self.search_regex {
-            regex::RegexBuilder::new(query)
-                .case_insensitive(!self.search_match_case)
-                .build()
-                .map(|re| re.find_iter(&text).count())
-                .unwrap_or(0)
-        } else if self.search_match_case {
-            text.match_indices(query).count()
+
+        (0..self.buffer.line_count())
+            .flat_map(|line| {
+                let text = self.buffer.line_text(line);
+                crate::search::line_matches(
+                    &text,
+                    &self.search_query,
+                    self.search_regex,
+                    self.search_match_case,
+                )
+                .into_iter()
+                .map(move |line_match| DocumentMatch {
+                    line,
+                    start_col: line_match.start_col,
+                    end_col: line_match.end_col,
+                })
+            })
+            .collect()
+    }
+
+    fn navigate_file_search(&mut self, forward: bool) -> Task<Message> {
+        let matches = self.current_document_matches();
+        if matches.is_empty() {
+            self.search_match_index = None;
+            return Task::none();
+        }
+
+        let next_index = match self.search_match_index {
+            Some(index) if forward => (index + 1) % matches.len(),
+            Some(0) if !forward => matches.len() - 1,
+            Some(index) => index.saturating_sub(1),
+            None if forward => 0,
+            None => matches.len() - 1,
+        };
+        self.search_match_index = Some(next_index);
+        let item = matches[next_index];
+        self.buffer.execute(EditorCommand::SetSelection {
+            anchor_line: item.line,
+            anchor_col: item.start_col,
+            focus_line: item.line,
+            focus_col: item.end_col,
+        });
+        self.scroll_editor_to_line(item.line)
+    }
+
+    fn estimated_editor_line_y(&self, target_line: usize) -> f32 {
+        crate::editor::renderer::line_visual_y(
+            &self.highlighted_lines,
+            &self.image_cache,
+            &self.math_cache,
+            self.editor_viewport_width.max(240.0),
+            self.buffer.cursor_line,
+            target_line,
+            true,
+        ) + 20.0
+    }
+
+    fn scroll_editor_to_line(&self, line: usize) -> Task<Message> {
+        let y = self.estimated_editor_line_y(line);
+        let top_padding = 36.0;
+        let bottom_padding = 72.0;
+        let visible_top = self.editor_scroll_y + top_padding;
+        let visible_bottom = self.editor_scroll_y + self.editor_viewport_height - bottom_padding;
+        let target_y = if y < visible_top {
+            (y - top_padding).max(0.0)
+        } else if y + 34.0 > visible_bottom {
+            (y + 34.0 + bottom_padding - self.editor_viewport_height).max(0.0)
         } else {
-            text.to_lowercase()
-                .match_indices(&query.to_lowercase())
-                .count()
-        }
+            self.editor_scroll_y
+        };
+
+        operation::scroll_to(
+            iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+            AbsoluteOffset {
+                x: 0.0,
+                y: target_y,
+            },
+        )
     }
 
     fn replace_all_in_current_document(&mut self) -> Result<usize, String> {
@@ -1780,16 +1971,31 @@ impl MdEditor {
     }
 
     fn run_editor_command(&mut self, command: EditorCommand) -> Task<Message> {
+        let should_keep_cursor_visible = matches!(
+            command,
+            EditorCommand::MoveCursor { .. }
+                | EditorCommand::SetCursor { .. }
+                | EditorCommand::SetSelection { .. }
+        );
         let result = self.buffer.execute(command);
         if result.projection_changed {
             self.highlight_all();
         }
-        if result.text_changed {
+        let content_task = if result.text_changed {
             self.load_images();
             self.toc_entries = views::toc::get_toc(&self.buffer.text());
             self.load_math()
         } else {
             Task::none()
+        };
+
+        if should_keep_cursor_visible {
+            Task::batch(vec![
+                content_task,
+                self.scroll_editor_to_line(self.buffer.cursor_line),
+            ])
+        } else {
+            content_task
         }
     }
 

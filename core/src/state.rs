@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use rusqlite::Connection;
 
 use crate::file_index::FileIndex;
-use crate::pdf::{PdfState, PdfRenderer};
+use crate::pdf::{PdfRenderer, PdfState};
 
 /// Application-wide shared state.
 /// Wrap in `Arc<AppState>` when sharing across threads.
@@ -18,13 +18,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        let mut db_path = PathBuf::from("md_editor_settings.sqlite");
-        if let Ok(mut exe_path) = std::env::current_exe() {
-            exe_path.pop(); // Remove the executable file name
-            exe_path.push("md_editor_settings.sqlite");
-            db_path = exe_path;
-        }
-
+        let db_path = settings_db_path();
         let db = Connection::open(&db_path).expect("Failed to open local sqlite database");
 
         db.execute(
@@ -149,4 +143,24 @@ impl AppState {
             pdf_renderer: None,
         }
     }
+}
+
+fn settings_db_path() -> PathBuf {
+    let mut dir = config_dir();
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        eprintln!("Failed to create config directory {}: {err}", dir.display());
+        return PathBuf::from("md_editor_settings.sqlite");
+    }
+    dir.push("md_editor_settings.sqlite");
+    dir
+}
+
+fn config_dir() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            return dir.to_path_buf();
+        }
+    }
+
+    PathBuf::from(".")
 }
