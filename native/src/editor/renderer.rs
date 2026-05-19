@@ -18,6 +18,7 @@ const TEXT_X_OFFSET: f32 = MARGIN_LEFT;
 const TOP_PAD: f32 = 24.0;
 const BASE_LINE_HEIGHT: f32 = 36.0;
 const IMAGE_HEIGHT: f32 = 280.0;
+const HORIZONTAL_SCROLLBAR_GUTTER: f32 = 16.0;
 
 // ── Widget ───────────────────────────────────────────────────────────
 
@@ -98,14 +99,18 @@ impl<'a, Message> Editor<'a, Message> {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-fn line_height_for(
+fn line_height_for<R>(
     line: &StyledLine,
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     available_width: f32,
     is_editing: bool,
+    active_col: Option<usize>,
     seen_math_blocks: &mut std::collections::HashSet<usize>,
-) -> f32 {
+) -> f32
+where
+    R: iced::advanced::text::Renderer<Font = iced::Font>,
+{
     if let Some(span) = line.spans.iter().find(|s| s.is_image) {
         if let Some(path) = &span.image_path {
             if let Some((_, w, h)) = image_cache.get(path) {
@@ -154,41 +159,28 @@ fn line_height_for(
     }
     if line.is_table_row {
         if is_editing {
-            let max_font = line
-                .spans
-                .iter()
-                .map(|s| s.font_size)
-                .fold(14.0_f32, f32::max);
-            let char_count = line
-                .spans
-                .iter()
-                .map(|s| s.visible_text(is_editing).chars().count())
-                .sum::<usize>() as f32;
-            let available_chars = ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0)
-                / (max_font * 0.55))
-                .max(12.0);
-            let visual_lines = (char_count / available_chars).ceil().max(1.0);
-            return visual_lines * BASE_LINE_HEIGHT;
+            return measured_inline_height::<R>(
+                line,
+                math_cache,
+                available_width,
+                is_editing,
+                active_col,
+            );
         } else {
             return 34.0;
         }
     }
     if !line.is_math_block && line.spans.iter().any(|s| s.is_math) {
-        let max_font = line
-            .spans
-            .iter()
-            .map(|s| s.font_size)
-            .fold(17.0_f32, f32::max);
-        let char_count = line
-            .spans
-            .iter()
-            .map(|s| s.visible_text(false).chars().count())
-            .sum::<usize>() as f32;
-        let available_chars = ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0)
-            / (max_font * 0.55))
-            .max(12.0);
-        let visual_lines = (char_count / available_chars).ceil().max(1.0);
-        return visual_lines * BASE_LINE_HEIGHT + 10.0;
+        if active_col.is_none() && !is_editing {
+            return estimated_inline_height(line, available_width, false) + 10.0;
+        }
+        return measured_inline_height::<R>(
+            line,
+            math_cache,
+            available_width,
+            is_editing,
+            active_col,
+        ) + 10.0;
     }
     if !line.is_code_block
         && !line.is_table_row
@@ -198,45 +190,21 @@ fn line_height_for(
             .iter()
             .any(|s| s.is_image || s.is_math || s.is_checkbox)
     {
-        let max_font = line
-            .spans
-            .iter()
-            .map(|s| s.font_size)
-            .fold(17.0_f32, f32::max);
-        let char_count = line
-            .spans
-            .iter()
-            .map(|s| s.visible_text(false).chars().count())
-            .sum::<usize>() as f32;
-        let available_chars = ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0)
-            / (max_font * 0.55))
-            .max(12.0);
-        let visual_lines = (char_count / available_chars).ceil().max(1.0);
-        return if max_font > 18.0 {
-            visual_lines * (max_font * 1.35).max(BASE_LINE_HEIGHT)
-        } else {
-            visual_lines * BASE_LINE_HEIGHT
-        };
+        if active_col.is_none() && !is_editing {
+            return estimated_inline_height(line, available_width, false);
+        }
+        return measured_inline_height::<R>(
+            line,
+            math_cache,
+            available_width,
+            is_editing,
+            active_col,
+        );
     }
-    // Mixed inline content is drawn span-by-span, so reserve space for wrapping here too.
-    let max_font = line
-        .spans
-        .iter()
-        .map(|s| s.font_size)
-        .fold(14.0_f32, f32::max);
-    let char_count = line
-        .spans
-        .iter()
-        .map(|s| s.visible_text(is_editing).chars().count())
-        .sum::<usize>() as f32;
-    let available_chars =
-        ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0) / (max_font * 0.55)).max(12.0);
-    let visual_lines = (char_count / available_chars).ceil().max(1.0);
-    if max_font > 15.0 {
-        visual_lines * (max_font * 1.6).max(BASE_LINE_HEIGHT)
-    } else {
-        visual_lines * BASE_LINE_HEIGHT
+    if active_col.is_none() && !is_editing {
+        return estimated_inline_height(line, available_width, false);
     }
+    measured_inline_height::<R>(line, math_cache, available_width, is_editing, active_col)
 }
 
 /// Pick the iced font for a span.
@@ -281,8 +249,221 @@ where
     paragraph.min_bounds().width
 }
 
+fn measured_inline_height<R>(
+    line: &StyledLine,
+    math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    available_width: f32,
+    is_editing: bool,
+    active_col: Option<usize>,
+) -> f32
+where
+    R: iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    let line_start_x = 0.0_f32;
+    let line_right_x = (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
+    let mut x = line_start_x;
+    let mut y = 0.0_f32;
+    let mut row_step = BASE_LINE_HEIGHT;
+
+    for (span_idx, span) in line.spans.iter().enumerate() {
+        let fs = span.font_size;
+        let step = visual_line_step(fs);
+        row_step = row_step.max(step);
+        let span_editing = is_editing
+            || active_col.is_some_and(|col| span_is_inline_edit_target(line, span_idx, col));
+
+        if span.is_checkbox && !span_editing {
+            let width = 26.0;
+            if x > line_start_x && x + width > line_right_x {
+                y += row_step;
+                x = line_start_x;
+                row_step = step;
+            }
+            x += width;
+            continue;
+        }
+
+        if span.is_math && !span_editing {
+            let tex = span.visible_text(false).trim_matches('$').trim();
+            if tex.is_empty() || span.is_syntax {
+                continue;
+            }
+            let width = math_cache
+                .get(tex)
+                .map(|(_, w, _)| *w)
+                .unwrap_or_else(|| measure_width::<R>(tex, fs, span_font(span, line)));
+            if x > line_start_x && x + width > line_right_x {
+                y += row_step;
+                x = line_start_x;
+                row_step = step;
+            }
+            x += width + 4.0;
+            continue;
+        }
+
+        let display = span_visible_text(line, span_idx, is_editing, active_col);
+        if display.is_empty() {
+            continue;
+        }
+
+        let font = span_font(span, line);
+        let mut token = String::new();
+        let flush_token = |token: &mut String, x: &mut f32, y: &mut f32, row_step: &mut f32| {
+            if token.is_empty() {
+                return;
+            }
+
+            let width = measure_width::<R>(token, fs, font);
+            if *x > line_start_x && *x + width > line_right_x {
+                *y += *row_step;
+                *x = line_start_x;
+                *row_step = step;
+            }
+
+            if width <= (line_right_x - line_start_x).max(1.0) {
+                *x += width;
+            } else {
+                for ch in token.chars() {
+                    let ch_text = ch.to_string();
+                    let ch_w = measure_width::<R>(&ch_text, fs, font);
+                    if *x > line_start_x && *x + ch_w > line_right_x {
+                        *y += *row_step;
+                        *x = line_start_x;
+                        *row_step = step;
+                    }
+                    *x += ch_w;
+                }
+            }
+            *row_step = (*row_step).max(step);
+            token.clear();
+        };
+
+        for ch in display.chars() {
+            token.push(ch);
+            if ch.is_whitespace() {
+                flush_token(&mut token, &mut x, &mut y, &mut row_step);
+            }
+        }
+        flush_token(&mut token, &mut x, &mut y, &mut row_step);
+    }
+
+    (y + row_step).max(BASE_LINE_HEIGHT)
+}
+
+fn estimated_inline_height(line: &StyledLine, available_width: f32, is_editing: bool) -> f32 {
+    let max_font = line
+        .spans
+        .iter()
+        .map(|s| s.font_size)
+        .fold(14.0_f32, f32::max);
+    let char_count = line
+        .spans
+        .iter()
+        .map(|s| s.visible_text(is_editing).chars().count())
+        .sum::<usize>() as f32;
+    let available_chars =
+        ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0) / (max_font * 0.48)).max(12.0);
+    let visual_lines = (char_count / available_chars).ceil().max(1.0);
+    let step = visual_line_step(max_font);
+    visual_lines * step
+}
+
 fn visual_line_step(font_size: f32) -> f32 {
     (font_size * 1.45).max(BASE_LINE_HEIGHT)
+}
+
+fn source_col_after_span(span: &crate::editor::highlight::StyledSpan, start_col: usize) -> usize {
+    start_col + span.text.chars().count()
+}
+
+fn span_source_range(line: &StyledLine, span_idx: usize) -> Option<(usize, usize)> {
+    let mut start = 0usize;
+    for (idx, span) in line.spans.iter().enumerate() {
+        let end = source_col_after_span(span, start);
+        if idx == span_idx {
+            return Some((start, end));
+        }
+        start = end;
+    }
+    None
+}
+
+fn col_touches_range(col: usize, start: usize, end: usize) -> bool {
+    col >= start && col <= end
+}
+
+fn span_is_inline_edit_target(line: &StyledLine, span_idx: usize, active_col: usize) -> bool {
+    let Some((start, end)) = span_source_range(line, span_idx) else {
+        return false;
+    };
+    let Some(span) = line.spans.get(span_idx) else {
+        return false;
+    };
+
+    if col_touches_range(active_col, start, end) {
+        return true;
+    }
+
+    if !span.is_syntax {
+        return false;
+    }
+
+    let adjacent_active = |idx: usize| {
+        line.spans
+            .get(idx)
+            .filter(|span| {
+                !span.is_syntax
+                    && (span.bold
+                        || span.italic
+                        || span.is_code
+                        || span.is_link
+                        || span.is_math
+                        || span.is_heading
+                        || line.is_blockquote)
+            })
+            .and_then(|_| span_source_range(line, idx))
+            .is_some_and(|(start, end)| col_touches_range(active_col, start, end))
+    };
+
+    span_idx.checked_sub(1).is_some_and(adjacent_active)
+        || adjacent_active(span_idx.saturating_add(1))
+}
+
+fn span_visible_text<'a>(
+    line: &'a StyledLine,
+    span_idx: usize,
+    block_editing: bool,
+    active_col: Option<usize>,
+) -> &'a str {
+    let Some(span) = line.spans.get(span_idx) else {
+        return "";
+    };
+    let span_editing = block_editing
+        || active_col.is_some_and(|col| span_is_inline_edit_target(line, span_idx, col));
+    span.visible_text(span_editing)
+}
+
+fn is_block_editing_line(line: &StyledLine, active_block_id: Option<usize>, focused: bool) -> bool {
+    focused
+        && Some(line.block_id) == active_block_id
+        && (line.is_code_block || line.is_math_block || line.is_table_row)
+}
+
+fn table_block_gutter_after(lines: &[StyledLine], line_idx: usize, is_editing: bool) -> f32 {
+    let Some(line) = lines.get(line_idx) else {
+        return 0.0;
+    };
+    if is_editing || !line.is_table_row {
+        return 0.0;
+    }
+    let next_same_table_block = lines
+        .get(line_idx + 1)
+        .is_some_and(|next| next.is_table_row && next.block_id == line.block_id);
+    if next_same_table_block {
+        0.0
+    } else {
+        HORIZONTAL_SCROLLBAR_GUTTER
+    }
 }
 
 fn draw_text_chunk<R>(
@@ -498,39 +679,52 @@ fn normalized_selection(
 }
 
 /// Total document height in pixels.
-fn total_height(
+fn total_height<R>(
     lines: &[StyledLine],
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     width: f32,
     active_block_id: Option<usize>,
+    active_cursor: Option<(usize, usize)>,
     focused: bool,
-) -> f32 {
+) -> f32
+where
+    R: iced::advanced::text::Renderer<Font = iced::Font>,
+{
     let mut h = TOP_PAD;
     let mut seen_math_blocks = std::collections::HashSet::new();
-    for line in lines {
-        let is_editing = focused && Some(line.block_id) == active_block_id;
-        h += line_height_for(
+    for (idx, line) in lines.iter().enumerate() {
+        let is_editing = is_block_editing_line(line, active_block_id, focused);
+        let active_col = active_cursor
+            .filter(|(line_idx, _)| *line_idx == idx)
+            .map(|(_, col)| col);
+        h += line_height_for::<R>(
             line,
             image_cache,
             math_cache,
             width,
             is_editing,
+            active_col,
             &mut seen_math_blocks,
         );
+        h += table_block_gutter_after(lines, idx, is_editing);
     }
     h + 80.0 // bottom padding
 }
 
-pub fn line_visual_y(
+pub fn line_visual_y<R>(
     lines: &[StyledLine],
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     available_width: f32,
     active_line: usize,
+    active_col: usize,
     target_line: usize,
     focused: bool,
-) -> f32 {
+) -> f32
+where
+    R: iced::advanced::text::Renderer<Font = iced::Font>,
+{
     let active_block_id = lines.get(active_line).map(|line| line.block_id);
     let mut y = TOP_PAD;
     let mut seen_math_blocks = std::collections::HashSet::new();
@@ -539,15 +733,18 @@ pub fn line_visual_y(
         if idx >= target_line {
             break;
         }
-        let is_editing = focused && Some(line.block_id) == active_block_id;
-        y += line_height_for(
+        let is_editing = is_block_editing_line(line, active_block_id, focused);
+        let line_active_col = (idx == active_line).then_some(active_col);
+        y += line_height_for::<R>(
             line,
             image_cache,
             math_cache,
             available_width,
             is_editing,
+            line_active_col,
             &mut seen_math_blocks,
         );
+        y += table_block_gutter_after(lines, idx, is_editing);
     }
 
     y
@@ -572,11 +769,12 @@ where
     fn size(&self) -> Size<Length> {
         Size {
             width: Length::Fill,
-            height: Length::Fixed(total_height(
+            height: Length::Fixed(total_height::<R>(
                 self.lines,
                 self.image_cache,
                 self.math_cache,
                 800.0,
+                None,
                 None,
                 false,
             )),
@@ -593,12 +791,13 @@ where
         let focused = state.is_focused;
         let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
         let max_width = limits.max().width;
-        let h = total_height(
+        let h = total_height::<R>(
             self.lines,
             self.image_cache,
             self.math_cache,
             max_width,
             active_block_id,
+            focused.then_some((self.buffer.cursor_line, self.buffer.cursor_col)),
             focused,
         );
         layout::Node::new(limits.resolve(Length::Fill, Length::Fixed(h), Size::new(0.0, 0.0)))
@@ -650,14 +849,16 @@ where
             std::collections::HashMap::new();
         let mut temp_y = bounds.y + TOP_PAD;
         let mut seen_math_blocks_layout = std::collections::HashSet::new();
-        for line in self.lines.iter() {
-            let is_editing = focused && Some(line.block_id) == active_block_id;
-            let lh = line_height_for(
+        for (i, line) in self.lines.iter().enumerate() {
+            let is_editing = is_block_editing_line(line, active_block_id, focused);
+            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
                 self.math_cache,
                 bounds.width,
                 is_editing,
+                active_col,
                 &mut seen_math_blocks_layout,
             );
             if line.is_code_block || line.is_math_block || line.is_blockquote || line.is_table_row {
@@ -672,7 +873,7 @@ where
                     is_math: line.is_math_block,
                     is_quote: line.is_blockquote,
                     is_table: line.is_table_row,
-                    is_editing: Some(line.block_id) == active_block_id,
+                    is_editing: is_block_editing_line(line, active_block_id, focused),
                     col_widths: Vec::new(),
                     content_width: 0.0,
                 });
@@ -722,7 +923,13 @@ where
                     entry.content_width = entry.col_widths.iter().sum::<f32>() + 12.0;
                 }
             }
-            temp_y += lh;
+            let gutter = table_block_gutter_after(self.lines, i, is_editing);
+            if let Some(entry) = blocks.get_mut(&line.block_id) {
+                if line.is_table_row && !is_editing {
+                    entry.height += gutter;
+                }
+            }
+            temp_y += lh + gutter;
         }
 
         for meta in blocks.values() {
@@ -808,19 +1015,22 @@ where
 
         let mut seen_math_blocks_draw = std::collections::HashSet::new();
         for (i, line) in self.lines.iter().enumerate() {
-            let is_editing = focused && Some(line.block_id) == active_block_id;
-            let lh = line_height_for(
+            let is_editing = is_block_editing_line(line, active_block_id, focused);
+            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
                 self.math_cache,
                 bounds.width,
                 is_editing,
+                active_col,
                 &mut seen_math_blocks_draw,
             );
 
             // Viewport culling
-            if y + lh < viewport.y {
-                y += lh;
+            let gutter = table_block_gutter_after(self.lines, i, is_editing);
+            if y + lh + gutter < viewport.y {
+                y += lh + gutter;
                 continue;
             }
             if y > viewport.y + viewport.height {
@@ -859,10 +1069,20 @@ where
                     };
 
                     if from_col < to_col {
-                        let (from_x, from_y) =
-                            self.position_for_col::<R>(i, from_col, bounds.width, is_editing);
-                        let (to_x, to_y) =
-                            self.position_for_col::<R>(i, to_col, bounds.width, is_editing);
+                        let (from_x, from_y) = self.position_for_col::<R>(
+                            i,
+                            from_col,
+                            bounds.width,
+                            is_editing,
+                            active_col,
+                        );
+                        let (to_x, to_y) = self.position_for_col::<R>(
+                            i,
+                            to_col,
+                            bounds.width,
+                            is_editing,
+                            active_col,
+                        );
                         let select_x = bounds.x + TEXT_X_OFFSET + from_x;
                         let select_w = if (to_y - from_y).abs() < 1.0 {
                             (to_x - from_x).max(3.0)
@@ -899,10 +1119,15 @@ where
                 ) {
                     let from_col = line_match.start_col;
                     let to_col = line_match.end_col;
-                    let (from_x, from_y) =
-                        self.position_for_col::<R>(i, from_col, bounds.width, is_editing);
+                    let (from_x, from_y) = self.position_for_col::<R>(
+                        i,
+                        from_col,
+                        bounds.width,
+                        is_editing,
+                        active_col,
+                    );
                     let (to_x, to_y) =
-                        self.position_for_col::<R>(i, to_col, bounds.width, is_editing);
+                        self.position_for_col::<R>(i, to_col, bounds.width, is_editing, active_col);
                     let same_visual_line = (to_y - from_y).abs() < 1.0;
                     let highlight_w = if same_visual_line {
                         (to_x - from_x).max(4.0)
@@ -1134,7 +1359,7 @@ where
                             },
                             theme::BORDER_SUBTLE,
                         );
-                        y += lh;
+                        y += lh + gutter;
                         continue;
                     }
 
@@ -1237,12 +1462,12 @@ where
                         state,
                         table_x,
                         table_width,
-                        meta.y + meta.height - 7.0,
+                        meta.y + meta.height - HORIZONTAL_SCROLLBAR_GUTTER + 5.0,
                         scroll_content_width,
                     );
                 }
 
-                y += lh;
+                y += lh + gutter;
                 continue;
             }
 
@@ -1250,12 +1475,15 @@ where
             let mut x = bounds.x + TEXT_X_OFFSET;
             let mut line_draw_y = y;
 
-            for span in &line.spans {
+            for (span_idx, span) in line.spans.iter().enumerate() {
                 let font = span_font(span, line);
                 let is_math = span.is_math || line.is_math_block;
+                let span_editing = is_editing
+                    || active_col
+                        .is_some_and(|col| span_is_inline_edit_target(line, span_idx, col));
 
                 // ── image ────────────────────────────────────────
-                if span.is_image && !is_editing {
+                if span.is_image && !span_editing {
                     image_counter += 1;
                     if let Some(path) = &span.image_path {
                         if let Some((handle, w, h)) = self.image_cache.get(path) {
@@ -1314,12 +1542,12 @@ where
                 // ── math (rendered to image) ─────────────────────
                 if is_math {
                     if line.is_block_fence
-                        && !is_editing
+                        && !span_editing
                         && span.visible_text(false).trim().is_empty()
                     {
                         continue; // Hide fences in preview
                     }
-                    if span.is_syntax && !is_editing {
+                    if span.is_syntax && !span_editing {
                         continue; // Hide inline $ in preview
                     }
 
@@ -1339,7 +1567,7 @@ where
 
                             // While editing math, show the source text only. Drawing the rendered
                             // image behind/above the source makes the edit target unreadable.
-                            if is_editing {
+                            if span_editing {
                                 // Skip drawing image, will draw text
                             } else {
                                 let line_start_x = bounds.x + TEXT_X_OFFSET;
@@ -1426,7 +1654,7 @@ where
                     }
 
                     if image_rendered
-                        && (line.is_math_block || (!line.is_math_block && !is_editing))
+                        && (line.is_math_block || (!line.is_math_block && !span_editing))
                     {
                         x += drawn_w + 4.0;
                         continue;
@@ -1504,12 +1732,12 @@ where
 
                 // ── text span ────────────────────────────────────
                 let fs = span.font_size;
-                let display_text = span.visible_text(is_editing);
+                let display_text = span_visible_text(line, span_idx, is_editing, active_col);
                 if display_text.is_empty() {
                     continue;
                 }
 
-                if span.is_checkbox && !is_editing {
+                if span.is_checkbox && !span_editing {
                     // Draw a premium custom checkbox quad!
                     let box_size = 18.0;
                     let box_y = line_draw_y + (BASE_LINE_HEIGHT - box_size) / 2.0;
@@ -1682,14 +1910,21 @@ where
                     if let Some(line) = self.lines.get(line_idx) {
                         let active_block_id =
                             self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
-                        let is_editing = state.is_focused && Some(line.block_id) == active_block_id;
+                        let is_editing =
+                            is_block_editing_line(line, active_block_id, state.is_focused);
                         let mut x_acc = 0.0_f32;
-                        for span in &line.spans {
+                        let active_col =
+                            (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+                        for (span_idx, span) in line.spans.iter().enumerate() {
                             let font = span_font(span, line);
                             let w = if span.is_checkbox && !is_editing {
                                 26.0
                             } else {
-                                measure_width::<R>(&span.text, span.font_size, font)
+                                measure_width::<R>(
+                                    span_visible_text(line, span_idx, is_editing, active_col),
+                                    span.font_size,
+                                    font,
+                                )
                             };
                             let click_x = pos.x - TEXT_X_OFFSET;
                             if click_x >= x_acc && click_x < x_acc + w {
@@ -1763,7 +1998,7 @@ where
                 let Some(pos) = _cursor.position_in(_layout.bounds()) else {
                     return;
                 };
-                let Some(block_id) = self.block_at_y(
+                let Some(block_id) = self.block_at_y::<R>(
                     pos.y,
                     _layout.bounds().width,
                     self.lines.get(self.buffer.cursor_line).map(|l| l.block_id),
@@ -2043,6 +2278,7 @@ impl<'a, Message> Editor<'a, Message> {
         col: usize,
         available_width: f32,
         is_editing: bool,
+        active_col: Option<usize>,
     ) -> (f32, f32)
     where
         R: iced::advanced::text::Renderer<Font = iced::Font>,
@@ -2070,37 +2306,263 @@ impl<'a, Message> Editor<'a, Message> {
         let mut y = 0.0_f32;
         let mut source_col = 0usize;
 
-        for span in &line.spans {
+        for (span_idx, span) in line.spans.iter().enumerate() {
             let font = span_font(span, line);
-            let display = span.visible_text(is_editing);
+            let display = span_visible_text(line, span_idx, is_editing, active_col);
+            let span_start_col = source_col;
+            let span_end_col = source_col_after_span(span, span_start_col);
             if display.is_empty() {
-                source_col += span.text.chars().count();
+                if col <= span_end_col {
+                    return (x, y);
+                }
+                source_col = span_end_col;
                 continue;
             }
             let step = visual_line_step(span.font_size);
-            for ch in display.chars() {
-                let ch_text = ch.to_string();
-                let w = if span.is_checkbox && !is_editing {
-                    26.0
-                } else {
-                    measure_width::<R>(&ch_text, span.font_size, font)
+            let mut token = Vec::new();
+            let flush_token =
+                |token: &mut Vec<(char, usize)>, x: &mut f32, y: &mut f32| -> Option<(f32, f32)> {
+                    if token.is_empty() {
+                        return None;
+                    }
+
+                    let token_width = token
+                        .iter()
+                        .map(|(ch, _)| measure_width::<R>(&ch.to_string(), span.font_size, font))
+                        .sum::<f32>();
+
+                    if *x > 0.0 && *x + token_width > max_w {
+                        *y += step;
+                        *x = 0.0;
+                    }
+
+                    if token_width <= max_w {
+                        for (ch, ch_col) in token.iter() {
+                            if *ch_col >= col {
+                                return Some((*x, *y));
+                            }
+                            *x += measure_width::<R>(&ch.to_string(), span.font_size, font);
+                        }
+                    } else {
+                        for (ch, ch_col) in token.iter() {
+                            let ch_w = measure_width::<R>(&ch.to_string(), span.font_size, font);
+                            if *x > 0.0 && *x + ch_w > max_w {
+                                *y += step;
+                                *x = 0.0;
+                            }
+                            if *ch_col >= col {
+                                return Some((*x, *y));
+                            }
+                            *x += ch_w;
+                        }
+                    }
+
+                    token.clear();
+                    None
                 };
-                if x > 0.0 && x + w > max_w {
-                    y += step;
-                    x = 0.0;
+
+            for ch in display.chars() {
+                if span.is_checkbox && !is_editing {
+                    if source_col >= col {
+                        return (x, y);
+                    }
+                    x += 26.0;
+                    source_col += 1;
+                    continue;
                 }
-                if source_col >= col {
-                    return (x, y);
-                }
-                x += w;
+
+                token.push((ch, source_col));
                 source_col += 1;
+                if ch.is_whitespace() {
+                    if let Some(pos) = flush_token(&mut token, &mut x, &mut y) {
+                        return pos;
+                    }
+                }
             }
-            let raw_len = span.text.chars().count();
-            if raw_len > display.chars().count() {
-                source_col = source_col.max(raw_len);
+            if let Some(pos) = flush_token(&mut token, &mut x, &mut y) {
+                return pos;
             }
+            if col <= span_end_col {
+                return (x, y);
+            }
+            source_col = span_end_col;
         }
         (x, y)
+    }
+
+    fn col_for_visual_point<R>(
+        &self,
+        line: &StyledLine,
+        click_x: f32,
+        line_y: f32,
+        available_width: f32,
+        is_editing: bool,
+        active_col: Option<usize>,
+    ) -> usize
+    where
+        R: iced::advanced::text::Renderer<Font = iced::Font>,
+    {
+        if click_x <= 0.0 {
+            return 0;
+        }
+
+        let max_w = (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
+        let mut x_acc = 0.0_f32;
+        let mut row_y = 0.0_f32;
+        let mut source_col = 0usize;
+        let mut row_start_col = 0usize;
+        let mut row_end_col = 0usize;
+        let mut row_step = BASE_LINE_HEIGHT;
+
+        for (span_idx, span) in line.spans.iter().enumerate() {
+            let font = span_font(span, line);
+            let display = span_visible_text(line, span_idx, is_editing, active_col);
+            let span_start_col = source_col;
+            let span_end_col = source_col_after_span(span, span_start_col);
+
+            if display.is_empty() {
+                source_col = span_end_col;
+                row_end_col = source_col;
+                continue;
+            }
+
+            let step = visual_line_step(span.font_size);
+            row_step = row_step.max(step);
+            let mut token = Vec::new();
+            let flush_token = |token: &mut Vec<(char, usize)>,
+                               x_acc: &mut f32,
+                               row_y: &mut f32,
+                               row_start_col: &mut usize,
+                               row_end_col: &mut usize,
+                               row_step: &mut f32|
+             -> Option<usize> {
+                if token.is_empty() {
+                    return None;
+                }
+
+                let token_width = token
+                    .iter()
+                    .map(|(ch, _)| measure_width::<R>(&ch.to_string(), span.font_size, font))
+                    .sum::<f32>();
+
+                if *x_acc > 0.0 && *x_acc + token_width > max_w {
+                    if line_y < *row_y + *row_step {
+                        return Some(*row_end_col);
+                    }
+                    *row_y += *row_step;
+                    *x_acc = 0.0;
+                    *row_start_col = token.first().map(|(_, col)| *col).unwrap_or(*row_end_col);
+                    *row_end_col = *row_start_col;
+                    *row_step = step;
+                }
+
+                if token_width <= max_w {
+                    if line_y < *row_y + *row_step {
+                        for (ch, ch_col) in token.iter() {
+                            let cw = measure_width::<R>(&ch.to_string(), span.font_size, font);
+                            if click_x < *x_acc + cw * 0.6 {
+                                return Some(*ch_col);
+                            }
+                            *row_end_col = *ch_col + 1;
+                            *x_acc += cw;
+                        }
+                    } else {
+                        *x_acc += token_width;
+                        if let Some((_, last_col)) = token.last() {
+                            *row_end_col = *last_col + 1;
+                        }
+                    }
+                } else {
+                    for (ch, ch_col) in token.iter() {
+                        let cw = measure_width::<R>(&ch.to_string(), span.font_size, font);
+                        if *x_acc > 0.0 && *x_acc + cw > max_w {
+                            if line_y < *row_y + *row_step {
+                                return Some(*row_end_col);
+                            }
+                            *row_y += *row_step;
+                            *x_acc = 0.0;
+                            *row_start_col = *ch_col;
+                            *row_end_col = *ch_col;
+                            *row_step = step;
+                        }
+
+                        if line_y < *row_y + *row_step {
+                            if click_x < *x_acc + cw * 0.6 {
+                                return Some(*ch_col);
+                            }
+                            *row_end_col = *ch_col + 1;
+                        }
+                        *x_acc += cw;
+                    }
+                }
+
+                token.clear();
+                None
+            };
+
+            for ch in display.chars() {
+                if span.is_checkbox && !is_editing {
+                    let cw = 26.0;
+                    if x_acc > 0.0 && x_acc + cw > max_w {
+                        if line_y < row_y + row_step {
+                            return row_end_col;
+                        }
+                        row_y += row_step;
+                        x_acc = 0.0;
+                        row_start_col = source_col;
+                        row_end_col = source_col;
+                        row_step = step;
+                    }
+
+                    if line_y < row_y + row_step {
+                        if click_x < x_acc + cw * 0.6 {
+                            return source_col;
+                        }
+                        row_end_col = source_col + 1;
+                    }
+
+                    x_acc += cw;
+                    source_col += 1;
+                    continue;
+                }
+
+                token.push((ch, source_col));
+                source_col += 1;
+                if ch.is_whitespace() {
+                    if let Some(col) = flush_token(
+                        &mut token,
+                        &mut x_acc,
+                        &mut row_y,
+                        &mut row_start_col,
+                        &mut row_end_col,
+                        &mut row_step,
+                    ) {
+                        return col;
+                    }
+                }
+            }
+            if let Some(col) = flush_token(
+                &mut token,
+                &mut x_acc,
+                &mut row_y,
+                &mut row_start_col,
+                &mut row_end_col,
+                &mut row_step,
+            ) {
+                return col;
+            }
+
+            source_col = span_end_col;
+            if line_y < row_y + row_step {
+                row_end_col = source_col;
+            }
+        }
+
+        if line_y < row_y + row_step {
+            row_end_col.max(row_start_col)
+        } else {
+            source_col
+        }
     }
 
     fn selected_text(&self, state: &State) -> Option<String> {
@@ -2139,33 +2601,42 @@ impl<'a, Message> Editor<'a, Message> {
         let Some(line) = self.lines.get(line_idx) else {
             return (0.0, 0.0);
         };
-        let is_editing =
-            Some(line.block_id) == self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
+        let is_editing = is_block_editing_line(
+            line,
+            self.lines.get(self.buffer.cursor_line).map(|l| l.block_id),
+            true,
+        );
         self.position_for_col::<R>(
             line_idx,
             self.buffer.cursor_col,
             available_width,
             is_editing,
+            (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col),
         )
     }
 
-    fn block_at_y(
+    fn block_at_y<R>(
         &self,
         pos_y: f32,
         available_width: f32,
         active_block_id: Option<usize>,
         focused: bool,
-    ) -> Option<usize> {
+    ) -> Option<usize>
+    where
+        R: iced::advanced::text::Renderer<Font = iced::Font>,
+    {
         let mut y_acc = TOP_PAD;
         let mut seen_math_blocks = std::collections::HashSet::new();
-        for line in self.lines {
-            let is_editing = focused && Some(line.block_id) == active_block_id;
-            let lh = line_height_for(
+        for (i, line) in self.lines.iter().enumerate() {
+            let is_editing = is_block_editing_line(line, active_block_id, focused);
+            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
                 self.math_cache,
                 available_width,
                 is_editing,
+                active_col,
                 &mut seen_math_blocks,
             );
             if pos_y >= y_acc && pos_y < y_acc + lh {
@@ -2174,7 +2645,11 @@ impl<'a, Message> Editor<'a, Message> {
                 }
                 return None;
             }
-            y_acc += lh;
+            let gutter = table_block_gutter_after(self.lines, i, is_editing);
+            if pos_y >= y_acc + lh && pos_y < y_acc + lh + gutter {
+                return Some(line.block_id);
+            }
+            y_acc += lh + gutter;
         }
         None
     }
@@ -2187,7 +2662,7 @@ impl<'a, Message> Editor<'a, Message> {
         let mut max_width = 0.0_f32;
         let mut table_widths: Vec<f32> = Vec::new();
         for line in self.lines.iter().filter(|line| line.block_id == block_id) {
-            let is_editing = focused && Some(line.block_id) == active_block_id;
+            let is_editing = is_block_editing_line(line, active_block_id, focused);
             if line.is_code_block {
                 let width = line
                     .spans
@@ -2255,16 +2730,19 @@ impl<'a, Message> Editor<'a, Message> {
         let mut block_start_y: Option<(usize, f32)> = None;
         let mut block_height = 0.0_f32;
 
-        for line in self.lines {
-            let is_editing = focused && Some(line.block_id) == active_block_id;
-            let lh = line_height_for(
+        for (i, line) in self.lines.iter().enumerate() {
+            let is_editing = is_block_editing_line(line, active_block_id, focused);
+            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
                 self.math_cache,
                 available_width,
                 is_editing,
+                active_col,
                 &mut seen_math_blocks,
             );
+            let gutter = table_block_gutter_after(self.lines, i, is_editing);
             let scrollable_block = line.is_code_block || line.is_table_row || line.is_math_block;
 
             if scrollable_block {
@@ -2290,7 +2768,7 @@ impl<'a, Message> Editor<'a, Message> {
                 } else if block_start_y.is_none() {
                     block_start_y = Some((line.block_id, y_acc));
                 }
-                block_height += lh;
+                block_height += lh + gutter;
             } else if let Some((block_id, y)) = block_start_y.take() {
                 if let Some(hit) = self.scrollbar_hit_for_block::<R>(
                     pos,
@@ -2308,7 +2786,7 @@ impl<'a, Message> Editor<'a, Message> {
                 block_height = 0.0;
             }
 
-            y_acc += lh;
+            y_acc += lh + gutter;
         }
 
         if let Some((block_id, y)) = block_start_y {
@@ -2398,20 +2876,27 @@ impl<'a, Message> Editor<'a, Message> {
         let mut seen_math_blocks = std::collections::HashSet::new();
 
         for (i, line) in self.lines.iter().enumerate() {
-            let is_editing = focused && Some(line.block_id) == active_block_id;
-            let lh = line_height_for(
+            let is_editing = is_block_editing_line(line, active_block_id, focused);
+            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
                 self.math_cache,
                 available_width,
                 is_editing,
+                active_col,
                 &mut seen_math_blocks,
             );
             if pos.y < y_acc + lh {
                 line_idx = i;
                 break;
             }
-            y_acc += lh;
+            let gutter = table_block_gutter_after(self.lines, i, is_editing);
+            if pos.y < y_acc + lh + gutter {
+                line_idx = i;
+                break;
+            }
+            y_acc += lh + gutter;
             line_idx = i; // clamp to last
         }
 
@@ -2424,41 +2909,15 @@ impl<'a, Message> Editor<'a, Message> {
             return (line_idx, 0);
         }
 
-        let is_editing = focused && Some(line.block_id) == active_block_id;
-        let max_w = (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
-        let mut x_acc = 0.0_f32;
-        let mut y_acc_line = 0.0_f32;
-        let mut col = 0;
-        for span in &line.spans {
-            let font = span_font(span, line);
-            let display = span.visible_text(is_editing);
-            if display.is_empty() {
-                col += span.text.chars().count();
-                continue;
-            }
-
-            let step = visual_line_step(span.font_size);
-            for ch in display.chars() {
-                let ch_text = ch.to_string();
-                let cw = if span.is_checkbox && !is_editing {
-                    26.0
-                } else {
-                    measure_width::<R>(&ch_text, span.font_size, font)
-                };
-                if x_acc > 0.0 && x_acc + cw > max_w {
-                    if pos.y - y_acc < y_acc_line + step {
-                        return (line_idx, col);
-                    }
-                    y_acc_line += step;
-                    x_acc = 0.0;
-                }
-                if pos.y - y_acc < y_acc_line + step && click_x < x_acc + cw * 0.6 {
-                    return (line_idx, col);
-                }
-                x_acc += cw;
-                col += 1;
-            }
-        }
+        let is_editing = is_block_editing_line(line, active_block_id, focused);
+        let col = self.col_for_visual_point::<R>(
+            line,
+            click_x,
+            pos.y - y_acc,
+            available_width,
+            is_editing,
+            (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col),
+        );
         (line_idx, col)
     }
 
@@ -2473,12 +2932,13 @@ impl<'a, Message> Editor<'a, Message> {
     {
         let (cur_x, cur_y_in_line) =
             self.cursor_position::<R>(self.buffer.cursor_line, available_width);
-        let cur_y_base = line_visual_y(
+        let cur_y_base = line_visual_y::<R>(
             self.lines,
             self.image_cache,
             self.math_cache,
             available_width,
             self.buffer.cursor_line,
+            self.buffer.cursor_col,
             self.buffer.cursor_line,
             state.is_focused,
         );
@@ -2494,12 +2954,57 @@ impl<'a, Message> Editor<'a, Message> {
 
         let target_y = cur_y_base + cur_y_in_line + delta_lines * step + step / 2.0;
 
-        self.hit_test::<R>(
+        let mut target = self.hit_test::<R>(
             Point::new(*visual_x + TEXT_X_OFFSET, target_y),
             available_width,
             self.lines.get(self.buffer.cursor_line).map(|l| l.block_id),
             state.is_focused,
-        )
+        );
+
+        let current = (self.buffer.cursor_line, self.buffer.cursor_col);
+        if delta_lines > 0.0 && target <= current {
+            target = self.fallback_visual_line_move::<R>(*visual_x, 1, available_width);
+        } else if delta_lines < 0.0 && target >= current {
+            target = self.fallback_visual_line_move::<R>(*visual_x, -1, available_width);
+        }
+
+        target
+    }
+
+    fn fallback_visual_line_move<R>(
+        &self,
+        visual_x: f32,
+        delta_lines: isize,
+        available_width: f32,
+    ) -> (usize, usize)
+    where
+        R: iced::advanced::text::Renderer<Font = iced::Font>,
+    {
+        let current_line = self.buffer.cursor_line;
+        let target_line = if delta_lines < 0 {
+            current_line.saturating_sub(1)
+        } else {
+            (current_line + 1).min(self.lines.len().saturating_sub(1))
+        };
+
+        if target_line == current_line {
+            return (self.buffer.cursor_line, self.buffer.cursor_col);
+        }
+
+        let Some(line) = self.lines.get(target_line) else {
+            return (self.buffer.cursor_line, self.buffer.cursor_col);
+        };
+        let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
+        let is_editing = is_block_editing_line(line, active_block_id, true);
+        let col = self.col_for_visual_point::<R>(
+            line,
+            visual_x,
+            BASE_LINE_HEIGHT / 2.0,
+            available_width,
+            is_editing,
+            None,
+        );
+        (target_line, col)
     }
 }
 
@@ -2522,8 +3027,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::buffer::DocBuffer;
-    use crate::editor::highlight::{StyledLine, StyledSpan};
+    use crate::editor::buffer::{DocBuffer, EditorCommand};
+    use crate::editor::highlight::{StyledLine, StyledSpan, highlight_markdown};
     use std::collections::HashMap;
 
     fn make_line(block_id: usize, spans: Vec<StyledSpan>) -> StyledLine {
@@ -2531,6 +3036,36 @@ mod tests {
         line.block_id = block_id;
         line.spans = spans;
         line
+    }
+
+    fn editor_for<'a>(
+        buffer: &'a DocBuffer,
+        lines: &'a [StyledLine],
+        image_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+        math_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    ) -> Editor<'a, ()> {
+        Editor::new(
+            buffer,
+            lines,
+            image_cache,
+            math_cache,
+            |_| (),
+            |_| (),
+            |_| (),
+        )
+    }
+
+    fn test_state() -> State {
+        State {
+            is_dragging: false,
+            is_focused: true,
+            modifiers: keyboard::Modifiers::default(),
+            selection_anchor: None,
+            selection_focus: None,
+            block_scroll_x: HashMap::new(),
+            horizontal_scroll_drag: None,
+            desired_visual_x: None,
+        }
     }
 
     #[test]
@@ -2655,6 +3190,179 @@ mod tests {
     }
 
     #[test]
+    fn typora_inline_editing_reveals_only_active_span_and_markers() {
+        let lines = highlight_markdown("alpha **bold** omega");
+        let line = &lines[0];
+
+        let rendered = line
+            .spans
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| span_visible_text(line, idx, false, None))
+            .collect::<Vec<_>>();
+        assert_eq!(rendered, vec!["alpha ", "", "bold", "", " omega"]);
+
+        let active_inside_bold = "alpha **bo".chars().count();
+        let editing = line
+            .spans
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| span_visible_text(line, idx, false, Some(active_inside_bold)))
+            .collect::<Vec<_>>();
+        assert_eq!(editing, vec!["alpha ", "**", "bold", "**", " omega"]);
+
+        let active_inside_plain = "al".chars().count();
+        let editing_plain = line
+            .spans
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| span_visible_text(line, idx, false, Some(active_inside_plain)))
+            .collect::<Vec<_>>();
+        assert_eq!(editing_plain, vec!["alpha ", "", "bold", "", " omega"]);
+    }
+
+    #[test]
+    fn table_scrollbar_gutter_is_reserved_only_after_last_table_row() {
+        let mut first = make_line(1, vec![]);
+        first.is_table_row = true;
+        let mut second = make_line(1, vec![]);
+        second.is_table_row = true;
+        let plain = make_line(2, vec![StyledSpan::plain("after")]);
+        let lines = vec![first, second, plain];
+
+        assert_eq!(table_block_gutter_after(&lines, 0, false), 0.0);
+        assert_eq!(
+            table_block_gutter_after(&lines, 1, false),
+            HORIZONTAL_SCROLLBAR_GUTTER
+        );
+        assert_eq!(table_block_gutter_after(&lines, 1, true), 0.0);
+        assert_eq!(table_block_gutter_after(&lines, 2, false), 0.0);
+    }
+
+    #[test]
+    fn inactive_plain_line_height_does_not_create_cursorless_blank_gap() {
+        let line = make_line(1, vec![StyledSpan::plain("short line")]);
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let mut seen_math_blocks = std::collections::HashSet::new();
+
+        let h = line_height_for::<iced::Renderer>(
+            &line,
+            &image_cache,
+            &math_cache,
+            900.0,
+            false,
+            None,
+            &mut seen_math_blocks,
+        );
+        assert_eq!(h, BASE_LINE_HEIGHT);
+    }
+
+    #[test]
+    fn visual_down_movement_is_monotonic_through_wrapped_markdown_lines() {
+        let text = concat!(
+            "alpha **bold text with enough words to wrap around the editor width** omega\n",
+            "second line with `inline code` and more words to move through\n",
+            "third line ends here"
+        );
+        let mut buffer = DocBuffer::from_text(text);
+        buffer.execute(EditorCommand::SetCursor { line: 0, col: 0 });
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let mut previous = (buffer.cursor_line, buffer.cursor_col);
+
+        for _ in 0..12 {
+            let lines = highlight_markdown(&buffer.text());
+            let editor = editor_for(&buffer, &lines, &image_cache, &math_cache);
+            let mut state = test_state();
+            let next = editor.move_visual::<iced::Renderer>(&mut state, 1.0, 260.0);
+
+            if next == previous {
+                assert_eq!(next.0, lines.len().saturating_sub(1));
+                break;
+            }
+            assert!(
+                next > previous,
+                "visual down must move forward, previous={previous:?}, next={next:?}"
+            );
+            drop(editor);
+            buffer.execute(EditorCommand::SetCursor {
+                line: next.0,
+                col: next.1,
+            });
+            previous = next;
+        }
+
+        assert_eq!(previous.0, 2);
+    }
+
+    #[test]
+    fn visual_down_moves_through_empty_lines_without_vanishing() {
+        let text = "first\n\nthird\n\nfifth";
+        let mut buffer = DocBuffer::from_text(text);
+        buffer.execute(EditorCommand::SetCursor { line: 0, col: 2 });
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+
+        let mut visited = Vec::new();
+        for _ in 0..8 {
+            let lines = highlight_markdown(&buffer.text());
+            let editor = editor_for(&buffer, &lines, &image_cache, &math_cache);
+            let mut state = test_state();
+            let next = editor.move_visual::<iced::Renderer>(&mut state, 1.0, 900.0);
+            visited.push(next);
+            drop(editor);
+            buffer.execute(EditorCommand::SetCursor {
+                line: next.0,
+                col: next.1,
+            });
+            if next.0 == lines.len().saturating_sub(1) {
+                break;
+            }
+        }
+
+        assert!(
+            visited.iter().any(|(line, col)| *line == 1 && *col == 0),
+            "down should visit first empty line, visited={visited:?}"
+        );
+        assert!(
+            visited.iter().any(|(line, col)| *line == 3 && *col == 0),
+            "down should visit second empty line, visited={visited:?}"
+        );
+        assert_eq!(buffer.cursor_line, 4);
+    }
+
+    #[test]
+    fn line_visual_y_includes_single_table_scrollbar_gutter() {
+        let mut header = make_line(1, vec![]);
+        header.is_table_row = true;
+        header.table_cells = vec![vec![StyledSpan::plain("A")], vec![StyledSpan::plain("B")]];
+        let mut body = make_line(1, vec![]);
+        body.is_table_row = true;
+        body.table_cells = vec![vec![StyledSpan::plain("1")], vec![StyledSpan::plain("2")]];
+        let after = make_line(2, vec![StyledSpan::plain("after")]);
+        let lines = vec![header, body, after];
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+
+        let y_after_table = line_visual_y::<iced::Renderer>(
+            &lines,
+            &image_cache,
+            &math_cache,
+            900.0,
+            0,
+            0,
+            2,
+            false,
+        );
+
+        assert_eq!(
+            y_after_table,
+            TOP_PAD + 34.0 + 34.0 + HORIZONTAL_SCROLLBAR_GUTTER
+        );
+    }
+
+    #[test]
     fn test_renderer_line_height_permutations() {
         let mut lines = Vec::new();
 
@@ -2738,12 +3446,13 @@ mod tests {
             for &is_editing in &[true, false] {
                 for line in &lines {
                     seen_math_blocks.clear();
-                    let h = line_height_for(
+                    let h = line_height_for::<iced::Renderer>(
                         line,
                         &image_cache,
                         &math_cache,
                         width,
                         is_editing,
+                        None,
                         &mut seen_math_blocks,
                     );
 
@@ -2779,20 +3488,30 @@ mod tests {
         let math_cache = HashMap::new();
 
         // 1. Verify adding lines monotonically increases total height
-        let h1 = total_height(&lines[0..50], &image_cache, &math_cache, 800.0, None, false);
-        let h2 = total_height(
+        let h1 = total_height::<iced::Renderer>(
+            &lines[0..50],
+            &image_cache,
+            &math_cache,
+            800.0,
+            None,
+            None,
+            false,
+        );
+        let h2 = total_height::<iced::Renderer>(
             &lines[0..100],
             &image_cache,
             &math_cache,
             800.0,
             None,
+            None,
             false,
         );
-        let h3 = total_height(
+        let h3 = total_height::<iced::Renderer>(
             &lines[0..200],
             &image_cache,
             &math_cache,
             800.0,
+            None,
             None,
             false,
         );
@@ -2801,8 +3520,24 @@ mod tests {
         assert!(h3 > h2);
 
         // 2. Verify width decreases wrapping space and monotonically increases total height
-        let h_wide = total_height(&lines, &image_cache, &math_cache, 1000.0, None, false);
-        let h_narrow = total_height(&lines, &image_cache, &math_cache, 200.0, None, false);
+        let h_wide = total_height::<iced::Renderer>(
+            &lines,
+            &image_cache,
+            &math_cache,
+            1000.0,
+            None,
+            None,
+            false,
+        );
+        let h_narrow = total_height::<iced::Renderer>(
+            &lines,
+            &image_cache,
+            &math_cache,
+            200.0,
+            None,
+            None,
+            false,
+        );
 
         assert!(h_narrow >= h_wide);
     }
@@ -2830,12 +3565,13 @@ mod tests {
         ];
         for &width in &extreme_widths {
             seen_math_blocks.clear();
-            let h = line_height_for(
+            let h = line_height_for::<iced::Renderer>(
                 &line,
                 &image_cache,
                 &math_cache,
                 width,
                 false,
+                None,
                 &mut seen_math_blocks,
             );
             assert!(h >= 0.0);
