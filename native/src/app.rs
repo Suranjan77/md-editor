@@ -494,15 +494,13 @@ impl MdEditor {
                 self.editor_viewport_height = viewport_height;
                 Task::none()
             }
-            Message::ScrollEditorToTarget(target_y) => {
-                operation::scroll_to(
-                    iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
-                    AbsoluteOffset {
-                        x: 0.0,
-                        y: target_y,
-                    },
-                )
-            }
+            Message::ScrollEditorToTarget(target_y) => operation::scroll_to(
+                iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                AbsoluteOffset {
+                    x: 0.0,
+                    y: target_y,
+                },
+            ),
 
             Message::PdfLoaded(generation, pages) => {
                 if generation != self.pdf_render_generation {
@@ -582,8 +580,6 @@ impl MdEditor {
                     let scroll_y = self.pdf_page_offset(target_page);
                     let start = target_page.saturating_sub(4);
                     let end = (target_page + 10).min(self.pdf_total_pages.saturating_sub(1));
-                    self.pdf_pending_pages.clear();
-                    self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
                     Task::batch(vec![
                         self.render_pdf_page_direct(target_page),
                         self.render_pdf_page_range(start, end),
@@ -955,8 +951,20 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::SearchPrevious => self.navigate_file_search(false),
-            Message::SearchNext => self.navigate_file_search(true),
+            Message::SearchPrevious => {
+                if self.file_search_visible && self.active_pdf_path.is_some() && self.showing_pdf {
+                    self.navigate_pdf_search(false)
+                } else {
+                    self.navigate_file_search(false)
+                }
+            }
+            Message::SearchNext => {
+                if self.file_search_visible && self.active_pdf_path.is_some() && self.showing_pdf {
+                    self.navigate_pdf_search(true)
+                } else {
+                    self.navigate_file_search(true)
+                }
+            }
             Message::SearchReplaceAll => {
                 match self.replace_all_in_current_document() {
                     Ok(count) => self.toast = Some(format!("Replaced {} matches", count)),
@@ -967,7 +975,21 @@ impl MdEditor {
             Message::PdfSearchResult(Ok(results)) => {
                 self.pdf_search_error = None;
                 self.pdf_search_results = results;
-                Task::none()
+                if self
+                    .search_match_index
+                    .is_some_and(|index| index >= self.pdf_search_results.len())
+                {
+                    self.search_match_index = None;
+                }
+                if self.file_search_visible
+                    && self.active_pdf_path.is_some()
+                    && self.showing_pdf
+                    && !self.pdf_search_results.is_empty()
+                {
+                    self.navigate_pdf_search_to_index(self.search_match_index.unwrap_or(0))
+                } else {
+                    Task::none()
+                }
             }
             Message::PdfSearchResult(Err(err)) => {
                 self.pdf_search_results.clear();
@@ -976,18 +998,17 @@ impl MdEditor {
             }
             Message::PdfSearchResultClicked(page) => {
                 self.search_visible = false;
-                self.pdf_current_page = page.min(self.pdf_total_pages.saturating_sub(1));
-                let scroll_y = self.pdf_page_offset(self.pdf_current_page);
-                Task::batch(vec![
-                    self.render_visible_pdf_pages(),
-                    operation::scroll_to(
-                        iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-                        AbsoluteOffset {
-                            x: 0.0,
-                            y: scroll_y,
-                        },
-                    ),
-                ])
+                self.file_search_visible = true;
+                self.search_match_index = self
+                    .pdf_search_results
+                    .iter()
+                    .position(|result| result.page_index == page);
+                if let Some(index) = self.search_match_index {
+                    self.navigate_pdf_search_to_index(index)
+                } else {
+                    self.pdf_current_page = page.min(self.pdf_total_pages.saturating_sub(1));
+                    self.navigate_pdf_page(self.pdf_current_page)
+                }
             }
             Message::PdfScrollBy(delta) => {
                 if self.active_pdf_path.is_none()
@@ -1046,7 +1067,13 @@ impl MdEditor {
                     Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
                     Shortcut::NewFile => Task::done(Message::CreateFileDialog),
                     Shortcut::Search => {
-                        if self.active_path.is_some() {
+                        if self.active_pdf_path.is_some() && self.showing_pdf {
+                            self.file_search_visible = true;
+                            self.search_visible = false;
+                            if !self.search_query.trim().is_empty() {
+                                return self.search_pdf();
+                            }
+                        } else if self.active_path.is_some() {
                             self.file_search_visible = true;
                         } else {
                             self.search_visible = true;
@@ -1063,7 +1090,12 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::TableOfContents => {
-                        self.toc_visible = !self.toc_visible;
+                        if self.active_pdf_path.is_some()
+                            && (self.showing_pdf
+                                || (self.split_view_active && self.active_path.is_some()))
+                        {
+                            self.toc_visible = !self.toc_visible;
+                        }
                         Task::none()
                     }
                     Shortcut::StudyTracker => {
@@ -1127,7 +1159,11 @@ impl MdEditor {
                 Task::none()
             }
             Message::ToggleTOC => {
-                self.toc_visible = !self.toc_visible;
+                if self.active_pdf_path.is_some()
+                    && (self.showing_pdf || (self.split_view_active && self.active_path.is_some()))
+                {
+                    self.toc_visible = !self.toc_visible;
+                }
                 Task::none()
             }
             _ => Task::none(),
@@ -1149,6 +1185,8 @@ impl MdEditor {
             self.backlinks_visible,
             self.tracker_visible,
             self.toc_visible,
+            self.active_pdf_path.is_some()
+                && (self.showing_pdf || (self.split_view_active && self.active_path.is_some())),
             self.split_view_active,
             self.active_path.is_some() && self.active_pdf_path.is_some(),
         );
@@ -1234,6 +1272,12 @@ impl MdEditor {
                     &self.pdf_pages,
                     self.pdf_zoom,
                     &self.pdf_dimensions,
+                    if self.file_search_visible || self.search_visible {
+                        &self.pdf_search_results
+                    } else {
+                        &[]
+                    },
+                    self.search_match_index,
                 ))
                 .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
                 .on_scroll(|vp| Message::PdfScrolled {
@@ -1242,16 +1286,35 @@ impl MdEditor {
                 })
                 .height(Length::Fill);
 
-                column![pdf_pages, pdf_toolbar].height(Length::Fill).into()
+                if self.file_search_visible && self.showing_pdf {
+                    column![
+                        views::pdf_viewer::search_bar(
+                            &self.search_query,
+                            self.search_regex,
+                            self.search_match_case,
+                            self.pdf_search_results.len(),
+                            self.search_match_index,
+                        ),
+                        pdf_pages,
+                        pdf_toolbar
+                    ]
+                    .height(Length::Fill)
+                    .into()
+                } else {
+                    column![pdf_pages, pdf_toolbar].height(Length::Fill).into()
+                }
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
 
-        let toc_view: Element<Message, Theme, iced::Renderer> = if self.toc_visible {
-            views::toc::view(&self.toc_entries)
-        } else {
-            container(Space::new()).width(Length::Fixed(0.0)).into()
-        };
+        let pdf_toc_available = self.active_pdf_path.is_some()
+            && (self.showing_pdf || (self.split_view_active && self.active_path.is_some()));
+        let toc_view: Element<Message, Theme, iced::Renderer> =
+            if self.toc_visible && pdf_toc_available {
+                views::toc::view(&self.toc_entries)
+            } else {
+                container(Space::new()).width(Length::Fixed(0.0)).into()
+            };
 
         let image_view: Element<Message, Theme, iced::Renderer> =
             if let Some((handle, width, height)) = &self.active_image {
@@ -1892,6 +1955,52 @@ impl MdEditor {
         self.scroll_editor_to_line(item.line)
     }
 
+    fn navigate_pdf_search(&mut self, forward: bool) -> Task<Message> {
+        if self.pdf_search_results.is_empty() {
+            self.search_match_index = None;
+            return Task::none();
+        }
+
+        let next_index = match self.search_match_index {
+            Some(index) if forward => (index + 1) % self.pdf_search_results.len(),
+            Some(0) if !forward => self.pdf_search_results.len() - 1,
+            Some(index) => index.saturating_sub(1),
+            None if forward => 0,
+            None => self.pdf_search_results.len() - 1,
+        };
+        self.navigate_pdf_search_to_index(next_index)
+    }
+
+    fn navigate_pdf_search_to_index(&mut self, index: usize) -> Task<Message> {
+        let Some(result) = self.pdf_search_results.get(index) else {
+            self.search_match_index = None;
+            return Task::none();
+        };
+
+        self.search_match_index = Some(index);
+        self.pdf_current_page = result
+            .page_index
+            .min(self.pdf_total_pages.saturating_sub(1));
+        self.navigate_pdf_page(self.pdf_current_page)
+    }
+
+    fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {
+        let scroll_y = self.pdf_page_offset(page);
+        let start = page.saturating_sub(2);
+        let end = (page + 4).min(self.pdf_total_pages.saturating_sub(1));
+        Task::batch(vec![
+            self.render_pdf_page_direct(page),
+            self.render_pdf_page_range(start, end),
+            operation::scroll_to(
+                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                AbsoluteOffset {
+                    x: 0.0,
+                    y: scroll_y,
+                },
+            ),
+        ])
+    }
+
     fn estimated_editor_line_y(&self, target_line: usize) -> f32 {
         crate::editor::renderer::line_visual_y::<iced::Renderer>(
             &self.highlighted_lines,
@@ -1919,10 +2028,7 @@ impl MdEditor {
             self.editor_scroll_y
         };
 
-        Task::perform(
-            async move { target_y },
-            Message::ScrollEditorToTarget,
-        )
+        Task::perform(async move { target_y }, Message::ScrollEditorToTarget)
     }
 
     fn replace_all_in_current_document(&mut self) -> Result<usize, String> {
