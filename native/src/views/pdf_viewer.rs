@@ -8,6 +8,20 @@ use crate::views::interactive_pdf::InteractivePdf;
 
 pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
 pub(crate) const PDF_PAGE_SPACING: f32 = 20.0;
+pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
+
+fn search_rect_to_view_rect(
+    rect: &md_editor_core::pdf::PdfRect,
+    page_height: f32,
+    zoom: f32,
+) -> md_editor_core::pdf::PdfRect {
+    md_editor_core::pdf::PdfRect {
+        x: rect.x * zoom,
+        y: (page_height - rect.y - rect.height) * zoom,
+        width: rect.width * zoom,
+        height: rect.height * zoom,
+    }
+}
 
 pub fn search_bar<'a>(
     query: &'a str,
@@ -17,6 +31,7 @@ pub fn search_bar<'a>(
     active_match_index: Option<usize>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let search_input = text_input("Find in PDF", query)
+        .id(iced::advanced::widget::Id::new(PDF_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
         .padding([8, 12])
         .size(14)
@@ -175,6 +190,11 @@ pub fn view_continuous<'a>(
 
     for (i, page_opt) in pages.iter().enumerate() {
         let display_size = placeholder_display_size;
+        let page_height = page_sizes
+            .get(i)
+            .and_then(|size| *size)
+            .map(|(_, h)| h)
+            .unwrap_or_else(|| display_size.1 / zoom.max(0.01));
 
         if let Some(handle) = page_opt {
             let (w, h) = display_size;
@@ -185,12 +205,7 @@ pub fn view_continuous<'a>(
                     result.page_index == i as u16 && Some(*idx) != active_search_index
                 })
                 .flat_map(|(_, result)| result.rects.iter())
-                .map(|rect| md_editor_core::pdf::PdfRect {
-                    x: rect.x * zoom,
-                    y: rect.y * zoom,
-                    width: rect.width * zoom,
-                    height: rect.height * zoom,
-                })
+                .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
                 .collect::<Vec<_>>();
             let active_highlights = active_search_index
                 .and_then(|idx| search_matches.get(idx))
@@ -199,12 +214,7 @@ pub fn view_continuous<'a>(
                     result
                         .rects
                         .iter()
-                        .map(|rect| md_editor_core::pdf::PdfRect {
-                            x: rect.x * zoom,
-                            y: rect.y * zoom,
-                            width: rect.width * zoom,
-                            height: rect.height * zoom,
-                        })
+                        .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
@@ -257,4 +267,26 @@ pub fn view_continuous<'a>(
             ..Default::default()
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_rects_convert_from_pdf_space_to_view_space() {
+        let rect = md_editor_core::pdf::PdfRect {
+            x: 72.0,
+            y: 700.0,
+            width: 100.0,
+            height: 14.0,
+        };
+
+        let converted = search_rect_to_view_rect(&rect, 792.0, 2.0);
+
+        assert_eq!(converted.x, 144.0);
+        assert_eq!(converted.y, 156.0);
+        assert_eq!(converted.width, 200.0);
+        assert_eq!(converted.height, 28.0);
+    }
 }

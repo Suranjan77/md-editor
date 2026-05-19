@@ -90,7 +90,7 @@ where
                 renderer,
                 bounds,
                 rect,
-                Color::from_rgba(0.92, 0.70, 0.30, 0.24),
+                Color::from_rgba(1.0, 0.78, 0.18, 0.38),
             );
         }
         for rect in &self.active_highlights {
@@ -98,7 +98,7 @@ where
                 renderer,
                 bounds,
                 rect,
-                Color::from_rgba(0.92, 0.70, 0.30, 0.48),
+                Color::from_rgba(1.0, 0.62, 0.0, 0.68),
             );
         }
     }

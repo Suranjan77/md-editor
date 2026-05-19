@@ -129,6 +129,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
     let mut code_highlighter: Option<syntect::easy::HighlightLines<'static>> = None;
 
     for raw_line in text.split('\n') {
+        let raw_line = raw_line.trim_end_matches('\r');
         let trimmed = raw_line.trim();
 
         // Stop table block if not a table row
@@ -1031,6 +1032,14 @@ mod tests {
         assert_eq!(lines[3].table_cells.len(), 2);
         assert!(lines[4].is_table_row);
         assert!(lines[5].is_table_row);
+    }
+
+    #[test]
+    fn horizontal_rule_is_detected_with_crlf_line_endings() {
+        let lines = highlight_markdown("before\r\n---\r\nafter\r\n");
+
+        assert!(lines[1].spans.iter().any(|span| span.is_rule));
+        assert_eq!(lines[1].spans[0].text, "---");
     }
 
     #[test]
