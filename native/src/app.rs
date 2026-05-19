@@ -982,6 +982,8 @@ impl MdEditor {
             }
             Message::PdfScrollBy(delta) => {
                 if self.active_pdf_path.is_none()
+                    || !self.showing_pdf
+                    || (self.split_view_active && self.active_path.is_some())
                     || self.search_visible
                     || self.file_search_visible
                     || self.active_modal.is_some()
@@ -1882,12 +1884,13 @@ impl MdEditor {
     }
 
     fn estimated_editor_line_y(&self, target_line: usize) -> f32 {
-        crate::editor::renderer::line_visual_y(
+        crate::editor::renderer::line_visual_y::<iced::Renderer>(
             &self.highlighted_lines,
             &self.image_cache,
             &self.math_cache,
             self.editor_viewport_width.max(240.0),
             self.buffer.cursor_line,
+            self.buffer.cursor_col,
             target_line,
             true,
         ) + 20.0
