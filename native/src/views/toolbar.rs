@@ -13,6 +13,7 @@ pub fn view<'a>(
     _backlinks_visible: bool,
     tracker_visible: bool,
     toc_visible: bool,
+    toc_available: bool,
     split_view_active: bool,
     split_available: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
@@ -61,6 +62,24 @@ pub fn view<'a>(
         Space::new().width(Length::Fixed(0.0)).into()
     };
 
+    let toc_button: Element<'_, Message, Theme, Renderer> = if toc_available {
+        button(icons::view(
+            Icon::ListTree,
+            if toc_visible {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            },
+            18.0,
+        ))
+        .on_press(Message::ToggleTOC)
+        .padding(8)
+        .style(button::text)
+        .into()
+    } else {
+        Space::new().width(Length::Fixed(0.0)).into()
+    };
+
     let actions = row![
         button(icons::view(Icon::Search, theme::TEXT_MUTED, 18.0))
             .on_press(Message::GlobalSearchOpen)
@@ -70,18 +89,7 @@ pub fn view<'a>(
             .on_press(Message::CommandPaletteOpen)
             .padding(8)
             .style(button::text),
-        button(icons::view(
-            Icon::ListTree,
-            if toc_visible {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            },
-            18.0
-        ))
-        .on_press(Message::ToggleTOC)
-        .padding(8)
-        .style(button::text),
+        toc_button,
         split_button,
         button(icons::view(
             Icon::Clock,
