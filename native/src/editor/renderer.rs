@@ -266,7 +266,12 @@ where
             let (width, height) = math_cache
                 .get(tex)
                 .map(|(_, w, h)| (*w, *h))
-                .unwrap_or_else(|| (measure_width::<R>(tex, fs, span_font(span, line)), BASE_LINE_HEIGHT));
+                .unwrap_or_else(|| {
+                    (
+                        measure_width::<R>(tex, fs, span_font(span, line)),
+                        BASE_LINE_HEIGHT,
+                    )
+                });
             let extra_h = (height - BASE_LINE_HEIGHT).max(0.0);
             row_step = row_step.max(BASE_LINE_HEIGHT + extra_h);
             if x > line_start_x && x + width > line_right_x {
@@ -327,7 +332,6 @@ where
     (y + row_step).max(BASE_LINE_HEIGHT)
 }
 
-
 fn visual_line_step(font_size: f32) -> f32 {
     (font_size * 1.45).max(BASE_LINE_HEIGHT)
 }
@@ -379,9 +383,7 @@ fn span_is_inline_edit_target(line: &StyledLine, span_idx: usize, active_col: us
         })
     };
 
-    let is_syntax = |idx: usize| {
-        line.spans.get(idx).is_some_and(|s| s.is_syntax)
-    };
+    let is_syntax = |idx: usize| line.spans.get(idx).is_some_and(|s| s.is_syntax);
 
     if span.is_syntax {
         let check_side = |content_idx: usize| -> bool {
@@ -389,7 +391,11 @@ fn span_is_inline_edit_target(line: &StyledLine, span_idx: usize, active_col: us
                 if touches(content_idx) {
                     return true;
                 }
-                let other_syntax_idx = if content_idx > span_idx { content_idx + 1 } else { content_idx.saturating_sub(1) };
+                let other_syntax_idx = if content_idx > span_idx {
+                    content_idx + 1
+                } else {
+                    content_idx.saturating_sub(1)
+                };
                 if is_syntax(other_syntax_idx) && touches(other_syntax_idx) {
                     return true;
                 }
@@ -1618,7 +1624,8 @@ where
                                         y: if line.is_math_block {
                                             line_draw_y + (lh - draw_h) / 2.0
                                         } else {
-                                            let margin_top = (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
+                                            let margin_top =
+                                                (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
                                             line_draw_y + margin_top
                                         },
                                         width: draw_w,
@@ -2365,20 +2372,26 @@ impl<'a, Message> Editor<'a, Message> {
                 if span.is_math && !span_editing {
                     let tex = span.visible_text(false).trim_matches('$').trim();
                     if !tex.is_empty() && !span.is_syntax {
-                        let (width, _) = self.math_cache
+                        let (width, _) = self
+                            .math_cache
                             .get(tex)
                             .map(|(_, w, h)| (*w, *h))
-                            .unwrap_or_else(|| (measure_width::<R>(tex, span.font_size, font), BASE_LINE_HEIGHT));
-                        
+                            .unwrap_or_else(|| {
+                                (
+                                    measure_width::<R>(tex, span.font_size, font),
+                                    BASE_LINE_HEIGHT,
+                                )
+                            });
+
                         if x > 0.0 && x + width > max_w {
                             y += step;
                             x = 0.0;
                         }
-                        
+
                         if source_col >= col {
                             return (x, y);
                         }
-                        
+
                         x += width + 4.0;
                         // Since this is a single block, if col is within it, return x, y
                         if col <= span_end_col {
@@ -2547,11 +2560,17 @@ impl<'a, Message> Editor<'a, Message> {
                 if span.is_math && !span_editing {
                     let tex = span.visible_text(false).trim_matches('$').trim();
                     if !tex.is_empty() && !span.is_syntax {
-                        let (width, height) = self.math_cache
+                        let (width, height) = self
+                            .math_cache
                             .get(tex)
                             .map(|(_, w, h)| (*w, *h))
-                            .unwrap_or_else(|| (measure_width::<R>(tex, span.font_size, font), BASE_LINE_HEIGHT));
-                        
+                            .unwrap_or_else(|| {
+                                (
+                                    measure_width::<R>(tex, span.font_size, font),
+                                    BASE_LINE_HEIGHT,
+                                )
+                            });
+
                         let extra_h = (height - BASE_LINE_HEIGHT).max(0.0);
                         row_step = row_step.max(BASE_LINE_HEIGHT + extra_h);
 
