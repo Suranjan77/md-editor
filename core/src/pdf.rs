@@ -354,7 +354,6 @@ impl PdfRenderer {
                             let mut matches = Vec::new();
                             for index in 0..doc.pages().len() {
                                 let page = doc.pages().get(index).map_err(|e| e.to_string())?;
-                                let page_height = page.height().value;
                                 let text_page = page.text().map_err(|e| e.to_string())?;
                                 let page_text = text_page.to_string();
                                 let page_matches: Vec<(usize, usize, Vec<PdfRect>)> =
@@ -371,7 +370,7 @@ impl PdfRenderer {
                                                         let bounds = segment.bounds();
                                                         PdfRect {
                                                             x: bounds.left().value,
-                                                            y: page_height - bounds.top().value,
+                                                            y: bounds.bottom().value,
                                                             width: bounds.width().value,
                                                             height: bounds.height().value,
                                                         }
@@ -393,7 +392,7 @@ impl PdfRenderer {
                                                             let bounds = segment.bounds();
                                                             PdfRect {
                                                                 x: bounds.left().value,
-                                                                y: page_height - bounds.top().value,
+                                                                y: bounds.bottom().value,
                                                                 width: bounds.width().value,
                                                                 height: bounds.height().value,
                                                             }
