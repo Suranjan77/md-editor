@@ -48,6 +48,7 @@ pub enum Message {
     PdfZoomChanged(f32),
     PdfFitToWidth,
     PdfLoaded(u64, u16), // render generation, total pages
+    PdfPageSizesLoaded(u64, String, Vec<(f32, f32)>),
     PdfRendered(u64, u16, image::DynamicImage),
     PdfRenderFailed(u64, u16),
     PdfScrolled {
@@ -57,7 +58,7 @@ pub enum Message {
     PdfLeftClicked(u16, f32, f32),
     PdfRightClicked(u16, f32, f32),
     PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
-    PdfPageLinksLoaded(u16, Vec<md_editor_core::pdf::LinkInfo>),
+    PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
     PdfSearchResultClicked(u16),
     PdfScrollBy(f32),

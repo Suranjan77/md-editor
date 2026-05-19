@@ -1,6 +1,7 @@
 use image::DynamicImage;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TocEntry {
@@ -58,7 +59,7 @@ impl PdfState {
 
 pub struct PdfRenderer {
     sender: std::sync::mpsc::Sender<PdfCommand>,
-    priority_render: std::sync::Arc<std::sync::Mutex<Option<PriorityRender>>>,
+    priority_sender: std::sync::mpsc::Sender<PriorityRender>,
 }
 
 struct PriorityRender {
@@ -71,6 +72,10 @@ struct PriorityRender {
 enum PdfCommand {
     Wake,
     PageCount(String, std::sync::mpsc::SyncSender<Result<u16, String>>),
+    PageSizes(
+        String,
+        std::sync::mpsc::SyncSender<Result<Vec<(f32, f32)>, String>>,
+    ),
     RenderPage(
         String,
         u16,
@@ -104,8 +109,7 @@ enum PdfCommand {
 impl PdfRenderer {
     pub fn new() -> Result<Self, String> {
         let (sender, receiver) = std::sync::mpsc::channel();
-        let priority_render = std::sync::Arc::new(std::sync::Mutex::new(None::<PriorityRender>));
-        let worker_priority_render = priority_render.clone();
+        let (priority_sender, priority_receiver) = std::sync::mpsc::channel::<PriorityRender>();
 
         std::thread::spawn(move || {
             let pdfium = match bind_pdfium() {
@@ -117,47 +121,36 @@ impl PdfRenderer {
             };
 
             let mut current_document: Option<(String, PdfDocument)> = None;
+            let mut pending_commands = VecDeque::new();
 
-            while let Ok(cmd) = receiver.recv() {
-                while let Some(priority) = worker_priority_render
-                    .lock()
-                    .ok()
-                    .and_then(|mut guard| guard.take())
-                {
-                    let res = (|| {
-                        if current_document
-                            .as_ref()
-                            .map(|(p, _)| p != &priority.path)
-                            .unwrap_or(true)
-                        {
-                            let doc = pdfium
-                                .load_pdf_from_file(&priority.path, None)
-                                .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
-                            current_document = Some((priority.path.clone(), doc));
+            loop {
+                let cmd = if let Some(cmd) = pending_commands.pop_front() {
+                    cmd
+                } else {
+                    match receiver.recv() {
+                        Ok(cmd) => {
+                            pending_commands.push_back(cmd);
+                            while let Ok(cmd) = receiver.try_recv() {
+                                pending_commands.push_back(cmd);
+                            }
+                            continue;
                         }
-                        let Some((_, doc)) = current_document.as_ref() else {
-                            return Err("PDF document was not loaded".to_string());
-                        };
-                        let pages = doc.pages();
-                        if i32::from(priority.page_index) >= pages.len() {
-                            return Err("Page index out of bounds".to_string());
-                        }
-                        let page = pages
-                            .get(priority.page_index as i32)
-                            .map_err(|e| format!("Failed to get page: {:?}", e))?;
+                        Err(_) => break,
+                    }
+                };
 
-                        let render_config = PdfRenderConfig::new()
-                            .set_target_width((page.width().value * priority.scale) as i32)
-                            .set_target_height((page.height().value * priority.scale) as i32);
+                while let Ok(mut priority) = priority_receiver.try_recv() {
+                    while let Ok(newer_priority) = priority_receiver.try_recv() {
+                        priority = newer_priority;
+                    }
 
-                        let bitmap = page
-                            .render_with_config(&render_config)
-                            .map_err(|e| format!("Failed to render page: {:?}", e))?;
-
-                        bitmap
-                            .as_image()
-                            .map_err(|e| format!("Failed to convert to image: {:?}", e))
-                    })();
+                    let res = render_page_from_cache(
+                        &pdfium,
+                        &mut current_document,
+                        &priority.path,
+                        priority.page_index,
+                        priority.scale,
+                    );
                     let _ = priority.resp.send(res);
                 }
 
@@ -182,7 +175,7 @@ impl PdfRenderer {
                         })();
                         let _ = resp.send(res);
                     }
-                    PdfCommand::RenderPage(path, index, scale, resp) => {
+                    PdfCommand::PageSizes(path, resp) => {
                         let res = (|| {
                             if current_document
                                 .as_ref()
@@ -197,26 +190,23 @@ impl PdfRenderer {
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
                             };
-                            let pages = doc.pages();
-                            if i32::from(index) >= pages.len() {
-                                return Err("Page index out of bounds".to_string());
+                            let mut sizes = Vec::with_capacity(doc.pages().len() as usize);
+                            for index in 0..doc.pages().len() {
+                                let page = doc.pages().get(index).map_err(|e| e.to_string())?;
+                                sizes.push((page.width().value, page.height().value));
                             }
-                            let page = pages
-                                .get(index as i32)
-                                .map_err(|e| format!("Failed to get page: {:?}", e))?;
-
-                            let render_config = PdfRenderConfig::new()
-                                .set_target_width((page.width().value * scale) as i32)
-                                .set_target_height((page.height().value * scale) as i32);
-
-                            let bitmap = page
-                                .render_with_config(&render_config)
-                                .map_err(|e| format!("Failed to render page: {:?}", e))?;
-
-                            bitmap
-                                .as_image()
-                                .map_err(|e| format!("Failed to convert to image: {:?}", e))
+                            Ok(sizes)
                         })();
+                        let _ = resp.send(res);
+                    }
+                    PdfCommand::RenderPage(path, index, scale, resp) => {
+                        let res = render_page_from_cache(
+                            &pdfium,
+                            &mut current_document,
+                            &path,
+                            index,
+                            scale,
+                        );
                         let _ = resp.send(res);
                     }
                     PdfCommand::GetToc(path, resp) => {
@@ -511,7 +501,7 @@ impl PdfRenderer {
 
         Ok(Self {
             sender,
-            priority_render,
+            priority_sender,
         })
     }
 
@@ -540,15 +530,14 @@ impl PdfRenderer {
         scale: f32,
     ) -> Result<DynamicImage, String> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        {
-            let mut guard = self.priority_render.lock().map_err(|e| e.to_string())?;
-            *guard = Some(PriorityRender {
+        self.priority_sender
+            .send(PriorityRender {
                 path: path.to_string(),
                 page_index,
                 scale,
                 resp: tx,
-            });
-        }
+            })
+            .map_err(|e| e.to_string())?;
         self.sender
             .send(PdfCommand::Wake)
             .map_err(|e| e.to_string())?;
@@ -559,6 +548,14 @@ impl PdfRenderer {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::PageCount(path.to_string(), tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())?
+    }
+
+    pub fn page_sizes(&self, path: &str) -> Result<Vec<(f32, f32)>, String> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::PageSizes(path.to_string(), tx))
             .map_err(|e| e.to_string())?;
         rx.recv().map_err(|e| e.to_string())?
     }
@@ -635,6 +632,47 @@ impl PdfRenderer {
         }
         entries
     }
+}
+
+fn render_page_from_cache<'a>(
+    pdfium: &'a Pdfium,
+    current_document: &mut Option<(String, PdfDocument<'a>)>,
+    path: &str,
+    index: u16,
+    scale: f32,
+) -> Result<DynamicImage, String> {
+    if current_document
+        .as_ref()
+        .map(|(p, _)| p != path)
+        .unwrap_or(true)
+    {
+        let doc = pdfium
+            .load_pdf_from_file(path, None)
+            .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+        *current_document = Some((path.to_string(), doc));
+    }
+    let Some((_, doc)) = current_document.as_ref() else {
+        return Err("PDF document was not loaded".to_string());
+    };
+    let pages = doc.pages();
+    if i32::from(index) >= pages.len() {
+        return Err("Page index out of bounds".to_string());
+    }
+    let page = pages
+        .get(index as i32)
+        .map_err(|e| format!("Failed to get page: {:?}", e))?;
+
+    let render_config = PdfRenderConfig::new()
+        .set_target_width((page.width().value * scale) as i32)
+        .set_target_height((page.height().value * scale) as i32);
+
+    let bitmap = page
+        .render_with_config(&render_config)
+        .map_err(|e| format!("Failed to render page: {:?}", e))?;
+
+    bitmap
+        .as_image()
+        .map_err(|e| format!("Failed to convert to image: {:?}", e))
 }
 
 fn bind_pdfium() -> Result<Pdfium, String> {

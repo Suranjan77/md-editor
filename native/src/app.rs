@@ -14,6 +14,7 @@ use crate::messages::{Message, Shortcut, TrackerTab};
 use crate::search::DocumentMatch;
 use crate::theme as app_theme;
 use crate::views;
+use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 use std::collections::HashSet;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
@@ -26,6 +27,41 @@ pub(crate) fn is_supported_image_path(path: &str) -> bool {
         || path.ends_with(".gif")
         || path.ends_with(".bmp")
         || path.ends_with(".webp")
+}
+
+fn pdf_slot_offset(page: u16, slot_height: f32) -> f32 {
+    PDF_PAGE_LIST_PADDING + f32::from(page) * (slot_height + PDF_PAGE_SPACING)
+}
+
+fn pdf_slot_total_height(total_pages: u16, slot_height: f32) -> f32 {
+    PDF_PAGE_LIST_PADDING + f32::from(total_pages) * (slot_height + PDF_PAGE_SPACING)
+}
+
+fn pdf_slot_page_at_scroll(scroll_y: f32, total_pages: u16, slot_height: f32) -> u16 {
+    if total_pages == 0 {
+        return 0;
+    }
+
+    let slot_stride = slot_height + PDF_PAGE_SPACING;
+    if slot_stride <= 0.0 {
+        return 0;
+    }
+
+    let page = ((scroll_y - PDF_PAGE_LIST_PADDING).max(0.0) / slot_stride).floor() as u16;
+    page.min(total_pages.saturating_sub(1))
+}
+
+fn pdf_placeholder_display_size_from(
+    placeholder_page_size: Option<(f32, f32)>,
+    first_page_size: Option<(f32, f32)>,
+    first_dimensions: Option<(u32, u32)>,
+    zoom: f32,
+) -> (f32, f32) {
+    placeholder_page_size
+        .or(first_page_size)
+        .or_else(|| first_dimensions.map(|(w, h)| (w as f32 / zoom, h as f32 / zoom)))
+        .map(|(w, h)| (w * zoom, h * zoom))
+        .unwrap_or((612.0 * zoom, 792.0 * zoom))
 }
 
 pub struct MdEditor {
@@ -49,6 +85,8 @@ pub struct MdEditor {
     pdf_zoom: f32,
     pdf_pages: Vec<Option<iced::widget::image::Handle>>,
     pdf_dimensions: Vec<Option<(u32, u32)>>,
+    pdf_page_sizes: Vec<Option<(f32, f32)>>,
+    pdf_placeholder_page_size: Option<(f32, f32)>,
     active_pdf_path: Option<String>,
     active_image_path: Option<String>,
     active_image: Option<(iced::widget::image::Handle, f32, f32)>,
@@ -101,7 +139,10 @@ pub struct MdEditor {
     image_cache: std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     math_cache: std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     pdf_pending_pages: HashSet<u16>,
+    pdf_pending_links: HashSet<u16>,
     pdf_render_generation: u64,
+    pdf_programmatic_scroll: bool,
+    pdf_toc_target_page: Option<u16>,
     split_view_active: bool,
     split_ratio: f32,
     is_resizing_split: bool,
@@ -144,6 +185,8 @@ impl MdEditor {
             pdf_zoom: 1.5,
             pdf_pages: Vec::new(),
             pdf_dimensions: Vec::new(),
+            pdf_page_sizes: Vec::new(),
+            pdf_placeholder_page_size: None,
             active_pdf_path: None,
             active_image_path: None,
             active_image: None,
@@ -188,7 +231,10 @@ impl MdEditor {
             image_cache: std::collections::HashMap::new(),
             math_cache: std::collections::HashMap::new(),
             pdf_pending_pages: HashSet::new(),
+            pdf_pending_links: HashSet::new(),
             pdf_render_generation: 0,
+            pdf_programmatic_scroll: false,
+            pdf_toc_target_page: None,
             split_view_active: false,
             split_ratio: 0.5,
             is_resizing_split: false,
@@ -509,14 +555,28 @@ impl MdEditor {
                 self.pdf_total_pages = pages;
                 self.pdf_pages = vec![None; pages as usize];
                 self.pdf_dimensions = vec![None; pages as usize];
+                if self.pdf_page_sizes.len() != pages as usize {
+                    self.pdf_page_sizes = vec![None; pages as usize];
+                }
                 self.pdf_pending_pages.clear();
+                self.pdf_pending_links.clear();
+                self.pdf_programmatic_scroll = false;
+                self.pdf_toc_target_page = None;
                 if pages == 0 {
                     self.toast = Some(
                         "PDF renderer is unavailable or the PDF could not be opened".to_string(),
                     );
                 }
-                if self.pdf_fit_to_width {
+                if self.pdf_fit_to_width
+                    && self
+                        .pdf_page_sizes
+                        .iter()
+                        .take(pages as usize)
+                        .any(Option::is_some)
+                {
                     Task::done(Message::PdfFitToWidth)
+                } else if self.pdf_fit_to_width {
+                    Task::none()
                 } else {
                     self.render_all_pdf_pages()
                 }
@@ -526,7 +586,11 @@ impl MdEditor {
                 self.pdf_zoom = zoom;
                 self.pdf_pages = vec![None; self.pdf_total_pages as usize];
                 self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
+                self.pdf_placeholder_page_size = self.first_pdf_page_size();
                 self.pdf_pending_pages.clear();
+                self.pdf_pending_links.clear();
+                self.pdf_programmatic_scroll = false;
+                self.pdf_toc_target_page = None;
                 self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
                 self.render_visible_pdf_pages()
             }
@@ -534,21 +598,53 @@ impl MdEditor {
                 self.pdf_fit_to_width = true;
                 let available_width = self.pdf_available_width();
                 let page_width = self
-                    .pdf_dimensions
+                    .pdf_page_sizes
                     .iter()
                     .flatten()
                     .next()
-                    .map(|(w, _)| (*w as f32 / self.pdf_zoom).max(1.0))
+                    .map(|(w, _)| (*w).max(1.0))
+                    .or_else(|| {
+                        self.pdf_dimensions
+                            .iter()
+                            .flatten()
+                            .next()
+                            .map(|(w, _)| (*w as f32 / self.pdf_zoom).max(1.0))
+                    })
                     .unwrap_or(612.0);
                 let next_zoom = ((available_width - 48.0).max(240.0) / page_width).clamp(0.5, 4.0);
                 self.pdf_zoom = (next_zoom * 100.0).round() / 100.0;
                 self.pdf_pages = vec![None; self.pdf_total_pages as usize];
                 self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
+                self.pdf_placeholder_page_size = self.first_pdf_page_size();
                 self.pdf_pending_pages.clear();
+                self.pdf_pending_links.clear();
+                self.pdf_programmatic_scroll = false;
+                self.pdf_toc_target_page = None;
                 self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
                 self.render_visible_pdf_pages()
             }
+            Message::PdfPageSizesLoaded(generation, path, sizes) => {
+                if generation != self.pdf_render_generation
+                    && self.active_pdf_path.as_deref() != Some(path.as_str())
+                {
+                    return Task::none();
+                }
+                self.pdf_page_sizes = sizes.into_iter().map(Some).collect();
+                if self.pdf_page_sizes.len() < self.pdf_total_pages as usize {
+                    self.pdf_page_sizes
+                        .resize(self.pdf_total_pages as usize, None);
+                }
+                if self.pdf_placeholder_page_size.is_none() {
+                    self.pdf_placeholder_page_size = self.first_pdf_page_size();
+                }
+                if self.pdf_fit_to_width && self.pdf_total_pages > 0 {
+                    Task::done(Message::PdfFitToWidth)
+                } else {
+                    Task::none()
+                }
+            }
             Message::PdfRendered(generation, page, img) => {
+                self.pdf_pending_pages.remove(&page);
                 if generation != self.pdf_render_generation {
                     return Task::none();
                 }
@@ -562,35 +658,40 @@ impl MdEditor {
                     self.pdf_pages[page as usize] = Some(handle);
                     self.pdf_dimensions[page as usize] = Some((width, height));
                 }
-                self.pdf_pending_pages.remove(&page);
-                Task::none()
+                if self.pdf_placeholder_page_size.is_none() || page == 0 {
+                    self.pdf_placeholder_page_size =
+                        Some((width as f32 / self.pdf_zoom, height as f32 / self.pdf_zoom));
+                }
+                let mut tasks = vec![self.load_pdf_page_links(page)];
+                if self.pdf_toc_target_page == Some(page) {
+                    self.pdf_programmatic_scroll = true;
+                    let scroll_y = self.pdf_page_offset(page);
+                    tasks.push(operation::scroll_to(
+                        iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                        AbsoluteOffset {
+                            x: 0.0,
+                            y: scroll_y,
+                        },
+                    ));
+                }
+                Task::batch(tasks)
             }
             Message::PdfRenderFailed(generation, page) => {
+                self.pdf_pending_pages.remove(&page);
                 if generation != self.pdf_render_generation {
                     return Task::none();
                 }
-                self.pdf_pending_pages.remove(&page);
+                if self.pdf_toc_target_page == Some(page) {
+                    self.pdf_toc_target_page = None;
+                    self.pdf_programmatic_scroll = false;
+                }
                 self.toast = Some(format!("Could not render PDF page {}", page + 1));
                 Task::none()
             }
             Message::TocClicked(index) => {
                 if self.active_pdf_path.is_some() {
-                    self.pdf_current_page = index as u16;
-                    let target_page = self.pdf_current_page;
-                    let scroll_y = self.pdf_page_offset(target_page);
-                    let start = target_page.saturating_sub(4);
-                    let end = (target_page + 10).min(self.pdf_total_pages.saturating_sub(1));
-                    Task::batch(vec![
-                        self.render_pdf_page_direct(target_page),
-                        self.render_pdf_page_range(start, end),
-                        operation::scroll_to(
-                            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-                            AbsoluteOffset {
-                                x: 0.0,
-                                y: scroll_y,
-                            },
-                        ),
-                    ])
+                    let target_page = (index as u16).min(self.pdf_total_pages.saturating_sub(1));
+                    self.navigate_pdf_page(target_page)
                 } else {
                     Task::done(Message::EditorCursorMove(index, 0))
                 }
@@ -598,9 +699,19 @@ impl MdEditor {
             Message::PdfScrolled { y, viewport_height } => {
                 self.pdf_scroll_y = y;
                 let new_page = self.pdf_page_at_scroll(y + viewport_height * 0.33);
+                if self.pdf_programmatic_scroll {
+                    self.pdf_programmatic_scroll = false;
+                    let target_page = self.pdf_toc_target_page.take().unwrap_or(new_page);
+                    self.pdf_current_page = target_page.min(self.pdf_total_pages.saturating_sub(1));
+                    let start = self.pdf_current_page.saturating_sub(2);
+                    let end =
+                        (self.pdf_current_page + 2).min(self.pdf_total_pages.saturating_sub(1));
+                    return self.render_pdf_page_range(start, end);
+                }
                 if new_page != self.pdf_current_page && new_page < self.pdf_total_pages {
                     if new_page.abs_diff(self.pdf_current_page) > 8 {
                         self.pdf_pending_pages.clear();
+                        self.pdf_pending_links.clear();
                     }
                     self.pdf_current_page = new_page;
                     self.render_pdf_pages_for_viewport(y, viewport_height)
@@ -613,17 +724,7 @@ impl MdEditor {
                     if let Some(dest_page) = link.dest_page {
                         self.pdf_current_page =
                             dest_page.min(u32::from(self.pdf_total_pages.saturating_sub(1))) as u16;
-                        let scroll_y = self.pdf_page_offset(self.pdf_current_page);
-                        Task::batch(vec![
-                            self.render_visible_pdf_pages(),
-                            operation::scroll_to(
-                                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-                                AbsoluteOffset {
-                                    x: 0.0,
-                                    y: scroll_y,
-                                },
-                            ),
-                        ])
+                        self.navigate_pdf_page(self.pdf_current_page)
                     } else if let Some(uri) = link.uri {
                         self.toast = Some(format!("External link: {}", uri));
                         Task::none()
@@ -714,7 +815,11 @@ impl MdEditor {
                 self.toc_entries = mapped;
                 Task::none()
             }
-            Message::PdfPageLinksLoaded(page, links) => {
+            Message::PdfPageLinksLoaded(generation, page, links) => {
+                self.pdf_pending_links.remove(&page);
+                if generation != self.pdf_render_generation {
+                    return Task::none();
+                }
                 self.pdf_page_links.insert(page, links);
                 Task::none()
             }
@@ -1272,6 +1377,8 @@ impl MdEditor {
                     &self.pdf_pages,
                     self.pdf_zoom,
                     &self.pdf_dimensions,
+                    &self.pdf_page_sizes,
+                    self.pdf_placeholder_page_size,
                     if self.file_search_visible || self.search_visible {
                         &self.pdf_search_results
                     } else {
@@ -1610,14 +1717,23 @@ impl MdEditor {
         self.pdf_fit_to_width = true;
         self.pdf_pages = Vec::new();
         self.pdf_dimensions = Vec::new();
+        self.pdf_page_sizes = Vec::new();
+        self.pdf_placeholder_page_size = None;
         self.pdf_pending_pages.clear();
+        self.pdf_pending_links.clear();
+        self.pdf_page_links.clear();
+        self.pdf_programmatic_scroll = false;
+        self.pdf_toc_target_page = None;
         self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
         let generation = self.pdf_render_generation;
 
         let _state = self.state.clone();
         let _state_toc = self.state.clone();
+        let _state_sizes = self.state.clone();
         let path_clone = path_str.clone();
         let path_str_toc = path_str.clone();
+        let path_for_sizes = path.to_string();
+        let path_str_sizes = path_str.clone();
 
         Task::batch(vec![
             Task::perform(
@@ -1626,6 +1742,19 @@ impl MdEditor {
                     renderer.page_count(&path_clone).ok()
                 },
                 move |res| Message::PdfLoaded(generation, res.unwrap_or(0)),
+            ),
+            Task::perform(
+                async move {
+                    let renderer = _state_sizes.pdf_renderer.as_ref()?;
+                    renderer.page_sizes(&path_str_sizes).ok()
+                },
+                move |res| {
+                    Message::PdfPageSizesLoaded(
+                        generation,
+                        path_for_sizes.clone(),
+                        res.unwrap_or_default(),
+                    )
+                },
             ),
             Task::perform(
                 async move {
@@ -1678,9 +1807,8 @@ impl MdEditor {
         let zoom = self.pdf_zoom;
         let generation = self.pdf_render_generation;
         let _state = self.state.clone();
-        let _state_links = self.state.clone();
 
-        let render_task = Task::perform(
+        Task::perform(
             async move {
                 let renderer = _state.pdf_renderer.as_ref()?;
                 let res = renderer
@@ -1695,31 +1823,13 @@ impl MdEditor {
                 } else if let Some((p, None)) = res {
                     Message::PdfRenderFailed(generation, p)
                 } else {
-                    Message::Tick
+                    Message::PdfRenderFailed(generation, page)
                 }
             },
-        );
-
-        let path_str_links = abs_path.to_string_lossy().to_string();
-        let links_task = Task::perform(
-            async move {
-                let renderer = _state_links.pdf_renderer.as_ref()?;
-                renderer.get_page_links(&path_str_links, page).ok()
-            },
-            move |res| Message::PdfPageLinksLoaded(page, res.unwrap_or_default()),
-        );
-
-        Task::batch(vec![render_task, links_task])
+        )
     }
 
     fn render_pdf_page_direct(&mut self, page: u16) -> Task<Message> {
-        if self
-            .pdf_pages
-            .get(page as usize)
-            .map_or(true, |p| p.is_none())
-        {
-            self.pdf_pending_pages.insert(page);
-        }
         let Some(path) = &self.active_pdf_path else {
             return Task::none();
         };
@@ -1730,6 +1840,13 @@ impl MdEditor {
         let zoom = self.pdf_zoom;
         let generation = self.pdf_render_generation;
         let _state = self.state.clone();
+        if self
+            .pdf_pages
+            .get(page as usize)
+            .map_or(true, |p| p.is_none())
+        {
+            self.pdf_pending_pages.insert(page);
+        }
 
         Task::perform(
             async move {
@@ -1747,6 +1864,30 @@ impl MdEditor {
                     Message::PdfRenderFailed(generation, page)
                 }
             },
+        )
+    }
+
+    fn load_pdf_page_links(&mut self, page: u16) -> Task<Message> {
+        if self.pdf_page_links.contains_key(&page) || self.pdf_pending_links.contains(&page) {
+            return Task::none();
+        }
+        let Some(path) = &self.active_pdf_path else {
+            return Task::none();
+        };
+        let Some(abs_path) = self.resolve_active_path(path) else {
+            return Task::none();
+        };
+        self.pdf_pending_links.insert(page);
+        let path_str = abs_path.to_string_lossy().to_string();
+        let generation = self.pdf_render_generation;
+        let _state = self.state.clone();
+
+        Task::perform(
+            async move {
+                let renderer = _state.pdf_renderer.as_ref()?;
+                renderer.get_page_links(&path_str, page).ok()
+            },
+            move |res| Message::PdfPageLinksLoaded(generation, page, res.unwrap_or_default()),
         )
     }
 
@@ -1799,17 +1940,29 @@ impl MdEditor {
     }
 
     fn estimated_pdf_page_height(&self) -> f32 {
-        let mut count = 0.0;
-        let mut total = 0.0;
-        for (_, h) in self.pdf_dimensions.iter().flatten() {
-            total += *h as f32;
-            count += 1.0;
-        }
-        if count > 0.0 {
-            total / count
-        } else {
-            792.0 * self.pdf_zoom
-        }
+        self.pdf_placeholder_display_size().1
+    }
+
+    fn first_pdf_page_size(&self) -> Option<(f32, f32)> {
+        self.pdf_page_sizes.first().and_then(|s| *s).or_else(|| {
+            self.pdf_dimensions
+                .first()
+                .and_then(|d| d.map(|(w, h)| (w as f32 / self.pdf_zoom, h as f32 / self.pdf_zoom)))
+        })
+    }
+
+    fn pdf_placeholder_display_size(&self) -> (f32, f32) {
+        pdf_placeholder_display_size_from(
+            self.pdf_placeholder_page_size,
+            self.pdf_page_sizes.first().and_then(|s| *s),
+            self.pdf_dimensions.first().and_then(|d| *d),
+            self.pdf_zoom,
+        )
+    }
+
+    fn pdf_page_display_size(&self, page: u16) -> (f32, f32) {
+        let _page = page;
+        self.pdf_placeholder_display_size()
     }
 
     fn pdf_available_width(&self) -> f32 {
@@ -1827,38 +1980,23 @@ impl MdEditor {
     }
 
     fn pdf_page_height(&self, page: u16) -> f32 {
-        self.pdf_dimensions
-            .get(page as usize)
-            .and_then(|d| d.map(|(_, h)| h as f32))
-            .unwrap_or_else(|| self.estimated_pdf_page_height())
+        if (page as usize) < self.pdf_total_pages as usize {
+            self.pdf_page_display_size(page).1
+        } else {
+            self.estimated_pdf_page_height()
+        }
     }
 
     fn pdf_page_offset(&self, page: u16) -> f32 {
-        let mut y = 20.0;
-        for idx in 0..page.min(self.pdf_total_pages) {
-            y += self.pdf_page_height(idx) + 20.0;
-        }
-        y
+        pdf_slot_offset(page.min(self.pdf_total_pages), self.pdf_page_height(0))
     }
 
     fn pdf_total_height(&self) -> f32 {
-        let mut y = 20.0;
-        for idx in 0..self.pdf_total_pages {
-            y += self.pdf_page_height(idx) + 20.0;
-        }
-        y
+        pdf_slot_total_height(self.pdf_total_pages, self.pdf_page_height(0))
     }
 
     fn pdf_page_at_scroll(&self, scroll_y: f32) -> u16 {
-        let mut y = 20.0;
-        for idx in 0..self.pdf_total_pages {
-            let next = y + self.pdf_page_height(idx) + 20.0;
-            if scroll_y < next {
-                return idx;
-            }
-            y = next;
-        }
-        self.pdf_total_pages.saturating_sub(1)
+        pdf_slot_page_at_scroll(scroll_y, self.pdf_total_pages, self.pdf_page_height(0))
     }
 
     fn pdf_link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<md_editor_core::pdf::LinkInfo> {
@@ -1985,20 +2123,40 @@ impl MdEditor {
     }
 
     fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {
-        let scroll_y = self.pdf_page_offset(page);
-        let start = page.saturating_sub(2);
-        let end = (page + 4).min(self.pdf_total_pages.saturating_sub(1));
-        Task::batch(vec![
-            self.render_pdf_page_direct(page),
-            self.render_pdf_page_range(start, end),
-            operation::scroll_to(
-                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-                AbsoluteOffset {
-                    x: 0.0,
-                    y: scroll_y,
-                },
-            ),
-        ])
+        let target_page = page.min(self.pdf_total_pages.saturating_sub(1));
+        self.pdf_current_page = target_page;
+        self.pdf_pending_pages.clear();
+        self.pdf_pending_links.clear();
+        self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
+        self.pdf_toc_target_page = Some(target_page);
+
+        let target_dimensions_ready = self
+            .pdf_dimensions
+            .get(target_page as usize)
+            .and_then(|d| *d)
+            .is_some();
+        let target_image_ready = self
+            .pdf_pages
+            .get(target_page as usize)
+            .is_some_and(|page| page.is_some());
+
+        let mut tasks = Vec::new();
+        if target_image_ready && target_dimensions_ready {
+            tasks.push(self.load_pdf_page_links(target_page));
+        } else {
+            tasks.push(self.render_pdf_page_direct(target_page));
+        }
+
+        self.pdf_programmatic_scroll = true;
+        let scroll_y = self.pdf_page_offset(target_page);
+        tasks.push(operation::scroll_to(
+            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+            AbsoluteOffset {
+                x: 0.0,
+                y: scroll_y,
+            },
+        ));
+        Task::batch(tasks)
     }
 
     fn estimated_editor_line_y(&self, target_line: usize) -> f32 {
@@ -2236,5 +2394,69 @@ impl MdEditor {
             w as f32 / 2.0,
             h as f32 / 2.0,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pdf_slot_offsets_use_fixed_placeholder_stride() {
+        let slot_height = 792.0;
+        let target_page = 250;
+
+        let offset = pdf_slot_offset(target_page, slot_height);
+
+        assert_eq!(
+            offset,
+            PDF_PAGE_LIST_PADDING + f32::from(target_page) * (slot_height + PDF_PAGE_SPACING)
+        );
+        assert_eq!(
+            pdf_slot_page_at_scroll(offset, 500, slot_height),
+            target_page
+        );
+    }
+
+    #[test]
+    fn pdf_slot_page_lookup_does_not_drift_to_later_pages() {
+        let slot_height = 792.0;
+        let target_page = 250;
+        let offset = pdf_slot_offset(target_page, slot_height);
+
+        assert_eq!(pdf_slot_page_at_scroll(offset, 500, slot_height), 250);
+        assert_ne!(pdf_slot_page_at_scroll(offset, 500, slot_height), 400);
+    }
+
+    #[test]
+    fn pdf_total_height_reserves_space_for_every_blank_page() {
+        let total_pages = 500;
+        let slot_height = 792.0;
+
+        assert_eq!(
+            pdf_slot_total_height(total_pages, slot_height),
+            PDF_PAGE_LIST_PADDING + f32::from(total_pages) * (slot_height + PDF_PAGE_SPACING)
+        );
+    }
+
+    #[test]
+    fn pdf_placeholder_size_scales_with_zoom() {
+        assert_eq!(
+            pdf_placeholder_display_size_from(Some((612.0, 792.0)), None, None, 2.0),
+            (1224.0, 1584.0)
+        );
+    }
+
+    #[test]
+    fn pdf_placeholder_prefers_first_page_size_over_rendered_dimensions() {
+        assert_eq!(
+            pdf_placeholder_display_size_from(
+                Some((612.0, 792.0)),
+                Some((300.0, 300.0)),
+                Some((5000, 5000)),
+                1.5,
+            ),
+            (918.0, 1188.0)
+        );
     }
 }
