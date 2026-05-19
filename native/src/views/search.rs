@@ -7,6 +7,9 @@ use crate::messages::Message;
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
+pub const FILE_SEARCH_INPUT_ID: &str = "file_search_input";
+pub const GLOBAL_SEARCH_INPUT_ID: &str = "global_search_input";
+
 pub fn file_bar<'a>(
     query: &'a str,
     replace: &'a str,
@@ -16,6 +19,7 @@ pub fn file_bar<'a>(
     active_match_index: Option<usize>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let search_input = text_input("Find in current file", query)
+        .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
         .padding([8, 12])
         .size(14)
@@ -101,6 +105,7 @@ pub fn view<'a>(
     }
 
     let search_input = text_input("Search document, vault, or PDF...", query)
+        .id(iced::advanced::widget::Id::new(GLOBAL_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
         .padding([10, 14])
         .size(15)

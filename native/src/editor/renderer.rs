@@ -1171,6 +1171,7 @@ where
                     },
                     theme::ACCENT_GLOW, // using a visible accent color for HR
                 );
+                self.draw_standard_cursor::<R>(renderer, focused, i, bounds, y, lh);
                 y += lh;
                 continue;
             }
@@ -1235,6 +1236,7 @@ where
                         *viewport,
                     );
                 }
+                self.draw_standard_cursor::<R>(renderer, focused, i, bounds, y, lh);
                 y += lh;
                 continue;
             }
@@ -1828,29 +1830,7 @@ where
             }
 
             // ── cursor ───────────────────────────────────────────
-            if focused && i == self.buffer.cursor_line {
-                let (cx, cy) = self.cursor_position::<R>(i, bounds.width);
-                let cursor_h = lh.min(20.0);
-                let cursor_x = bounds.x + TEXT_X_OFFSET + cx;
-                let cursor_y = y + cy + (BASE_LINE_HEIGHT - cursor_h) / 2.0;
-
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: cursor_x,
-                            y: cursor_y,
-                            width: 2.0,
-                            height: cursor_h,
-                        },
-                        border: iced::Border {
-                            radius: 1.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    },
-                    theme::ACCENT,
-                );
-            }
+            self.draw_standard_cursor::<R>(renderer, focused, i, bounds, y, lh);
 
             y += lh;
         }
@@ -2268,6 +2248,45 @@ where
 // ── Private helpers on Editor ────────────────────────────────────────
 
 impl<'a, Message> Editor<'a, Message> {
+    fn draw_standard_cursor<R>(
+        &self,
+        renderer: &mut R,
+        focused: bool,
+        line_idx: usize,
+        bounds: Rectangle,
+        y: f32,
+        line_height: f32,
+    ) where
+        R: renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    {
+        if !focused || line_idx != self.buffer.cursor_line {
+            return;
+        }
+
+        let (cx, cy) = self.cursor_position::<R>(line_idx, bounds.width);
+        let cursor_h = line_height.min(20.0);
+        if cursor_h <= 0.0 {
+            return;
+        }
+
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle {
+                    x: bounds.x + TEXT_X_OFFSET + cx,
+                    y: y + cy + (BASE_LINE_HEIGHT - cursor_h) / 2.0,
+                    width: 2.0,
+                    height: cursor_h,
+                },
+                border: iced::Border {
+                    radius: 1.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            theme::ACCENT,
+        );
+    }
+
     fn position_for_col<R>(
         &self,
         line_idx: usize,
@@ -3403,6 +3422,39 @@ mod tests {
             "down should visit second empty line, visited={visited:?}"
         );
         assert_eq!(buffer.cursor_line, 4);
+    }
+
+    #[test]
+    fn trailing_empty_line_after_enter_has_visible_cursor_geometry() {
+        let mut buffer = DocBuffer::from_text("first");
+        buffer.execute(EditorCommand::SetCursor { line: 0, col: 5 });
+        buffer.execute(EditorCommand::InsertText("\n".to_string()));
+
+        let lines = highlight_markdown(&buffer.text());
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let editor = editor_for(&buffer, &lines, &image_cache, &math_cache);
+        let mut seen_math_blocks = std::collections::HashSet::new();
+
+        assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 0));
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1].spans.len(), 1);
+        assert_eq!(lines[1].spans[0].visible_text(false), "");
+
+        let height = line_height_for::<iced::Renderer>(
+            &lines[1],
+            &image_cache,
+            &math_cache,
+            900.0,
+            false,
+            Some(0),
+            &mut seen_math_blocks,
+        );
+        let cursor = editor.cursor_position::<iced::Renderer>(1, 900.0);
+
+        assert_eq!(height, BASE_LINE_HEIGHT);
+        assert_eq!(cursor, (0.0, 0.0));
+        assert!(height.min(20.0) > 0.0);
     }
 
     #[test]

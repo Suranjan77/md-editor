@@ -37,6 +37,20 @@ fn pdf_slot_total_height(total_pages: u16, slot_height: f32) -> f32 {
     PDF_PAGE_LIST_PADDING + f32::from(total_pages) * (slot_height + PDF_PAGE_SPACING)
 }
 
+fn pdf_search_match_scroll_y_from(
+    page_offset: f32,
+    rect_y: Option<f32>,
+    rect_height: f32,
+    page_height: f32,
+    zoom: f32,
+    max_y: f32,
+) -> f32 {
+    let match_top = rect_y
+        .map(|y| (page_height - y - rect_height).max(0.0) * zoom)
+        .unwrap_or(0.0);
+    (page_offset + match_top - 96.0).clamp(0.0, max_y.max(0.0))
+}
+
 fn pdf_slot_page_at_scroll(scroll_y: f32, total_pages: u16, slot_height: f32) -> u16 {
     if total_pages == 0 {
         return 0;
@@ -1006,9 +1020,9 @@ impl MdEditor {
             Message::GlobalSearchOpen => {
                 self.search_visible = true;
                 if self.active_pdf_path.is_some() && !self.search_query.trim().is_empty() {
-                    self.search_pdf()
+                    Task::batch(vec![self.search_pdf(), focus_global_search_input()])
                 } else {
-                    Task::none()
+                    focus_global_search_input()
                 }
             }
             Message::SearchClose => {
@@ -1176,14 +1190,20 @@ impl MdEditor {
                             self.file_search_visible = true;
                             self.search_visible = false;
                             if !self.search_query.trim().is_empty() {
-                                return self.search_pdf();
+                                return Task::batch(vec![
+                                    self.search_pdf(),
+                                    focus_pdf_search_input(),
+                                ]);
                             }
+                            focus_pdf_search_input()
                         } else if self.active_path.is_some() {
                             self.file_search_visible = true;
+                            self.search_visible = false;
+                            focus_file_search_input()
                         } else {
                             self.search_visible = true;
+                            focus_global_search_input()
                         }
-                        Task::none()
                     }
                     Shortcut::CommandPalette => {
                         self.command_palette_visible = true;
@@ -1999,6 +2019,24 @@ impl MdEditor {
         pdf_slot_page_at_scroll(scroll_y, self.pdf_total_pages, self.pdf_page_height(0))
     }
 
+    fn pdf_search_match_scroll_y(&self, result: &md_editor_core::pdf::PdfSearchMatch) -> f32 {
+        let rect = result.rects.first();
+        let page_height = self
+            .pdf_page_sizes
+            .get(result.page_index as usize)
+            .and_then(|size| *size)
+            .map(|(_, h)| h)
+            .unwrap_or_else(|| self.pdf_page_height(result.page_index) / self.pdf_zoom.max(0.01));
+        pdf_search_match_scroll_y_from(
+            self.pdf_page_offset(result.page_index),
+            rect.map(|rect| rect.y),
+            rect.map(|rect| rect.height).unwrap_or(0.0),
+            page_height,
+            self.pdf_zoom,
+            self.pdf_total_height(),
+        )
+    }
+
     fn pdf_link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<md_editor_core::pdf::LinkInfo> {
         let links = self.pdf_page_links.get(&page_idx)?;
         let dim = self
@@ -2110,16 +2148,33 @@ impl MdEditor {
     }
 
     fn navigate_pdf_search_to_index(&mut self, index: usize) -> Task<Message> {
-        let Some(result) = self.pdf_search_results.get(index) else {
+        let Some(result) = self.pdf_search_results.get(index).cloned() else {
             self.search_match_index = None;
             return Task::none();
         };
 
         self.search_match_index = Some(index);
-        self.pdf_current_page = result
+        let target_page = result
             .page_index
             .min(self.pdf_total_pages.saturating_sub(1));
-        self.navigate_pdf_page(self.pdf_current_page)
+        self.pdf_current_page = target_page;
+        self.pdf_programmatic_scroll = true;
+        self.pdf_toc_target_page = Some(target_page);
+
+        let scroll_y = self.pdf_search_match_scroll_y(&result);
+        Task::batch(vec![
+            self.render_pdf_page_range(
+                target_page.saturating_sub(2),
+                (target_page + 2).min(self.pdf_total_pages.saturating_sub(1)),
+            ),
+            operation::scroll_to(
+                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                AbsoluteOffset {
+                    x: 0.0,
+                    y: scroll_y,
+                },
+            ),
+        ])
     }
 
     fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {
@@ -2263,12 +2318,7 @@ impl MdEditor {
     }
 
     fn run_editor_command(&mut self, command: EditorCommand) -> Task<Message> {
-        let should_keep_cursor_visible = matches!(
-            command,
-            EditorCommand::MoveCursor { .. }
-                | EditorCommand::SetCursor { .. }
-                | EditorCommand::SetSelection { .. }
-        );
+        let should_keep_cursor_visible = editor_command_keeps_cursor_visible(&command);
         let result = self.buffer.execute(command);
         if result.projection_changed {
             self.highlight_all();
@@ -2397,9 +2447,55 @@ impl MdEditor {
     }
 }
 
+fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
+    matches!(
+        command,
+        EditorCommand::InsertText(_)
+            | EditorCommand::DeleteSelection
+            | EditorCommand::DeleteBackward
+            | EditorCommand::DeleteForward
+            | EditorCommand::MoveCursor { .. }
+            | EditorCommand::SetCursor { .. }
+            | EditorCommand::SetSelection { .. }
+            | EditorCommand::SelectAll
+            | EditorCommand::ToggleCheckbox { .. }
+            | EditorCommand::FormatBold
+            | EditorCommand::FormatItalic
+            | EditorCommand::FormatInlineCode
+            | EditorCommand::InsertLink
+            | EditorCommand::Undo
+            | EditorCommand::Redo
+    )
+}
+
+fn focus_file_search_input() -> Task<Message> {
+    operation::focus(iced::advanced::widget::Id::new(
+        views::search::FILE_SEARCH_INPUT_ID,
+    ))
+}
+
+fn focus_global_search_input() -> Task<Message> {
+    operation::focus(iced::advanced::widget::Id::new(
+        views::search::GLOBAL_SEARCH_INPUT_ID,
+    ))
+}
+
+fn focus_pdf_search_input() -> Task<Message> {
+    operation::focus(iced::advanced::widget::Id::new(
+        views::pdf_viewer::PDF_SEARCH_INPUT_ID,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn insert_text_keeps_cursor_visible_after_enter_at_eof() {
+        assert!(editor_command_keeps_cursor_visible(
+            &EditorCommand::InsertText("\n".to_string())
+        ));
+    }
 
     #[test]
     fn pdf_slot_offsets_use_fixed_placeholder_stride() {
@@ -2436,6 +2532,18 @@ mod tests {
         assert_eq!(
             pdf_slot_total_height(total_pages, slot_height),
             PDF_PAGE_LIST_PADDING + f32::from(total_pages) * (slot_height + PDF_PAGE_SPACING)
+        );
+    }
+
+    #[test]
+    fn pdf_search_scroll_targets_match_rect_not_just_page_top() {
+        assert_eq!(
+            pdf_search_match_scroll_y_from(1000.0, Some(250.0), 20.0, 792.0, 2.0, 5000.0),
+            1948.0
+        );
+        assert_eq!(
+            pdf_search_match_scroll_y_from(20.0, Some(780.0), 10.0, 792.0, 1.0, 5000.0),
+            0.0
         );
     }
 
