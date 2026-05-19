@@ -6,6 +6,9 @@ use crate::theme;
 use crate::views::icons::{self, Icon};
 use crate::views::interactive_pdf::InteractivePdf;
 
+pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
+pub(crate) const PDF_PAGE_SPACING: f32 = 20.0;
+
 pub fn search_bar<'a>(
     query: &'a str,
     regex: bool,
@@ -130,6 +133,8 @@ pub fn view_continuous<'a>(
     pages: &'a [Option<iced::widget::image::Handle>],
     zoom: f32,
     dimensions: &'a [Option<(u32, u32)>],
+    page_sizes: &'a [Option<(f32, f32)>],
+    placeholder_page_size: Option<(f32, f32)>,
     search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
     active_search_index: Option<usize>,
 ) -> Element<'a, Message, Theme, Renderer> {
@@ -147,15 +152,32 @@ pub fn view_continuous<'a>(
     }
 
     let mut page_list = column![]
-        .spacing(20)
-        .padding(20)
+        .spacing(PDF_PAGE_SPACING)
+        .padding(PDF_PAGE_LIST_PADDING)
         .align_x(Alignment::Center)
         .width(Length::Fill)
         .height(Length::Shrink);
 
+    let placeholder_display_size = placeholder_page_size
+        .map(|(w, h)| (w * zoom, h * zoom))
+        .or_else(|| {
+            page_sizes
+                .first()
+                .and_then(|s| *s)
+                .map(|(w, h)| (w * zoom, h * zoom))
+        })
+        .or_else(|| {
+            dimensions
+                .first()
+                .and_then(|d| d.map(|(w, h)| (w as f32, h as f32)))
+        })
+        .unwrap_or((612.0 * zoom, 792.0 * zoom));
+
     for (i, page_opt) in pages.iter().enumerate() {
+        let display_size = placeholder_display_size;
+
         if let Some(handle) = page_opt {
-            let (w, h) = dimensions[i].unwrap_or((800, 1100));
+            let (w, h) = display_size;
             let highlights = search_matches
                 .iter()
                 .enumerate()
@@ -190,13 +212,15 @@ pub fn view_continuous<'a>(
                 container(
                     InteractivePdf::new(
                         handle.clone(),
-                        w as f32,
-                        h as f32,
+                        w,
+                        h,
                         move |x, y| Message::PdfLeftClicked(i as u16, x, y),
                         move |x, y| Message::PdfRightClicked(i as u16, x, y),
                     )
                     .highlights(highlights, active_highlights),
                 )
+                .width(Length::Fixed(w))
+                .height(Length::Fixed(h))
                 .style(|_| container::Style {
                     background: Some(iced::Background::Color(iced::Color::WHITE)),
                     shadow: iced::Shadow {
@@ -210,10 +234,17 @@ pub fn view_continuous<'a>(
         } else {
             page_list = page_list.push(
                 container(text(format!("Loading Page {}...", i + 1)).color(theme::TEXT_MUTED))
-                    .width(Length::Fixed(612.0 * zoom))
-                    .height(Length::Fixed(792.0 * zoom))
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
+                    .width(Length::Fixed(display_size.0))
+                    .height(Length::Fixed(display_size.1))
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(iced::Color::WHITE)),
+                        border: iced::Border {
+                            color: theme::BORDER,
+                            width: 1.0,
+                            radius: 0.0.into(),
+                        },
+                        ..Default::default()
+                    }),
             );
         }
     }
