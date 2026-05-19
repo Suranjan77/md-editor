@@ -44,6 +44,7 @@ pub struct State {
     selection_focus: Option<(usize, usize)>,
     block_scroll_x: HashMap<usize, f32>,
     horizontal_scroll_drag: Option<HorizontalScrollDrag>,
+    desired_visual_x: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -152,7 +153,25 @@ fn line_height_for(
         return 34.0;
     }
     if line.is_table_row {
-        return 34.0;
+        if is_editing {
+            let max_font = line
+                .spans
+                .iter()
+                .map(|s| s.font_size)
+                .fold(14.0_f32, f32::max);
+            let char_count = line
+                .spans
+                .iter()
+                .map(|s| s.visible_text(is_editing).chars().count())
+                .sum::<usize>() as f32;
+            let available_chars = ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0)
+                / (max_font * 0.55))
+                .max(12.0);
+            let visual_lines = (char_count / available_chars).ceil().max(1.0);
+            return visual_lines * BASE_LINE_HEIGHT;
+        } else {
+            return 34.0;
+        }
     }
     if !line.is_math_block && line.spans.iter().any(|s| s.is_math) {
         let max_font = line
@@ -812,21 +831,7 @@ where
                 continue;
             }
 
-            // ── active line highlight ────────────────────────────
-            if is_editing && i == self.buffer.cursor_line {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: bounds.x,
-                            y,
-                            width: bounds.width,
-                            height: lh,
-                        },
-                        ..Default::default()
-                    },
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.03),
-                );
-            }
+            // (Active line highlight removed)
 
             let selection = normalized_selection(state.selection_anchor, state.selection_focus)
                 .or_else(|| {
@@ -1666,6 +1671,7 @@ where
                     state.is_focused = true;
                     state.selection_anchor = Some((line_idx, col));
                     state.selection_focus = Some((line_idx, col));
+                    state.desired_visual_x = None;
                     shell.publish((self.on_command)(EditorCommand::SetCursor {
                         line: line_idx,
                         col,
@@ -1806,6 +1812,14 @@ where
             }) if state.is_focused => {
                 state.modifiers = *modifiers;
 
+                if !matches!(
+                    key.as_ref(),
+                    keyboard::Key::Named(keyboard::key::Named::ArrowUp)
+                        | keyboard::Key::Named(keyboard::key::Named::ArrowDown)
+                ) {
+                    state.desired_visual_x = None;
+                }
+
                 // Named keys first — they must never fall through to char input
                 match key.as_ref() {
                     keyboard::Key::Named(keyboard::key::Named::Backspace) => {
@@ -1847,21 +1861,55 @@ where
                         return;
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-                        shell.publish((self.on_command)(EditorCommand::MoveCursor {
-                            movement: Movement::Up,
-                            extend: modifiers.shift(),
-                        }));
-                        state.selection_anchor = None;
-                        state.selection_focus = None;
+                        let (new_line, new_col) =
+                            self.move_visual::<R>(state, -1.0, _layout.bounds().width);
+                        if modifiers.shift() {
+                            let (a_l, a_c) = state
+                                .selection_anchor
+                                .or_else(|| self.buffer.selection.map(|(sl, sc, _, _)| (sl, sc)))
+                                .unwrap_or((self.buffer.cursor_line, self.buffer.cursor_col));
+                            state.selection_anchor = Some((a_l, a_c));
+                            state.selection_focus = Some((new_line, new_col));
+                            shell.publish((self.on_command)(EditorCommand::SetSelection {
+                                anchor_line: a_l,
+                                anchor_col: a_c,
+                                focus_line: new_line,
+                                focus_col: new_col,
+                            }));
+                        } else {
+                            state.selection_anchor = None;
+                            state.selection_focus = None;
+                            shell.publish((self.on_command)(EditorCommand::SetCursor {
+                                line: new_line,
+                                col: new_col,
+                            }));
+                        }
                         return;
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-                        shell.publish((self.on_command)(EditorCommand::MoveCursor {
-                            movement: Movement::Down,
-                            extend: modifiers.shift(),
-                        }));
-                        state.selection_anchor = None;
-                        state.selection_focus = None;
+                        let (new_line, new_col) =
+                            self.move_visual::<R>(state, 1.0, _layout.bounds().width);
+                        if modifiers.shift() {
+                            let (a_l, a_c) = state
+                                .selection_anchor
+                                .or_else(|| self.buffer.selection.map(|(sl, sc, _, _)| (sl, sc)))
+                                .unwrap_or((self.buffer.cursor_line, self.buffer.cursor_col));
+                            state.selection_anchor = Some((a_l, a_c));
+                            state.selection_focus = Some((new_line, new_col));
+                            shell.publish((self.on_command)(EditorCommand::SetSelection {
+                                anchor_line: a_l,
+                                anchor_col: a_c,
+                                focus_line: new_line,
+                                focus_col: new_col,
+                            }));
+                        } else {
+                            state.selection_anchor = None;
+                            state.selection_focus = None;
+                            shell.publish((self.on_command)(EditorCommand::SetCursor {
+                                line: new_line,
+                                col: new_col,
+                            }));
+                        }
                         return;
                     }
                     keyboard::Key::Named(keyboard::key::Named::Home) => {
@@ -2031,9 +2079,6 @@ impl<'a, Message> Editor<'a, Message> {
             }
             let step = visual_line_step(span.font_size);
             for ch in display.chars() {
-                if source_col >= col {
-                    return (x, y);
-                }
                 let ch_text = ch.to_string();
                 let w = if span.is_checkbox && !is_editing {
                     26.0
@@ -2043,6 +2088,9 @@ impl<'a, Message> Editor<'a, Message> {
                 if x > 0.0 && x + w > max_w {
                     y += step;
                     x = 0.0;
+                }
+                if source_col >= col {
+                    return (x, y);
                 }
                 x += w;
                 source_col += 1;
@@ -2398,6 +2446,9 @@ impl<'a, Message> Editor<'a, Message> {
                     measure_width::<R>(&ch_text, span.font_size, font)
                 };
                 if x_acc > 0.0 && x_acc + cw > max_w {
+                    if pos.y - y_acc < y_acc_line + step {
+                        return (line_idx, col);
+                    }
                     y_acc_line += step;
                     x_acc = 0.0;
                 }
@@ -2409,6 +2460,46 @@ impl<'a, Message> Editor<'a, Message> {
             }
         }
         (line_idx, col)
+    }
+
+    fn move_visual<R>(
+        &self,
+        state: &mut State,
+        delta_lines: f32,
+        available_width: f32,
+    ) -> (usize, usize)
+    where
+        R: iced::advanced::text::Renderer<Font = iced::Font>,
+    {
+        let (cur_x, cur_y_in_line) =
+            self.cursor_position::<R>(self.buffer.cursor_line, available_width);
+        let cur_y_base = line_visual_y(
+            self.lines,
+            self.image_cache,
+            self.math_cache,
+            available_width,
+            self.buffer.cursor_line,
+            self.buffer.cursor_line,
+            state.is_focused,
+        );
+
+        let visual_x = state.desired_visual_x.get_or_insert(cur_x);
+        let line = &self.lines[self.buffer.cursor_line];
+        let max_font = line
+            .spans
+            .iter()
+            .map(|s| s.font_size)
+            .fold(17.0_f32, f32::max);
+        let step = visual_line_step(max_font);
+
+        let target_y = cur_y_base + cur_y_in_line + delta_lines * step + step / 2.0;
+
+        self.hit_test::<R>(
+            Point::new(*visual_x + TEXT_X_OFFSET, target_y),
+            available_width,
+            self.lines.get(self.buffer.cursor_line).map(|l| l.block_id),
+            state.is_focused,
+        )
     }
 }
 
@@ -2515,6 +2606,7 @@ mod tests {
                             selection_focus: Some((end_line, end_col)),
                             block_scroll_x: HashMap::new(),
                             horizontal_scroll_drag: None,
+                            desired_visual_x: None,
                         };
 
                         let sel = editor.selected_text(&state);
@@ -2658,7 +2750,11 @@ mod tests {
                     assert!(h >= 0.0);
 
                     if line.is_table_row {
-                        assert_eq!(h, 34.0);
+                        if is_editing {
+                            assert!(h >= BASE_LINE_HEIGHT);
+                        } else {
+                            assert_eq!(h, 34.0);
+                        }
                     } else if line.is_math_block && is_editing {
                         assert_eq!(h, BASE_LINE_HEIGHT);
                     } else if line.is_blockquote {
