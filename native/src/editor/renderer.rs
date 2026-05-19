@@ -171,9 +171,6 @@ where
         }
     }
     if !line.is_math_block && line.spans.iter().any(|s| s.is_math) {
-        if active_col.is_none() && !is_editing {
-            return estimated_inline_height(line, available_width, false) + 10.0;
-        }
         return measured_inline_height::<R>(
             line,
             math_cache,
@@ -181,28 +178,6 @@ where
             is_editing,
             active_col,
         ) + 10.0;
-    }
-    if !line.is_code_block
-        && !line.is_table_row
-        && !line.is_blockquote
-        && !line
-            .spans
-            .iter()
-            .any(|s| s.is_image || s.is_math || s.is_checkbox)
-    {
-        if active_col.is_none() && !is_editing {
-            return estimated_inline_height(line, available_width, false);
-        }
-        return measured_inline_height::<R>(
-            line,
-            math_cache,
-            available_width,
-            is_editing,
-            active_col,
-        );
-    }
-    if active_col.is_none() && !is_editing {
-        return estimated_inline_height(line, available_width, false);
     }
     measured_inline_height::<R>(line, math_cache, available_width, is_editing, active_col)
 }
@@ -288,10 +263,12 @@ where
             if tex.is_empty() || span.is_syntax {
                 continue;
             }
-            let width = math_cache
+            let (width, height) = math_cache
                 .get(tex)
-                .map(|(_, w, _)| *w)
-                .unwrap_or_else(|| measure_width::<R>(tex, fs, span_font(span, line)));
+                .map(|(_, w, h)| (*w, *h))
+                .unwrap_or_else(|| (measure_width::<R>(tex, fs, span_font(span, line)), BASE_LINE_HEIGHT));
+            let extra_h = (height - BASE_LINE_HEIGHT).max(0.0);
+            row_step = row_step.max(BASE_LINE_HEIGHT + extra_h);
             if x > line_start_x && x + width > line_right_x {
                 y += row_step;
                 x = line_start_x;
@@ -350,23 +327,6 @@ where
     (y + row_step).max(BASE_LINE_HEIGHT)
 }
 
-fn estimated_inline_height(line: &StyledLine, available_width: f32, is_editing: bool) -> f32 {
-    let max_font = line
-        .spans
-        .iter()
-        .map(|s| s.font_size)
-        .fold(14.0_f32, f32::max);
-    let char_count = line
-        .spans
-        .iter()
-        .map(|s| s.visible_text(is_editing).chars().count())
-        .sum::<usize>() as f32;
-    let available_chars =
-        ((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(120.0) / (max_font * 0.48)).max(12.0);
-    let visual_lines = (char_count / available_chars).ceil().max(1.0);
-    let step = visual_line_step(max_font);
-    visual_lines * step
-}
 
 fn visual_line_step(font_size: f32) -> f32 {
     (font_size * 1.45).max(BASE_LINE_HEIGHT)
@@ -393,40 +353,66 @@ fn col_touches_range(col: usize, start: usize, end: usize) -> bool {
 }
 
 fn span_is_inline_edit_target(line: &StyledLine, span_idx: usize, active_col: usize) -> bool {
-    let Some((start, end)) = span_source_range(line, span_idx) else {
-        return false;
-    };
     let Some(span) = line.spans.get(span_idx) else {
         return false;
     };
 
-    if col_touches_range(active_col, start, end) {
-        return true;
-    }
-
-    if !span.is_syntax {
-        return false;
-    }
-
-    let adjacent_active = |idx: usize| {
-        line.spans
-            .get(idx)
-            .filter(|span| {
-                !span.is_syntax
-                    && (span.bold
-                        || span.italic
-                        || span.is_code
-                        || span.is_link
-                        || span.is_math
-                        || span.is_heading
-                        || line.is_blockquote)
-            })
-            .and_then(|_| span_source_range(line, idx))
+    let touches = |idx: usize| -> bool {
+        span_source_range(line, idx)
             .is_some_and(|(start, end)| col_touches_range(active_col, start, end))
     };
 
-    span_idx.checked_sub(1).is_some_and(adjacent_active)
-        || adjacent_active(span_idx.saturating_add(1))
+    if touches(span_idx) {
+        return true;
+    }
+
+    let is_content = |idx: usize| {
+        line.spans.get(idx).is_some_and(|s| {
+            !s.is_syntax
+                && (s.bold
+                    || s.italic
+                    || s.is_code
+                    || s.is_link
+                    || s.is_math
+                    || s.is_heading
+                    || line.is_blockquote)
+        })
+    };
+
+    let is_syntax = |idx: usize| {
+        line.spans.get(idx).is_some_and(|s| s.is_syntax)
+    };
+
+    if span.is_syntax {
+        let check_side = |content_idx: usize| -> bool {
+            if is_content(content_idx) {
+                if touches(content_idx) {
+                    return true;
+                }
+                let other_syntax_idx = if content_idx > span_idx { content_idx + 1 } else { content_idx.saturating_sub(1) };
+                if is_syntax(other_syntax_idx) && touches(other_syntax_idx) {
+                    return true;
+                }
+            }
+            false
+        };
+
+        if span_idx > 0 && check_side(span_idx - 1) {
+            return true;
+        }
+        if check_side(span_idx + 1) {
+            return true;
+        }
+    } else if is_content(span_idx) {
+        if span_idx > 0 && is_syntax(span_idx - 1) && touches(span_idx - 1) {
+            return true;
+        }
+        if is_syntax(span_idx + 1) && touches(span_idx + 1) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn span_visible_text<'a>(
@@ -734,7 +720,7 @@ where
             break;
         }
         let is_editing = is_block_editing_line(line, active_block_id, focused);
-        let line_active_col = (idx == active_line).then_some(active_col);
+        let line_active_col = (focused && idx == active_line).then_some(active_col);
         y += line_height_for::<R>(
             line,
             image_cache,
@@ -851,7 +837,8 @@ where
         let mut seen_math_blocks_layout = std::collections::HashSet::new();
         for (i, line) in self.lines.iter().enumerate() {
             let is_editing = is_block_editing_line(line, active_block_id, focused);
-            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let active_col =
+                (focused && i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
             let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
@@ -1016,7 +1003,8 @@ where
         let mut seen_math_blocks_draw = std::collections::HashSet::new();
         for (i, line) in self.lines.iter().enumerate() {
             let is_editing = is_block_editing_line(line, active_block_id, focused);
-            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let active_col =
+                (focused && i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
             let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
@@ -1630,7 +1618,8 @@ where
                                         y: if line.is_math_block {
                                             line_draw_y + (lh - draw_h) / 2.0
                                         } else {
-                                            line_draw_y + (BASE_LINE_HEIGHT - draw_h) / 2.0 - 1.0
+                                            let margin_top = (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
+                                            line_draw_y + margin_top
                                         },
                                         width: draw_w,
                                         height: draw_h,
@@ -2308,6 +2297,8 @@ impl<'a, Message> Editor<'a, Message> {
 
         for (span_idx, span) in line.spans.iter().enumerate() {
             let font = span_font(span, line);
+            let span_editing = is_editing
+                || active_col.is_some_and(|col| span_is_inline_edit_target(line, span_idx, col));
             let display = span_visible_text(line, span_idx, is_editing, active_col);
             let span_start_col = source_col;
             let span_end_col = source_col_after_span(span, span_start_col);
@@ -2371,6 +2362,31 @@ impl<'a, Message> Editor<'a, Message> {
                     continue;
                 }
 
+                if span.is_math && !span_editing {
+                    let tex = span.visible_text(false).trim_matches('$').trim();
+                    if !tex.is_empty() && !span.is_syntax {
+                        let (width, _) = self.math_cache
+                            .get(tex)
+                            .map(|(_, w, h)| (*w, *h))
+                            .unwrap_or_else(|| (measure_width::<R>(tex, span.font_size, font), BASE_LINE_HEIGHT));
+                        
+                        if x > 0.0 && x + width > max_w {
+                            y += step;
+                            x = 0.0;
+                        }
+                        
+                        if source_col >= col {
+                            return (x, y);
+                        }
+                        
+                        x += width + 4.0;
+                        // Since this is a single block, if col is within it, return x, y
+                        if col <= span_end_col {
+                            return (x, y);
+                        }
+                        break; // Move to next span
+                    }
+                }
                 token.push((ch, source_col));
                 source_col += 1;
                 if ch.is_whitespace() {
@@ -2416,6 +2432,8 @@ impl<'a, Message> Editor<'a, Message> {
 
         for (span_idx, span) in line.spans.iter().enumerate() {
             let font = span_font(span, line);
+            let span_editing = is_editing
+                || active_col.is_some_and(|col| span_is_inline_edit_target(line, span_idx, col));
             let display = span_visible_text(line, span_idx, is_editing, active_col);
             let span_start_col = source_col;
             let span_end_col = source_col_after_span(span, span_start_col);
@@ -2526,6 +2544,39 @@ impl<'a, Message> Editor<'a, Message> {
                     continue;
                 }
 
+                if span.is_math && !span_editing {
+                    let tex = span.visible_text(false).trim_matches('$').trim();
+                    if !tex.is_empty() && !span.is_syntax {
+                        let (width, height) = self.math_cache
+                            .get(tex)
+                            .map(|(_, w, h)| (*w, *h))
+                            .unwrap_or_else(|| (measure_width::<R>(tex, span.font_size, font), BASE_LINE_HEIGHT));
+                        
+                        let extra_h = (height - BASE_LINE_HEIGHT).max(0.0);
+                        row_step = row_step.max(BASE_LINE_HEIGHT + extra_h);
+
+                        if x_acc > 0.0 && x_acc + width > max_w {
+                            if line_y < row_y + row_step {
+                                return row_end_col;
+                            }
+                            row_y += row_step;
+                            x_acc = 0.0;
+                            row_start_col = source_col;
+                            row_end_col = source_col;
+                            row_step = step;
+                        }
+
+                        if line_y < row_y + row_step {
+                            if click_x < x_acc + width {
+                                return source_col;
+                            }
+                            row_end_col = span_end_col;
+                        }
+
+                        x_acc += width + 4.0;
+                        break; // Skip token loop entirely for this span
+                    }
+                }
                 token.push((ch, source_col));
                 source_col += 1;
                 if ch.is_whitespace() {
@@ -2629,7 +2680,8 @@ impl<'a, Message> Editor<'a, Message> {
         let mut seen_math_blocks = std::collections::HashSet::new();
         for (i, line) in self.lines.iter().enumerate() {
             let is_editing = is_block_editing_line(line, active_block_id, focused);
-            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let active_col =
+                (focused && i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
             let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
@@ -2732,7 +2784,8 @@ impl<'a, Message> Editor<'a, Message> {
 
         for (i, line) in self.lines.iter().enumerate() {
             let is_editing = is_block_editing_line(line, active_block_id, focused);
-            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let active_col =
+                (focused && i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
             let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
@@ -2877,7 +2930,8 @@ impl<'a, Message> Editor<'a, Message> {
 
         for (i, line) in self.lines.iter().enumerate() {
             let is_editing = is_block_editing_line(line, active_block_id, focused);
-            let active_col = (i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+            let active_col =
+                (focused && i == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
             let lh = line_height_for::<R>(
                 line,
                 self.image_cache,
@@ -2916,7 +2970,7 @@ impl<'a, Message> Editor<'a, Message> {
             pos.y - y_acc,
             available_width,
             is_editing,
-            (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col),
+            (focused && line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col),
         );
         (line_idx, col)
     }

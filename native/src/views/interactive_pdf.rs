@@ -49,7 +49,11 @@ where
         _renderer: &R,
         limits: &layout::Limits,
     ) -> layout::Node {
-        layout::Node::new(limits.resolve(Length::Fixed(self.width), Length::Fixed(self.height), Size::new(self.width, self.height)))
+        layout::Node::new(limits.resolve(
+            Length::Fixed(self.width),
+            Length::Fixed(self.height),
+            Size::new(self.width, self.height),
+        ))
     }
 
     fn draw(
