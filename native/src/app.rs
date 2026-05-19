@@ -494,6 +494,15 @@ impl MdEditor {
                 self.editor_viewport_height = viewport_height;
                 Task::none()
             }
+            Message::ScrollEditorToTarget(target_y) => {
+                operation::scroll_to(
+                    iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                    AbsoluteOffset {
+                        x: 0.0,
+                        y: target_y,
+                    },
+                )
+            }
 
             Message::PdfLoaded(generation, pages) => {
                 if generation != self.pdf_render_generation {
@@ -1910,12 +1919,9 @@ impl MdEditor {
             self.editor_scroll_y
         };
 
-        operation::scroll_to(
-            iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
-            AbsoluteOffset {
-                x: 0.0,
-                y: target_y,
-            },
+        Task::perform(
+            async move { target_y },
+            Message::ScrollEditorToTarget,
         )
     }
 

@@ -69,7 +69,10 @@ pub fn setup_pdfium() -> PathBuf {
     let lib_path = cache_dir.join(lib_subdir).join(lib_filename);
 
     if lib_path.exists() {
-        println!("cargo:warning=PDFium already cached at {}", lib_path.display());
+        println!(
+            "cargo:warning=PDFium already cached at {}",
+            lib_path.display()
+        );
         setup_resource_copy(&cache_dir, &profile_dir, lib_filename);
         emit_pdfium_paths(&target_dir, &profile_dir);
         return cache_dir;
@@ -141,7 +144,10 @@ fn setup_resource_copy(cache_dir: &Path, profile_dir: &Path, lib_filename: &str)
     };
     let lib_src = cache_dir.join(lib_subdir).join(lib_filename);
     if !lib_src.exists() {
-        println!("cargo:warning=PDFium library not found at {}", lib_src.display());
+        println!(
+            "cargo:warning=PDFium library not found at {}",
+            lib_src.display()
+        );
         return;
     }
 
@@ -151,7 +157,8 @@ fn setup_resource_copy(cache_dir: &Path, profile_dir: &Path, lib_filename: &str)
 
     let lib_dst = resource_dir.join(lib_filename);
     if !lib_dst.exists()
-        || fs::metadata(&lib_src).unwrap().len() != fs::metadata(&lib_dst).map(|m| m.len()).unwrap_or(0)
+        || fs::metadata(&lib_src).unwrap().len()
+            != fs::metadata(&lib_dst).map(|m| m.len()).unwrap_or(0)
     {
         fs::copy(&lib_src, &lib_dst).expect("Failed to copy PDFium library to resource directory");
     }
