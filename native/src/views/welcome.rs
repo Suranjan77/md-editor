@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, image, text, Space};
+use iced::widget::{Space, button, column, container, image, text};
 use iced::{Alignment, Background, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;

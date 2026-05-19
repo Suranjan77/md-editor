@@ -1,5 +1,5 @@
-use iced::widget::{button, column, container, scrollable, text, Space};
-use iced::{Element, Length, Theme, Renderer, Padding};
+use iced::widget::{Space, button, column, container, scrollable, text};
+use iced::{Element, Length, Padding, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
@@ -25,32 +25,32 @@ pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
             }
             if level > 0 && level <= 6 {
                 let text = trimmed[level..].trim().to_string();
-                toc.push(TocEntry { level: level as u8, text, line: i });
+                toc.push(TocEntry {
+                    level: level as u8,
+                    text,
+                    line: i,
+                });
             }
         }
     }
     toc
 }
 
-pub fn view<'a>(
-    toc: &'a [TocEntry],
-) -> Element<'a, Message, Theme, Renderer> {
+pub fn view<'a>(toc: &'a [TocEntry]) -> Element<'a, Message, Theme, Renderer> {
     let title = text("Table of Contents")
         .size(16)
         .color(theme::TEXT_PRIMARY);
 
     let items = toc.iter().map(|entry| {
         let indent = (entry.level.saturating_sub(1) as f32) * 15.0;
-        
-        container(button(
-            text(&entry.text)
-                .size(14)
-                .color(theme::TEXT_SECONDARY)
+
+        container(
+            button(text(&entry.text).size(14).color(theme::TEXT_SECONDARY))
+                .on_press(Message::TocClicked(entry.line))
+                .padding([4, 8])
+                .style(button::text)
+                .width(Length::Fill),
         )
-        .on_press(Message::TocClicked(entry.line))
-        .padding([4, 8])
-        .style(button::text)
-        .width(Length::Fill))
         .padding(Padding {
             top: 0.0,
             right: 0.0,
@@ -66,7 +66,7 @@ pub fn view<'a>(
             Space::new().height(Length::Fixed(10.0)),
             scrollable(column(items).spacing(2))
         ]
-        .padding(15)
+        .padding(15),
     )
     .width(Length::Fixed(250.0))
     .height(Length::Fill)

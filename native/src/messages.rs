@@ -42,6 +42,7 @@ pub enum Message {
         viewport_width: f32,
         viewport_height: f32,
     },
+    ScrollEditorToTarget(f32),
 
     // ── PDF ──────────────────────────────────────────────────────
     PdfZoomChanged(f32),

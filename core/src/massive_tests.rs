@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use crate::config::{get_sys_config, set_sys_config};
 use crate::file_index::FileIndex;
 use crate::state::AppState;
-use crate::config::{get_sys_config, set_sys_config};
-use crate::tracker::{save_session, get_sessions, get_total_hours, get_kv, set_kv, StudySession};
+use crate::tracker::{StudySession, get_kv, get_sessions, get_total_hours, save_session, set_kv};
 use crate::vault::{
-    set_vault_root, save_file, rename_entry, delete_entry, list_vault, search_vault
+    delete_entry, list_vault, rename_entry, save_file, search_vault, set_vault_root,
 };
+use std::path::PathBuf;
 
 // =====================================================================
 // PHASE 1: FILE INDEX & WIKILINK EXTRACTION TESTS
@@ -22,26 +22,32 @@ fn test_file_index_wikilink_combinatorics() {
     // We vary whitespace, aliases, special characters, and extensions
 
     let target_names = vec![
-        "simple", "simple-dashed", "simple_under", "nested/path/to/file",
-        "spac y target", "unicode-🦀", "japanese-日本語", "umlaut-öäü",
-        "emoji-🚀-star🌟", "dot.name", "complex!@#%^&*()", "caps_LOCK",
-        "nested/sub/sub/file", "spaces-around-words", "multiple--dashes", "accented-éàçè"
+        "simple",
+        "simple-dashed",
+        "simple_under",
+        "nested/path/to/file",
+        "spac y target",
+        "unicode-🦀",
+        "japanese-日本語",
+        "umlaut-öäü",
+        "emoji-🚀-star🌟",
+        "dot.name",
+        "complex!@#%^&*()",
+        "caps_LOCK",
+        "nested/sub/sub/file",
+        "spaces-around-words",
+        "multiple--dashes",
+        "accented-éàçè",
     ];
 
     let alias_options = vec![
         None,
         Some("simple_alias"),
         Some("spaced alias name"),
-        Some("unicode-🔥")
+        Some("unicode-🔥"),
     ];
 
-    let space_variations = vec![
-        ("", ""),
-        (" ", " "),
-        ("  ", ""),
-        ("", "  "),
-        ("   ", "   ")
-    ];
+    let space_variations = vec![("", ""), (" ", " "), ("  ", ""), ("", "  "), ("   ", "   ")];
 
     let mut content = String::new();
     let mut expected_targets = std::collections::HashSet::new();
@@ -54,7 +60,10 @@ fn test_file_index_wikilink_combinatorics() {
 
                 // Construct the link content: [[ <sp_start> target [| alias] <sp_end> ]]
                 let link = match alias {
-                    Some(al) => format!("[[{}{}|{}{}{}]]", sp_start, unique_target, sp_start, al, sp_end),
+                    Some(al) => format!(
+                        "[[{}{}|{}{}{}]]",
+                        sp_start, unique_target, sp_start, al, sp_end
+                    ),
                     None => format!("[[{}{}{}]]", sp_start, unique_target, sp_end),
                 };
                 content.push_str(&link);
@@ -79,10 +88,17 @@ fn test_file_index_wikilink_combinatorics() {
 
     // Verify all generated cases parsed correctly
     for expected in &expected_targets {
-        assert!(outgoing_set.contains(expected), "Missing expected link: {:?}", expected);
+        assert!(
+            outgoing_set.contains(expected),
+            "Missing expected link: {:?}",
+            expected
+        );
     }
 
-    assert!(outgoing.len() >= 300, "Should have tested hundreds of link combinatorics");
+    assert!(
+        outgoing.len() >= 300,
+        "Should have tested hundreds of link combinatorics"
+    );
 }
 
 #[test]
@@ -109,7 +125,7 @@ fn test_file_index_graph_topologies() {
     for i in 1..=200 {
         let leaf = PathBuf::from(format!("/vault/leaf_{}.md", i));
         assert!(center_backlinks.contains(&leaf));
-        
+
         let leaf_backlinks = index.get_backlinks(&leaf);
         assert_eq!(leaf_backlinks.len(), 1);
         assert_eq!(leaf_backlinks[0], center);
@@ -202,7 +218,10 @@ fn test_file_index_dynamic_fuzzing_updates() {
             total_incoming += index.get_backlinks(f).len();
         }
 
-        assert_eq!(total_outgoing, total_incoming, "Link count invariant violated during updates");
+        assert_eq!(
+            total_outgoing, total_incoming,
+            "Link count invariant violated during updates"
+        );
     }
 
     // Delete files one by one and ensure index drains cleanly to empty
@@ -308,14 +327,22 @@ fn test_study_tracker_massive_sessions() {
         assert!(
             retrieved[j].date >= retrieved[j + 1].date,
             "Sessions not sorted descending by date! index {}: {} vs index {}: {}",
-            j, retrieved[j].date, j + 1, retrieved[j + 1].date
+            j,
+            retrieved[j].date,
+            j + 1,
+            retrieved[j + 1].date
         );
     }
 
     // 3. Verify total aggregate hours calculation
     let calculated_hours = get_total_hours(&state).expect("Failed to get total hours");
     let diff = (calculated_hours - expected_total_hours).abs();
-    assert!(diff < 0.01, "Aggregate hours sum mismatch: expected {}, got {}", expected_total_hours, calculated_hours);
+    assert!(
+        diff < 0.01,
+        "Aggregate hours sum mismatch: expected {}, got {}",
+        expected_total_hours,
+        calculated_hours
+    );
 
     // 4. Test massive Tracker KV store (500 entries)
     for i in 0..500 {
@@ -332,7 +359,10 @@ fn test_study_tracker_massive_sessions() {
         assert!(
             kv_entries[j].key < kv_entries[j + 1].key,
             "Tracker KV entries not sorted ascending by key! index {}: {} vs index {}: {}",
-            j, kv_entries[j].key, j + 1, kv_entries[j + 1].key
+            j,
+            kv_entries[j].key,
+            j + 1,
+            kv_entries[j + 1].key
         );
     }
 }
@@ -345,59 +375,89 @@ fn test_study_tracker_massive_sessions() {
 #[test]
 fn test_vault_recursive_listings_and_operations() {
     let state = AppState::new_in_memory();
-    let temp_dir = std::env::current_dir().unwrap().join("target").join("test_vault_listing");
+    let temp_dir = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test_vault_listing");
     if temp_dir.exists() {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
     std::fs::create_dir_all(&temp_dir).unwrap();
 
     let vault_path_str = temp_dir.to_string_lossy().to_string();
-    
+
     // Create nested subdirectories: sub_0, sub_0/sub_1, ..., sub_0/.../sub_9
     let mut current_sub = temp_dir.clone();
     for i in 0..10 {
         current_sub = current_sub.join(format!("sub_{}", i));
         std::fs::create_dir_all(&current_sub).unwrap();
-        
+
         // Write 10 files in this sub directory: various extensions
         // .md, .pdf, .png, .txt (txt should be ignored!)
         std::fs::write(current_sub.join("file.md"), "Link to [[other_file]]").unwrap();
         std::fs::write(current_sub.join("image.png"), "fake image content").unwrap();
         std::fs::write(current_sub.join("document.pdf"), "fake pdf content").unwrap();
         std::fs::write(current_sub.join("ignored.txt"), "this should be ignored").unwrap();
-        std::fs::write(current_sub.join(".hidden_file.md"), "this should be ignored").unwrap();
+        std::fs::write(
+            current_sub.join(".hidden_file.md"),
+            "this should be ignored",
+        )
+        .unwrap();
     }
 
     // Set vault root
     let entries = set_vault_root(&state, &vault_path_str).expect("Failed to set vault root");
-    
+
     // Expected files to be included: 10 md files, 10 png files, 10 pdf files = 30 files, plus the 10 subdirectories!
     // Total entries should be 40!
     assert_eq!(entries.len(), 40);
 
     for entry in &entries {
         // Assert ignored extensions or hidden files are NOT in the list
-        assert!(!entry.name.ends_with(".txt"), "TXT files must be ignored: {}", entry.name);
-        assert!(!entry.name.starts_with('.'), "Hidden files must be ignored: {}", entry.name);
-        
+        assert!(
+            !entry.name.ends_with(".txt"),
+            "TXT files must be ignored: {}",
+            entry.name
+        );
+        assert!(
+            !entry.name.starts_with('.'),
+            "Hidden files must be ignored: {}",
+            entry.name
+        );
+
         if entry.is_dir {
-            assert!(entry.name.starts_with("sub_"), "Directory name must start with sub_: {}", entry.name);
+            assert!(
+                entry.name.starts_with("sub_"),
+                "Directory name must start with sub_: {}",
+                entry.name
+            );
         } else {
-            let has_valid_ext = entry.name.ends_with(".md") || entry.name.ends_with(".png") || entry.name.ends_with(".pdf");
-            assert!(has_valid_ext, "Invalid file extension in vault list: {}", entry.name);
+            let has_valid_ext = entry.name.ends_with(".md")
+                || entry.name.ends_with(".png")
+                || entry.name.ends_with(".pdf");
+            assert!(
+                has_valid_ext,
+                "Invalid file extension in vault list: {}",
+                entry.name
+            );
         }
     }
 
     // Assert sorting order of the listed entries: dirs first, then files case-insensitive
     for j in 0..39 {
         let current = &entries[j];
-        let next = &entries[j+1];
+        let next = &entries[j + 1];
         match (current.is_dir, next.is_dir) {
             (true, false) => {} // Correct
             (false, true) => panic!("Directories must be listed before files!"),
             _ => {
                 // If both are dirs or both are files, they must be sorted alphabetically case-insensitively
-                assert!(current.name.to_lowercase() <= next.name.to_lowercase(), "Alphabetical sorting order violated! {} vs {}", current.name, next.name);
+                assert!(
+                    current.name.to_lowercase() <= next.name.to_lowercase(),
+                    "Alphabetical sorting order violated! {} vs {}",
+                    current.name,
+                    next.name
+                );
             }
         }
     }
@@ -408,7 +468,10 @@ fn test_vault_recursive_listings_and_operations() {
 #[test]
 fn test_vault_fts5_indexing_and_search() {
     let state = AppState::new_in_memory();
-    let temp_dir = std::env::current_dir().unwrap().join("target").join("test_vault_search");
+    let temp_dir = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test_vault_search");
     if temp_dir.exists() {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -423,9 +486,30 @@ fn test_vault_fts5_indexing_and_search() {
         let path_space = temp_dir.join(format!("space_file_{}.md", i));
         let path_lorem = temp_dir.join(format!("lorem_file_{}.md", i));
 
-        std::fs::write(&path_rust, format!("This is standard rust coding guidelines document version {}", i)).unwrap();
-        std::fs::write(&path_space, format!("We study md-editor space propulsion using quantum dynamics version {}", i)).unwrap();
-        std::fs::write(&path_lorem, format!("Lorem ipsum dolor sit amet, consectetur adipiscing elit version {}", i)).unwrap();
+        std::fs::write(
+            &path_rust,
+            format!(
+                "This is standard rust coding guidelines document version {}",
+                i
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            &path_space,
+            format!(
+                "We study md-editor space propulsion using quantum dynamics version {}",
+                i
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            &path_lorem,
+            format!(
+                "Lorem ipsum dolor sit amet, consectetur adipiscing elit version {}",
+                i
+            ),
+        )
+        .unwrap();
     }
 
     // Trigger full vault index via set_vault_root
@@ -457,7 +541,10 @@ fn test_vault_fts5_indexing_and_search() {
 #[test]
 fn test_vault_file_lifecycle_renames_deletes() {
     let state = AppState::new_in_memory();
-    let temp_dir = std::env::current_dir().unwrap().join("target").join("test_vault_lifecycle");
+    let temp_dir = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test_vault_lifecycle");
     if temp_dir.exists() {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -529,4 +616,3 @@ fn test_vault_file_lifecycle_renames_deletes() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
-
