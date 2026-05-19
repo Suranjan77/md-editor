@@ -35,6 +35,7 @@ pub struct LinkPreviewResult {
 pub struct PdfSearchMatch {
     pub page_index: u16,
     pub context: String,
+    pub rects: Vec<PdfRect>,
 }
 
 pub struct PdfState {
@@ -233,7 +234,12 @@ impl PdfRenderer {
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
                             };
-                            let bookmarks: Vec<PdfBookmark> = doc.bookmarks().iter().collect();
+                            let mut bookmarks = Vec::new();
+                            let mut current = doc.bookmarks().root();
+                            while let Some(bookmark) = current {
+                                current = bookmark.next_sibling();
+                                bookmarks.push(bookmark);
+                            }
                             Ok(Self::parse_bookmarks(&bookmarks))
                         })();
                         let _ = resp.send(res);
@@ -358,22 +364,69 @@ impl PdfRenderer {
                             let mut matches = Vec::new();
                             for index in 0..doc.pages().len() {
                                 let page = doc.pages().get(index).map_err(|e| e.to_string())?;
-                                let page_text = page.text().map_err(|e| e.to_string())?.to_string();
-                                let found = if let Some(re) = &re {
-                                    re.find(&page_text).map(|found| {
-                                        (found.start(), found.as_str().chars().count())
-                                    })
-                                } else {
-                                    let haystack = if match_case {
-                                        page_text.clone()
+                                let page_height = page.height().value;
+                                let text_page = page.text().map_err(|e| e.to_string())?;
+                                let page_text = text_page.to_string();
+                                let page_matches: Vec<(usize, usize, Vec<PdfRect>)> =
+                                    if let Some(re) = &re {
+                                        re.find_iter(&page_text)
+                                            .filter_map(|found| {
+                                                let char_start =
+                                                    page_text[..found.start()].chars().count();
+                                                let char_count = found.as_str().chars().count();
+                                                let rects = text_page
+                                                    .segments_subset(char_start, char_count)
+                                                    .iter()
+                                                    .map(|segment| {
+                                                        let bounds = segment.bounds();
+                                                        PdfRect {
+                                                            x: bounds.left().value,
+                                                            y: page_height - bounds.top().value,
+                                                            width: bounds.width().value,
+                                                            height: bounds.height().value,
+                                                        }
+                                                    })
+                                                    .collect::<Vec<_>>();
+                                                Some((found.start(), char_count, rects))
+                                            })
+                                            .collect()
                                     } else {
-                                        page_text.to_lowercase()
+                                        let options =
+                                            PdfSearchOptions::new().match_case(match_case);
+                                        match text_page.search(&query, &options) {
+                                            Ok(search) => search
+                                                .iter(PdfSearchDirection::SearchForward)
+                                                .filter_map(|segments| {
+                                                    let rects = segments
+                                                        .iter()
+                                                        .map(|segment| {
+                                                            let bounds = segment.bounds();
+                                                            PdfRect {
+                                                                x: bounds.left().value,
+                                                                y: page_height - bounds.top().value,
+                                                                width: bounds.width().value,
+                                                                height: bounds.height().value,
+                                                            }
+                                                        })
+                                                        .collect::<Vec<_>>();
+                                                    let haystack = if match_case {
+                                                        page_text.clone()
+                                                    } else {
+                                                        page_text.to_lowercase()
+                                                    };
+                                                    haystack.find(&needle).map(|pos| {
+                                                        (pos, needle.chars().count(), rects)
+                                                    })
+                                                })
+                                                .collect(),
+                                            Err(_) => Vec::new(),
+                                        }
                                     };
-                                    haystack
-                                        .find(&needle)
-                                        .map(|pos| (pos, needle.chars().count()))
-                                };
-                                if let Some((pos, match_len)) = found {
+
+                                for (pos, match_len, rects) in page_matches {
+                                    if rects.is_empty() {
+                                        continue;
+                                    }
                                     let match_char = page_text[..pos].chars().count();
                                     let start = match_char.saturating_sub(48);
                                     let take = match_len + 96;
@@ -388,10 +441,14 @@ impl PdfRenderer {
                                     matches.push(PdfSearchMatch {
                                         page_index: index as u16,
                                         context,
+                                        rects,
                                     });
-                                    if matches.len() >= 100 {
+                                    if matches.len() >= 250 {
                                         break;
                                     }
+                                }
+                                if matches.len() >= 250 {
+                                    break;
                                 }
                             }
                             Ok(matches)
