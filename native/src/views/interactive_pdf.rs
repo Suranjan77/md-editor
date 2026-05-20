@@ -85,7 +85,11 @@ where
         );
 
         let bounds = layout.bounds();
+        if !self.highlights.is_empty() || !self.active_highlights.is_empty() {
+            println!("InteractivePdf::draw: bounds={:?}", bounds);
+        }
         for rect in &self.highlights {
+            println!("  highlight rect: x={}, y={}, w={}, h={}", rect.x, rect.y, rect.width, rect.height);
             draw_highlight(
                 renderer,
                 bounds,
@@ -94,6 +98,7 @@ where
             );
         }
         for rect in &self.active_highlights {
+            println!("  active highlight rect: x={}, y={}, w={}, h={}", rect.x, rect.y, rect.width, rect.height);
             draw_highlight(
                 renderer,
                 bounds,
@@ -102,6 +107,7 @@ where
             );
         }
     }
+
 
     fn update(
         &mut self,
