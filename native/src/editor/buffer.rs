@@ -362,13 +362,46 @@ impl DocBuffer {
             self.cursor_offset
         };
 
-        self.rope.insert(insert_at, text);
+        let mut text_to_insert = text.to_string();
+
+        if text == "\n" {
+            let line_idx = self.rope.char_to_line(insert_at);
+            let line_text = self.line_text(line_idx);
+            if let Some(list_item) = parse_list_item(&line_text) {
+                let line_start = self.rope.line_to_char(line_idx);
+                let marker_end = line_start + list_item.indent.chars().count() + list_item.marker.chars().count();
+                if insert_at >= marker_end {
+                    if list_item.is_empty {
+                        // Empty list item: clear the prefix on the current line and do NOT insert newline!
+                        let marker_start = line_start + list_item.indent.chars().count();
+                        let marker_len = list_item.marker.chars().count();
+                        let marker_text = self.rope.slice(marker_start..marker_start + marker_len).to_string();
+                        self.rope.remove(marker_start..marker_start + marker_len);
+                        ops.push(EditOp::Delete {
+                            char_offset: marker_start,
+                            text: marker_text,
+                        });
+                        
+                        self.cursor_offset = marker_start;
+                        self.selection_offsets = None;
+                        self.commit_transaction(ops, before_cursor, before_selection);
+                        return CommandResult::changed();
+                    } else {
+                        // Non-empty list item: auto-continue on next line!
+                        let next_prefix = format!("{}{}", list_item.indent, list_item.next_marker);
+                        text_to_insert = format!("\n{}", next_prefix);
+                    }
+                }
+            }
+        }
+
+        self.rope.insert(insert_at, &text_to_insert);
         ops.push(EditOp::Insert {
             char_offset: insert_at,
-            text: text.to_string(),
+            text: text_to_insert.clone(),
         });
 
-        self.cursor_offset = insert_at + text.chars().count();
+        self.cursor_offset = insert_at + text_to_insert.chars().count();
         self.selection_offsets = None;
         self.commit_transaction(ops, before_cursor, before_selection);
         CommandResult::changed()
@@ -546,19 +579,78 @@ impl DocBuffer {
 
         if let Some(selection) = self.selection_offsets {
             let (start, end) = selection.range();
-            self.rope.insert(end, suffix);
-            ops.push(EditOp::Insert {
-                char_offset: end,
-                text: suffix.to_string(),
-            });
-            self.rope.insert(start, prefix);
-            ops.push(EditOp::Insert {
-                char_offset: start,
-                text: prefix.to_string(),
-            });
-            self.cursor_offset = end + prefix.chars().count() + suffix.chars().count();
-            self.selection_offsets =
-                Selection::new(start + prefix.chars().count(), end + prefix.chars().count());
+            
+            let has_inner_formatting = (end - start >= prefix.chars().count() + suffix.chars().count())
+                && {
+                    let text = self.rope.slice(start..end).to_string();
+                    text.starts_with(prefix) && text.ends_with(suffix)
+                };
+
+            let has_outer_formatting = start >= prefix.chars().count()
+                && end + suffix.chars().count() <= self.rope.len_chars()
+                && {
+                    let before = self.rope.slice(start - prefix.chars().count()..start).to_string();
+                    let after = self.rope.slice(end..end + suffix.chars().count()).to_string();
+                    before == prefix && after == suffix
+                };
+
+            if has_inner_formatting {
+                // Delete suffix first (at end - suffix.chars().count()..end)
+                let suffix_start = end - suffix.chars().count();
+                let suffix_text = self.rope.slice(suffix_start..end).to_string();
+                self.rope.remove(suffix_start..end);
+                ops.push(EditOp::Delete {
+                    char_offset: suffix_start,
+                    text: suffix_text,
+                });
+                
+                // Delete prefix (at start..start + prefix.chars().count())
+                let prefix_end = start + prefix.chars().count();
+                let prefix_text = self.rope.slice(start..prefix_end).to_string();
+                self.rope.remove(start..prefix_end);
+                ops.push(EditOp::Delete {
+                    char_offset: start,
+                    text: prefix_text,
+                });
+                
+                self.cursor_offset = suffix_start - prefix.chars().count();
+                self.selection_offsets = Selection::new(start, suffix_start - prefix.chars().count());
+            } else if has_outer_formatting {
+                // Delete suffix (at end..end + suffix.chars().count())
+                let suffix_end = end + suffix.chars().count();
+                let suffix_text = self.rope.slice(end..suffix_end).to_string();
+                self.rope.remove(end..suffix_end);
+                ops.push(EditOp::Delete {
+                    char_offset: end,
+                    text: suffix_text,
+                });
+                
+                // Delete prefix (at start - prefix.chars().count()..start)
+                let prefix_start = start - prefix.chars().count();
+                let prefix_text = self.rope.slice(prefix_start..start).to_string();
+                self.rope.remove(prefix_start..start);
+                ops.push(EditOp::Delete {
+                    char_offset: prefix_start,
+                    text: prefix_text,
+                });
+                
+                self.cursor_offset = end - prefix.chars().count();
+                self.selection_offsets = Selection::new(start - prefix.chars().count(), end - prefix.chars().count());
+            } else {
+                self.rope.insert(end, suffix);
+                ops.push(EditOp::Insert {
+                    char_offset: end,
+                    text: suffix.to_string(),
+                });
+                self.rope.insert(start, prefix);
+                ops.push(EditOp::Insert {
+                    char_offset: start,
+                    text: prefix.to_string(),
+                });
+                self.cursor_offset = end + prefix.chars().count() + suffix.chars().count();
+                self.selection_offsets =
+                    Selection::new(start + prefix.chars().count(), end + prefix.chars().count());
+            }
         } else {
             let text = format!("{prefix}{placeholder}{suffix}");
             self.rope.insert(self.cursor_offset, &text);
@@ -637,6 +729,109 @@ impl DocBuffer {
             (start_line, start_col, end_line, end_col)
         });
     }
+}
+
+struct ListItem {
+    indent: String,
+    marker: String,
+    next_marker: String,
+    is_empty: bool,
+}
+
+fn parse_list_item(line_text: &str) -> Option<ListItem> {
+    // Find leading whitespace (indentation)
+    let mut indent_len = 0;
+    for c in line_text.chars() {
+        if c.is_whitespace() && c != '\n' && c != '\r' {
+            indent_len += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    let indent = line_text[..indent_len].to_string();
+    let rest = line_text[indent_len..].trim_end_matches(&['\r', '\n'][..]);
+    
+    // Check Checklist: e.g. "- [ ] ", "* [ ] ", "- [x] ", etc.
+    if (rest.starts_with("- [") || rest.starts_with("* [") || rest.starts_with("+ ["))
+        && rest.len() >= 5
+    {
+        let has_space_after = rest.len() >= 6 && &rest[5..6] == " ";
+        let bracket_end = rest.find(']');
+        if bracket_end == Some(4) {
+            let box_char = &rest[3..4];
+            if box_char == " " || box_char == "x" || box_char == "X" {
+                let marker_len = if has_space_after { 6 } else { 5 };
+                let marker = rest[..marker_len].to_string();
+                let content = &rest[marker_len..];
+                let is_empty = content.trim().is_empty();
+                let bullet = &rest[..1];
+                let next_marker = format!("{} [ ] ", bullet);
+                return Some(ListItem {
+                    indent,
+                    marker,
+                    next_marker,
+                    is_empty,
+                });
+            }
+        }
+    }
+    
+    // Check Unordered List: e.g. "- ", "* ", "+ " (or just "-", "*", "+" at the end of line)
+    if rest == "-" || rest == "*" || rest == "+" {
+        return Some(ListItem {
+            indent,
+            marker: rest.to_string(),
+            next_marker: format!("{} ", rest),
+            is_empty: true,
+        });
+    }
+    if rest.starts_with("- ") || rest.starts_with("* ") || rest.starts_with("+ ") {
+        let marker = rest[..2].to_string();
+        let content = &rest[2..];
+        let is_empty = content.trim().is_empty();
+        return Some(ListItem {
+            indent,
+            marker: marker.clone(),
+            next_marker: marker,
+            is_empty,
+        });
+    }
+    
+    // Check ordered list: e.g. "1. ", "123. " or just "1.", "123." at the end of line
+    let mut dot_idx = None;
+    for (idx, c) in rest.char_indices() {
+        if c.is_ascii_digit() {
+            continue;
+        } else if c == '.' {
+            dot_idx = Some(idx);
+            break;
+        } else {
+            break;
+        }
+    }
+    if let Some(dot) = dot_idx {
+        if dot > 0 {
+            let is_at_end = rest.len() == dot + 1;
+            let has_space_after = rest.len() >= dot + 2 && &rest[dot + 1..dot + 2] == " ";
+            if is_at_end || has_space_after {
+                let marker_len = if has_space_after { dot + 2 } else { dot + 1 };
+                let marker = rest[..marker_len].to_string();
+                let content = &rest[marker_len..];
+                let is_empty = content.trim().is_empty();
+                if let Ok(num) = rest[..dot].parse::<usize>() {
+                    let next_marker = format!("{}. ", num + 1);
+                    return Some(ListItem {
+                        indent,
+                        marker,
+                        next_marker,
+                        is_empty,
+                    });
+                }
+            }
+        }
+    }
+    
+    None
 }
 
 #[cfg(test)]
@@ -918,5 +1113,69 @@ mod tests {
         assert!(!buffer.undo());
         assert!(!buffer.redo());
         assert_eq!((buffer.cursor_line, buffer.cursor_col), (0, 0));
+    }
+
+    #[test]
+    fn format_toggle_bold_inner_and_outer() {
+        let mut buffer = DocBuffer::from_text("hello");
+        buffer.set_selection(0, 0, 0, 5);
+        buffer.execute(EditorCommand::FormatBold);
+        assert_eq!(buffer.text(), "**hello**");
+        
+        // Inner toggle (selection is the formatted text itself)
+        buffer.set_selection(0, 0, 0, 9);
+        buffer.execute(EditorCommand::FormatBold);
+        assert_eq!(buffer.text(), "hello");
+        
+        // Re-bold
+        buffer.set_selection(0, 0, 0, 5);
+        buffer.execute(EditorCommand::FormatBold);
+        assert_eq!(buffer.text(), "**hello**");
+        
+        // Outer toggle (selection is the inner unformatted text)
+        buffer.set_selection(0, 2, 0, 7);
+        buffer.execute(EditorCommand::FormatBold);
+        assert_eq!(buffer.text(), "hello");
+    }
+
+    #[test]
+    fn list_auto_continuation_unordered_and_checklist() {
+        // Unordered list continuation
+        let mut buffer = DocBuffer::from_text("- Buy milk");
+        buffer.set_cursor(0, 10);
+        buffer.insert_at_cursor("\n");
+        assert_eq!(buffer.text(), "- Buy milk\n- ");
+        assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 2));
+
+        // Unordered list empty line clearing
+        buffer.insert_at_cursor("\n");
+        assert_eq!(buffer.text(), "- Buy milk\n");
+        assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 0));
+
+        // Checklist continuation
+        let mut buffer2 = DocBuffer::from_text("* [ ] Code task");
+        buffer2.set_cursor(0, 15);
+        buffer2.insert_at_cursor("\n");
+        assert_eq!(buffer2.text(), "* [ ] Code task\n* [ ] ");
+        assert_eq!((buffer2.cursor_line, buffer2.cursor_col), (1, 6));
+
+        // Checklist empty line clearing
+        buffer2.insert_at_cursor("\n");
+        assert_eq!(buffer2.text(), "* [ ] Code task\n");
+        assert_eq!((buffer2.cursor_line, buffer2.cursor_col), (1, 0));
+    }
+
+    #[test]
+    fn list_auto_continuation_ordered() {
+        let mut buffer = DocBuffer::from_text("1. Step one");
+        buffer.set_cursor(0, 11);
+        buffer.insert_at_cursor("\n");
+        assert_eq!(buffer.text(), "1. Step one\n2. ");
+        assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 3));
+
+        // Ordered list empty line clearing
+        buffer.insert_at_cursor("\n");
+        assert_eq!(buffer.text(), "1. Step one\n");
+        assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 0));
     }
 }
