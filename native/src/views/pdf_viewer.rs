@@ -1,5 +1,5 @@
-use iced::widget::{Space, button, checkbox, column, container, row, text, text_input};
-use iced::{Alignment, Element, Length, Renderer, Theme};
+use iced::widget::{Space, button, checkbox, column, container, row, text, text_input, stack, Pin};
+use iced::{Alignment, Element, Length, Renderer, Theme, Color};
 
 use crate::messages::Message;
 use crate::theme;
@@ -33,6 +33,7 @@ pub fn search_bar<'a>(
     let search_input = text_input("Find in PDF", query)
         .id(iced::advanced::widget::Id::new(PDF_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
+        .on_submit(Message::SearchNext)
         .padding([8, 12])
         .size(14)
         .width(Length::Fill);
@@ -188,13 +189,14 @@ pub fn view_continuous<'a>(
         })
         .unwrap_or((612.0 * zoom, 792.0 * zoom));
 
+    let (pw, ph) = (placeholder_display_size.0 / zoom.max(0.01), placeholder_display_size.1 / zoom.max(0.01));
+
     for (i, page_opt) in pages.iter().enumerate() {
-        let display_size = placeholder_display_size;
-        let page_height = page_sizes
+        let (page_width, page_height) = page_sizes
             .get(i)
             .and_then(|size| *size)
-            .map(|(_, h)| h)
-            .unwrap_or_else(|| display_size.1 / zoom.max(0.01));
+            .unwrap_or((pw, ph));
+        let display_size = (page_width * zoom, page_height * zoom);
 
         if let Some(handle) = page_opt {
             let (w, h) = display_size;
@@ -218,28 +220,72 @@ pub fn view_continuous<'a>(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            page_list = page_list.push(
-                container(
-                    InteractivePdf::new(
-                        handle.clone(),
-                        w,
-                        h,
-                        move |x, y| Message::PdfLeftClicked(i as u16, x, y),
-                        move |x, y| Message::PdfRightClicked(i as u16, x, y),
-                    )
-                    .highlights(highlights, active_highlights),
+            let mut layers: Vec<Element<'a, Message, Theme, Renderer>> = vec![
+                InteractivePdf::new(
+                    handle.clone(),
+                    w,
+                    h,
+                    move |x, y| Message::PdfLeftClicked(i as u16, x, y),
+                    move |x, y| Message::PdfRightClicked(i as u16, x, y),
                 )
-                .width(Length::Fixed(w))
-                .height(Length::Fixed(h))
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(iced::Color::WHITE)),
-                    shadow: iced::Shadow {
-                        color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                        offset: iced::Vector::new(0.0, 4.0),
-                        blur_radius: 10.0,
-                    },
-                    ..Default::default()
-                }),
+                .into()
+            ];
+
+            for rect in &highlights {
+                layers.push(
+                    Pin::new(
+                        container(Space::new())
+                            .width(Length::Fixed((rect.width).max(3.0)))
+                            .height(Length::Fixed((rect.height).max(8.0)))
+                            .style(|_| container::Style {
+                                background: Some(iced::Background::Color(Color::from_rgba(1.0, 0.78, 0.18, 0.38))),
+                                border: iced::Border {
+                                    radius: 2.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            })
+                    )
+                    .x(rect.x)
+                    .y(rect.y)
+                    .into()
+                );
+            }
+
+            for rect in &active_highlights {
+                layers.push(
+                    Pin::new(
+                        container(Space::new())
+                            .width(Length::Fixed((rect.width).max(3.0)))
+                            .height(Length::Fixed((rect.height).max(8.0)))
+                            .style(|_| container::Style {
+                                background: Some(iced::Background::Color(Color::from_rgba(1.0, 0.62, 0.0, 0.68))),
+                                border: iced::Border {
+                                    radius: 2.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            })
+                    )
+                    .x(rect.x)
+                    .y(rect.y)
+                    .into()
+                );
+            }
+
+            page_list = page_list.push(
+                container(stack(layers))
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed(h))
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(iced::Color::WHITE)),
+                        shadow: iced::Shadow {
+                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                            offset: iced::Vector::new(0.0, 4.0),
+                            blur_radius: 10.0,
+                        },
+                        ..Default::default()
+                    }),
             );
         } else {
             page_list = page_list.push(

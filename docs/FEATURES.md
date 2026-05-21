@@ -59,7 +59,11 @@ Version 1.0 targets:
 
 Md-editor is 100% portable. All application settings, session state, and the SQLite database are stored in a file named `md_editor_settings.sqlite` located in the same directory as the executable.
 
-The app does not use system-wide configuration directories like `%APPDATA%` or `~/Library/Application Support`.
+The app does not write to system-wide configuration directories like `%APPDATA%` or `~/Library/Application Support` automatically.
+
+On Linux, optional desktop launcher integration (desktop entry shortcuts and multi-size application icons) can be explicitly installed or uninstalled using command-line arguments:
+- `--install` or `--install-desktop`: Installs the desktop entry and system icons.
+- `--uninstall` or `--uninstall-desktop`: Removes the desktop entry and system icons.
 
 PDF support uses a platform-specific PDFium dynamic library. The application looks for the library (e.g., `pdfium.dll`, `libpdfium.so`, or `libpdfium.dylib`) in a `resources` folder next to the executable or directly in the same directory as the executable.
 
