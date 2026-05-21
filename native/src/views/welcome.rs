@@ -11,7 +11,7 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
         .style(button::primary);
 
     let app_icon_handle =
-        iced::widget::image::Handle::from_bytes(include_bytes!("../../../app-icon.png").to_vec());
+        iced::widget::image::Handle::from_bytes(include_bytes!("../../../md-editor.png").to_vec());
     let logo = image(app_icon_handle).width(128).height(128);
 
     let content = column![

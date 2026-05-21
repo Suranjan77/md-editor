@@ -51,6 +51,7 @@ pub enum Message {
     PdfPageSizesLoaded(u64, String, Vec<(f32, f32)>),
     PdfRendered(u64, u16, image::DynamicImage),
     PdfRenderFailed(u64, u16),
+    PdfRenderSkipped(u64, u16),
     PdfScrolled {
         y: f32,
         viewport_height: f32,
@@ -97,7 +98,7 @@ pub enum Message {
     SplitViewDragStart,
     SplitViewDragging(f32),
     SplitViewDragEnd,
-    WindowResized(f32),
+    WindowResized(f32, f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
