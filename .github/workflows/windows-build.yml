@@ -1,0 +1,95 @@
+name: Build Windows Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  APP_NAME: md-editor
+
+jobs:
+  build-windows:
+    name: Build Windows x64 package
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        shell: pwsh
+        run: |
+          rustup update stable
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Build release executable
+        shell: pwsh
+        run: |
+          cargo build --release
+
+      - name: Download Pdfium Windows x64
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "pdfium-download" | Out-Null
+
+          Invoke-WebRequest `
+            -Uri "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-win-x64.tgz" `
+            -OutFile "pdfium-download/pdfium-win-x64.tgz"
+
+          tar -xzf "pdfium-download/pdfium-win-x64.tgz" -C "pdfium-download"
+
+          $pdfiumDll = Get-ChildItem -Path "pdfium-download" -Recurse -Filter "pdfium.dll" | Select-Object -First 1
+
+          if (-not $pdfiumDll) {
+            throw "pdfium.dll was not found in the downloaded Pdfium archive."
+          }
+
+          Write-Host "Found Pdfium DLL at: $($pdfiumDll.FullName)"
+
+      - name: Create release package layout
+        shell: pwsh
+        run: |
+          $packageDir = "release-package"
+          $resourceDir = "$packageDir/resource"
+          $exePath = "target/release/${{ env.APP_NAME }}.exe"
+
+          if (-not (Test-Path $exePath)) {
+            throw "Executable not found: $exePath. Check APP_NAME in the workflow."
+          }
+
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $resourceDir | Out-Null
+
+          Copy-Item $exePath "$packageDir/"
+          
+          $pdfiumDll = Get-ChildItem -Path "pdfium-download" -Recurse -Filter "pdfium.dll" | Select-Object -First 1
+          Copy-Item $pdfiumDll.FullName "$resourceDir/pdfium.dll"
+
+          Write-Host "Package layout:"
+          Get-ChildItem -Path $packageDir -Recurse
+
+      - name: Create zip archive
+        shell: pwsh
+        run: |
+          $zipName = "${{ env.APP_NAME }}-windows-x64.zip"
+
+          if (Test-Path $zipName) {
+            Remove-Item $zipName
+          }
+
+          Compress-Archive `
+            -Path "release-package/*" `
+            -DestinationPath $zipName `
+            -Force
+
+          Write-Host "Created archive: $zipName"
+
+      - name: Upload Windows zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-windows-x64
+          path: ${{ env.APP_NAME }}-windows-x64.zip
