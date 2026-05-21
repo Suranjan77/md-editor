@@ -211,6 +211,10 @@ pub fn view<'a>(
             .color(theme::TEXT_MUTED)
             .font(iced::Font::default()),
         Space::new().width(Length::Fill),
+        button(icons::view(Icon::FolderOpen, theme::TEXT_MUTED, 16.0))
+            .on_press(Message::OpenVaultDialog)
+            .padding(8)
+            .style(button::text),
         button(icons::view(Icon::FileText, theme::TEXT_MUTED, 16.0))
             .on_press(Message::CreateFileDialog)
             .padding(8)

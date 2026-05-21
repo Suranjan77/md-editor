@@ -64,14 +64,30 @@ The executable is created at:
 
 The PDFium library is copied into the same Cargo profile output directory during the build.
 
-## Portability
+## Portability & Linux Desktop Integration
 
-Md-editor is 100% portable. It stores all its configuration and the SQLite database in the same directory as the executable.
+Md-editor is 100% portable. By default, it runs completely isolated, storing all its configuration and the SQLite database in the same directory as the executable:
 
 - **Settings and State:** `md_editor_settings.sqlite` (located next to the executable).
 - **PDF Support:** The PDFium shared library (`pdfium.dll`, `libpdfium.so`, or `libpdfium.dylib`) should be placed in a `resources` folder next to the executable or in the same directory as the executable.
 
-The app does not use system-wide configuration directories like `%APPDATA%` or `~/Library/Application Support`.
+The app does not write to system-wide configuration directories like `%APPDATA%` or `~/Library/Application Support` automatically.
+
+### Optional Desktop Integration (Linux)
+
+While it is portable by default, you can explicitly integrate it with your Linux desktop launcher and icon theme using CLI parameters:
+
+- **Install Launcher & Icons:** Run the executable with `--install` or `--install-desktop`:
+  ```bash
+  ./md-editor --install
+  ```
+  This creates a launcher at `~/.local/share/applications/md-editor.desktop` with absolute paths, registers resized application icons at `~/.local/share/icons/hicolor/`, and runs `update-desktop-database`/`gtk-update-icon-cache`.
+
+- **Uninstall Launcher & Icons:** Run the executable with `--uninstall` or `--uninstall-desktop`:
+  ```bash
+  ./md-editor --uninstall
+  ```
+  This cleanly removes all the installed desktop shortcuts and icon copies from your `~/.local` directory.
 
 ## Technical Overview
 
