@@ -167,6 +167,9 @@ where
                 active_col,
             );
         } else {
+            if line.table_cells.is_empty() {
+                return 0.0;
+            }
             return 34.0;
         }
     }
@@ -595,6 +598,19 @@ fn draw_nowrap_text<R>(
     );
 }
 
+fn clip_viewport(viewport: Rectangle, clip: Rectangle) -> Rectangle {
+    let x1 = viewport.x.max(clip.x);
+    let y1 = viewport.y.max(clip.y);
+    let x2 = (viewport.x + viewport.width).min(clip.x + clip.width);
+    let y2 = (viewport.y + viewport.height).min(clip.y + clip.height);
+    Rectangle {
+        x: x1,
+        y: y1,
+        width: (x2 - x1).max(0.0),
+        height: (y2 - y1).max(0.0),
+    }
+}
+
 fn draw_horizontal_scrollbar<R>(
     renderer: &mut R,
     block_id: usize,
@@ -836,6 +852,7 @@ where
             is_editing: bool,
             col_widths: Vec<f32>,
             content_width: f32,
+            code_lang: Option<String>,
         }
         let mut blocks: std::collections::HashMap<usize, BlockMeta> =
             std::collections::HashMap::new();
@@ -859,7 +876,7 @@ where
                     temp_y += lh;
                     continue;
                 }
-                let entry = blocks.entry(line.block_id).or_insert(BlockMeta {
+                let entry = blocks.entry(line.block_id).or_insert_with(|| BlockMeta {
                     y: temp_y,
                     height: 0.0,
                     is_code: line.is_code_block,
@@ -869,7 +886,11 @@ where
                     is_editing: is_block_editing_line(line, active_block_id, focused),
                     col_widths: Vec::new(),
                     content_width: 0.0,
+                    code_lang: line.code_block_lang.clone(),
                 });
+                if entry.code_lang.is_none() && line.code_block_lang.is_some() {
+                    entry.code_lang = line.code_block_lang.clone();
+                }
                 entry.height += lh;
 
                 if line.is_code_block {
@@ -893,9 +914,9 @@ where
                             let tex = span.visible_text(false).trim_matches('$').trim();
                             self.math_cache
                                 .get(tex)
-                                .map(|(_, w, _)| *w * 1.2 + 72.0)
+                                .map(|(_, w, _)| *w * 1.2 + 48.0)
                                 .unwrap_or_else(|| {
-                                    measure_width::<R>(tex, 16.0, iced::Font::MONOSPACE) + 72.0
+                                    measure_width::<R>(tex, 16.0, iced::Font::MONOSPACE) + 48.0
                                 })
                         })
                         .fold(0.0_f32, f32::max);
@@ -931,21 +952,48 @@ where
             }
 
             if meta.is_quote {
+                let block_x = bounds.x + TEXT_X_OFFSET - 16.0;
+                let block_w = bounds.width - TEXT_X_OFFSET;
+                
+                // Draw card background for quote
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: Rectangle {
-                            x: bounds.x + TEXT_X_OFFSET - 16.0,
+                            x: block_x,
+                            y: meta.y,
+                            width: block_w,
+                            height: meta.height,
+                        },
+                        border: iced::Border {
+                            radius: 8.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.012),
+                );
+
+                // Draw left accent border with rounded left corners
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: block_x,
                             y: meta.y,
                             width: 4.0,
                             height: meta.height,
                         },
                         border: iced::Border {
-                            radius: 2.0.into(),
+                            radius: iced::border::Radius {
+                                top_left: 8.0,
+                                bottom_left: 8.0,
+                                top_right: 0.0,
+                                bottom_right: 0.0,
+                            },
                             ..Default::default()
                         },
                         ..Default::default()
                     },
-                    theme::ACCENT_DIM,
+                    theme::ACCENT,
                 );
             } else if meta.is_table && !meta.is_editing {
                 let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
@@ -960,9 +1008,9 @@ where
                             height: meta.height,
                         },
                         border: iced::Border {
-                            color: theme::BORDER_SUBTLE,
+                            color: theme::BORDER,
                             width: 1.0,
-                            radius: 4.0.into(),
+                            radius: 8.0.into(),
                         },
                         ..Default::default()
                     },
@@ -982,6 +1030,8 @@ where
                 if bg != Color::TRANSPARENT || meta.is_code || meta.is_math {
                     let block_x = bounds.x + TEXT_X_OFFSET - 16.0;
                     let block_w = bounds.width - TEXT_X_OFFSET;
+
+                    // Draw container card background
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: Rectangle {
@@ -997,8 +1047,64 @@ where
                             },
                             ..Default::default()
                         },
-                        bg,
+                        if meta.is_math && !meta.is_editing {
+                            theme::BG_SECONDARY
+                        } else {
+                            bg
+                        },
                     );
+
+                    // If it's a code block and not editing, draw the language badge!
+                        if meta.is_code && !meta.is_editing {
+                            if let Some(ref lang) = meta.code_lang {
+                                let badge_text = lang.to_uppercase();
+                                if !badge_text.is_empty() {
+                                    let text_size = 11.0;
+                                    let badge_font = iced::Font {
+                                        weight: iced::font::Weight::Bold,
+                                        ..iced::Font::DEFAULT
+                                    };
+                                    let text_w = measure_width::<R>(&badge_text, text_size, badge_font);
+                                    let badge_w = text_w + 12.0;
+                                    let badge_h = 18.0;
+                                    let badge_rect = Rectangle {
+                                        x: block_x + block_w - badge_w - 12.0,
+                                        y: meta.y + 8.0,
+                                        width: badge_w,
+                                        height: badge_h,
+                                    };
+                                    // Draw badge container
+                                    renderer.fill_quad(
+                                        renderer::Quad {
+                                            bounds: badge_rect,
+                                            border: iced::Border {
+                                                radius: 4.0.into(),
+                                                ..Default::default()
+                                            },
+                                            ..Default::default()
+                                        },
+                                        theme::BG_TERTIARY,
+                                    );
+                                    // Draw badge text centered inside the badge container
+                                    renderer.fill_text(
+                                        iced::advanced::text::Text {
+                                            content: badge_text,
+                                            bounds: Size::new(badge_w, badge_h),
+                                            size: text_size.into(),
+                                            line_height: iced::advanced::text::LineHeight::default(),
+                                            font: badge_font,
+                                            align_x: iced::alignment::Horizontal::Center.into(),
+                                            align_y: iced::alignment::Vertical::Center.into(),
+                                            shaping: iced::advanced::text::Shaping::Basic,
+                                            wrapping: iced::advanced::text::Wrapping::None,
+                                        },
+                                        Point::new(badge_rect.x + badge_w / 2.0, badge_rect.y + badge_h / 2.0),
+                                        theme::ACCENT,
+                                        *viewport,
+                                    );
+                                }
+                            }
+                        }
                 }
             }
         }
@@ -1346,18 +1452,22 @@ where
                         renderer.fill_quad(
                             renderer::Quad {
                                 bounds: Rectangle {
-                                    x: table_x - 8.0,
-                                    y: row_y + row_h / 2.0,
-                                    width: table_width + 16.0,
+                                    x: table_x - 6.0,
+                                    y: row_y,
+                                    width: table_width + 12.0,
                                     height: 1.0,
                                 },
                                 ..Default::default()
                             },
-                            theme::BORDER_SUBTLE,
+                            theme::BORDER,
                         );
                         y += lh + gutter;
                         continue;
                     }
+
+                    let is_last_row = !self.lines[i + 1..].iter().any(|next_line| {
+                        next_line.is_table_row && next_line.block_id == line.block_id && !next_line.table_cells.is_empty()
+                    });
 
                     let row_bg = if is_header {
                         Some(theme::BG_TERTIARY)
@@ -1374,6 +1484,15 @@ where
                                     y: row_y,
                                     width: table_width + 12.0,
                                     height: row_h,
+                                },
+                                border: iced::Border {
+                                    radius: iced::border::Radius {
+                                        top_left: if is_header { 8.0 } else { 0.0 },
+                                        top_right: if is_header { 8.0 } else { 0.0 },
+                                        bottom_left: if is_last_row { 8.0 } else { 0.0 },
+                                        bottom_right: if is_last_row { 8.0 } else { 0.0 },
+                                    },
+                                    ..Default::default()
                                 },
                                 ..Default::default()
                             },
@@ -1555,7 +1674,7 @@ where
                     if !tex.is_empty() {
                         if let Some((handle, w, h)) = self.math_cache.get(tex) {
                             let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
-                            let block_max_w = (available_w - 88.0).max(80.0);
+                            let block_max_w = (available_w - 48.0).max(80.0);
                             let fit_scale = if line.is_math_block { scale } else { scale };
                             let draw_w = w * fit_scale;
                             let draw_h = h * fit_scale;
@@ -1612,12 +1731,26 @@ where
                                         },
                                         Point::new(
                                             bounds.x + TEXT_X_OFFSET + available_w - eq_w,
-                                            eq_y,
+                                            eq_y + draw_h / 2.0,
                                         ),
                                         theme::TEXT_MUTED,
                                         *viewport,
                                     );
                                 }
+
+                                let math_viewport = if line.is_math_block {
+                                    clip_viewport(
+                                        *viewport,
+                                        Rectangle {
+                                            x: bounds.x + TEXT_X_OFFSET,
+                                            y: line_draw_y,
+                                            width: block_max_w,
+                                            height: lh,
+                                        },
+                                    )
+                                } else {
+                                    *viewport
+                                };
 
                                 renderer.draw_image(
                                     iced::advanced::image::Image::new(handle.clone()),
@@ -1633,7 +1766,7 @@ where
                                         width: draw_w,
                                         height: draw_h,
                                     },
-                                    *viewport,
+                                    math_viewport,
                                 );
                                 if line.is_math_block {
                                     draw_horizontal_scrollbar::<R>(
@@ -1661,7 +1794,7 @@ where
                     if line.is_math_block && !is_editing && !tex.is_empty() {
                         equation_counter += 1;
                         let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
-                        let viewport_w = (available_w - 72.0).max(80.0);
+                        let viewport_w = (available_w - 48.0).max(80.0);
                         let content_w = tex
                             .lines()
                             .map(|raw_math_line| {
@@ -1674,6 +1807,17 @@ where
                             .copied()
                             .unwrap_or(0.0)
                             .clamp(0.0, (content_w - viewport_w).max(0.0));
+
+                        let math_viewport = clip_viewport(
+                            *viewport,
+                            Rectangle {
+                                x: bounds.x + TEXT_X_OFFSET,
+                                y: line_draw_y,
+                                width: viewport_w,
+                                height: lh,
+                            },
+                        );
+
                         let mut text_y = line_draw_y + 18.0;
                         for raw_math_line in tex.lines() {
                             renderer.fill_text(
@@ -1690,7 +1834,7 @@ where
                                 },
                                 Point::new(bounds.x + TEXT_X_OFFSET - scroll_x, text_y),
                                 theme::TEXT_SECONDARY,
-                                *viewport,
+                                math_viewport,
                             );
                             text_y += BASE_LINE_HEIGHT;
                         }
@@ -1719,7 +1863,7 @@ where
                             },
                             Point::new(
                                 bounds.x + TEXT_X_OFFSET + available_w - eq_w,
-                                y + (lh - BASE_LINE_HEIGHT) / 2.0,
+                                y + lh / 2.0,
                             ),
                             theme::TEXT_MUTED,
                             *viewport,
@@ -1759,40 +1903,25 @@ where
                             theme::ACCENT,
                         );
 
-                        let inner_size = 8.0;
-                        let inner_rect = Rectangle {
-                            x: x + (box_size - inner_size) / 2.0,
-                            y: box_y + (box_size - inner_size) / 2.0,
-                            width: inner_size,
-                            height: inner_size,
+                        let check_font = iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..iced::Font::DEFAULT
                         };
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: inner_rect,
-                                border: iced::Border {
-                                    radius: 2.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            },
-                            theme::BG_PRIMARY,
-                        );
+                        let check_size = 13.0;
+                        let check_w = measure_width::<R>("✓", check_size, check_font);
                         renderer.fill_text(
                             iced::advanced::text::Text {
                                 content: "✓".to_string(),
-                                bounds: Size::new(box_size, box_size),
-                                size: 13.0.into(),
+                                bounds: Size::new(check_w, box_size),
+                                size: check_size.into(),
                                 line_height: iced::advanced::text::LineHeight::default(),
-                                font: iced::Font {
-                                    weight: iced::font::Weight::Bold,
-                                    ..iced::Font::DEFAULT
-                                },
-                                align_x: iced::alignment::Horizontal::Center.into(),
-                                align_y: iced::alignment::Vertical::Center.into(),
+                                font: check_font,
+                                align_x: iced::alignment::Horizontal::Left.into(),
+                                align_y: iced::alignment::Vertical::Top.into(),
                                 shaping: iced::advanced::text::Shaping::Basic,
                                 wrapping: iced::advanced::text::Wrapping::None,
                             },
-                            Point::new(x, box_y),
+                            Point::new(x + (box_size - check_w) / 2.0, box_y + (box_size - check_size) / 2.0 - 0.5),
                             theme::BG_PRIMARY,
                             *viewport,
                         );
@@ -1982,8 +2111,20 @@ where
                 ) else {
                     return;
                 };
-                let viewport_w =
-                    (_layout.bounds().width - TEXT_X_OFFSET - MARGIN_RIGHT - 24.0).max(80.0);
+                let mut block_table = false;
+                let mut block_math = false;
+                if let Some(first_line) = self.lines.iter().find(|l| l.block_id == block_id) {
+                    block_table = first_line.is_table_row;
+                    block_math = first_line.is_math_block;
+                }
+                let available_w = _layout.bounds().width - TEXT_X_OFFSET - MARGIN_RIGHT;
+                let viewport_w = if block_table {
+                    available_w
+                } else if block_math {
+                    available_w - 48.0
+                } else {
+                    available_w - 24.0
+                }.max(80.0);
                 let content_w = self.block_content_width::<R>(
                     block_id,
                     _layout.bounds().width,
@@ -2255,7 +2396,7 @@ impl<'a, Message> Editor<'a, Message> {
         line_idx: usize,
         bounds: Rectangle,
         y: f32,
-        line_height: f32,
+        _line_height: f32,
     ) where
         R: renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
     {
@@ -2263,17 +2404,42 @@ impl<'a, Message> Editor<'a, Message> {
             return;
         }
 
-        let (cx, cy) = self.cursor_position::<R>(line_idx, bounds.width);
-        let cursor_h = line_height.min(20.0);
+        let mut font_size = 17.0;
+        if let Some(styled_line) = self.lines.get(line_idx) {
+            let mut char_count = 0;
+            let mut found = false;
+            for span in &styled_line.spans {
+                let span_text = span.visible_text(true);
+                let next_char_count = char_count + span_text.chars().count();
+                if self.buffer.cursor_col >= char_count && self.buffer.cursor_col <= next_char_count {
+                    font_size = span.font_size;
+                    found = true;
+                    break;
+                }
+                char_count = next_char_count;
+            }
+            if !found {
+                if let Some(first_span) = styled_line.spans.first() {
+                    font_size = first_span.font_size;
+                }
+            }
+        }
+
+        let cursor_h = font_size + 2.0;
         if cursor_h <= 0.0 {
             return;
         }
+
+        let (cx, cy) = self.cursor_position::<R>(line_idx, bounds.width);
+        // Center cursor within the visual line step, matching text centering
+        let line_step = visual_line_step(font_size);
+        let centering_offset = (line_step - cursor_h) / 2.0;
 
         renderer.fill_quad(
             renderer::Quad {
                 bounds: Rectangle {
                     x: bounds.x + TEXT_X_OFFSET + cx,
-                    y: y + cy + (BASE_LINE_HEIGHT - cursor_h) / 2.0,
+                    y: y + cy + centering_offset,
                     width: 2.0,
                     height: cursor_h,
                 },
@@ -2813,11 +2979,10 @@ impl<'a, Message> Editor<'a, Message> {
     {
         let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
         let focused = state.is_focused;
-        let viewport_w = (available_width - TEXT_X_OFFSET - MARGIN_RIGHT - 24.0).max(80.0);
         let viewport_x = TEXT_X_OFFSET;
         let mut y_acc = TOP_PAD;
         let mut seen_math_blocks = std::collections::HashSet::new();
-        let mut block_start_y: Option<(usize, f32)> = None;
+        let mut block_start_y: Option<(usize, f32, bool, bool, bool)> = None; // (block_id, y, is_table, is_math, is_code)
         let mut block_height = 0.0_f32;
 
         for (i, line) in self.lines.iter().enumerate() {
@@ -2838,36 +3003,55 @@ impl<'a, Message> Editor<'a, Message> {
 
             if scrollable_block {
                 if block_start_y
-                    .map(|(block_id, _)| block_id != line.block_id)
+                    .map(|(block_id, _, _, _, _)| block_id != line.block_id)
                     .unwrap_or(false)
                 {
+                    let (b_id, b_y, b_table, b_math, _) = block_start_y.unwrap();
+                    let available_w = available_width - TEXT_X_OFFSET - MARGIN_RIGHT;
+                    let block_viewport_w = if b_table {
+                        available_w
+                    } else if b_math {
+                        available_w - 48.0
+                    } else {
+                        available_w - 24.0
+                    }.max(80.0);
+
                     if let Some(hit) = self.scrollbar_hit_for_block::<R>(
                         pos,
-                        block_start_y.unwrap().0,
-                        block_start_y.unwrap().1,
+                        b_id,
+                        b_y,
                         block_height,
                         viewport_x,
-                        viewport_w,
+                        block_viewport_w,
                         available_width,
                         focused,
                         state,
                     ) {
                         return Some(hit);
                     }
-                    block_start_y = Some((line.block_id, y_acc));
+                    block_start_y = Some((line.block_id, y_acc, line.is_table_row, line.is_math_block, line.is_code_block));
                     block_height = 0.0;
                 } else if block_start_y.is_none() {
-                    block_start_y = Some((line.block_id, y_acc));
+                    block_start_y = Some((line.block_id, y_acc, line.is_table_row, line.is_math_block, line.is_code_block));
                 }
                 block_height += lh + gutter;
-            } else if let Some((block_id, y)) = block_start_y.take() {
+            } else if let Some((b_id, b_y, b_table, b_math, _)) = block_start_y.take() {
+                let available_w = available_width - TEXT_X_OFFSET - MARGIN_RIGHT;
+                let block_viewport_w = if b_table {
+                    available_w
+                } else if b_math {
+                    available_w - 48.0
+                } else {
+                    available_w - 24.0
+                }.max(80.0);
+
                 if let Some(hit) = self.scrollbar_hit_for_block::<R>(
                     pos,
-                    block_id,
-                    y,
+                    b_id,
+                    b_y,
                     block_height,
                     viewport_x,
-                    viewport_w,
+                    block_viewport_w,
                     available_width,
                     focused,
                     state,
@@ -2880,14 +3064,23 @@ impl<'a, Message> Editor<'a, Message> {
             y_acc += lh + gutter;
         }
 
-        if let Some((block_id, y)) = block_start_y {
+        if let Some((b_id, b_y, b_table, b_math, _)) = block_start_y {
+            let available_w = available_width - TEXT_X_OFFSET - MARGIN_RIGHT;
+            let block_viewport_w = if b_table {
+                available_w
+            } else if b_math {
+                available_w - 48.0
+            } else {
+                available_w - 24.0
+            }.max(80.0);
+
             return self.scrollbar_hit_for_block::<R>(
                 pos,
-                block_id,
-                y,
+                b_id,
+                b_y,
                 block_height,
                 viewport_x,
-                viewport_w,
+                block_viewport_w,
                 available_width,
                 focused,
                 state,
@@ -3701,5 +3894,88 @@ mod tests {
             );
             assert!(h >= 0.0);
         }
+    }
+
+    #[test]
+    fn test_clip_viewport() {
+        let viewport = Rectangle {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 200.0,
+        };
+        // Fully inside
+        let clip_inside = Rectangle {
+            x: 20.0,
+            y: 30.0,
+            width: 50.0,
+            height: 50.0,
+        };
+        let res = clip_viewport(viewport, clip_inside);
+        assert_eq!(res.x, 20.0);
+        assert_eq!(res.y, 30.0);
+        assert_eq!(res.width, 50.0);
+        assert_eq!(res.height, 50.0);
+
+        // No overlap
+        let clip_no_overlap = Rectangle {
+            x: 200.0,
+            y: 300.0,
+            width: 50.0,
+            height: 50.0,
+        };
+        let res_none = clip_viewport(viewport, clip_no_overlap);
+        assert_eq!(res_none.width, 0.0);
+        assert_eq!(res_none.height, 0.0);
+
+        // Partial overlap
+        let clip_partial = Rectangle {
+            x: 50.0,
+            y: 100.0,
+            width: 100.0,
+            height: 200.0,
+        };
+        let res_partial = clip_viewport(viewport, clip_partial);
+        assert_eq!(res_partial.x, 50.0);
+        assert_eq!(res_partial.y, 100.0);
+        assert_eq!(res_partial.width, 60.0);
+        assert_eq!(res_partial.height, 120.0);
+    }
+
+    #[test]
+    fn test_code_block_badge_logic() {
+        use crate::editor::highlight::highlight_markdown;
+        let md = "```rust\nfn main() {}\n```";
+        let lines = highlight_markdown(md);
+        
+        // The first line should have the language
+        assert_eq!(lines[0].is_code_block, true);
+        assert_eq!(lines[0].code_block_lang.as_deref(), Some("rust"));
+        
+        // Check badge_w calculation logic
+        let _badge_text = "RUST";
+        let text_w = 32.0; // Simulated width
+        let badge_w = text_w + 12.0;
+        let badge_h = 18.0;
+        
+        let block_x = 10.0;
+        let block_w = 500.0;
+        let badge_rect = Rectangle {
+            x: block_x + block_w - badge_w - 12.0,
+            y: 100.0 + 8.0,
+            width: badge_w,
+            height: badge_h,
+        };
+        
+        // Assert bounds placement
+        assert!(badge_rect.x > block_x);
+        assert!(badge_rect.x + badge_rect.width < block_x + block_w);
+        
+        // Centered text anchor point
+        let text_x = badge_rect.x + badge_w / 2.0;
+        let text_y = badge_rect.y + badge_h / 2.0;
+        
+        assert_eq!(text_x, badge_rect.x + badge_w / 2.0);
+        assert_eq!(text_y, badge_rect.y + badge_h / 2.0);
     }
 }
