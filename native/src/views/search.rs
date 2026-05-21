@@ -21,6 +21,7 @@ pub fn file_bar<'a>(
     let search_input = text_input("Find in current file", query)
         .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
+        .on_submit(Message::SearchNext)
         .padding([8, 12])
         .size(14)
         .width(Length::FillPortion(3));
