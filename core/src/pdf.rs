@@ -60,6 +60,7 @@ impl PdfState {
 pub struct PdfRenderer {
     sender: std::sync::mpsc::Sender<PdfCommand>,
     priority_sender: std::sync::mpsc::Sender<PriorityRender>,
+    visible_range: std::sync::Arc<std::sync::Mutex<Option<(u16, u16, String)>>>,
 }
 
 struct PriorityRender {
@@ -110,6 +111,8 @@ impl PdfRenderer {
     pub fn new() -> Result<Self, String> {
         let (sender, receiver) = std::sync::mpsc::channel();
         let (priority_sender, priority_receiver) = std::sync::mpsc::channel::<PriorityRender>();
+        let visible_range: std::sync::Arc<std::sync::Mutex<Option<(u16, u16, String)>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let visible_range_clone = visible_range.clone();
 
         std::thread::spawn(move || {
             let pdfium = match bind_pdfium() {
@@ -200,14 +203,36 @@ impl PdfRenderer {
                         let _ = resp.send(res);
                     }
                     PdfCommand::RenderPage(path, index, scale, resp) => {
-                        let res = render_page_from_cache(
-                            &pdfium,
-                            &mut current_document,
-                            &path,
-                            index,
-                            scale,
-                        );
-                        let _ = resp.send(res);
+                        let skipped = {
+                            if let Ok(range_lock) = visible_range_clone.lock() {
+                                if let Some((start, end, ref range_path)) = *range_lock {
+                                    if range_path == &path {
+                                        let buffered_start = start.saturating_sub(2);
+                                        let buffered_end = end.saturating_add(2);
+                                        index < buffered_start || index > buffered_end
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        };
+
+                        if skipped {
+                            let _ = resp.send(Err("Skipped".to_string()));
+                        } else {
+                            let res = render_page_from_cache(
+                                &pdfium,
+                                &mut current_document,
+                                &path,
+                                index,
+                                scale,
+                            );
+                            let _ = resp.send(res);
+                        }
                     }
                     PdfCommand::GetToc(path, resp) => {
                         let res = (|| {
@@ -533,7 +558,14 @@ impl PdfRenderer {
         Ok(Self {
             sender,
             priority_sender,
+            visible_range,
         })
+    }
+
+    pub fn set_visible_range(&self, start: u16, end: u16, path: &str) {
+        if let Ok(mut range_lock) = self.visible_range.lock() {
+            *range_lock = Some((start, end, path.to_string()));
+        }
     }
 
     pub fn render_page(
@@ -773,14 +805,14 @@ mod tests {
     fn test_pdf_search() {
         let _guard = TEST_LOCK.lock().unwrap();
         let pdfium = bind_pdfium().unwrap();
-        let doc = pdfium.load_pdf_from_file("/home/sur/.local/share/sioyek/tutorial.pdf", None).unwrap();
+        let doc = pdfium.load_pdf_from_file("../dummy.pdf", None).unwrap();
         let page = doc.pages().get(0).unwrap();
         let text_page = page.text().unwrap();
         let page_height = page.height().value;
         let page_width = page.width().value;
         println!("Page size: {} x {}", page_width, page_height);
         let options = PdfSearchOptions::new();
-        let search = text_page.search("sioyek", &options).unwrap();
+        let search = text_page.search("dummy", &options).unwrap();
         let mut count = 0;
         for segments in search.iter(PdfSearchDirection::SearchForward) {
             count += 1;
@@ -802,24 +834,22 @@ mod tests {
     fn test_pdf_renderer_search() {
         let _guard = TEST_LOCK.lock().unwrap();
         let renderer = PdfRenderer::new().unwrap();
-        let path = "/home/sur/.local/share/sioyek/tutorial.pdf";
+        let path = "../dummy.pdf";
         
         // Test non-regex search
-        let results = renderer.search_text(path, "sioyek", false, false).unwrap();
+        let results = renderer.search_text(path, "dummy", false, false).unwrap();
         println!("Non-regex results: {results:?}");
-        assert!(!results.is_empty(), "Non-regex search for 'sioyek' should return matches");
+        assert!(!results.is_empty(), "Non-regex search for 'dummy' should return matches");
         for match_info in &results {
-            assert!(match_info.context.to_lowercase().contains("sioyek"));
+            assert!(match_info.context.to_lowercase().contains("dummy"));
             assert!(!match_info.rects.is_empty());
         }
 
         // Test regex search
-        let regex_results = renderer.search_text(path, "sio[a-z]+k", true, false).unwrap();
+        let regex_results = renderer.search_text(path, "dum[a-z]+y", true, false).unwrap();
         println!("Regex results: {regex_results:?}");
-        assert!(!regex_results.is_empty(), "Regex search for 'sio[a-z]+k' should return matches");
+        assert!(!regex_results.is_empty(), "Regex search for 'dum[a-z]+y' should return matches");
         assert_eq!(results.len(), regex_results.len(), "Regex and non-regex search count should match");
     }
-
-
 }
 

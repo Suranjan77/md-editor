@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=MD Editor
+Comment=Native desktop markdown workspace
+Exec=md-editor %F
+Icon=md-editor
+Terminal=false
+Type=Application
+MimeType=text/markdown;application/pdf;
+Categories=Office;WordProcessor;Utility;
+StartupWMClass=md-editor

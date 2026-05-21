@@ -205,7 +205,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(String::new()),
-                color: theme::SUCCESS,
+                color: theme::WARNING,
                 is_syntax: true,
                 is_math: true,
                 font_size: 16.0,
@@ -226,7 +226,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(inline_math.to_string()),
-                    color: theme::TEXT_PRIMARY,
+                    color: theme::WARNING,
                     italic: true,
                     font_size: 16.0,
                     is_math: true,
@@ -246,7 +246,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(String::new()),
-                color: theme::SUCCESS,
+                color: theme::WARNING,
                 is_syntax: true,
                 is_math: true,
                 font_size: 16.0,
@@ -275,7 +275,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: None,
-                color: theme::TEXT_PRIMARY,
+                color: theme::WARNING,
                 italic: true,
                 font_size: 16.0,
                 is_math: true,
@@ -426,7 +426,7 @@ fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: display.to_string(),
             display_text: None,
-            color: theme::TEXT_PRIMARY,
+            color: theme::ACCENT,
             bold: true,
             font_size: heading_size(level),
             is_heading: true,
@@ -501,7 +501,13 @@ fn highlight_line(line: &str) -> StyledLine {
             is_checked,
             ..StyledSpan::plain("")
         });
+        let start_idx = sl.spans.len();
         parse_inline_spans(&line[checkbox_end..], &mut sl.spans);
+        if is_checked {
+            for span in &mut sl.spans[start_idx..] {
+                span.color = theme::TEXT_MUTED;
+            }
+        }
         return sl;
     }
 
@@ -687,7 +693,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 let math_raw: String = chars[i..=end].iter().collect();
                 spans.push(StyledSpan {
                     text: math_raw,
-                    color: theme::TEXT_PRIMARY,
+                    color: theme::WARNING,
                     italic: true,
                     font_size: 16.0,
                     is_math: true,

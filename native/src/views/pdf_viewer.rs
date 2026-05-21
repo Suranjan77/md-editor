@@ -1,5 +1,5 @@
-use iced::widget::{Space, button, checkbox, column, container, row, text, text_input};
-use iced::{Alignment, Element, Length, Renderer, Theme};
+use iced::widget::{Space, button, checkbox, column, container, row, text, text_input, stack, Pin};
+use iced::{Alignment, Element, Length, Renderer, Theme, Color};
 
 use crate::messages::Message;
 use crate::theme;
@@ -12,19 +12,14 @@ pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
 
 fn search_rect_to_view_rect(
     rect: &md_editor_core::pdf::PdfRect,
-    page_width: f32,
     page_height: f32,
-    placeholder_width: f32,
-    placeholder_height: f32,
     zoom: f32,
 ) -> md_editor_core::pdf::PdfRect {
-    let scale_x = placeholder_width / page_width.max(0.001);
-    let scale_y = placeholder_height / page_height.max(0.001);
     md_editor_core::pdf::PdfRect {
-        x: rect.x * scale_x * zoom,
-        y: (page_height - rect.y - rect.height) * scale_y * zoom,
-        width: rect.width * scale_x * zoom,
-        height: rect.height * scale_y * zoom,
+        x: rect.x * zoom,
+        y: (page_height - rect.y - rect.height) * zoom,
+        width: rect.width * zoom,
+        height: rect.height * zoom,
     }
 }
 
@@ -38,6 +33,7 @@ pub fn search_bar<'a>(
     let search_input = text_input("Find in PDF", query)
         .id(iced::advanced::widget::Id::new(PDF_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
+        .on_submit(Message::SearchNext)
         .padding([8, 12])
         .size(14)
         .width(Length::Fill);
@@ -196,11 +192,11 @@ pub fn view_continuous<'a>(
     let (pw, ph) = (placeholder_display_size.0 / zoom.max(0.01), placeholder_display_size.1 / zoom.max(0.01));
 
     for (i, page_opt) in pages.iter().enumerate() {
-        let display_size = placeholder_display_size;
         let (page_width, page_height) = page_sizes
             .get(i)
             .and_then(|size| *size)
             .unwrap_or((pw, ph));
+        let display_size = (page_width * zoom, page_height * zoom);
 
         if let Some(handle) = page_opt {
             let (w, h) = display_size;
@@ -211,7 +207,7 @@ pub fn view_continuous<'a>(
                     result.page_index == i as u16 && Some(*idx) != active_search_index
                 })
                 .flat_map(|(_, result)| result.rects.iter())
-                .map(|rect| search_rect_to_view_rect(rect, page_width, page_height, pw, ph, zoom))
+                .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
                 .collect::<Vec<_>>();
             let active_highlights = active_search_index
                 .and_then(|idx| search_matches.get(idx))
@@ -220,32 +216,76 @@ pub fn view_continuous<'a>(
                     result
                         .rects
                         .iter()
-                        .map(|rect| search_rect_to_view_rect(rect, page_width, page_height, pw, ph, zoom))
+                        .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            page_list = page_list.push(
-                container(
-                    InteractivePdf::new(
-                        handle.clone(),
-                        w,
-                        h,
-                        move |x, y| Message::PdfLeftClicked(i as u16, x, y),
-                        move |x, y| Message::PdfRightClicked(i as u16, x, y),
-                    )
-                    .highlights(highlights, active_highlights),
+            let mut layers: Vec<Element<'a, Message, Theme, Renderer>> = vec![
+                InteractivePdf::new(
+                    handle.clone(),
+                    w,
+                    h,
+                    move |x, y| Message::PdfLeftClicked(i as u16, x, y),
+                    move |x, y| Message::PdfRightClicked(i as u16, x, y),
                 )
-                .width(Length::Fixed(w))
-                .height(Length::Fixed(h))
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(iced::Color::WHITE)),
-                    shadow: iced::Shadow {
-                        color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                        offset: iced::Vector::new(0.0, 4.0),
-                        blur_radius: 10.0,
-                    },
-                    ..Default::default()
-                }),
+                .into()
+            ];
+
+            for rect in &highlights {
+                layers.push(
+                    Pin::new(
+                        container(Space::new())
+                            .width(Length::Fixed((rect.width).max(3.0)))
+                            .height(Length::Fixed((rect.height).max(8.0)))
+                            .style(|_| container::Style {
+                                background: Some(iced::Background::Color(Color::from_rgba(1.0, 0.78, 0.18, 0.38))),
+                                border: iced::Border {
+                                    radius: 2.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            })
+                    )
+                    .x(rect.x)
+                    .y(rect.y)
+                    .into()
+                );
+            }
+
+            for rect in &active_highlights {
+                layers.push(
+                    Pin::new(
+                        container(Space::new())
+                            .width(Length::Fixed((rect.width).max(3.0)))
+                            .height(Length::Fixed((rect.height).max(8.0)))
+                            .style(|_| container::Style {
+                                background: Some(iced::Background::Color(Color::from_rgba(1.0, 0.62, 0.0, 0.68))),
+                                border: iced::Border {
+                                    radius: 2.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            })
+                    )
+                    .x(rect.x)
+                    .y(rect.y)
+                    .into()
+                );
+            }
+
+            page_list = page_list.push(
+                container(stack(layers))
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed(h))
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(iced::Color::WHITE)),
+                        shadow: iced::Shadow {
+                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                            offset: iced::Vector::new(0.0, 4.0),
+                            blur_radius: 10.0,
+                        },
+                        ..Default::default()
+                    }),
             );
         } else {
             page_list = page_list.push(
@@ -288,7 +328,7 @@ mod tests {
             height: 14.0,
         };
 
-        let converted = search_rect_to_view_rect(&rect, 612.0, 792.0, 612.0, 792.0, 2.0);
+        let converted = search_rect_to_view_rect(&rect, 792.0, 2.0);
 
         assert_eq!(converted.x, 144.0);
         assert_eq!(converted.y, 156.0);
