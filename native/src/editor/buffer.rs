@@ -369,19 +369,24 @@ impl DocBuffer {
             let line_text = self.line_text(line_idx);
             if let Some(list_item) = parse_list_item(&line_text) {
                 let line_start = self.rope.line_to_char(line_idx);
-                let marker_end = line_start + list_item.indent.chars().count() + list_item.marker.chars().count();
+                let marker_end = line_start
+                    + list_item.indent.chars().count()
+                    + list_item.marker.chars().count();
                 if insert_at >= marker_end {
                     if list_item.is_empty {
                         // Empty list item: clear the prefix on the current line and do NOT insert newline!
                         let marker_start = line_start + list_item.indent.chars().count();
                         let marker_len = list_item.marker.chars().count();
-                        let marker_text = self.rope.slice(marker_start..marker_start + marker_len).to_string();
+                        let marker_text = self
+                            .rope
+                            .slice(marker_start..marker_start + marker_len)
+                            .to_string();
                         self.rope.remove(marker_start..marker_start + marker_len);
                         ops.push(EditOp::Delete {
                             char_offset: marker_start,
                             text: marker_text,
                         });
-                        
+
                         self.cursor_offset = marker_start;
                         self.selection_offsets = None;
                         self.commit_transaction(ops, before_cursor, before_selection);
@@ -579,9 +584,9 @@ impl DocBuffer {
 
         if let Some(selection) = self.selection_offsets {
             let (start, end) = selection.range();
-            
-            let has_inner_formatting = (end - start >= prefix.chars().count() + suffix.chars().count())
-                && {
+
+            let has_inner_formatting =
+                (end - start >= prefix.chars().count() + suffix.chars().count()) && {
                     let text = self.rope.slice(start..end).to_string();
                     text.starts_with(prefix) && text.ends_with(suffix)
                 };
@@ -589,8 +594,14 @@ impl DocBuffer {
             let has_outer_formatting = start >= prefix.chars().count()
                 && end + suffix.chars().count() <= self.rope.len_chars()
                 && {
-                    let before = self.rope.slice(start - prefix.chars().count()..start).to_string();
-                    let after = self.rope.slice(end..end + suffix.chars().count()).to_string();
+                    let before = self
+                        .rope
+                        .slice(start - prefix.chars().count()..start)
+                        .to_string();
+                    let after = self
+                        .rope
+                        .slice(end..end + suffix.chars().count())
+                        .to_string();
                     before == prefix && after == suffix
                 };
 
@@ -603,7 +614,7 @@ impl DocBuffer {
                     char_offset: suffix_start,
                     text: suffix_text,
                 });
-                
+
                 // Delete prefix (at start..start + prefix.chars().count())
                 let prefix_end = start + prefix.chars().count();
                 let prefix_text = self.rope.slice(start..prefix_end).to_string();
@@ -612,9 +623,10 @@ impl DocBuffer {
                     char_offset: start,
                     text: prefix_text,
                 });
-                
+
                 self.cursor_offset = suffix_start - prefix.chars().count();
-                self.selection_offsets = Selection::new(start, suffix_start - prefix.chars().count());
+                self.selection_offsets =
+                    Selection::new(start, suffix_start - prefix.chars().count());
             } else if has_outer_formatting {
                 // Delete suffix (at end..end + suffix.chars().count())
                 let suffix_end = end + suffix.chars().count();
@@ -624,7 +636,7 @@ impl DocBuffer {
                     char_offset: end,
                     text: suffix_text,
                 });
-                
+
                 // Delete prefix (at start - prefix.chars().count()..start)
                 let prefix_start = start - prefix.chars().count();
                 let prefix_text = self.rope.slice(prefix_start..start).to_string();
@@ -633,9 +645,10 @@ impl DocBuffer {
                     char_offset: prefix_start,
                     text: prefix_text,
                 });
-                
+
                 self.cursor_offset = end - prefix.chars().count();
-                self.selection_offsets = Selection::new(start - prefix.chars().count(), end - prefix.chars().count());
+                self.selection_offsets =
+                    Selection::new(start - prefix.chars().count(), end - prefix.chars().count());
             } else {
                 self.rope.insert(end, suffix);
                 ops.push(EditOp::Insert {
@@ -750,7 +763,7 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
     }
     let indent = line_text[..indent_len].to_string();
     let rest = line_text[indent_len..].trim_end_matches(&['\r', '\n'][..]);
-    
+
     // Check Checklist: e.g. "- [ ] ", "* [ ] ", "- [x] ", etc.
     if (rest.starts_with("- [") || rest.starts_with("* [") || rest.starts_with("+ ["))
         && rest.len() >= 5
@@ -775,7 +788,7 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
             }
         }
     }
-    
+
     // Check Unordered List: e.g. "- ", "* ", "+ " (or just "-", "*", "+" at the end of line)
     if rest == "-" || rest == "*" || rest == "+" {
         return Some(ListItem {
@@ -796,7 +809,7 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
             is_empty,
         });
     }
-    
+
     // Check ordered list: e.g. "1. ", "123. " or just "1.", "123." at the end of line
     let mut dot_idx = None;
     for (idx, c) in rest.char_indices() {
@@ -830,7 +843,7 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
             }
         }
     }
-    
+
     None
 }
 
@@ -1121,17 +1134,17 @@ mod tests {
         buffer.set_selection(0, 0, 0, 5);
         buffer.execute(EditorCommand::FormatBold);
         assert_eq!(buffer.text(), "**hello**");
-        
+
         // Inner toggle (selection is the formatted text itself)
         buffer.set_selection(0, 0, 0, 9);
         buffer.execute(EditorCommand::FormatBold);
         assert_eq!(buffer.text(), "hello");
-        
+
         // Re-bold
         buffer.set_selection(0, 0, 0, 5);
         buffer.execute(EditorCommand::FormatBold);
         assert_eq!(buffer.text(), "**hello**");
-        
+
         // Outer toggle (selection is the inner unformatted text)
         buffer.set_selection(0, 2, 0, 7);
         buffer.execute(EditorCommand::FormatBold);

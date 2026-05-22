@@ -934,7 +934,10 @@ fn extract_display_name(target: &str) -> String {
     }
     let (path_part, anchor_part) = if let Some(idx) = target.find('#') {
         let anchor = &target[idx + 1..];
-        if anchor.chars().any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')')) {
+        if anchor
+            .chars()
+            .any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')'))
+        {
             (target, None)
         } else {
             (&target[..idx], Some(anchor))
@@ -970,7 +973,6 @@ fn extract_display_name(target: &str) -> String {
         clean_name.to_string()
     }
 }
-
 
 fn highlight_code_spans(
     line: &str,
@@ -1373,16 +1375,34 @@ mod tests {
         let lines = highlight_markdown(test_markdown);
         assert_eq!(lines.len(), 1);
         let line = &lines[0];
-        let link1 = line.spans.iter().find(|span| span.is_link && span.link_target.as_deref() == Some("../folder/file_name")).unwrap();
+        let link1 = line
+            .spans
+            .iter()
+            .find(|span| span.is_link && span.link_target.as_deref() == Some("../folder/file_name"))
+            .unwrap();
         assert_eq!(link1.display_text.as_deref(), Some("file_name"));
 
-        let link2 = line.spans.iter().find(|span| span.is_link && span.link_target.as_deref() == Some("../other/file_name")).unwrap();
+        let link2 = line
+            .spans
+            .iter()
+            .find(|span| span.is_link && span.link_target.as_deref() == Some("../other/file_name"))
+            .unwrap();
         assert_eq!(link2.display_text.as_deref(), Some("My Alias"));
 
-        let link3 = line.spans.iter().find(|span| span.is_link && span.link_target.as_deref() == Some("#equation-1")).unwrap();
+        let link3 = line
+            .spans
+            .iter()
+            .find(|span| span.is_link && span.link_target.as_deref() == Some("#equation-1"))
+            .unwrap();
         assert_eq!(link3.display_text.as_deref(), Some("#equation-1"));
 
-        let link4 = line.spans.iter().find(|span| span.is_link && span.link_target.as_deref() == Some("../nested/complex!@#%^&*()")).unwrap();
+        let link4 = line
+            .spans
+            .iter()
+            .find(|span| {
+                span.is_link && span.link_target.as_deref() == Some("../nested/complex!@#%^&*()")
+            })
+            .unwrap();
         assert_eq!(link4.display_text.as_deref(), Some("complex!@#%^&*()"));
     }
 }

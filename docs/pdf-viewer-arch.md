@@ -87,8 +87,12 @@ Important fields:
   unloaded blank placeholders.
 - `pdf_scroll_y`: current scroll offset.
 - `pdf_page_links`: loaded links per page.
+- `pdf_page_text`: lazily loaded text geometry for visible pages.
+- `pdf_annotations`: sidecar study highlights and notes grouped by page.
+- `pdf_selection`: active PDF text selection in page text-index coordinates.
 - `pdf_pending_pages`: pages with image render requests in flight.
 - `pdf_pending_links`: pages with link extraction requests in flight.
+- `pdf_pending_text`: pages with text extraction requests in flight.
 - `pdf_render_generation`: invalidates stale async results after document,
   zoom, or navigation changes.
 - `pdf_programmatic_scroll`: suppresses normal viewport scheduling for the
@@ -167,7 +171,13 @@ if page image is missing && page is not pending {
 }
 ```
 
-`render_pdf_page()` renders only the page image. It does not extract links.
+`render_pdf_page()` renders only the page image. The requested PDFium render
+scale is supersampled relative to the displayed zoom so narrow split-view pages
+remain sharp when drawn into the page bounds. The cached `pdf_dimensions` remain
+logical display dimensions, not raw bitmap dimensions, so link hit-testing and
+placeholder fallback math continue to use PDF-space/display-space geometry.
+
+`render_pdf_page()` does not extract links.
 If the renderer is missing or rendering fails, it returns `PdfRenderFailed`
 instead of hiding the issue behind `Message::Tick`.
 
@@ -177,9 +187,30 @@ When `PdfRendered` succeeds:
 2. Ignore stale generations.
 3. Store the image handle in `pdf_pages`.
 4. Store `(width, height)` in `pdf_dimensions`.
-5. Schedule low-priority link extraction for that page.
+5. Schedule low-priority link extraction and text extraction for that page.
 6. If the page is the active navigation target, compute the scroll offset and
    issue the programmatic scroll.
+
+## Text Selection And Study Overlays
+
+PDF text extraction is loaded lazily through `get_page_text(path, page)`.
+Extraction runs on the same single PDFium worker as rendering, so it is
+deduplicated with `pdf_pending_text` and bounded by the visible page range.
+Text is stored in PDF-space coordinates and survives zoom changes.
+
+`native/src/views/interactive_pdf.rs` draws the page bitmap plus overlay layers
+inside one custom widget:
+
+1. Persistent sidecar annotation highlights.
+2. Active PDF search highlights.
+3. Active text-selection highlight.
+
+This avoids creating one iced widget per annotation rectangle and keeps large
+study documents responsive.
+
+PDF highlights, quick notes, and linked markdown notes are stored in SQLite
+sidecar tables. Original PDFs are not modified. Linked markdown notes use the
+normal vault files and can participate in the existing markdown/backlink graph.
 
 ## Page Size Metadata
 
