@@ -29,6 +29,9 @@ pub enum Message {
     NameModalSubmit(String),
     NameModalSubmitCurrent,
     NameModalCancel,
+    PdfLinkNoteFolderSelected(String),
+    PdfLinkNoteFileSelected(String),
+    PdfLinkNotePickerSearchChanged(String),
     DeleteFile(String),
     DeleteFileDialog(String),
 
@@ -68,6 +71,23 @@ pub enum Message {
     PdfScrollBy(f32),
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
     ClosePdfLinkPreview,
+    // ── PDF Study Updates ──────────────────────────────────────────
+    PdfDocumentIdComputed(Option<(String, String, u64, Option<i64>)>),
+    PdfPageTextLoaded(u64, u16, Result<md_editor_core::pdf::PdfPageText, String>),
+    PdfSelectionChanged(u16, usize, usize),
+    PdfSelectionCleared,
+    PdfSelectionFinished(u16, usize, usize),
+    PdfCopySelection,
+    PdfCreateHighlight(md_editor_core::pdf::PdfAnnotationColor),
+    PdfDeleteHighlight(String),
+    PdfAddQuickNote(String, String),
+    PdfLinkNote(String, String),
+    PdfOpenLinkedNote(String),
+    PdfAnnotationFocused {
+        document_path: String,
+        annotation_id: String,
+        page: u16,
+    },
 
     // ── Tracker ──────────────────────────────────────────────────
     TrackerToggle,
