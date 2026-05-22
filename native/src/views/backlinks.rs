@@ -5,7 +5,10 @@ use crate::messages::Message;
 use crate::theme;
 
 /// Render the backlinks panel.
-pub fn view<'a>(backlinks: &'a [String], visible: bool) -> Element<'a, Message, Theme, Renderer> {
+pub fn view<'a>(
+    backlinks: &'a [md_editor_core::types::BacklinkItem],
+    visible: bool,
+) -> Element<'a, Message, Theme, Renderer> {
     if !visible {
         return container(text("")).width(Length::Fixed(0.0)).into();
     }
@@ -23,13 +26,39 @@ pub fn view<'a>(backlinks: &'a [String], visible: bool) -> Element<'a, Message, 
     let list: Column<'_, Message, Theme, Renderer> =
         backlinks
             .iter()
-            .fold(Column::new().spacing(4), |col, link| {
-                let btn: iced::widget::Button<'_, Message, Theme, Renderer> =
-                    button(text(link).size(12).color(theme::TEXT_SECONDARY))
-                        .on_press(Message::SidebarFileClicked(link.clone()))
-                        .padding([6, 10])
-                        .width(Length::Fill)
-                        .style(button::text);
+            .fold(Column::new().spacing(6), |col, item| {
+                let msg = match &item.source {
+                    md_editor_core::types::BacklinkTarget::MarkdownFile { path } => {
+                        Message::SidebarFileClicked(path.clone())
+                    }
+                    md_editor_core::types::BacklinkTarget::PdfDocument { path } => {
+                        Message::SidebarFileClicked(path.clone())
+                    }
+                    md_editor_core::types::BacklinkTarget::PdfAnnotation {
+                        document_path,
+                        annotation_id,
+                        page,
+                    } => Message::PdfAnnotationFocused {
+                        document_path: document_path.clone(),
+                        annotation_id: annotation_id.clone(),
+                        page: *page,
+                    },
+                };
+
+                let mut btn_content =
+                    column![text(&item.label).size(12).color(theme::TEXT_SECONDARY)].spacing(2);
+
+                if let Some(ctx) = &item.context {
+                    if !ctx.trim().is_empty() {
+                        btn_content = btn_content.push(text(ctx).size(10).color(theme::TEXT_MUTED));
+                    }
+                }
+
+                let btn: iced::widget::Button<'_, Message, Theme, Renderer> = button(btn_content)
+                    .on_press(msg)
+                    .padding([6, 10])
+                    .width(Length::Fill)
+                    .style(button::text);
 
                 col.push(btn)
             });
