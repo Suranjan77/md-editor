@@ -87,6 +87,12 @@ impl AppState {
             [],
         )
         .expect("Failed to create pdf_documents table");
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS pdf_documents_vault_relative_path
+             ON pdf_documents(vault_relative_path)",
+            [],
+        )
+        .expect("Failed to create pdf document path index");
 
         db.execute(
             "CREATE TABLE IF NOT EXISTS pdf_annotations (
@@ -114,6 +120,20 @@ impl AppState {
             [],
         )
         .expect("Failed to create pdf_annotations index");
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_linked_note
+             ON pdf_annotations(document_id, linked_note_path)
+             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
+            [],
+        )
+        .expect("Failed to create pdf annotation linked-note index");
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS pdf_annotations_linked_note
+             ON pdf_annotations(linked_note_path)
+             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
+            [],
+        )
+        .expect("Failed to create pdf annotation note backlink index");
 
         AppState {
             vault_root: Mutex::new(None),
@@ -190,6 +210,12 @@ impl AppState {
             [],
         )
         .expect("Failed to create pdf_documents table");
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS pdf_documents_vault_relative_path
+             ON pdf_documents(vault_relative_path)",
+            [],
+        )
+        .expect("Failed to create pdf document path index");
 
         db.execute(
             "CREATE TABLE IF NOT EXISTS pdf_annotations (
@@ -217,6 +243,20 @@ impl AppState {
             [],
         )
         .expect("Failed to create pdf_annotations index");
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_linked_note
+             ON pdf_annotations(document_id, linked_note_path)
+             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
+            [],
+        )
+        .expect("Failed to create pdf annotation linked-note index");
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS pdf_annotations_linked_note
+             ON pdf_annotations(linked_note_path)
+             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
+            [],
+        )
+        .expect("Failed to create pdf annotation note backlink index");
 
         AppState {
             vault_root: Mutex::new(None),

@@ -22,10 +22,13 @@ Markdown files open in the main editor. The editor supports:
 
 ### Search and Navigate
 
-The app supports two search modes:
+The app supports three search modes:
 
 - Per-file search, opened with `Ctrl+F`, highlights matches in the active markdown file and navigates between them.
 - Global search, opened from the toolbar, searches the indexed vault and PDF text.
+- PDF search, opened with `Ctrl+F` when the PDF pane is active, highlights
+  matches directly on the rendered PDF pages and scrolls next/previous matches
+  into view.
 
 Additional navigation tools include:
 
@@ -46,13 +49,20 @@ PDF files open in an integrated viewer with:
 - Text selection and clipboard copy for PDFs with embedded text.
 - Sidecar PDF highlights, quick notes, and linked markdown notes without
   modifying the original PDF.
+- Linked-note creation through a searchable in-app vault picker. Users can
+  select an existing markdown note to append a highlight section, or select a
+  folder and create a new note path.
+- Clean linked-note markdown with one section per highlight, quoted selected
+  text, a navigable `pdf://` link back to the exact page/highlight, and a notes
+  area for follow-up writing.
 - Mixed backlinks between markdown notes, PDFs, and PDF highlights.
 - Higher-resolution page rendering so fit-to-width pages remain sharp in split
   view.
 
-In split view, per-file search is owned by the markdown pane by default so
-`Ctrl+F` does not open competing search bars in both panes. PDF search remains
-available when the PDF is the active full view.
+In split view, `Ctrl+F` follows the active pane. If the markdown pane is active,
+it opens markdown search. If the PDF pane is active through scrolling, clicking,
+or selecting text, it opens PDF search. This keeps markdown and PDF search
+isolated while still supporting both panes.
 
 Image files open in a dedicated image preview.
 
@@ -96,8 +106,10 @@ Important native modules:
 
 - `app`: application state, update loop, routing, and layout composition.
 - `editor`: markdown buffer, syntax highlighting, height/layout caching, and custom renderer.
+- `pdf_notes`: linked PDF note path normalization and markdown section formatting.
 - `search`: reusable in-file search matching used by search navigation and editor highlights.
-- `views`: sidebar, toolbar, search panel, PDF viewer, tracker, backlinks, modals, icons, and related UI.
+- `views`: sidebar, toolbar, search panel, PDF viewer, linked-note picker,
+  tracker, backlinks, modals, icons, and related UI.
 
 Editor performance notes:
 
@@ -105,3 +117,12 @@ Editor performance notes:
 - `editor/layout_cache.rs` stores line measurement cache keys and invalidates cached heights when text, edit state, layout width, or media/math dimensions change.
 - `editor/renderer.rs` draws only visible lines and visible block backgrounds.
 - `app.rs` debounces syntax highlighting for large documents and ignores stale background highlight results with generation ids.
+- PDF overlays are drawn as a small number of canvas layers rather than one UI
+  widget per search match or annotation rectangle, keeping large annotated PDFs
+  responsive.
+
+## Release Readiness
+
+See [LAUNCH.md](LAUNCH.md) for the release checklist, smoke-test flow, PDFium
+packaging notes, Linux desktop integration commands, and current known
+constraints.

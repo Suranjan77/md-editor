@@ -12,6 +12,10 @@ use std::time::{Duration, Instant};
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
 use crate::messages::{Message, Shortcut, TrackerTab};
+use crate::pdf_notes::{
+    append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path,
+    note_filename_from_path, slug_fragment,
+};
 use crate::search::DocumentMatch;
 use crate::theme as app_theme;
 use crate::views;
@@ -24,6 +28,12 @@ const PDF_RENDER_SUPERSAMPLE: f32 = 2.0;
 const LARGE_DOC_LINE_THRESHOLD: usize = 1_000;
 const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivePanel {
+    Markdown,
+    Pdf,
+}
 
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
     path.ends_with(".png")
@@ -157,6 +167,7 @@ pub struct MdEditor {
     // Modal state
     active_modal: Option<views::modals::ModalType>,
     modal_input: String,
+    link_note_picker_search: String,
 
     // Command palette
     command_palette_visible: bool,
@@ -176,6 +187,7 @@ pub struct MdEditor {
     search_match_index: Option<usize>,
     search_results: Vec<md_editor_core::types::SearchResult>,
     pdf_search_results: Vec<md_editor_core::pdf::PdfSearchMatch>,
+    pdf_search_indices_by_page: std::collections::HashMap<u16, Vec<usize>>,
     pdf_search_error: Option<String>,
 
     // TOC
@@ -191,6 +203,7 @@ pub struct MdEditor {
     split_view_active: bool,
     split_ratio: f32,
     is_resizing_split: bool,
+    active_panel: ActivePanel,
     window_width: f32,
     window_height: f32,
     editor_scroll_y: f32,
@@ -271,6 +284,7 @@ impl MdEditor {
             tracker_manual_notes: String::new(),
             active_modal: None,
             modal_input: String::new(),
+            link_note_picker_search: String::new(),
             command_palette_visible: false,
             command_palette_query: String::new(),
             commands: views::command_palette::get_commands(),
@@ -284,6 +298,7 @@ impl MdEditor {
             search_match_index: None,
             search_results: Vec::new(),
             pdf_search_results: Vec::new(),
+            pdf_search_indices_by_page: std::collections::HashMap::new(),
             pdf_search_error: None,
             toc_visible: false,
             toc_entries: Vec::new(),
@@ -297,6 +312,7 @@ impl MdEditor {
             split_view_active: false,
             split_ratio: 0.5,
             is_resizing_split: false,
+            active_panel: ActivePanel::Markdown,
             window_width: 1200.0,
             window_height: 800.0,
             editor_scroll_y: 0.0,
@@ -660,11 +676,13 @@ impl MdEditor {
             Message::CreateFileDialog => {
                 self.active_modal = Some(views::modals::ModalType::CreateFile);
                 self.modal_input.clear();
+                self.link_note_picker_search.clear();
                 Task::none()
             }
             Message::CreateFolderDialog => {
                 self.active_modal = Some(views::modals::ModalType::CreateFolder);
                 self.modal_input.clear();
+                self.link_note_picker_search.clear();
                 Task::none()
             }
             Message::DeleteFileDialog(path) => {
@@ -675,9 +693,42 @@ impl MdEditor {
                 self.modal_input = input;
                 Task::none()
             }
+            Message::PdfLinkNoteFolderSelected(folder) => {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
+                    let filename = note_filename_from_path(&self.modal_input);
+                    self.modal_input = if folder.is_empty() {
+                        filename
+                    } else {
+                        format!("{}/{}", folder.trim_end_matches('/'), filename)
+                    };
+                }
+                Task::none()
+            }
+            Message::PdfLinkNoteFileSelected(path) => {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
+                    self.modal_input = normalize_note_path(&path);
+                }
+                Task::none()
+            }
+            Message::PdfLinkNotePickerSearchChanged(query) => {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
+                    self.link_note_picker_search = query;
+                }
+                Task::none()
+            }
             Message::NameModalCancel => {
                 self.active_modal = None;
                 self.modal_input.clear();
+                self.link_note_picker_search.clear();
                 Task::none()
             }
             Message::NameModalSubmitCurrent => {
@@ -686,6 +737,7 @@ impl MdEditor {
                     Some(views::modals::ModalType::CreateFile)
                         | Some(views::modals::ModalType::CreateFolder)
                         | Some(views::modals::ModalType::QuickNote(_))
+                        | Some(views::modals::ModalType::LinkNote(_))
                 ) {
                     Task::done(Message::NameModalSubmit(self.modal_input.clone()))
                 } else {
@@ -696,7 +748,14 @@ impl MdEditor {
                 if let Some(views::modals::ModalType::QuickNote(id)) = self.active_modal.clone() {
                     self.active_modal = None;
                     self.modal_input.clear();
+                    self.link_note_picker_search.clear();
                     return Task::done(Message::PdfAddQuickNote(id, input));
+                }
+                if let Some(views::modals::ModalType::LinkNote(id)) = self.active_modal.clone() {
+                    self.active_modal = None;
+                    self.modal_input.clear();
+                    self.link_note_picker_search.clear();
+                    return Task::done(Message::PdfLinkNote(id, input));
                 }
 
                 let name = input.trim();
@@ -728,6 +787,7 @@ impl MdEditor {
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         self.active_modal = None;
                         self.modal_input.clear();
+                        self.link_note_picker_search.clear();
                         self.toast = Some("Created".to_string());
                     }
                     Err(err) => self.toast = Some(err),
@@ -750,6 +810,7 @@ impl MdEditor {
                             self.pdf_dimensions.clear();
                         }
                         self.active_modal = None;
+                        self.link_note_picker_search.clear();
                         self.toast = Some("Deleted".to_string());
                     }
                     Err(err) => self.toast = Some(err),
@@ -787,6 +848,7 @@ impl MdEditor {
                 viewport_width,
                 viewport_height,
             } => {
+                self.active_panel = ActivePanel::Markdown;
                 self.editor_scroll_y = y;
                 self.editor_viewport_width = viewport_width;
                 self.editor_viewport_height = viewport_height;
@@ -1069,6 +1131,7 @@ impl MdEditor {
                 }
             }
             Message::PdfScrolled { y, viewport_height } => {
+                self.active_panel = ActivePanel::Pdf;
                 self.pdf_scroll_y = y;
                 let new_page = self.pdf_page_at_scroll(y + viewport_height * 0.33);
                 if self.pdf_programmatic_scroll {
@@ -1092,6 +1155,7 @@ impl MdEditor {
                 }
             }
             Message::PdfLeftClicked(page_idx, x, y, modifiers) => {
+                self.active_panel = ActivePanel::Pdf;
                 if let Some(link) = self.pdf_link_at(page_idx, x, y) {
                     if let Some(dest_page) = link.dest_page {
                         self.pdf_current_page =
@@ -1133,6 +1197,7 @@ impl MdEditor {
                 }
             }
             Message::PdfRightClicked(page_idx, x, y) => {
+                self.active_panel = ActivePanel::Pdf;
                 let mut target_ann = None;
                 if x < 0.0 || y < 0.0 {
                     if let Some(ref ann_id) = self.focused_annotation_id {
@@ -1449,6 +1514,7 @@ impl MdEditor {
                     self.search_pdf()
                 } else {
                     self.pdf_search_results.clear();
+                    self.pdf_search_indices_by_page.clear();
                     Task::none()
                 }
             }
@@ -1511,6 +1577,7 @@ impl MdEditor {
             Message::PdfSearchResult(Ok(results)) => {
                 self.pdf_search_error = None;
                 self.pdf_search_results = results;
+                self.rebuild_pdf_search_page_index();
                 if self
                     .search_match_index
                     .is_some_and(|index| index >= self.pdf_search_results.len())
@@ -1529,12 +1596,14 @@ impl MdEditor {
             }
             Message::PdfSearchResult(Err(err)) => {
                 self.pdf_search_results.clear();
+                self.pdf_search_indices_by_page.clear();
                 self.pdf_search_error = Some(err);
                 Task::none()
             }
             Message::PdfSearchResultClicked(page) => {
                 self.search_visible = false;
                 self.file_search_visible = true;
+                self.active_panel = ActivePanel::Pdf;
                 self.search_match_index = self
                     .pdf_search_results
                     .iter()
@@ -1548,8 +1617,11 @@ impl MdEditor {
             }
             Message::PdfScrollBy(delta) => {
                 if self.active_pdf_path.is_none()
-                    || !self.showing_pdf
-                    || (self.split_view_active && self.active_path.is_some())
+                    || (!self.showing_pdf
+                        && !(self.split_view_active && self.active_path.is_some()))
+                    || (self.split_view_active
+                        && self.active_path.is_some()
+                        && self.active_panel != ActivePanel::Pdf)
                     || self.search_visible
                     || self.file_search_visible
                     || self.active_modal.is_some()
@@ -1621,6 +1693,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfSelectionChanged(page, anchor, focus) => {
+                self.active_panel = ActivePanel::Pdf;
                 self.pdf_selection = Some(views::interactive_pdf::PdfSelection {
                     page_index: page,
                     anchor_idx: anchor,
@@ -1633,6 +1706,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfSelectionFinished(page, anchor, focus) => {
+                self.active_panel = ActivePanel::Pdf;
                 self.pdf_selection = Some(views::interactive_pdf::PdfSelection {
                     page_index: page,
                     anchor_idx: anchor,
@@ -1641,10 +1715,13 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfCopySelection => {
+                if !self.pdf_copy_shortcut_is_active() {
+                    return Task::none();
+                }
                 if let Some(sel) = &self.pdf_selection {
                     if let Some(page_text) = self.pdf_page_text.get(&sel.page_index) {
                         let start = sel.anchor_idx.min(sel.focus_idx);
-                        let end = sel.anchor_idx.max(sel.focus_idx);
+                        let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
                         let selected = text_by_char_range(&page_text.text, start, end);
                         if !selected.is_empty() {
                             return iced::clipboard::write(selected);
@@ -1657,7 +1734,7 @@ impl MdEditor {
                 if let (Some(sel), Some(doc_id)) = (&self.pdf_selection, &self.pdf_document_id) {
                     if let Some(page_text) = self.pdf_page_text.get(&sel.page_index) {
                         let start = sel.anchor_idx.min(sel.focus_idx);
-                        let end = sel.anchor_idx.max(sel.focus_idx);
+                        let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
 
                         let mut selected_chars = Vec::new();
                         for c in &page_text.chars {
@@ -1773,46 +1850,24 @@ impl MdEditor {
                 }
                 if let Some(mut ann) = annotation {
                     if note_path.is_empty() {
-                        if let Some(ref pdf_path) = self.active_pdf_path {
-                            let pdf_filename = std::path::Path::new(pdf_path)
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("document");
-                            let mut clean_pdf_name = String::new();
-                            for c in pdf_filename.chars() {
-                                if c.is_alphanumeric() {
-                                    clean_pdf_name.push(c.to_ascii_lowercase());
-                                } else if c.is_whitespace() || c == '-' || c == '_' {
-                                    if !clean_pdf_name.ends_with('-') {
-                                        clean_pdf_name.push('-');
-                                    }
-                                }
-                            }
-                            let clean_pdf_name = clean_pdf_name.trim_matches('-');
-                            note_path = format!(
-                                "{}-note-{}.md",
-                                clean_pdf_name,
-                                &annotation_id[..8.min(annotation_id.len())]
-                            );
+                        self.modal_input = self.default_pdf_note_path(&ann);
+                        self.link_note_picker_search.clear();
+                        self.active_modal = Some(views::modals::ModalType::LinkNote(annotation_id));
+                        return Task::none();
+                    }
 
-                            let content = format!(
-                                "---\nsource_pdf: {}\npdf_annotation: {}\npdf_page: {}\n---\n\n# Note for annotation {}\n\n> {}\n",
-                                pdf_path,
-                                annotation_id,
-                                ann.page_index + 1,
-                                &annotation_id[..8.min(annotation_id.len())],
-                                ann.selected_text
-                            );
+                    note_path = normalize_note_path(&note_path);
+                    if let Some(ref pdf_path) = self.active_pdf_path {
+                        let content = self.linked_pdf_note_file_content(&note_path, pdf_path, &ann);
 
-                            if let Err(e) =
-                                md_editor_core::vault::save_file(&self.state, &note_path, &content)
-                            {
-                                self.toast = Some(format!("Failed to create linked note: {}", e));
-                                return Task::none();
-                            }
-                        } else {
+                        if let Err(e) =
+                            md_editor_core::vault::save_file(&self.state, &note_path, &content)
+                        {
+                            self.toast = Some(format!("Failed to create linked note: {}", e));
                             return Task::none();
                         }
+                    } else {
+                        return Task::none();
                     }
 
                     ann.linked_note_path = Some(note_path.clone());
@@ -1841,7 +1896,12 @@ impl MdEditor {
             }
             Message::PdfOpenLinkedNote(note_path) => {
                 self.split_view_active = true;
-                self.open_file(&note_path)
+                let open_task = self.open_file_extended(&note_path, false);
+                if self.pdf_fit_to_width {
+                    Task::batch(vec![open_task, Task::done(Message::PdfFitToWidth)])
+                } else {
+                    Task::batch(vec![open_task, self.restore_scroll_positions()])
+                }
             }
             Message::PdfAnnotationFocused {
                 document_path,
@@ -1888,6 +1948,7 @@ impl MdEditor {
                         } else if self.active_modal.is_some() {
                             self.active_modal = None;
                             self.modal_input.clear();
+                            self.link_note_picker_search.clear();
                         } else if self.tracker_visible {
                             self.tracker_visible = false;
                         } else if self.file_search_visible {
@@ -1914,11 +1975,28 @@ impl MdEditor {
                         if self.split_view_active && self.active_path.is_some() {
                             self.file_search_visible = true;
                             self.search_visible = false;
-                            self.pdf_search_results.clear();
-                            Task::batch(vec![
-                                focus_file_search_input(),
-                                self.restore_scroll_positions(),
-                            ])
+                            if self.active_panel == ActivePanel::Pdf
+                                && self.active_pdf_path.is_some()
+                            {
+                                if !self.search_query.trim().is_empty() {
+                                    return Task::batch(vec![
+                                        self.search_pdf(),
+                                        focus_pdf_search_input(),
+                                        self.restore_scroll_positions(),
+                                    ]);
+                                }
+                                Task::batch(vec![
+                                    focus_pdf_search_input(),
+                                    self.restore_scroll_positions(),
+                                ])
+                            } else {
+                                self.pdf_search_results.clear();
+                                self.pdf_search_indices_by_page.clear();
+                                Task::batch(vec![
+                                    focus_file_search_input(),
+                                    self.restore_scroll_positions(),
+                                ])
+                            }
                         } else if self.active_pdf_path.is_some() && self.showing_pdf {
                             self.file_search_visible = true;
                             self.search_visible = false;
@@ -2153,11 +2231,12 @@ impl MdEditor {
                     &self.pdf_dimensions,
                     &self.pdf_page_sizes,
                     self.pdf_placeholder_page_size,
-                    if pdf_search_active || self.search_visible {
+                    if pdf_search_active || self.search_visible || self.file_search_visible {
                         &self.pdf_search_results
                     } else {
                         &[]
                     },
+                    &self.pdf_search_indices_by_page,
                     self.search_match_index,
                     &self.pdf_page_text,
                     &self.pdf_annotations,
@@ -2343,7 +2422,12 @@ impl MdEditor {
         }
 
         if let Some(modal_type) = &self.active_modal {
-            layers.push(views::modals::view(modal_type, &self.modal_input));
+            layers.push(views::modals::view(
+                modal_type,
+                &self.modal_input,
+                &self.link_note_picker_search,
+                &self.vault_entries,
+            ));
         }
 
         if self.tracker_visible {
@@ -2475,6 +2559,7 @@ impl MdEditor {
                 self.active_image_path = None;
                 self.active_image = None;
                 self.showing_pdf = false;
+                self.active_panel = ActivePanel::Markdown;
                 self.toc_entries = views::toc::get_toc(&content);
                 let highlight_task = self.refresh_highlighting_for_current_buffer(true);
                 self.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
@@ -2504,6 +2589,7 @@ impl MdEditor {
         self.active_image_path = None;
         self.active_image = None;
         self.showing_pdf = true;
+        self.active_panel = ActivePanel::Pdf;
         self.pdf_current_page = 0;
         self.pdf_fit_to_width = true;
         self.pdf_pages = Vec::new();
@@ -2513,6 +2599,9 @@ impl MdEditor {
         self.pdf_pending_pages.clear();
         self.pdf_pending_links.clear();
         self.pdf_page_links.clear();
+        self.pdf_search_results.clear();
+        self.pdf_search_indices_by_page.clear();
+        self.pdf_search_error = None;
         self.pdf_programmatic_scroll = false;
         self.pdf_toc_target_page = None;
         self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
@@ -2601,6 +2690,7 @@ impl MdEditor {
                 self.active_path = None;
                 self.active_pdf_path = None;
                 self.showing_pdf = false;
+                self.active_panel = ActivePanel::Markdown;
                 self.toc_entries.clear();
                 self.backlinks.clear();
             }
@@ -2976,6 +3066,37 @@ impl MdEditor {
         ))
     }
 
+    fn default_pdf_note_path(&self, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
+        let pdf_filename = self
+            .active_pdf_path
+            .as_deref()
+            .and_then(|pdf_path| std::path::Path::new(pdf_path).file_stem())
+            .and_then(|s| s.to_str())
+            .unwrap_or("document");
+        let clean_pdf_name = slug_fragment(pdf_filename);
+        format!(
+            "pdf-notes/{}-p{}-{}.md",
+            clean_pdf_name,
+            ann.page_index + 1,
+            &ann.id[..8.min(ann.id.len())]
+        )
+    }
+
+    fn linked_pdf_note_file_content(
+        &self,
+        note_path: &str,
+        pdf_path: &str,
+        ann: &md_editor_core::pdf::PdfAnnotation,
+    ) -> String {
+        match md_editor_core::vault::open_file(&self.state, note_path)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+        {
+            Some(existing) => append_linked_pdf_note_section(&existing, pdf_path, ann),
+            None => new_linked_pdf_note_content(note_path, pdf_path, ann),
+        }
+    }
+
     fn highlight_all(&mut self) -> Task<Message> {
         self.refresh_highlighting_for_current_buffer(false)
     }
@@ -3049,6 +3170,16 @@ impl MdEditor {
             .collect()
     }
 
+    fn rebuild_pdf_search_page_index(&mut self) {
+        self.pdf_search_indices_by_page.clear();
+        for (idx, result) in self.pdf_search_results.iter().enumerate() {
+            self.pdf_search_indices_by_page
+                .entry(result.page_index)
+                .or_default()
+                .push(idx);
+        }
+    }
+
     fn navigate_file_search(&mut self, forward: bool) -> Task<Message> {
         let matches = self.current_document_matches();
         if matches.is_empty() {
@@ -3102,22 +3233,35 @@ impl MdEditor {
             .min(self.pdf_total_pages.saturating_sub(1));
         self.pdf_current_page = target_page;
         self.pdf_programmatic_scroll = true;
-        self.pdf_toc_target_page = Some(target_page);
+        self.pdf_toc_target_page = None;
 
         let scroll_y = self.pdf_search_match_scroll_y(&result);
-        Task::batch(vec![
-            self.render_pdf_page_range(
-                target_page.saturating_sub(2),
-                (target_page + 2).min(self.pdf_total_pages.saturating_sub(1)),
-            ),
-            operation::scroll_to(
-                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-                AbsoluteOffset {
-                    x: 0.0,
-                    y: scroll_y,
-                },
-            ),
-        ])
+        if let Some(path) = &self.active_pdf_path {
+            if let Some(abs_path) = self.resolve_active_path(path) {
+                let path_str = abs_path.to_string_lossy().to_string();
+                if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+                    renderer.set_visible_range(
+                        target_page.saturating_sub(1),
+                        (target_page + 1).min(self.pdf_total_pages.saturating_sub(1)),
+                        &path_str,
+                    );
+                }
+            }
+        }
+
+        let mut tasks = vec![self.render_pdf_page_direct(target_page)];
+        tasks.push(self.render_pdf_page_range(
+            target_page.saturating_sub(2),
+            (target_page + 2).min(self.pdf_total_pages.saturating_sub(1)),
+        ));
+        tasks.push(operation::scroll_to(
+            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+            AbsoluteOffset {
+                x: 0.0,
+                y: scroll_y,
+            },
+        ));
+        Task::batch(tasks)
     }
 
     fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {
@@ -3217,12 +3361,26 @@ impl MdEditor {
     fn pdf_search_is_active(&self) -> bool {
         self.file_search_visible
             && self.active_pdf_path.is_some()
-            && self.showing_pdf
-            && !(self.split_view_active && self.active_path.is_some())
+            && (self.showing_pdf
+                || (self.split_view_active
+                    && self.active_path.is_some()
+                    && self.active_panel == ActivePanel::Pdf))
     }
 
     fn editor_search_is_active(&self) -> bool {
-        self.file_search_visible && self.active_path.is_some() && !self.pdf_search_is_active()
+        self.file_search_visible
+            && self.active_path.is_some()
+            && !self.pdf_search_is_active()
+            && (!self.split_view_active || self.active_panel == ActivePanel::Markdown)
+    }
+
+    fn pdf_copy_shortcut_is_active(&self) -> bool {
+        self.pdf_selection.is_some()
+            && self.active_pdf_path.is_some()
+            && (self.showing_pdf
+                || (self.split_view_active
+                    && self.active_path.is_some()
+                    && self.active_panel == ActivePanel::Pdf))
     }
 
     fn scroll_editor_to_line(&self, line: usize) -> Task<Message> {
@@ -3824,6 +3982,32 @@ mod tests {
                 1.5,
             ),
             (918.0, 1188.0)
+        );
+    }
+
+    #[test]
+    fn default_pdf_note_path_uses_pdf_name_page_and_annotation_prefix() {
+        let ann = md_editor_core::pdf::PdfAnnotation {
+            id: "abcdef123456".to_string(),
+            document_id: "doc".to_string(),
+            page_index: 4,
+            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
+            color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+            selected_text: "Important field result".to_string(),
+            ranges: vec![],
+            rects: vec![],
+            note: None,
+            linked_note_path: None,
+            markdown_anchor: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        let mut app = MdEditor::new().0;
+        app.active_pdf_path = Some("papers/My PDF File.pdf".to_string());
+        assert_eq!(
+            app.default_pdf_note_path(&ann),
+            "pdf-notes/my-pdf-file-p5-abcdef12.md"
         );
     }
 }
