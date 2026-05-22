@@ -4,6 +4,205 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PdfTextChar {
+    pub char_index: u32,
+    pub text_index: usize,
+    pub ch: char,
+    pub bbox: PdfRect,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PdfTextLine {
+    pub start_text_index: usize,
+    pub end_text_index: usize,
+    pub bbox: PdfRect,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PdfPageText {
+    pub page_index: u16,
+    pub page_width: f32,
+    pub page_height: f32,
+    pub text: String,
+    pub chars: Vec<PdfTextChar>,
+    pub lines: Vec<PdfTextLine>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum PdfAnnotationKind {
+    Highlight,
+    Note,
+}
+
+impl PdfAnnotationKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Highlight => "Highlight",
+            Self::Note => "Note",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "Highlight" => Ok(Self::Highlight),
+            "Note" => Ok(Self::Note),
+            _ => Err(format!("Unknown annotation kind: {s}")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Hash)]
+pub enum PdfAnnotationColor {
+    Yellow,
+    Green,
+    Blue,
+    Pink,
+    Orange,
+}
+
+impl PdfAnnotationColor {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Yellow => "Yellow",
+            Self::Green => "Green",
+            Self::Blue => "Blue",
+            Self::Pink => "Pink",
+            Self::Orange => "Orange",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "Yellow" => Ok(Self::Yellow),
+            "Green" => Ok(Self::Green),
+            "Blue" => Ok(Self::Blue),
+            "Pink" => Ok(Self::Pink),
+            "Orange" => Ok(Self::Orange),
+            _ => Err(format!("Unknown annotation color: {s}")),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PdfTextRange {
+    pub start_text_index: usize,
+    pub end_text_index: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PdfAnnotation {
+    pub id: String,
+    pub document_id: String,
+    pub page_index: u16,
+    pub kind: PdfAnnotationKind,
+    pub color: PdfAnnotationColor,
+    pub selected_text: String,
+    pub ranges: Vec<PdfTextRange>,
+    pub rects: Vec<PdfRect>,
+    pub note: Option<String>,
+    pub linked_note_path: Option<String>,
+    pub markdown_anchor: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+pub fn compute_provisional_id(
+    path: &std::path::Path,
+) -> Result<(String, u64, Option<i64>), String> {
+    use sha2::{Digest, Sha256};
+    use std::fs::File;
+    use std::io::Read;
+
+    let metadata =
+        std::fs::metadata(path).map_err(|e| format!("Failed to read file metadata: {e}"))?;
+    let file_len = metadata.len();
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
+
+    let mut file = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+
+    // Read up to 1 MiB
+    let chunk_size = 1024 * 1024;
+    let mut buffer = vec![0u8; chunk_size];
+    let bytes_read = file
+        .read(&mut buffer)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+    buffer.truncate(bytes_read);
+
+    let mut hasher = Sha256::new();
+    hasher.update(&buffer);
+    hasher.update(&file_len.to_be_bytes());
+    if let Some(mtime) = modified {
+        hasher.update(&mtime.to_be_bytes());
+    } else {
+        hasher.update(&[0u8; 8]);
+    }
+
+    let hash_result = hasher.finalize();
+    let id = format!("{:x}", hash_result);
+
+    Ok((id, file_len, modified))
+}
+
+pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
+    let chars = chars
+        .iter()
+        .filter(|c| c.bbox.width > 0.0 && c.bbox.height > 0.0)
+        .collect::<Vec<_>>();
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let mut rects = Vec::new();
+    let mut current: Option<PdfRect> = None;
+    for c in chars {
+        match &mut current {
+            Some(r) => {
+                let r_y_min = r.y;
+                let r_y_max = r.y + r.height;
+                let c_y_min = c.bbox.y;
+                let c_y_max = c.bbox.y + c.bbox.height;
+
+                let overlap = r_y_max.min(c_y_max) - r_y_min.max(c_y_min);
+                let min_h = r.height.min(c.bbox.height);
+
+                // Characters should be moving left-to-right (c.bbox.x >= r.x)
+                // and horizontal gap should not be too large
+                let horizontal_gap = c.bbox.x - (r.x + r.width);
+
+                if overlap > 0.0
+                    && overlap > 0.3 * min_h
+                    && c.bbox.x >= r.x
+                    && horizontal_gap < 3.0 * min_h.max(4.0)
+                {
+                    // Merge
+                    let x_min = r.x;
+                    let x_max = (r.x + r.width).max(c.bbox.x + c.bbox.width);
+                    let y_min = r.y.min(c.bbox.y);
+                    let y_max = (r.y + r.height).max(c.bbox.y + c.bbox.height);
+                    r.x = x_min;
+                    r.y = y_min;
+                    r.width = x_max - x_min;
+                    r.height = y_max - y_min;
+                } else {
+                    rects.push(current.take().unwrap());
+                    current = Some(c.bbox.clone());
+                }
+            }
+            None => {
+                current = Some(c.bbox.clone());
+            }
+        }
+    }
+    if let Some(r) = current {
+        rects.push(r);
+    }
+    rects
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TocEntry {
     pub title: String,
     pub page_index: Option<u32>,
@@ -105,13 +304,19 @@ enum PdfCommand {
         Option<f32>,
         std::sync::mpsc::SyncSender<Result<LinkPreviewResult, String>>,
     ),
+    GetPageText(
+        String,
+        u16,
+        std::sync::mpsc::SyncSender<Result<PdfPageText, String>>,
+    ),
 }
 
 impl PdfRenderer {
     pub fn new() -> Result<Self, String> {
         let (sender, receiver) = std::sync::mpsc::channel();
         let (priority_sender, priority_receiver) = std::sync::mpsc::channel::<PriorityRender>();
-        let visible_range: std::sync::Arc<std::sync::Mutex<Option<(u16, u16, String)>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let visible_range: std::sync::Arc<std::sync::Mutex<Option<(u16, u16, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
         let visible_range_clone = visible_range.clone();
 
         std::thread::spawn(move || {
@@ -375,115 +580,136 @@ impl PdfRenderer {
                             for index in 0..doc.pages().len() {
                                 let page = doc.pages().get(index).map_err(|e| e.to_string())?;
                                 let text_page = page.text().map_err(|e| e.to_string())?;
-                                  let mut page_text = String::new();
-                                  let mut char_indices = Vec::new();
-                                  for c in text_page.chars().iter() {
-                                      if let Some(ch) = c.unicode_char() {
-                                          page_text.push(ch);
-                                          char_indices.push(c.index());
-                                      }
-                                  }
-                                 let page_matches: Vec<(usize, usize, Vec<PdfRect>)> =
-                                     if let Some(re) = &re {
-                                         re.find_iter(&page_text)
-                                             .filter_map(|found| {
-                                                 let match_char_idx_in_text = page_text[..found.start()].chars().count();
-                                                 let match_char_count = found.as_str().chars().count();
-                                                 if match_char_idx_in_text < char_indices.len() && match_char_count > 0 {
-                                                     let char_start = char_indices[match_char_idx_in_text];
-                                                     let char_end_idx = (match_char_idx_in_text + match_char_count - 1).min(char_indices.len() - 1);
-                                                     let char_count = char_indices[char_end_idx] - char_start + 1;
-                                                     let rects = text_page
-                                                         .segments_subset(char_start, char_count)
-                                                         .iter()
-                                                         .map(|segment| {
-                                                             let bounds = segment.bounds();
-                                                             PdfRect {
-                                                                 x: bounds.left().value,
-                                                                 y: bounds.bottom().value,
-                                                                 width: bounds.width().value,
-                                                                 height: bounds.height().value,
-                                                             }
-                                                         })
-                                                         .collect::<Vec<_>>();
-                                                     Some((match_char_idx_in_text, match_char_count, rects))
-                                                 } else {
-                                                     None
-                                                 }
-                                             })
-                                             .collect()
-                                     } else {
-                                         let options =
-                                             PdfSearchOptions::new().match_case(match_case);
-                                         match text_page.search(&query, &options) {
-                                             Ok(search) => {
-                                                 search
-                                                     .iter(PdfSearchDirection::SearchForward)
-                                                     .map(|segments| {
-                                                         let rects = segments
-                                                             .iter()
-                                                             .map(|segment| {
-                                                                 let bounds = segment.bounds();
-                                                                 PdfRect {
-                                                                     x: bounds.left().value,
-                                                                     y: bounds.bottom().value,
-                                                                     width: bounds.width().value,
-                                                                     height: bounds.height().value,
-                                                                 }
-                                                             })
-                                                             .collect::<Vec<_>>();
-                                                         let mut min_char_index = None;
-                                                         let mut max_char_index = None;
-                                                         for segment in segments.iter() {
-                                                             if let Ok(chars) = segment.chars() {
-                                                                 for char in chars.iter() {
-                                                                     let idx = char.index();
-                                                                     if min_char_index.map_or(true, |min| idx < min) {
-                                                                         min_char_index = Some(idx);
-                                                                     }
-                                                                     if max_char_index.map_or(true, |max| idx > max) {
-                                                                         max_char_index = Some(idx);
-                                                                     }
-                                                                 }
-                                                             }
-                                                         }
-                                                         let char_start = min_char_index.unwrap_or(0);
-                                                         let char_count = max_char_index.map(|max| max - char_start + 1).unwrap_or(0);
-                                                         let page_text_idx = char_indices.binary_search(&char_start).unwrap_or_else(|x| x);
-                                                         let match_char_count = if char_count > 0 {
-                                                             let page_text_end_idx = char_indices
-                                                                 .binary_search(&(char_start + char_count - 1))
-                                                                 .unwrap_or_else(|x| x);
-                                                             if page_text_end_idx >= page_text_idx {
-                                                                 page_text_end_idx - page_text_idx + 1
-                                                             } else {
-                                                                 0
-                                                             }
-                                                         } else {
-                                                             0
-                                                         };
-                                                         (page_text_idx, match_char_count, rects)
-                                                     })
-                                                     .collect()
-                                             }
-                                             Err(_) => Vec::new(),
-                                         }
-                                     };
+                                let mut page_text = String::new();
+                                let mut char_indices = Vec::new();
+                                for c in text_page.chars().iter() {
+                                    if let Some(ch) = c.unicode_char() {
+                                        page_text.push(ch);
+                                        char_indices.push(c.index());
+                                    }
+                                }
+                                let page_matches: Vec<(usize, usize, Vec<PdfRect>)> =
+                                    if let Some(re) = &re {
+                                        re.find_iter(&page_text)
+                                            .filter_map(|found| {
+                                                let match_char_idx_in_text =
+                                                    page_text[..found.start()].chars().count();
+                                                let match_char_count =
+                                                    found.as_str().chars().count();
+                                                if match_char_idx_in_text < char_indices.len()
+                                                    && match_char_count > 0
+                                                {
+                                                    let char_start =
+                                                        char_indices[match_char_idx_in_text];
+                                                    let char_end_idx = (match_char_idx_in_text
+                                                        + match_char_count
+                                                        - 1)
+                                                    .min(char_indices.len() - 1);
+                                                    let char_count =
+                                                        char_indices[char_end_idx] - char_start + 1;
+                                                    let rects = text_page
+                                                        .segments_subset(char_start, char_count)
+                                                        .iter()
+                                                        .map(|segment| {
+                                                            let bounds = segment.bounds();
+                                                            PdfRect {
+                                                                x: bounds.left().value,
+                                                                y: bounds.bottom().value,
+                                                                width: bounds.width().value,
+                                                                height: bounds.height().value,
+                                                            }
+                                                        })
+                                                        .collect::<Vec<_>>();
+                                                    Some((
+                                                        match_char_idx_in_text,
+                                                        match_char_count,
+                                                        rects,
+                                                    ))
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect()
+                                    } else {
+                                        let options =
+                                            PdfSearchOptions::new().match_case(match_case);
+                                        match text_page.search(&query, &options) {
+                                            Ok(search) => search
+                                                .iter(PdfSearchDirection::SearchForward)
+                                                .map(|segments| {
+                                                    let rects = segments
+                                                        .iter()
+                                                        .map(|segment| {
+                                                            let bounds = segment.bounds();
+                                                            PdfRect {
+                                                                x: bounds.left().value,
+                                                                y: bounds.bottom().value,
+                                                                width: bounds.width().value,
+                                                                height: bounds.height().value,
+                                                            }
+                                                        })
+                                                        .collect::<Vec<_>>();
+                                                    let mut min_char_index = None;
+                                                    let mut max_char_index = None;
+                                                    for segment in segments.iter() {
+                                                        if let Ok(chars) = segment.chars() {
+                                                            for char in chars.iter() {
+                                                                let idx = char.index();
+                                                                if min_char_index
+                                                                    .map_or(true, |min| idx < min)
+                                                                {
+                                                                    min_char_index = Some(idx);
+                                                                }
+                                                                if max_char_index
+                                                                    .map_or(true, |max| idx > max)
+                                                                {
+                                                                    max_char_index = Some(idx);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    let char_start = min_char_index.unwrap_or(0);
+                                                    let char_count = max_char_index
+                                                        .map(|max| max - char_start + 1)
+                                                        .unwrap_or(0);
+                                                    let page_text_idx = char_indices
+                                                        .binary_search(&char_start)
+                                                        .unwrap_or_else(|x| x);
+                                                    let match_char_count = if char_count > 0 {
+                                                        let page_text_end_idx = char_indices
+                                                            .binary_search(
+                                                                &(char_start + char_count - 1),
+                                                            )
+                                                            .unwrap_or_else(|x| x);
+                                                        if page_text_end_idx >= page_text_idx {
+                                                            page_text_end_idx - page_text_idx + 1
+                                                        } else {
+                                                            0
+                                                        }
+                                                    } else {
+                                                        0
+                                                    };
+                                                    (page_text_idx, match_char_count, rects)
+                                                })
+                                                .collect(),
+                                            Err(_) => Vec::new(),
+                                        }
+                                    };
 
-                                 for (pos, match_len, rects) in page_matches {
-                                     if rects.is_empty() {
-                                         continue;
-                                     }
-                                     let start = pos.saturating_sub(48);
-                                     let take = match_len + 96;
-                                     let context = page_text
-                                         .chars()
-                                         .skip(start)
-                                         .take(take)
-                                         .collect::<String>()
-                                         .split_whitespace()
-                                         .collect::<Vec<_>>()
-                                         .join(" ");
+                                for (pos, match_len, rects) in page_matches {
+                                    if rects.is_empty() {
+                                        continue;
+                                    }
+                                    let start = pos.saturating_sub(48);
+                                    let take = match_len + 96;
+                                    let context = page_text
+                                        .chars()
+                                        .skip(start)
+                                        .take(take)
+                                        .collect::<String>()
+                                        .split_whitespace()
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
                                     matches.push(PdfSearchMatch {
                                         page_index: index as u16,
                                         context,
@@ -547,6 +773,131 @@ impl PdfRenderer {
                             Ok(LinkPreviewResult {
                                 image_data: buf.into_inner(),
                                 center_ratio,
+                            })
+                        })();
+                        let _ = resp.send(res);
+                    }
+                    PdfCommand::GetPageText(path, index, resp) => {
+                        let res = (|| {
+                            if current_document
+                                .as_ref()
+                                .map(|(p, _)| p != &path)
+                                .unwrap_or(true)
+                            {
+                                let doc = pdfium
+                                    .load_pdf_from_file(&path, None)
+                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                current_document = Some((path.clone(), doc));
+                            }
+                            let Some((_, doc)) = current_document.as_ref() else {
+                                return Err("PDF document was not loaded".to_string());
+                            };
+                            let pages = doc.pages();
+                            if i32::from(index) >= pages.len() {
+                                return Err("Page index out of bounds".to_string());
+                            }
+                            let page = pages.get(index as i32).map_err(|e| e.to_string())?;
+                            let text_page = page.text().map_err(|e| e.to_string())?;
+
+                            let page_width = page.width().value;
+                            let page_height = page.height().value;
+
+                            let mut text = String::new();
+                            let mut chars = Vec::new();
+                            let mut text_index = 0usize;
+
+                            for c in text_page.chars().iter() {
+                                if let Some(ch) = c.unicode_char() {
+                                    let char_index = c.index() as u32;
+                                    text.push(ch);
+
+                                    let bbox = match c.loose_bounds() {
+                                        Ok(rect) => PdfRect {
+                                            x: rect.left().value,
+                                            y: rect.bottom().value,
+                                            width: rect.width().value,
+                                            height: rect.height().value,
+                                        },
+                                        Err(_) => PdfRect {
+                                            x: 0.0,
+                                            y: 0.0,
+                                            width: 0.0,
+                                            height: 0.0,
+                                        },
+                                    };
+
+                                    chars.push(PdfTextChar {
+                                        char_index,
+                                        text_index,
+                                        ch,
+                                        bbox,
+                                    });
+                                    text_index += 1;
+                                }
+                            }
+
+                            // Group into lines
+                            let mut lines = Vec::new();
+                            let mut current_line: Option<PdfTextLine> = None;
+
+                            for c in chars
+                                .iter()
+                                .filter(|c| c.bbox.width > 0.0 && c.bbox.height > 0.0)
+                            {
+                                match &mut current_line {
+                                    Some(line) => {
+                                        let line_y_min = line.bbox.y;
+                                        let line_y_max = line.bbox.y + line.bbox.height;
+                                        let c_y_min = c.bbox.y;
+                                        let c_y_max = c.bbox.y + c.bbox.height;
+
+                                        let overlap =
+                                            line_y_max.min(c_y_max) - line_y_min.max(c_y_min);
+                                        let min_h = line.bbox.height.min(c.bbox.height);
+
+                                        if overlap > 0.0 && overlap > 0.3 * min_h {
+                                            // Merge bbox
+                                            let x_min = line.bbox.x.min(c.bbox.x);
+                                            let x_max = (line.bbox.x + line.bbox.width)
+                                                .max(c.bbox.x + c.bbox.width);
+                                            let y_min = line.bbox.y.min(c.bbox.y);
+                                            let y_max = (line.bbox.y + line.bbox.height)
+                                                .max(c.bbox.y + c.bbox.height);
+
+                                            line.bbox.x = x_min;
+                                            line.bbox.y = y_min;
+                                            line.bbox.width = x_max - x_min;
+                                            line.bbox.height = y_max - y_min;
+                                            line.end_text_index = c.text_index + 1;
+                                        } else {
+                                            lines.push(current_line.take().unwrap());
+                                            current_line = Some(PdfTextLine {
+                                                start_text_index: c.text_index,
+                                                end_text_index: c.text_index + 1,
+                                                bbox: c.bbox.clone(),
+                                            });
+                                        }
+                                    }
+                                    None => {
+                                        current_line = Some(PdfTextLine {
+                                            start_text_index: c.text_index,
+                                            end_text_index: c.text_index + 1,
+                                            bbox: c.bbox.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                            if let Some(line) = current_line {
+                                lines.push(line);
+                            }
+
+                            Ok(PdfPageText {
+                                page_index: index,
+                                page_width,
+                                page_height,
+                                text,
+                                chars,
+                                lines,
                             })
                         })();
                         let _ = resp.send(res);
@@ -677,6 +1028,14 @@ impl PdfRenderer {
         rx.recv().map_err(|e| e.to_string())?
     }
 
+    pub fn get_page_text(&self, path: &str, page_index: u16) -> Result<PdfPageText, String> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::GetPageText(path.to_string(), page_index, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())?
+    }
+
     fn parse_bookmarks(bookmarks: &[PdfBookmark]) -> Vec<TocEntry> {
         let mut entries = Vec::new();
         for bookmark in bookmarks.iter() {
@@ -740,7 +1099,7 @@ fn render_page_from_cache<'a>(
 
 fn bind_pdfium() -> Result<Pdfium, String> {
     static BIND_RESULT: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
-    
+
     let res = BIND_RESULT.get_or_init(|| {
         let lib_name = Pdfium::pdfium_platform_library_name();
         let mut candidates = Vec::new();
@@ -822,8 +1181,13 @@ mod tests {
                 let ry = bounds.bottom().value;
                 let rh = bounds.height().value;
                 let view_y = page_height - ry - rh;
-                println!("  Segment bounds: left={}, bottom={}, width={}, height={}",
-                         bounds.left().value, ry, bounds.width().value, rh);
+                println!(
+                    "  Segment bounds: left={}, bottom={}, width={}, height={}",
+                    bounds.left().value,
+                    ry,
+                    bounds.width().value,
+                    rh
+                );
                 println!("  Expected view y (zoom=1.0): {}", view_y);
             }
         }
@@ -835,21 +1199,93 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         let renderer = PdfRenderer::new().unwrap();
         let path = "../dummy.pdf";
-        
+
         // Test non-regex search
         let results = renderer.search_text(path, "dummy", false, false).unwrap();
         println!("Non-regex results: {results:?}");
-        assert!(!results.is_empty(), "Non-regex search for 'dummy' should return matches");
+        assert!(
+            !results.is_empty(),
+            "Non-regex search for 'dummy' should return matches"
+        );
         for match_info in &results {
             assert!(match_info.context.to_lowercase().contains("dummy"));
             assert!(!match_info.rects.is_empty());
         }
 
         // Test regex search
-        let regex_results = renderer.search_text(path, "dum[a-z]+y", true, false).unwrap();
+        let regex_results = renderer
+            .search_text(path, "dum[a-z]+y", true, false)
+            .unwrap();
         println!("Regex results: {regex_results:?}");
-        assert!(!regex_results.is_empty(), "Regex search for 'dum[a-z]+y' should return matches");
-        assert_eq!(results.len(), regex_results.len(), "Regex and non-regex search count should match");
+        assert!(
+            !regex_results.is_empty(),
+            "Regex search for 'dum[a-z]+y' should return matches"
+        );
+        assert_eq!(
+            results.len(),
+            regex_results.len(),
+            "Regex and non-regex search count should match"
+        );
+    }
+
+    #[test]
+    fn test_pdf_text_extraction_and_hashing() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let path = "../dummy.pdf";
+        let (id, size, modified) = compute_provisional_id(std::path::Path::new(path)).unwrap();
+        assert!(!id.is_empty(), "Document hash must not be empty");
+        assert!(size > 0, "Document size must be > 0");
+        assert!(modified.is_some(), "Modified time should be available");
+
+        let renderer = PdfRenderer::new().unwrap();
+        let text_layer = renderer.get_page_text(path, 0).unwrap();
+        println!("Extracted text: {}", text_layer.text);
+        assert!(
+            text_layer.text.to_lowercase().contains("dummy"),
+            "Extracted text should contain 'dummy'"
+        );
+        assert!(
+            !text_layer.chars.is_empty(),
+            "Chars list should not be empty"
+        );
+        assert!(
+            !text_layer.lines.is_empty(),
+            "Lines list should not be empty"
+        );
+        for line in &text_layer.lines {
+            assert!(
+                line.end_text_index > line.start_text_index,
+                "PDF text lines must use non-empty exclusive ranges"
+            );
+            assert!(
+                line.bbox.width > 0.0 && line.bbox.height > 0.0,
+                "PDF text lines must be backed by visible glyph bounds"
+            );
+            assert!(
+                line.end_text_index <= text_layer.text.chars().count(),
+                "PDF text line range must stay within extracted text"
+            );
+            let line_chars = text_layer
+                .chars
+                .iter()
+                .filter(|c| {
+                    c.text_index >= line.start_text_index
+                        && c.text_index < line.end_text_index
+                        && c.bbox.width > 0.0
+                        && c.bbox.height > 0.0
+                })
+                .count();
+            assert!(line_chars > 0, "Every PDF text line must be selectable");
+        }
+
+        // Verify bounding boxes coordinates
+        for c in &text_layer.chars {
+            assert!(c.bbox.width >= 0.0);
+            assert!(c.bbox.height >= 0.0);
+        }
+
+        // Test character merging
+        let merged = merge_char_rects(&text_layer.chars[..5]);
+        assert!(!merged.is_empty(), "Merged rects list should not be empty");
     }
 }
-

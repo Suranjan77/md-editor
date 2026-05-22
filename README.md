@@ -16,8 +16,8 @@ Open a folder as your vault, write markdown notes, search across your work, read
 - Global vault and PDF search.
 - Backlinks and table of contents panels.
 - Syntax-highlighted code blocks, markdown tables, task checkboxes, images, and math rendering.
-- Built-in PDF viewer with continuous pages, fit-to-width, PDF links, and PDF text search.
-- Split view for markdown plus PDF/reference material.
+- Built-in PDF viewer with continuous pages, fit-to-width, PDF links, text selection, highlights, linked notes, and PDF text search.
+- Split view for markdown plus PDF/reference material with active-pane search.
 - Study tracker for sessions, reading, project stages, and tracker configuration.
 - Cross-platform native UI built with Rust and Iced.
 
@@ -106,7 +106,9 @@ cargo test
 
 ## Feature Document
 
-See [docs/FEATURES.md](docs/FEATURES.md) for the version 1 feature document, platform support notes, architecture summary, and release readiness details.
+See [docs/FEATURES.md](docs/FEATURES.md) for the version 1 feature document, platform support notes, and architecture summary.
+
+See [docs/LAUNCH.md](docs/LAUNCH.md) for the release checklist, smoke-test flow, and packaging notes.
 
 ## Screenshots
 ![Markdown Editing window](images/markdown_window.png)
