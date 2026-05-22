@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::file_index::FileIndex;
 use crate::state::AppState;
-use crate::types::{FileEntry, SearchResult};
+use crate::types::{BacklinkItem, BacklinkTarget, FileEntry, SearchResult};
 
 const IMAGE_EXTENSIONS: [&str; 6] = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
 
@@ -218,6 +218,116 @@ pub fn get_backlinks(state: &AppState, path: &str) -> Result<Vec<String>, String
         .into_iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect())
+}
+
+/// Get mixed backlinks (markdown files, PDF documents, and PDF annotations).
+pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkItem>, String> {
+    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
+    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+
+    let lower_path = path.to_lowercase();
+    let mut results = Vec::new();
+
+    if lower_path.ends_with(".pdf") {
+        // PDF Case:
+        // 1. Get incoming backlinks from FileIndex (markdown files linking to this PDF)
+        let abs_path = resolve_vault_path(vault_root, path);
+        let index = state.file_index.lock().map_err(|e| e.to_string())?;
+        let backlinks = index.get_backlinks(&abs_path);
+        for bl in backlinks {
+            let rel_path = path_to_relative_string(&bl, vault_root);
+            let name = bl
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| rel_path.clone());
+            results.push(BacklinkItem {
+                source: BacklinkTarget::MarkdownFile { path: rel_path },
+                label: name,
+                context: None,
+            });
+        }
+
+        // 2. Query notes linked from PDF annotations of this PDF document
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = db
+            .prepare("SELECT document_id FROM pdf_documents WHERE vault_relative_path = ?1")
+            .map_err(|e| e.to_string())?;
+        let mut rows = stmt.query([path]).map_err(|e| e.to_string())?;
+        if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            let doc_id: String = row.get(0).map_err(|e| e.to_string())?;
+
+            let mut stmt2 = db
+                .prepare(
+                    "SELECT linked_note_path, selected_text FROM pdf_annotations
+                     WHERE document_id = ?1 AND linked_note_path IS NOT NULL AND linked_note_path != ''",
+                )
+                .map_err(|e| e.to_string())?;
+            let mut rows2 = stmt2.query([doc_id]).map_err(|e| e.to_string())?;
+            while let Some(row2) = rows2.next().map_err(|e| e.to_string())? {
+                let note_path: String = row2.get(0).map_err(|e| e.to_string())?;
+                let selected_text: String = row2.get(1).map_err(|e| e.to_string())?;
+
+                let note_name = Path::new(&note_path)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| note_path.clone());
+
+                results.push(BacklinkItem {
+                    source: BacklinkTarget::MarkdownFile { path: note_path },
+                    label: note_name,
+                    context: Some(selected_text),
+                });
+            }
+        }
+    } else {
+        // Markdown Case:
+        // 1. Standard incoming backlinks from FileIndex
+        let abs_path = resolve_vault_path(vault_root, path);
+        let index = state.file_index.lock().map_err(|e| e.to_string())?;
+        let backlinks = index.get_backlinks(&abs_path);
+        for bl in backlinks {
+            let rel_path = path_to_relative_string(&bl, vault_root);
+            let name = bl
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| rel_path.clone());
+            results.push(BacklinkItem {
+                source: BacklinkTarget::MarkdownFile { path: rel_path },
+                label: name,
+                context: None,
+            });
+        }
+
+        // 2. Query annotations from SQLite referencing this note (linked_note_path)
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = db
+            .prepare(
+                "SELECT a.id, a.page_index, a.selected_text, d.vault_relative_path
+                 FROM pdf_annotations a
+                 JOIN pdf_documents d ON a.document_id = d.document_id
+                 WHERE a.linked_note_path = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut rows = stmt.query([path]).map_err(|e| e.to_string())?;
+        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            let ann_id: String = row.get(0).map_err(|e| e.to_string())?;
+            let page_idx: i32 = row.get(1).map_err(|e| e.to_string())?;
+            let selected_text: String = row.get(2).map_err(|e| e.to_string())?;
+            let doc_path: String = row.get(3).map_err(|e| e.to_string())?;
+
+            results.push(BacklinkItem {
+                source: BacklinkTarget::PdfAnnotation {
+                    document_path: doc_path,
+                    annotation_id: ann_id,
+                    page: (page_idx + 1) as u16,
+                },
+                label: format!("Page {} highlight", page_idx + 1),
+                context: Some(selected_text),
+            });
+        }
+    }
+
+    Ok(results)
 }
 
 /// Read raw image bytes from the vault.

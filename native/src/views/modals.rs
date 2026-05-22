@@ -4,10 +4,12 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 use crate::messages::Message;
 use crate::theme;
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum ModalType {
     CreateFile,
     CreateFolder,
-    Delete(String), // path
+    Delete(String),    // path
+    QuickNote(String), // annotation ID
 }
 
 pub fn view<'a>(
@@ -18,6 +20,7 @@ pub fn view<'a>(
         ModalType::CreateFile => "Create New File",
         ModalType::CreateFolder => "Create New Folder",
         ModalType::Delete(_) => "Delete Confirmation",
+        ModalType::QuickNote(_) => "Edit Quick Note",
     };
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
