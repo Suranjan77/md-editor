@@ -18,6 +18,7 @@ Markdown files open in the main editor. The editor supports:
 - Horizontal scrolling for wide code, math, and table blocks.
 - In-file search with highlighted matches and previous/next navigation.
 - Save, undo/redo, selection editing, and common keyboard shortcuts.
+- Large-document rendering optimizations using cached line heights, viewport culling, and debounced highlighting.
 
 ### Search and Navigate
 
@@ -84,6 +85,13 @@ The workspace is split into two crates:
 Important native modules:
 
 - `app`: application state, update loop, routing, and layout composition.
-- `editor`: markdown buffer, syntax highlighting, and custom renderer.
+- `editor`: markdown buffer, syntax highlighting, height/layout caching, and custom renderer.
 - `search`: reusable in-file search matching used by search navigation and editor highlights.
 - `views`: sidebar, toolbar, search panel, PDF viewer, tracker, backlinks, modals, icons, and related UI.
+
+Editor performance notes:
+
+- `editor/layout_tree.rs` stores visual line heights in a Fenwick tree for fast y-to-line and line-to-y lookup.
+- `editor/layout_cache.rs` stores line measurement cache keys and invalidates cached heights when text, edit state, layout width, or media/math dimensions change.
+- `editor/renderer.rs` draws only visible lines and visible block backgrounds.
+- `app.rs` debounces syntax highlighting for large documents and ignores stale background highlight results with generation ids.
