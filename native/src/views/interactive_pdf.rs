@@ -24,11 +24,13 @@ pub struct InteractivePdf<'a, Message> {
     handle: iced::widget::image::Handle,
     width: f32,
     height: f32,
+    page_width: f32,
+    page_height: f32,
     page_index: u16,
     page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
     highlights: &'a [md_editor_core::pdf::PdfAnnotation],
-    search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
-    active_search_index: Option<usize>,
+    search_highlights: Vec<md_editor_core::pdf::PdfRect>,
+    active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&'a str>,
     on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
@@ -36,6 +38,7 @@ pub struct InteractivePdf<'a, Message> {
     on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     on_selection_finished: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     on_selection_cleared: Box<dyn Fn() -> Message + 'a>,
+    on_copy_selection: Box<dyn Fn() -> Message + 'a>,
 }
 
 impl<'a, Message> InteractivePdf<'a, Message> {
@@ -43,11 +46,13 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         handle: iced::widget::image::Handle,
         width: f32,
         height: f32,
+        page_width: f32,
+        page_height: f32,
         page_index: u16,
         page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
         highlights: &'a [md_editor_core::pdf::PdfAnnotation],
-        search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
-        active_search_index: Option<usize>,
+        search_highlights: Vec<md_editor_core::pdf::PdfRect>,
+        active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
         active_selection: Option<PdfSelection>,
         focused_annotation_id: Option<&'a str>,
         on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a,
@@ -55,16 +60,19 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         on_selection_changed: impl Fn(u16, usize, usize) -> Message + 'a,
         on_selection_finished: impl Fn(u16, usize, usize) -> Message + 'a,
         on_selection_cleared: impl Fn() -> Message + 'a,
+        on_copy_selection: impl Fn() -> Message + 'a,
     ) -> Self {
         Self {
             handle,
             width,
             height,
+            page_width,
+            page_height,
             page_index,
             page_text,
             highlights,
-            search_matches,
-            active_search_index,
+            search_highlights,
+            active_search_highlights,
             active_selection,
             focused_annotation_id,
             on_left_click: Box::new(on_left_click),
@@ -72,6 +80,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             on_selection_changed: Box::new(on_selection_changed),
             on_selection_finished: Box::new(on_selection_finished),
             on_selection_cleared: Box::new(on_selection_cleared),
+            on_copy_selection: Box::new(on_copy_selection),
         }
     }
 }
@@ -113,6 +122,32 @@ fn get_annotation_color(color: md_editor_core::pdf::PdfAnnotationColor) -> Color
     }
 }
 
+fn draw_view_highlight<R>(
+    renderer: &mut R,
+    page_bounds: Rectangle,
+    rect: &md_editor_core::pdf::PdfRect,
+    color: Color,
+) where
+    R: renderer::Renderer,
+{
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: Rectangle {
+                x: page_bounds.x + rect.x,
+                y: page_bounds.y + rect.y,
+                width: rect.width.max(3.0),
+                height: rect.height.max(8.0),
+            },
+            border: iced::Border {
+                radius: 2.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        color,
+    );
+}
+
 fn hit_test(
     page_text: &md_editor_core::pdf::PdfPageText,
     point: iced::Point,
@@ -151,7 +186,12 @@ fn hit_test(
     let line_chars: Vec<&md_editor_core::pdf::PdfTextChar> = page_text
         .chars
         .iter()
-        .filter(|c| c.text_index >= line.start_text_index && c.text_index < line.end_text_index)
+        .filter(|c| {
+            c.text_index >= line.start_text_index
+                && c.text_index < line.end_text_index
+                && c.bbox.width > 0.0
+                && c.bbox.height > 0.0
+        })
         .collect();
 
     if line_chars.is_empty() {
@@ -226,63 +266,57 @@ where
             *viewport,
         );
 
+        let page_height = self
+            .page_text
+            .map(|page_text| page_text.page_height)
+            .unwrap_or(self.page_height);
+        let zoom = self
+            .page_text
+            .map(|page_text| self.width / page_text.page_width)
+            .unwrap_or_else(|| self.width / self.page_width.max(1.0));
+
+        // 1. Draw persistent annotation highlights
+        for ann in self.highlights {
+            let color = get_annotation_color(ann.color);
+            let is_focused = self.focused_annotation_id == Some(ann.id.as_str());
+            let border = if is_focused {
+                iced::Border {
+                    color: Color::from_rgb8(177, 204, 198), // theme::ACCENT
+                    width: 1.5,
+                    radius: 0.0.into(),
+                }
+            } else {
+                iced::Border::default()
+            };
+
+            for r in &ann.rects {
+                let screen_rect = to_screen_rect(r, page_height, zoom, bounds);
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: screen_rect,
+                        border,
+                        ..Default::default()
+                    },
+                    color,
+                );
+            }
+        }
+
+        // 2. Draw search highlights. These are pre-converted into view coordinates
+        // by the PDF view builder, matching the stable main-branch search path.
+        for r in &self.search_highlights {
+            draw_view_highlight(renderer, bounds, r, Color::from_rgba(1.0, 0.78, 0.18, 0.38));
+        }
+        for r in &self.active_search_highlights {
+            draw_view_highlight(renderer, bounds, r, Color::from_rgba(1.0, 0.62, 0.0, 0.68));
+        }
+
+        // 3. Draw active selection highlight
         if let Some(page_text) = self.page_text {
-            let zoom = self.width / page_text.page_width;
-
-            // 1. Draw persistent annotation highlights
-            for ann in self.highlights {
-                let color = get_annotation_color(ann.color);
-                let is_focused = self.focused_annotation_id == Some(ann.id.as_str());
-                let border = if is_focused {
-                    iced::Border {
-                        color: Color::from_rgb8(177, 204, 198), // theme::ACCENT
-                        width: 1.5,
-                        radius: 0.0.into(),
-                    }
-                } else {
-                    iced::Border::default()
-                };
-
-                for r in &ann.rects {
-                    let screen_rect = to_screen_rect(r, page_text.page_height, zoom, bounds);
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds: screen_rect,
-                            border,
-                            ..Default::default()
-                        },
-                        color,
-                    );
-                }
-            }
-
-            // 2. Draw search highlights (normal and active)
-            for (idx, result) in self.search_matches.iter().enumerate() {
-                if result.page_index == self.page_index {
-                    let is_active = Some(idx) == self.active_search_index;
-                    let color = if is_active {
-                        Color::from_rgba(1.0, 0.62, 0.0, 0.68)
-                    } else {
-                        Color::from_rgba(1.0, 0.78, 0.18, 0.38)
-                    };
-                    for r in &result.rects {
-                        let screen_rect = to_screen_rect(r, page_text.page_height, zoom, bounds);
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: screen_rect,
-                                ..Default::default()
-                            },
-                            color,
-                        );
-                    }
-                }
-            }
-
-            // 3. Draw active selection highlight
             if let Some(sel) = self.active_selection {
                 if sel.page_index == self.page_index {
                     let start = sel.anchor_idx.min(sel.focus_idx);
-                    let end = sel.anchor_idx.max(sel.focus_idx);
+                    let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
                     let selected_chars: Vec<md_editor_core::pdf::PdfTextChar> = page_text
                         .chars
                         .iter()
@@ -331,6 +365,15 @@ where
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => {
                 state.modifiers = *m;
             }
+            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                if (modifiers.command() || modifiers.control())
+                    && matches!(key, iced::keyboard::Key::Character(c) if c == "c")
+                    && self.active_selection.is_some()
+                {
+                    shell.publish((self.on_copy_selection)());
+                    shell.capture_event();
+                }
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position_in(bounds) {
                     state.drag_start = Some(position);
@@ -341,10 +384,8 @@ where
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(start_pos) = state.drag_start {
                     if let Some(current_pos) = cursor.position() {
-                        let current_rel = iced::Point::new(
-                            current_pos.x - bounds.x,
-                            current_pos.y - bounds.y,
-                        );
+                        let current_rel =
+                            iced::Point::new(current_pos.x - bounds.x, current_pos.y - bounds.y);
                         let dx = current_rel.x - start_pos.x;
                         let dy = current_rel.y - start_pos.y;
                         let dist_sq = dx * dx + dy * dy;

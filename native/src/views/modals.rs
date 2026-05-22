@@ -3,6 +3,7 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
+use crate::views::link_note_picker;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModalType {
@@ -10,17 +11,21 @@ pub enum ModalType {
     CreateFolder,
     Delete(String),    // path
     QuickNote(String), // annotation ID
+    LinkNote(String),  // annotation ID
 }
 
 pub fn view<'a>(
     modal_type: &ModalType,
     input_value: &str,
+    picker_search: &str,
+    vault_entries: &'a [md_editor_core::types::FileEntry],
 ) -> Element<'a, Message, Theme, Renderer> {
     let title = match modal_type {
         ModalType::CreateFile => "Create New File",
         ModalType::CreateFolder => "Create New Folder",
         ModalType::Delete(_) => "Delete Confirmation",
         ModalType::QuickNote(_) => "Edit Quick Note",
+        ModalType::LinkNote(_) => "Create Linked Note",
     };
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
@@ -44,6 +49,7 @@ pub fn view<'a>(
         ]
         .spacing(20)
         .into(),
+        ModalType::LinkNote(_) => link_note_picker::view(input_value, picker_search, vault_entries),
         _ => {
             column![
                 text(title).size(18).color(theme::TEXT_PRIMARY),
@@ -70,7 +76,10 @@ pub fn view<'a>(
 
     container(
         container(content)
-            .width(Length::Fixed(400.0))
+            .width(Length::Fixed(match modal_type {
+                ModalType::LinkNote(_) => 560.0,
+                _ => 400.0,
+            }))
             .padding(30)
             .style(|_| container::Style {
                 background: Some(iced::Background::Color(theme::BG_SECONDARY)),
