@@ -7,6 +7,7 @@ use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 use image::GenericImageView;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
@@ -19,6 +20,9 @@ use std::collections::HashSet;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
+const LARGE_DOC_LINE_THRESHOLD: usize = 1_000;
+const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
+const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
 
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
     path.ends_with(".png")
@@ -95,6 +99,10 @@ pub struct MdEditor {
     // Editor state
     buffer: DocBuffer,
     highlighted_lines: Vec<highlight::StyledLine>,
+    highlight_generation: u64,
+    pending_highlight_generation: Option<u64>,
+    pending_highlight_requested_at: Option<Instant>,
+    pending_highlight_text: Option<String>,
 
     // PDF state
     pdf_current_page: u16,
@@ -198,6 +206,10 @@ impl MdEditor {
             backlinks: Vec::new(),
             buffer: DocBuffer::new(),
             highlighted_lines: Vec::new(),
+            highlight_generation: 0,
+            pending_highlight_generation: None,
+            pending_highlight_requested_at: None,
+            pending_highlight_text: None,
             pdf_current_page: 0,
             pdf_total_pages: 0,
             pdf_zoom: 1.5,
@@ -365,6 +377,12 @@ impl MdEditor {
             Subscription::none()
         };
 
+        let highlight_debounce = if self.pending_highlight_generation.is_some() {
+            iced::time::every(HIGHLIGHT_DEBOUNCE).map(|_| Message::HighlightDebounceElapsed)
+        } else {
+            Subscription::none()
+        };
+
         let mouse_drag = if self.is_resizing_split {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
@@ -381,13 +399,22 @@ impl MdEditor {
 
         let window_events = iced::event::listen_with(|event, _status, _window_id| {
             if let iced::Event::Window(iced::window::Event::Resized(size)) = event {
-                Some(Message::WindowResized(size.width as f32, size.height as f32))
+                Some(Message::WindowResized(
+                    size.width as f32,
+                    size.height as f32,
+                ))
             } else {
                 None
             }
         });
 
-        Subscription::batch(vec![keyboard, toast, mouse_drag, window_events])
+        Subscription::batch(vec![
+            keyboard,
+            toast,
+            highlight_debounce,
+            mouse_drag,
+            window_events,
+        ])
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -422,18 +449,17 @@ impl MdEditor {
                         .args(["/C", "start", "", &path])
                         .spawn();
                     #[cfg(target_os = "macos")]
-                    let _ = std::process::Command::new("open")
-                        .arg(&path)
-                        .spawn();
+                    let _ = std::process::Command::new("open").arg(&path).spawn();
                     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(&path)
-                        .spawn();
+                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
                     Task::none()
                 } else {
                     let (file_part, anchor_part) = if let Some(idx) = path.find('#') {
                         let anchor = &path[idx + 1..];
-                        if anchor.chars().any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')')) {
+                        if anchor
+                            .chars()
+                            .any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')'))
+                        {
                             (path.as_str(), None)
                         } else {
                             (&path[..idx], Some(anchor))
@@ -447,16 +473,28 @@ impl MdEditor {
                         let anchor_part = anchor_part.trim();
                         if file_part.is_empty() {
                             let target_slug = slugify(anchor_part);
-                            if let Some(line_idx) = find_heading_or_widget_line(&self.buffer.text(), &self.highlighted_lines, &target_slug) {
+                            if let Some(line_idx) = find_heading_or_widget_line(
+                                &self.buffer.text(),
+                                &self.highlighted_lines,
+                                &target_slug,
+                            ) {
                                 let scroll_task = self.scroll_editor_to_line(line_idx);
-                                let cmd_task = self.run_editor_command(EditorCommand::SetCursor { line: line_idx, col: 0 });
+                                let cmd_task = self.run_editor_command(EditorCommand::SetCursor {
+                                    line: line_idx,
+                                    col: 0,
+                                });
                                 Task::batch(vec![cmd_task, scroll_task])
                             } else {
-                                self.toast = Some(format!("Heading or widget not found: #{}", anchor_part));
+                                self.toast =
+                                    Some(format!("Heading or widget not found: #{}", anchor_part));
                                 Task::none()
                             }
                         } else {
-                            let mut resolved_file = resolve_relative_link_path(self.vault_root.as_deref(), self.active_path.as_deref(), file_part);
+                            let mut resolved_file = resolve_relative_link_path(
+                                self.vault_root.as_deref(),
+                                self.active_path.as_deref(),
+                                file_part,
+                            );
                             if std::path::Path::new(&resolved_file).extension().is_none() {
                                 resolved_file.push_str(".md");
                             }
@@ -464,9 +502,16 @@ impl MdEditor {
                             let open_task = self.open_file_extended(&resolved_file, false);
 
                             let target_slug = slugify(anchor_part);
-                            if let Some(line_idx) = find_heading_or_widget_line(&self.buffer.text(), &self.highlighted_lines, &target_slug) {
+                            if let Some(line_idx) = find_heading_or_widget_line(
+                                &self.buffer.text(),
+                                &self.highlighted_lines,
+                                &target_slug,
+                            ) {
                                 let scroll_task = self.scroll_editor_to_line(line_idx);
-                                let cmd_task = self.run_editor_command(EditorCommand::SetCursor { line: line_idx, col: 0 });
+                                let cmd_task = self.run_editor_command(EditorCommand::SetCursor {
+                                    line: line_idx,
+                                    col: 0,
+                                });
                                 Task::batch(vec![open_task, cmd_task, scroll_task])
                             } else {
                                 // If heading or widget not found in the new file, reset scroll to top!
@@ -479,7 +524,11 @@ impl MdEditor {
                             }
                         }
                     } else {
-                        let mut resolved_path = resolve_relative_link_path(self.vault_root.as_deref(), self.active_path.as_deref(), &path);
+                        let mut resolved_path = resolve_relative_link_path(
+                            self.vault_root.as_deref(),
+                            self.active_path.as_deref(),
+                            &path,
+                        );
                         if std::path::Path::new(&resolved_path).extension().is_none() {
                             resolved_path.push_str(".md");
                         }
@@ -602,6 +651,9 @@ impl MdEditor {
             }
 
             Message::EditorCommand(command) => self.run_editor_command(command),
+            Message::EditorCommandNoScroll(command) => {
+                self.run_editor_command_with_scroll(command, false)
+            }
             Message::MathRendered(tex, res) => {
                 if let Ok(tuple) = res {
                     self.math_cache.insert(tex, tuple);
@@ -640,6 +692,33 @@ impl MdEditor {
                     y: target_y,
                 },
             ),
+            Message::HighlightDebounceElapsed => {
+                if self
+                    .pending_highlight_requested_at
+                    .is_some_and(|requested| requested.elapsed() < HIGHLIGHT_DEBOUNCE)
+                {
+                    return Task::none();
+                }
+                let Some(generation) = self.pending_highlight_generation else {
+                    return Task::none();
+                };
+                let Some(text) = self.pending_highlight_text.take() else {
+                    self.pending_highlight_generation = None;
+                    self.pending_highlight_requested_at = None;
+                    return Task::none();
+                };
+                self.pending_highlight_generation = None;
+                self.pending_highlight_requested_at = None;
+                Self::highlight_task(generation, text)
+            }
+            Message::HighlightReady(generation, lines) => {
+                if generation != self.highlight_generation {
+                    return Task::none();
+                }
+                self.highlighted_lines = lines;
+                self.load_images();
+                self.load_math()
+            }
 
             Message::PdfLoaded(generation, pages) => {
                 if generation != self.pdf_render_generation {
@@ -702,7 +781,8 @@ impl MdEditor {
                 let new_scroll_y = if self.pdf_scroll_y < PDF_PAGE_LIST_PADDING {
                     self.pdf_scroll_y
                 } else {
-                    self.pdf_page_offset(current_page) + relative_ratio * self.pdf_page_height(current_page)
+                    self.pdf_page_offset(current_page)
+                        + relative_ratio * self.pdf_page_height(current_page)
                 };
                 self.pdf_scroll_y = new_scroll_y;
 
@@ -761,7 +841,8 @@ impl MdEditor {
                 let new_scroll_y = if self.pdf_scroll_y < PDF_PAGE_LIST_PADDING {
                     self.pdf_scroll_y
                 } else {
-                    self.pdf_page_offset(current_page) + relative_ratio * self.pdf_page_height(current_page)
+                    self.pdf_page_offset(current_page)
+                        + relative_ratio * self.pdf_page_height(current_page)
                 };
                 self.pdf_scroll_y = new_scroll_y;
 
@@ -896,16 +977,13 @@ impl MdEditor {
                                 .args(["/C", "start", "", &uri])
                                 .spawn();
                             #[cfg(target_os = "macos")]
-                            let _ = std::process::Command::new("open")
-                                .arg(&uri)
-                                .spawn();
+                            let _ = std::process::Command::new("open").arg(&uri).spawn();
                             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-                            let _ = std::process::Command::new("xdg-open")
-                                .arg(&uri)
-                                .spawn();
+                            let _ = std::process::Command::new("xdg-open").arg(&uri).spawn();
                             self.toast = Some(format!("Opening: {}", uri));
                         } else {
-                            self.toast = Some(format!("External link (Ctrl+click to open): {}", uri));
+                            self.toast =
+                                Some(format!("External link (Ctrl+click to open): {}", uri));
                         }
                         Task::none()
                     } else {
@@ -1250,13 +1328,16 @@ impl MdEditor {
                     self.navigate_file_search(true)
                 }
             }
-            Message::SearchReplaceAll => {
-                match self.replace_all_in_current_document() {
-                    Ok(count) => self.toast = Some(format!("Replaced {} matches", count)),
-                    Err(err) => self.toast = Some(err),
+            Message::SearchReplaceAll => match self.replace_all_in_current_document() {
+                Ok((count, task)) => {
+                    self.toast = Some(format!("Replaced {} matches", count));
+                    task
                 }
-                Task::none()
-            }
+                Err(err) => {
+                    self.toast = Some(err);
+                    Task::none()
+                }
+            },
             Message::PdfSearchResult(Ok(results)) => {
                 self.pdf_search_error = None;
                 self.pdf_search_results = results;
@@ -1525,6 +1606,7 @@ impl MdEditor {
                     &self.image_cache,
                     &self.math_cache,
                     Message::EditorCommand,
+                    Message::EditorCommandNoScroll,
                     Message::SidebarFileClicked,
                     Message::EditorCheckboxToggle,
                 )
@@ -1547,21 +1629,24 @@ impl MdEditor {
         .height(Length::Fill);
 
         let editor_view: Element<Message, Theme, iced::Renderer> = {
-            let file_bar: Element<'_, Message, Theme, iced::Renderer> = if self.file_search_visible && self.active_path.is_some() {
-                views::search::file_bar(
-                    &self.search_query,
-                    &self.search_replace,
-                    self.search_regex,
-                    self.search_match_case,
-                    self.current_document_match_count(),
-                    self.search_match_index,
-                ).into()
-            } else {
-                container(Space::new()).height(Length::Fixed(0.0)).width(Length::Fill).into()
-            };
-            column![file_bar, editor_scroll]
-                .height(Length::Fill)
-                .into()
+            let file_bar: Element<'_, Message, Theme, iced::Renderer> =
+                if self.file_search_visible && self.active_path.is_some() {
+                    views::search::file_bar(
+                        &self.search_query,
+                        &self.search_replace,
+                        self.search_regex,
+                        self.search_match_case,
+                        self.current_document_match_count(),
+                        self.search_match_index,
+                    )
+                    .into()
+                } else {
+                    container(Space::new())
+                        .height(Length::Fixed(0.0))
+                        .width(Length::Fill)
+                        .into()
+                };
+            column![file_bar, editor_scroll].height(Length::Fill).into()
         };
 
         let pdf_view: Element<Message, Theme, iced::Renderer> =
@@ -1592,17 +1677,22 @@ impl MdEditor {
                 })
                 .height(Length::Fill);
 
-                let search_bar: Element<'_, Message, Theme, iced::Renderer> = if self.file_search_visible && self.showing_pdf {
-                    views::pdf_viewer::search_bar(
-                        &self.search_query,
-                        self.search_regex,
-                        self.search_match_case,
-                        self.pdf_search_results.len(),
-                        self.search_match_index,
-                    ).into()
-                } else {
-                    container(Space::new()).height(Length::Fixed(0.0)).width(Length::Fill).into()
-                };
+                let search_bar: Element<'_, Message, Theme, iced::Renderer> =
+                    if self.file_search_visible && self.showing_pdf {
+                        views::pdf_viewer::search_bar(
+                            &self.search_query,
+                            self.search_regex,
+                            self.search_match_case,
+                            self.pdf_search_results.len(),
+                            self.search_match_index,
+                        )
+                        .into()
+                    } else {
+                        container(Space::new())
+                            .height(Length::Fixed(0.0))
+                            .width(Length::Fill)
+                            .into()
+                    };
 
                 column![search_bar, pdf_pages, pdf_toolbar]
                     .height(Length::Fill)
@@ -1893,9 +1983,7 @@ impl MdEditor {
                 self.active_image = None;
                 self.showing_pdf = false;
                 self.toc_entries = views::toc::get_toc(&content);
-                self.highlighted_lines = highlight::highlight_markdown(&content);
-                self.load_images();
-                let math_task = self.load_math();
+                let highlight_task = self.refresh_highlighting_for_current_buffer(true);
                 self.backlinks =
                     md_editor_core::vault::get_backlinks(&self.state, path).unwrap_or_default();
                 if is_different && reset_scroll {
@@ -1904,9 +1992,9 @@ impl MdEditor {
                         iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
                         AbsoluteOffset { x: 0.0, y: 0.0 },
                     );
-                    return Task::batch(vec![math_task, scroll_task]);
+                    return Task::batch(vec![highlight_task, scroll_task]);
                 }
-                return math_task;
+                return highlight_task;
             }
         }
         Task::none()
@@ -2115,7 +2203,8 @@ impl MdEditor {
         let viewport_h = self.window_height.max(400.0);
         let pages_in_view = (viewport_h / page_h).ceil() as u16;
         let first_visible = self.pdf_current_page;
-        let last_visible = (first_visible + pages_in_view).min(self.pdf_total_pages.saturating_sub(1));
+        let last_visible =
+            (first_visible + pages_in_view).min(self.pdf_total_pages.saturating_sub(1));
 
         if let Some(path) = &self.active_pdf_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
@@ -2127,7 +2216,8 @@ impl MdEditor {
         }
 
         let start = self.pdf_current_page.saturating_sub(3);
-        let end = (self.pdf_current_page + pages_in_view + 3).min(self.pdf_total_pages.saturating_sub(1));
+        let end =
+            (self.pdf_current_page + pages_in_view + 3).min(self.pdf_total_pages.saturating_sub(1));
         self.render_pdf_page_range(start, end)
     }
 
@@ -2311,8 +2401,41 @@ impl MdEditor {
         ))
     }
 
-    fn highlight_all(&mut self) {
-        self.highlighted_lines = highlight::highlight_markdown(&self.buffer.text());
+    fn highlight_all(&mut self) -> Task<Message> {
+        self.refresh_highlighting_for_current_buffer(false)
+    }
+
+    fn refresh_highlighting_for_current_buffer(&mut self, opened_file: bool) -> Task<Message> {
+        let text = self.buffer.text();
+        let line_count = self.buffer.line_count();
+        self.highlight_generation = self.highlight_generation.wrapping_add(1);
+        let generation = self.highlight_generation;
+        self.pending_highlight_generation = None;
+        self.pending_highlight_requested_at = None;
+        self.pending_highlight_text = None;
+
+        if opened_file && line_count > HUGE_DOC_LINE_THRESHOLD {
+            self.highlighted_lines = plain_highlight_placeholders(&text);
+            return Self::highlight_task(generation, text);
+        }
+
+        if !opened_file && line_count > LARGE_DOC_LINE_THRESHOLD {
+            self.pending_highlight_generation = Some(generation);
+            self.pending_highlight_requested_at = Some(Instant::now());
+            self.pending_highlight_text = Some(text);
+            return Task::none();
+        }
+
+        self.highlighted_lines = highlight::highlight_markdown(&text);
+        self.load_images();
+        self.load_math()
+    }
+
+    fn highlight_task(generation: u64, text: String) -> Task<Message> {
+        Task::perform(
+            async move { highlight::highlight_markdown(&text) },
+            move |lines| Message::HighlightReady(generation, lines),
+        )
     }
 
     fn current_document_match_count(&self) -> usize {
@@ -2510,10 +2633,7 @@ impl MdEditor {
             let pdf_y = self.pdf_scroll_y;
             tasks.push(operation::scroll_to(
                 iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-                AbsoluteOffset {
-                    x: 0.0,
-                    y: pdf_y,
-                },
+                AbsoluteOffset { x: 0.0, y: pdf_y },
             ));
         }
         Task::batch(tasks)
@@ -2528,7 +2648,7 @@ impl MdEditor {
         Task::perform(async move { target_y }, Message::ScrollEditorToTarget)
     }
 
-    fn replace_all_in_current_document(&mut self) -> Result<usize, String> {
+    fn replace_all_in_current_document(&mut self) -> Result<(usize, Task<Message>), String> {
         if self.active_path.is_none() {
             return Err("Open a markdown file before replacing text".to_string());
         }
@@ -2569,11 +2689,11 @@ impl MdEditor {
 
         if count > 0 {
             self.buffer.set_text(&new_text);
-            self.highlight_all();
-            self.load_images();
             self.toc_entries = views::toc::get_toc(&self.buffer.text());
+            let task = self.highlight_all();
+            return Ok((count, task));
         }
-        Ok(count)
+        Ok((count, Task::none()))
     }
 
     fn search_pdf(&self) -> Task<Message> {
@@ -2602,20 +2722,29 @@ impl MdEditor {
     }
 
     fn run_editor_command(&mut self, command: EditorCommand) -> Task<Message> {
-        let should_keep_cursor_visible = editor_command_keeps_cursor_visible(&command);
+        let keep_cursor_visible = editor_command_keeps_cursor_visible(&command);
+        self.run_editor_command_with_scroll(command, keep_cursor_visible)
+    }
+
+    fn run_editor_command_with_scroll(
+        &mut self,
+        command: EditorCommand,
+        keep_cursor_visible: bool,
+    ) -> Task<Message> {
         let result = self.buffer.execute(command);
-        if result.projection_changed {
-            self.highlight_all();
-        }
-        let content_task = if result.text_changed {
-            self.load_images();
+        let content_task = if result.projection_changed {
+            if result.text_changed {
+                self.toc_entries = views::toc::get_toc(&self.buffer.text());
+            }
+            self.highlight_all()
+        } else if result.text_changed {
             self.toc_entries = views::toc::get_toc(&self.buffer.text());
-            self.load_math()
+            Task::none()
         } else {
             Task::none()
         };
 
-        if should_keep_cursor_visible {
+        if keep_cursor_visible {
             Task::batch(vec![
                 content_task,
                 self.scroll_editor_to_line(self.buffer.cursor_line),
@@ -2752,6 +2881,18 @@ fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
     )
 }
 
+fn plain_highlight_placeholders(text: &str) -> Vec<highlight::StyledLine> {
+    text.split('\n')
+        .enumerate()
+        .map(|(idx, line)| {
+            let mut styled = highlight::StyledLine::new();
+            styled.block_id = idx;
+            styled.spans.push(highlight::StyledSpan::plain(line));
+            styled
+        })
+        .collect()
+}
+
 fn focus_file_search_input() -> Task<Message> {
     operation::focus(iced::advanced::widget::Id::new(
         views::search::FILE_SEARCH_INPUT_ID,
@@ -2790,7 +2931,11 @@ fn normalize_path(path: &std::path::Path) -> String {
     normalized.to_string_lossy().to_string()
 }
 
-fn resolve_relative_link_path(vault_root: Option<&str>, active_path: Option<&str>, link_path: &str) -> String {
+fn resolve_relative_link_path(
+    vault_root: Option<&str>,
+    active_path: Option<&str>,
+    link_path: &str,
+) -> String {
     if link_path.starts_with('.') {
         if let Some(active_file) = active_path {
             let active_path_buf = std::path::Path::new(active_file);
@@ -2890,7 +3035,7 @@ fn find_heading_or_widget_line(
         return Some(line_idx);
     }
     let target_slug_underscored = target_slug.replace('-', "_");
-    
+
     let re_slug_str = format!(
         r#"(?i)id\s*=\s*["']{}["']|name\s*=\s*["']{}["']|\\label\s*\{{\s*{}\s*\}}|\{{\s*#\s*{}\s*\}}"#,
         regex::escape(target_slug),
@@ -2926,7 +3071,7 @@ mod tests {
         assert_eq!(slugify("Equation 1"), "equation-1");
         assert_eq!(slugify("Header: Equation 1"), "header-equation-1");
         assert_eq!(slugify("**Bold Heading**"), "bold-heading");
-        
+
         let text = "# Equation 1\nSome text\n## Header: Equation 1\nMore text\n# **Bold Heading**";
         assert_eq!(find_heading_line(text, "equation-1"), Some(0));
         assert_eq!(find_heading_line(text, "header-equation-1"), Some(2));
@@ -2966,20 +3111,17 @@ mod tests {
             .join(format!("test_vault_{}", unique_id));
         let sub_dir = target_dir.join("subdir");
         std::fs::create_dir_all(&sub_dir).unwrap();
-        
+
         let target_file = sub_dir.join("another_file.md");
         std::fs::write(&target_file, "content").unwrap();
-        
+
         let vault_root = target_dir.to_str().unwrap();
         let active_path = "subdir/active.md";
-        
-        let resolved = resolve_relative_link_path(
-            Some(vault_root),
-            Some(active_path),
-            "another_file",
-        );
+
+        let resolved =
+            resolve_relative_link_path(Some(vault_root), Some(active_path), "another_file");
         assert_eq!(resolved, "subdir/another_file");
-        
+
         let _ = std::fs::remove_dir_all(&target_dir);
     }
 
@@ -2987,17 +3129,38 @@ mod tests {
     fn test_find_heading_or_widget_line() {
         let text = "Line 0\n$$E = mc^2$$ \\label{equation-1}\nLine 2\n<div id=\"figure-1\">\nLine 4\n$$E = h\\nu$$ { #equation-2 }";
         let highlighted = highlight::highlight_markdown(text);
-        assert_eq!(find_heading_or_widget_line(text, &highlighted, "equation-1"), Some(1));
-        assert_eq!(find_heading_or_widget_line(text, &highlighted, "figure-1"), Some(3));
-        assert_eq!(find_heading_or_widget_line(text, &highlighted, "equation-2"), Some(5));
-        assert_eq!(find_heading_or_widget_line(text, &highlighted, "not-existent"), None);
+        assert_eq!(
+            find_heading_or_widget_line(text, &highlighted, "equation-1"),
+            Some(1)
+        );
+        assert_eq!(
+            find_heading_or_widget_line(text, &highlighted, "figure-1"),
+            Some(3)
+        );
+        assert_eq!(
+            find_heading_or_widget_line(text, &highlighted, "equation-2"),
+            Some(5)
+        );
+        assert_eq!(
+            find_heading_or_widget_line(text, &highlighted, "not-existent"),
+            None
+        );
 
         // Also test the dynamic numbering of figures and math equations
         let dynamic_text = "Here is an image:\n![Alt](image.png)\nAnd a math block:\n$$\nE = mc^2\n$$\nAnother image:\n![Alt2](pic.png)";
         let dyn_highlighted = highlight::highlight_markdown(dynamic_text);
-        assert_eq!(find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "figure-1"), Some(1));
-        assert_eq!(find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "equation-1"), Some(3));
-        assert_eq!(find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "figure-2"), Some(7));
+        assert_eq!(
+            find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "figure-1"),
+            Some(1)
+        );
+        assert_eq!(
+            find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "equation-1"),
+            Some(3)
+        );
+        assert_eq!(
+            find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "figure-2"),
+            Some(7)
+        );
     }
 
     #[test]

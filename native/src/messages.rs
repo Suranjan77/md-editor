@@ -34,6 +34,7 @@ pub enum Message {
 
     // ── Editor ───────────────────────────────────────────────────
     EditorCommand(crate::editor::buffer::EditorCommand),
+    EditorCommandNoScroll(crate::editor::buffer::EditorCommand),
     EditorSave,
     EditorCheckboxToggle(usize),
     EditorCursorMove(usize, usize),
@@ -43,6 +44,8 @@ pub enum Message {
         viewport_height: f32,
     },
     ScrollEditorToTarget(f32),
+    HighlightReady(u64, Vec<crate::editor::highlight::StyledLine>),
+    HighlightDebounceElapsed,
 
     // ── PDF ──────────────────────────────────────────────────────
     PdfZoomChanged(f32),
