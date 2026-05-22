@@ -47,10 +47,16 @@ fn install_linux_desktop_entry_with_home(home: &str) -> bool {
                 let size_dir = hicolor_dir.join(format!("{}x{}", size, size)).join("apps");
                 let _ = std::fs::create_dir_all(&size_dir);
                 let target_path = size_dir.join("md-editor.png");
-                
+
                 let resized = img.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
                 let mut bytes = Vec::new();
-                if resized.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).is_ok() {
+                if resized
+                    .write_to(
+                        &mut std::io::Cursor::new(&mut bytes),
+                        image::ImageFormat::Png,
+                    )
+                    .is_ok()
+                {
                     let _ = std::fs::write(target_path, bytes);
                 }
             }
@@ -70,8 +76,7 @@ MimeType=text/markdown;application/pdf;
 Categories=Office;WordProcessor;Utility;
 StartupWMClass=md-editor
 "#,
-            exe_str,
-            primary_icon_str
+            exe_str, primary_icon_str
         );
 
         let desktop_file_path = app_dir.join("md-editor.desktop");
@@ -124,7 +129,10 @@ fn uninstall_linux_desktop_entry_with_home(home: &str) -> bool {
         // Remove specific size icons
         let sizes = [16, 32, 48, 64, 128, 256, 512];
         for &size in &sizes {
-            let size_icon = hicolor_dir.join(format!("{}x{}", size, size)).join("apps").join("md-editor.png");
+            let size_icon = hicolor_dir
+                .join(format!("{}x{}", size, size))
+                .join("apps")
+                .join("md-editor.png");
             if size_icon.exists() {
                 let _ = std::fs::remove_file(size_icon);
             }
@@ -255,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_parse_cli_args() {
-        use super::{parse_cli_args, CliAction};
+        use super::{CliAction, parse_cli_args};
 
         // Empty args list (just binary path) -> RunApp
         assert_eq!(
@@ -312,8 +320,13 @@ mod tests {
         let local_share = test_home.join(".local").join("share");
         let app_file = local_share.join("applications").join("md-editor.desktop");
         let primary_icon = local_share.join("icons").join("md-editor.png");
-        let scalable_icon = local_share.join("icons").join("hicolor").join("scalable").join("apps").join("md-editor.png");
-        
+        let scalable_icon = local_share
+            .join("icons")
+            .join("hicolor")
+            .join("scalable")
+            .join("apps")
+            .join("md-editor.png");
+
         assert!(app_file.exists(), "Desktop file must exist");
         assert!(primary_icon.exists(), "Primary icon must exist");
         assert!(scalable_icon.exists(), "Scalable icon must exist");
@@ -321,7 +334,12 @@ mod tests {
         // Verify specific sized icons
         let sizes = [16, 32, 48, 64, 128, 256, 512];
         for &size in &sizes {
-            let size_icon = local_share.join("icons").join("hicolor").join(format!("{}x{}", size, size)).join("apps").join("md-editor.png");
+            let size_icon = local_share
+                .join("icons")
+                .join("hicolor")
+                .join(format!("{}x{}", size, size))
+                .join("apps")
+                .join("md-editor.png");
             assert!(size_icon.exists(), "Icon size {}x{} must exist", size, size);
         }
 
@@ -334,8 +352,18 @@ mod tests {
         assert!(!primary_icon.exists(), "Primary icon must be deleted");
         assert!(!scalable_icon.exists(), "Scalable icon must be deleted");
         for &size in &sizes {
-            let size_icon = local_share.join("icons").join("hicolor").join(format!("{}x{}", size, size)).join("apps").join("md-editor.png");
-            assert!(!size_icon.exists(), "Icon size {}x{} must be deleted", size, size);
+            let size_icon = local_share
+                .join("icons")
+                .join("hicolor")
+                .join(format!("{}x{}", size, size))
+                .join("apps")
+                .join("md-editor.png");
+            assert!(
+                !size_icon.exists(),
+                "Icon size {}x{} must be deleted",
+                size,
+                size
+            );
         }
 
         // Clean up the temporary folder

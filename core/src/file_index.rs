@@ -85,7 +85,10 @@ fn extract_wikilinks(content: &str, vault_root: &Path, file_path: &Path) -> Vec<
             }
             let path_part = if let Some(idx) = target_str.find('#') {
                 let anchor = &target_str[idx + 1..];
-                if anchor.chars().any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')')) {
+                if anchor
+                    .chars()
+                    .any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')'))
+                {
                     target_str
                 } else {
                     target_str[..idx].trim()
@@ -155,7 +158,10 @@ mod tests {
         let links_rel = extract_wikilinks(content_rel, &root, &file_path_rel);
         assert_eq!(links_rel.len(), 2);
         assert_eq!(links_rel[0], PathBuf::from("/vault/other-note.md"));
-        assert_eq!(links_rel[1], PathBuf::from("/vault/nested/subfolder/page.md"));
+        assert_eq!(
+            links_rel[1],
+            PathBuf::from("/vault/nested/subfolder/page.md")
+        );
     }
 
     #[test]

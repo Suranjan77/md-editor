@@ -43,6 +43,16 @@ PDF files open in an integrated viewer with:
 - PDF table of contents.
 - PDF text search.
 - Internal PDF link handling.
+- Text selection and clipboard copy for PDFs with embedded text.
+- Sidecar PDF highlights, quick notes, and linked markdown notes without
+  modifying the original PDF.
+- Mixed backlinks between markdown notes, PDFs, and PDF highlights.
+- Higher-resolution page rendering so fit-to-width pages remain sharp in split
+  view.
+
+In split view, per-file search is owned by the markdown pane by default so
+`Ctrl+F` does not open competing search bars in both panes. PDF search remains
+available when the PDF is the active full view.
 
 Image files open in a dedicated image preview.
 

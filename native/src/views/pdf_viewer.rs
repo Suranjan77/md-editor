@@ -1,27 +1,14 @@
-use iced::widget::{Space, button, checkbox, column, container, row, text, text_input, stack, Pin};
-use iced::{Alignment, Element, Length, Renderer, Theme, Color};
+use iced::widget::{Space, button, checkbox, column, container, row, text, text_input};
+use iced::{Alignment, Color, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
 use crate::views::icons::{self, Icon};
-use crate::views::interactive_pdf::InteractivePdf;
+use crate::views::interactive_pdf::{InteractivePdf, PdfSelection};
 
 pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
 pub(crate) const PDF_PAGE_SPACING: f32 = 20.0;
 pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
-
-fn search_rect_to_view_rect(
-    rect: &md_editor_core::pdf::PdfRect,
-    page_height: f32,
-    zoom: f32,
-) -> md_editor_core::pdf::PdfRect {
-    md_editor_core::pdf::PdfRect {
-        x: rect.x * zoom,
-        y: (page_height - rect.y - rect.height) * zoom,
-        width: rect.width * zoom,
-        height: rect.height * zoom,
-    }
-}
 
 pub fn search_bar<'a>(
     query: &'a str,
@@ -92,11 +79,133 @@ pub fn toolbar<'a>(
     total_pages: u16,
     zoom: f32,
     toc_visible: bool,
+    selection_active: bool,
+    focused_annotation: Option<&'a md_editor_core::pdf::PdfAnnotation>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let page_label = if total_pages == 0 {
         "No PDF".to_string()
     } else {
         format!("{} / {}", current_page + 1, total_pages)
+    };
+
+    let study_controls = if selection_active {
+        let colors = [
+            (
+                md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                Color::from_rgb8(250, 219, 92),
+            ),
+            (
+                md_editor_core::pdf::PdfAnnotationColor::Green,
+                Color::from_rgb8(105, 219, 124),
+            ),
+            (
+                md_editor_core::pdf::PdfAnnotationColor::Blue,
+                Color::from_rgb8(92, 182, 250),
+            ),
+            (
+                md_editor_core::pdf::PdfAnnotationColor::Pink,
+                Color::from_rgb8(250, 140, 190),
+            ),
+            (
+                md_editor_core::pdf::PdfAnnotationColor::Orange,
+                Color::from_rgb8(250, 160, 90),
+            ),
+        ];
+        let mut color_row = row![].spacing(8).align_y(Alignment::Center);
+        for (color_enum, display_color) in colors {
+            color_row = color_row.push(
+                button(text("■").size(18).color(display_color))
+                    .on_press(Message::PdfCreateHighlight(color_enum))
+                    .style(button::text)
+                    .padding(2),
+            );
+        }
+
+        row![
+            color_row,
+            Space::new().width(5.0),
+            button(text("Copy").size(12).color(theme::TEXT_PRIMARY))
+                .on_press(Message::PdfCopySelection)
+                .padding([4, 8]),
+            button(text("Clear").size(12).color(theme::TEXT_MUTED))
+                .on_press(Message::PdfSelectionCleared)
+                .padding([4, 8])
+                .style(button::text),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+    } else {
+        row![]
+    };
+
+    let annotation_controls = if let Some(ann) = focused_annotation {
+        let note_btn = button(
+            row![
+                icons::view(Icon::FileText, theme::TEXT_PRIMARY, 14.0),
+                text(" Note").size(12).color(theme::TEXT_PRIMARY)
+            ]
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::PdfRightClicked(ann.page_index, -1.0, -1.0))
+        .padding([4, 8])
+        .style(button::text);
+
+        let link_btn = if let Some(ref path) = ann.linked_note_path {
+            if !path.is_empty() {
+                button(
+                    row![
+                        icons::view(Icon::FolderOpen, theme::ACCENT, 14.0),
+                        text(" Open Note").size(12).color(theme::ACCENT)
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::PdfOpenLinkedNote(path.clone()))
+                .padding([4, 8])
+                .style(button::text)
+            } else {
+                button(
+                    row![
+                        icons::view(Icon::Folder, theme::TEXT_MUTED, 14.0),
+                        text(" Link Note").size(12).color(theme::TEXT_MUTED)
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
+                .padding([4, 8])
+                .style(button::text)
+            }
+        } else {
+            button(
+                row![
+                    icons::view(Icon::Folder, theme::TEXT_MUTED, 14.0),
+                    text(" Link Note").size(12).color(theme::TEXT_MUTED)
+                ]
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
+            .padding([4, 8])
+            .style(button::text)
+        };
+
+        let delete_btn = button(icons::view(
+            Icon::Trash,
+            Color::from_rgb8(239, 83, 80),
+            14.0,
+        ))
+        .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
+        .padding([4, 8])
+        .style(button::text);
+
+        row![
+            text("Highlight:").size(12).color(theme::TEXT_MUTED),
+            note_btn,
+            link_btn,
+            delete_btn,
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+    } else {
+        row![]
     };
 
     container(
@@ -109,6 +218,9 @@ pub fn toolbar<'a>(
             .on_press(Message::ToggleTOC)
             .padding(8)
             .style(button::text),
+            Space::new().width(Length::Fill),
+            study_controls,
+            annotation_controls,
             Space::new().width(Length::Fill),
             button(text("-").size(16))
                 .on_press(Message::PdfZoomChanged((zoom - 0.1).max(0.5)))
@@ -138,7 +250,7 @@ pub fn toolbar<'a>(
         border: iced::Border {
             color: theme::BORDER,
             width: 1.0,
-            ..Default::default()
+            radius: 0.0.into(),
         },
         ..Default::default()
     })
@@ -153,6 +265,10 @@ pub fn view_continuous<'a>(
     placeholder_page_size: Option<(f32, f32)>,
     search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
     active_search_index: Option<usize>,
+    page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
+    annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
+    active_selection: Option<PdfSelection>,
+    focused_annotation_id: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
     if pages.is_empty() {
         return container(text("Loading PDF...").color(theme::TEXT_MUTED).size(14))
@@ -189,92 +305,44 @@ pub fn view_continuous<'a>(
         })
         .unwrap_or((612.0 * zoom, 792.0 * zoom));
 
-    let (pw, ph) = (placeholder_display_size.0 / zoom.max(0.01), placeholder_display_size.1 / zoom.max(0.01));
+    let (pw, ph) = (
+        placeholder_display_size.0 / zoom.max(0.01),
+        placeholder_display_size.1 / zoom.max(0.01),
+    );
 
     for (i, page_opt) in pages.iter().enumerate() {
-        let (page_width, page_height) = page_sizes
-            .get(i)
-            .and_then(|size| *size)
-            .unwrap_or((pw, ph));
+        let (page_width, page_height) =
+            page_sizes.get(i).and_then(|size| *size).unwrap_or((pw, ph));
         let display_size = (page_width * zoom, page_height * zoom);
 
         if let Some(handle) = page_opt {
             let (w, h) = display_size;
-            let highlights = search_matches
-                .iter()
-                .enumerate()
-                .filter(|(idx, result)| {
-                    result.page_index == i as u16 && Some(*idx) != active_search_index
-                })
-                .flat_map(|(_, result)| result.rects.iter())
-                .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
-                .collect::<Vec<_>>();
-            let active_highlights = active_search_index
-                .and_then(|idx| search_matches.get(idx))
-                .filter(|result| result.page_index == i as u16)
-                .map(|result| {
-                    result
-                        .rects
-                        .iter()
-                        .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let mut layers: Vec<Element<'a, Message, Theme, Renderer>> = vec![
-                InteractivePdf::new(
-                    handle.clone(),
-                    w,
-                    h,
-                    move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
-                    move |x, y| Message::PdfRightClicked(i as u16, x, y),
-                )
-                .into()
-            ];
 
-            for rect in &highlights {
-                layers.push(
-                    Pin::new(
-                        container(Space::new())
-                            .width(Length::Fixed((rect.width).max(3.0)))
-                            .height(Length::Fixed((rect.height).max(8.0)))
-                            .style(|_| container::Style {
-                                background: Some(iced::Background::Color(Color::from_rgba(1.0, 0.78, 0.18, 0.38))),
-                                border: iced::Border {
-                                    radius: 2.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            })
-                    )
-                    .x(rect.x)
-                    .y(rect.y)
-                    .into()
-                );
-            }
-
-            for rect in &active_highlights {
-                layers.push(
-                    Pin::new(
-                        container(Space::new())
-                            .width(Length::Fixed((rect.width).max(3.0)))
-                            .height(Length::Fixed((rect.height).max(8.0)))
-                            .style(|_| container::Style {
-                                background: Some(iced::Background::Color(Color::from_rgba(1.0, 0.62, 0.0, 0.68))),
-                                border: iced::Border {
-                                    radius: 2.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            })
-                    )
-                    .x(rect.x)
-                    .y(rect.y)
-                    .into()
-                );
-            }
+            let page_text = page_texts.get(&(i as u16));
+            let page_highlights = annotations
+                .get(&(i as u16))
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let interactive = InteractivePdf::new(
+                handle.clone(),
+                w,
+                h,
+                i as u16,
+                page_text,
+                page_highlights,
+                search_matches,
+                active_search_index,
+                active_selection,
+                focused_annotation_id,
+                move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
+                move |x, y| Message::PdfRightClicked(i as u16, x, y),
+                move |page, anchor, focus| Message::PdfSelectionChanged(page, anchor, focus),
+                move |page, anchor, focus| Message::PdfSelectionFinished(page, anchor, focus),
+                move || Message::PdfSelectionCleared,
+            );
 
             page_list = page_list.push(
-                container(stack(layers))
+                container(interactive)
                     .width(Length::Fixed(w))
                     .height(Length::Fixed(h))
                     .style(|_| container::Style {
@@ -313,26 +381,4 @@ pub fn view_continuous<'a>(
             ..Default::default()
         })
         .into()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn search_rects_convert_from_pdf_space_to_view_space() {
-        let rect = md_editor_core::pdf::PdfRect {
-            x: 72.0,
-            y: 700.0,
-            width: 100.0,
-            height: 14.0,
-        };
-
-        let converted = search_rect_to_view_rect(&rect, 792.0, 2.0);
-
-        assert_eq!(converted.x, 144.0);
-        assert_eq!(converted.y, 156.0);
-        assert_eq!(converted.width, 200.0);
-        assert_eq!(converted.height, 28.0);
-    }
 }
