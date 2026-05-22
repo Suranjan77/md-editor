@@ -56,7 +56,7 @@ pub enum Message {
         y: f32,
         viewport_height: f32,
     },
-    PdfLeftClicked(u16, f32, f32),
+    PdfLeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
     PdfRightClicked(u16, f32, f32),
     PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),

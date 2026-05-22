@@ -411,19 +411,93 @@ impl MdEditor {
                 Task::none()
             }
             Message::SidebarFileClicked(path) => {
-                self.selected_path = Some(path.clone());
-                let lower = path.to_lowercase();
-                if lower.ends_with(".md") || lower.ends_with(".markdown") {
-                    self.showing_pdf = false;
-                    self.open_file(&path)
-                } else if lower.ends_with(".pdf") {
-                    self.active_pdf_path = Some(path.clone());
-                    self.showing_pdf = true;
-                    self.open_pdf(&path)
-                } else if is_supported_image_path(&lower) {
-                    self.open_image(&path)
-                } else {
+                let path = path.trim().to_string();
+                let is_url = path.starts_with("http://")
+                    || path.starts_with("https://")
+                    || path.contains("://");
+
+                if is_url {
+                    #[cfg(target_os = "windows")]
+                    let _ = std::process::Command::new("cmd")
+                        .args(["/C", "start", "", &path])
+                        .spawn();
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open")
+                        .arg(&path)
+                        .spawn();
+                    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg(&path)
+                        .spawn();
                     Task::none()
+                } else {
+                    let (file_part, anchor_part) = if let Some(idx) = path.find('#') {
+                        let anchor = &path[idx + 1..];
+                        if anchor.chars().any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')')) {
+                            (path.as_str(), None)
+                        } else {
+                            (&path[..idx], Some(anchor))
+                        }
+                    } else {
+                        (path.as_str(), None)
+                    };
+
+                    if let Some(anchor_part) = anchor_part {
+                        let file_part = file_part.trim();
+                        let anchor_part = anchor_part.trim();
+                        if file_part.is_empty() {
+                            let target_slug = slugify(anchor_part);
+                            if let Some(line_idx) = find_heading_or_widget_line(&self.buffer.text(), &self.highlighted_lines, &target_slug) {
+                                let scroll_task = self.scroll_editor_to_line(line_idx);
+                                let cmd_task = self.run_editor_command(EditorCommand::SetCursor { line: line_idx, col: 0 });
+                                Task::batch(vec![cmd_task, scroll_task])
+                            } else {
+                                self.toast = Some(format!("Heading or widget not found: #{}", anchor_part));
+                                Task::none()
+                            }
+                        } else {
+                            let mut resolved_file = resolve_relative_link_path(self.vault_root.as_deref(), self.active_path.as_deref(), file_part);
+                            if std::path::Path::new(&resolved_file).extension().is_none() {
+                                resolved_file.push_str(".md");
+                            }
+                            self.selected_path = Some(resolved_file.clone());
+                            let open_task = self.open_file_extended(&resolved_file, false);
+
+                            let target_slug = slugify(anchor_part);
+                            if let Some(line_idx) = find_heading_or_widget_line(&self.buffer.text(), &self.highlighted_lines, &target_slug) {
+                                let scroll_task = self.scroll_editor_to_line(line_idx);
+                                let cmd_task = self.run_editor_command(EditorCommand::SetCursor { line: line_idx, col: 0 });
+                                Task::batch(vec![open_task, cmd_task, scroll_task])
+                            } else {
+                                // If heading or widget not found in the new file, reset scroll to top!
+                                self.editor_scroll_y = 0.0;
+                                let scroll_task = operation::scroll_to(
+                                    iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                                    AbsoluteOffset { x: 0.0, y: 0.0 },
+                                );
+                                Task::batch(vec![open_task, scroll_task])
+                            }
+                        }
+                    } else {
+                        let mut resolved_path = resolve_relative_link_path(self.vault_root.as_deref(), self.active_path.as_deref(), &path);
+                        if std::path::Path::new(&resolved_path).extension().is_none() {
+                            resolved_path.push_str(".md");
+                        }
+                        self.selected_path = Some(resolved_path.clone());
+                        let lower = resolved_path.to_lowercase();
+                        if lower.ends_with(".md") || lower.ends_with(".markdown") {
+                            self.showing_pdf = false;
+                            self.open_file(&resolved_path)
+                        } else if lower.ends_with(".pdf") {
+                            self.active_pdf_path = Some(resolved_path.clone());
+                            self.showing_pdf = true;
+                            self.open_pdf(&resolved_path)
+                        } else if is_supported_image_path(&lower) {
+                            self.open_image(&resolved_path)
+                        } else {
+                            Task::none()
+                        }
+                    }
                 }
             }
             Message::SidebarFolderToggled(path) => {
@@ -809,14 +883,30 @@ impl MdEditor {
                     self.render_pdf_pages_for_viewport(y, viewport_height)
                 }
             }
-            Message::PdfLeftClicked(page_idx, x, y) => {
+            Message::PdfLeftClicked(page_idx, x, y, modifiers) => {
                 if let Some(link) = self.pdf_link_at(page_idx, x, y) {
                     if let Some(dest_page) = link.dest_page {
                         self.pdf_current_page =
                             dest_page.min(u32::from(self.pdf_total_pages.saturating_sub(1))) as u16;
                         self.navigate_pdf_page(self.pdf_current_page)
                     } else if let Some(uri) = link.uri {
-                        self.toast = Some(format!("External link: {}", uri));
+                        if modifiers.control() || modifiers.command() {
+                            #[cfg(target_os = "windows")]
+                            let _ = std::process::Command::new("cmd")
+                                .args(["/C", "start", "", &uri])
+                                .spawn();
+                            #[cfg(target_os = "macos")]
+                            let _ = std::process::Command::new("open")
+                                .arg(&uri)
+                                .spawn();
+                            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+                            let _ = std::process::Command::new("xdg-open")
+                                .arg(&uri)
+                                .spawn();
+                            self.toast = Some(format!("Opening: {}", uri));
+                        } else {
+                            self.toast = Some(format!("External link (Ctrl+click to open): {}", uri));
+                        }
                         Task::none()
                     } else {
                         Task::none()
@@ -1789,6 +1879,11 @@ impl MdEditor {
     }
 
     fn open_file(&mut self, path: &str) -> Task<Message> {
+        self.open_file_extended(path, true)
+    }
+
+    fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
+        let is_different = self.active_path.as_deref() != Some(path);
         if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
             if let Ok(content) = String::from_utf8(bytes) {
                 self.buffer = DocBuffer::from_text(&content);
@@ -1803,6 +1898,14 @@ impl MdEditor {
                 let math_task = self.load_math();
                 self.backlinks =
                     md_editor_core::vault::get_backlinks(&self.state, path).unwrap_or_default();
+                if is_different && reset_scroll {
+                    self.editor_scroll_y = 0.0;
+                    let scroll_task = operation::scroll_to(
+                        iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                        AbsoluteOffset { x: 0.0, y: 0.0 },
+                    );
+                    return Task::batch(vec![math_task, scroll_task]);
+                }
                 return math_task;
             }
         }
@@ -2667,9 +2770,235 @@ fn focus_pdf_search_input() -> Task<Message> {
     ))
 }
 
+fn normalize_path(path: &std::path::Path) -> String {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                components.pop();
+            }
+            std::path::Component::Normal(c) => {
+                components.push(c);
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                components.push(component.as_os_str());
+            }
+        }
+    }
+    let normalized: std::path::PathBuf = components.into_iter().collect();
+    normalized.to_string_lossy().to_string()
+}
+
+fn resolve_relative_link_path(vault_root: Option<&str>, active_path: Option<&str>, link_path: &str) -> String {
+    if link_path.starts_with('.') {
+        if let Some(active_file) = active_path {
+            let active_path_buf = std::path::Path::new(active_file);
+            if let Some(parent) = active_path_buf.parent() {
+                let resolved = parent.join(link_path);
+                return normalize_path(&resolved);
+            }
+        }
+    }
+    // If it doesn't start with '.', check if there is an existing file relative to the active path's parent.
+    if let (Some(vault), Some(active_file)) = (vault_root, active_path) {
+        let active_path_buf = std::path::Path::new(active_file);
+        if let Some(parent) = active_path_buf.parent() {
+            let relative_candidate = parent.join(link_path);
+            let abs_relative = std::path::Path::new(vault).join(&relative_candidate);
+            if abs_relative.exists()
+                || abs_relative.with_extension("md").exists()
+                || abs_relative.with_extension("markdown").exists()
+            {
+                return normalize_path(&relative_candidate);
+            }
+        }
+    }
+    link_path.to_string()
+}
+
+fn slugify(s: &str) -> String {
+    let mut result = String::new();
+    let mut last_was_hyphen = false;
+    for c in s.to_lowercase().chars() {
+        if c.is_alphanumeric() || c == '_' {
+            result.push(c);
+            last_was_hyphen = false;
+        } else if c.is_whitespace() || c == '-' {
+            if !last_was_hyphen {
+                result.push('-');
+                last_was_hyphen = true;
+            }
+        }
+    }
+    result.trim_matches('-').to_string()
+}
+
+fn find_heading_line(text: &str, target_slug: &str) -> Option<usize> {
+    for (line_idx, line_content) in text.split('\n').enumerate() {
+        let trimmed = line_content.trim_start();
+        if trimmed.starts_with('#') {
+            let mut level = 0;
+            for c in trimmed.chars() {
+                if c == '#' {
+                    level += 1;
+                } else {
+                    break;
+                }
+            }
+            if level > 0 && level <= 6 {
+                let heading_text = trimmed[level..].trim();
+                if slugify(heading_text) == target_slug {
+                    return Some(line_idx);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_heading_or_widget_line(
+    text: &str,
+    highlighted_lines: &[crate::editor::highlight::StyledLine],
+    target_slug: &str,
+) -> Option<usize> {
+    // If target_slug is "listing-N", we also want to look for "code-N", and vice-versa
+    let alternative_slug = if let Some(num_str) = target_slug.strip_prefix("listing-") {
+        Some(format!("code-{}", num_str))
+    } else if let Some(num_str) = target_slug.strip_prefix("code-") {
+        Some(format!("listing-{}", num_str))
+    } else {
+        None
+    };
+
+    for (line_idx, line) in highlighted_lines.iter().enumerate() {
+        for span in &line.spans {
+            if let Some(ref span_id) = span.id {
+                if span_id.eq_ignore_ascii_case(target_slug) {
+                    return Some(line_idx);
+                }
+                if let Some(ref alt) = alternative_slug {
+                    if span_id.eq_ignore_ascii_case(alt) {
+                        return Some(line_idx);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(line_idx) = find_heading_line(text, target_slug) {
+        return Some(line_idx);
+    }
+    let target_slug_underscored = target_slug.replace('-', "_");
+    
+    let re_slug_str = format!(
+        r#"(?i)id\s*=\s*["']{}["']|name\s*=\s*["']{}["']|\\label\s*\{{\s*{}\s*\}}|\{{\s*#\s*{}\s*\}}"#,
+        regex::escape(target_slug),
+        regex::escape(target_slug),
+        regex::escape(target_slug),
+        regex::escape(target_slug)
+    );
+    let re_slug = regex::Regex::new(&re_slug_str).ok()?;
+
+    let re_under_str = format!(
+        r#"(?i)id\s*=\s*["']{}["']|name\s*=\s*["']{}["']|\\label\s*\{{\s*{}\s*\}}|\{{\s*#\s*{}\s*\}}"#,
+        regex::escape(&target_slug_underscored),
+        regex::escape(&target_slug_underscored),
+        regex::escape(&target_slug_underscored),
+        regex::escape(&target_slug_underscored)
+    );
+    let re_under = regex::Regex::new(&re_under_str).ok()?;
+
+    for (line_idx, line_content) in text.split('\n').enumerate() {
+        if re_slug.is_match(line_content) || re_under.is_match(line_content) {
+            return Some(line_idx);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_slugify_and_find_heading_line() {
+        assert_eq!(slugify("Equation 1"), "equation-1");
+        assert_eq!(slugify("Header: Equation 1"), "header-equation-1");
+        assert_eq!(slugify("**Bold Heading**"), "bold-heading");
+        
+        let text = "# Equation 1\nSome text\n## Header: Equation 1\nMore text\n# **Bold Heading**";
+        assert_eq!(find_heading_line(text, "equation-1"), Some(0));
+        assert_eq!(find_heading_line(text, "header-equation-1"), Some(2));
+        assert_eq!(find_heading_line(text, "bold-heading"), Some(4));
+        assert_eq!(find_heading_line(text, "not-existent"), None);
+    }
+
+    #[test]
+    fn test_resolve_relative_link_path() {
+        assert_eq!(
+            resolve_relative_link_path(None, Some("notes/math.md"), "../science/chemistry"),
+            "science/chemistry"
+        );
+        assert_eq!(
+            resolve_relative_link_path(None, Some("notes/math.md"), "./geometry"),
+            "notes/geometry"
+        );
+        assert_eq!(
+            resolve_relative_link_path(None, None, "../science/chemistry"),
+            "../science/chemistry"
+        );
+        assert_eq!(
+            resolve_relative_link_path(None, Some("math.md"), "./geometry"),
+            "geometry"
+        );
+    }
+
+    #[test]
+    fn test_resolve_relative_link_path_with_vault() {
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let target_dir = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("test_vault_{}", unique_id));
+        let sub_dir = target_dir.join("subdir");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        
+        let target_file = sub_dir.join("another_file.md");
+        std::fs::write(&target_file, "content").unwrap();
+        
+        let vault_root = target_dir.to_str().unwrap();
+        let active_path = "subdir/active.md";
+        
+        let resolved = resolve_relative_link_path(
+            Some(vault_root),
+            Some(active_path),
+            "another_file",
+        );
+        assert_eq!(resolved, "subdir/another_file");
+        
+        let _ = std::fs::remove_dir_all(&target_dir);
+    }
+
+    #[test]
+    fn test_find_heading_or_widget_line() {
+        let text = "Line 0\n$$E = mc^2$$ \\label{equation-1}\nLine 2\n<div id=\"figure-1\">\nLine 4\n$$E = h\\nu$$ { #equation-2 }";
+        let highlighted = highlight::highlight_markdown(text);
+        assert_eq!(find_heading_or_widget_line(text, &highlighted, "equation-1"), Some(1));
+        assert_eq!(find_heading_or_widget_line(text, &highlighted, "figure-1"), Some(3));
+        assert_eq!(find_heading_or_widget_line(text, &highlighted, "equation-2"), Some(5));
+        assert_eq!(find_heading_or_widget_line(text, &highlighted, "not-existent"), None);
+
+        // Also test the dynamic numbering of figures and math equations
+        let dynamic_text = "Here is an image:\n![Alt](image.png)\nAnd a math block:\n$$\nE = mc^2\n$$\nAnother image:\n![Alt2](pic.png)";
+        let dyn_highlighted = highlight::highlight_markdown(dynamic_text);
+        assert_eq!(find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "figure-1"), Some(1));
+        assert_eq!(find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "equation-1"), Some(3));
+        assert_eq!(find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "figure-2"), Some(7));
+    }
 
     #[test]
     fn insert_text_keeps_cursor_visible_after_enter_at_eof() {
