@@ -29,6 +29,9 @@ pub enum Message {
     NameModalSubmit(String),
     NameModalSubmitCurrent,
     NameModalCancel,
+    PdfLinkNoteFolderSelected(String),
+    PdfLinkNoteFileSelected(String),
+    PdfLinkNotePickerSearchChanged(String),
     DeleteFile(String),
     DeleteFileDialog(String),
 

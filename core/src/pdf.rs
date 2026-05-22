@@ -148,6 +148,10 @@ pub fn compute_provisional_id(
 }
 
 pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
+    let chars = chars
+        .iter()
+        .filter(|c| c.bbox.width > 0.0 && c.bbox.height > 0.0)
+        .collect::<Vec<_>>();
     if chars.is_empty() {
         return Vec::new();
     }
@@ -836,7 +840,10 @@ impl PdfRenderer {
                             let mut lines = Vec::new();
                             let mut current_line: Option<PdfTextLine> = None;
 
-                            for c in &chars {
+                            for c in chars
+                                .iter()
+                                .filter(|c| c.bbox.width > 0.0 && c.bbox.height > 0.0)
+                            {
                                 match &mut current_line {
                                     Some(line) => {
                                         let line_y_min = line.bbox.y;
@@ -861,12 +868,12 @@ impl PdfRenderer {
                                             line.bbox.y = y_min;
                                             line.bbox.width = x_max - x_min;
                                             line.bbox.height = y_max - y_min;
-                                            line.end_text_index = c.text_index;
+                                            line.end_text_index = c.text_index + 1;
                                         } else {
                                             lines.push(current_line.take().unwrap());
                                             current_line = Some(PdfTextLine {
                                                 start_text_index: c.text_index,
-                                                end_text_index: c.text_index,
+                                                end_text_index: c.text_index + 1,
                                                 bbox: c.bbox.clone(),
                                             });
                                         }
@@ -874,7 +881,7 @@ impl PdfRenderer {
                                     None => {
                                         current_line = Some(PdfTextLine {
                                             start_text_index: c.text_index,
-                                            end_text_index: c.text_index,
+                                            end_text_index: c.text_index + 1,
                                             bbox: c.bbox.clone(),
                                         });
                                     }
@@ -1245,6 +1252,31 @@ mod tests {
             !text_layer.lines.is_empty(),
             "Lines list should not be empty"
         );
+        for line in &text_layer.lines {
+            assert!(
+                line.end_text_index > line.start_text_index,
+                "PDF text lines must use non-empty exclusive ranges"
+            );
+            assert!(
+                line.bbox.width > 0.0 && line.bbox.height > 0.0,
+                "PDF text lines must be backed by visible glyph bounds"
+            );
+            assert!(
+                line.end_text_index <= text_layer.text.chars().count(),
+                "PDF text line range must stay within extracted text"
+            );
+            let line_chars = text_layer
+                .chars
+                .iter()
+                .filter(|c| {
+                    c.text_index >= line.start_text_index
+                        && c.text_index < line.end_text_index
+                        && c.bbox.width > 0.0
+                        && c.bbox.height > 0.0
+                })
+                .count();
+            assert!(line_chars > 0, "Every PDF text line must be selectable");
+        }
 
         // Verify bounding boxes coordinates
         for c in &text_layer.chars {

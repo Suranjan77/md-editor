@@ -1,5 +1,7 @@
-use iced::widget::{Space, button, checkbox, column, container, row, text, text_input};
-use iced::{Alignment, Color, Element, Length, Renderer, Theme};
+use iced::widget::{
+    Space, button, canvas, checkbox, column, container, row, stack, text, text_input,
+};
+use iced::{Alignment, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse};
 
 use crate::messages::Message;
 use crate::theme;
@@ -9,6 +11,71 @@ use crate::views::interactive_pdf::{InteractivePdf, PdfSelection};
 pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
 pub(crate) const PDF_PAGE_SPACING: f32 = 20.0;
 pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
+
+#[derive(Debug, Clone)]
+struct OverlayRect {
+    rect: md_editor_core::pdf::PdfRect,
+    color: Color,
+    border_color: Option<Color>,
+}
+
+#[derive(Debug, Clone)]
+struct PdfOverlay {
+    rects: Vec<OverlayRect>,
+}
+
+impl<Message> canvas::Program<Message> for PdfOverlay {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+        for item in &self.rects {
+            let rect = Rectangle {
+                x: item.rect.x,
+                y: item.rect.y,
+                width: item.rect.width.max(3.0),
+                height: item.rect.height.max(8.0),
+            };
+            frame.fill_rectangle(
+                Point::new(rect.x, rect.y),
+                iced::Size::new(rect.width, rect.height),
+                item.color,
+            );
+            if let Some(border_color) = item.border_color {
+                frame.stroke_rectangle(
+                    Point::new(rect.x, rect.y),
+                    iced::Size::new(rect.width, rect.height),
+                    canvas::Stroke::default()
+                        .with_color(border_color)
+                        .with_width(1.5),
+                );
+            }
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+fn search_rect_to_view_rect(
+    rect: &md_editor_core::pdf::PdfRect,
+    page_height: f32,
+    zoom: f32,
+) -> md_editor_core::pdf::PdfRect {
+    md_editor_core::pdf::PdfRect {
+        x: rect.x * zoom,
+        y: (page_height - rect.y - rect.height) * zoom,
+        width: rect.width * zoom,
+        height: rect.height * zoom,
+    }
+}
 
 pub fn search_bar<'a>(
     query: &'a str,
@@ -111,28 +178,58 @@ pub fn toolbar<'a>(
                 Color::from_rgb8(250, 160, 90),
             ),
         ];
-        let mut color_row = row![].spacing(8).align_y(Alignment::Center);
+        let mut color_row = row![].spacing(6).align_y(Alignment::Center);
         for (color_enum, display_color) in colors {
             color_row = color_row.push(
-                button(text("■").size(18).color(display_color))
-                    .on_press(Message::PdfCreateHighlight(color_enum))
-                    .style(button::text)
-                    .padding(2),
+                button(
+                    container(Space::new().width(18.0).height(18.0))
+                        .width(Length::Fixed(22.0))
+                        .height(Length::Fixed(22.0))
+                        .center_x(Length::Fixed(22.0))
+                        .center_y(Length::Fixed(22.0))
+                        .style(move |_| container::Style {
+                            background: Some(iced::Background::Color(Color {
+                                a: 0.72,
+                                ..display_color
+                            })),
+                            border: iced::Border {
+                                color: display_color,
+                                width: 1.0,
+                                radius: 5.0.into(),
+                            },
+                            ..Default::default()
+                        }),
+                )
+                .on_press(Message::PdfCreateHighlight(color_enum))
+                .style(button::text)
+                .padding(0),
             );
         }
 
         row![
-            color_row,
-            Space::new().width(5.0),
-            button(text("Copy").size(12).color(theme::TEXT_PRIMARY))
-                .on_press(Message::PdfCopySelection)
-                .padding([4, 8]),
-            button(text("Clear").size(12).color(theme::TEXT_MUTED))
-                .on_press(Message::PdfSelectionCleared)
-                .padding([4, 8])
-                .style(button::text),
+            container(
+                row![
+                    text("Highlight").size(12).color(theme::TEXT_MUTED),
+                    color_row,
+                    button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
+                        .on_press(Message::PdfSelectionCleared)
+                        .padding(5)
+                        .style(button::text),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([4, 8])
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                border: iced::Border {
+                    color: theme::BORDER,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            }),
         ]
-        .spacing(8)
         .align_y(Alignment::Center)
     } else {
         row![]
@@ -264,6 +361,7 @@ pub fn view_continuous<'a>(
     page_sizes: &'a [Option<(f32, f32)>],
     placeholder_page_size: Option<(f32, f32)>,
     search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
+    _search_match_indices_by_page: &'a std::collections::HashMap<u16, Vec<usize>>,
     active_search_index: Option<usize>,
     page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
     annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
@@ -318,20 +416,108 @@ pub fn view_continuous<'a>(
         if let Some(handle) = page_opt {
             let (w, h) = display_size;
 
-            let page_text = page_texts.get(&(i as u16));
+            let page_index = i as u16;
+            let page_text = page_texts.get(&page_index);
             let page_highlights = annotations
-                .get(&(i as u16))
+                .get(&page_index)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
+            let mut overlay_rects = Vec::new();
+            for ann in page_highlights {
+                let color = match ann.color {
+                    md_editor_core::pdf::PdfAnnotationColor::Yellow => {
+                        Color::from_rgba(1.0, 0.92, 0.23, 0.35)
+                    }
+                    md_editor_core::pdf::PdfAnnotationColor::Green => {
+                        Color::from_rgba(0.3, 0.85, 0.3, 0.35)
+                    }
+                    md_editor_core::pdf::PdfAnnotationColor::Blue => {
+                        Color::from_rgba(0.12, 0.53, 0.9, 0.35)
+                    }
+                    md_editor_core::pdf::PdfAnnotationColor::Pink => {
+                        Color::from_rgba(0.95, 0.3, 0.6, 0.35)
+                    }
+                    md_editor_core::pdf::PdfAnnotationColor::Orange => {
+                        Color::from_rgba(1.0, 0.6, 0.1, 0.35)
+                    }
+                };
+                let border_color = if focused_annotation_id == Some(ann.id.as_str()) {
+                    Some(theme::ACCENT)
+                } else {
+                    None
+                };
+                for rect in &ann.rects {
+                    overlay_rects.push(OverlayRect {
+                        rect: search_rect_to_view_rect(rect, page_height, zoom),
+                        color,
+                        border_color,
+                    });
+                }
+            }
+            let search_highlights = search_matches
+                .iter()
+                .enumerate()
+                .filter(|(idx, result)| {
+                    result.page_index == page_index && Some(*idx) != active_search_index
+                })
+                .flat_map(|(_, result)| result.rects.iter())
+                .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
+                .collect::<Vec<_>>();
+            overlay_rects.extend(search_highlights.iter().cloned().map(|rect| OverlayRect {
+                rect,
+                color: Color::from_rgba(1.0, 0.78, 0.18, 0.38),
+                border_color: None,
+            }));
+            let active_search_highlights = active_search_index
+                .and_then(|idx| search_matches.get(idx))
+                .filter(|result| result.page_index == page_index)
+                .map(|result| {
+                    result
+                        .rects
+                        .iter()
+                        .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            overlay_rects.extend(active_search_highlights.iter().cloned().map(|rect| {
+                OverlayRect {
+                    rect,
+                    color: Color::from_rgba(1.0, 0.62, 0.0, 0.68),
+                    border_color: None,
+                }
+            }));
+            if let (Some(sel), Some(page_text)) = (active_selection, page_text) {
+                if sel.page_index == page_index {
+                    let start = sel.anchor_idx.min(sel.focus_idx);
+                    let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
+                    let selected_chars = page_text
+                        .chars
+                        .iter()
+                        .filter(|c| c.text_index >= start && c.text_index < end)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    overlay_rects.extend(
+                        md_editor_core::pdf::merge_char_rects(&selected_chars)
+                            .into_iter()
+                            .map(|rect| OverlayRect {
+                                rect: search_rect_to_view_rect(&rect, page_text.page_height, zoom),
+                                color: Color::from_rgba(0.12, 0.53, 0.9, 0.45),
+                                border_color: None,
+                            }),
+                    );
+                }
+            }
             let interactive = InteractivePdf::new(
                 handle.clone(),
                 w,
                 h,
-                i as u16,
+                page_width,
+                page_height,
+                page_index,
                 page_text,
                 page_highlights,
-                search_matches,
-                active_search_index,
+                search_highlights,
+                active_search_highlights,
                 active_selection,
                 focused_annotation_id,
                 move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
@@ -339,21 +525,29 @@ pub fn view_continuous<'a>(
                 move |page, anchor, focus| Message::PdfSelectionChanged(page, anchor, focus),
                 move |page, anchor, focus| Message::PdfSelectionFinished(page, anchor, focus),
                 move || Message::PdfSelectionCleared,
+                move || Message::PdfCopySelection,
             );
 
             page_list = page_list.push(
-                container(interactive)
+                container(stack![
+                    interactive,
+                    canvas(PdfOverlay {
+                        rects: overlay_rects
+                    })
                     .width(Length::Fixed(w))
-                    .height(Length::Fixed(h))
-                    .style(|_| container::Style {
-                        background: Some(iced::Background::Color(iced::Color::WHITE)),
-                        shadow: iced::Shadow {
-                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                            offset: iced::Vector::new(0.0, 4.0),
-                            blur_radius: 10.0,
-                        },
-                        ..Default::default()
-                    }),
+                    .height(Length::Fixed(h)),
+                ])
+                .width(Length::Fixed(w))
+                .height(Length::Fixed(h))
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(iced::Color::WHITE)),
+                    shadow: iced::Shadow {
+                        color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                        offset: iced::Vector::new(0.0, 4.0),
+                        blur_radius: 10.0,
+                    },
+                    ..Default::default()
+                }),
             );
         } else {
             page_list = page_list.push(
