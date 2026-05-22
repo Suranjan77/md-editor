@@ -6,11 +6,16 @@ use iced::advanced::{Clipboard, Shell};
 use iced::mouse;
 use iced::{Element, Length, Rectangle, Size};
 
+#[derive(Default, Debug, Clone, Copy)]
+pub struct State {
+    pub modifiers: iced::keyboard::Modifiers,
+}
+
 pub struct InteractivePdf<Message> {
     handle: iced::widget::image::Handle,
     width: f32,
     height: f32,
-    on_left_click: Box<dyn Fn(f32, f32) -> Message>,
+    on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message>,
     on_right_click: Box<dyn Fn(f32, f32) -> Message>,
 }
 
@@ -19,7 +24,7 @@ impl<Message> InteractivePdf<Message> {
         handle: iced::widget::image::Handle,
         width: f32,
         height: f32,
-        on_left_click: impl Fn(f32, f32) -> Message + 'static,
+        on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'static,
         on_right_click: impl Fn(f32, f32) -> Message + 'static,
     ) -> Self {
         Self {
@@ -73,6 +78,13 @@ where
         );
     }
 
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(State::default())
+    }
+
+    fn tag(&self) -> iced::advanced::widget::tree::Tag {
+        iced::advanced::widget::tree::Tag::of::<State>()
+    }
 
     fn update(
         &mut self,
@@ -85,18 +97,30 @@ where
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
-        if let Event::Mouse(mouse::Event::ButtonPressed(button)) = event {
-            if matches!(button, mouse::Button::Left | mouse::Button::Right) {
-                if let Some(position) = cursor.position_in(layout.bounds()) {
-                    let x = position.x / self.width;
-                    let y = position.y / self.height;
-                    match button {
-                        mouse::Button::Left => shell.publish((self.on_left_click)(x, y)),
-                        mouse::Button::Right => shell.publish((self.on_right_click)(x, y)),
-                        _ => {}
+        let state = _state.state.downcast_mut::<State>();
+
+        match event {
+            Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => {
+                state.modifiers = *m;
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(button)) => {
+                if matches!(button, mouse::Button::Left | mouse::Button::Right) {
+                    if let Some(position) = cursor.position_in(layout.bounds()) {
+                        let x = position.x / self.width;
+                        let y = position.y / self.height;
+                        match button {
+                            mouse::Button::Left => {
+                                shell.publish((self.on_left_click)(x, y, state.modifiers));
+                            }
+                            mouse::Button::Right => {
+                                shell.publish((self.on_right_click)(x, y));
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
+            _ => {}
         }
     }
 }

@@ -225,7 +225,7 @@ pub fn view_continuous<'a>(
                     handle.clone(),
                     w,
                     h,
-                    move |x, y| Message::PdfLeftClicked(i as u16, x, y),
+                    move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
                     move |x, y| Message::PdfRightClicked(i as u16, x, y),
                 )
                 .into()
