@@ -335,21 +335,24 @@ where
                 if let Some(position) = cursor.position_in(bounds) {
                     state.drag_start = Some(position);
                     state.is_dragging = false;
+                    shell.capture_event();
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(start_pos) = state.drag_start {
-                    if let Some(current_pos) = cursor.position_in(bounds) {
-                        let dx = current_pos.x - start_pos.x;
-                        let dy = current_pos.y - start_pos.y;
+                    if let Some(current_pos) = cursor.position() {
+                        let current_rel = iced::Point::new(
+                            current_pos.x - bounds.x,
+                            current_pos.y - bounds.y,
+                        );
+                        let dx = current_rel.x - start_pos.x;
+                        let dy = current_rel.y - start_pos.y;
                         let dist_sq = dx * dx + dy * dy;
                         if dist_sq > 4.0 {
                             state.is_dragging = true;
                             if let Some(page_text) = self.page_text {
                                 let zoom = self.width / page_text.page_width;
-                                // Need coordinates relative to layout.bounds() for hit_test
                                 let start_rel = start_pos;
-                                let current_rel = current_pos;
                                 if let (Some(anchor), Some(focus)) = (
                                     hit_test(page_text, start_rel, zoom),
                                     hit_test(page_text, current_rel, zoom),
@@ -361,6 +364,7 @@ where
                                     ));
                                 }
                             }
+                            shell.capture_event();
                         }
                     }
                 }
@@ -369,10 +373,13 @@ where
                 if let Some(start_pos) = state.drag_start {
                     if state.is_dragging {
                         if let Some(page_text) = self.page_text {
-                            if let Some(current_pos) = cursor.position_in(bounds) {
+                            if let Some(current_pos) = cursor.position() {
+                                let current_rel = iced::Point::new(
+                                    current_pos.x - bounds.x,
+                                    current_pos.y - bounds.y,
+                                );
                                 let zoom = self.width / page_text.page_width;
                                 let start_rel = start_pos;
-                                let current_rel = current_pos;
                                 if let (Some(anchor), Some(focus)) = (
                                     hit_test(page_text, start_rel, zoom),
                                     hit_test(page_text, current_rel, zoom),
@@ -393,6 +400,7 @@ where
                             shell.publish((self.on_left_click)(x, y, state.modifiers));
                         }
                     }
+                    shell.capture_event();
                 }
                 state.drag_start = None;
                 state.is_dragging = false;
@@ -402,9 +410,25 @@ where
                     let x = position.x / self.width;
                     let y = position.y / self.height;
                     shell.publish((self.on_right_click)(x, y));
+                    shell.capture_event();
                 }
             }
             _ => {}
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &widget::Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &R,
+    ) -> mouse::Interaction {
+        if cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Text
+        } else {
+            mouse::Interaction::Idle
         }
     }
 }
