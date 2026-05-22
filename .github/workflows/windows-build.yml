@@ -1,13 +1,18 @@
-name: Build Windows Release
+name: Build and Release
 
 on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 env:
   APP_NAME: md-editor
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -54,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           $packageDir = "release-package"
-          $resourceDir = "$packageDir/resource"
+          $resourceDir = "$packageDir/resources"
           $exePath = "target/release/${{ env.APP_NAME }}.exe"
 
           if (-not (Test-Path $exePath)) {
@@ -93,3 +98,108 @@ jobs:
         with:
           name: ${{ env.APP_NAME }}-windows-x64
           path: ${{ env.APP_NAME }}-windows-x64.zip
+
+  build-linux:
+    name: Build Linux x64 package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libfontconfig1-dev libfreetype6-dev libwayland-dev
+
+      - name: Install stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Build release executable
+        run: |
+          cargo build --release
+
+      - name: Create release package layout
+        run: |
+          packageDir="release-package"
+          resourceDir="$packageDir/resources"
+          exePath="target/release/${{ env.APP_NAME }}"
+
+          if [ ! -f "$exePath" ]; then
+            echo "Executable not found: $exePath"
+            exit 1
+          fi
+
+          mkdir -p "$packageDir"
+          mkdir -p "$resourceDir"
+
+          cp "$exePath" "$packageDir/"
+          
+          # Use the PDFium shared library downloaded during compilation
+          # It is placed under target/release/libpdfium.so
+          pdfiumPath="target/release/libpdfium.so"
+          if [ -f "$pdfiumPath" ]; then
+            cp "$pdfiumPath" "$resourceDir/libpdfium.so"
+          else
+            echo "libpdfium.so not found at $pdfiumPath"
+            exit 1
+          fi
+
+          echo "Package layout:"
+          ls -R "$packageDir"
+
+      - name: Create archives
+        run: |
+          # Create tar.gz (retaining execution permissions)
+          tar -czf "${{ env.APP_NAME }}-linux-x64.tar.gz" -C release-package .
+          
+          # Create zip as requested
+          zip -r "${{ env.APP_NAME }}-linux-x64.zip" release-package
+
+          echo "Created archives: ${{ env.APP_NAME }}-linux-x64.tar.gz and ${{ env.APP_NAME }}-linux-x64.zip"
+
+      - name: Upload Linux archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-linux-x64
+          path: |
+            ${{ env.APP_NAME }}-linux-x64.tar.gz
+            ${{ env.APP_NAME }}-linux-x64.zip
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-windows-x64
+          path: ./artifacts/windows
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-linux-x64
+          path: ./artifacts/linux
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Latest Build' }}
+          draft: false
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          files: |
+            ./artifacts/windows/${{ env.APP_NAME }}-windows-x64.zip
+            ./artifacts/linux/${{ env.APP_NAME }}-linux-x64.tar.gz
+            ./artifacts/linux/${{ env.APP_NAME }}-linux-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
