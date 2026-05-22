@@ -31,6 +31,8 @@ pub struct StyledSpan {
     /// True if this span is a syntax marker (**, `, $, etc.) that should
     /// be hidden in preview mode.
     pub is_syntax: bool,
+    /// Unique HTML-like identifier for this span.
+    pub id: Option<String>,
 }
 
 impl StyledSpan {
@@ -55,6 +57,7 @@ impl StyledSpan {
             image_alt: None,
             is_math: false,
             is_syntax: false,
+            id: None,
         }
     }
 
@@ -389,6 +392,48 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
         }
     }
 
+    // Post-process to assign unique sequential IDs to images, display math blocks, tables, and code blocks
+    let mut image_counter = 0;
+    let mut equation_counter = 0;
+    let mut table_counter = 0;
+    let mut code_counter = 0;
+    let mut seen_math_block_ids = std::collections::HashSet::new();
+    let mut seen_table_block_ids = std::collections::HashSet::new();
+    let mut seen_code_block_ids = std::collections::HashSet::new();
+
+    for line in &mut lines {
+        if line.is_math_block && line.block_id > 0 {
+            if seen_math_block_ids.insert(line.block_id) {
+                equation_counter += 1;
+                if let Some(first_span) = line.spans.first_mut() {
+                    first_span.id = Some(format!("equation-{}", equation_counter));
+                }
+            }
+        }
+        if line.is_table_row && line.block_id > 0 {
+            if seen_table_block_ids.insert(line.block_id) {
+                table_counter += 1;
+                if let Some(first_span) = line.spans.first_mut() {
+                    first_span.id = Some(format!("table-{}", table_counter));
+                }
+            }
+        }
+        if line.is_code_block && line.block_id > 0 {
+            if seen_code_block_ids.insert(line.block_id) {
+                code_counter += 1;
+                if let Some(first_span) = line.spans.first_mut() {
+                    first_span.id = Some(format!("code-{}", code_counter));
+                }
+            }
+        }
+        for span in &mut line.spans {
+            if span.is_image {
+                image_counter += 1;
+                span.id = Some(format!("figure-{}", image_counter));
+            }
+        }
+    }
+
     lines
 }
 
@@ -636,8 +681,13 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
             if let Some(end) = find_double(&chars, i + 2, ']') {
                 let link_text: String = chars[i + 2..end].iter().collect();
                 let parts: Vec<&str> = link_text.split('|').collect();
-                let target = parts[0];
-                let display = parts.get(1).unwrap_or(&target);
+                let target = parts[0].trim();
+                let display = parts
+                    .get(1)
+                    .map(|d| d.trim())
+                    .filter(|d| !d.is_empty())
+                    .map(|d| d.to_string())
+                    .unwrap_or_else(|| extract_display_name(target));
                 // [[ — syntax marker
                 spans.push(StyledSpan::syntax("[[", theme::TEXT_MUTED, 16.0));
                 spans.push(StyledSpan {
@@ -877,6 +927,50 @@ fn find_double(chars: &[char], start: usize, target: char) -> Option<usize> {
     }
     None
 }
+
+fn extract_display_name(target: &str) -> String {
+    if target.starts_with('#') {
+        return target.to_string();
+    }
+    let (path_part, anchor_part) = if let Some(idx) = target.find('#') {
+        let anchor = &target[idx + 1..];
+        if anchor.chars().any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')')) {
+            (target, None)
+        } else {
+            (&target[..idx], Some(anchor))
+        }
+    } else {
+        (target, None)
+    };
+    let path_part = path_part.trim();
+    let anchor_part = anchor_part.map(|s| s.trim());
+
+    let file_name = path_part
+        .split('/')
+        .last()
+        .and_then(|s| s.split('\\').last())
+        .unwrap_or(path_part)
+        .trim();
+
+    let clean_name = if let Some(stripped) = file_name.strip_suffix(".md") {
+        stripped
+    } else if let Some(stripped) = file_name.strip_suffix(".markdown") {
+        stripped
+    } else {
+        file_name
+    };
+
+    if let Some(anchor) = anchor_part {
+        if path_part.is_empty() {
+            format!("#{}", anchor)
+        } else {
+            format!("{}#{}", clean_name, anchor)
+        }
+    } else {
+        clean_name.to_string()
+    }
+}
+
 
 fn highlight_code_spans(
     line: &str,
@@ -1273,5 +1367,22 @@ mod tests {
                 .any(|span| span.is_link && span.link_target.as_deref() == Some("aliased"))
         );
         assert!(line.spans.iter().any(|span| span.is_code));
+
+        // Test relative path wikilinks and display alias extraction
+        let test_markdown = "Link [[../folder/file_name]] and [[../other/file_name | My Alias]] and [[#equation-1]] and [[../nested/complex!@#%^&*()]].";
+        let lines = highlight_markdown(test_markdown);
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        let link1 = line.spans.iter().find(|span| span.is_link && span.link_target.as_deref() == Some("../folder/file_name")).unwrap();
+        assert_eq!(link1.display_text.as_deref(), Some("file_name"));
+
+        let link2 = line.spans.iter().find(|span| span.is_link && span.link_target.as_deref() == Some("../other/file_name")).unwrap();
+        assert_eq!(link2.display_text.as_deref(), Some("My Alias"));
+
+        let link3 = line.spans.iter().find(|span| span.is_link && span.link_target.as_deref() == Some("#equation-1")).unwrap();
+        assert_eq!(link3.display_text.as_deref(), Some("#equation-1"));
+
+        let link4 = line.spans.iter().find(|span| span.is_link && span.link_target.as_deref() == Some("../nested/complex!@#%^&*()")).unwrap();
+        assert_eq!(link4.display_text.as_deref(), Some("complex!@#%^&*()"));
     }
 }
