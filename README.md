@@ -1,118 +1,243 @@
 # MD Editor
 
-MD Editor is a native desktop markdown workspace for local notes, PDFs, images, search, backlinks, and study tracking.
+**A calm, local-first Markdown workspace for notes, PDFs, images, search, backlinks, and study progress.**
 
-![Home screen](images/home_screen.png)
+![MD Editor intro](images/intro.gif)
 
-## Simple User Brief
+MD Editor is a native desktop app for people who do serious work with ordinary
+files. Open a folder as your vault, write in Markdown, read PDFs beside your
+notes, keep track of study sessions, and search across everything without moving
+your thinking into a cloud-only system.
 
-Open a folder as your vault, write markdown notes, search across your work, read PDFs beside your notes, and keep everything stored as normal local files. The app is designed for research and study workflows where notes, papers, images, and progress tracking live in one desktop workspace.
+It is designed to feel personal and practical: a desk for your notes, papers,
+references, and progress, all stored locally in formats you can keep using
+outside the app.
 
-## Highlights
+---
 
-- Local vault-based markdown editing.
-- Sidebar file/folder tree with create and delete actions.
-- Per-file search with highlighted matches and previous/next navigation.
-- Global vault and PDF search.
-- Backlinks and table of contents panels.
-- Syntax-highlighted code blocks, markdown tables, task checkboxes, images, and math rendering.
-- Built-in PDF viewer with continuous pages, fit-to-width, PDF links, text selection, highlights, linked notes, and PDF text search.
-- Split view for markdown plus PDF/reference material with active-pane search.
-- Study tracker for sessions, reading, project stages, and tracker configuration.
-- Cross-platform native UI built with Rust and Iced.
+## At A Glance
 
-## Supported Platforms
+| Work locally | Read deeply | Find quickly | Keep momentum |
+| --- | --- | --- | --- |
+| Use any folder as a vault. Your Markdown, PDFs, and images stay as normal files. | Open PDFs beside notes, copy text, create sidecar highlights, and link important passages back to Markdown. | Search the active file, the full vault, and PDF text with focused result navigation. | Track sessions, reading, project stages, and study gates in the same workspace. |
 
-Version 1.0 targets:
+## Why It Exists
 
-- Windows x64 and Windows ARM64
-- Linux x64 and Linux ARM64
-- macOS Intel and Apple Silicon
+Most writing tools are either too small for research or too eager to own your
+workflow. MD Editor takes a quieter route.
 
-PDF support depends on PDFium. The build script downloads the matching PDFium binary for the target OS/architecture and copies the shared library next to the executable.
+You bring a folder. The app gives you a native workspace around it: an editor,
+file tree, backlinks, table of contents, PDF viewer, search tools, image preview,
+and study tracker. When you close the app, your work is still there as plain
+Markdown and local files.
+
+Use it for:
+
+- research notes and reading logs;
+- study vaults and course material;
+- project journals and technical documentation;
+- paper review, PDF annotation, and linked notes;
+- any long-running body of notes that should remain portable.
+
+## The Workspace
+
+### 1. Open A Vault
+
+Choose a folder and MD Editor turns it into a working vault. The sidebar indexes
+supported files and gives you a familiar tree for opening, creating, and deleting
+notes.
+
+### 2. Write In Markdown
+
+The editor supports the things you expect in a real Markdown workspace:
+
+- headings, emphasis, links, blockquotes, and task checkboxes;
+- fenced code blocks with syntax highlighting;
+- tables, images, and math rendering;
+- in-file search with highlighted matches;
+- table of contents navigation for longer notes;
+- backlinks for discovering connected material.
+
+### 3. Keep References Beside Your Notes
+
+PDFs open inside the app, so reading and writing can happen in one place.
+
+- Continuous page rendering
+- Fit-to-width viewing
+- PDF table of contents
+- Internal PDF links
+- Text selection and copy
+- PDF search with highlighted matches
+- Sidecar highlights and quick notes
+- Linked Markdown notes for important passages
+
+PDF highlights are stored separately, so the original PDF is not modified.
+
+### 4. Search Without Breaking Flow
+
+MD Editor has separate search modes for different kinds of work:
+
+- `Ctrl+F` in Markdown searches the active note.
+- Global search scans the vault and indexed PDF text.
+- `Ctrl+F` in the PDF pane searches the active PDF.
+- Split view keeps Markdown and PDF search behavior tied to the active pane.
+
+### 5. Track Study Progress
+
+The built-in tracker helps you record sessions, reading, project stages, gates,
+and configuration. It is useful when your notes are not just reference material,
+but part of a steady study or research routine.
+
+## Screenshots
+
+### Markdown Editing
+
+![Markdown editing](images/markdown_window.png)
+
+### Notes And PDFs Together
+
+![Markdown and PDF split view](images/split_view.png)
+
+### Study Tracker
+
+![Study tracker](images/study_tracker.png)
+
+## A Local-First Promise
+
+MD Editor does not try to hide your work inside a proprietary database.
+
+- Your vault is a normal folder.
+- Notes are normal Markdown files.
+- PDFs and images stay where you put them.
+- Settings and app state are stored beside the executable by default.
+- No system-wide configuration directories are used automatically.
+
+The app creates a local SQLite file named:
+
+```text
+md_editor_settings.sqlite
+```
+
+This keeps the application portable and easy to reason about.
 
 ## Supported Files
 
-- Markdown: `.md`, `.markdown`
-- PDF: `.pdf`
-- Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`
+| Type | Extensions |
+| --- | --- |
+| Markdown | `.md`, `.markdown` |
+| PDF | `.pdf` |
+| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp` |
+
+## Supported Platforms
+
+MD Editor 1.0+ targets:
+
+| Platform | Architectures |
+| --- | --- |
+| Windows | x64, ARM64 |
+| Linux | x64, ARM64 |
+| macOS | Intel, Apple Silicon |
+
+PDF support uses PDFium. The build script downloads the matching PDFium binary
+for the target operating system and architecture, then copies the shared library
+next to the executable.
 
 ## Build From Source
 
-Requirements:
+### Requirements
 
 - Rust stable with Cargo
 - A desktop environment capable of creating native windows
 - Internet access on the first build if PDFium is not already cached
 
-Run in development:
+### Run In Development
 
 ```bash
 cargo run
 ```
 
-Build a release binary:
+### Build A Release Binary
 
 ```bash
 cargo build --release
 ```
 
-The executable is created at:
+Release output:
 
-- Windows: `target\release\md-editor.exe`
-- Linux/macOS: `target/release/md-editor`
+| Platform | Executable |
+| --- | --- |
+| Windows | `target\release\md-editor.exe` |
+| Linux/macOS | `target/release/md-editor` |
 
-The PDFium library is copied into the same Cargo profile output directory during the build.
+The PDFium library is copied into the same Cargo profile output directory during
+the build.
 
-## Portability & Linux Desktop Integration
+## PDFium Placement
 
-Md-editor is 100% portable. By default, it runs completely isolated, storing all its configuration and the SQLite database in the same directory as the executable:
+For packaged or portable builds, place the PDFium shared library in either:
 
-- **Settings and State:** `md_editor_settings.sqlite` (located next to the executable).
-- **PDF Support:** The PDFium shared library (`pdfium.dll`, `libpdfium.so`, or `libpdfium.dylib`) should be placed in a `resources` folder next to the executable or in the same directory as the executable.
+1. a `resources` folder next to the executable; or
+2. the same directory as the executable.
 
-The app does not write to system-wide configuration directories like `%APPDATA%` or `~/Library/Application Support` automatically.
+Expected library names:
 
-### Optional Desktop Integration (Linux)
+| Platform | Library |
+| --- | --- |
+| Windows | `pdfium.dll` |
+| Linux | `libpdfium.so` |
+| macOS | `libpdfium.dylib` |
 
-While it is portable by default, you can explicitly integrate it with your Linux desktop launcher and icon theme using CLI parameters:
+## Optional Linux Desktop Integration
 
-- **Install Launcher & Icons:** Run the executable with `--install` or `--install-desktop`:
-  ```bash
-  ./md-editor --install
-  ```
-  This creates a launcher at `~/.local/share/applications/md-editor.desktop` with absolute paths, registers resized application icons at `~/.local/share/icons/hicolor/`, and runs `update-desktop-database`/`gtk-update-icon-cache`.
+Linux builds are portable by default. Desktop integration is opt-in.
 
-- **Uninstall Launcher & Icons:** Run the executable with `--uninstall` or `--uninstall-desktop`:
-  ```bash
-  ./md-editor --uninstall
-  ```
-  This cleanly removes all the installed desktop shortcuts and icon copies from your `~/.local` directory.
-
-## Technical Overview
-
-This repository is a Rust workspace:
-
-- `core`: vault management, SQLite state, full-text search, PDF rendering, and tracker storage.
-- `native`: Iced desktop application, editor UI, custom markdown renderer, panels, and commands.
-
-Useful commands:
+Install launcher and icons:
 
 ```bash
-cargo check
-cargo test -p md-editor-native
-cargo test
+./md-editor --install
 ```
 
-## Feature Document
+This creates:
 
-See [docs/FEATURES.md](docs/FEATURES.md) for the version 1 feature document, platform support notes, and architecture summary.
+```text
+~/.local/share/applications/md-editor.desktop
+```
 
-See [docs/LAUNCH.md](docs/LAUNCH.md) for the release checklist, smoke-test flow, and packaging notes.
+It also installs resized icons under `~/.local/share/icons/hicolor/` and refreshes
+desktop/icon caches when those tools are available.
 
-## Screenshots
-![Markdown Editing window](images/markdown_window.png)
----
-![Split View](images/split_view.png)
----
-![Study Tracker](images/study_tracker.png)
+Remove launcher and icons:
+
+```bash
+./md-editor --uninstall
+```
+
+## Project Structure
+
+```text
+md-editor/
++-- core/      vaults, indexing, search, PDF rendering, settings, tracker storage
++-- native/    Iced desktop UI, editor, views, commands, interaction state
++-- docs/      feature notes, launch checklist, architecture notes
++-- images/    README screenshots and intro media
+```
+
+Useful development commands:
+
+```bash
+cargo fmt --check
+cargo check
+cargo test
+cargo test -p md-editor-native
+```
+
+## Documentation
+
+- [Feature document](docs/FEATURES.md) covers the version 1 feature set,
+  platform notes, and architecture summary.
+- [Launch checklist](docs/LAUNCH.md) covers release checks, smoke testing,
+  PDFium packaging, and known constraints.
+
+## License
+
+MD Editor is released under the MIT License. See [LICENSE](LICENSE) for details.
