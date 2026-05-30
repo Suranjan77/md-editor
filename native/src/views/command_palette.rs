@@ -152,5 +152,9 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::StudyTracker => "Tracker",
         Shortcut::SplitView => "Split",
         Shortcut::Escape => "Esc",
+        Shortcut::ZoomIn => "Ctrl +",
+        Shortcut::ZoomOut => "Ctrl -",
+        Shortcut::ZoomFit => "Ctrl 0",
+        Shortcut::GoToPage => "Ctrl G",
     }
 }
