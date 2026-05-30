@@ -156,5 +156,10 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::ZoomOut => "Ctrl -",
         Shortcut::ZoomFit => "Ctrl 0",
         Shortcut::GoToPage => "Ctrl G",
+        Shortcut::PdfSearch => "Ctrl R",
+        Shortcut::PdfHighlight => "Ctrl H",
+        Shortcut::PdfFirstPage => "Home",
+        Shortcut::PdfLastPage => "End",
+        Shortcut::PdfZoomInput => "Ctrl Z",
     }
 }

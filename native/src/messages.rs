@@ -69,6 +69,10 @@ pub enum Message {
     PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
     PdfSearchResultClicked(u16),
     PdfScrollBy(f32),
+    PdfFirstPage,
+    PdfLastPage,
+    PdfSearchToggle,
+    PdfGoToPage,
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
     ClosePdfLinkPreview,
     // ── PDF Study Updates ──────────────────────────────────────────
@@ -152,4 +156,9 @@ pub enum Shortcut {
     ZoomOut,
     ZoomFit,
     GoToPage,
+    PdfSearch,
+    PdfHighlight,
+    PdfFirstPage,
+    PdfLastPage,
+    PdfZoomInput,
 }
