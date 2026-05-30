@@ -2303,6 +2303,7 @@ impl MdEditor {
                     self.search_match_index,
                     &self.pdf_page_text,
                     &self.pdf_annotations,
+                    &self.pdf_page_links,
                     self.pdf_selection,
                     self.focused_annotation_id.as_deref(),
                 ))
