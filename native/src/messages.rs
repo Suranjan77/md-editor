@@ -148,4 +148,8 @@ pub enum Shortcut {
     StudyTracker,
     SplitView,
     Escape,
+    ZoomIn,
+    ZoomOut,
+    ZoomFit,
+    GoToPage,
 }

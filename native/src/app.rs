@@ -395,6 +395,18 @@ impl MdEditor {
                             iced::keyboard::Key::Character(c) if c == "t" => {
                                 return Message::KeyboardShortcut(Shortcut::TableOfContents);
                             }
+                            iced::keyboard::Key::Character(c) if c == "=" || c == "+" => {
+                                return Message::KeyboardShortcut(Shortcut::ZoomIn);
+                            }
+                            iced::keyboard::Key::Character(c) if c == "-" => {
+                                return Message::KeyboardShortcut(Shortcut::ZoomOut);
+                            }
+                            iced::keyboard::Key::Character(c) if c == "0" => {
+                                return Message::KeyboardShortcut(Shortcut::ZoomFit);
+                            }
+                            iced::keyboard::Key::Character(c) if c == "g" => {
+                                return Message::KeyboardShortcut(Shortcut::GoToPage);
+                            }
                             _ => {}
                         }
                     }
@@ -732,6 +744,21 @@ impl MdEditor {
                 Task::none()
             }
             Message::NameModalSubmitCurrent => {
+                if let Some(views::modals::ModalType::GoToPage(total_pages)) =
+                    self.active_modal.clone()
+                {
+                    self.active_modal = None;
+                    let page_num = self
+                        .modal_input
+                        .trim()
+                        .parse::<u16>()
+                        .unwrap_or(1)
+                        .max(1)
+                        .min(total_pages);
+                    let target_page = page_num.saturating_sub(1);
+                    self.modal_input.clear();
+                    return self.navigate_pdf_page(target_page);
+                }
                 if matches!(
                     self.active_modal,
                     Some(views::modals::ModalType::CreateFile)
@@ -2052,6 +2079,42 @@ impl MdEditor {
                         self.toc_visible = false;
                         self.tracker_visible = false;
                         Task::none()
+                    }
+                    Shortcut::ZoomIn => {
+                        if self.active_pdf_path.is_some() && self.showing_pdf {
+                            let new_zoom = (self.pdf_zoom + 0.1).min(4.0);
+                            Task::done(Message::PdfZoomChanged(new_zoom))
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::ZoomOut => {
+                        if self.active_pdf_path.is_some() && self.showing_pdf {
+                            let new_zoom = (self.pdf_zoom - 0.1).max(0.5);
+                            Task::done(Message::PdfZoomChanged(new_zoom))
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::ZoomFit => {
+                        if self.active_pdf_path.is_some() && self.showing_pdf {
+                            Task::done(Message::PdfFitToWidth)
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::GoToPage => {
+                        if self.active_pdf_path.is_some()
+                            && self.showing_pdf
+                            && self.pdf_total_pages > 0
+                        {
+                            self.active_modal =
+                                Some(views::modals::ModalType::GoToPage(self.pdf_total_pages));
+                            self.modal_input.clear();
+                            Task::none()
+                        } else {
+                            Task::none()
+                        }
                     }
                 }
             }
