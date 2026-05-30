@@ -203,6 +203,7 @@ pub struct MdEditor {
     split_view_active: bool,
     split_ratio: f32,
     is_resizing_split: bool,
+    pdf_split_ratio: f32,
     active_panel: ActivePanel,
     window_width: f32,
     window_height: f32,
@@ -312,6 +313,7 @@ impl MdEditor {
             split_view_active: false,
             split_ratio: 0.5,
             is_resizing_split: false,
+            pdf_split_ratio: 0.3,
             active_panel: ActivePanel::Markdown,
             window_width: 1200.0,
             window_height: 800.0,
@@ -2132,10 +2134,30 @@ impl MdEditor {
             }
             Message::SplitViewDragStart => {
                 self.is_resizing_split = true;
+                // Also start PDF split resize if showing PDF
+                if self.showing_pdf && self.active_pdf_path.is_some() {
+                    let has_split =
+                        !self.sidebar_visible && !self.tracker_visible && !self.toc_visible;
+                    if has_split || self.split_view_active {
+                        self.pdf_split_ratio = 0.3;
+                    }
+                }
                 Task::none()
             }
             Message::SplitViewDragging(x_pos) => {
                 if !self.is_resizing_split {
+                    return Task::none();
+                }
+                // If PDF-only mode (no split view), resize page list
+                if self.showing_pdf && self.active_pdf_path.is_some() && !self.split_view_active {
+                    let content_width = (self.window_width - 250.0).max(480.0); // sidebar width
+                    let x_min = 300.0;
+                    let x_max = content_width - 300.0;
+                    let total_width = x_max - x_min;
+                    if total_width > 1.0 {
+                        self.pdf_split_ratio =
+                            ((x_pos - x_min) / total_width).clamp(0.15, 0.75);
+                    }
                     return Task::none();
                 }
                 let side_width = if self.sidebar_visible { 250.0 } else { 0.0 }
@@ -2288,51 +2310,81 @@ impl MdEditor {
                     self.pdf_selection.is_some(),
                     focused_ann,
                 );
-                let pdf_pages = scrollable(views::pdf_viewer::view_continuous(
-                    &self.pdf_pages,
-                    self.pdf_zoom,
-                    &self.pdf_dimensions,
-                    &self.pdf_page_sizes,
-                    self.pdf_placeholder_page_size,
-                    if pdf_search_active || self.search_visible || self.file_search_visible {
-                        &self.pdf_search_results
-                    } else {
-                        &[]
-                    },
-                    &self.pdf_search_indices_by_page,
-                    self.search_match_index,
-                    &self.pdf_page_text,
-                    &self.pdf_annotations,
-                    &self.pdf_page_links,
-                    self.pdf_selection,
-                    self.focused_annotation_id.as_deref(),
-                ))
-                .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
-                .on_scroll(|vp| Message::PdfScrolled {
-                    y: vp.absolute_offset().y,
-                    viewport_height: vp.bounds().height,
-                })
-                .height(Length::Fill);
+                let side_width = if self.sidebar_visible { 250.0 } else { 0.0 };
+                let pdf_width = self.window_width - side_width;
+                let left_width = (pdf_width * self.pdf_split_ratio)
+                    .clamp(280.0, (pdf_width - 120.0).max(280.0));
 
-                let search_bar: Element<'_, Message, Theme, iced::Renderer> = if pdf_search_active {
-                    views::pdf_viewer::search_bar(
-                        &self.search_query,
-                        self.search_regex,
-                        self.search_match_case,
-                        self.pdf_search_results.len(),
-                        self.search_match_index,
+                let left_panel: Element<_, _, iced::Renderer> = container(
+                    column![
+                        if pdf_search_active {
+                            views::pdf_viewer::search_bar(
+                                &self.search_query,
+                                self.search_regex,
+                                self.search_match_case,
+                                self.pdf_search_results.len(),
+                                self.search_match_index,
+                            )
+                        } else {
+                            container(Space::new()).height(Length::Fixed(0.0)).width(Length::Fill).into()
+                        },
+                        scrollable(views::pdf_viewer::view_continuous(
+                            &self.pdf_pages,
+                            self.pdf_zoom,
+                            &self.pdf_dimensions,
+                            &self.pdf_page_sizes,
+                            self.pdf_placeholder_page_size,
+                            if pdf_search_active || self.search_visible || self.file_search_visible {
+                                &self.pdf_search_results
+                            } else {
+                                &[]
+                            },
+                            &self.pdf_search_indices_by_page,
+                            self.search_match_index,
+                            &self.pdf_page_text,
+                            &self.pdf_annotations,
+                            &self.pdf_page_links,
+                            self.pdf_selection,
+                            self.focused_annotation_id.as_deref(),
+                        ))
+                        .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
+                        .on_scroll(|vp| Message::PdfScrolled {
+                            y: vp.absolute_offset().y,
+                            viewport_height: vp.bounds().height,
+                        })
+                        .height(Length::Fill),
+                    ],
+                )
+                .width(Length::Fixed(left_width))
+                .height(Length::Fill)
+                .into();
+
+                if self.active_panel == ActivePanel::Pdf && !self.split_view_active {
+                    // PDF-only mode: show page list with resizer
+                    let divider = mouse_area(
+                        container(Space::new())
+                            .width(Length::Fixed(8.0))
+                            .height(Length::Fill)
+                            .style(|_| container::Style {
+                                background: Some(iced::Background::Color(app_theme::BG_TERTIARY)),
+                                ..Default::default()
+                            }),
                     )
-                    .into()
-                } else {
-                    container(Space::new())
-                        .height(Length::Fixed(0.0))
-                        .width(Length::Fill)
-                        .into()
-                };
+                    .on_press(Message::SplitViewDragStart)
+                    .on_release(Message::SplitViewDragEnd)
+                    .on_enter(Message::SplitViewDragStart)
+                    .on_exit(Message::SplitViewDragEnd)
+                    .interaction(iced::mouse::Interaction::ResizingHorizontally);
 
-                column![search_bar, pdf_pages, pdf_toolbar]
-                    .height(Length::Fill)
-                    .into()
+                    row![left_panel, divider, pdf_toolbar]
+                        .height(Length::Fill)
+                        .into()
+                } else {
+                    // Markdown-only or Split view: no horizontal divider, just column
+                    column![left_panel, pdf_toolbar]
+                        .height(Length::Fill)
+                        .into()
+                }
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
@@ -2667,6 +2719,7 @@ impl MdEditor {
         self.pdf_search_indices_by_page.clear();
         self.pdf_search_error = None;
         self.pdf_programmatic_scroll = false;
+        self.pdf_split_ratio = 0.3;
         self.pdf_toc_target_page = None;
         self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
         let generation = self.pdf_render_generation;
