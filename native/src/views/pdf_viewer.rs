@@ -335,7 +335,10 @@ pub fn toolbar<'a>(
                 .padding([4, 10])
                 .style(button::text),
             Space::new().width(Length::Fill),
-            text(page_label).size(12).color(theme::TEXT_SECONDARY),
+            button(text(page_label).size(12).color(theme::TEXT_SECONDARY))
+                .on_press(Message::PdfGoToPage)
+                .padding(0)
+                .style(button::text),
         ]
         .spacing(10)
         .align_y(Alignment::Center)

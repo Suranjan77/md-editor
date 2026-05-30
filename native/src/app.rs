@@ -409,10 +409,25 @@ impl MdEditor {
                             iced::keyboard::Key::Character(c) if c == "g" => {
                                 return Message::KeyboardShortcut(Shortcut::GoToPage);
                             }
+                            iced::keyboard::Key::Character(c) if c == "r" => {
+                                return Message::KeyboardShortcut(Shortcut::PdfSearch);
+                            }
+                            iced::keyboard::Key::Character(c) if c == "h" => {
+                                return Message::KeyboardShortcut(Shortcut::PdfHighlight);
+                            }
+                            iced::keyboard::Key::Character(c) if c == "z" => {
+                                return Message::KeyboardShortcut(Shortcut::PdfZoomInput);
+                            }
                             _ => {}
                         }
                     }
                     match key {
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::Home) => {
+                            return Message::KeyboardShortcut(Shortcut::PdfFirstPage);
+                        }
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::End) => {
+                            return Message::KeyboardShortcut(Shortcut::PdfLastPage);
+                        }
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => {
                             return Message::PdfScrollBy(64.0);
                         }
@@ -1665,6 +1680,53 @@ impl MdEditor {
                     AbsoluteOffset { x: 0.0, y },
                 )
             }
+            Message::PdfFirstPage => {
+                if self.showing_pdf && self.pdf_total_pages > 0 {
+                    self.pdf_current_page = 0;
+                    self.pdf_scroll_y = 0.0;
+                    Task::none()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfLastPage => {
+                if self.showing_pdf && self.pdf_total_pages > 0 {
+                    self.pdf_current_page = self.pdf_total_pages.saturating_sub(1).max(0);
+                    let max_y = self.pdf_total_height().max(0.0);
+                    self.pdf_scroll_y = max_y;
+                    Task::none()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfSearchToggle => {
+                if self.showing_pdf {
+                    if self.file_search_visible {
+                        self.file_search_visible = false;
+                        self.pdf_search_results.clear();
+                        self.pdf_search_indices_by_page.clear();
+                    } else {
+                        self.file_search_visible = true;
+                        self.search_visible = false;
+                    }
+                    Task::none()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfGoToPage => {
+                if self.active_pdf_path.is_some()
+                    && self.showing_pdf
+                    && self.pdf_total_pages > 0
+                {
+                    self.active_modal =
+                        Some(views::modals::ModalType::GoToPage(self.pdf_total_pages));
+                    self.modal_input.clear();
+                    Task::none()
+                } else {
+                    Task::none()
+                }
+            }
             Message::PdfDocumentIdComputed(Some((path, hash, len, mtime))) => {
                 let _ = self.state.save_pdf_document(&hash, &path, len, mtime);
                 self.pdf_document_id = Some(hash.clone());
@@ -2110,6 +2172,49 @@ impl MdEditor {
                             && self.showing_pdf
                             && self.pdf_total_pages > 0
                         {
+                            self.active_modal =
+                                Some(views::modals::ModalType::GoToPage(self.pdf_total_pages));
+                            self.modal_input.clear();
+                            Task::none()
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::PdfSearch => {
+                        if self.showing_pdf {
+                            Task::done(Message::PdfSearchToggle)
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::PdfHighlight => {
+                        if self.showing_pdf {
+                            if self.pdf_selection.is_some() {
+                                let color = md_editor_core::pdf::PdfAnnotationColor::Yellow;
+                                Task::done(Message::PdfCreateHighlight(color))
+                            } else {
+                                Task::none()
+                            }
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::PdfFirstPage => {
+                        if self.showing_pdf {
+                            Task::done(Message::PdfFirstPage)
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::PdfLastPage => {
+                        if self.showing_pdf {
+                            Task::done(Message::PdfLastPage)
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::PdfZoomInput => {
+                        if self.showing_pdf {
                             self.active_modal =
                                 Some(views::modals::ModalType::GoToPage(self.pdf_total_pages));
                             self.modal_input.clear();
