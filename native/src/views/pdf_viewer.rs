@@ -365,6 +365,7 @@ pub fn view_continuous<'a>(
     active_search_index: Option<usize>,
     page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
     annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
+    links_by_page: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
@@ -507,6 +508,10 @@ pub fn view_continuous<'a>(
                     );
                 }
             }
+            let page_links = links_by_page
+                .get(&page_index)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
             let interactive = InteractivePdf::new(
                 handle.clone(),
                 w,
@@ -520,6 +525,7 @@ pub fn view_continuous<'a>(
                 active_search_highlights,
                 active_selection,
                 focused_annotation_id,
+                page_links,
                 move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
                 move |x, y| Message::PdfRightClicked(i as u16, x, y),
                 move |page, anchor, focus| Message::PdfSelectionChanged(page, anchor, focus),

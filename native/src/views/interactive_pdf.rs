@@ -33,6 +33,7 @@ pub struct InteractivePdf<'a, Message> {
     active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&'a str>,
+    links: &'a [md_editor_core::pdf::LinkInfo],
     on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
     on_right_click: Box<dyn Fn(f32, f32) -> Message + 'a>,
     on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
@@ -55,6 +56,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
         active_selection: Option<PdfSelection>,
         focused_annotation_id: Option<&'a str>,
+        links: &'a [md_editor_core::pdf::LinkInfo],
         on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a,
         on_right_click: impl Fn(f32, f32) -> Message + 'a,
         on_selection_changed: impl Fn(u16, usize, usize) -> Message + 'a,
@@ -75,6 +77,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             active_search_highlights,
             active_selection,
             focused_annotation_id,
+            links,
             on_left_click: Box::new(on_left_click),
             on_right_click: Box::new(on_right_click),
             on_selection_changed: Box::new(on_selection_changed),
@@ -466,11 +469,50 @@ where
         _viewport: &Rectangle,
         _renderer: &R,
     ) -> mouse::Interaction {
-        if cursor.is_over(layout.bounds()) {
-            mouse::Interaction::Text
-        } else {
-            mouse::Interaction::Idle
+        if !cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::Idle;
         }
+        let bounds = layout.bounds();
+
+        // Hit-test links against cursor position
+        if self.hover_link(cursor.position_in(bounds), bounds) {
+            return mouse::Interaction::Pointer;
+        }
+
+        mouse::Interaction::Text
+    }
+}
+
+impl<'a, Message> InteractivePdf<'a, Message> {
+    /// Convert screen-space point to page-space PDF coords, check if over any link.
+    fn hover_link(&self, point: Option<iced::Point>, bounds: Rectangle) -> bool {
+        let point = match point {
+            Some(p) => p,
+            None => return false,
+        };
+        let screen_x = point.x - bounds.x;
+        let screen_y = point.y - bounds.y;
+
+        let page_height = self
+            .page_text
+            .map(|p| p.page_height)
+            .unwrap_or(self.page_height);
+        let zoom = self
+            .page_text
+            .map(|p| self.width / p.page_width)
+            .unwrap_or(self.width / self.page_width.max(1.0));
+
+        for link in self.links {
+            let r = search_rect_to_view_rect(&link.bbox, page_height, zoom);
+            if screen_x >= r.x
+                && screen_x <= r.x + r.width
+                && screen_y >= r.y
+                && screen_y <= r.y + r.height
+            {
+                return true;
+            }
+        }
+        false
     }
 }
 
