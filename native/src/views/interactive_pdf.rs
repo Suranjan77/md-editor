@@ -35,7 +35,7 @@ pub struct InteractivePdf<'a, Message> {
     focused_annotation_id: Option<&'a str>,
     links: &'a [md_editor_core::pdf::LinkInfo],
     on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
-    on_right_click: Box<dyn Fn(f32, f32) -> Message + 'a>,
+    on_right_click: Box<dyn Fn(f32, f32, iced::Point) -> Message + 'a>,
     on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     on_selection_finished: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     on_selection_cleared: Box<dyn Fn() -> Message + 'a>,
@@ -58,7 +58,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         focused_annotation_id: Option<&'a str>,
         links: &'a [md_editor_core::pdf::LinkInfo],
         on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a,
-        on_right_click: impl Fn(f32, f32) -> Message + 'a,
+        on_right_click: impl Fn(f32, f32, iced::Point) -> Message + 'a,
         on_selection_changed: impl Fn(u16, usize, usize) -> Message + 'a,
         on_selection_finished: impl Fn(u16, usize, usize) -> Message + 'a,
         on_selection_cleared: impl Fn() -> Message + 'a,
@@ -453,7 +453,8 @@ where
                 if let Some(position) = cursor.position_in(bounds) {
                     let x = position.x / self.width;
                     let y = position.y / self.height;
-                    shell.publish((self.on_right_click)(x, y));
+                    let absolute_pos = cursor.position().unwrap_or_default();
+                    shell.publish((self.on_right_click)(x, y, absolute_pos));
                     shell.capture_event();
                 }
             }
@@ -473,13 +474,19 @@ where
             return mouse::Interaction::Idle;
         }
         let bounds = layout.bounds();
+        let point = cursor.position_in(bounds);
 
         // Hit-test links against cursor position
-        if self.hover_link(cursor.position_in(bounds), bounds) {
+        if self.hover_link(point, bounds) {
             return mouse::Interaction::Pointer;
         }
 
-        mouse::Interaction::Text
+        // Hit-test text against cursor position
+        if self.hover_text(point, bounds) {
+            return mouse::Interaction::Text;
+        }
+
+        mouse::Interaction::Grab
     }
 }
 
@@ -504,6 +511,36 @@ impl<'a, Message> InteractivePdf<'a, Message> {
 
         for link in self.links {
             let r = search_rect_to_view_rect(&link.bbox, page_height, zoom);
+            if screen_x >= r.x
+                && screen_x <= r.x + r.width
+                && screen_y >= r.y
+                && screen_y <= r.y + r.height
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if screen-space point is hovering over any text character or line.
+    fn hover_text(&self, point: Option<iced::Point>, bounds: Rectangle) -> bool {
+        let point = match point {
+            Some(p) => p,
+            None => return false,
+        };
+        let screen_x = point.x - bounds.x;
+        let screen_y = point.y - bounds.y;
+
+        let page_text = match self.page_text {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let page_height = page_text.page_height;
+        let zoom = self.width / page_text.page_width;
+
+        for line in &page_text.lines {
+            let r = search_rect_to_view_rect(&line.bbox, page_height, zoom);
             if screen_x >= r.x
                 && screen_x <= r.x + r.width
                 && screen_y >= r.y
