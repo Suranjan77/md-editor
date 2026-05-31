@@ -308,7 +308,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans
                     .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
             } else {
-                let mut parts = trimmed.split('|').collect::<Vec<_>>();
+                let mut parts = split_table_cells(trimmed);
                 if parts.first() == Some(&"") {
                     parts.remove(0);
                 }
@@ -605,7 +605,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end) = find_char(&chars, i + 1, '`') {
+            if let Some(end) = find_unescaped_char(&chars, i + 1, '`') {
                 let code_text: String = chars[i + 1..end].iter().collect();
                 // Opening backtick — syntax marker
                 spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 14.0));
@@ -631,7 +631,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end) = find_double(&chars, i + 2, '*') {
+            if let Some(end) = find_unescaped_double(&chars, i + 2, '*') {
                 let bold_text: String = chars[i + 2..end].iter().collect();
                 // Opening ** — syntax marker
                 spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
@@ -656,7 +656,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end) = find_char(&chars, i + 1, '*') {
+            if let Some(end) = find_unescaped_char(&chars, i + 1, '*') {
                 let italic_text: String = chars[i + 1..end].iter().collect();
                 spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
                 spans.push(StyledSpan {
@@ -678,7 +678,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end) = find_double(&chars, i + 2, ']') {
+            if let Some(end) = find_unescaped_double(&chars, i + 2, ']') {
                 let link_text: String = chars[i + 2..end].iter().collect();
                 let parts: Vec<&str> = link_text.split('|').collect();
                 let target = parts[0].trim();
@@ -711,9 +711,9 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end_text) = find_char(&chars, i + 1, ']') {
+            if let Some(end_text) = find_unescaped_char(&chars, i + 1, ']') {
                 if end_text + 1 < len && chars[end_text + 1] == '(' {
-                    if let Some(end_url) = find_char(&chars, end_text + 2, ')') {
+                    if let Some(end_url) = find_link_url_end(&chars, end_text + 2) {
                         let link_display: String = chars[i + 1..end_text].iter().collect();
                         let url: String = chars[end_text + 2..end_url].iter().collect();
                         // Full raw: [text](url), display just the text
@@ -739,7 +739,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end) = find_char(&chars, i + 1, '$') {
+            if let Some(end) = find_unescaped_char(&chars, i + 1, '$') {
                 let math_raw: String = chars[i..=end].iter().collect();
                 spans.push(StyledSpan {
                     text: math_raw,
@@ -760,9 +760,9 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end_alt) = find_char(&chars, i + 2, ']') {
+            if let Some(end_alt) = find_unescaped_char(&chars, i + 2, ']') {
                 if end_alt + 1 < len && chars[end_alt + 1] == '(' {
-                    if let Some(end_url) = find_char(&chars, end_alt + 2, ')') {
+                    if let Some(end_url) = find_link_url_end(&chars, end_alt + 2) {
                         let alt_text: String = chars[i + 2..end_alt].iter().collect();
                         let url: String = chars[end_alt + 2..end_url].iter().collect();
                         let raw: String = chars[i..=end_url].iter().collect();
@@ -841,11 +841,7 @@ fn single_line_display_math(trimmed: &str) -> Option<&str> {
         return None;
     }
     let math = rest[..end].trim();
-    if math.is_empty() {
-        None
-    } else {
-        Some(math)
-    }
+    if math.is_empty() { None } else { Some(math) }
 }
 
 fn is_obvious_markdown_boundary(trimmed: &str) -> bool {
@@ -885,25 +881,65 @@ fn heading_size(level: u8) -> f32 {
     }
 }
 
-fn find_char(chars: &[char], start: usize, target: char) -> Option<usize> {
+fn is_escaped(chars: &[char], idx: usize) -> bool {
+    let mut slash_count = 0;
+    let mut i = idx;
+    while i > 0 {
+        i -= 1;
+        if chars[i] == '\\' {
+            slash_count += 1;
+        } else {
+            break;
+        }
+    }
+    slash_count % 2 == 1
+}
+
+fn find_unescaped_char(chars: &[char], start: usize, target: char) -> Option<usize> {
+    (start..chars.len()).find(|&i| chars[i] == target && !is_escaped(chars, i))
+}
+
+fn find_unescaped_double(chars: &[char], start: usize, target: char) -> Option<usize> {
+    if start + 1 >= chars.len() {
+        return None;
+    }
+    (start..chars.len() - 1)
+        .find(|&i| chars[i] == target && chars[i + 1] == target && !is_escaped(chars, i))
+}
+
+fn find_link_url_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut depth = 0usize;
     for i in start..chars.len() {
-        if chars[i] == target {
-            return Some(i);
+        if is_escaped(chars, i) {
+            continue;
+        }
+        match chars[i] {
+            '(' => depth += 1,
+            ')' if depth == 0 => return Some(i),
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
         }
     }
     None
 }
 
-fn find_double(chars: &[char], start: usize, target: char) -> Option<usize> {
-    if start + 1 >= chars.len() {
-        return None;
-    }
-    for i in start..chars.len() - 1 {
-        if chars[i] == target && chars[i + 1] == target {
-            return Some(i);
+fn split_table_cells(line: &str) -> Vec<&str> {
+    let mut cells = Vec::new();
+    let mut start = 0;
+    let mut escaped = false;
+    for (idx, ch) in line.char_indices() {
+        if ch == '\\' && !escaped {
+            escaped = true;
+            continue;
         }
+        if ch == '|' && !escaped {
+            cells.push(&line[start..idx]);
+            start = idx + ch.len_utf8();
+        }
+        escaped = false;
     }
-    None
+    cells.push(&line[start..]);
+    cells
 }
 
 fn extract_display_name(target: &str) -> String {
@@ -1015,8 +1051,8 @@ fn code_span(text: &str, color: Color) -> StyledSpan {
     }
 }
 
-fn syntect_defaults(
-) -> Option<&'static (syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> {
+fn syntect_defaults()
+-> Option<&'static (syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> {
     static DEFAULTS: OnceLock<(syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> =
         OnceLock::new();
     Some(DEFAULTS.get_or_init(|| {
@@ -1161,10 +1197,12 @@ mod tests {
             .collect::<String>();
         assert_eq!(rendered, source);
         assert!(lines[1].spans.iter().all(|span| span.is_code));
-        assert!(lines[1]
-            .spans
-            .iter()
-            .any(|span| span.color != crate::theme::TEXT_PRIMARY));
+        assert!(
+            lines[1]
+                .spans
+                .iter()
+                .any(|span| span.color != crate::theme::TEXT_PRIMARY)
+        );
     }
 
     #[test]
@@ -1201,6 +1239,69 @@ mod tests {
         assert!(!lines[0].spans.iter().any(|span| span.bold));
         assert!(!lines[0].spans.iter().any(|span| span.is_link));
         assert!(!lines[0].spans.iter().any(|span| span.is_code));
+    }
+
+    #[test]
+    fn escaped_inline_markers_remain_literal() {
+        let lines = highlight_markdown(r"\**not bold\** and \`not code\` and \$not math\$");
+        let text = lines[0]
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>();
+        assert_eq!(text, r"\**not bold\** and \`not code\` and \$not math\$");
+        assert!(!lines[0].spans.iter().any(|span| span.bold));
+        assert!(!lines[0].spans.iter().any(|span| span.is_code));
+        assert!(!lines[0].spans.iter().any(|span| span.is_math));
+    }
+
+    #[test]
+    fn links_support_balanced_parentheses_and_tables_support_escaped_pipes() {
+        let lines = highlight_markdown("[docs](https://example.com/a_(b))\n| A\\|B | C |");
+        let link = lines[0].spans.iter().find(|span| span.is_link).unwrap();
+        assert_eq!(
+            link.link_target.as_deref(),
+            Some("https://example.com/a_(b)")
+        );
+
+        assert!(lines[1].is_table_row);
+        assert_eq!(lines[1].table_cells.len(), 2);
+        let first_cell = lines[1].table_cells[0]
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>();
+        assert_eq!(first_cell, "A\\|B");
+    }
+
+    #[test]
+    fn span_source_reconstructs_original_lines_for_core_markdown() {
+        let text = "# H\nplain **bold** `code` ![alt](img.png)\n> quote\n- [ ] task";
+        let lines = highlight_markdown(text);
+        for (source, line) in text.split('\n').zip(lines.iter()) {
+            let reconstructed = line
+                .spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>();
+            assert_eq!(reconstructed, source);
+        }
+    }
+
+    #[test]
+    fn large_document_highlight_preserves_line_count_and_block_ids() {
+        let mut text = String::new();
+        for idx in 0..10_000 {
+            text.push_str(&format!(
+                "- item {idx} with **bold** and [link](note-{idx}.md)\n"
+            ));
+        }
+
+        let lines = highlight_markdown(&text);
+        assert_eq!(lines.len(), 10_001);
+        assert!(lines.iter().take(10_000).all(|line| line.block_id > 0));
+        assert!(lines.iter().take(10_000).all(|line| {
+            line.spans.iter().any(|span| span.bold) && line.spans.iter().any(|span| span.is_link)
+        }));
     }
 
     #[test]
@@ -1337,18 +1438,21 @@ mod tests {
         assert_eq!(lines.len(), 1);
         let line = &lines[0];
 
-        assert!(line
-            .spans
-            .iter()
-            .any(|span| span.is_link && span.link_target.as_deref() == Some("wikilink")));
-        assert!(line
-            .spans
-            .iter()
-            .any(|span| span.is_link && span.link_target.as_deref() == Some("http://google.com")));
-        assert!(line
-            .spans
-            .iter()
-            .any(|span| span.is_link && span.link_target.as_deref() == Some("aliased")));
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.is_link && span.link_target.as_deref() == Some("wikilink"))
+        );
+        assert!(
+            line.spans.iter().any(
+                |span| span.is_link && span.link_target.as_deref() == Some("http://google.com")
+            )
+        );
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.is_link && span.link_target.as_deref() == Some("aliased"))
+        );
         assert!(line.spans.iter().any(|span| span.is_code));
 
         // Test relative path wikilinks and display alias extraction

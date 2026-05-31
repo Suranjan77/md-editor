@@ -9,14 +9,17 @@ use crate::views::link_note_picker;
 pub enum PdfContextMenuItem {
     Copy,
     CopyAsQuote,
+    CopyWithSourceLink,
     HighlightYellow,
     HighlightGreen,
     HighlightBlue,
     HighlightPink,
     HighlightOrange,
     SearchSelectedText,
+    InsertQuoteLink,
     EditNote { id: String, page: u16 },
     LinkToNote { id: String, page: u16 },
+    OpenLinkedNote(String),
     DeleteHighlight(String),
     OpenLink(md_editor_core::pdf::LinkInfo),
     CopyLink(String),
@@ -51,7 +54,7 @@ fn view_go_to_page<'a>(
             .on_input(Message::NameModalInputChanged)
             .on_submit(Message::NameModalSubmitCurrent)
             .padding(10)
-            .width(Length::Fixed(120.0))
+            .width(Length::Fixed(120.0)),
     );
 
     let input_box = if error.is_some() {
@@ -122,44 +125,41 @@ fn view_go_to_page<'a>(
     .into()
 }
 
-fn view_context_menu<'a>(
-    state: &PdfContextMenuState,
-) -> Element<'a, Message, Theme, Renderer> {
+fn view_context_menu<'a>(state: &PdfContextMenuState) -> Element<'a, Message, Theme, Renderer> {
     use iced::widget::Space;
     let mut menu_col = column![].spacing(1);
 
     for item in &state.items {
         let label = match item {
             PdfContextMenuItem::Copy => "Copy",
-            PdfContextMenuItem::CopyAsQuote => "Copy as Quote",
-            PdfContextMenuItem::HighlightYellow => "Highlight Yellow",
-            PdfContextMenuItem::HighlightGreen => "Highlight Green",
-            PdfContextMenuItem::HighlightBlue => "Highlight Blue",
-            PdfContextMenuItem::HighlightPink => "Highlight Pink",
-            PdfContextMenuItem::HighlightOrange => "Highlight Orange",
-            PdfContextMenuItem::SearchSelectedText => "Search Selected Text",
-            PdfContextMenuItem::EditNote { .. } => "Edit Note",
-            PdfContextMenuItem::LinkToNote { .. } => "Link to Note",
-            PdfContextMenuItem::DeleteHighlight(_) => "Delete Highlight",
+            PdfContextMenuItem::CopyAsQuote => "Copy as quote",
+            PdfContextMenuItem::CopyWithSourceLink => "Copy quote with PDF link",
+            PdfContextMenuItem::HighlightYellow => "Highlight: Yellow",
+            PdfContextMenuItem::HighlightGreen => "Highlight: Green",
+            PdfContextMenuItem::HighlightBlue => "Highlight: Blue",
+            PdfContextMenuItem::HighlightPink => "Highlight: Pink",
+            PdfContextMenuItem::HighlightOrange => "Highlight: Orange",
+            PdfContextMenuItem::SearchSelectedText => "Search selected text",
+            PdfContextMenuItem::InsertQuoteLink => "Insert quote in note",
+            PdfContextMenuItem::EditNote { .. } => "Edit short note",
+            PdfContextMenuItem::LinkToNote { .. } => "Link markdown note",
+            PdfContextMenuItem::OpenLinkedNote(_) => "Open markdown note",
+            PdfContextMenuItem::DeleteHighlight(_) => "Delete highlight",
             PdfContextMenuItem::OpenLink(_) => "Open Link",
             PdfContextMenuItem::CopyLink(_) => "Copy Link",
         };
 
         menu_col = menu_col.push(
-            button(
-                text(label)
-                    .size(12)
-                    .color(theme::TEXT_PRIMARY)
-            )
-            .on_press(Message::PdfContextMenuAction(item.clone()))
-            .padding([6, 12])
-            .style(button::text)
-            .width(Length::Fill)
+            button(text(label).size(12).color(theme::TEXT_PRIMARY))
+                .on_press(Message::PdfContextMenuAction(item.clone()))
+                .padding([6, 12])
+                .style(button::text)
+                .width(Length::Fill),
         );
     }
 
     let menu_card = container(menu_col)
-        .width(Length::Fixed(180.0))
+        .width(Length::Fixed(220.0))
         .style(|_| container::Style {
             background: Some(iced::Background::Color(theme::BG_SECONDARY)),
             border: iced::Border {
@@ -180,10 +180,7 @@ fn view_context_menu<'a>(
 
     let content = row![
         Space::new().width(Length::Fixed(x.max(0.0))),
-        column![
-            Space::new().height(Length::Fixed(y.max(0.0))),
-            menu_card,
-        ]
+        column![Space::new().height(Length::Fixed(y.max(0.0))), menu_card,]
     ];
 
     container(
@@ -192,7 +189,7 @@ fn view_context_menu<'a>(
             .style(button::text)
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding(0)
+            .padding(0),
     )
     .width(Length::Fill)
     .height(Length::Fill)
@@ -220,8 +217,8 @@ pub fn view<'a>(
         ModalType::CreateFile => "Create New File",
         ModalType::CreateFolder => "Create New Folder",
         ModalType::Delete(_) => "Delete Confirmation",
-        ModalType::QuickNote(_) => "Edit Quick Note",
-        ModalType::LinkNote(_) => "Create Linked Note",
+        ModalType::QuickNote(_) => "Short Note",
+        ModalType::LinkNote(_) => "Link Markdown Note",
     };
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
@@ -246,26 +243,34 @@ pub fn view<'a>(
         .spacing(20)
         .into(),
         ModalType::LinkNote(_) => link_note_picker::view(input_value, picker_search, vault_entries),
-        _ => column![
-            text(title).size(18).color(theme::TEXT_PRIMARY),
-            text_input("Enter name...", input_value)
-                .on_input(Message::NameModalInputChanged)
-                .padding(10),
-            row![
-                button(text("Cancel").size(14))
-                    .on_press(Message::NameModalCancel)
-                    .padding([8, 20])
-                    .style(button::text),
-                button(text("Confirm").size(14))
-                    .on_press(Message::NameModalSubmit(input_value.to_string()))
-                    .padding([8, 20])
-                    .style(button::primary),
+        _ => {
+            let (placeholder, confirm_label) = match modal_type {
+                ModalType::QuickNote(_) => ("Write a short note...", "Save Note"),
+                ModalType::CreateFile => ("File name...", "Create File"),
+                ModalType::CreateFolder => ("Folder name...", "Create Folder"),
+                _ => ("Enter name...", "Confirm"),
+            };
+            column![
+                text(title).size(18).color(theme::TEXT_PRIMARY),
+                text_input(placeholder, input_value)
+                    .on_input(Message::NameModalInputChanged)
+                    .padding(10),
+                row![
+                    button(text("Cancel").size(14))
+                        .on_press(Message::NameModalCancel)
+                        .padding([8, 20])
+                        .style(button::text),
+                    button(text(confirm_label).size(14))
+                        .on_press(Message::NameModalSubmit(input_value.to_string()))
+                        .padding([8, 20])
+                        .style(button::primary),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
             ]
-            .spacing(10)
-            .align_y(Alignment::Center)
-        ]
-        .spacing(20)
-        .into(),
+            .spacing(20)
+            .into()
+        }
     };
 
     container(

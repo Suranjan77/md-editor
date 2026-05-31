@@ -66,7 +66,12 @@ pub enum Message {
         viewport_height: f32,
     },
     PdfLeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
-    PdfRightClicked { page_index: u16, x: f32, y: f32, absolute_pos: iced::Point },
+    PdfRightClicked {
+        page_index: u16,
+        x: f32,
+        y: f32,
+        absolute_pos: iced::Point,
+    },
     PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfSearchMatchesFound(u64, Vec<md_editor_core::pdf::PdfSearchMatch>),
@@ -88,6 +93,7 @@ pub enum Message {
     PdfSelectionCleared,
     PdfSelectionFinished(u16, usize, usize),
     PdfCopySelection,
+    PdfInsertQuoteLink,
     PdfCreateHighlight(md_editor_core::pdf::PdfAnnotationColor),
     PdfDeleteHighlight(String),
     PdfAddQuickNote(String, String),
@@ -101,7 +107,10 @@ pub enum Message {
 
     PdfToggleAnnotationsSidebar,
     PdfFilterAnnotationsByColor(Option<md_editor_core::pdf::PdfAnnotationColor>),
-    PdfNavigateToAnnotation { id: String, page: u16 },
+    PdfNavigateToAnnotation {
+        id: String,
+        page: u16,
+    },
     PdfEditAnnotationNote(String, u16),
     PdfExportAnnotations,
     PdfAnnotationsExported(Result<String, String>),
@@ -128,6 +137,7 @@ pub enum Message {
         String,
         Result<(iced::widget::image::Handle, f32, f32), String>,
     ),
+    ImageLoadFailed(String, String),
 
     // ── System ───────────────────────────────────────────────────
     Tick,

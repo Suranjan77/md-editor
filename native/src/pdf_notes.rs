@@ -1,3 +1,5 @@
+use crate::pdf_links::build_pdf_link;
+
 pub fn slug_fragment(s: &str) -> String {
     let slug = slugify(s);
     if slug.is_empty() {
@@ -95,12 +97,7 @@ fn note_title_from_path(path: &str) -> String {
 }
 
 fn pdf_annotation_link(pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
-    format!(
-        "pdf://{}?page={}&annotation={}",
-        pdf_path,
-        ann.page_index + 1,
-        ann.id
-    )
+    build_pdf_link(pdf_path, Some(ann.page_index + 1), Some(&ann.id))
 }
 
 fn markdown_quote(text: &str) -> String {
@@ -211,7 +208,7 @@ mod tests {
         assert!(content.contains("## Page 5"));
         assert!(content.contains("> Important field result"));
         assert!(content.contains(
-            "[Open highlight in PDF](pdf://papers/My PDF File.pdf?page=5&annotation=abcdef123456)"
+            "[Open highlight in PDF](pdf://papers/My%20PDF%20File.pdf?page=5&annotation=abcdef123456)"
         ));
         assert!(content.contains("### Notes"));
         assert!(!content.contains("pdf_annotation:"));
