@@ -478,31 +478,10 @@ fn scan_page_for_search<'a>(
     regex: bool,
     match_case: bool,
 ) -> Vec<PdfSearchMatch> {
-    if ensure_document(pdfium, current_document, path).is_err() {
-        return Vec::new();
-    }
-    let Some((_, doc)) = current_document.as_ref() else {
+    let Ok(page_layer) = get_page_text_impl(pdfium, current_document, path, index) else {
         return Vec::new();
     };
-    let pages = doc.pages();
-    if i32::from(index) >= pages.len() {
-        return Vec::new();
-    }
-    let Ok(page) = pages.get(index as i32) else {
-        return Vec::new();
-    };
-    let Ok(text_page) = page.text() else {
-        return Vec::new();
-    };
-
-    let mut page_text = String::new();
-    let mut char_indices = Vec::new();
-    for c in text_page.chars().iter() {
-        if let Some(ch) = c.unicode_char() {
-            page_text.push(ch);
-            char_indices.push(c.index());
-        }
-    }
+    let page_text = page_layer.text.as_str();
 
     let re = {
         let pattern = if regex {
@@ -519,28 +498,23 @@ fn scan_page_for_search<'a>(
         }
     };
 
-    let page_matches: Vec<(usize, usize, Vec<PdfRect>)> = re.find_iter(&page_text)
+    let page_matches: Vec<(usize, usize, Vec<PdfRect>)> = re
+        .find_iter(page_text)
         .filter_map(|found| {
             let match_char_idx_in_text = page_text[..found.start()].chars().count();
             let match_char_count = found.as_str().chars().count();
-            if match_char_idx_in_text < char_indices.len() && match_char_count > 0 {
-                let char_start = char_indices[match_char_idx_in_text];
-                let char_end_idx = (match_char_idx_in_text + match_char_count - 1)
-                    .min(char_indices.len() - 1);
-                let char_count = char_indices[char_end_idx] - char_start + 1;
-                let rects = text_page
-                    .segments_subset(char_start, char_count)
+
+            if match_char_count > 0 {
+                let match_end = match_char_idx_in_text + match_char_count;
+                let chars = page_layer
+                    .chars
                     .iter()
-                    .map(|segment| {
-                        let bounds = segment.bounds();
-                        PdfRect {
-                            x: bounds.left().value,
-                            y: bounds.bottom().value,
-                            width: bounds.width().value,
-                            height: bounds.height().value,
-                        }
+                    .filter(|c| {
+                        c.text_index >= match_char_idx_in_text && c.text_index < match_end
                     })
+                    .cloned()
                     .collect::<Vec<_>>();
+                let rects = merge_char_rects(&chars);
                 Some((match_char_idx_in_text, match_char_count, rects))
             } else {
                 None

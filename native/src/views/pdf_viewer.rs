@@ -1,14 +1,12 @@
-use iced::widget::{
-    Space, button, checkbox, column, container, row, text, text_input, stack,
-};
-use iced::{Alignment, Color, Element, Length, Renderer, Theme, Rectangle};
+use iced::widget::{button, checkbox, column, container, row, stack, text, text_input, Space};
+use iced::{Alignment, Color, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::pdf_layout::PdfLayout;
 use crate::theme;
 use crate::views::icons::{self, Icon};
 use crate::views::interactive_pdf::{
-    InteractivePdf, PdfSelection, HighlightRect, PdfHighlights, search_rect_to_view_rect,
+    pdf_highlight_rects, InteractivePdf, PdfHighlights, PdfSelection,
 };
 
 pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
@@ -28,8 +26,6 @@ mod tests {
         );
     }
 }
-
-
 
 pub fn search_bar<'a>(
     query: &'a str,
@@ -74,11 +70,12 @@ pub fn search_bar<'a>(
                     } else {
                         format!("{} of {}", index + 1, current_match_count)
                     },
-                _ => if searching {
-                    format!("{} matches (searching...)", current_match_count)
-                } else {
-                    format!("{} matches", current_match_count)
-                },
+                _ =>
+                    if searching {
+                        format!("{} matches (searching...)", current_match_count)
+                    } else {
+                        format!("{} matches", current_match_count)
+                    },
             })
             .size(12)
             .color(theme::TEXT_MUTED),
@@ -172,30 +169,28 @@ pub fn toolbar<'a>(
             );
         }
 
-        row![
-            container(
-                row![
-                    text("Highlight").size(12).color(theme::TEXT_MUTED),
-                    color_row,
-                    button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
-                        .on_press(Message::PdfSelectionCleared)
-                        .padding(5)
-                        .style(button::text),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .padding([4, 8])
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
-                border: iced::Border {
-                    color: theme::BORDER,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            }),
-        ]
+        row![container(
+            row![
+                text("Highlight").size(12).color(theme::TEXT_MUTED),
+                color_row,
+                button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
+                    .on_press(Message::PdfSelectionCleared)
+                    .padding(5)
+                    .style(button::text),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([4, 8])
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+            border: iced::Border {
+                color: theme::BORDER,
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        }),]
         .align_y(Alignment::Center)
     } else {
         row![]
@@ -209,7 +204,12 @@ pub fn toolbar<'a>(
             ]
             .align_y(Alignment::Center),
         )
-        .on_press(Message::PdfRightClicked { page_index: ann.page_index, x: -1.0, y: -1.0, absolute_pos: iced::Point::ORIGIN })
+        .on_press(Message::PdfRightClicked {
+            page_index: ann.page_index,
+            x: -1.0,
+            y: -1.0,
+            absolute_pos: iced::Point::ORIGIN,
+        })
         .padding([4, 8])
         .style(button::text);
 
@@ -281,11 +281,15 @@ pub fn toolbar<'a>(
             .on_press(Message::ToggleTOC)
             .padding(8)
             .style(button::text),
-            button(icons::view(Icon::FileText, if annotations_sidebar_visible {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            }, 14.0))
+            button(icons::view(
+                Icon::FileText,
+                if annotations_sidebar_visible {
+                    theme::ACCENT
+                } else {
+                    theme::TEXT_MUTED
+                },
+                14.0
+            ))
             .on_press(Message::PdfToggleAnnotationsSidebar)
             .padding(8)
             .style(button::text),
@@ -304,38 +308,26 @@ pub fn toolbar<'a>(
                 .on_press(Message::PdfZoomChanged((zoom + 0.1).min(4.0)))
                 .padding([4, 10])
                 .style(button::text),
-            button(
-                text("Fit W")
-                    .size(12)
-                    .color(if fit_to_width {
-                        theme::ACCENT
-                    } else {
-                        theme::TEXT_MUTED
-                    }),
-            )
+            button(text("Fit W").size(12).color(if fit_to_width {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            }),)
             .on_press(Message::PdfFitToWidth)
             .padding([4, 10])
             .style(button::text),
-            button(
-                text("Fit P")
-                    .size(12)
-                    .color(if fit_to_page {
-                        theme::ACCENT
-                    } else {
-                        theme::TEXT_MUTED
-                    }),
-            )
+            button(text("Fit P").size(12).color(if fit_to_page {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            }),)
             .on_press(Message::PdfFitToPage)
             .padding([4, 10])
             .style(button::text),
-            button(
-                text("Rotate ⟳")
-                    .size(12)
-                    .color(theme::TEXT_MUTED),
-            )
-            .on_press(Message::PdfRotateClockwise)
-            .padding([4, 10])
-            .style(button::text),
+            button(text("Rotate ⟳").size(12).color(theme::TEXT_MUTED),)
+                .on_press(Message::PdfRotateClockwise)
+                .padding([4, 10])
+                .style(button::text),
             Space::new().width(Length::Fill),
             button(text(page_label).size(12).color(theme::TEXT_SECONDARY))
                 .on_press(Message::PdfGoToPage)
@@ -482,111 +474,24 @@ pub fn view_continuous<'a>(
                 .filter(|result| result.page_index == page_index)
                 .map(|result| result.rects.clone())
                 .unwrap_or_default();
-            let mut overlay_rects = Vec::new();
             let raw_page_height = page_text.map(|p| p.page_height).unwrap_or(page_height);
+            let overlay_rects = pdf_highlight_rects(
+                page_index,
+                page_width,
+                raw_page_height,
+                page_text,
+                page_highlights,
+                &search_highlights,
+                &active_search_highlights,
+                active_selection,
+                focused_annotation_id,
+                zoom,
+                rotation,
+            );
             let page_links = links_by_page
                 .get(&page_index)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
-
-            // 1. Persistent annotations
-            for ann in page_highlights {
-                let color = match ann.color {
-                    md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgba(1.0, 0.92, 0.23, 0.35),
-                    md_editor_core::pdf::PdfAnnotationColor::Green => Color::from_rgba(0.3, 0.85, 0.3, 0.35),
-                    md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgba(0.12, 0.53, 0.9, 0.35),
-                    md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgba(0.95, 0.3, 0.6, 0.35),
-                    md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgba(1.0, 0.6, 0.1, 0.35),
-                };
-                let is_focused = focused_annotation_id == Some(ann.id.as_str());
-                let border = if is_focused {
-                    iced::Border {
-                        color: Color::from_rgb8(177, 204, 198), // theme::ACCENT
-                        width: 1.5,
-                        radius: 0.0.into(),
-                    }
-                } else {
-                    iced::Border::default()
-                };
-
-                for r in &ann.rects {
-                    let vr = search_rect_to_view_rect(r, page_width, raw_page_height, zoom, rotation);
-                    overlay_rects.push(HighlightRect {
-                        rect: Rectangle {
-                            x: vr.x,
-                            y: vr.y,
-                            width: vr.width,
-                            height: vr.height,
-                        },
-                        color,
-                        border,
-                    });
-                }
-            }
-
-            // 2. Search highlights
-            for r in &search_highlights {
-                let vr = search_rect_to_view_rect(r, page_width, raw_page_height, zoom, rotation);
-                overlay_rects.push(HighlightRect {
-                    rect: Rectangle {
-                        x: vr.x,
-                        y: vr.y,
-                        width: vr.width.max(3.0),
-                        height: vr.height.max(8.0),
-                    },
-                    color: Color::from_rgba(1.0, 0.78, 0.18, 0.38),
-                    border: iced::Border {
-                        radius: 2.0.into(),
-                        ..Default::default()
-                    },
-                });
-            }
-            for r in &active_search_highlights {
-                let vr = search_rect_to_view_rect(r, page_width, raw_page_height, zoom, rotation);
-                overlay_rects.push(HighlightRect {
-                    rect: Rectangle {
-                        x: vr.x,
-                        y: vr.y,
-                        width: vr.width.max(3.0),
-                        height: vr.height.max(8.0),
-                    },
-                    color: Color::from_rgba(1.0, 0.62, 0.0, 0.68),
-                    border: iced::Border {
-                        radius: 2.0.into(),
-                        ..Default::default()
-                    },
-                });
-            }
-
-            // 3. Active selection highlight
-            if let Some(page_text) = page_text {
-                if let Some(sel) = active_selection {
-                    if sel.page_index == page_index {
-                        let start = sel.anchor_idx.min(sel.focus_idx);
-                        let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-                        let selected_chars: Vec<md_editor_core::pdf::PdfTextChar> = page_text
-                            .chars
-                            .iter()
-                            .filter(|c| c.text_index >= start && c.text_index < end)
-                            .cloned()
-                            .collect();
-                        let selection_rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
-                        for r in selection_rects {
-                            let vr = search_rect_to_view_rect(&r, page_text.page_width, page_text.page_height, zoom, rotation);
-                            overlay_rects.push(HighlightRect {
-                                rect: Rectangle {
-                                    x: vr.x,
-                                    y: vr.y,
-                                    width: vr.width,
-                                    height: vr.height,
-                                },
-                                color: Color::from_rgba(0.12, 0.53, 0.9, 0.45),
-                                border: iced::Border::default(),
-                            });
-                        }
-                    }
-                }
-            }
 
             let interactive = InteractivePdf::new(
                 handle.clone(),
@@ -604,7 +509,12 @@ pub fn view_continuous<'a>(
                 page_links,
                 rotation,
                 move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
-                move |x, y, absolute_pos| Message::PdfRightClicked { page_index: i as u16, x, y, absolute_pos },
+                move |x, y, absolute_pos| Message::PdfRightClicked {
+                    page_index: i as u16,
+                    x,
+                    y,
+                    absolute_pos,
+                },
                 move |page, anchor, focus| Message::PdfSelectionChanged(page, anchor, focus),
                 move |page, anchor, focus| Message::PdfSelectionFinished(page, anchor, focus),
                 move || Message::PdfSelectionCleared,
@@ -612,21 +522,18 @@ pub fn view_continuous<'a>(
             );
 
             page_list = page_list.push(
-                container(stack![
-                    interactive,
-                    PdfHighlights::new(w, h, overlay_rects)
-                ])
-                .width(Length::Fixed(w))
-                .height(Length::Fixed(h))
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(iced::Color::WHITE)),
-                    shadow: iced::Shadow {
-                        color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                        offset: iced::Vector::new(0.0, 4.0),
-                        blur_radius: 10.0,
-                    },
-                    ..Default::default()
-                }),
+                container(stack![interactive, PdfHighlights::new(w, h, overlay_rects)])
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed(h))
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(iced::Color::WHITE)),
+                        shadow: iced::Shadow {
+                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                            offset: iced::Vector::new(0.0, 4.0),
+                            blur_radius: 10.0,
+                        },
+                        ..Default::default()
+                    }),
             );
         } else {
             page_list = page_list.push(
