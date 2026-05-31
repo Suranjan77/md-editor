@@ -1,4 +1,4 @@
-use iced::widget::{button, checkbox, column, container, row, stack, text, text_input, Space};
+use iced::widget::{Space, button, checkbox, column, container, row, stack, text, text_input};
 use iced::{Alignment, Color, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
@@ -6,7 +6,7 @@ use crate::pdf_layout::PdfLayout;
 use crate::theme;
 use crate::views::icons::{self, Icon};
 use crate::views::interactive_pdf::{
-    pdf_highlight_rects, InteractivePdf, PdfHighlights, PdfSelection,
+    InteractivePdf, PdfHighlights, PdfSelection, pdf_highlight_rects,
 };
 
 pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
@@ -15,6 +15,10 @@ pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use md_editor_core::pdf::{PdfRect, PdfSearchMatch};
+    use std::collections::HashMap;
+
     #[test]
     fn loading_placeholder_does_not_use_plain_loading_text() {
         let source = include_str!("pdf_viewer.rs");
@@ -25,6 +29,71 @@ mod tests {
             "PDF loading placeholder should be a stable skeleton, not plain loading text"
         );
     }
+
+    #[test]
+    fn search_highlights_use_page_index_without_scanning_other_pages() {
+        let matches = vec![
+            PdfSearchMatch {
+                page_index: 0,
+                context: "a".into(),
+                rects: vec![PdfRect {
+                    x: 1.0,
+                    y: 1.0,
+                    width: 1.0,
+                    height: 1.0,
+                }],
+            },
+            PdfSearchMatch {
+                page_index: 2,
+                context: "b".into(),
+                rects: vec![PdfRect {
+                    x: 2.0,
+                    y: 2.0,
+                    width: 2.0,
+                    height: 2.0,
+                }],
+            },
+        ];
+        let mut by_page = HashMap::new();
+        by_page.insert(2, vec![1]);
+
+        assert_eq!(
+            search_highlights_for_page(&matches, &by_page, Some(1), 2),
+            (Vec::new(), matches[1].rects.clone())
+        );
+
+        assert_eq!(
+            search_highlights_for_page(&matches, &by_page, None, 2),
+            (matches[1].rects.clone(), Vec::new())
+        );
+    }
+}
+
+fn search_highlights_for_page(
+    search_matches: &[md_editor_core::pdf::PdfSearchMatch],
+    search_match_indices_by_page: &std::collections::HashMap<u16, Vec<usize>>,
+    active_search_index: Option<usize>,
+    page_index: u16,
+) -> (
+    Vec<md_editor_core::pdf::PdfRect>,
+    Vec<md_editor_core::pdf::PdfRect>,
+) {
+    let active_search_highlights = active_search_index
+        .and_then(|idx| search_matches.get(idx))
+        .filter(|result| result.page_index == page_index)
+        .map(|result| result.rects.clone())
+        .unwrap_or_default();
+
+    let search_highlights = search_match_indices_by_page
+        .get(&page_index)
+        .into_iter()
+        .flat_map(|indices| indices.iter().copied())
+        .filter(|idx| Some(*idx) != active_search_index)
+        .filter_map(|idx| search_matches.get(idx))
+        .flat_map(|result| result.rects.iter().copied())
+        .collect::<Vec<_>>();
+
+    (search_highlights, active_search_highlights)
 }
 
 pub fn search_bar<'a>(
@@ -169,28 +238,30 @@ pub fn toolbar<'a>(
             );
         }
 
-        row![container(
-            row![
-                text("Highlight").size(12).color(theme::TEXT_MUTED),
-                color_row,
-                button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
-                    .on_press(Message::PdfSelectionCleared)
-                    .padding(5)
-                    .style(button::text),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .padding([4, 8])
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(theme::BG_PRIMARY)),
-            border: iced::Border {
-                color: theme::BORDER,
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            ..Default::default()
-        }),]
+        row![
+            container(
+                row![
+                    text("Highlight").size(12).color(theme::TEXT_MUTED),
+                    color_row,
+                    button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
+                        .on_press(Message::PdfSelectionCleared)
+                        .padding(5)
+                        .style(button::text),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([4, 8])
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                border: iced::Border {
+                    color: theme::BORDER,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            }),
+        ]
         .align_y(Alignment::Center)
     } else {
         row![]
@@ -359,7 +430,7 @@ pub fn view_continuous<'a>(
     page_sizes: &'a [Option<(f32, f32)>],
     placeholder_page_size: Option<(f32, f32)>,
     search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
-    _search_match_indices_by_page: &'a std::collections::HashMap<u16, Vec<usize>>,
+    search_match_indices_by_page: &'a std::collections::HashMap<u16, Vec<usize>>,
     active_search_index: Option<usize>,
     page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
     annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
@@ -437,11 +508,9 @@ pub fn view_continuous<'a>(
         page_list = page_list.push(Space::new().height(Length::Fixed(PDF_PAGE_LIST_PADDING)));
     }
 
-    for (i, page_opt) in pages.iter().enumerate() {
-        // Skip pages outside the visible window + buffer
-        if !render_range.contains(&(i as u16)) {
-            continue;
-        }
+    for page_index in render_range.clone() {
+        let i = page_index as usize;
+        let page_opt = pages.get(i).and_then(|page| page.as_ref());
 
         let (page_width, page_height) =
             page_sizes.get(i).and_then(|size| *size).unwrap_or((pw, ph));
@@ -454,26 +523,17 @@ pub fn view_continuous<'a>(
         if let Some(handle) = page_opt {
             let (w, h) = display_size;
 
-            let page_index = i as u16;
             let page_text = page_texts.get(&page_index);
             let page_highlights = annotations
                 .get(&page_index)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
-            let search_highlights = search_matches
-                .iter()
-                .enumerate()
-                .filter(|(idx, result)| {
-                    result.page_index == page_index && Some(*idx) != active_search_index
-                })
-                .flat_map(|(_, result)| result.rects.iter())
-                .copied()
-                .collect::<Vec<_>>();
-            let active_search_highlights = active_search_index
-                .and_then(|idx| search_matches.get(idx))
-                .filter(|result| result.page_index == page_index)
-                .map(|result| result.rects.clone())
-                .unwrap_or_default();
+            let (search_highlights, active_search_highlights) = search_highlights_for_page(
+                search_matches,
+                search_match_indices_by_page,
+                active_search_index,
+                page_index,
+            );
             let raw_page_height = page_text.map(|p| p.page_height).unwrap_or(page_height);
             let overlay_rects = pdf_highlight_rects(
                 page_index,
@@ -508,9 +568,9 @@ pub fn view_continuous<'a>(
                 focused_annotation_id,
                 page_links,
                 rotation,
-                move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
+                move |x, y, modifiers| Message::PdfLeftClicked(page_index, x, y, modifiers),
                 move |x, y, absolute_pos| Message::PdfRightClicked {
-                    page_index: i as u16,
+                    page_index,
                     x,
                     y,
                     absolute_pos,
@@ -537,20 +597,24 @@ pub fn view_continuous<'a>(
             );
         } else {
             page_list = page_list.push(
-                container(text(format!("{}", i + 1)).color(theme::TEXT_MUTED).size(16))
-                    .width(Length::Fixed(display_size.0))
-                    .height(Length::Fixed(display_size.1))
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .style(|_| container::Style {
-                        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
-                        border: iced::Border {
-                            color: theme::BORDER,
-                            width: 1.0,
-                            radius: 0.0.into(),
-                        },
-                        ..Default::default()
-                    }),
+                container(
+                    text(format!("{}", usize::from(page_index) + 1))
+                        .color(theme::TEXT_MUTED)
+                        .size(16),
+                )
+                .width(Length::Fixed(display_size.0))
+                .height(Length::Fixed(display_size.1))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+                    border: iced::Border {
+                        color: theme::BORDER,
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                }),
             );
         }
         page_list = page_list.push(Space::new().height(Length::Fixed(PDF_PAGE_SPACING)));
