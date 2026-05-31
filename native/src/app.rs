@@ -246,6 +246,7 @@ pub struct MdEditor {
     pdf_current_page: u16,
     pdf_total_pages: u16,
     pdf_zoom: f32,
+    pdf_rotation: u16,
     pdf_pages: Vec<Option<iced::widget::image::Handle>>,
     pdf_dimensions: Vec<Option<(u32, u32)>>,
     pdf_page_sizes: Vec<Option<(f32, f32)>>,
@@ -372,6 +373,7 @@ impl MdEditor {
             pdf_current_page: 0,
             pdf_total_pages: 0,
             pdf_zoom: 1.5,
+            pdf_rotation: 0,
             pdf_pages: Vec::new(),
             pdf_dimensions: Vec::new(),
             pdf_page_sizes: Vec::new(),
@@ -1116,6 +1118,7 @@ impl MdEditor {
                     self.pdf_placeholder_display_size(),
                     PDF_PAGE_SPACING,
                     PDF_PAGE_LIST_PADDING,
+                    self.pdf_rotation,
                 );
                 self.pdf_pending_pages.clear();
                 self.pdf_stale_pages.clear();
@@ -1199,6 +1202,7 @@ impl MdEditor {
                     self.pdf_placeholder_display_size(),
                     PDF_PAGE_SPACING,
                     PDF_PAGE_LIST_PADDING,
+                    self.pdf_rotation,
                 );
                 self.update_pdf_page_cache();
 
@@ -1296,6 +1300,7 @@ impl MdEditor {
                     self.pdf_placeholder_display_size(),
                     PDF_PAGE_SPACING,
                     PDF_PAGE_LIST_PADDING,
+                    self.pdf_rotation,
                 );
                 self.update_pdf_page_cache();
 
@@ -1391,6 +1396,7 @@ impl MdEditor {
                     self.pdf_placeholder_display_size(),
                     PDF_PAGE_SPACING,
                     PDF_PAGE_LIST_PADDING,
+                    self.pdf_rotation,
                 );
                 self.update_pdf_page_cache();
 
@@ -1418,6 +1424,36 @@ impl MdEditor {
                     ),
                 ])
             }
+            Message::PdfRotateClockwise => {
+                if self.active_pdf_path.is_some() && self.showing_pdf {
+                    self.pdf_rotation = (self.pdf_rotation + 90) % 360;
+                    self.pdf_page_cache.clear();
+                    self.pdf_pages.fill(None);
+                    self.pdf_dimensions.fill(None);
+                    self.pdf_stale_pages.clear();
+                    self.pdf_pending_pages.clear();
+                    self.pdf_pending_links.clear();
+                    self.pdf_layout = PdfLayout::rebuild(
+                        &self.pdf_page_sizes,
+                        self.pdf_zoom,
+                        self.pdf_placeholder_display_size(),
+                        PDF_PAGE_SPACING,
+                        PDF_PAGE_LIST_PADDING,
+                        self.pdf_rotation,
+                    );
+                    self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
+
+                    if self.pdf_fit_to_width {
+                        Task::done(Message::PdfFitToWidth)
+                    } else if self.pdf_fit_to_page {
+                        Task::done(Message::PdfFitToPage)
+                    } else {
+                        self.render_visible_pdf_pages()
+                    }
+                } else {
+                    Task::none()
+                }
+            }
             Message::PdfPageSizesLoaded(generation, path, sizes) => {
                 if generation != self.pdf_render_generation
                     || self.active_pdf_path.as_deref() != Some(path.as_str())
@@ -1438,6 +1474,7 @@ impl MdEditor {
                     self.pdf_placeholder_display_size(),
                     PDF_PAGE_SPACING,
                     PDF_PAGE_LIST_PADDING,
+                    self.pdf_rotation,
                 );
                 if self.pdf_fit_to_width && self.pdf_total_pages > 0 {
                     Task::done(Message::PdfFitToWidth)
@@ -1452,6 +1489,12 @@ impl MdEditor {
                 if generation != self.pdf_render_generation {
                     return Task::none();
                 }
+                let img = match self.pdf_rotation {
+                    90 => img.rotate90(),
+                    180 => img.rotate180(),
+                    270 => img.rotate270(),
+                    _ => img,
+                };
                 let (width, height) = img.dimensions();
                 let handle = iced::widget::image::Handle::from_rgba(
                     width,
@@ -3157,6 +3200,7 @@ impl MdEditor {
                 scrollable(views::pdf_viewer::view_continuous(
                     &self.pdf_pages,
                     self.pdf_zoom,
+                    self.pdf_rotation,
                     &self.pdf_dimensions,
                     &self.pdf_page_sizes,
                     self.pdf_placeholder_page_size,
@@ -3533,6 +3577,7 @@ impl MdEditor {
         self.showing_pdf = true;
         self.active_panel = ActivePanel::Pdf;
         self.pdf_current_page = 0;
+        self.pdf_rotation = 0;
         self.pdf_fit_to_width = true;
         self.pdf_fit_to_page = false;
         self.pdf_pages = Vec::new();
@@ -3905,19 +3950,29 @@ impl MdEditor {
     }
 
     fn pdf_placeholder_display_size(&self) -> (f32, f32) {
-        pdf_placeholder_display_size_from(
+        let size = pdf_placeholder_display_size_from(
             self.pdf_placeholder_page_size,
             self.pdf_page_sizes.first().and_then(|s| *s),
             self.pdf_dimensions.first().and_then(|d| *d),
             self.pdf_zoom,
-        )
+        );
+        if self.pdf_rotation == 90 || self.pdf_rotation == 270 {
+            (size.1, size.0)
+        } else {
+            size
+        }
     }
 
     fn pdf_page_display_size(&self, page: u16) -> (f32, f32) {
-        if let Some(Some((w, h))) = self.pdf_page_sizes.get(page as usize) {
+        let size = if let Some(Some((w, h))) = self.pdf_page_sizes.get(page as usize) {
             (*w * self.pdf_zoom, *h * self.pdf_zoom)
         } else {
             self.pdf_placeholder_display_size()
+        };
+        if self.pdf_rotation == 90 || self.pdf_rotation == 270 {
+            (size.1, size.0)
+        } else {
+            size
         }
     }
 
@@ -5064,6 +5119,7 @@ mod tests {
             app.pdf_placeholder_display_size(),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
+            app.pdf_rotation,
         );
 
         let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]);
@@ -5166,5 +5222,40 @@ mod tests {
         assert_eq!(history.entries[2], p4);
         assert_eq!(history.current_index, 2);
         assert_eq!(history.go_forward(), None);
+    }
+
+    #[test]
+    fn test_pdf_page_rotation() {
+        let mut app = MdEditor::new().0;
+        app.active_pdf_path = Some("dummy.pdf".to_string());
+        app.showing_pdf = true;
+        app.pdf_total_pages = 1;
+        app.pdf_page_sizes = vec![Some((100.0, 200.0))];
+        app.pdf_zoom = 1.0;
+        app.pdf_rotation = 0;
+
+        app.pdf_layout = PdfLayout::rebuild(
+            &app.pdf_page_sizes,
+            app.pdf_zoom,
+            app.pdf_placeholder_display_size(),
+            PDF_PAGE_SPACING,
+            PDF_PAGE_LIST_PADDING,
+            app.pdf_rotation,
+        );
+
+        assert_eq!(app.pdf_layout.page_height(0), 200.0);
+        assert_eq!(app.pdf_rotation, 0);
+
+        let _ = app.update(Message::PdfRotateClockwise);
+        assert_eq!(app.pdf_rotation, 90);
+        assert_eq!(app.pdf_layout.page_height(0), 100.0);
+
+        let _ = app.update(Message::PdfRotateClockwise);
+        assert_eq!(app.pdf_rotation, 180);
+        assert_eq!(app.pdf_layout.page_height(0), 200.0);
+
+        let _ = app.update(Message::PdfRotateClockwise);
+        assert_eq!(app.pdf_rotation, 270);
+        assert_eq!(app.pdf_layout.page_height(0), 100.0);
     }
 }
