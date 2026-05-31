@@ -34,6 +34,7 @@ pub struct InteractivePdf<'a, Message> {
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&'a str>,
     links: &'a [md_editor_core::pdf::LinkInfo],
+    rotation: u16,
     on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
     on_right_click: Box<dyn Fn(f32, f32, iced::Point) -> Message + 'a>,
     on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
@@ -57,6 +58,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         active_selection: Option<PdfSelection>,
         focused_annotation_id: Option<&'a str>,
         links: &'a [md_editor_core::pdf::LinkInfo],
+        rotation: u16,
         on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a,
         on_right_click: impl Fn(f32, f32, iced::Point) -> Message + 'a,
         on_selection_changed: impl Fn(u16, usize, usize) -> Message + 'a,
@@ -78,6 +80,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             active_selection,
             focused_annotation_id,
             links,
+            rotation,
             on_left_click: Box::new(on_left_click),
             on_right_click: Box::new(on_right_click),
             on_selection_changed: Box::new(on_selection_changed),
@@ -86,32 +89,66 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             on_copy_selection: Box::new(on_copy_selection),
         }
     }
+
+    fn get_zoom(&self, page_width: f32, page_height: f32) -> f32 {
+        let is_rotated = self.rotation == 90 || self.rotation == 270;
+        if is_rotated {
+            self.width / page_height.max(1.0)
+        } else {
+            self.width / page_width.max(1.0)
+        }
+    }
 }
 
 fn search_rect_to_view_rect(
     rect: &md_editor_core::pdf::PdfRect,
+    page_width: f32,
     page_height: f32,
     zoom: f32,
+    rotation: u16,
 ) -> md_editor_core::pdf::PdfRect {
-    md_editor_core::pdf::PdfRect {
-        x: rect.x * zoom,
-        y: (page_height - rect.y - rect.height) * zoom,
-        width: rect.width * zoom,
-        height: rect.height * zoom,
+    match rotation {
+        90 => md_editor_core::pdf::PdfRect {
+            x: rect.y * zoom,
+            y: rect.x * zoom,
+            width: rect.height * zoom,
+            height: rect.width * zoom,
+        },
+        180 => md_editor_core::pdf::PdfRect {
+            x: (page_width - rect.x - rect.width) * zoom,
+            y: rect.y * zoom,
+            width: rect.width * zoom,
+            height: rect.height * zoom,
+        },
+        270 => md_editor_core::pdf::PdfRect {
+            x: (page_height - rect.y - rect.height) * zoom,
+            y: (page_width - rect.x - rect.width) * zoom,
+            width: rect.height * zoom,
+            height: rect.width * zoom,
+        },
+        _ => md_editor_core::pdf::PdfRect {
+            x: rect.x * zoom,
+            y: (page_height - rect.y - rect.height) * zoom,
+            width: rect.width * zoom,
+            height: rect.height * zoom,
+        },
     }
 }
 
 fn to_screen_rect(
     pdf_rect: &md_editor_core::pdf::PdfRect,
+    page_width: f32,
     page_height: f32,
     zoom: f32,
+    rotation: u16,
     bounds: Rectangle,
 ) -> Rectangle {
+    let r = search_rect_to_view_rect(pdf_rect, page_width, page_height, zoom, rotation);
     Rectangle {
-        x: bounds.x + pdf_rect.x * zoom,
-        y: bounds.y + (page_height - pdf_rect.y - pdf_rect.height) * zoom,
-        width: pdf_rect.width * zoom,
-        height: pdf_rect.height * zoom,
+        x: bounds.x + r.x,
+        y: bounds.y + r.y,
+        width: r.width,
+        height: r.height,
     }
 }
 
@@ -125,36 +162,11 @@ fn get_annotation_color(color: md_editor_core::pdf::PdfAnnotationColor) -> Color
     }
 }
 
-fn draw_view_highlight<R>(
-    renderer: &mut R,
-    page_bounds: Rectangle,
-    rect: &md_editor_core::pdf::PdfRect,
-    color: Color,
-) where
-    R: renderer::Renderer,
-{
-    renderer.fill_quad(
-        renderer::Quad {
-            bounds: Rectangle {
-                x: page_bounds.x + rect.x,
-                y: page_bounds.y + rect.y,
-                width: rect.width.max(3.0),
-                height: rect.height.max(8.0),
-            },
-            border: iced::Border {
-                radius: 2.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        color,
-    );
-}
-
 fn hit_test(
     page_text: &md_editor_core::pdf::PdfPageText,
     point: iced::Point,
     zoom: f32,
+    rotation: u16,
 ) -> Option<usize> {
     let x = point.x;
     let y = point.y;
@@ -164,7 +176,7 @@ fn hit_test(
     let mut min_line_dist = f32::MAX;
 
     for (line_idx, line) in page_text.lines.iter().enumerate() {
-        let line_view = search_rect_to_view_rect(&line.bbox, page_text.page_height, zoom);
+        let line_view = search_rect_to_view_rect(&line.bbox, page_text.page_width, page_text.page_height, zoom, rotation);
         let line_y_min = line_view.y;
         let line_y_max = line_view.y + line_view.height;
 
@@ -206,7 +218,7 @@ fn hit_test(
     let mut min_char_dist = f32::MAX;
 
     for ch in line_chars {
-        let char_view = search_rect_to_view_rect(&ch.bbox, page_text.page_height, zoom);
+        let char_view = search_rect_to_view_rect(&ch.bbox, page_text.page_width, page_text.page_height, zoom, rotation);
         let char_x_min = char_view.x;
         let char_x_max = char_view.x + char_view.width;
 
@@ -269,14 +281,12 @@ where
             *viewport,
         );
 
+        let page_width = self.page_width;
         let page_height = self
             .page_text
             .map(|page_text| page_text.page_height)
             .unwrap_or(self.page_height);
-        let zoom = self
-            .page_text
-            .map(|page_text| self.width / page_text.page_width)
-            .unwrap_or_else(|| self.width / self.page_width.max(1.0));
+        let zoom = self.get_zoom(page_width, page_height);
 
         // 1. Draw persistent annotation highlights
         for ann in self.highlights {
@@ -293,7 +303,7 @@ where
             };
 
             for r in &ann.rects {
-                let screen_rect = to_screen_rect(r, page_height, zoom, bounds);
+                let screen_rect = to_screen_rect(r, page_width, page_height, zoom, self.rotation, bounds);
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: screen_rect,
@@ -305,13 +315,44 @@ where
             }
         }
 
-        // 2. Draw search highlights. These are pre-converted into view coordinates
-        // by the PDF view builder, matching the stable main-branch search path.
+        // 2. Draw search highlights.
         for r in &self.search_highlights {
-            draw_view_highlight(renderer, bounds, r, Color::from_rgba(1.0, 0.78, 0.18, 0.38));
+            let screen_rect = to_screen_rect(r, page_width, page_height, zoom, self.rotation, bounds);
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: screen_rect.x,
+                        y: screen_rect.y,
+                        width: screen_rect.width.max(3.0),
+                        height: screen_rect.height.max(8.0),
+                    },
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Color::from_rgba(1.0, 0.78, 0.18, 0.38),
+            );
         }
         for r in &self.active_search_highlights {
-            draw_view_highlight(renderer, bounds, r, Color::from_rgba(1.0, 0.62, 0.0, 0.68));
+            let screen_rect = to_screen_rect(r, page_width, page_height, zoom, self.rotation, bounds);
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: screen_rect.x,
+                        y: screen_rect.y,
+                        width: screen_rect.width.max(3.0),
+                        height: screen_rect.height.max(8.0),
+                    },
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Color::from_rgba(1.0, 0.62, 0.0, 0.68),
+            );
         }
 
         // 3. Draw active selection highlight
@@ -328,7 +369,7 @@ where
                         .collect();
                     let selection_rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
                     for r in selection_rects {
-                        let screen_rect = to_screen_rect(&r, page_text.page_height, zoom, bounds);
+                        let screen_rect = to_screen_rect(&r, page_text.page_width, page_text.page_height, zoom, self.rotation, bounds);
                         renderer.fill_quad(
                             renderer::Quad {
                                 bounds: screen_rect,
@@ -395,11 +436,11 @@ where
                         if dist_sq > 4.0 {
                             state.is_dragging = true;
                             if let Some(page_text) = self.page_text {
-                                let zoom = self.width / page_text.page_width;
+                                let zoom = self.get_zoom(self.page_width, page_text.page_height);
                                 let start_rel = start_pos;
                                 if let (Some(anchor), Some(focus)) = (
-                                    hit_test(page_text, start_rel, zoom),
-                                    hit_test(page_text, current_rel, zoom),
+                                    hit_test(page_text, start_rel, zoom, self.rotation),
+                                    hit_test(page_text, current_rel, zoom, self.rotation),
                                 ) {
                                     shell.publish((self.on_selection_changed)(
                                         self.page_index,
@@ -422,11 +463,11 @@ where
                                     current_pos.x - bounds.x,
                                     current_pos.y - bounds.y,
                                 );
-                                let zoom = self.width / page_text.page_width;
+                                let zoom = self.get_zoom(self.page_width, page_text.page_height);
                                 let start_rel = start_pos;
                                 if let (Some(anchor), Some(focus)) = (
-                                    hit_test(page_text, start_rel, zoom),
-                                    hit_test(page_text, current_rel, zoom),
+                                    hit_test(page_text, start_rel, zoom, self.rotation),
+                                    hit_test(page_text, current_rel, zoom, self.rotation),
                                 ) {
                                     shell.publish((self.on_selection_finished)(
                                         self.page_index,
@@ -500,17 +541,15 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         let screen_x = point.x - bounds.x;
         let screen_y = point.y - bounds.y;
 
+        let page_width = self.page_width;
         let page_height = self
             .page_text
             .map(|p| p.page_height)
             .unwrap_or(self.page_height);
-        let zoom = self
-            .page_text
-            .map(|p| self.width / p.page_width)
-            .unwrap_or(self.width / self.page_width.max(1.0));
+        let zoom = self.get_zoom(page_width, page_height);
 
         for link in self.links {
-            let r = search_rect_to_view_rect(&link.bbox, page_height, zoom);
+            let r = search_rect_to_view_rect(&link.bbox, page_width, page_height, zoom, self.rotation);
             if screen_x >= r.x
                 && screen_x <= r.x + r.width
                 && screen_y >= r.y
@@ -531,16 +570,20 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         let screen_x = point.x - bounds.x;
         let screen_y = point.y - bounds.y;
 
+        let page_width = self.page_width;
+        let page_height = self
+            .page_text
+            .map(|p| p.page_height)
+            .unwrap_or(self.page_height);
+        let zoom = self.get_zoom(page_width, page_height);
+
         let page_text = match self.page_text {
             Some(p) => p,
             None => return false,
         };
 
-        let page_height = page_text.page_height;
-        let zoom = self.width / page_text.page_width;
-
         for line in &page_text.lines {
-            let r = search_rect_to_view_rect(&line.bbox, page_height, zoom);
+            let r = search_rect_to_view_rect(&line.bbox, page_width, page_height, zoom, self.rotation);
             if screen_x >= r.x
                 && screen_x <= r.x + r.width
                 && screen_y >= r.y
