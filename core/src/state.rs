@@ -412,8 +412,8 @@ impl AppState {
             let created_at: i64 = row.get(11).map_err(|e| e.to_string())?;
             let updated_at: i64 = row.get(12).map_err(|e| e.to_string())?;
 
-            let kind = PdfAnnotationKind::from_str(&kind_str)?;
-            let color = PdfAnnotationColor::from_str(&color_str)?;
+            let kind = kind_str.parse::<PdfAnnotationKind>()?;
+            let color = color_str.parse::<PdfAnnotationColor>()?;
             let ranges: Vec<PdfTextRange> = serde_json::from_str(&ranges_json)
                 .map_err(|e| format!("Failed to parse ranges JSON: {e}"))?;
             let rects: Vec<PdfRect> = serde_json::from_str(&rects_json)
@@ -440,6 +440,12 @@ impl AppState {
     }
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn settings_db_path() -> PathBuf {
     let mut dir = config_dir();
     if let Err(err) = std::fs::create_dir_all(&dir) {
@@ -451,10 +457,10 @@ fn settings_db_path() -> PathBuf {
 }
 
 fn config_dir() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            return dir.to_path_buf();
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        return dir.to_path_buf();
     }
 
     PathBuf::from(".")

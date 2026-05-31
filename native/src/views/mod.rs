@@ -12,3 +12,4 @@ pub mod toc;
 pub mod toolbar;
 pub mod tracker;
 pub mod welcome;
+pub mod pdf_annotations;

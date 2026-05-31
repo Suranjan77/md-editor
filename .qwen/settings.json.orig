@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node *)",
+      "Bash(cargo test *)",
+      "Bash(true)",
+      "Bash(cargo tree *)",
+      "Bash(rustc *)",
+      "Bash(grep *)",
+      "Bash(git stash)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git config *)"
+    ]
+  },
+  "$version": 4
+}

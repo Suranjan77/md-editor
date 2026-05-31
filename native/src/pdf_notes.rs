@@ -131,6 +131,54 @@ fn linked_pdf_note_section(pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotat
     )
 }
 
+pub fn export_annotations_to_markdown(
+    pdf_filename: &str,
+    pdf_path: &str,
+    annotations: &[md_editor_core::pdf::PdfAnnotation],
+) -> String {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut doc = format!(
+        "# Annotations: {}\n\n**Document:** {}\n**Annotations:** {}\n**Exported:** {}\n\n---\n",
+        pdf_filename,
+        pdf_path,
+        annotations.len(),
+        now
+    );
+
+    let mut sorted_anns = annotations.to_vec();
+    sorted_anns.sort_by_key(|ann| (ann.page_index, ann.created_at));
+
+    for ann in sorted_anns {
+        let col_text = match ann.color {
+            md_editor_core::pdf::PdfAnnotationColor::Yellow => "Yellow",
+            md_editor_core::pdf::PdfAnnotationColor::Green => "Green",
+            md_editor_core::pdf::PdfAnnotationColor::Blue => "Blue",
+            md_editor_core::pdf::PdfAnnotationColor::Pink => "Pink",
+            md_editor_core::pdf::PdfAnnotationColor::Orange => "Orange",
+        };
+
+        doc.push_str(&format!(
+            "\n## Page {}\n\n{}\n\n**Colour:** {}\n",
+            ann.page_index + 1,
+            markdown_quote(&ann.selected_text),
+            col_text
+        ));
+
+        if let Some(ref note_str) = ann.note {
+            if !note_str.trim().is_empty() {
+                doc.push_str(&format!("\n**Note:** {}\n", note_str.trim()));
+            }
+        }
+
+        doc.push_str(&format!(
+            "\n[Open in PDF]({})\n",
+            pdf_annotation_link(pdf_path, &ann)
+        ));
+    }
+
+    doc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +229,45 @@ mod tests {
 
         let deduped = append_linked_pdf_note_section(&appended, "papers/My PDF File.pdf", &ann);
         assert_eq!(deduped, appended);
+    }
+
+    #[test]
+    fn test_export_annotations() {
+        let ann1 = md_editor_core::pdf::PdfAnnotation {
+            id: "1".to_string(),
+            document_id: "doc".to_string(),
+            page_index: 2,
+            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
+            color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+            selected_text: "First".to_string(),
+            ranges: vec![],
+            rects: vec![],
+            note: Some("some note".to_string()),
+            linked_note_path: None,
+            markdown_anchor: None,
+            created_at: 10,
+            updated_at: 10,
+        };
+        let ann2 = md_editor_core::pdf::PdfAnnotation {
+            id: "2".to_string(),
+            page_index: 0,
+            color: md_editor_core::pdf::PdfAnnotationColor::Green,
+            selected_text: "Second".to_string(),
+            note: None,
+            created_at: 5,
+            ..ann1.clone()
+        };
+
+        let result = export_annotations_to_markdown("doc.pdf", "/path/to/doc.pdf", &[ann1, ann2]);
+        assert!(result.contains("# Annotations: doc.pdf"));
+        assert!(result.contains("**Document:** /path/to/doc.pdf"));
+        // Green color (page 1) should come before Yellow color (page 3) due to sorting by page
+        let p1_idx = result.find("Page 1").unwrap();
+        let p3_idx = result.find("Page 3").unwrap();
+        assert!(p1_idx < p3_idx);
+        assert!(result.contains("> First"));
+        assert!(result.contains("**Note:** some note"));
+        assert!(result.contains("> Second"));
+        assert!(result.contains("[Open in PDF](pdf:///path/to/doc.pdf?page=3&annotation=1)"));
     }
 }
