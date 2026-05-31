@@ -52,7 +52,10 @@ pub enum Message {
 
     // ── PDF ──────────────────────────────────────────────────────
     PdfZoomChanged(f32),
+    PdfWheelScrolledForZoom(f32),
     PdfFitToWidth,
+    PdfFitToPage,
+    PdfRotateClockwise,
     PdfLoaded(u64, u16), // render generation, total pages
     PdfPageSizesLoaded(u64, String, Vec<(f32, f32)>),
     PdfRendered(u64, u16, image::DynamicImage),
@@ -63,10 +66,11 @@ pub enum Message {
         viewport_height: f32,
     },
     PdfLeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
-    PdfRightClicked(u16, f32, f32),
+    PdfRightClicked { page_index: u16, x: f32, y: f32, absolute_pos: iced::Point },
     PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
-    PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
+    PdfSearchMatchesFound(u64, Vec<md_editor_core::pdf::PdfSearchMatch>),
+    PdfSearchFinished(u64, Result<(), String>),
     PdfSearchResultClicked(u16),
     PdfScrollBy(f32),
     PdfFirstPage,
@@ -74,6 +78,8 @@ pub enum Message {
     PdfSearchToggle,
     PdfGoToPage,
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
+    PdfNavBack,
+    PdfNavForward,
     ClosePdfLinkPreview,
     // ── PDF Study Updates ──────────────────────────────────────────
     PdfDocumentIdComputed(Option<(String, String, u64, Option<i64>)>),
@@ -93,6 +99,13 @@ pub enum Message {
         page: u16,
     },
 
+    PdfToggleAnnotationsSidebar,
+    PdfFilterAnnotationsByColor(Option<md_editor_core::pdf::PdfAnnotationColor>),
+    PdfNavigateToAnnotation { id: String, page: u16 },
+    PdfEditAnnotationNote(String, u16),
+    PdfExportAnnotations,
+    PdfAnnotationsExported(Result<String, String>),
+    PdfContextMenuAction(crate::views::modals::PdfContextMenuItem),
     // ── Tracker ──────────────────────────────────────────────────
     TrackerToggle,
     TrackerStart,
@@ -126,6 +139,7 @@ pub enum Message {
     SplitViewDragging(f32),
     SplitViewDragEnd,
     WindowResized(f32, f32),
+    KeyboardModifiersChanged(iced::keyboard::Modifiers),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
