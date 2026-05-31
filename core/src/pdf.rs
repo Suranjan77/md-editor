@@ -239,6 +239,127 @@ pub struct LinkPreviewResult {
     pub center_ratio: f32,
 }
 
+fn link_preview_crop(
+    full_width: u32,
+    full_height: u32,
+    target_y: Option<f32>,
+    scale: f32,
+) -> (u32, u32, u32, u32, f32) {
+    if full_height == 0 {
+        return (0, 0, full_width.max(1), 1, 0.5);
+    }
+
+    let desired_w = (full_width as f32 * 0.82).round().max(1.0) as u32;
+    let crop_w = desired_w.min(full_width.max(1));
+    let crop_x = full_width.saturating_sub(crop_w) / 2;
+
+    let desired_h = (720.0 * scale).round().max(1.0) as u32;
+    let crop_h = desired_h.min(full_height);
+    let target = target_y.unwrap_or(full_height as f32 / (2.0 * scale)) * scale;
+    let max_y = full_height.saturating_sub(crop_h);
+    let crop_y = (target - crop_h as f32 * 0.42)
+        .round()
+        .clamp(0.0, max_y as f32) as u32;
+    let center_ratio = ((target - crop_y as f32) / crop_h as f32).clamp(0.0, 1.0);
+
+    (crop_x, crop_y, crop_w.max(1), crop_h.max(1), center_ratio)
+}
+
+fn link_preview_content_crop(
+    full_width: u32,
+    full_height: u32,
+    page_width: f32,
+    page_height: f32,
+    target_y: Option<f32>,
+    scale: f32,
+    lines: &[PdfTextLine],
+) -> (u32, u32, u32, u32, f32) {
+    let target = target_y.unwrap_or(page_height / 2.0);
+    let mut sorted = lines
+        .iter()
+        .filter(|line| line.bbox.width > 0.0 && line.bbox.height > 0.0)
+        .collect::<Vec<_>>();
+    sorted.sort_by(|a, b| {
+        let a_top = page_height - a.bbox.y - a.bbox.height;
+        let b_top = page_height - b.bbox.y - b.bbox.height;
+        a_top
+            .partial_cmp(&b_top)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    if sorted.is_empty() {
+        return link_preview_crop(full_width, full_height, target_y, scale);
+    }
+
+    let start_idx = sorted
+        .iter()
+        .position(|line| {
+            let line_bottom = page_height - line.bbox.y;
+            line_bottom >= target - 8.0
+        })
+        .unwrap_or_else(|| sorted.len().saturating_sub(1));
+
+    let mut selected = Vec::new();
+    let mut block_bottom = page_height - sorted[start_idx].bbox.y;
+    let block_top = page_height - sorted[start_idx].bbox.y - sorted[start_idx].bbox.height;
+
+    for line in sorted.iter().skip(start_idx) {
+        let line_top = page_height - line.bbox.y - line.bbox.height;
+        let line_bottom = page_height - line.bbox.y;
+        if !selected.is_empty() {
+            let gap = line_top - block_bottom;
+            if gap > 34.0 || line_bottom - block_top > 220.0 || selected.len() >= 10 {
+                break;
+            }
+        }
+        block_bottom = block_bottom.max(line_bottom);
+        selected.push(*line);
+    }
+
+    let x_min = selected
+        .iter()
+        .map(|line| line.bbox.x)
+        .fold(page_width, f32::min);
+    let x_max = selected
+        .iter()
+        .map(|line| line.bbox.x + line.bbox.width)
+        .fold(0.0, f32::max);
+    let y_top = selected
+        .iter()
+        .map(|line| page_height - line.bbox.y - line.bbox.height)
+        .fold(page_height, f32::min);
+    let y_bottom = selected
+        .iter()
+        .map(|line| page_height - line.bbox.y)
+        .fold(0.0, f32::max);
+
+    let x_pad = 36.0;
+    let y_pad = 42.0;
+    let crop_x = ((x_min - x_pad).max(0.0) * scale).round() as u32;
+    let right = ((x_max + x_pad).min(page_width) * scale).round() as u32;
+    let min_w = (360.0 * scale).round() as u32;
+    let crop_w = right
+        .saturating_sub(crop_x)
+        .max(min_w)
+        .min(full_width.saturating_sub(crop_x).max(1));
+
+    let content_top = ((y_top - y_pad).max(0.0) * scale).round();
+    let content_bottom = ((y_bottom + y_pad).min(page_height) * scale).round();
+    let content_h = (content_bottom - content_top).max(1.0) as u32;
+    let min_h = (180.0 * scale).round() as u32;
+    let max_h = (330.0 * scale).round() as u32;
+    let crop_h = content_h.max(min_h).min(max_h).min(full_height.max(1));
+    let content_center = (content_top + content_bottom) / 2.0;
+    let max_y = full_height.saturating_sub(crop_h);
+    let crop_y = (content_center - crop_h as f32 / 2.0)
+        .round()
+        .clamp(0.0, max_y as f32) as u32;
+    let target_scaled = target * scale;
+    let center_ratio = ((target_scaled - crop_y as f32) / crop_h as f32).clamp(0.0, 1.0);
+
+    (crop_x, crop_y, crop_w, crop_h, center_ratio)
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PdfSearchMatch {
     pub page_index: u16,
@@ -752,11 +873,14 @@ impl PdfRenderer {
                     RenderCommand::RenderLinkPreview(path, index, dest_y, resp) => {
                         let res = (|| {
                             ensure_document(&pdfium, &mut current_document, &path)?;
+                            let page_text =
+                                get_page_text_impl(&pdfium, &mut current_document, &path, index as u16)
+                                    .ok();
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
                             };
                             let page = doc.pages().get(index as i32).map_err(|e| e.to_string())?;
-                            let scale = 1.0;
+                            let scale = 2.0;
                             let full_width = (page.width().value * scale) as i32;
                             let full_height = (page.height().value * scale) as i32;
                             let render_config = PdfRenderConfig::new()
@@ -766,19 +890,20 @@ impl PdfRenderer {
                                 .render_with_config(&render_config)
                                 .map_err(|e| e.to_string())?;
                             let dynamic_image = bitmap.as_image().map_err(|e| e.to_string())?;
-                            let target_y = dest_y.unwrap_or(0.0);
-                            let v_padding = 150.0 * scale;
-                            let center_y_scaled = target_y * scale;
-                            let crop_y = (center_y_scaled - v_padding).max(0.0) as u32;
-                            let crop_h =
-                                (v_padding * 2.0).min((full_height as u32 - crop_y) as f32) as u32;
-                            let center_ratio = if crop_h > 0 {
-                                ((center_y_scaled - crop_y as f32) / crop_h as f32).clamp(0.0, 1.0)
+                            let (crop_x, crop_y, crop_w, crop_h, center_ratio) = if let Some(page_text) = page_text {
+                                link_preview_content_crop(
+                                    full_width as u32,
+                                    full_height as u32,
+                                    page.width().value,
+                                    page.height().value,
+                                    dest_y,
+                                    scale,
+                                    &page_text.lines,
+                                )
                             } else {
-                                0.5
+                                link_preview_crop(full_width as u32, full_height as u32, dest_y, scale)
                             };
-                            let cropped =
-                                dynamic_image.crop_imm(0, crop_y, full_width as u32, crop_h.max(1));
+                            let cropped = dynamic_image.crop_imm(crop_x, crop_y, crop_w, crop_h);
                             let mut buf = std::io::Cursor::new(Vec::new());
                             cropped
                                 .write_to(&mut buf, image::ImageFormat::Png)
@@ -1277,6 +1402,102 @@ mod tests {
             regex_results.len(),
             "Regex and non-regex search count should match"
         );
+    }
+
+    #[test]
+    fn link_preview_crop_is_tall_and_clamped_to_page_bounds() {
+        let (top_x, top_y, top_w, top_h, top_ratio) =
+            link_preview_crop(1000, 1600, Some(20.0), 2.0);
+        assert_eq!(top_x, 90);
+        assert_eq!(top_y, 0);
+        assert_eq!(top_w, 820);
+        assert_eq!(top_h, 1440);
+        assert!(top_ratio > 0.0 && top_ratio < 0.1);
+
+        let (middle_x, middle_y, middle_w, middle_h, middle_ratio) =
+            link_preview_crop(1000, 2000, Some(450.0), 2.0);
+        assert_eq!(middle_x, 90);
+        assert_eq!(middle_w, 820);
+        assert_eq!(middle_h, 1440);
+        assert!(middle_y > 0);
+        assert!(middle_ratio > 0.35 && middle_ratio < 0.5);
+
+        let (_, bottom_y, _, bottom_h, bottom_ratio) =
+            link_preview_crop(1000, 1600, Some(2000.0), 2.0);
+        assert_eq!(bottom_h, 1440);
+        assert_eq!(bottom_y + bottom_h, 1600);
+        assert_eq!(bottom_ratio, 1.0);
+    }
+
+    #[test]
+    fn link_preview_content_crop_uses_nearby_text_bounds_without_clipping_width() {
+        let lines = vec![
+            PdfTextLine {
+                start_text_index: 0,
+                end_text_index: 10,
+                bbox: PdfRect {
+                    x: 70.0,
+                    y: 600.0,
+                    width: 470.0,
+                    height: 14.0,
+                },
+            },
+            PdfTextLine {
+                start_text_index: 10,
+                end_text_index: 20,
+                bbox: PdfRect {
+                    x: 72.0,
+                    y: 575.0,
+                    width: 430.0,
+                    height: 14.0,
+                },
+            },
+        ];
+
+        let (x, y, w, h, ratio) =
+            link_preview_content_crop(1224, 1584, 612.0, 792.0, Some(185.0), 2.0, &lines);
+
+        assert!(x <= 68, "left content edge must include padding");
+        assert!(x + w >= 1152, "wide content must not be clipped");
+        assert!(h >= 360);
+        assert!(h <= 660, "preview should show content block, not whole page");
+        assert!(y < 360);
+        assert!(ratio > 0.0 && ratio < 1.0);
+    }
+
+    #[test]
+    fn ladr_reference_preview_renders_content_crop_not_full_page() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let path = "/home/sur/repo/study-tracker/Y1/books/LADR4e.pdf";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("Skipping LADR preview test; fixture not present: {path}");
+            return;
+        }
+
+        let renderer = PdfRenderer::new().unwrap();
+        let mut target = None;
+        for page in 0..20 {
+            let Ok(links) = renderer.get_page_links(path, page) else {
+                continue;
+            };
+            if let Some(link) = links
+                .into_iter()
+                .find(|link| link.dest_page.is_some() && link.dest_y.is_some())
+            {
+                target = Some(link);
+                break;
+            }
+        }
+
+        let link = target.expect("LADR fixture should contain internal PDF references");
+        let preview = renderer
+            .render_link_preview(path, link.dest_page.unwrap(), link.dest_y)
+            .expect("LADR link preview should render");
+        let img = image::load_from_memory(&preview.image_data).unwrap();
+
+        assert!(img.height() <= 700, "preview should not render full page");
+        assert!(img.width() <= 1300, "preview should not render full page width at 2x");
+        assert!(img.height() >= 260, "preview should remain comfortably readable");
     }
 
     #[test]
