@@ -498,6 +498,7 @@ pub fn view_continuous<'a>(
                 active_selection,
                 focused_annotation_id,
                 page_links,
+                rotation,
                 move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
                 move |x, y, absolute_pos| Message::PdfRightClicked { page_index: i as u16, x, y, absolute_pos },
                 move |page, anchor, focus| Message::PdfSelectionChanged(page, anchor, focus),
