@@ -1895,6 +1895,7 @@ impl MdEditor {
                 }
             }
             Message::PdfLinkPreviewResult(Ok(res)) => {
+                self.active_modal = None;
                 if let Ok(img) = image::load_from_memory(&res.image_data) {
                     let (width, height) = img.dimensions();
                     self.pdf_link_preview = Some(iced::widget::image::Handle::from_rgba(
@@ -1911,6 +1912,7 @@ impl MdEditor {
             }
             Message::ClosePdfLinkPreview => {
                 self.pdf_link_preview = None;
+                self.active_modal = None;
                 Task::none()
             }
             Message::PdfTocLoaded(generation, entries) => {
@@ -2913,6 +2915,14 @@ impl MdEditor {
                     } else if self.pdf_fit_to_page {
                         return Task::done(Message::PdfFitToPage);
                     }
+                } else if self.active_path.is_some() {
+                    if let Ok(Some(last_pdf)) =
+                        md_editor_core::config::get_sys_config(&self.state, "last_pdf")
+                    {
+                        self.split_view_active = true;
+                        return self.open_pdf(&last_pdf);
+                    }
+                    self.toast = Some("Open a PDF once to use split view".to_string());
                 } else {
                     self.toast =
                         Some("Open a markdown file and a PDF to use split view".to_string());
@@ -3456,6 +3466,7 @@ impl MdEditor {
         if let Some(preview_handle) = &self.pdf_link_preview {
             let img = iced::widget::image(preview_handle.clone())
                 .width(Length::Fill)
+                .height(Length::Fill)
                 .content_fit(iced::ContentFit::Contain);
 
             let modal = container(
@@ -3464,20 +3475,28 @@ impl MdEditor {
                         Space::new().width(Length::Fill),
                         iced::widget::button("✕")
                             .on_press(Message::ClosePdfLinkPreview)
-                            .padding(8)
+                            .padding(10)
+                            .style(iced::widget::button::text)
                     ],
                     container(img)
-                        .width(Length::Fixed(800.0))
-                        .height(Length::Fixed(600.0))
+                        .width(Length::Fixed(1160.0))
+                        .height(Length::Fixed(820.0))
+                        .padding(16)
                         .style(|_| container::Style {
                             background: Some(iced::Background::Color(iced::Color::WHITE)),
                             border: iced::Border {
-                                radius: 8.0.into(),
+                                radius: 6.0.into(),
                                 ..Default::default()
+                            },
+                            shadow: iced::Shadow {
+                                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                                offset: iced::Vector::new(0.0, 8.0),
+                                blur_radius: 24.0,
                             },
                             ..Default::default()
                         })
                 ]
+                .spacing(8)
                 .align_x(Alignment::Center),
             )
             .width(Length::Fill)
@@ -3583,6 +3602,7 @@ impl MdEditor {
         let path_str = abs_path.to_string_lossy().to_string();
         self.active_pdf_path = Some(path.to_string());
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
+        let _ = md_editor_core::config::set_sys_config(&self.state, "last_pdf", path);
         self.active_image_path = None;
         self.active_image = None;
         self.showing_pdf = true;
@@ -5143,6 +5163,40 @@ mod tests {
         assert!(app.pdf_stale_pages.contains(&0));
         assert!(app.pdf_stale_pages.contains(&1));
         assert_eq!(app.pdf_state.zoom, 2.0);
+    }
+
+    #[test]
+    fn closing_pdf_link_preview_clears_hidden_context_menu() {
+        let mut app = MdEditor::new().0;
+        app.pdf_link_preview = Some(iced::widget::image::Handle::from_rgba(
+            1,
+            1,
+            vec![255, 255, 255, 255],
+        ));
+        app.active_modal = Some(views::modals::ModalType::PdfContextMenu(
+            views::modals::PdfContextMenuState {
+                absolute_pos: iced::Point::ORIGIN,
+                items: Vec::new(),
+            },
+        ));
+
+        let _ = app.update(Message::ClosePdfLinkPreview);
+
+        assert!(app.pdf_link_preview.is_none());
+        assert!(app.active_modal.is_none());
+    }
+
+    #[test]
+    fn split_view_toggle_works_from_markdown_view_with_loaded_pdf() {
+        let mut app = MdEditor::new().0;
+        app.active_path = Some("note.md".to_string());
+        app.active_pdf_path = Some("paper.pdf".to_string());
+        app.showing_pdf = false;
+        app.active_panel = ActivePanel::Markdown;
+
+        let _ = app.update(Message::SplitViewToggle);
+
+        assert!(app.split_view_active);
     }
 
     #[test]
