@@ -58,7 +58,7 @@ pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
 
     if abs_path
         .extension()
-        .map_or(false, |e| is_image(e.to_str().unwrap_or("")))
+        .is_some_and(|e| is_image(e.to_str().unwrap_or("")))
     {
         read_image(&abs_path)
     } else {
@@ -124,7 +124,7 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
     let abs_old = resolve_vault_path(vault_root, old_path);
     let abs_new = resolve_vault_path(vault_root, new_path);
 
-    if abs_old.is_file() && abs_old.extension().map_or(false, |e| e == "md") {
+    if abs_old.is_file() && is_markdown_path(&abs_old) {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         index.remove_file(&abs_old);
         let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -139,7 +139,29 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
         return Err(format!("Target already exists: {}", abs_new.display()));
     }
     fs::rename(&abs_old, &abs_new)
-        .map_err(|e| format!("Failed to rename {}: {}", abs_old.display(), e))
+        .map_err(|e| format!("Failed to rename {}: {}", abs_old.display(), e))?;
+
+    if abs_new.is_file() && is_markdown_path(&abs_new) {
+        let content = fs::read_to_string(&abs_new)
+            .map_err(|e| format!("Failed to read renamed file {}: {}", abs_new.display(), e))?;
+
+        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+        index.update_file(&abs_new, &content);
+
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute(
+            "DELETE FROM file_search WHERE path = ?1",
+            rusqlite::params![new_path],
+        )
+        .ok();
+        db.execute(
+            "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
+            rusqlite::params![new_path, &content],
+        )
+        .ok();
+    }
+
+    Ok(())
 }
 
 /// Delete a file or directory.
@@ -197,10 +219,8 @@ pub fn search_vault(state: &AppState, query: &str) -> Result<Vec<SearchResult>, 
         .map_err(|e| e.to_string())?;
 
     let mut results = Vec::new();
-    for row in rows {
-        if let Ok(r) = row {
-            results.push(r);
-        }
+    for r in rows.flatten() {
+        results.push(r);
     }
     Ok(results)
 }
@@ -351,7 +371,7 @@ fn read_file(path: &Path) -> Result<String, String> {
 fn read_image(path: &Path) -> Result<Vec<u8>, String> {
     if !path
         .extension()
-        .map_or(false, |e| is_image(e.to_str().unwrap_or("")))
+        .is_some_and(|e| is_image(e.to_str().unwrap_or("")))
     {
         return Err(format!("Not an image: {}", path.display()));
     }
@@ -367,6 +387,12 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
 
 pub fn is_image(ext: &str) -> bool {
     IMAGE_EXTENSIONS.contains(&ext)
+}
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext == "md" || ext == "markdown")
 }
 
 fn list_vault_entries(root: &Path) -> Result<Vec<FileEntry>, String> {
@@ -452,10 +478,58 @@ fn list_all_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(
             list_all_md_files_recursive(&path, files)?;
         } else if path
             .extension()
-            .map_or(false, |e| e == "md" || e == "markdown")
+            .is_some_and(|e| e == "md" || e == "markdown")
         {
             files.push(path);
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("md_editor_{name}_{nanos}"))
+    }
+
+    #[test]
+    fn rename_markdown_reindexes_links_and_search_under_new_path() {
+        let root = unique_temp_dir("rename_reindex");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("source.md"), "Link to [[target]]. UniqueNeedle").unwrap();
+        fs::write(root.join("target.md"), "Target").unwrap();
+
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, root.to_str().unwrap()).unwrap();
+
+        rename_entry(&state, "source.md", "renamed.md").unwrap();
+
+        let backlinks = get_backlinks(&state, "target.md").unwrap();
+        assert!(
+            backlinks.iter().any(|p| p.ends_with("renamed.md")),
+            "renamed markdown file should remain an incoming backlink: {backlinks:?}"
+        );
+        assert!(
+            !backlinks.iter().any(|p| p.ends_with("source.md")),
+            "old markdown path should be removed from backlinks: {backlinks:?}"
+        );
+
+        let results = search_vault(&state, "UniqueNeedle").unwrap();
+        assert!(
+            results.iter().any(|result| result.path == "renamed.md"),
+            "FTS index should contain renamed markdown path: {results:?}"
+        );
+        assert!(
+            !results.iter().any(|result| result.path == "source.md"),
+            "FTS index should not retain old markdown path: {results:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

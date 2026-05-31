@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 md-editor-core = { path = "../core" }
 iced = { version = "0.14", features = ["canvas", "image", "advanced", "tokio"] }
+tokio = { version = "1", features = ["rt", "sync"] }
 rfd = "0.17.2"
 ropey = "1.6"
 image = "0.25"

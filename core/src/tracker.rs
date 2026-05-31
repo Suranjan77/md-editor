@@ -55,10 +55,8 @@ pub fn get_sessions(state: &AppState) -> Result<Vec<StudySession>, String> {
         .map_err(|e| e.to_string())?;
 
     let mut results = Vec::new();
-    for row in rows {
-        if let Ok(r) = row {
-            results.push(r);
-        }
+    for r in rows.flatten() {
+        results.push(r);
     }
     Ok(results)
 }
