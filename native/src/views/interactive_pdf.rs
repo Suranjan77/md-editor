@@ -28,11 +28,7 @@ pub struct InteractivePdf<'a, Message> {
     page_height: f32,
     page_index: u16,
     page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
-    highlights: &'a [md_editor_core::pdf::PdfAnnotation],
-    search_highlights: Vec<md_editor_core::pdf::PdfRect>,
-    active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
     active_selection: Option<PdfSelection>,
-    focused_annotation_id: Option<&'a str>,
     links: &'a [md_editor_core::pdf::LinkInfo],
     rotation: u16,
     on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
@@ -52,11 +48,11 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         page_height: f32,
         page_index: u16,
         page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
-        highlights: &'a [md_editor_core::pdf::PdfAnnotation],
-        search_highlights: Vec<md_editor_core::pdf::PdfRect>,
-        active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
+        _highlights: &'a [md_editor_core::pdf::PdfAnnotation],
+        _search_highlights: Vec<md_editor_core::pdf::PdfRect>,
+        _active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
         active_selection: Option<PdfSelection>,
-        focused_annotation_id: Option<&'a str>,
+        _focused_annotation_id: Option<&'a str>,
         links: &'a [md_editor_core::pdf::LinkInfo],
         rotation: u16,
         on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a,
@@ -74,11 +70,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             page_height,
             page_index,
             page_text,
-            highlights,
-            search_highlights,
-            active_search_highlights,
             active_selection,
-            focused_annotation_id,
             links,
             rotation,
             on_left_click: Box::new(on_left_click),
@@ -135,23 +127,6 @@ pub(crate) fn search_rect_to_view_rect(
     }
 }
 
-fn to_screen_rect(
-    pdf_rect: &md_editor_core::pdf::PdfRect,
-    page_width: f32,
-    page_height: f32,
-    zoom: f32,
-    rotation: u16,
-    bounds: Rectangle,
-) -> Rectangle {
-    let r = search_rect_to_view_rect(pdf_rect, page_width, page_height, zoom, rotation);
-    Rectangle {
-        x: bounds.x + r.x,
-        y: bounds.y + r.y,
-        width: r.width,
-        height: r.height,
-    }
-}
-
 fn get_annotation_color(color: md_editor_core::pdf::PdfAnnotationColor) -> Color {
     match color {
         md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgba(1.0, 0.92, 0.23, 0.35),
@@ -160,6 +135,189 @@ fn get_annotation_color(color: md_editor_core::pdf::PdfAnnotationColor) -> Color
         md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgba(0.95, 0.3, 0.6, 0.35),
         md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgba(1.0, 0.6, 0.1, 0.35),
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OverlayQuad {
+    bounds: Rectangle,
+    color: Color,
+    border: iced::Border,
+}
+
+#[derive(Clone, Debug)]
+pub struct HighlightRect {
+    pub rect: Rectangle,
+    pub color: Color,
+    pub border: iced::Border,
+}
+
+fn pdf_rect_to_screen_rect(
+    rect: &md_editor_core::pdf::PdfRect,
+    page_width: f32,
+    page_height: f32,
+    zoom: f32,
+    rotation: u16,
+    bounds: Rectangle,
+) -> Rectangle {
+    let r = search_rect_to_view_rect(rect, page_width, page_height, zoom, rotation);
+    Rectangle {
+        x: bounds.x + r.x,
+        y: bounds.y + r.y,
+        width: r.width,
+        height: r.height,
+    }
+}
+
+fn build_overlay_quads(
+    bounds: Rectangle,
+    page_index: u16,
+    page_width: f32,
+    page_height: f32,
+    page_text: Option<&md_editor_core::pdf::PdfPageText>,
+    highlights: &[md_editor_core::pdf::PdfAnnotation],
+    search_highlights: &[md_editor_core::pdf::PdfRect],
+    active_search_highlights: &[md_editor_core::pdf::PdfRect],
+    active_selection: Option<PdfSelection>,
+    focused_annotation_id: Option<&str>,
+    zoom: f32,
+    rotation: u16,
+) -> Vec<OverlayQuad> {
+    let mut quads = Vec::new();
+
+    for ann in highlights {
+        let color = get_annotation_color(ann.color);
+        let is_focused = focused_annotation_id == Some(ann.id.as_str());
+        let border = if is_focused {
+            iced::Border {
+                color: Color::from_rgb(0.69, 0.8, 0.78),
+                width: 1.5,
+                radius: 0.0.into(),
+            }
+        } else {
+            iced::Border::default()
+        };
+
+        for rect in &ann.rects {
+            quads.push(OverlayQuad {
+                bounds: pdf_rect_to_screen_rect(
+                    rect,
+                    page_width,
+                    page_height,
+                    zoom,
+                    rotation,
+                    bounds,
+                ),
+                color,
+                border,
+            });
+        }
+    }
+
+    for rect in search_highlights {
+        let mut screen =
+            pdf_rect_to_screen_rect(rect, page_width, page_height, zoom, rotation, bounds);
+        screen.width = screen.width.max(3.0);
+        screen.height = screen.height.max(8.0);
+        quads.push(OverlayQuad {
+            bounds: screen,
+            color: Color::from_rgba(1.0, 0.78, 0.18, 0.38),
+            border: iced::Border {
+                radius: 2.0.into(),
+                ..Default::default()
+            },
+        });
+    }
+
+    for rect in active_search_highlights {
+        let mut screen =
+            pdf_rect_to_screen_rect(rect, page_width, page_height, zoom, rotation, bounds);
+        screen.width = screen.width.max(3.0);
+        screen.height = screen.height.max(8.0);
+        quads.push(OverlayQuad {
+            bounds: screen,
+            color: Color::from_rgba(1.0, 0.62, 0.0, 0.68),
+            border: iced::Border {
+                radius: 2.0.into(),
+                ..Default::default()
+            },
+        });
+    }
+
+    if let (Some(selection), Some(page_text)) = (active_selection, page_text) {
+        if selection.page_index == page_index {
+            let start = selection.anchor_idx.min(selection.focus_idx);
+            let end = selection
+                .anchor_idx
+                .max(selection.focus_idx)
+                .saturating_add(1);
+            let selected_chars: Vec<md_editor_core::pdf::PdfTextChar> = page_text
+                .chars
+                .iter()
+                .filter(|c| c.text_index >= start && c.text_index < end)
+                .cloned()
+                .collect();
+
+            for rect in md_editor_core::pdf::merge_char_rects(&selected_chars) {
+                quads.push(OverlayQuad {
+                    bounds: pdf_rect_to_screen_rect(
+                        &rect,
+                        page_text.page_width,
+                        page_text.page_height,
+                        zoom,
+                        rotation,
+                        bounds,
+                    ),
+                    color: Color::from_rgba(0.12, 0.53, 0.9, 0.45),
+                    border: iced::Border::default(),
+                });
+            }
+        }
+    }
+
+    quads
+}
+
+pub fn pdf_highlight_rects(
+    page_index: u16,
+    page_width: f32,
+    page_height: f32,
+    page_text: Option<&md_editor_core::pdf::PdfPageText>,
+    highlights: &[md_editor_core::pdf::PdfAnnotation],
+    search_highlights: &[md_editor_core::pdf::PdfRect],
+    active_search_highlights: &[md_editor_core::pdf::PdfRect],
+    active_selection: Option<PdfSelection>,
+    focused_annotation_id: Option<&str>,
+    zoom: f32,
+    rotation: u16,
+) -> Vec<HighlightRect> {
+    let origin = Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: page_width * zoom,
+        height: page_height * zoom,
+    };
+
+    build_overlay_quads(
+        origin,
+        page_index,
+        page_width,
+        page_height,
+        page_text,
+        highlights,
+        search_highlights,
+        active_search_highlights,
+        active_selection,
+        focused_annotation_id,
+        zoom,
+        rotation,
+    )
+    .into_iter()
+    .map(|quad| HighlightRect {
+        rect: quad.bounds,
+        color: quad.color,
+        border: quad.border,
+    })
+    .collect()
 }
 
 fn hit_test(
@@ -176,7 +334,13 @@ fn hit_test(
     let mut min_line_dist = f32::MAX;
 
     for (line_idx, line) in page_text.lines.iter().enumerate() {
-        let line_view = search_rect_to_view_rect(&line.bbox, page_text.page_width, page_text.page_height, zoom, rotation);
+        let line_view = search_rect_to_view_rect(
+            &line.bbox,
+            page_text.page_width,
+            page_text.page_height,
+            zoom,
+            rotation,
+        );
         let line_y_min = line_view.y;
         let line_y_max = line_view.y + line_view.height;
 
@@ -218,7 +382,13 @@ fn hit_test(
     let mut min_char_dist = f32::MAX;
 
     for ch in line_chars {
-        let char_view = search_rect_to_view_rect(&ch.bbox, page_text.page_width, page_text.page_height, zoom, rotation);
+        let char_view = search_rect_to_view_rect(
+            &ch.bbox,
+            page_text.page_width,
+            page_text.page_height,
+            zoom,
+            rotation,
+        );
         let char_x_min = char_view.x;
         let char_x_max = char_view.x + char_view.width;
 
@@ -448,7 +618,8 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         let zoom = self.get_zoom(page_width, page_height);
 
         for link in self.links {
-            let r = search_rect_to_view_rect(&link.bbox, page_width, page_height, zoom, self.rotation);
+            let r =
+                search_rect_to_view_rect(&link.bbox, page_width, page_height, zoom, self.rotation);
             if screen_x >= r.x
                 && screen_x <= r.x + r.width
                 && screen_y >= r.y
@@ -482,7 +653,8 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         };
 
         for line in &page_text.lines {
-            let r = search_rect_to_view_rect(&line.bbox, page_width, page_height, zoom, self.rotation);
+            let r =
+                search_rect_to_view_rect(&line.bbox, page_width, page_height, zoom, self.rotation);
             if screen_x >= r.x
                 && screen_x <= r.x + r.width
                 && screen_y >= r.y
@@ -505,13 +677,6 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct HighlightRect {
-    pub rect: Rectangle,
-    pub color: Color,
-    pub border: iced::Border,
-}
-
 pub struct PdfHighlights {
     width: f32,
     height: f32,
@@ -520,11 +685,15 @@ pub struct PdfHighlights {
 
 impl PdfHighlights {
     pub fn new(width: f32, height: f32, rects: Vec<HighlightRect>) -> Self {
-        Self { width, height, rects }
+        Self {
+            width,
+            height,
+            rects,
+        }
     }
 }
 
-impl<'a, Message, Theme, R> Widget<Message, Theme, R> for PdfHighlights
+impl<Message, Theme, R> Widget<Message, Theme, R> for PdfHighlights
 where
     R: renderer::Renderer,
 {
@@ -587,3 +756,140 @@ where
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use md_editor_core::pdf::{
+        PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfPageText, PdfRect, PdfTextChar,
+        PdfTextLine,
+    };
+
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> PdfRect {
+        PdfRect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    fn screen_rect(x: f32, y: f32, width: f32, height: f32) -> Rectangle {
+        Rectangle {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    fn annotation(rects: Vec<PdfRect>) -> PdfAnnotation {
+        PdfAnnotation {
+            id: "ann-1".into(),
+            document_id: "doc".into(),
+            page_index: 0,
+            kind: PdfAnnotationKind::Highlight,
+            color: PdfAnnotationColor::Yellow,
+            selected_text: "a".into(),
+            ranges: Vec::new(),
+            rects,
+            note: None,
+            linked_note_path: None,
+            markdown_anchor: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn page_text() -> PdfPageText {
+        PdfPageText {
+            page_index: 0,
+            page_width: 100.0,
+            page_height: 200.0,
+            text: "ab".into(),
+            chars: vec![
+                PdfTextChar {
+                    char_index: 0,
+                    text_index: 0,
+                    ch: 'a',
+                    bbox: rect(10.0, 20.0, 5.0, 10.0),
+                },
+                PdfTextChar {
+                    char_index: 1,
+                    text_index: 1,
+                    ch: 'b',
+                    bbox: rect(15.0, 20.0, 5.0, 10.0),
+                },
+            ],
+            lines: vec![PdfTextLine {
+                start_text_index: 0,
+                end_text_index: 2,
+                bbox: rect(10.0, 20.0, 10.0, 10.0),
+            }],
+        }
+    }
+
+    #[test]
+    fn overlay_quads_all_use_screen_space_with_layout_bounds_offset() {
+        let bounds = Rectangle {
+            x: 100.0,
+            y: 50.0,
+            width: 100.0,
+            height: 200.0,
+        };
+        let annotations = vec![annotation(vec![rect(1.0, 2.0, 3.0, 4.0)])];
+        let search = vec![rect(10.0, 20.0, 5.0, 10.0)];
+        let active_search = vec![rect(30.0, 40.0, 5.0, 10.0)];
+        let text = page_text();
+
+        let quads = build_overlay_quads(
+            bounds,
+            0,
+            100.0,
+            200.0,
+            Some(&text),
+            &annotations,
+            &search,
+            &active_search,
+            Some(PdfSelection {
+                page_index: 0,
+                anchor_idx: 0,
+                focus_idx: 1,
+            }),
+            Some("ann-1"),
+            1.0,
+            0,
+        );
+
+        assert_eq!(quads.len(), 4);
+        assert_eq!(quads[0].bounds, screen_rect(101.0, 244.0, 3.0, 4.0));
+        assert_eq!(quads[1].bounds, screen_rect(110.0, 220.0, 5.0, 10.0));
+        assert_eq!(quads[2].bounds, screen_rect(130.0, 200.0, 5.0, 10.0));
+        assert_eq!(quads[3].bounds, screen_rect(110.0, 220.0, 10.0, 10.0));
+        assert_eq!(quads[0].border.width, 1.5);
+    }
+
+    #[test]
+    fn selection_overlay_draws_only_on_matching_page() {
+        let text = page_text();
+        let quads = build_overlay_quads(
+            screen_rect(100.0, 50.0, 100.0, 200.0),
+            1,
+            100.0,
+            200.0,
+            Some(&text),
+            &[],
+            &[],
+            &[],
+            Some(PdfSelection {
+                page_index: 0,
+                anchor_idx: 0,
+                focus_idx: 1,
+            }),
+            None,
+            1.0,
+            0,
+        );
+
+        assert!(quads.is_empty());
+    }
+}
