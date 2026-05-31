@@ -504,105 +504,49 @@ fn scan_page_for_search<'a>(
         }
     }
 
-    let re = if regex {
-        match regex::RegexBuilder::new(query)
+    let re = {
+        let pattern = if regex {
+            query.to_string()
+        } else {
+            regex::escape(query)
+        };
+        match regex::RegexBuilder::new(&pattern)
             .case_insensitive(!match_case)
             .build()
         {
-            Ok(r) => Some(r),
+            Ok(r) => r,
             Err(_) => return Vec::new(),
         }
-    } else {
-        None
     };
 
-    let page_matches: Vec<(usize, usize, Vec<PdfRect>)> = if let Some(re) = &re {
-        re.find_iter(&page_text)
-            .filter_map(|found| {
-                let match_char_idx_in_text = page_text[..found.start()].chars().count();
-                let match_char_count = found.as_str().chars().count();
-                if match_char_idx_in_text < char_indices.len() && match_char_count > 0 {
-                    let char_start = char_indices[match_char_idx_in_text];
-                    let char_end_idx = (match_char_idx_in_text + match_char_count - 1)
-                        .min(char_indices.len() - 1);
-                    let char_count = char_indices[char_end_idx] - char_start + 1;
-                    let rects = text_page
-                        .segments_subset(char_start, char_count)
-                        .iter()
-                        .map(|segment| {
-                            let bounds = segment.bounds();
-                            PdfRect {
-                                x: bounds.left().value,
-                                y: bounds.bottom().value,
-                                width: bounds.width().value,
-                                height: bounds.height().value,
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    Some((match_char_idx_in_text, match_char_count, rects))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    } else {
-        let options = PdfSearchOptions::new().match_case(match_case);
-        match text_page.search(query, &options) {
-            Ok(search) => search
-                .iter(PdfSearchDirection::SearchForward)
-                .map(|segments| {
-                    let rects = segments
-                        .iter()
-                        .map(|segment| {
-                            let bounds = segment.bounds();
-                            PdfRect {
-                                x: bounds.left().value,
-                                y: bounds.bottom().value,
-                                width: bounds.width().value,
-                                height: bounds.height().value,
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    let mut min_char_index = None;
-                    let mut max_char_index = None;
-                    for segment in segments.iter() {
-                        if let Ok(chars) = segment.chars() {
-                            for char in chars.iter() {
-                                let idx = char.index();
-                                if min_char_index.is_none_or(|min| idx < min) {
-                                    min_char_index = Some(idx);
-                                }
-                                if max_char_index.is_none_or(|max| idx > max) {
-                                    max_char_index = Some(idx);
-                                }
-                            }
+    let page_matches: Vec<(usize, usize, Vec<PdfRect>)> = re.find_iter(&page_text)
+        .filter_map(|found| {
+            let match_char_idx_in_text = page_text[..found.start()].chars().count();
+            let match_char_count = found.as_str().chars().count();
+            if match_char_idx_in_text < char_indices.len() && match_char_count > 0 {
+                let char_start = char_indices[match_char_idx_in_text];
+                let char_end_idx = (match_char_idx_in_text + match_char_count - 1)
+                    .min(char_indices.len() - 1);
+                let char_count = char_indices[char_end_idx] - char_start + 1;
+                let rects = text_page
+                    .segments_subset(char_start, char_count)
+                    .iter()
+                    .map(|segment| {
+                        let bounds = segment.bounds();
+                        PdfRect {
+                            x: bounds.left().value,
+                            y: bounds.bottom().value,
+                            width: bounds.width().value,
+                            height: bounds.height().value,
                         }
-                    }
-                    let char_start = min_char_index.unwrap_or(0);
-                    let char_count = max_char_index
-                        .map(|max| max - char_start + 1)
-                        .unwrap_or(0);
-                    let page_text_idx = char_indices
-                        .binary_search(&char_start)
-                        .unwrap_or_else(|x| x);
-                    let match_char_count = if char_count > 0 {
-                        let page_text_end_idx = char_indices
-                            .binary_search(&(char_start + char_count - 1))
-                            .unwrap_or_else(|x| x);
-                        if page_text_end_idx >= page_text_idx {
-                            page_text_end_idx - page_text_idx + 1
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
-                    (page_text_idx, match_char_count, rects)
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        }
-    };
+                    })
+                    .collect::<Vec<_>>();
+                Some((match_char_idx_in_text, match_char_count, rects))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     let mut matches = Vec::new();
     for (pos, match_len, rects) in page_matches {
