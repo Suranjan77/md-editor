@@ -100,7 +100,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
     }
 }
 
-fn search_rect_to_view_rect(
+pub(crate) fn search_rect_to_view_rect(
     rect: &md_editor_core::pdf::PdfRect,
     page_width: f32,
     page_height: f32,
@@ -280,107 +280,6 @@ where
             bounds,
             *viewport,
         );
-
-        let page_width = self.page_width;
-        let page_height = self
-            .page_text
-            .map(|page_text| page_text.page_height)
-            .unwrap_or(self.page_height);
-        let zoom = self.get_zoom(page_width, page_height);
-
-        // 1. Draw persistent annotation highlights
-        for ann in self.highlights {
-            let color = get_annotation_color(ann.color);
-            let is_focused = self.focused_annotation_id == Some(ann.id.as_str());
-            let border = if is_focused {
-                iced::Border {
-                    color: Color::from_rgb8(177, 204, 198), // theme::ACCENT
-                    width: 1.5,
-                    radius: 0.0.into(),
-                }
-            } else {
-                iced::Border::default()
-            };
-
-            for r in &ann.rects {
-                let screen_rect = to_screen_rect(r, page_width, page_height, zoom, self.rotation, bounds);
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: screen_rect,
-                        border,
-                        ..Default::default()
-                    },
-                    color,
-                );
-            }
-        }
-
-        // 2. Draw search highlights.
-        for r in &self.search_highlights {
-            let screen_rect = to_screen_rect(r, page_width, page_height, zoom, self.rotation, bounds);
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: Rectangle {
-                        x: screen_rect.x,
-                        y: screen_rect.y,
-                        width: screen_rect.width.max(3.0),
-                        height: screen_rect.height.max(8.0),
-                    },
-                    border: iced::Border {
-                        radius: 2.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                Color::from_rgba(1.0, 0.78, 0.18, 0.38),
-            );
-        }
-        for r in &self.active_search_highlights {
-            let screen_rect = to_screen_rect(r, page_width, page_height, zoom, self.rotation, bounds);
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: Rectangle {
-                        x: screen_rect.x,
-                        y: screen_rect.y,
-                        width: screen_rect.width.max(3.0),
-                        height: screen_rect.height.max(8.0),
-                    },
-                    border: iced::Border {
-                        radius: 2.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                Color::from_rgba(1.0, 0.62, 0.0, 0.68),
-            );
-        }
-
-        // 3. Draw active selection highlight
-        if let Some(page_text) = self.page_text {
-            if let Some(sel) = self.active_selection {
-                if sel.page_index == self.page_index {
-                    let start = sel.anchor_idx.min(sel.focus_idx);
-                    let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-                    let selected_chars: Vec<md_editor_core::pdf::PdfTextChar> = page_text
-                        .chars
-                        .iter()
-                        .filter(|c| c.text_index >= start && c.text_index < end)
-                        .cloned()
-                        .collect();
-                    let selection_rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
-                    for r in selection_rects {
-                        let screen_rect = to_screen_rect(&r, page_text.page_width, page_text.page_height, zoom, self.rotation, bounds);
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: screen_rect,
-                                ..Default::default()
-                            },
-                            Color::from_rgba(0.12, 0.53, 0.9, 0.45),
-                        );
-                    }
-                }
-            }
-        }
     }
 
     fn state(&self) -> iced::advanced::widget::tree::State {
@@ -605,3 +504,86 @@ where
         Self::new(widget)
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct HighlightRect {
+    pub rect: Rectangle,
+    pub color: Color,
+    pub border: iced::Border,
+}
+
+pub struct PdfHighlights {
+    width: f32,
+    height: f32,
+    rects: Vec<HighlightRect>,
+}
+
+impl PdfHighlights {
+    pub fn new(width: f32, height: f32, rects: Vec<HighlightRect>) -> Self {
+        Self { width, height, rects }
+    }
+}
+
+impl<'a, Message, Theme, R> Widget<Message, Theme, R> for PdfHighlights
+where
+    R: renderer::Renderer,
+{
+    fn size(&self) -> Size<Length> {
+        Size {
+            width: Length::Fixed(self.width),
+            height: Length::Fixed(self.height),
+        }
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut widget::Tree,
+        _renderer: &R,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::Node::new(limits.resolve(
+            Length::Fixed(self.width),
+            Length::Fixed(self.height),
+            Size::new(self.width, self.height),
+        ))
+    }
+
+    fn draw(
+        &self,
+        _state: &widget::Tree,
+        renderer: &mut R,
+        _theme: &Theme,
+        _style: &renderer::Style,
+        layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        for item in &self.rects {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: bounds.x + item.rect.x,
+                        y: bounds.y + item.rect.y,
+                        width: item.rect.width,
+                        height: item.rect.height,
+                    },
+                    border: item.border,
+                    ..Default::default()
+                },
+                item.color,
+            );
+        }
+    }
+}
+
+impl<'a, Message, Theme, R> From<PdfHighlights> for Element<'a, Message, Theme, R>
+where
+    R: renderer::Renderer,
+    Message: 'a,
+{
+    fn from(widget: PdfHighlights) -> Self {
+        Self::new(widget)
+    }
+}
+
