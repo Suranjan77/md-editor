@@ -533,13 +533,13 @@ where
 
 impl<'a, Message> InteractivePdf<'a, Message> {
     /// Convert screen-space point to page-space PDF coords, check if over any link.
-    fn hover_link(&self, point: Option<iced::Point>, bounds: Rectangle) -> bool {
+    fn hover_link(&self, point: Option<iced::Point>, _bounds: Rectangle) -> bool {
         let point = match point {
             Some(p) => p,
             None => return false,
         };
-        let screen_x = point.x - bounds.x;
-        let screen_y = point.y - bounds.y;
+        let screen_x = point.x;
+        let screen_y = point.y;
 
         let page_width = self.page_width;
         let page_height = self
@@ -562,13 +562,13 @@ impl<'a, Message> InteractivePdf<'a, Message> {
     }
 
     /// Check if screen-space point is hovering over any text character or line.
-    fn hover_text(&self, point: Option<iced::Point>, bounds: Rectangle) -> bool {
+    fn hover_text(&self, point: Option<iced::Point>, _bounds: Rectangle) -> bool {
         let point = match point {
             Some(p) => p,
             None => return false,
         };
-        let screen_x = point.x - bounds.x;
-        let screen_y = point.y - bounds.y;
+        let screen_x = point.x;
+        let screen_y = point.y;
 
         let page_width = self.page_width;
         let page_height = self
