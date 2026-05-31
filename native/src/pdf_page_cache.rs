@@ -20,7 +20,7 @@ use std::collections::{HashMap, VecDeque};
 
 use iced::widget::image::Handle;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CachedPage {
     pub handle: Handle,
     pub dimensions: (u32, u32),
@@ -34,7 +34,7 @@ pub const DEFAULT_MAX_BYTES: usize = 512 * 1024 * 1024;
 /// How far on each side of the visible range we refuse to evict.
 pub const VISIBLE_GUARD_PAGES: u16 = 3;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PdfPageCache {
     pages: HashMap<u16, CachedPage>,
     /// Most-recently-used pages live near the back of the deque.
