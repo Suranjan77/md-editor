@@ -455,6 +455,21 @@ pub enum QueryCommand {
     ),
 }
 
+type PdfSearchResultReceiver = std::sync::mpsc::Receiver<PdfSearchMatch>;
+type PdfSearchDoneReceiver = std::sync::mpsc::Receiver<Result<(), String>>;
+
+struct ActivePdfSearch {
+    search_id: u64,
+    path: String,
+    query: String,
+    regex: bool,
+    match_case: bool,
+    result_sender: std::sync::mpsc::Sender<PdfSearchMatch>,
+    done_sender: std::sync::mpsc::Sender<Result<(), String>>,
+    page_idx: u16,
+    total_pages: u16,
+}
+
 fn ensure_document<'a>(
     pdfium: &'a Pdfium,
     current_document: &mut Option<(String, PdfDocument<'a>)>,
@@ -541,17 +556,14 @@ fn get_page_text_impl<'a>(
                 let c_y_min = c.bbox.y;
                 let c_y_max = c.bbox.y + c.bbox.height;
 
-                let overlap =
-                    line_y_max.min(c_y_max) - line_y_min.max(c_y_min);
+                let overlap = line_y_max.min(c_y_max) - line_y_min.max(c_y_min);
                 let min_h = line.bbox.height.min(c.bbox.height);
 
                 if overlap > 0.0 && overlap > 0.3 * min_h {
                     let x_min = line.bbox.x.min(c.bbox.x);
-                    let x_max = (line.bbox.x + line.bbox.width)
-                        .max(c.bbox.x + c.bbox.width);
+                    let x_max = (line.bbox.x + line.bbox.width).max(c.bbox.x + c.bbox.width);
                     let y_min = line.bbox.y.min(c.bbox.y);
-                    let y_max = (line.bbox.y + line.bbox.height)
-                        .max(c.bbox.y + c.bbox.height);
+                    let y_max = (line.bbox.y + line.bbox.height).max(c.bbox.y + c.bbox.height);
 
                     line.bbox.x = x_min;
                     line.bbox.y = y_min;
@@ -630,9 +642,7 @@ fn scan_page_for_search<'a>(
                 let chars = page_layer
                     .chars
                     .iter()
-                    .filter(|c| {
-                        c.text_index >= match_char_idx_in_text && c.text_index < match_end
-                    })
+                    .filter(|c| c.text_index >= match_char_idx_in_text && c.text_index < match_end)
                     .cloned()
                     .collect::<Vec<_>>();
                 let rects = merge_char_rects(&chars);
@@ -873,9 +883,13 @@ impl PdfRenderer {
                     RenderCommand::RenderLinkPreview(path, index, dest_y, resp) => {
                         let res = (|| {
                             ensure_document(&pdfium, &mut current_document, &path)?;
-                            let page_text =
-                                get_page_text_impl(&pdfium, &mut current_document, &path, index as u16)
-                                    .ok();
+                            let page_text = get_page_text_impl(
+                                &pdfium,
+                                &mut current_document,
+                                &path,
+                                index as u16,
+                            )
+                            .ok();
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
                             };
@@ -890,19 +904,25 @@ impl PdfRenderer {
                                 .render_with_config(&render_config)
                                 .map_err(|e| e.to_string())?;
                             let dynamic_image = bitmap.as_image().map_err(|e| e.to_string())?;
-                            let (crop_x, crop_y, crop_w, crop_h, center_ratio) = if let Some(page_text) = page_text {
-                                link_preview_content_crop(
-                                    full_width as u32,
-                                    full_height as u32,
-                                    page.width().value,
-                                    page.height().value,
-                                    dest_y,
-                                    scale,
-                                    &page_text.lines,
-                                )
-                            } else {
-                                link_preview_crop(full_width as u32, full_height as u32, dest_y, scale)
-                            };
+                            let (crop_x, crop_y, crop_w, crop_h, center_ratio) =
+                                if let Some(page_text) = page_text {
+                                    link_preview_content_crop(
+                                        full_width as u32,
+                                        full_height as u32,
+                                        page.width().value,
+                                        page.height().value,
+                                        dest_y,
+                                        scale,
+                                        &page_text.lines,
+                                    )
+                                } else {
+                                    link_preview_crop(
+                                        full_width as u32,
+                                        full_height as u32,
+                                        dest_y,
+                                        scale,
+                                    )
+                                };
                             let cropped = dynamic_image.crop_imm(crop_x, crop_y, crop_w, crop_h);
                             let mut buf = std::io::Cursor::new(Vec::new());
                             cropped
@@ -930,7 +950,7 @@ impl PdfRenderer {
             };
 
             let mut current_document: Option<(String, PdfDocument)> = None;
-            let mut active_search: Option<(u64, String, String, bool, bool, std::sync::mpsc::Sender<PdfSearchMatch>, std::sync::mpsc::Sender<Result<(), String>>, u16, u16)> = None;
+            let mut active_search: Option<ActivePdfSearch> = None;
 
             loop {
                 let cmd = if active_search.is_some() {
@@ -949,10 +969,11 @@ impl PdfRenderer {
                 if let Some(cmd) = cmd {
                     match cmd {
                         QueryCommand::CancelSearch { search_id } => {
-                            if let Some((active_id, _, _, _, _, _, _, _, _)) = &active_search {
-                                if *active_id == search_id {
-                                    active_search = None;
-                                }
+                            if active_search
+                                .as_ref()
+                                .is_some_and(|active| active.search_id == search_id)
+                            {
+                                active_search = None;
                             }
                         }
                         QueryCommand::SearchText {
@@ -977,7 +998,7 @@ impl PdfRenderer {
                                 })();
                                 match total_pages {
                                     Ok(total) => {
-                                        active_search = Some((
+                                        active_search = Some(ActivePdfSearch {
                                             search_id,
                                             path,
                                             query,
@@ -985,9 +1006,9 @@ impl PdfRenderer {
                                             match_case,
                                             result_sender,
                                             done_sender,
-                                            0,
-                                            total,
-                                        ));
+                                            page_idx: 0,
+                                            total_pages: total,
+                                        });
                                     }
                                     Err(err) => {
                                         let _ = done_sender.send(Err(err));
@@ -997,18 +1018,34 @@ impl PdfRenderer {
                             }
                         }
                         QueryCommand::GetPageText(path, index, resp) => {
-                            let res = get_page_text_impl(&pdfium, &mut current_document, &path, index);
+                            let res =
+                                get_page_text_impl(&pdfium, &mut current_document, &path, index);
                             let _ = resp.send(res);
                         }
                     }
                 }
 
-                if let Some((search_id, path, query, regex, match_case, result_sender, done_sender, page_idx, total_pages)) = active_search.clone() {
-                    if page_idx >= total_pages {
-                        let _ = done_sender.send(Ok(()));
+                if let Some(active) = active_search.as_ref() {
+                    if active.page_idx >= active.total_pages {
+                        let _ = active.done_sender.send(Ok(()));
                         active_search = None;
                     } else {
-                        let matches = scan_page_for_search(&pdfium, &mut current_document, &path, page_idx, &query, regex, match_case);
+                        let search_id = active.search_id;
+                        let path = active.path.clone();
+                        let query = active.query.clone();
+                        let regex = active.regex;
+                        let match_case = active.match_case;
+                        let page_idx = active.page_idx;
+                        let result_sender = active.result_sender.clone();
+                        let matches = scan_page_for_search(
+                            &pdfium,
+                            &mut current_document,
+                            &path,
+                            page_idx,
+                            &query,
+                            regex,
+                            match_case,
+                        );
                         let mut send_err = false;
                         for m in matches {
                             if result_sender.send(m).is_err() {
@@ -1018,12 +1055,10 @@ impl PdfRenderer {
                         }
                         if send_err {
                             active_search = None;
-                        } else {
-                            if let Some((active_id, _, _, _, _, _, _, ref mut cur_page, _)) = active_search {
-                                if active_id == search_id {
-                                    *cur_page += 1;
-                                }
-                            }
+                        } else if let Some(active) = active_search.as_mut()
+                            && active.search_id == search_id
+                        {
+                            active.page_idx += 1;
                         }
                     }
                 }
@@ -1122,7 +1157,7 @@ impl PdfRenderer {
         regex: bool,
         match_case: bool,
         search_id: u64,
-    ) -> Result<(std::sync::mpsc::Receiver<PdfSearchMatch>, std::sync::mpsc::Receiver<Result<(), String>>), String> {
+    ) -> Result<(PdfSearchResultReceiver, PdfSearchDoneReceiver), String> {
         let (res_tx, res_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         self.query_sender
@@ -1460,7 +1495,10 @@ mod tests {
         assert!(x <= 68, "left content edge must include padding");
         assert!(x + w >= 1152, "wide content must not be clipped");
         assert!(h >= 360);
-        assert!(h <= 660, "preview should show content block, not whole page");
+        assert!(
+            h <= 660,
+            "preview should show content block, not whole page"
+        );
         assert!(y < 360);
         assert!(ratio > 0.0 && ratio < 1.0);
     }
@@ -1496,8 +1534,14 @@ mod tests {
         let img = image::load_from_memory(&preview.image_data).unwrap();
 
         assert!(img.height() <= 700, "preview should not render full page");
-        assert!(img.width() <= 1300, "preview should not render full page width at 2x");
-        assert!(img.height() >= 260, "preview should remain comfortably readable");
+        assert!(
+            img.width() <= 1300,
+            "preview should not render full page width at 2x"
+        );
+        assert!(
+            img.height() >= 260,
+            "preview should remain comfortably readable"
+        );
     }
 
     #[test]

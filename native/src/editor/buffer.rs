@@ -96,6 +96,22 @@ pub enum EditorCommand {
     FormatItalic,
     FormatInlineCode,
     InsertLink,
+    ToggleHeading,
+    ToggleBlockquote,
+    ToggleUnorderedList,
+    ToggleOrderedList,
+    InsertCodeBlock,
+    InsertMathBlock,
+    InsertTable,
+    DuplicateLine,
+    MoveLineUp,
+    MoveLineDown,
+    ReplaceAll {
+        query: String,
+        replacement: String,
+        regex: bool,
+        match_case: bool,
+    },
     Undo,
     Redo,
 }
@@ -230,6 +246,24 @@ impl DocBuffer {
             EditorCommand::FormatItalic => self.wrap_selection_or_insert("*", "*", "italic"),
             EditorCommand::FormatInlineCode => self.wrap_selection_or_insert("`", "`", "code"),
             EditorCommand::InsertLink => self.wrap_selection_or_insert("[", "](url)", "link"),
+            EditorCommand::ToggleHeading => self.toggle_heading(),
+            EditorCommand::ToggleBlockquote => self.toggle_line_prefix("> "),
+            EditorCommand::ToggleUnorderedList => self.toggle_line_prefix("- "),
+            EditorCommand::ToggleOrderedList => self.toggle_ordered_list(),
+            EditorCommand::InsertCodeBlock => self.wrap_lines_or_insert_block("```", "```", "code"),
+            EditorCommand::InsertMathBlock => self.wrap_lines_or_insert_block("$$", "$$", "x = y"),
+            EditorCommand::InsertTable => {
+                self.insert_text("| Column 1 | Column 2 |\n|---|---|\n| value | value |")
+            }
+            EditorCommand::DuplicateLine => self.duplicate_line(),
+            EditorCommand::MoveLineUp => self.move_line(-1),
+            EditorCommand::MoveLineDown => self.move_line(1),
+            EditorCommand::ReplaceAll {
+                query,
+                replacement,
+                regex,
+                match_case,
+            } => self.replace_all(&query, &replacement, regex, match_case),
             EditorCommand::Undo => {
                 if self.undo() {
                     CommandResult::changed()
@@ -735,6 +769,253 @@ impl DocBuffer {
         CommandResult::changed()
     }
 
+    fn replace_all(
+        &mut self,
+        query: &str,
+        replacement: &str,
+        regex: bool,
+        match_case: bool,
+    ) -> CommandResult {
+        if query.is_empty() {
+            return CommandResult::default();
+        }
+
+        let text = self.text();
+        let new_text = if regex {
+            let Ok(re) = regex::RegexBuilder::new(query)
+                .case_insensitive(!match_case)
+                .build()
+            else {
+                return CommandResult::default();
+            };
+            re.replace_all(&text, replacement).to_string()
+        } else if match_case {
+            text.replace(query, replacement)
+        } else {
+            let Ok(re) = regex::RegexBuilder::new(&regex::escape(query))
+                .case_insensitive(true)
+                .build()
+            else {
+                return CommandResult::default();
+            };
+            re.replace_all(&text, replacement).to_string()
+        };
+
+        if new_text == text {
+            return CommandResult::default();
+        }
+
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+        let old_len = self.rope.len_chars();
+        self.rope.remove(0..old_len);
+        self.rope.insert(0, &new_text);
+        self.cursor_offset = self.cursor_offset.min(self.rope.len_chars());
+        self.selection_offsets = None;
+        self.commit_transaction(
+            vec![
+                EditOp::Delete {
+                    char_offset: 0,
+                    text,
+                },
+                EditOp::Insert {
+                    char_offset: 0,
+                    text: new_text,
+                },
+            ],
+            before_cursor,
+            before_selection,
+        );
+        CommandResult::changed()
+    }
+
+    fn toggle_heading(&mut self) -> CommandResult {
+        let line = self.cursor_line;
+        let text = self.line_text(line);
+        let trimmed = text.trim_start();
+        let indent_len = text.len() - trimmed.len();
+        let (delete_len, insert) = if trimmed.starts_with("###### ") {
+            (7, "")
+        } else {
+            let level = trimmed.chars().take_while(|ch| *ch == '#').count();
+            if (1..=5).contains(&level) && trimmed.chars().nth(level) == Some(' ') {
+                (level + 1, &"#".repeat(level + 1)[..])
+            } else {
+                (0, "# ")
+            }
+        };
+        self.replace_line_prefix(line, indent_len, delete_len, insert)
+    }
+
+    fn toggle_line_prefix(&mut self, prefix: &str) -> CommandResult {
+        let line = self.cursor_line;
+        let text = self.line_text(line);
+        let trimmed = text.trim_start();
+        let indent_len = text.len() - trimmed.len();
+        let delete_len = if trimmed.starts_with(prefix) {
+            prefix.len()
+        } else {
+            0
+        };
+        let insert = if delete_len == 0 { prefix } else { "" };
+        self.replace_line_prefix(line, indent_len, delete_len, insert)
+    }
+
+    fn toggle_ordered_list(&mut self) -> CommandResult {
+        let line = self.cursor_line;
+        let text = self.line_text(line);
+        let trimmed = text.trim_start();
+        let indent_len = text.len() - trimmed.len();
+        let delete_len = detect_numbered_list_marker(trimmed).unwrap_or(0);
+        let insert = if delete_len == 0 { "1. " } else { "" };
+        self.replace_line_prefix(line, indent_len, delete_len, insert)
+    }
+
+    fn replace_line_prefix(
+        &mut self,
+        line: usize,
+        indent_bytes: usize,
+        delete_bytes: usize,
+        insert: &str,
+    ) -> CommandResult {
+        let line_start = self
+            .rope
+            .line_to_char(line.min(self.line_count().saturating_sub(1)));
+        let indent_chars = self.line_text(line)[..indent_bytes].chars().count();
+        let delete_chars = self.line_text(line)[indent_bytes..indent_bytes + delete_bytes]
+            .chars()
+            .count();
+        let start = line_start + indent_chars;
+        let end = start + delete_chars;
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+        let mut ops = Vec::new();
+        if start < end {
+            let old = self.rope.slice(start..end).to_string();
+            self.rope.remove(start..end);
+            ops.push(EditOp::Delete {
+                char_offset: start,
+                text: old,
+            });
+        }
+        if !insert.is_empty() {
+            self.rope.insert(start, insert);
+            ops.push(EditOp::Insert {
+                char_offset: start,
+                text: insert.to_string(),
+            });
+        }
+        if ops.is_empty() {
+            return CommandResult::default();
+        }
+        self.cursor_offset = if insert.is_empty() {
+            self.cursor_offset.saturating_sub(delete_chars)
+        } else {
+            self.cursor_offset + insert.chars().count()
+        }
+        .min(self.rope.len_chars());
+        self.selection_offsets = None;
+        self.commit_transaction(ops, before_cursor, before_selection);
+        CommandResult::changed()
+    }
+
+    fn wrap_lines_or_insert_block(
+        &mut self,
+        open: &str,
+        close: &str,
+        placeholder: &str,
+    ) -> CommandResult {
+        if let Some(selection) = self.selection_offsets {
+            let (start, end) = selection.range();
+            let start_line = self.rope.char_to_line(start);
+            let end_line = self.rope.char_to_line(end);
+            let line_start = self.rope.line_to_char(start_line);
+            let line_end =
+                self.line_col_to_offset(end_line, self.line_text(end_line).chars().count());
+            let selected = self.rope.slice(line_start..line_end).to_string();
+            let wrapped = format!("{open}\n{selected}\n{close}");
+            let before_cursor = self.cursor_offset;
+            let before_selection = self.selection_offsets;
+            self.rope.remove(line_start..line_end);
+            self.rope.insert(line_start, &wrapped);
+            self.cursor_offset = line_start + wrapped.chars().count();
+            self.selection_offsets = None;
+            self.commit_transaction(
+                vec![
+                    EditOp::Delete {
+                        char_offset: line_start,
+                        text: selected,
+                    },
+                    EditOp::Insert {
+                        char_offset: line_start,
+                        text: wrapped,
+                    },
+                ],
+                before_cursor,
+                before_selection,
+            );
+            CommandResult::changed()
+        } else {
+            self.insert_text(&format!("{open}\n{placeholder}\n{close}"))
+        }
+    }
+
+    fn duplicate_line(&mut self) -> CommandResult {
+        let line = self.cursor_line;
+        let line_text = self.line_text(line);
+        let insert_at = self.line_col_to_offset(line, line_text.chars().count());
+        let text = format!("\n{line_text}");
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+        self.rope.insert(insert_at, &text);
+        self.cursor_offset = insert_at + text.chars().count();
+        self.selection_offsets = None;
+        self.commit_transaction(
+            vec![EditOp::Insert {
+                char_offset: insert_at,
+                text,
+            }],
+            before_cursor,
+            before_selection,
+        );
+        CommandResult::changed()
+    }
+
+    fn move_line(&mut self, delta: isize) -> CommandResult {
+        let line = self.cursor_line;
+        let max_line = self.line_count().saturating_sub(1);
+        if (delta < 0 && line == 0) || (delta > 0 && line >= max_line) {
+            return CommandResult::default();
+        }
+        let target = if delta < 0 { line - 1 } else { line + 1 };
+        let mut lines: Vec<String> = self.text().split('\n').map(ToString::to_string).collect();
+        lines.swap(line, target);
+        let new_text = lines.join("\n");
+        let old_text = self.text();
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+        let old_len = self.rope.len_chars();
+        self.rope.remove(0..old_len);
+        self.rope.insert(0, &new_text);
+        self.cursor_offset = self.line_col_to_offset(target, self.cursor_col);
+        self.selection_offsets = None;
+        self.commit_transaction(
+            vec![
+                EditOp::Delete {
+                    char_offset: 0,
+                    text: old_text,
+                },
+                EditOp::Insert {
+                    char_offset: 0,
+                    text: new_text,
+                },
+            ],
+            before_cursor,
+            before_selection,
+        );
+        CommandResult::changed()
+    }
+
     fn commit_transaction(
         &mut self,
         ops: Vec<EditOp>,
@@ -902,6 +1183,22 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
     }
 
     None
+}
+
+fn detect_numbered_list_marker(trimmed: &str) -> Option<usize> {
+    let mut digits = 0;
+    for ch in trimmed.chars() {
+        if ch.is_ascii_digit() {
+            digits += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if digits > 0 && trimmed[digits..].starts_with(". ") {
+        Some(digits + 2)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1328,5 +1625,55 @@ mod tests {
         buffer.insert_at_cursor("\n");
         assert_eq!(buffer.text(), "1. Step one\n");
         assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 0));
+    }
+
+    #[test]
+    fn replace_all_is_single_undoable_transaction() {
+        let mut buffer = DocBuffer::from_text("alpha beta alpha");
+        buffer.execute(EditorCommand::ReplaceAll {
+            query: "alpha".to_string(),
+            replacement: "gamma".to_string(),
+            regex: false,
+            match_case: true,
+        });
+        assert_eq!(buffer.text(), "gamma beta gamma");
+        assert!(buffer.undo());
+        assert_eq!(buffer.text(), "alpha beta alpha");
+        assert!(buffer.redo());
+        assert_eq!(buffer.text(), "gamma beta gamma");
+    }
+
+    #[test]
+    fn block_markdown_commands_are_undoable() {
+        let mut buffer = DocBuffer::from_text("title\nbody");
+        buffer.execute(EditorCommand::ToggleHeading);
+        assert_eq!(buffer.text(), "# title\nbody");
+        buffer.execute(EditorCommand::ToggleBlockquote);
+        assert_eq!(buffer.text(), "> # title\nbody");
+        assert!(buffer.undo());
+        assert_eq!(buffer.text(), "# title\nbody");
+        assert!(buffer.undo());
+        assert_eq!(buffer.text(), "title\nbody");
+
+        buffer.set_cursor(1, 0);
+        buffer.execute(EditorCommand::ToggleUnorderedList);
+        assert_eq!(buffer.text(), "title\n- body");
+        buffer.execute(EditorCommand::ToggleOrderedList);
+        assert_eq!(buffer.text(), "title\n1. - body");
+    }
+
+    #[test]
+    fn structural_insert_and_line_move_commands_work() {
+        let mut buffer = DocBuffer::from_text("a\nb");
+        buffer.execute(EditorCommand::DuplicateLine);
+        assert_eq!(buffer.text(), "a\na\nb");
+        buffer.execute(EditorCommand::MoveLineDown);
+        assert_eq!(buffer.text(), "a\nb\na");
+
+        let mut buffer = DocBuffer::new();
+        buffer.execute(EditorCommand::InsertTable);
+        assert!(buffer.text().contains("| Column 1 | Column 2 |"));
+        buffer.execute(EditorCommand::InsertCodeBlock);
+        assert!(buffer.text().contains("```"));
     }
 }

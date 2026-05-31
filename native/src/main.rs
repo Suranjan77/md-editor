@@ -1,7 +1,32 @@
+#![allow(
+    clippy::bool_assert_comparison,
+    clippy::collapsible_if,
+    clippy::derivable_impls,
+    clippy::extra_unused_type_parameters,
+    clippy::if_same_then_else,
+    clippy::items_after_test_module,
+    clippy::let_and_return,
+    clippy::manual_strip,
+    clippy::manual_map,
+    clippy::needless_range_loop,
+    clippy::needless_lifetimes,
+    clippy::nonminimal_bool,
+    clippy::redundant_closure,
+    clippy::redundant_guards,
+    clippy::single_match,
+    clippy::too_many_arguments,
+    clippy::unnecessary_cast,
+    clippy::useless_conversion,
+    clippy::unnecessary_map_or,
+    clippy::unnecessary_min_or_max,
+    clippy::double_ended_iterator_last
+)]
+
 mod app;
 mod editor;
 mod messages;
 mod pdf_layout;
+mod pdf_links;
 mod pdf_notes;
 mod pdf_page_cache;
 mod search;

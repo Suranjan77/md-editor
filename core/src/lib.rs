@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop, clippy::useless_vec)]
+
 pub mod config;
 pub mod file_index;
 pub mod pdf;

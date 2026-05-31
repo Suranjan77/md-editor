@@ -47,6 +47,8 @@ PDF files open in an integrated viewer with:
 - PDF text search.
 - Internal PDF link handling.
 - Text selection and clipboard copy for PDFs with embedded text.
+- Direct quote insertion from a PDF selection into the active markdown note,
+  including a `pdf://` page link back to the source page.
 - Sidecar PDF highlights, quick notes, and linked markdown notes without
   modifying the original PDF.
 - Linked-note creation through a searchable in-app vault picker. Users can
@@ -56,6 +58,8 @@ PDF files open in an integrated viewer with:
   text, a navigable `pdf://` link back to the exact page/highlight, and a notes
   area for follow-up writing.
 - Mixed backlinks between markdown notes, PDFs, and PDF highlights.
+- Companion-note memory for linked PDF notes, so future PDF/note workflows can
+  reopen the same research pairing.
 - Higher-resolution page rendering so fit-to-width pages remain sharp in split
   view.
 

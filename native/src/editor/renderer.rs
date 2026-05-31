@@ -33,6 +33,7 @@ pub struct Editor<'a, Message> {
     search_regex: bool,
     search_match_case: bool,
     active_search_match: Option<(usize, usize)>,
+    modifiers: keyboard::Modifiers,
     on_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_pointer_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
@@ -91,6 +92,7 @@ impl<'a, Message> Editor<'a, Message> {
             search_regex: false,
             search_match_case: false,
             active_search_match: None,
+            modifiers: keyboard::Modifiers::default(),
             on_command: Box::new(on_command),
             on_pointer_command: Box::new(on_pointer_command),
             on_link_click: Box::new(on_link_click),
@@ -109,6 +111,11 @@ impl<'a, Message> Editor<'a, Message> {
         self.search_regex = regex;
         self.search_match_case = match_case;
         self.active_search_match = active_match;
+        self
+    }
+
+    pub fn modifiers(mut self, modifiers: keyboard::Modifiers) -> Self {
+        self.modifiers = modifiers;
         self
     }
 }
@@ -2307,7 +2314,11 @@ where
                                 }
                                 if span.is_link {
                                     if let Some(target) = &span.link_target {
-                                        if state.modifiers.control() || state.modifiers.command() {
+                                        let link_mod_active = state.modifiers.control()
+                                            || state.modifiers.command()
+                                            || self.modifiers.control()
+                                            || self.modifiers.command();
+                                        if link_mod_active {
                                             shell.publish((self.on_link_click)(target.clone()));
                                             return;
                                         }
@@ -2601,6 +2612,31 @@ where
                         }
                         keyboard::Key::Character(c) if c == "k" => {
                             shell.publish((self.on_command)(EditorCommand::InsertLink));
+                            state.selection_anchor = None;
+                            state.selection_focus = None;
+                        }
+                        keyboard::Key::Character(c) if c == "1" => {
+                            shell.publish((self.on_command)(EditorCommand::ToggleHeading));
+                            state.selection_anchor = None;
+                            state.selection_focus = None;
+                        }
+                        keyboard::Key::Character(c) if c == "q" => {
+                            shell.publish((self.on_command)(EditorCommand::ToggleBlockquote));
+                            state.selection_anchor = None;
+                            state.selection_focus = None;
+                        }
+                        keyboard::Key::Character(c) if c == "l" => {
+                            shell.publish((self.on_command)(EditorCommand::ToggleUnorderedList));
+                            state.selection_anchor = None;
+                            state.selection_focus = None;
+                        }
+                        keyboard::Key::Character(c) if c == "7" => {
+                            shell.publish((self.on_command)(EditorCommand::ToggleOrderedList));
+                            state.selection_anchor = None;
+                            state.selection_focus = None;
+                        }
+                        keyboard::Key::Character(c) if c == "d" => {
+                            shell.publish((self.on_command)(EditorCommand::DuplicateLine));
                             state.selection_anchor = None;
                             state.selection_focus = None;
                         }
