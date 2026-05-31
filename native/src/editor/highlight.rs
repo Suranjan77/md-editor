@@ -793,14 +793,6 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
 }
 
 fn detect_heading(trimmed: &str) -> Option<u8> {
-    let heading_without_required_space = |prefix: &str| {
-        trimmed.starts_with(prefix)
-            && trimmed
-                .chars()
-                .nth(prefix.len())
-                .map(|c| !c.is_whitespace() && c != '#')
-                .unwrap_or(false)
-    };
     if trimmed.starts_with("###### ") {
         return Some(6);
     }
@@ -817,24 +809,6 @@ fn detect_heading(trimmed: &str) -> Option<u8> {
         return Some(2);
     }
     if trimmed.starts_with("# ") {
-        return Some(1);
-    }
-    if heading_without_required_space("######") {
-        return Some(6);
-    }
-    if heading_without_required_space("#####") {
-        return Some(5);
-    }
-    if heading_without_required_space("####") {
-        return Some(4);
-    }
-    if heading_without_required_space("###") {
-        return Some(3);
-    }
-    if heading_without_required_space("##") {
-        return Some(2);
-    }
-    if heading_without_required_space("#") {
         return Some(1);
     }
     None
@@ -867,7 +841,11 @@ fn single_line_display_math(trimmed: &str) -> Option<&str> {
         return None;
     }
     let math = rest[..end].trim();
-    if math.is_empty() { None } else { Some(math) }
+    if math.is_empty() {
+        None
+    } else {
+        Some(math)
+    }
 }
 
 fn is_obvious_markdown_boundary(trimmed: &str) -> bool {
@@ -1037,8 +1015,8 @@ fn code_span(text: &str, color: Color) -> StyledSpan {
     }
 }
 
-fn syntect_defaults()
--> Option<&'static (syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> {
+fn syntect_defaults(
+) -> Option<&'static (syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> {
     static DEFAULTS: OnceLock<(syntect::parsing::SyntaxSet, syntect::highlighting::ThemeSet)> =
         OnceLock::new();
     Some(DEFAULTS.get_or_init(|| {
@@ -1058,6 +1036,14 @@ mod tests {
         let lines = highlight_markdown("# Heading");
         assert!(lines[0].spans.iter().any(|span| span.is_heading));
         assert!(!lines[0].is_math_block);
+    }
+
+    #[test]
+    fn heading_requires_space_after_hash_prefix() {
+        let lines = highlight_markdown("#Heading\n##Also not heading\n# Heading");
+        assert!(!lines[0].spans.iter().any(|span| span.is_heading));
+        assert!(!lines[1].spans.iter().any(|span| span.is_heading));
+        assert!(lines[2].spans.iter().any(|span| span.is_heading));
     }
 
     #[test]
@@ -1082,7 +1068,7 @@ mod tests {
         let lines = highlight_markdown("$$a=b$$\n##Change of Basis\nPlain text");
         assert!(lines[0].is_math_block);
         assert!(!lines[1].is_math_block);
-        assert!(lines[1].spans.iter().any(|span| span.is_heading));
+        assert!(!lines[1].spans.iter().any(|span| span.is_heading));
         assert!(!lines[2].is_math_block);
     }
 
@@ -1175,12 +1161,10 @@ mod tests {
             .collect::<String>();
         assert_eq!(rendered, source);
         assert!(lines[1].spans.iter().all(|span| span.is_code));
-        assert!(
-            lines[1]
-                .spans
-                .iter()
-                .any(|span| span.color != crate::theme::TEXT_PRIMARY)
-        );
+        assert!(lines[1]
+            .spans
+            .iter()
+            .any(|span| span.color != crate::theme::TEXT_PRIMARY));
     }
 
     #[test]
@@ -1353,21 +1337,18 @@ mod tests {
         assert_eq!(lines.len(), 1);
         let line = &lines[0];
 
-        assert!(
-            line.spans
-                .iter()
-                .any(|span| span.is_link && span.link_target.as_deref() == Some("wikilink"))
-        );
-        assert!(
-            line.spans.iter().any(
-                |span| span.is_link && span.link_target.as_deref() == Some("http://google.com")
-            )
-        );
-        assert!(
-            line.spans
-                .iter()
-                .any(|span| span.is_link && span.link_target.as_deref() == Some("aliased"))
-        );
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.is_link && span.link_target.as_deref() == Some("wikilink")));
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.is_link && span.link_target.as_deref() == Some("http://google.com")));
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.is_link && span.link_target.as_deref() == Some("aliased")));
         assert!(line.spans.iter().any(|span| span.is_code));
 
         // Test relative path wikilinks and display alias extraction

@@ -1,5 +1,8 @@
 use ropey::Rope;
 use serde::{Deserialize, Serialize};
+use unicode_segmentation::UnicodeSegmentation;
+
+const MAX_UNDO_TRANSACTIONS: usize = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection {
@@ -447,7 +450,10 @@ impl DocBuffer {
         if self.cursor_offset == 0 {
             return CommandResult::default();
         }
-        self.delete_range(self.cursor_offset - 1, self.cursor_offset)
+        self.delete_range(
+            self.previous_grapheme_offset(self.cursor_offset),
+            self.cursor_offset,
+        )
     }
 
     fn delete_forward(&mut self) -> CommandResult {
@@ -457,7 +463,10 @@ impl DocBuffer {
         if self.cursor_offset >= self.rope.len_chars() {
             return CommandResult::default();
         }
-        self.delete_range(self.cursor_offset, self.cursor_offset + 1)
+        self.delete_range(
+            self.cursor_offset,
+            self.next_grapheme_offset(self.cursor_offset),
+        )
     }
 
     fn delete_range(&mut self, start: usize, end: usize) -> CommandResult {
@@ -483,14 +492,28 @@ impl DocBuffer {
             self.selection_offsets
                 .map(|selection| selection.anchor)
                 .unwrap_or(self.cursor_offset)
+        } else if let Some(selection) = self.selection_offsets {
+            let (start, end) = selection.range();
+            match movement {
+                Movement::Left => self.cursor_offset = start,
+                Movement::Right => self.cursor_offset = end,
+                _ => {}
+            }
+            self.selection_offsets = None;
+            if matches!(movement, Movement::Left | Movement::Right) {
+                self.desired_col = None;
+                self.sync_public_state();
+                return;
+            }
+            self.cursor_offset
         } else {
             self.selection_offsets = None;
             self.cursor_offset
         };
 
         self.cursor_offset = match movement {
-            Movement::Left => self.cursor_offset.saturating_sub(1),
-            Movement::Right => (self.cursor_offset + 1).min(self.rope.len_chars()),
+            Movement::Left => self.previous_grapheme_offset(self.cursor_offset),
+            Movement::Right => self.next_grapheme_offset(self.cursor_offset),
             Movement::Home => {
                 self.desired_col = None;
                 let line = self
@@ -519,6 +542,37 @@ impl DocBuffer {
             self.desired_col = None;
         }
         self.sync_public_state();
+    }
+
+    fn previous_grapheme_offset(&self, offset: usize) -> usize {
+        let offset = offset.min(self.rope.len_chars());
+        if offset == 0 {
+            return 0;
+        }
+
+        self.rope
+            .slice(..offset)
+            .to_string()
+            .graphemes(true)
+            .last()
+            .map(|grapheme| offset - grapheme.chars().count())
+            .unwrap_or(0)
+    }
+
+    fn next_grapheme_offset(&self, offset: usize) -> usize {
+        let offset = offset.min(self.rope.len_chars());
+        if offset >= self.rope.len_chars() {
+            return self.rope.len_chars();
+        }
+
+        self.rope
+            .slice(offset..)
+            .to_string()
+            .graphemes(true)
+            .next()
+            .map(|grapheme| offset + grapheme.chars().count())
+            .unwrap_or(self.rope.len_chars())
+            .min(self.rope.len_chars())
     }
 
     fn vertical_offset(&mut self, delta: isize) -> usize {
@@ -696,6 +750,9 @@ impl DocBuffer {
             before_selection,
             after_selection: self.selection_offsets,
         });
+        if self.undo_stack.len() > MAX_UNDO_TRANSACTIONS {
+            self.undo_stack.remove(0);
+        }
         self.redo_stack.clear();
         self.sync_public_state();
     }
@@ -934,6 +991,56 @@ mod tests {
     }
 
     #[test]
+    fn left_and_right_move_by_grapheme_clusters() {
+        let mut buffer = DocBuffer::from_text("a👩‍💻b");
+        buffer.set_cursor(0, 0);
+
+        buffer.move_cursor_right();
+        assert_eq!(buffer.cursor_offset(), 1);
+        buffer.move_cursor_right();
+        assert_eq!(buffer.cursor_offset(), 4);
+        buffer.move_cursor_right();
+        assert_eq!(buffer.cursor_offset(), 5);
+
+        buffer.move_cursor_left();
+        assert_eq!(buffer.cursor_offset(), 4);
+        buffer.move_cursor_left();
+        assert_eq!(buffer.cursor_offset(), 1);
+        buffer.move_cursor_left();
+        assert_eq!(buffer.cursor_offset(), 0);
+    }
+
+    #[test]
+    fn backspace_and_delete_remove_whole_grapheme_clusters() {
+        let mut buffer = DocBuffer::from_text("a👩‍💻b");
+        buffer.set_cursor(0, 4);
+        buffer.backspace();
+        assert_eq!(buffer.text(), "ab");
+        assert_eq!(buffer.cursor_offset(), 1);
+
+        let mut buffer = DocBuffer::from_text("a👩‍💻b");
+        buffer.set_cursor(0, 1);
+        buffer.delete();
+        assert_eq!(buffer.text(), "ab");
+        assert_eq!(buffer.cursor_offset(), 1);
+    }
+
+    #[test]
+    fn horizontal_move_without_shift_collapses_selection_to_edge() {
+        let mut buffer = DocBuffer::from_text("abcdef");
+        buffer.set_selection(0, 1, 0, 4);
+
+        buffer.move_cursor_left();
+        assert_eq!(buffer.selection, None);
+        assert_eq!(buffer.cursor_offset(), 1);
+
+        buffer.set_selection(0, 1, 0, 4);
+        buffer.move_cursor_right();
+        assert_eq!(buffer.selection, None);
+        assert_eq!(buffer.cursor_offset(), 4);
+    }
+
+    #[test]
     fn select_all_and_replace() {
         let mut buffer = DocBuffer::from_text("a\nb\nc");
         buffer.execute(EditorCommand::SelectAll);
@@ -1036,6 +1143,16 @@ mod tests {
     }
 
     #[test]
+    fn undo_history_is_bounded_to_prevent_unbounded_growth() {
+        let mut buffer = DocBuffer::new();
+        for _ in 0..1100 {
+            buffer.execute(EditorCommand::InsertText("a".to_string()));
+        }
+
+        assert_eq!(buffer.undo_stack.len(), 1000);
+    }
+
+    #[test]
     fn deterministic_editing_stress_keeps_cursor_and_selection_valid() {
         let mut buffer = DocBuffer::new();
         let mut seed = 0xC0FFEE_u64;
@@ -1103,11 +1220,11 @@ mod tests {
     }
 
     #[test]
-    fn unicode_boundaries_are_char_based() {
+    fn unicode_boundaries_are_grapheme_based() {
         let mut buffer = DocBuffer::from_text("a👩‍💻b");
         buffer.set_cursor(0, 4);
         buffer.backspace();
-        assert_eq!(buffer.text(), "a👩‍b");
+        assert_eq!(buffer.text(), "ab");
         buffer.undo();
         assert_eq!(buffer.text(), "a👩‍💻b");
     }
@@ -1148,6 +1265,27 @@ mod tests {
         // Outer toggle (selection is the inner unformatted text)
         buffer.set_selection(0, 2, 0, 7);
         buffer.execute(EditorCommand::FormatBold);
+        assert_eq!(buffer.text(), "hello");
+    }
+
+    #[test]
+    fn format_toggle_undo_redo_preserves_inner_and_outer_marker_removal() {
+        let mut buffer = DocBuffer::from_text("**hello**");
+        buffer.set_selection(0, 0, 0, 9);
+        buffer.execute(EditorCommand::FormatBold);
+        assert_eq!(buffer.text(), "hello");
+        assert!(buffer.undo());
+        assert_eq!(buffer.text(), "**hello**");
+        assert!(buffer.redo());
+        assert_eq!(buffer.text(), "hello");
+
+        let mut buffer = DocBuffer::from_text("**hello**");
+        buffer.set_selection(0, 2, 0, 7);
+        buffer.execute(EditorCommand::FormatBold);
+        assert_eq!(buffer.text(), "hello");
+        assert!(buffer.undo());
+        assert_eq!(buffer.text(), "**hello**");
+        assert!(buffer.redo());
         assert_eq!(buffer.text(), "hello");
     }
 
