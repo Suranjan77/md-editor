@@ -105,6 +105,9 @@ Important fields:
 - `pdf_toc_target_page`: target page currently being navigated to.
 - `pdf_initial_target_page` and `pdf_initial_target_annotation`: deferred
   navigation target used when opening a PDF from a `pdf://` markdown link.
+- `native/src/pdf_links.rs`: shared builder/parser for `pdf://` links. It
+  percent-encodes paths and annotation ids so spaces, `?`, `#`, `&`, and
+  markdown delimiter characters remain clickable.
 - `active_panel`: tracks whether markdown or PDF last received direct user
   interaction so split-view shortcuts route to the right pane.
 
@@ -235,9 +238,23 @@ Linked-note behavior:
   overwriting the file.
 - Re-linking the same highlight is idempotent because the generated `pdf://`
   target is used as a duplicate marker.
+- Generated `pdf://` targets must come from `native/src/pdf_links.rs`; hand-made
+  string formatting can break Ctrl/Cmd-click navigation when paths contain URL
+  or markdown delimiter characters.
+- Linking a highlight records a `pdf_companion_note:<pdf-path>` setting, giving
+  the app a stable companion-note pairing for the PDF.
 - The visible markdown avoids debug identifiers. The annotation id is kept only
   inside the `pdf://` link because it is required for exact highlight
   navigation.
+
+PDF selection quote insertion:
+
+- The PDF context menu includes an insert action when text is selected and a
+  markdown note is open.
+- The action inserts a markdown blockquote at the current editor cursor and
+  appends a source link like `[PDF, p. 3](pdf://paper.pdf?page=3)`.
+- This path does not create an annotation or sidecar row; it is for lightweight
+  citation while writing.
 
 ## Page Size Metadata
 
@@ -298,6 +315,7 @@ It is used by:
 - TOC clicks.
 - Internal PDF link clicks.
 - PDF search result clicks.
+- `pdf://` markdown links, including quote links and generated highlight links.
 
 Navigation flow:
 

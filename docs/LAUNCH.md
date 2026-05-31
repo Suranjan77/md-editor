@@ -37,6 +37,8 @@ Use a fresh temporary vault and verify:
   the active match into view.
 - Create several PDF highlights on different pages.
 - Add a quick note to a PDF highlight.
+- Select PDF text in split view, use the context menu to insert a quote link,
+  and confirm the markdown note receives a blockquote plus `pdf://` page link.
 - Link one highlight to a new markdown note through the picker.
 - Link another highlight to the same markdown note and confirm a new section is
   appended instead of replacing the file.

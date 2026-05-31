@@ -275,12 +275,10 @@ pub fn toolbar<'a>(
             ]
             .align_y(Alignment::Center),
         )
-        .on_press(Message::PdfRightClicked {
-            page_index: ann.page_index,
-            x: -1.0,
-            y: -1.0,
-            absolute_pos: iced::Point::ORIGIN,
-        })
+        .on_press(Message::PdfEditAnnotationNote(
+            ann.id.clone(),
+            ann.page_index,
+        ))
         .padding([4, 8])
         .style(button::text);
 

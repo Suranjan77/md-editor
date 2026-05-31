@@ -40,14 +40,14 @@ fn test_file_index_wikilink_combinatorics() {
         "accented-éàçè",
     ];
 
-    let alias_options = vec![
+    let alias_options = [
         None,
         Some("simple_alias"),
         Some("spaced alias name"),
         Some("unicode-🔥"),
     ];
 
-    let space_variations = vec![("", ""), (" ", " "), ("  ", ""), ("", "  "), ("   ", "   ")];
+    let space_variations = [("", ""), (" ", " "), ("  ", ""), ("", "  "), ("   ", "   ")];
 
     let mut content = String::new();
     let mut expected_targets = std::collections::HashSet::new();
@@ -155,21 +155,21 @@ fn test_file_index_graph_topologies() {
         nodes.push(PathBuf::from(format!("/vault/mesh_{}.md", i)));
     }
 
-    for i in 0..30 {
+    for (i, node) in nodes.iter().enumerate().take(30) {
         let mut mesh_content = String::new();
         for j in 0..30 {
             if i != j {
                 mesh_content.push_str(&format!("[[mesh_{}]] ", j));
             }
         }
-        index_mesh.update_file(&nodes[i], &mesh_content);
+        index_mesh.update_file(node, &mesh_content);
     }
 
     // Verify mesh links
-    for i in 0..30 {
-        let outgoing = index_mesh.get_outgoing_links(&nodes[i]);
+    for node in nodes.iter().take(30) {
+        let outgoing = index_mesh.get_outgoing_links(node);
         assert_eq!(outgoing.len(), 29);
-        let incoming = index_mesh.get_backlinks(&nodes[i]);
+        let incoming = index_mesh.get_backlinks(node);
         assert_eq!(incoming.len(), 29);
     }
 }
