@@ -9,6 +9,7 @@ pub fn view<'a>(
     annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
     filter_color: Option<md_editor_core::pdf::PdfAnnotationColor>,
     focused_id: Option<&'a str>,
+    can_insert_annotation_link: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
     let title = text("Annotations").size(16).color(theme::TEXT_PRIMARY);
 
@@ -145,6 +146,16 @@ pub fn view<'a>(
                 ))
                 .padding([2, 6])
                 .style(button::secondary),
+            if can_insert_annotation_link {
+                button(text("Cite").size(11))
+                    .on_press(Message::PdfInsertAnnotationLink(ann.id.clone()))
+                    .padding([2, 6])
+                    .style(button::secondary)
+            } else {
+                button(text("Cite").size(11))
+                    .padding([2, 6])
+                    .style(button::secondary)
+            },
             button(icons::view(
                 Icon::Trash,
                 Color::from_rgb(0.8, 0.2, 0.2),
@@ -209,4 +220,62 @@ pub fn view<'a>(
         ..Default::default()
     })
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use md_editor_core::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind};
+    use std::collections::HashMap;
+
+    fn annotation() -> PdfAnnotation {
+        PdfAnnotation {
+            id: "ann-1".to_string(),
+            document_id: "doc".to_string(),
+            page_index: 2,
+            kind: PdfAnnotationKind::Highlight,
+            color: PdfAnnotationColor::Yellow,
+            selected_text: "Important highlight".to_string(),
+            ranges: vec![],
+            rects: vec![],
+            note: None,
+            linked_note_path: None,
+            markdown_anchor: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn annotations() -> HashMap<u16, Vec<PdfAnnotation>> {
+        HashMap::from([(2, vec![annotation()])])
+    }
+
+    #[test]
+    fn annotation_sidebar_cite_click_emits_insert_message() {
+        let annotations = annotations();
+        let mut ui = iced_test::simulator(view(&annotations, None, Some("ann-1"), true));
+
+        ui.click("Cite").expect("Cite button should exist");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::PdfInsertAnnotationLink(id)] if id == "ann-1"
+        ));
+    }
+
+    #[test]
+    fn annotation_sidebar_cite_is_inert_without_markdown_file() {
+        let annotations = annotations();
+        let mut ui = iced_test::simulator(view(&annotations, None, Some("ann-1"), false));
+
+        ui.click("Cite")
+            .expect("disabled-looking Cite control should still render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(
+            messages.is_empty(),
+            "Cite must not insert without an active markdown note"
+        );
+    }
 }

@@ -30,6 +30,47 @@ pub fn note_filename_from_path(path: &str) -> String {
         .to_string()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkedPdfNoteAction {
+    Created,
+    Appended,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedPdfNoteUpdate {
+    pub content: String,
+    pub action: LinkedPdfNoteAction,
+}
+
+pub fn build_linked_pdf_note_content(
+    existing: Option<&str>,
+    note_path: &str,
+    pdf_path: &str,
+    ann: &md_editor_core::pdf::PdfAnnotation,
+) -> LinkedPdfNoteUpdate {
+    match existing {
+        Some(existing) => {
+            let link = pdf_annotation_link(pdf_path, ann);
+            if existing.contains(&link) {
+                LinkedPdfNoteUpdate {
+                    content: existing.to_string(),
+                    action: LinkedPdfNoteAction::Unchanged,
+                }
+            } else {
+                LinkedPdfNoteUpdate {
+                    content: append_linked_pdf_note_section(existing, pdf_path, ann),
+                    action: LinkedPdfNoteAction::Appended,
+                }
+            }
+        }
+        None => LinkedPdfNoteUpdate {
+            content: new_linked_pdf_note_content(note_path, pdf_path, ann),
+            action: LinkedPdfNoteAction::Created,
+        },
+    }
+}
+
 pub fn new_linked_pdf_note_content(
     note_path: &str,
     pdf_path: &str,
@@ -180,18 +221,18 @@ pub fn export_annotations_to_markdown(
 mod tests {
     use super::*;
 
-    #[test]
-    fn formats_sections_for_shared_notes() {
-        assert_eq!(slug_fragment("My PDF File"), "my-pdf-file");
-        assert_eq!(normalize_note_path("notes/pdf note"), "notes/pdf note.md");
-
-        let ann = md_editor_core::pdf::PdfAnnotation {
-            id: "abcdef123456".to_string(),
+    fn annotation(
+        id: &str,
+        page_index: u16,
+        selected_text: &str,
+    ) -> md_editor_core::pdf::PdfAnnotation {
+        md_editor_core::pdf::PdfAnnotation {
+            id: id.to_string(),
             document_id: "doc".to_string(),
-            page_index: 4,
+            page_index,
             kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
             color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
-            selected_text: "Important field result".to_string(),
+            selected_text: selected_text.to_string(),
             ranges: vec![],
             rects: vec![],
             note: None,
@@ -199,7 +240,15 @@ mod tests {
             markdown_anchor: None,
             created_at: 0,
             updated_at: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn formats_sections_for_shared_notes() {
+        assert_eq!(slug_fragment("My PDF File"), "my-pdf-file");
+        assert_eq!(normalize_note_path("notes/pdf note"), "notes/pdf note.md");
+
+        let ann = annotation("abcdef123456", 4, "Important field result");
 
         let content =
             new_linked_pdf_note_content("notes/shared pdf note.md", "papers/My PDF File.pdf", &ann);
@@ -226,6 +275,57 @@ mod tests {
 
         let deduped = append_linked_pdf_note_section(&appended, "papers/My PDF File.pdf", &ann);
         assert_eq!(deduped, appended);
+    }
+
+    #[test]
+    fn linked_pdf_note_builder_reports_create_append_and_unchanged() {
+        let ann = annotation("ann#1", 6, "Important field result");
+
+        let created =
+            build_linked_pdf_note_content(None, "notes/result.md", "papers/My PDF.pdf", &ann);
+        assert_eq!(created.action, LinkedPdfNoteAction::Created);
+        assert!(created.content.contains("# Result"));
+        assert!(created.content.contains("## Page 7"));
+        assert!(created.content.contains(
+            "[Open highlight in PDF](pdf://papers/My%20PDF.pdf?page=7&annotation=ann%231)"
+        ));
+
+        let ann2 = annotation("ann#2", 8, "Second field result");
+        let appended = build_linked_pdf_note_content(
+            Some(&created.content),
+            "notes/result.md",
+            "papers/My PDF.pdf",
+            &ann2,
+        );
+        assert_eq!(appended.action, LinkedPdfNoteAction::Appended);
+        assert!(appended.content.contains("## Page 9"));
+        assert!(appended.content.contains("> Second field result"));
+
+        let unchanged = build_linked_pdf_note_content(
+            Some(&appended.content),
+            "notes/result.md",
+            "papers/My PDF.pdf",
+            &ann,
+        );
+        assert_eq!(unchanged.action, LinkedPdfNoteAction::Unchanged);
+        assert_eq!(unchanged.content, appended.content);
+    }
+
+    #[test]
+    fn linked_pdf_note_builder_handles_empty_selected_text_deliberately() {
+        let ann = annotation("ann-empty", 0, "   ");
+
+        let created =
+            build_linked_pdf_note_content(None, "notes/empty.md", "papers/paper.pdf", &ann);
+
+        assert_eq!(created.action, LinkedPdfNoteAction::Created);
+        assert!(created.content.contains("## Page 1"));
+        assert!(created.content.contains("> \n\n[Open highlight in PDF]"));
+        assert!(
+            created
+                .content
+                .contains("pdf://papers/paper.pdf?page=1&annotation=ann-empty")
+        );
     }
 
     #[test]

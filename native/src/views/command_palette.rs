@@ -4,10 +4,27 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 use crate::messages::{Message, Shortcut};
 use crate::theme;
 
+#[derive(Debug, Clone)]
 pub struct Command {
     pub name: String,
     pub shortcut: Shortcut,
     pub icon: String,
+}
+
+pub fn insert_pdf_quote_command() -> Command {
+    Command {
+        name: "Insert PDF Quote".to_string(),
+        shortcut: Shortcut::InsertPdfQuote,
+        icon: "Q".to_string(),
+    }
+}
+
+pub fn insert_pdf_highlight_command() -> Command {
+    Command {
+        name: "Insert PDF Highlight".to_string(),
+        shortcut: Shortcut::InsertPdfHighlight,
+        icon: "H".to_string(),
+    }
 }
 
 pub fn get_commands() -> Vec<Command> {
@@ -60,7 +77,7 @@ pub fn get_commands() -> Vec<Command> {
     ]
 }
 
-pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Theme, Renderer> {
+pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, Theme, Renderer> {
     let input = text_input("Type a command...", query)
         .on_input(Message::CommandPaletteQueryChanged)
         .padding(12)
@@ -68,11 +85,11 @@ pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Th
 
     let mut list = column![].spacing(5);
 
-    let filtered: Vec<&Command> = if query.is_empty() {
-        commands.iter().collect()
+    let filtered: Vec<Command> = if query.is_empty() {
+        commands
     } else {
         commands
-            .iter()
+            .into_iter()
             .filter(|c| c.name.to_lowercase().contains(&query.to_lowercase()))
             .collect()
     };
@@ -81,7 +98,7 @@ pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Th
         list = list.push(
             button(
                 row![
-                    container(text(&cmd.icon).size(12).color(theme::TEXT_SECONDARY))
+                    container(text(cmd.icon).size(12).color(theme::TEXT_SECONDARY))
                         .width(Length::Fixed(24.0))
                         .height(Length::Fixed(24.0))
                         .center_x(Length::Fixed(24.0))
@@ -95,7 +112,7 @@ pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Th
                             },
                             ..Default::default()
                         }),
-                    text(&cmd.name).size(14).color(theme::TEXT_PRIMARY),
+                    text(cmd.name).size(14).color(theme::TEXT_PRIMARY),
                     Space::new().width(Length::Fill),
                     text(shortcut_label(cmd.shortcut))
                         .size(11)
@@ -158,8 +175,49 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::GoToPage => "Ctrl G",
         Shortcut::PdfSearch => "Ctrl R",
         Shortcut::PdfHighlight => "Ctrl H",
+        Shortcut::InsertPdfQuote => "Quote",
+        Shortcut::InsertPdfHighlight => "Cite",
         Shortcut::PdfFirstPage => "Home",
         Shortcut::PdfLastPage => "End",
         Shortcut::PdfZoomInput => "Ctrl Z",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_palette_pdf_quote_click_emits_shortcut() {
+        let commands = vec![insert_pdf_quote_command()];
+        let mut ui = iced_test::simulator(view("", commands));
+
+        ui.click("Insert PDF Quote")
+            .expect("PDF quote command should render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::CommandPaletteCommandClicked(
+                Shortcut::InsertPdfQuote
+            )]
+        ));
+    }
+
+    #[test]
+    fn command_palette_pdf_highlight_click_emits_shortcut() {
+        let commands = vec![insert_pdf_highlight_command()];
+        let mut ui = iced_test::simulator(view("", commands));
+
+        ui.click("Insert PDF Highlight")
+            .expect("PDF highlight command should render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::CommandPaletteCommandClicked(
+                Shortcut::InsertPdfHighlight
+            )]
+        ));
     }
 }

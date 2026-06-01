@@ -478,14 +478,13 @@ where
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => {
                 state.modifiers = *m;
             }
-            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. })
                 if (modifiers.command() || modifiers.control())
                     && matches!(key, iced::keyboard::Key::Character(c) if c == "c")
-                    && self.active_selection.is_some()
-                {
-                    shell.publish((self.on_copy_selection)());
-                    shell.capture_event();
-                }
+                    && self.active_selection.is_some() =>
+            {
+                shell.publish((self.on_copy_selection)());
+                shell.capture_event();
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position_in(bounds) {
