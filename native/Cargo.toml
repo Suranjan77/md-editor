@@ -27,3 +27,6 @@ ratex-parser = "0.1.7"
 ratex-layout = "0.1.7"
 ratex-types = "0.1.7"
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+iced_test = "0.14.0"
