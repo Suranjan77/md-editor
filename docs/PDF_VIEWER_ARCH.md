@@ -12,17 +12,19 @@ The PDF viewer is split across two crates:
 2. `native`: owns iced UI state, messages, rendering tasks, and scroll behavior in
    `native/src/app.rs`.
 
-PDFium is treated as a single-worker resource. The application must not create
-multiple `Pdfium::new()` instances because `pdfium-render` stores the bindings in
-a process-global cell. The renderer therefore uses one background worker thread
-with an internal priority scheduling loop.
+PDFium is treated as a process-wide serialized native resource. The renderer
+uses separate render and query workers so UI-facing queues can stay independent,
+but every PDFium call is protected by `with_pdfium_access`, a global mutex
+wrapper in `core/src/pdf.rs`. This prevents native heap corruption when PDF
+search text extraction interleaves with page rendering.
 
 ```text
 iced UI
   -> Message handlers in native/src/app.rs
   -> iced::Task async calls
   -> PdfRenderer API in core/src/pdf.rs
-  -> single PDFium worker
+  -> render/query PDFium workers
+  -> process-wide PDFium lock
   -> typed Message result back to app.rs
   -> generation validation, pending cleanup, cache update, optional follow-up task
 ```
@@ -44,15 +46,24 @@ It exposes synchronous request methods used from iced tasks:
 
 Internally it owns:
 
-- `sender: Sender<PdfCommand>` for normal work.
+- `render_sender: Sender<RenderCommand>` for rendering, page metadata, links,
+  TOC, and previews.
+- `query_sender: Sender<QueryCommand>` for page text extraction and streamed
+  PDF search.
 - `priority_sender: Sender<PriorityRender>` for target page renders.
-- one worker thread with one PDFium binding and one cached `PdfDocument`.
+- one render worker with one cached `PdfDocument`.
+- one query worker with one cached `PdfDocument`.
 
-The worker keeps:
+Each worker owns its own `Pdfium` handle, but all calls into PDFium must go
+through `with_pdfium_access`. This avoids allocator corruption from
+concurrent native PDFium use while still keeping render and search request
+queues separate.
+
+The render worker keeps:
 
 ```rust
 current_document: Option<(String, PdfDocument)>
-pending_commands: VecDeque<PdfCommand>
+pending_commands: VecDeque<RenderCommand>
 ```
 
 The scheduling rule is:
@@ -70,6 +81,12 @@ request is sent. The `Wake` command itself performs no work.
 This design cannot interrupt an already-running PDFium operation. It does ensure
 that a TOC target page does not wait behind already queued preloads, link
 extraction, search, or previews once the current operation completes.
+
+The query worker handles `GetPageText`, `SearchText`, and `CancelSearch`.
+Streaming search scans one page at a time, sends matches as they arrive, checks
+for cancellation between pages, and emits a done result when complete. Search
+holds the PDFium global lock while extracting/scanning each page, then releases
+it before sending results and moving to the next page.
 
 ## Native PDF State
 
@@ -206,8 +223,9 @@ When `PdfRendered` succeeds:
 ## Text Selection And Study Overlays
 
 PDF text extraction is loaded lazily through `get_page_text(path, page)`.
-Extraction runs on the same single PDFium worker as rendering, so it is
-deduplicated with `pdf_pending_text` and bounded by the visible page range.
+Extraction runs on the query worker and is serialized against rendering by the
+PDFium global lock, so it is deduplicated with `pdf_pending_text` and bounded by
+the visible page range.
 Text is stored in PDF-space coordinates and survives zoom changes.
 
 `native/src/views/interactive_pdf.rs` owns page bitmap interaction: mouse hit
@@ -438,7 +456,8 @@ mapped to PDF-space coordinates using cached page dimensions and zoom.
 
 When changing this code, preserve these rules:
 
-1. Do not create more than one `Pdfium::new()` binding in the process.
+1. Every PDFium operation must go through `with_pdfium_access`; do not call
+   PDFium directly from worker code without the guard.
 2. Target page renders must use `render_page_priority()`.
 3. Priority rendering may use `Wake`, but `Wake` should not do real work.
 4. Remove pending page/link state before generation checks.
@@ -455,3 +474,5 @@ When changing this code, preserve these rules:
     them into one widget per rectangle.
 12. Linked-note file writes must append to existing notes unless the exact
     highlight link already exists.
+13. If replacing PDFium, prove parity for portable packaging, page rendering,
+    text geometry, link extraction, and search before migration.

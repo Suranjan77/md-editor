@@ -352,6 +352,8 @@ mod tests {
             note: None,
             linked_note_path: linked_note_path.map(str::to_string),
             markdown_anchor: None,
+            tags: Vec::new(),
+            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }

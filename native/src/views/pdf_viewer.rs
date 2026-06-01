@@ -34,6 +34,8 @@ mod tests {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            tags: Vec::new(),
+            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }

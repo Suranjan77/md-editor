@@ -74,6 +74,16 @@ pub fn get_commands() -> Vec<Command> {
             shortcut: Shortcut::FocusMode,
             icon: "F".to_string(),
         },
+        Command {
+            name: "Follow Citation".to_string(),
+            shortcut: Shortcut::FollowCitation,
+            icon: "G".to_string(),
+        },
+        Command {
+            name: "Show Usages".to_string(),
+            shortcut: Shortcut::ShowUsages,
+            icon: "U".to_string(),
+        },
     ]
 }
 
@@ -180,6 +190,8 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::PdfFirstPage => "Home",
         Shortcut::PdfLastPage => "End",
         Shortcut::PdfZoomInput => "Ctrl Z",
+        Shortcut::FollowCitation => "Alt G",
+        Shortcut::ShowUsages => "Alt U",
     }
 }
 

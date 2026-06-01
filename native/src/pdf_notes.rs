@@ -193,6 +193,8 @@ pub fn export_annotations_to_markdown(
             md_editor_core::pdf::PdfAnnotationColor::Blue => "Blue",
             md_editor_core::pdf::PdfAnnotationColor::Pink => "Pink",
             md_editor_core::pdf::PdfAnnotationColor::Orange => "Orange",
+            md_editor_core::pdf::PdfAnnotationColor::Red => "Red",
+            md_editor_core::pdf::PdfAnnotationColor::Purple => "Purple",
         };
 
         doc.push_str(&format!(
@@ -217,6 +219,65 @@ pub fn export_annotations_to_markdown(
     doc
 }
 
+pub fn sync_annotation_note_in_markdown(
+    content: &str,
+    pdf_path: &str,
+    ann: &md_editor_core::pdf::PdfAnnotation,
+) -> String {
+    let link = pdf_annotation_link(pdf_path, ann);
+    let link_pos = match content.find(&link) {
+        Some(pos) => pos,
+        None => {
+            return content.to_string();
+        }
+    };
+
+    let notes_header = "### Notes";
+    let notes_header_pos = match content[link_pos..].find(notes_header) {
+        Some(pos) => link_pos + pos,
+        None => {
+            let insert_pos = match content[link_pos..].find("\n\n") {
+                Some(pos) => link_pos + pos,
+                None => content.len(),
+            };
+            let mut new_content = content.to_string();
+            new_content.insert_str(insert_pos, "\n\n### Notes\n\n");
+            let new_link_pos = match new_content.find(&link) {
+                Some(p) => p,
+                None => return content.to_string(),
+            };
+            match new_content[new_link_pos..].find(notes_header) {
+                Some(pos) => new_link_pos + pos,
+                None => return content.to_string(),
+            }
+        }
+    };
+
+    let notes_start = notes_header_pos + notes_header.len();
+    let mut notes_end = content.len();
+    for boundary in ["\n## ", "\n---"] {
+        if let Some(pos) = content[notes_start..].find(boundary) {
+            let abs_pos = notes_start + pos;
+            if abs_pos < notes_end {
+                notes_end = abs_pos;
+            }
+        }
+    }
+
+    let note_text = ann.note.as_deref().unwrap_or("").trim();
+    let replacement = if note_text.is_empty() {
+        "\n\n".to_string()
+    } else {
+        format!("\n\n{}\n\n", note_text)
+    };
+
+    let mut new_content = String::new();
+    new_content.push_str(&content[..notes_start]);
+    new_content.push_str(&replacement);
+    new_content.push_str(content[notes_end..].trim_start());
+    new_content
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +299,8 @@ mod tests {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            tags: Vec::new(),
+            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }
@@ -342,6 +405,8 @@ mod tests {
             note: Some("some note".to_string()),
             linked_note_path: None,
             markdown_anchor: None,
+            tags: Vec::new(),
+            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 10,
             updated_at: 10,
         };
@@ -366,5 +431,34 @@ mod tests {
         assert!(result.contains("**Note:** some note"));
         assert!(result.contains("> Second"));
         assert!(result.contains("[Open in PDF](pdf:///path/to/doc.pdf?page=3&annotation=1)"));
+    }
+
+    #[test]
+    fn test_sync_annotation_note_in_markdown() {
+        let ann = annotation("ann-1", 0, "Hello world");
+        let initial_content =
+            new_linked_pdf_note_content("notes/shared.md", "papers/paper.pdf", &ann);
+
+        // Assert initial contains empty Notes section
+        assert!(initial_content.contains("### Notes\n\n"));
+
+        // 1. Sync a note content
+        let mut ann_updated = ann.clone();
+        ann_updated.note = Some("Sync this message".to_string());
+        let synced =
+            sync_annotation_note_in_markdown(&initial_content, "papers/paper.pdf", &ann_updated);
+        assert!(synced.contains("### Notes\n\nSync this message\n\n"));
+
+        // 2. Sync to update it again
+        ann_updated.note = Some("Updated message".to_string());
+        let synced2 = sync_annotation_note_in_markdown(&synced, "papers/paper.pdf", &ann_updated);
+        assert!(synced2.contains("### Notes\n\nUpdated message\n\n"));
+        assert!(!synced2.contains("Sync this message"));
+
+        // 3. Sync to empty note
+        ann_updated.note = None;
+        let synced3 = sync_annotation_note_in_markdown(&synced2, "papers/paper.pdf", &ann_updated);
+        assert!(synced3.contains("### Notes\n\n"));
+        assert!(!synced3.contains("Updated message"));
     }
 }

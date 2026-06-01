@@ -23,6 +23,23 @@ impl FileIndex {
 
     /// Extract wikilinks from document text and update the index for a given file.
     pub fn update_file(&mut self, file_path: &Path, content: &str) {
+        let targets = extract_wikilinks(content, &self.vault_root, file_path);
+        self.update_resolved_targets(file_path, targets);
+    }
+
+    /// Update the index for a file from pre-parsed local markdown link targets.
+    pub fn update_file_targets<'a, I>(&mut self, file_path: &Path, targets: I)
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let targets = targets
+            .into_iter()
+            .filter_map(|target| resolve_wikilink_target(target, &self.vault_root, file_path))
+            .collect::<Vec<_>>();
+        self.update_resolved_targets(file_path, targets);
+    }
+
+    fn update_resolved_targets(&mut self, file_path: &Path, targets: Vec<PathBuf>) {
         if let Some(old_targets) = self.outgoing.remove(file_path) {
             for target in &old_targets {
                 if let Some(incoming_set) = self.incoming.get_mut(target) {
@@ -31,7 +48,6 @@ impl FileIndex {
             }
         }
 
-        let targets = extract_wikilinks(content, &self.vault_root, file_path);
         let target_set: HashSet<PathBuf> = targets.into_iter().collect();
 
         for target in &target_set {
@@ -78,64 +94,69 @@ fn extract_wikilinks(content: &str, vault_root: &Path, file_path: &Path) -> Vec<
     let mut links = Vec::new();
 
     for cap in re.captures_iter(content) {
-        if let Some(target) = cap.get(1) {
-            let target_str = target.as_str().trim();
-            if target_str.starts_with('#') {
-                continue;
-            }
-            let path_part = if let Some(idx) = target_str.find('#') {
-                let anchor = &target_str[idx + 1..];
-                if anchor
-                    .chars()
-                    .any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')'))
-                {
-                    target_str
-                } else {
-                    target_str[..idx].trim()
-                }
-            } else {
-                target_str
-            };
-            if path_part.is_empty() {
-                continue;
-            }
-
-            let resolved = if path_part.starts_with('.') {
-                if let Some(parent) = file_path.parent() {
-                    parent.join(path_part)
-                } else {
-                    vault_root.join(path_part)
-                }
-            } else {
-                vault_root.join(path_part)
-            };
-
-            // Normalize path components
-            let mut components = Vec::new();
-            for component in resolved.components() {
-                match component {
-                    std::path::Component::ParentDir => {
-                        components.pop();
-                    }
-                    std::path::Component::Normal(c) => {
-                        components.push(c);
-                    }
-                    std::path::Component::CurDir => {}
-                    _ => {
-                        components.push(component.as_os_str());
-                    }
-                }
-            }
-            let mut normalized: PathBuf = components.into_iter().collect();
-
-            if normalized.extension().is_none() {
-                normalized.set_extension("md");
-            }
-            links.push(normalized);
+        if let Some(target) = cap.get(1)
+            && let Some(resolved) = resolve_wikilink_target(target.as_str(), vault_root, file_path)
+        {
+            links.push(resolved);
         }
     }
 
     links
+}
+
+fn resolve_wikilink_target(target: &str, vault_root: &Path, file_path: &Path) -> Option<PathBuf> {
+    let target_str = target.trim();
+    if target_str.starts_with('#') {
+        return None;
+    }
+    let path_part = if let Some(idx) = target_str.find('#') {
+        let anchor = &target_str[idx + 1..];
+        if anchor
+            .chars()
+            .any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')'))
+        {
+            target_str
+        } else {
+            target_str[..idx].trim()
+        }
+    } else {
+        target_str
+    };
+    if path_part.is_empty() {
+        return None;
+    }
+
+    let resolved = if path_part.starts_with('.') {
+        if let Some(parent) = file_path.parent() {
+            parent.join(path_part)
+        } else {
+            vault_root.join(path_part)
+        }
+    } else {
+        vault_root.join(path_part)
+    };
+
+    let mut components = Vec::new();
+    for component in resolved.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                components.pop();
+            }
+            std::path::Component::Normal(c) => {
+                components.push(c);
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                components.push(component.as_os_str());
+            }
+        }
+    }
+    let mut normalized: PathBuf = components.into_iter().collect();
+
+    if normalized.extension().is_none() {
+        normalized.set_extension("md");
+    }
+    Some(normalized)
 }
 
 #[cfg(test)]
@@ -177,5 +198,46 @@ mod tests {
         let backlinks = index.get_backlinks(&target_b);
         assert_eq!(backlinks.len(), 1);
         assert_eq!(backlinks[0], file_a);
+    }
+
+    #[test]
+    fn update_file_targets_accepts_parser_metadata_targets() {
+        let root = PathBuf::from("/vault");
+        let mut index = FileIndex::new(root);
+
+        let file = PathBuf::from("/vault/folder/source.md");
+        index.update_file_targets(
+            &file,
+            [
+                "../target",
+                "#local-heading",
+                "./sibling#Heading",
+                "../complex!@#%^&*()",
+            ],
+        );
+
+        assert_eq!(
+            index.get_backlinks(&PathBuf::from("/vault/target.md")),
+            vec![file.clone()]
+        );
+        assert_eq!(
+            index.get_backlinks(&PathBuf::from("/vault/folder/sibling.md")),
+            vec![file.clone()]
+        );
+        assert_eq!(
+            index.get_backlinks(&PathBuf::from("/vault/complex!@#%^&*().md")),
+            vec![file.clone()]
+        );
+
+        index.update_file_targets(&file, ["other"]);
+        assert!(
+            index
+                .get_backlinks(&PathBuf::from("/vault/target.md"))
+                .is_empty()
+        );
+        assert_eq!(
+            index.get_backlinks(&PathBuf::from("/vault/other.md")),
+            vec![file]
+        );
     }
 }

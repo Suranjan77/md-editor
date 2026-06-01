@@ -100,5 +100,6 @@ Known constraints:
 - PDF annotations are sidecar records; original PDF files are not modified.
 - PDF text selection and search depend on embedded PDF text. Scanned/image-only
   PDFs need OCR outside the app.
-- PDFium operations use one worker thread. Navigation prioritizes the newest
-  target page, but an already-running PDFium operation cannot be interrupted.
+- PDFium operations are serialized behind a process-wide lock across render and
+  query workers. Navigation prioritizes the newest target page, but an
+  already-running PDFium operation cannot be interrupted.

@@ -107,67 +107,7 @@ fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
     text.chars().skip(start).take(end - start).collect()
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct NavigationPoint {
-    pub page: u16,
-    pub scroll_offset: f32,
-    pub zoom: f32,
-}
-
-#[derive(Debug, Clone)]
-pub struct NavigationHistory {
-    pub entries: Vec<NavigationPoint>,
-    pub current_index: usize,
-    pub max_entries: usize,
-}
-
-impl Default for NavigationHistory {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            current_index: 0,
-            max_entries: 50,
-        }
-    }
-}
-
-impl NavigationHistory {
-    pub fn push(&mut self, point: NavigationPoint) {
-        if !self.entries.is_empty() && self.current_index < self.entries.len() - 1 {
-            self.entries.truncate(self.current_index + 1);
-        }
-
-        if let Some(last) = self.entries.last() {
-            if last == &point {
-                return;
-            }
-        }
-
-        self.entries.push(point);
-        if self.entries.len() > self.max_entries {
-            self.entries.remove(0);
-        }
-        self.current_index = self.entries.len().saturating_sub(1);
-    }
-
-    pub fn go_back(&mut self) -> Option<NavigationPoint> {
-        if self.current_index > 0 && !self.entries.is_empty() {
-            self.current_index -= 1;
-            Some(self.entries[self.current_index].clone())
-        } else {
-            None
-        }
-    }
-
-    pub fn go_forward(&mut self) -> Option<NavigationPoint> {
-        if self.current_index + 1 < self.entries.len() {
-            self.current_index += 1;
-            Some(self.entries[self.current_index].clone())
-        } else {
-            None
-        }
-    }
-}
+use crate::pdf_navigation::{NavigationHistory, NavigationTarget};
 
 pub type EditorMatch = md_editor_core::types::SearchResult;
 
@@ -230,7 +170,6 @@ pub struct PdfViewState {
     pub page_cache: PdfPageCache,
     pub layout: PdfLayout,
     pub search: PdfSearchState,
-    pub navigation_history: NavigationHistory,
 }
 
 pub struct MdEditor {
@@ -243,6 +182,7 @@ pub struct MdEditor {
     sidebar_visible: bool,
     backlinks_visible: bool,
     backlinks: Vec<md_editor_core::types::BacklinkItem>,
+    navigation_history: NavigationHistory,
 
     // Editor state
     buffer: DocBuffer,
@@ -311,6 +251,10 @@ pub struct MdEditor {
     // Search
     search_visible: bool,
     editor_search: EditorSearchState,
+    global_search_id: u64,
+    global_search_results: Vec<md_editor_core::types::UnifiedSearchResult>,
+    global_search_searching: bool,
+    global_search_error: Option<String>,
 
     pdf_search_error: Option<String>,
     pdf_active_search_id: u64,
@@ -372,6 +316,7 @@ impl MdEditor {
             sidebar_visible: true,
             backlinks_visible: false,
             backlinks: Vec::new(),
+            navigation_history: NavigationHistory::default(),
             buffer: DocBuffer::new(),
             highlighted_lines: Vec::new(),
             highlight_generation: 0,
@@ -386,7 +331,6 @@ impl MdEditor {
                 page_cache: PdfPageCache::default(),
                 layout: PdfLayout::default(),
                 search: PdfSearchState::default(),
-                navigation_history: NavigationHistory::default(),
             },
             pdf_rotation: 0,
             pdf_pages: Vec::new(),
@@ -435,6 +379,10 @@ impl MdEditor {
             toast: None,
             search_visible: false,
             editor_search: EditorSearchState::default(),
+            global_search_id: 0,
+            global_search_results: Vec::new(),
+            global_search_searching: false,
+            global_search_error: None,
 
             pdf_search_error: None,
             pdf_active_search_id: 0,
@@ -522,6 +470,12 @@ impl MdEditor {
                             }
                             iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight) => {
                                 return Message::PdfNavForward;
+                            }
+                            iced::keyboard::Key::Character(c) if c == "g" => {
+                                return Message::KeyboardShortcut(Shortcut::FollowCitation);
+                            }
+                            iced::keyboard::Key::Character(c) if c == "u" => {
+                                return Message::KeyboardShortcut(Shortcut::ShowUsages);
                             }
                             _ => {}
                         }
@@ -685,6 +639,11 @@ impl MdEditor {
                 Task::none()
             }
             Message::SidebarFileClicked(path) => {
+                if self.showing_pdf && self.active_pdf_path.is_some() {
+                    self.push_pdf_navigation_history();
+                } else if self.active_path.is_some() {
+                    self.push_markdown_navigation_history();
+                }
                 let mut path = path.trim().to_string();
                 if path.starts_with('<') && path.ends_with('>') {
                     path = path[1..path.len() - 1].to_string();
@@ -1080,7 +1039,7 @@ impl MdEditor {
             Message::EditorSave => {
                 if let Some(path) = &self.active_path {
                     let content = self.buffer.text();
-                    let _ = md_editor_core::vault::save_file(&self.state, path, &content);
+                    let _ = save_markdown_file_with_parser_targets(&self.state, path, &content);
                     self.buffer.dirty = false;
                     self.toast = Some("File saved".to_string());
                 }
@@ -1615,22 +1574,32 @@ impl MdEditor {
                 Task::none()
             }
             Message::TocClicked(index) => {
-                // Navigate based on what TOC content is currently displayed.
-                let use_pdf = self.showing_pdf;
-                if use_pdf && self.active_pdf_path.is_some() {
-                    self.push_pdf_navigation_history();
-                    // Guard against stale index (e.g. TOC from a different document,
-                    // or a PDF with only one page where every entry maps to page 0).
+                if self.active_path.is_some() {
+                    if self.showing_pdf && self.active_pdf_path.is_some() {
+                        self.push_pdf_navigation_history();
+                    } else if self.active_path.is_some() {
+                        self.push_markdown_navigation_history();
+                    }
+                    self.active_panel = ActivePanel::Markdown;
+                    Task::done(Message::EditorCursorMove(index, 0))
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfTocClicked(index) => {
+                if self.active_pdf_path.is_some() {
+                    if self.showing_pdf && self.active_pdf_path.is_some() {
+                        self.push_pdf_navigation_history();
+                    } else if self.active_path.is_some() {
+                        self.push_markdown_navigation_history();
+                    }
                     let target_page = index
                         .min(self.pdf_total_pages.saturating_sub(1) as usize)
                         .max(0) as u16;
                     self.active_panel = ActivePanel::Pdf;
                     self.navigate_pdf_page(target_page)
-                } else if self.split_view_active && self.active_path.is_some() {
-                    // Split-view markdown focus — toc entries are headings.
-                    Task::done(Message::EditorCursorMove(index, 0))
                 } else {
-                    Task::done(Message::EditorCursorMove(index, 0))
+                    Task::none()
                 }
             }
             Message::PdfScrolled { y, viewport_height } => {
@@ -2264,6 +2233,9 @@ impl MdEditor {
                 self.search_visible = false;
                 self.editor_search.visible = false;
                 self.pdf_state.search.visible = false;
+                self.global_search_results.clear();
+                self.global_search_searching = false;
+                self.global_search_error = None;
                 self.restore_scroll_positions()
             }
             Message::SearchQueryChanged(q) => {
@@ -2276,6 +2248,59 @@ impl MdEditor {
                     } else {
                         self.pdf_state.search.matches.clear();
                         self.pdf_state.search.page_index.clear();
+                        Task::none()
+                    }
+                } else if self.search_visible {
+                    self.editor_search.query = q.clone();
+                    self.editor_search.active_index = None;
+                    if q.trim().len() > 2 {
+                        self.global_search_searching = true;
+                        self.global_search_error = None;
+                        self.global_search_id = self.global_search_id.wrapping_add(1);
+                        let search_id = self.global_search_id;
+
+                        let state = self.state.clone();
+                        let active_markdown = self.active_path.clone();
+                        let active_pdf = self.active_pdf_path.clone();
+                        let query = q.clone();
+
+                        let db_task = Task::perform(
+                            async move {
+                                let res = md_editor_core::vault::search_vault_unified(
+                                    &state,
+                                    &query,
+                                    active_markdown.as_deref(),
+                                    active_pdf.as_deref(),
+                                );
+                                (search_id, res)
+                            },
+                            |(id, res)| match res {
+                                Ok(matches) => Message::UnifiedSearchMatchesFound(id, matches),
+                                Err(err) => Message::UnifiedSearchFinished(id, Err(err)),
+                            },
+                        );
+
+                        self.global_search_results.clear();
+
+                        let pdf_task = if self.active_pdf_path.is_some() {
+                            self.pdf_state.search.query = q.clone();
+                            self.pdf_state.search.active_index = None;
+                            self.pdf_search_error = None;
+                            self.search_pdf()
+                        } else {
+                            Task::none()
+                        };
+
+                        Task::batch(vec![db_task, pdf_task])
+                    } else {
+                        self.global_search_results.clear();
+                        self.global_search_searching = false;
+                        self.global_search_error = None;
+                        if self.active_pdf_path.is_some() {
+                            self.pdf_state.search.query = q.clone();
+                            self.pdf_state.search.matches.clear();
+                            self.pdf_state.search.page_index.clear();
+                        }
                         Task::none()
                     }
                 } else {
@@ -2356,10 +2381,65 @@ impl MdEditor {
 
             Message::PdfSearchMatchesFound(search_id, matches) => {
                 if search_id == self.pdf_active_search_id {
+                    if self.search_visible {
+                        if let Some(ref pdf_path) = self.active_pdf_path {
+                            let query_lower = self.editor_search.query.to_lowercase();
+                            let query_trimmed = self.editor_search.query.trim();
+
+                            let index_locked = self.state.file_index.lock().ok();
+                            let vault_root_locked = self.state.vault_root.lock().ok();
+                            let vault_root = vault_root_locked.as_ref().and_then(|r| r.as_ref());
+
+                            let is_linked = |p1: &str, p2: &str| -> bool {
+                                if let (Some(index), Some(root)) = (index_locked.as_ref(), vault_root) {
+                                    let path1 = md_editor_core::vault::resolve_vault_path(root, p1);
+                                    let path2 = md_editor_core::vault::resolve_vault_path(root, p2);
+                                    index.outgoing.get(&path1).map_or(false, |set| set.contains(&path2))
+                                        || index.incoming.get(&path1).map_or(false, |set| set.contains(&path2))
+                                } else {
+                                    false
+                                }
+                            };
+
+                            for m in &matches {
+                                let mut score = 4.0;
+                                score *= 1.5;
+                                if m.context.to_lowercase().contains(&query_lower) {
+                                    if m.context.trim().to_lowercase() == query_trimmed.to_lowercase() {
+                                        score *= 2.0;
+                                    }
+                                }
+                                if let Some(ref active) = self.active_path {
+                                    if is_linked(pdf_path, active) {
+                                        score *= 1.3;
+                                    }
+                                }
+
+                                self.global_search_results.push(md_editor_core::types::UnifiedSearchResult {
+                                    group: md_editor_core::types::SearchResultGroup::PdfContent,
+                                    path: pdf_path.clone(),
+                                    line: (m.page_index + 1) as usize,
+                                    context: m.context.clone(),
+                                    score,
+                                    page_index: Some(m.page_index),
+                                    annotation_id: None,
+                                });
+                            }
+
+                            self.global_search_results.sort_by(|a, b| {
+                                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                                    .then_with(|| a.group.cmp(&b.group))
+                                    .then_with(|| a.path.cmp(&b.path))
+                                    .then_with(|| a.line.cmp(&b.line))
+                            });
+                        }
+                    }
+
                     self.pdf_state.search.matches.extend(matches);
                     self.rebuild_pdf_search_page_index();
                     if self.pdf_state.search.active_index.is_none()
                         && !self.pdf_state.search.matches.is_empty()
+                        && !self.search_visible
                     {
                         self.pdf_state.search.active_index = Some(0);
                         self.navigate_pdf_search_to_index(0)
@@ -2368,6 +2448,62 @@ impl MdEditor {
                     }
                 } else {
                     Task::none()
+                }
+            }
+            Message::UnifiedSearchMatchesFound(search_id, matches) => {
+                if search_id == self.global_search_id {
+                    self.global_search_results.retain(|r| r.group == md_editor_core::types::SearchResultGroup::PdfContent);
+                    self.global_search_results.extend(matches);
+                    self.global_search_results.sort_by(|a, b| {
+                        b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| a.group.cmp(&b.group))
+                            .then_with(|| a.path.cmp(&b.path))
+                            .then_with(|| a.line.cmp(&b.line))
+                    });
+                }
+                Task::none()
+            }
+            Message::UnifiedSearchFinished(search_id, result) => {
+                if search_id == self.global_search_id {
+                    self.global_search_searching = false;
+                    if let Err(err) = result {
+                        self.global_search_error = Some(err);
+                    }
+                }
+                Task::none()
+            }
+            Message::UnifiedSearchResultClicked(result) => {
+                if self.showing_pdf && self.active_pdf_path.is_some() {
+                    self.push_pdf_navigation_history();
+                } else if self.active_path.is_some() {
+                    self.push_markdown_navigation_history();
+                }
+                self.search_visible = false;
+
+                match result.group {
+                    md_editor_core::types::SearchResultGroup::MarkdownContent | md_editor_core::types::SearchResultGroup::Heading => {
+                        let open_task = self.open_file(&result.path);
+                        let cursor_task = Task::done(Message::EditorCursorMove(result.line.saturating_sub(1), 0));
+                        Task::batch(vec![open_task, cursor_task])
+                    }
+                    md_editor_core::types::SearchResultGroup::Filename => {
+                        if result.path.ends_with(".pdf") {
+                            self.open_pdf(&result.path)
+                        } else {
+                            self.open_file(&result.path)
+                        }
+                    }
+                    md_editor_core::types::SearchResultGroup::PdfContent => {
+                        let page = result.page_index.unwrap_or(0);
+                        self.pdf_initial_target_page = Some(page);
+                        self.open_pdf(&result.path)
+                    }
+                    md_editor_core::types::SearchResultGroup::Annotation => {
+                        let page = result.page_index.unwrap_or(0);
+                        self.pdf_initial_target_page = Some(page);
+                        self.pdf_initial_target_annotation = result.annotation_id.clone();
+                        self.open_pdf(&result.path)
+                    }
                 }
             }
             Message::PdfSearchFinished(search_id, result) => {
@@ -2440,39 +2576,46 @@ impl MdEditor {
                 }
             }
             Message::PdfNavBack => {
-                if self.showing_pdf && self.active_pdf_path.is_some() {
-                    if !self.pdf_state.navigation_history.entries.is_empty() {
-                        let current_point = NavigationPoint {
-                            page: self.pdf_current_page,
-                            scroll_offset: self.pdf_scroll_y,
-                            zoom: self.pdf_state.zoom,
-                        };
-                        if self.pdf_state.navigation_history.current_index
-                            == self.pdf_state.navigation_history.entries.len() - 1
-                            && self.pdf_state.navigation_history.entries
-                                [self.pdf_state.navigation_history.current_index]
-                                != current_point
+                let current_target = if self.showing_pdf && self.active_pdf_path.is_some() {
+                    Some(NavigationTarget::Pdf {
+                        path: self.active_pdf_path.clone().unwrap(),
+                        page: self.pdf_current_page,
+                        scroll_offset: self.pdf_scroll_y,
+                        zoom: self.pdf_state.zoom,
+                    })
+                } else {
+                    self.active_path
+                        .as_ref()
+                        .map(|path| NavigationTarget::Markdown {
+                            path: path.clone(),
+                            line: self.buffer.cursor_line,
+                            column: self.buffer.cursor_col,
+                        })
+                };
+
+                if let Some(target) = current_target {
+                    if !self.navigation_history.entries.is_empty() {
+                        if self.navigation_history.current_index
+                            == self.navigation_history.entries.len() - 1
+                            && self.navigation_history.entries
+                                [self.navigation_history.current_index]
+                                .target
+                                != target
                         {
-                            self.pdf_state.navigation_history.push(current_point);
+                            self.navigation_history.push(target);
                         }
                     }
+                }
 
-                    if let Some(point) = self.pdf_state.navigation_history.go_back() {
-                        self.navigate_to_point(point)
-                    } else {
-                        Task::none()
-                    }
+                if let Some(target) = self.navigation_history.go_back() {
+                    self.navigate_to_target(target)
                 } else {
                     Task::none()
                 }
             }
             Message::PdfNavForward => {
-                if self.showing_pdf && self.active_pdf_path.is_some() {
-                    if let Some(point) = self.pdf_state.navigation_history.go_forward() {
-                        self.navigate_to_point(point)
-                    } else {
-                        Task::none()
-                    }
+                if let Some(target) = self.navigation_history.go_forward() {
+                    self.navigate_to_target(target)
                 } else {
                     Task::none()
                 }
@@ -2670,6 +2813,8 @@ impl MdEditor {
                             note: None,
                             linked_note_path: None,
                             markdown_anchor: None,
+                            tags: Vec::new(),
+                            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
                             created_at: now,
                             updated_at: now,
                         };
@@ -2734,6 +2879,7 @@ impl MdEditor {
                         break;
                     }
                 }
+                let mut task = Task::none();
                 if let Some(ann) = found_ann {
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
                         self.toast = Some(format!("Failed to save note: {}", e));
@@ -2742,10 +2888,47 @@ impl MdEditor {
                             self.backlinks =
                                 md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                     .unwrap_or_default();
+
+                            if let Some(ref note_path) = ann.linked_note_path {
+                                if let Ok(bytes) =
+                                    md_editor_core::vault::open_file(&self.state, note_path)
+                                {
+                                    if let Ok(existing_content) = String::from_utf8(bytes) {
+                                        let updated_content =
+                                            crate::pdf_notes::sync_annotation_note_in_markdown(
+                                                &existing_content,
+                                                path,
+                                                &ann,
+                                            );
+                                        if updated_content != existing_content {
+                                            if let Err(e) = save_markdown_file_with_parser_targets(
+                                                &self.state,
+                                                note_path,
+                                                &updated_content,
+                                            ) {
+                                                self.toast = Some(format!(
+                                                    "Failed to sync linked note: {}",
+                                                    e
+                                                ));
+                                            } else if self.active_path.as_deref() == Some(note_path)
+                                            {
+                                                self.buffer =
+                                                    DocBuffer::from_text(&updated_content);
+                                                let _ = reindex_markdown_file_with_parser_targets(
+                                                    &self.state,
+                                                    note_path,
+                                                    &updated_content,
+                                                );
+                                                task = self.highlight_all();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                Task::none()
+                task
             }
             Message::PdfLinkNote(annotation_id, mut note_path) => {
                 let mut annotation = None;
@@ -2767,9 +2950,11 @@ impl MdEditor {
                     if let Some(ref pdf_path) = self.active_pdf_path {
                         let content = self.linked_pdf_note_file_content(&note_path, pdf_path, &ann);
 
-                        if let Err(e) =
-                            md_editor_core::vault::save_file(&self.state, &note_path, &content)
-                        {
+                        if let Err(e) = save_markdown_file_with_parser_targets(
+                            &self.state,
+                            &note_path,
+                            &content,
+                        ) {
                             self.toast = Some(format!("Failed to create linked note: {}", e));
                             return Task::none();
                         }
@@ -2841,6 +3026,11 @@ impl MdEditor {
                 }
             }
             Message::SearchResultClicked(path) => {
+                if self.showing_pdf && self.active_pdf_path.is_some() {
+                    self.push_pdf_navigation_history();
+                } else if self.active_path.is_some() {
+                    self.push_markdown_navigation_history();
+                }
                 self.search_visible = false;
                 self.open_file(&path)
             }
@@ -2962,10 +3152,7 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::TableOfContents => {
-                        if self.active_pdf_path.is_some()
-                            && (self.showing_pdf
-                                || (self.split_view_active && self.active_path.is_some()))
-                        {
+                        if self.active_path.is_some() || self.active_pdf_path.is_some() {
                             self.toc_visible = !self.toc_visible;
                         }
                         Task::none()
@@ -3075,6 +3262,8 @@ impl MdEditor {
                             Task::none()
                         }
                     }
+                    Shortcut::FollowCitation => self.follow_citation(),
+                    Shortcut::ShowUsages => self.show_usages(),
                 }
             }
             Message::SplitViewToggle => {
@@ -3158,9 +3347,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::ToggleTOC => {
-                if self.active_pdf_path.is_some()
-                    && (self.showing_pdf || (self.split_view_active && self.active_path.is_some()))
-                {
+                if self.active_path.is_some() || self.active_pdf_path.is_some() {
                     self.toc_visible = !self.toc_visible;
                 }
                 Task::none()
@@ -3274,8 +3461,7 @@ impl MdEditor {
             self.backlinks_visible,
             self.tracker_visible,
             self.toc_visible,
-            self.active_pdf_path.is_some()
-                && (self.showing_pdf || (self.split_view_active && self.active_path.is_some())),
+            self.active_path.is_some() || self.active_pdf_path.is_some(),
             self.split_view_active,
             self.active_path.is_some(),
         );
@@ -3437,19 +3623,20 @@ impl MdEditor {
             container(Space::new()).width(Length::Fixed(0.0)).into()
         };
 
-        let pdf_toc_available = self.active_pdf_path.is_some()
-            && (self.showing_pdf || (self.split_view_active && self.active_path.is_some()));
+        let md_toc: &[views::toc::TocEntry] = if self.active_path.is_some() {
+            &self.md_toc_entries
+        } else {
+            &[]
+        };
+        let pdf_toc: &[views::toc::TocEntry] =
+            if self.active_pdf_path.is_some() && (self.showing_pdf || self.split_view_active) {
+                self.pdf_toc_entries_flat.as_deref().unwrap_or(&[])
+            } else {
+                &[]
+            };
         let toc_view: Element<Message, Theme, iced::Renderer> =
-            if self.toc_visible && pdf_toc_available {
-                // Pick the right TOC based on what's currently visible.
-                let entries = if self.showing_pdf {
-                    self.pdf_toc_entries_flat.as_deref().unwrap_or(&[])
-                } else if self.split_view_active && self.active_path.is_some() {
-                    &self.md_toc_entries
-                } else {
-                    &self.md_toc_entries
-                };
-                views::toc::view(entries)
+            if self.toc_visible && (!md_toc.is_empty() || !pdf_toc.is_empty()) {
+                views::toc::view(md_toc, pdf_toc)
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
@@ -3573,9 +3760,9 @@ impl MdEditor {
                     self.editor_search.regex,
                     self.editor_search.match_case,
                     self.current_document_match_count(),
-                    &self.editor_search.matches,
-                    &self.pdf_state.search.matches,
-                    self.pdf_search_error.as_deref(),
+                    &self.global_search_results,
+                    self.global_search_searching,
+                    self.global_search_error.as_deref(),
                     true,
                 ))
                 .width(Length::Fill)
@@ -3714,10 +3901,20 @@ impl MdEditor {
     fn open_vault(&mut self, path: &str) {
         self.vault_root = Some(path.to_string());
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_vault", path);
-        if let Ok(mut vault_root) = self.state.vault_root.lock() {
-            vault_root.replace(std::path::PathBuf::from(path));
+        self.vault_entries =
+            md_editor_core::vault::set_vault_root(&self.state, path).unwrap_or_default();
+        let _ = reindex_vault_with_parser_targets(&self.state, std::path::Path::new(path));
+
+        if let Ok(broken) =
+            crate::integrity::check_vault_integrity(&self.state, std::path::Path::new(path))
+        {
+            if !broken.is_empty() {
+                eprintln!(
+                    "Vault integrity check: found {} broken references",
+                    broken.len()
+                );
+            }
         }
-        self.vault_entries = md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
     }
 
     fn new_entry_path(&self, name: &str) -> String {
@@ -3745,16 +3942,73 @@ impl MdEditor {
             .unwrap_or_else(|| name.to_string())
     }
 
+    fn follow_citation(&mut self) -> Task<Message> {
+        let cursor_line = self.buffer.cursor_line;
+        let cursor_col = self.buffer.cursor_col;
+        if cursor_line < self.highlighted_lines.len() {
+            let line = &self.highlighted_lines[cursor_line];
+            let mut current_col = 0;
+            let mut target_span = None;
+            for span in &line.spans {
+                let span_len = span.text.chars().count();
+                if cursor_col >= current_col && cursor_col < current_col + span_len {
+                    target_span = Some(span);
+                    break;
+                }
+                current_col += span_len;
+            }
+            if target_span.is_none() && cursor_col == current_col && !line.spans.is_empty() {
+                target_span = line.spans.last();
+            }
+            if let Some(span) = target_span {
+                if span.is_link {
+                    if let Some(ref target) = span.link_target {
+                        return Task::done(Message::SidebarFileClicked(target.clone()));
+                    }
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn show_usages(&mut self) -> Task<Message> {
+        let path = if self.showing_pdf && self.active_pdf_path.is_some() {
+            self.active_pdf_path.clone()
+        } else if self.split_view_active
+            && self.active_panel == ActivePanel::Pdf
+            && self.active_pdf_path.is_some()
+        {
+            self.active_pdf_path.clone()
+        } else {
+            self.active_path.clone()
+        };
+
+        if let Some(ref p) = path {
+            self.backlinks =
+                md_editor_core::vault::get_mixed_backlinks(&self.state, p).unwrap_or_default();
+            self.backlinks_visible = true;
+        }
+        Task::none()
+    }
+
     fn open_file(&mut self, path: &str) -> Task<Message> {
         self.open_file_extended(path, true)
     }
 
     fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
         let is_different = self.active_path.as_deref() != Some(path);
+        if is_different {
+            if self.showing_pdf && self.active_pdf_path.is_some() {
+                self.push_pdf_navigation_history();
+            } else if self.active_path.is_some() {
+                self.push_markdown_navigation_history();
+            }
+        }
         if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
             if let Ok(content) = String::from_utf8(bytes) {
                 self.buffer = DocBuffer::from_text(&content);
                 self.active_path = Some(path.to_string());
+                let _ = reindex_markdown_file_with_parser_targets(&self.state, path, &content);
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image_path = None;
                 self.active_image = None;
@@ -3779,6 +4033,14 @@ impl MdEditor {
     }
 
     fn open_pdf(&mut self, path: &str) -> Task<Message> {
+        let is_different = self.active_pdf_path.as_deref() != Some(path);
+        if is_different {
+            if self.showing_pdf && self.active_pdf_path.is_some() {
+                self.push_pdf_navigation_history();
+            } else if self.active_path.is_some() {
+                self.push_markdown_navigation_history();
+            }
+        }
         let Some(abs_path) = self.resolve_active_path(path) else {
             self.toast = Some("Open a vault before opening a PDF".to_string());
             return Task::none();
@@ -4583,39 +4845,86 @@ impl MdEditor {
 
     fn push_pdf_navigation_history(&mut self) {
         if self.showing_pdf && self.pdf_total_pages > 0 {
-            let point = NavigationPoint {
-                page: self.pdf_current_page,
-                scroll_offset: self.pdf_scroll_y,
-                zoom: self.pdf_state.zoom,
-            };
-            self.pdf_state.navigation_history.push(point);
+            if let Some(ref path) = self.active_pdf_path {
+                let target = NavigationTarget::Pdf {
+                    path: path.clone(),
+                    page: self.pdf_current_page,
+                    scroll_offset: self.pdf_scroll_y,
+                    zoom: self.pdf_state.zoom,
+                };
+                self.navigation_history.push(target);
+            }
         }
     }
 
-    fn navigate_to_point(&mut self, point: NavigationPoint) -> Task<Message> {
-        self.pdf_state.zoom = point.zoom;
-        self.pdf_current_page = point.page.min(self.pdf_total_pages.saturating_sub(1));
-        self.pdf_pending_pages.clear();
-        self.pdf_stale_pages.clear();
-        self.pdf_pending_links.clear();
-        self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
-        self.pdf_toc_target_page = Some(self.pdf_current_page);
-        self.pdf_programmatic_scroll = true;
+    fn push_markdown_navigation_history(&mut self) {
+        if let Some(ref path) = self.active_path {
+            let target = NavigationTarget::Markdown {
+                path: path.clone(),
+                line: self.buffer.cursor_line,
+                column: self.buffer.cursor_col,
+            };
+            self.navigation_history.push(target);
+        }
+    }
 
-        let start = self.pdf_current_page.saturating_sub(2);
-        let end = (self.pdf_current_page + 2).min(self.pdf_total_pages.saturating_sub(1));
-        self.update_pdf_page_cache();
+    fn navigate_to_target(&mut self, target: NavigationTarget) -> Task<Message> {
+        match target {
+            NavigationTarget::Markdown { path, line, column } => {
+                let mut tasks = Vec::new();
+                let is_different_file = self.active_path.as_deref() != Some(&path);
+                if is_different_file {
+                    tasks.push(self.open_file_extended(&path, false));
+                } else {
+                    self.showing_pdf = false;
+                    self.active_panel = ActivePanel::Markdown;
+                }
 
-        Task::batch(vec![
-            self.render_pdf_page_range(start, end),
-            operation::scroll_to(
-                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-                AbsoluteOffset {
-                    x: 0.0,
-                    y: point.scroll_offset,
-                },
-            ),
-        ])
+                tasks.push(Task::done(Message::EditorCommand(
+                    crate::editor::buffer::EditorCommand::SetCursor { line, col: column },
+                )));
+
+                tasks.push(self.center_editor_line(line));
+                Task::batch(tasks)
+            }
+            NavigationTarget::Pdf {
+                path,
+                page,
+                scroll_offset,
+                zoom,
+            } => {
+                let mut tasks = Vec::new();
+                let is_different_pdf = self.active_pdf_path.as_deref() != Some(&path);
+                if is_different_pdf {
+                    tasks.push(self.open_pdf(&path));
+                } else {
+                    self.showing_pdf = true;
+                    self.active_panel = ActivePanel::Pdf;
+                }
+                self.pdf_state.zoom = zoom;
+                self.pdf_current_page = page.min(self.pdf_total_pages.saturating_sub(1));
+                self.pdf_pending_pages.clear();
+                self.pdf_stale_pages.clear();
+                self.pdf_pending_links.clear();
+                self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
+                self.pdf_toc_target_page = Some(self.pdf_current_page);
+                self.pdf_programmatic_scroll = true;
+
+                let start = self.pdf_current_page.saturating_sub(2);
+                let end = (self.pdf_current_page + 2).min(self.pdf_total_pages.saturating_sub(1));
+                self.update_pdf_page_cache();
+
+                tasks.push(self.render_pdf_page_range(start, end));
+                tasks.push(operation::scroll_to(
+                    iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                    AbsoluteOffset {
+                        x: 0.0,
+                        y: scroll_offset,
+                    },
+                ));
+                Task::batch(tasks)
+            }
+        }
     }
 
     fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {
@@ -5189,7 +5498,7 @@ fn normalize_path(path: &std::path::Path) -> String {
     normalized.to_string_lossy().to_string().replace('\\', "/")
 }
 
-fn resolve_relative_link_path(
+pub(crate) fn resolve_relative_link_path(
     vault_root: Option<&str>,
     active_path: Option<&str>,
     link_path: &str,
@@ -5221,20 +5530,105 @@ fn resolve_relative_link_path(
 }
 
 fn slugify(s: &str) -> String {
-    let mut result = String::new();
-    let mut last_was_hyphen = false;
-    for c in s.to_lowercase().chars() {
-        if c.is_alphanumeric() || c == '_' {
-            result.push(c);
-            last_was_hyphen = false;
-        } else if c.is_whitespace() || c == '-' {
-            if !last_was_hyphen {
-                result.push('-');
-                last_was_hyphen = true;
-            }
-        }
+    crate::editor::highlight::markdown_anchor_slug(s)
+}
+
+fn save_markdown_file_with_parser_targets(
+    state: &md_editor_core::state::AppState,
+    path: &str,
+    content: &str,
+) -> Result<(), String> {
+    let markdown_link_targets = parser_index_targets(content);
+    md_editor_core::vault::save_file_with_markdown_link_targets(
+        state,
+        path,
+        content,
+        &markdown_link_targets,
+    )
+}
+
+fn reindex_markdown_file_with_parser_targets(
+    state: &md_editor_core::state::AppState,
+    path: &str,
+    content: &str,
+) -> Result<(), String> {
+    let vault_root = state.vault_root.lock().map_err(|err| err.to_string())?;
+    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let abs_path = md_editor_core::vault::resolve_vault_path(vault_root, path);
+    let targets = parser_index_targets(content);
+
+    let mut index = state.file_index.lock().map_err(|err| err.to_string())?;
+    index.update_file_targets(&abs_path, targets.iter().map(String::as_str));
+    Ok(())
+}
+
+fn reindex_vault_with_parser_targets(
+    state: &md_editor_core::state::AppState,
+    vault_root: &std::path::Path,
+) -> Result<(), String> {
+    let md_files = md_editor_core::vault::list_all_md_files(vault_root)?;
+    let mut index = state.file_index.lock().map_err(|err| err.to_string())?;
+    *index = md_editor_core::file_index::FileIndex::new(vault_root.to_path_buf());
+
+    for abs_path in md_files {
+        let content = std::fs::read_to_string(&abs_path)
+            .map_err(|err| format!("Failed to read file {}: {err}", abs_path.display()))?;
+        let targets = parser_index_targets(&content);
+        index.update_file_targets(&abs_path, targets.iter().map(String::as_str));
     }
-    result.trim_matches('-').to_string()
+
+    Ok(())
+}
+
+fn parser_index_targets(content: &str) -> Vec<String> {
+    let highlighted = highlight::highlight_markdown(content);
+    let metadata = highlight::extract_document_metadata(&highlighted);
+    metadata
+        .links
+        .iter()
+        .filter_map(indexable_markdown_link_target)
+        .collect()
+}
+
+fn indexable_markdown_link_target(
+    link: &crate::editor::highlight::MarkdownLinkEntry,
+) -> Option<String> {
+    if !matches!(
+        link.kind,
+        crate::editor::highlight::MarkdownLinkKind::Wiki
+            | crate::editor::highlight::MarkdownLinkKind::Inline
+            | crate::editor::highlight::MarkdownLinkKind::ResolvedReference
+    ) {
+        return None;
+    }
+
+    let target = link.target.trim();
+    if target.is_empty() || target.starts_with('#') {
+        return None;
+    }
+    if let Some(pdf_target) = parse_pdf_link(target) {
+        return Some(pdf_target.path);
+    }
+    if has_uri_scheme(target) {
+        return None;
+    }
+    Some(target.to_string())
+}
+
+pub(crate) fn has_uri_scheme(target: &str) -> bool {
+    let Some(colon_idx) = target.find(':') else {
+        return false;
+    };
+    let first_separator = target
+        .find('/')
+        .into_iter()
+        .chain(target.find('\\'))
+        .min()
+        .unwrap_or(usize::MAX);
+    colon_idx < first_separator
+        && target[..colon_idx]
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
 }
 
 fn find_heading_line(text: &str, target_slug: &str) -> Option<usize> {
@@ -5274,18 +5668,15 @@ fn find_heading_or_widget_line(
         None
     };
 
-    for (line_idx, line) in highlighted_lines.iter().enumerate() {
-        for span in &line.spans {
-            if let Some(ref span_id) = span.id {
-                if span_id.eq_ignore_ascii_case(target_slug) {
-                    return Some(line_idx);
-                }
-                if let Some(ref alt) = alternative_slug {
-                    if span_id.eq_ignore_ascii_case(alt) {
-                        return Some(line_idx);
-                    }
-                }
-            }
+    let metadata = crate::editor::highlight::extract_document_metadata(highlighted_lines);
+    for anchor in &metadata.anchors {
+        if anchor.slug.eq_ignore_ascii_case(target_slug) {
+            return Some(anchor.line);
+        }
+        if let Some(ref alt) = alternative_slug
+            && anchor.slug.eq_ignore_ascii_case(alt)
+        {
+            return Some(anchor.line);
         }
     }
 
@@ -5335,6 +5726,222 @@ mod tests {
         assert_eq!(find_heading_line(text, "header-equation-1"), Some(2));
         assert_eq!(find_heading_line(text, "bold-heading"), Some(4));
         assert_eq!(find_heading_line(text, "not-existent"), None);
+    }
+
+    #[test]
+    fn indexable_markdown_link_target_filters_external_links() {
+        let wiki = markdown_link("notes/topic", highlight::MarkdownLinkKind::Wiki);
+        let local_inline =
+            markdown_link("../paper.md#section", highlight::MarkdownLinkKind::Inline);
+        let external = markdown_link("https://example.com", highlight::MarkdownLinkKind::Inline);
+        let pdf = markdown_link(
+            "pdf://papers/a.pdf?page=2",
+            highlight::MarkdownLinkKind::Inline,
+        );
+        let reference = markdown_link("ref-id", highlight::MarkdownLinkKind::Reference);
+        let anchor = markdown_link("#local", highlight::MarkdownLinkKind::Wiki);
+        let resolved_reference = markdown_link(
+            "papers/b.pdf",
+            highlight::MarkdownLinkKind::ResolvedReference,
+        );
+
+        assert_eq!(
+            indexable_markdown_link_target(&wiki).as_deref(),
+            Some("notes/topic")
+        );
+        assert_eq!(
+            indexable_markdown_link_target(&local_inline).as_deref(),
+            Some("../paper.md#section")
+        );
+        assert!(indexable_markdown_link_target(&external).is_none());
+        assert_eq!(
+            indexable_markdown_link_target(&pdf).as_deref(),
+            Some("papers/a.pdf")
+        );
+        assert!(indexable_markdown_link_target(&reference).is_none());
+        assert!(indexable_markdown_link_target(&anchor).is_none());
+        assert_eq!(
+            indexable_markdown_link_target(&resolved_reference).as_deref(),
+            Some("papers/b.pdf")
+        );
+    }
+
+    fn markdown_link(
+        target: &str,
+        kind: highlight::MarkdownLinkKind,
+    ) -> highlight::MarkdownLinkEntry {
+        highlight::MarkdownLinkEntry {
+            line: 0,
+            target: target.to_string(),
+            display_text: target.to_string(),
+            source_text: target.to_string(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn save_markdown_file_with_parser_targets_indexes_local_links() {
+        let root = unique_temp_dir("native_parser_save");
+        std::fs::create_dir_all(&root).unwrap();
+        let state = md_editor_core::state::AppState::new_in_memory();
+        md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
+
+        save_markdown_file_with_parser_targets(
+            &state,
+            "source.md",
+            "See [[wiki-target]], [inline](inline-target), [pdf](pdf://papers/a.pdf?page=2), and [web](https://example.com).",
+        )
+        .unwrap();
+
+        let wiki_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "wiki-target.md").unwrap();
+        assert!(
+            wiki_backlinks
+                .iter()
+                .any(|path| path.ends_with("source.md")),
+            "wiki link should be indexed: {wiki_backlinks:?}"
+        );
+        let inline_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "inline-target.md").unwrap();
+        assert!(
+            inline_backlinks
+                .iter()
+                .any(|path| path.ends_with("source.md")),
+            "local inline link should be indexed: {inline_backlinks:?}"
+        );
+        let pdf_backlinks = md_editor_core::vault::get_backlinks(&state, "papers/a.pdf").unwrap();
+        assert!(
+            pdf_backlinks.iter().any(|path| path.ends_with("source.md")),
+            "pdf link should be indexed against vault PDF path: {pdf_backlinks:?}"
+        );
+        let external_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "https://example.com.md").unwrap();
+        assert!(
+            external_backlinks.is_empty(),
+            "external URL should not be indexed: {external_backlinks:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_markdown_file_with_reference_links_indexes_resolved_targets() {
+        let root = unique_temp_dir("native_reference_save");
+        std::fs::create_dir_all(&root).unwrap();
+        let state = md_editor_core::state::AppState::new_in_memory();
+        md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
+
+        save_markdown_file_with_parser_targets(
+            &state,
+            "source.md",
+            "See [my text][ref1] and [shortcut_ref] and [unresolved_ref].\n\n[ref1]: papers/ref-target.pdf\n[shortcut_ref]: <another_note.md>",
+        )
+        .unwrap();
+
+        let ref1_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "papers/ref-target.pdf").unwrap();
+        assert!(
+            ref1_backlinks
+                .iter()
+                .any(|path| path.ends_with("source.md")),
+            "reference pdf link should be indexed: {ref1_backlinks:?}"
+        );
+
+        let shortcut_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "another_note.md").unwrap();
+        assert!(
+            shortcut_backlinks
+                .iter()
+                .any(|path| path.ends_with("source.md")),
+            "shortcut reference link should be indexed: {shortcut_backlinks:?}"
+        );
+
+        let unresolved_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "unresolved_ref.md").unwrap();
+        assert!(
+            unresolved_backlinks.is_empty(),
+            "unresolved reference ID should not be indexed: {unresolved_backlinks:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reindex_vault_with_parser_targets_replaces_regex_backlinks() {
+        let root = unique_temp_dir("native_parser_reindex");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("source.md"),
+            "```md\n[[ignored-code-link]]\n```\nSee [inline](inline-target).",
+        )
+        .unwrap();
+
+        let state = md_editor_core::state::AppState::new_in_memory();
+        md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
+        let regex_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "ignored-code-link.md").unwrap();
+        assert!(
+            regex_backlinks
+                .iter()
+                .any(|path| path.ends_with("source.md")),
+            "core fallback should see raw wiki text before native parser reindex"
+        );
+
+        reindex_vault_with_parser_targets(&state, &root).unwrap();
+
+        let ignored_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "ignored-code-link.md").unwrap();
+        assert!(
+            ignored_backlinks.is_empty(),
+            "parser reindex should drop links inside code blocks: {ignored_backlinks:?}"
+        );
+        let inline_backlinks =
+            md_editor_core::vault::get_backlinks(&state, "inline-target.md").unwrap();
+        assert!(
+            inline_backlinks
+                .iter()
+                .any(|path| path.ends_with("source.md")),
+            "parser reindex should add local inline links: {inline_backlinks:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reindex_markdown_file_with_parser_targets_updates_opened_file() {
+        let root = unique_temp_dir("native_parser_open_file");
+        std::fs::create_dir_all(&root).unwrap();
+        let state = md_editor_core::state::AppState::new_in_memory();
+        md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
+        md_editor_core::vault::save_file(&state, "source.md", "See [[old-target]].").unwrap();
+
+        reindex_markdown_file_with_parser_targets(
+            &state,
+            "source.md",
+            "```md\n[[old-target]]\n```\nSee [new](new-target).",
+        )
+        .unwrap();
+
+        let old_backlinks = md_editor_core::vault::get_backlinks(&state, "old-target.md").unwrap();
+        assert!(
+            old_backlinks.is_empty(),
+            "parser reindex should remove stale/code-block links: {old_backlinks:?}"
+        );
+        let new_backlinks = md_editor_core::vault::get_backlinks(&state, "new-target.md").unwrap();
+        assert!(
+            new_backlinks.iter().any(|path| path.ends_with("source.md")),
+            "parser reindex should add current local inline links: {new_backlinks:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn unique_temp_dir(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("md_editor_{name}_{nanos}"))
     }
 
     #[test]
@@ -5658,6 +6265,8 @@ mod tests {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            tags: Vec::new(),
+            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         };
@@ -5723,6 +6332,8 @@ mod tests {
                 note: None,
                 linked_note_path: None,
                 markdown_anchor: None,
+                tags: Vec::new(),
+                status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
                 created_at: 0,
                 updated_at: 0,
             }],
@@ -5779,6 +6390,8 @@ mod tests {
                 note: None,
                 linked_note_path: None,
                 markdown_anchor: None,
+                tags: Vec::new(),
+                status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
                 created_at: 0,
                 updated_at: 0,
             }],
@@ -5835,20 +6448,22 @@ mod tests {
     #[test]
     fn test_pdf_navigation_history() {
         let mut history = NavigationHistory::default();
-        let p1 = NavigationPoint {
+        let p1 = NavigationTarget::Pdf {
+            path: "doc1.pdf".to_string(),
             page: 1,
             scroll_offset: 100.0,
             zoom: 1.0,
         };
-        let p2 = NavigationPoint {
+        let p2 = NavigationTarget::Pdf {
+            path: "doc1.pdf".to_string(),
             page: 2,
             scroll_offset: 200.0,
             zoom: 1.5,
         };
-        let p3 = NavigationPoint {
-            page: 3,
-            scroll_offset: 300.0,
-            zoom: 2.0,
+        let p3 = NavigationTarget::Markdown {
+            path: "note.md".to_string(),
+            line: 5,
+            column: 10,
         };
 
         // Test push
@@ -5882,14 +6497,15 @@ mod tests {
 
         // Test branch truncation on push
         assert_eq!(history.go_back(), Some(p2.clone())); // current_index = 1
-        let p4 = NavigationPoint {
+        let p4 = NavigationTarget::Pdf {
+            path: "doc2.pdf".to_string(),
             page: 4,
             scroll_offset: 400.0,
             zoom: 1.0,
         };
         history.push(p4.clone()); // truncates forward, adds p4 at index 2
         assert_eq!(history.entries.len(), 3);
-        assert_eq!(history.entries[2], p4);
+        assert_eq!(history.entries[2].target, p4);
         assert_eq!(history.current_index, 2);
         assert_eq!(history.go_forward(), None);
     }
@@ -6128,5 +6744,397 @@ mod tests {
         // Programmatic scroll bypasses Ctrl key cancellation, sets self.pdf_programmatic_scroll = false, and clears target
         assert!(!app.pdf_programmatic_scroll);
         assert_eq!(app.pdf_toc_target_page, None);
+    }
+
+    #[test]
+    fn test_large_doc_highlight_debounce_and_reset() {
+        let mut app = MdEditor::new().0;
+
+        // Setup a buffer with more than LARGE_DOC_LINE_THRESHOLD (1,000) lines
+        let mut text = String::new();
+        for i in 0..1005 {
+            text.push_str(&format!("Line {}\n", i));
+        }
+        app.buffer.set_text(&text);
+
+        // 1. Initial edit (opened_file = false)
+        let _task = app.refresh_highlighting_for_current_buffer(false);
+        assert_eq!(app.highlight_generation, 1);
+        assert_eq!(app.pending_highlight_generation, Some(1));
+        assert!(app.pending_highlight_requested_at.is_some());
+        assert!(app.pending_highlight_text.is_some());
+
+        // 2. Second edit before debounce triggers resets and increments generation
+        let _task2 = app.refresh_highlighting_for_current_buffer(false);
+        assert_eq!(app.highlight_generation, 2);
+        assert_eq!(app.pending_highlight_generation, Some(2));
+
+        // 3. Mock time elapsed to trigger highlight debounce
+        app.pending_highlight_requested_at =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(300));
+        let _debounce_task = app.update(Message::HighlightDebounceElapsed);
+
+        // Debounce state cleared
+        assert_eq!(app.pending_highlight_generation, None);
+        assert!(app.pending_highlight_requested_at.is_none());
+        assert!(app.pending_highlight_text.is_none());
+    }
+
+    #[test]
+    fn test_stale_highlight_generation_handling() {
+        let mut app = MdEditor::new().0;
+        app.highlight_generation = 5;
+
+        let dummy_lines_stale = vec![crate::editor::highlight::StyledLine::new()];
+        let mut dummy_lines_newer = vec![crate::editor::highlight::StyledLine::new()];
+        dummy_lines_newer[0]
+            .spans
+            .push(crate::editor::highlight::StyledSpan::plain("newer"));
+
+        // 1. Stale highlight ready (generation 4 < 5) should be ignored
+        let _ = app.update(Message::HighlightReady(4, dummy_lines_stale));
+        assert!(app.highlighted_lines.is_empty());
+
+        // 2. Newer highlight ready (generation 5 == 5) should be accepted
+        let _ = app.update(Message::HighlightReady(5, dummy_lines_newer));
+        assert_eq!(app.highlighted_lines.len(), 1);
+        assert_eq!(app.highlighted_lines[0].spans[0].text, "newer");
+    }
+
+    #[test]
+    fn test_pdf_open_clears_page_text_cache() {
+        let mut app = MdEditor::new().0;
+
+        // 1. Populate the page text cache with some dummy entries
+        app.pdf_page_text.insert(
+            0,
+            md_editor_core::pdf::PdfPageText {
+                page_index: 0,
+                page_width: 500.0,
+                page_height: 700.0,
+                text: "Hello".to_string(),
+                chars: vec![],
+                lines: vec![],
+            },
+        );
+        app.pdf_text_lru.push_back(0);
+
+        // 2. Perform open_pdf (we'll set vault root first so path resolves)
+        let root = unique_temp_dir("open_pdf_test");
+        std::fs::create_dir_all(&root).unwrap();
+        let root_str = root.to_str().unwrap().to_string();
+        md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
+        app.vault_root = Some(root_str);
+
+        // Create a dummy pdf file so resolve_active_path works
+        let pdf_path = root.join("test.pdf");
+        std::fs::write(&pdf_path, "%PDF-1.4 ...").unwrap();
+
+        let _task = app.open_pdf("test.pdf");
+
+        // 3. Verify page text cache is cleared
+        assert!(app.pdf_page_text.is_empty());
+        assert!(app.pdf_text_lru.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_sync_quick_note_to_linked_note_file() {
+        let mut app = MdEditor::new().0;
+        let root = unique_temp_dir("sync_quick_note_test");
+        std::fs::create_dir_all(&root).unwrap();
+        let root_str = root.to_str().unwrap().to_string();
+        app.vault_root = Some(root_str.clone());
+        md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
+
+        // 1. Create a dummy linked note file
+        let note_path = "linked-note.md";
+        let doc_id = format!("doc-{}", uuid::Uuid::new_v4());
+        let ann_id = format!("ann-{}", uuid::Uuid::new_v4());
+        let pdf_path = "paper.pdf";
+
+        let ann = md_editor_core::pdf::PdfAnnotation {
+            id: ann_id.clone(),
+            document_id: doc_id.clone(),
+            page_index: 0,
+            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
+            color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+            selected_text: "Target Highlight Text".to_string(),
+            ranges: vec![],
+            rects: vec![],
+            note: None,
+            linked_note_path: Some(note_path.to_string()),
+            markdown_anchor: None,
+            tags: Vec::new(),
+            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        // Create the linked note file with initial empty content
+        let initial_content =
+            crate::pdf_notes::new_linked_pdf_note_content(note_path, pdf_path, &ann);
+        std::fs::write(root.join(note_path), &initial_content).unwrap();
+
+        // Setup db mock document and annotation
+        {
+            let db = app.state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO pdf_documents (document_id, vault_relative_path, file_size, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![doc_id, pdf_path, 0, 0, 0],
+            ).unwrap();
+            db.execute(
+                "INSERT INTO pdf_annotations (id, document_id, page_index, kind, color, selected_text, ranges_json, rects_json, note, linked_note_path, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![
+                    ann_id, doc_id, 0, "Highlight", "Yellow", "Target Highlight Text", "[]", "[]", "", note_path, 0, 0
+                ]
+            ).unwrap();
+        }
+
+        // Setup app state
+        app.active_pdf_path = Some(pdf_path.to_string());
+        app.pdf_annotations.insert(0, vec![ann.clone()]);
+
+        // Open the file as active in the editor so we test real-time buffer reload
+        app.active_path = Some(note_path.to_string());
+        app.buffer = crate::editor::buffer::DocBuffer::from_text(&initial_content);
+
+        // 2. Fire PdfAddQuickNote
+        let _ = app.update(Message::PdfAddQuickNote(
+            ann_id.to_string(),
+            "New note update from UI".to_string(),
+        ));
+
+        // 3. Verifications
+        // Check annotation in app memory
+        let updated_ann = app
+            .pdf_annotations
+            .get(&0)
+            .unwrap()
+            .iter()
+            .find(|a| a.id == ann_id)
+            .unwrap();
+        assert_eq!(
+            updated_ann.note,
+            Some("New note update from UI".to_string())
+        );
+
+        // Check annotation in SQLite
+        let db_note: Option<String> = app
+            .state
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT note FROM pdf_annotations WHERE id = ?1",
+                rusqlite::params![ann_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(db_note, Some("New note update from UI".to_string()));
+
+        // Check file on disk
+        let disk_content = std::fs::read_to_string(root.join(note_path)).unwrap();
+        assert!(disk_content.contains("### Notes\n\nNew note update from UI\n\n"));
+
+        // Check active editor buffer reload
+        assert!(
+            app.buffer
+                .text()
+                .contains("### Notes\n\nNew note update from UI\n\n")
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_cross_pane_navigation_history() {
+        let mut app = MdEditor::new().0;
+        let root = unique_temp_dir("cross_pane_nav_test");
+        std::fs::create_dir_all(&root).unwrap();
+        let root_str = root.to_str().unwrap().to_string();
+        app.vault_root = Some(root_str.clone());
+        md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
+
+        // Create a markdown file and a dummy PDF file
+        let note_path = "document.md";
+        let pdf_path = "document.pdf";
+        std::fs::write(root.join(note_path), "# Title\nSome content here").unwrap();
+        std::fs::write(root.join(pdf_path), "%PDF-1.4 ...").unwrap();
+
+        // 1. Open the markdown file
+        let _ = app.open_file(note_path);
+        assert_eq!(app.active_path.as_deref(), Some(note_path));
+        assert!(!app.showing_pdf);
+
+        // 2. Open the PDF (this should trigger history push of markdown path)
+        let _ = app.open_pdf(pdf_path);
+        assert_eq!(app.active_pdf_path.as_deref(), Some(pdf_path));
+        assert!(app.showing_pdf);
+
+        // 3. Verify history has 1 entry (for Markdown)
+        assert_eq!(app.navigation_history.entries.len(), 1);
+        match &app.navigation_history.entries[0].target {
+            NavigationTarget::Markdown { path, .. } => {
+                assert_eq!(path, note_path);
+            }
+            _ => panic!("Expected Markdown target"),
+        }
+
+        // 4. Trigger PdfNavBack to return to Markdown
+        let _ = app.update(Message::PdfNavBack);
+        assert_eq!(app.active_path.as_deref(), Some(note_path));
+        assert!(!app.showing_pdf);
+
+        // 5. Trigger PdfNavForward to return to PDF
+        let _ = app.update(Message::PdfNavForward);
+        assert_eq!(app.active_pdf_path.as_deref(), Some(pdf_path));
+        assert!(app.showing_pdf);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_follow_citation() {
+        let mut app = MdEditor::new().0;
+
+        let link_span = highlight::StyledSpan {
+            text: "[citation](pdf://papers/a.pdf)".to_string(),
+            display_text: Some("citation".to_string()),
+            color: iced::Color::BLACK,
+            bold: false,
+            italic: false,
+            font_size: 12.0,
+            is_code: false,
+            is_link: true,
+            link_target: Some("pdf://papers/a.pdf".to_string()),
+            is_heading: false,
+            heading_level: 0,
+            is_checkbox: false,
+            is_checked: false,
+            is_rule: false,
+            is_image: false,
+            image_path: None,
+            image_alt: None,
+            is_math: false,
+            is_syntax: false,
+            id: None,
+        };
+        app.highlighted_lines = vec![highlight::StyledLine {
+            spans: vec![link_span],
+            is_code_block: false,
+            is_math_block: false,
+            code_block_lang: None,
+            is_blockquote: false,
+            block_id: 1,
+            is_block_fence: false,
+            is_table_row: false,
+            table_cells: vec![],
+        }];
+
+        app.buffer.cursor_line = 0;
+        app.buffer.cursor_col = 5;
+        let _task = app.follow_citation();
+
+        app.buffer.cursor_col = 50;
+        let _task_none = app.follow_citation();
+
+        app.buffer.cursor_line = 10;
+        let _task_oob = app.follow_citation();
+    }
+
+    #[test]
+    fn test_show_usages() {
+        let mut app = MdEditor::new().0;
+        let root = unique_temp_dir("test_show_usages_dir");
+        std::fs::create_dir_all(&root).unwrap();
+        let root_str = root.to_str().unwrap().to_string();
+        app.vault_root = Some(root_str.clone());
+        md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
+
+        save_markdown_file_with_parser_targets(
+            &app.state,
+            "source.md",
+            "Refer to [doc](pdf://papers/a.pdf?page=2)",
+        )
+        .unwrap();
+
+        app.active_pdf_path = Some("papers/a.pdf".to_string());
+        app.showing_pdf = true;
+
+        let _ = app.show_usages();
+
+        assert!(app.backlinks_visible);
+        assert!(!app.backlinks.is_empty());
+        let backlink_labels = app
+            .backlinks
+            .iter()
+            .map(|b| b.label.clone())
+            .collect::<Vec<_>>();
+        assert!(backlink_labels.contains(&"source.md".to_string()));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_combined_outline_toc_navigator() {
+        let md_toc = vec![highlight::OutlineEntry {
+            level: 1,
+            text: "Heading 1".to_string(),
+            line: 5,
+        }];
+        let pdf_toc = vec![highlight::OutlineEntry {
+            level: 2,
+            text: "Bookmark 2".to_string(),
+            line: 12,
+        }];
+
+        let _element = views::toc::view(&md_toc, &pdf_toc);
+    }
+
+    #[test]
+    fn test_global_unified_search() {
+        let mut app = MdEditor::new().0;
+        let root = unique_temp_dir("test_global_unified_search_dir");
+        std::fs::create_dir_all(&root).unwrap();
+        let root_str = root.to_str().unwrap().to_string();
+        app.vault_root = Some(root_str.clone());
+        md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
+
+        app.search_visible = true;
+        let _ = app.update(Message::SearchQueryChanged("vault".to_string()));
+
+        assert_eq!(app.editor_search.query, "vault");
+        assert!(app.global_search_searching);
+
+        let match_item = md_editor_core::types::UnifiedSearchResult {
+            group: md_editor_core::types::SearchResultGroup::Heading,
+            path: "source.md".to_string(),
+            line: 1,
+            context: "# Welcome to the Vault".to_string(),
+            score: 8.0,
+            page_index: None,
+            annotation_id: None,
+        };
+
+        let _ = app.update(Message::UnifiedSearchMatchesFound(
+            app.global_search_id,
+            vec![match_item],
+        ));
+
+        assert_eq!(app.global_search_results.len(), 1);
+        assert_eq!(app.global_search_results[0].context, "# Welcome to the Vault");
+
+        let _ = app.update(Message::UnifiedSearchFinished(app.global_search_id, Ok(())));
+        assert!(!app.global_search_searching);
+
+        let _click_task = app.update(Message::UnifiedSearchResultClicked(
+            app.global_search_results[0].clone(),
+        ));
+        assert!(!app.search_visible);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

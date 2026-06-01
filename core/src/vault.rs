@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::file_index::FileIndex;
 use crate::state::AppState;
-use crate::types::{BacklinkItem, BacklinkTarget, FileEntry, SearchResult};
+use crate::types::{BacklinkItem, BacklinkTarget, FileEntry, SearchResult, SearchResultGroup, UnifiedSearchResult};
 
 const IMAGE_EXTENSIONS: [&str; 6] = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
 
@@ -78,6 +78,36 @@ pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), Stri
 
     let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
     index.update_file(&abs_path, content);
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute(
+        "DELETE FROM file_search WHERE path = ?1",
+        rusqlite::params![path],
+    )
+    .ok();
+    db.execute(
+        "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
+        rusqlite::params![path, content],
+    )
+    .ok();
+
+    Ok(())
+}
+
+/// Save file content and update backlinks from pre-parsed local markdown link targets.
+pub fn save_file_with_markdown_link_targets(
+    state: &AppState,
+    path: &str,
+    content: &str,
+    markdown_link_targets: &[String],
+) -> Result<(), String> {
+    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
+    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let abs_path = resolve_vault_path(vault_root, path);
+    write_file(&abs_path, content)?;
+
+    let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+    index.update_file_targets(&abs_path, markdown_link_targets.iter().map(String::as_str));
 
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute(
@@ -486,6 +516,216 @@ fn list_all_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(
     Ok(())
 }
 
+/// Perform unified global search across markdown content, headings, filenames, annotations & notes.
+pub fn search_vault_unified(
+    state: &AppState,
+    query: &str,
+    active_markdown_path: Option<&str>,
+    active_pdf_path: Option<&str>,
+) -> Result<Vec<UnifiedSearchResult>, String> {
+    let query_lower = query.to_lowercase();
+    let query_trimmed = query.trim();
+    if query_trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let index_locked = state.file_index.lock().ok();
+    let vault_root_locked = state.vault_root.lock().ok();
+    let vault_root = vault_root_locked.as_ref().and_then(|r| r.as_ref());
+
+    let is_linked = |p1: &str, p2: &str| -> bool {
+        if let (Some(index), Some(root)) = (index_locked.as_ref(), vault_root) {
+            let path1 = resolve_vault_path(root, p1);
+            let path2 = resolve_vault_path(root, p2);
+            index.outgoing.get(&path1).map_or(false, |set| set.contains(&path2))
+                || index.incoming.get(&path1).map_or(false, |set| set.contains(&path2))
+        } else {
+            false
+        }
+    };
+
+    let mut results = Vec::new();
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    // 1. Search Filenames
+    // Markdown files
+    let mut stmt_md_paths = db.prepare("SELECT DISTINCT path FROM file_search").map_err(|e| e.to_string())?;
+    let mut rows_md_paths = stmt_md_paths.query([]).map_err(|e| e.to_string())?;
+    while let Some(row) = rows_md_paths.next().map_err(|e| e.to_string())? {
+        let path: String = row.get(0).map_err(|e| e.to_string())?;
+        let filename = std::path::Path::new(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        if filename.to_lowercase().contains(&query_lower) {
+            let mut score = 10.0;
+            if Some(path.as_str()) == active_markdown_path {
+                score *= 1.5;
+            }
+            let file_stem = std::path::Path::new(&filename)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| filename.clone());
+            if file_stem.trim().to_lowercase() == query_trimmed.to_lowercase() {
+                score *= 2.0;
+            }
+            if let Some(active) = active_markdown_path {
+                if is_linked(&path, active) {
+                    score *= 1.3;
+                }
+            }
+            results.push(UnifiedSearchResult {
+                group: SearchResultGroup::Filename,
+                path,
+                line: 1,
+                context: filename,
+                score,
+                page_index: None,
+                annotation_id: None,
+            });
+        }
+    }
+
+    // PDF files
+    let mut stmt_pdf_paths = db.prepare("SELECT vault_relative_path FROM pdf_documents").map_err(|e| e.to_string())?;
+    let mut rows_pdf_paths = stmt_pdf_paths.query([]).map_err(|e| e.to_string())?;
+    while let Some(row) = rows_pdf_paths.next().map_err(|e| e.to_string())? {
+        let path: String = row.get(0).map_err(|e| e.to_string())?;
+        let filename = std::path::Path::new(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        if filename.to_lowercase().contains(&query_lower) {
+            let mut score = 10.0;
+            if Some(path.as_str()) == active_pdf_path {
+                score *= 1.5;
+            }
+            let file_stem = std::path::Path::new(&filename)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| filename.clone());
+            if file_stem.trim().to_lowercase() == query_trimmed.to_lowercase() {
+                score *= 2.0;
+            }
+            if let Some(active) = active_markdown_path {
+                if is_linked(&path, active) {
+                    score *= 1.3;
+                }
+            }
+            results.push(UnifiedSearchResult {
+                group: SearchResultGroup::Filename,
+                path,
+                line: 1,
+                context: filename,
+                score,
+                page_index: None,
+                annotation_id: None,
+            });
+        }
+    }
+
+    // 2. Search PDF Annotations & Quick Notes
+    let mut stmt_ann = db.prepare(
+        "SELECT d.vault_relative_path, a.id, a.page_index, a.selected_text, a.note
+         FROM pdf_annotations a
+         JOIN pdf_documents d ON a.document_id = d.document_id
+         WHERE a.selected_text LIKE ?1 OR a.note LIKE ?1"
+    ).map_err(|e| e.to_string())?;
+    let like_query = format!("%{}%", query_trimmed);
+    let mut rows_ann = stmt_ann.query([&like_query]).map_err(|e| e.to_string())?;
+    while let Some(row) = rows_ann.next().map_err(|e| e.to_string())? {
+        let path: String = row.get(0).map_err(|e| e.to_string())?;
+        let ann_id: String = row.get(1).map_err(|e| e.to_string())?;
+        let page_idx: i32 = row.get(2).map_err(|e| e.to_string())?;
+        let selected_text: String = row.get(3).map_err(|e| e.to_string())?;
+        let note: Option<String> = row.get(4).map_err(|e| e.to_string())?;
+
+        let note_text = note.unwrap_or_default();
+        let context = format!("Highlight: \"{}\" | Note: \"{}\"", selected_text, note_text);
+
+        let mut score = 6.0;
+        if Some(path.as_str()) == active_pdf_path {
+            score *= 1.5;
+        }
+        if selected_text.to_lowercase().contains(&query_lower) || note_text.to_lowercase().contains(&query_lower) {
+            if selected_text.trim().to_lowercase() == query_trimmed.to_lowercase()
+                || note_text.trim().to_lowercase() == query_trimmed.to_lowercase() {
+                score *= 2.0;
+            }
+        }
+        if let Some(active) = active_markdown_path {
+            if is_linked(&path, active) {
+                score *= 1.3;
+            }
+        }
+
+        results.push(UnifiedSearchResult {
+            group: SearchResultGroup::Annotation,
+            path,
+            line: (page_idx + 1) as usize,
+            context,
+            score,
+            page_index: Some(page_idx as u16),
+            annotation_id: Some(ann_id),
+        });
+    }
+
+    // 3. Search Markdown Content & Headings
+    let fts_query = format!("\"{}\"", query_trimmed.replace('"', "\"\""));
+    let mut stmt_fts = db.prepare("SELECT path, content, rank FROM file_search WHERE content MATCH ?1").map_err(|e| e.to_string())?;
+    let mut rows_fts = stmt_fts.query([&fts_query]).map_err(|e| e.to_string())?;
+    while let Some(row) = rows_fts.next().map_err(|e| e.to_string())? {
+        let path: String = row.get(0).map_err(|e| e.to_string())?;
+        let content: String = row.get(1).map_err(|e| e.to_string())?;
+        let rank: f64 = row.get(2).map_err(|e| e.to_string())?;
+
+        for (idx, line) in content.lines().enumerate() {
+            if line.to_lowercase().contains(&query_lower) {
+                let is_heading = line.trim_start().starts_with('#');
+                let group = if is_heading {
+                    SearchResultGroup::Heading
+                } else {
+                    SearchResultGroup::MarkdownContent
+                };
+
+                let mut score = if is_heading { 8.0 } else { 5.0 };
+                score += (10.0 - rank).max(0.0) as f32 * 0.1;
+
+                if Some(path.as_str()) == active_markdown_path {
+                    score *= 1.5;
+                }
+                if line.trim().to_lowercase() == query_trimmed.to_lowercase() {
+                    score *= 2.0;
+                }
+                if let Some(active) = active_markdown_path {
+                    if is_linked(&path, active) {
+                        score *= 1.3;
+                    }
+                }
+
+                results.push(UnifiedSearchResult {
+                    group,
+                    path: path.clone(),
+                    line: idx + 1,
+                    context: line.to_string(),
+                    score,
+                    page_index: None,
+                    annotation_id: None,
+                });
+            }
+        }
+    }
+
+    results.sort_by(|a, b| {
+        b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.group.cmp(&b.group))
+            .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.line.cmp(&b.line))
+    });
+
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,6 +769,88 @@ mod tests {
             !results.iter().any(|result| result.path == "source.md"),
             "FTS index should not retain old markdown path: {results:?}"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_file_with_markdown_link_targets_uses_parser_supplied_links() {
+        let root = unique_temp_dir("save_parser_targets");
+        fs::create_dir_all(&root).unwrap();
+
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, root.to_str().unwrap()).unwrap();
+
+        save_file_with_markdown_link_targets(
+            &state,
+            "source.md",
+            "Parser saw a code-block-safe link set.",
+            &["target".to_string()],
+        )
+        .unwrap();
+
+        let backlinks = get_backlinks(&state, "target.md").unwrap();
+        assert!(
+            backlinks.iter().any(|path| path.ends_with("source.md")),
+            "parser-supplied target should create backlink: {backlinks:?}"
+        );
+
+        save_file_with_markdown_link_targets(
+            &state,
+            "source.md",
+            "Parser now reports a different link set.",
+            &["other".to_string()],
+        )
+        .unwrap();
+
+        let old_backlinks = get_backlinks(&state, "target.md").unwrap();
+        assert!(
+            old_backlinks.is_empty(),
+            "old parser-supplied backlink should be removed: {old_backlinks:?}"
+        );
+        let new_backlinks = get_backlinks(&state, "other.md").unwrap();
+        assert!(
+            new_backlinks.iter().any(|path| path.ends_with("source.md")),
+            "new parser-supplied backlink should be indexed: {new_backlinks:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_search_vault_unified() {
+        let root = unique_temp_dir("search_unified_test");
+        fs::create_dir_all(&root).unwrap();
+
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, root.to_str().unwrap()).unwrap();
+
+        let note_content = "# Welcome to the Vault\nThis is a test note about Rust programming.\n";
+        save_file(&state, "source.md", note_content).unwrap();
+
+        {
+            let db = state.db.lock().unwrap();
+            db.execute("INSERT OR REPLACE INTO file_search (path, content) VALUES (?1, ?2)",
+                       ["source.md", note_content]).unwrap();
+        }
+
+        let results = search_vault_unified(&state, "Vault", Some("source.md"), None).unwrap();
+        assert!(!results.is_empty());
+        let groups = results.iter().map(|r| r.group).collect::<Vec<_>>();
+        assert!(groups.contains(&SearchResultGroup::Heading));
+
+        let results_filename = search_vault_unified(&state, "source", Some("source.md"), None).unwrap();
+        let groups_filename = results_filename.iter().map(|r| r.group).collect::<Vec<_>>();
+        assert!(groups_filename.contains(&SearchResultGroup::Filename));
+
+        let results2 = search_vault_unified(&state, "Rust", Some("source.md"), None).unwrap();
+        let groups2 = results2.iter().map(|r| r.group).collect::<Vec<_>>();
+        assert!(groups2.contains(&SearchResultGroup::MarkdownContent));
+
+        let active_match = results2.iter().find(|r| r.path == "source.md").unwrap();
+        let results_non_active = search_vault_unified(&state, "Rust", None, None).unwrap();
+        let non_active_match = results_non_active.iter().find(|r| r.path == "source.md").unwrap();
+        assert!(active_match.score > non_active_match.score);
 
         let _ = fs::remove_dir_all(root);
     }

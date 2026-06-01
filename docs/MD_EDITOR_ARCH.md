@@ -44,6 +44,16 @@ Important behavior:
 
 Syntax markers such as `**`, `$`, and code fences are represented as spans with `is_syntax = true` and often `display_text = Some("")`. This lets the renderer hide inactive markdown markers while preserving exact source text when the user edits the active span or block.
 
+Parser-owned metadata helpers live in the same module:
+
+- `extract_outline()`: heading outline entries for TOC/navigation.
+- `extract_markdown_links()`: inline, reference, wiki, and footnote link metadata.
+- `extract_markdown_anchors()`: heading slugs and generated widget IDs.
+- `extract_frontmatter_metadata()`: shallow top-of-file `---` metadata for aliases and tags.
+- `extract_document_metadata()`: combined outline, link, anchor, and frontmatter metadata.
+
+Renderer code consumes styled spans and metadata; it must not add markdown parser rules.
+
 ## Highlight Scheduling
 
 Small documents are highlighted synchronously after text changes. Large documents use a delayed path:
