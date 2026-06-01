@@ -636,7 +636,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 let bold_text: String = chars[i + 2..end].iter().collect();
                 // Opening ** — syntax marker
                 spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
-                
+
                 let start_idx = spans.len();
                 parse_inline_spans(&bold_text, spans);
                 for span in &mut spans[start_idx..] {
@@ -649,7 +649,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                         ..StyledSpan::plain("")
                     });
                 }
-                
+
                 // Closing ** — syntax marker
                 spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
                 i = end + 2;
@@ -666,7 +666,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
             if let Some(end) = find_unescaped_char(&chars, i + 1, '*') {
                 let italic_text: String = chars[i + 1..end].iter().collect();
                 spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
-                
+
                 let start_idx = spans.len();
                 parse_inline_spans(&italic_text, spans);
                 for span in &mut spans[start_idx..] {
@@ -679,7 +679,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                         ..StyledSpan::plain("")
                     });
                 }
-                
+
                 spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
                 i = end + 1;
                 continue;
@@ -767,7 +767,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                         continue;
                     }
                 }
-                
+
                 // 2. Full reference link [text][ref]
                 if end_text + 1 < len && chars[end_text + 1] == '[' {
                     if let Some(end_ref) = find_unescaped_char(&chars, end_text + 2, ']') {
@@ -792,10 +792,20 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 // 3. Shortcut reference link [ref]
                 let link_display: String = chars[i + 1..end_text].iter().collect();
                 let trimmed = link_display.trim();
-                let next_char = if end_text + 1 < len { Some(chars[end_text + 1]) } else { None };
+                let next_char = if end_text + 1 < len {
+                    Some(chars[end_text + 1])
+                } else {
+                    None
+                };
                 // Avoid treating empty brackets or task list checkboxes as links mid-line
                 // Also avoid if followed by '(' or '[' as that indicates a malformed link.
-                if !trimmed.is_empty() && trimmed != "x" && trimmed != "X" && next_char != Some('(') && next_char != Some('[') && !link_display.contains('[') {
+                if !trimmed.is_empty()
+                    && trimmed != "x"
+                    && trimmed != "X"
+                    && next_char != Some('(')
+                    && next_char != Some('[')
+                    && !link_display.contains('[')
+                {
                     let raw: String = chars[i..=end_text].iter().collect();
                     spans.push(StyledSpan {
                         text: raw,
@@ -1139,6 +1149,47 @@ fn syntect_defaults()
             syntect::highlighting::ThemeSet::load_defaults(),
         )
     }))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutlineEntry {
+    pub level: u8,
+    pub text: String,
+    pub line: usize,
+}
+
+pub fn extract_outline(lines: &[StyledLine]) -> Vec<OutlineEntry> {
+    let mut outline = Vec::new();
+    for (line_idx, line) in lines.iter().enumerate() {
+        let mut heading_level = None;
+        for span in &line.spans {
+            if span.is_heading {
+                heading_level = Some(span.heading_level);
+                break;
+            }
+        }
+
+        if let Some(level) = heading_level {
+            let mut text = String::new();
+            let mut spans_iter = line.spans.iter();
+            if let Some(first_span) = line.spans.first() {
+                if first_span.is_syntax && first_span.text.trim_start().starts_with('#') {
+                    spans_iter.next();
+                }
+            }
+
+            for span in spans_iter {
+                text.push_str(span.display_text.as_deref().unwrap_or(&span.text));
+            }
+
+            outline.push(OutlineEntry {
+                level,
+                text: text.trim().to_string(),
+                line: line_idx,
+            });
+        }
+    }
+    outline
 }
 
 #[cfg(test)]
@@ -1573,15 +1624,23 @@ mod tests {
     fn reference_link_span_exposes_metadata_but_is_inactive() {
         let lines = highlight_markdown("Check [this link][ref_id] and [that_one] syntax.");
         let line = &lines[0];
-        
+
         // Full reference link: [text][ref]
-        let link1 = line.spans.iter().find(|span| span.text == "[this link][ref_id]").expect("Did not find full reference link span");
+        let link1 = line
+            .spans
+            .iter()
+            .find(|span| span.text == "[this link][ref_id]")
+            .expect("Did not find full reference link span");
         assert!(link1.is_link);
         assert_eq!(link1.link_target.as_deref(), Some("ref_id"));
         assert_eq!(link1.display_text.as_deref(), Some("this link"));
 
         // Shortcut reference link: [ref]
-        let link2 = line.spans.iter().find(|span| span.text == "[that_one]").expect("Did not find shortcut reference link span");
+        let link2 = line
+            .spans
+            .iter()
+            .find(|span| span.text == "[that_one]")
+            .expect("Did not find shortcut reference link span");
         assert!(link2.is_link);
         assert_eq!(link2.link_target.as_deref(), Some("that_one"));
         assert_eq!(link2.display_text.as_deref(), Some("that_one"));
@@ -1591,14 +1650,22 @@ mod tests {
     fn reference_link_span_reconstructs_source_lines() {
         let text = "Here is a [link][ref] and a [shortcut].";
         let lines = highlight_markdown(text);
-        let reconstructed = lines[0].spans.iter().map(|s| s.text.as_str()).collect::<String>();
+        let reconstructed = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<String>();
         assert_eq!(reconstructed, text);
     }
 
     #[test]
     fn malformed_reference_syntax_remains_plain_text() {
         let lines = highlight_markdown("Bad [link][ref and [shortcut and [ ].");
-        let reconstructed = lines[0].spans.iter().map(|s| s.text.as_str()).collect::<String>();
+        let reconstructed = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<String>();
         assert_eq!(reconstructed, "Bad [link][ref and [shortcut and [ ].");
         assert!(!lines[0].spans.iter().any(|s| s.is_link));
     }
@@ -1606,18 +1673,31 @@ mod tests {
     #[test]
     fn headings_parse_inline_links_and_emphasis() {
         let lines = highlight_markdown("## Heading with **bold** and [link](url)");
-        let reconstructed = lines[0].spans.iter().map(|s| s.text.as_str()).collect::<String>();
+        let reconstructed = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<String>();
         assert_eq!(reconstructed, "## Heading with **bold** and [link](url)");
         assert!(lines[0].spans.iter().all(|s| s.is_heading));
         assert!(lines[0].spans.iter().all(|s| s.heading_level == 2));
-        assert!(lines[0].spans.iter().any(|s| s.is_link && s.link_target.as_deref() == Some("url")));
+        assert!(
+            lines[0]
+                .spans
+                .iter()
+                .any(|s| s.is_link && s.link_target.as_deref() == Some("url"))
+        );
         assert!(lines[0].spans.iter().any(|s| s.bold && s.text == "bold"));
     }
 
     #[test]
     fn nested_emphasis_combines_bold_and_italic() {
         let lines = highlight_markdown("**bold and *italic* inside**");
-        let reconstructed = lines[0].spans.iter().map(|s| s.text.as_str()).collect::<String>();
+        let reconstructed = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<String>();
         assert_eq!(reconstructed, "**bold and *italic* inside**");
         // The word "italic" should have both bold and italic true
         let italic_span = lines[0].spans.iter().find(|s| s.text == "italic").unwrap();
@@ -1628,10 +1708,35 @@ mod tests {
     #[test]
     fn footnotes_parsed_as_links() {
         let lines = highlight_markdown("This has a footnote[^1].");
-        let reconstructed = lines[0].spans.iter().map(|s| s.text.as_str()).collect::<String>();
+        let reconstructed = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<String>();
         assert_eq!(reconstructed, "This has a footnote[^1].");
         let link_span = lines[0].spans.iter().find(|s| s.is_link).unwrap();
         assert_eq!(link_span.text, "[^1]");
         assert_eq!(link_span.link_target.as_deref(), Some("^1"));
+    }
+
+    #[test]
+    fn test_extract_outline() {
+        use super::extract_outline;
+        let text = "# Heading 1\nSome text\n## Heading 2 with **bold**\n```markdown\n# Not a heading in code\n```\n### Heading 3";
+        let lines = highlight_markdown(text);
+        let outline = extract_outline(&lines);
+        assert_eq!(outline.len(), 3);
+
+        assert_eq!(outline[0].level, 1);
+        assert_eq!(outline[0].text, "Heading 1");
+        assert_eq!(outline[0].line, 0);
+
+        assert_eq!(outline[1].level, 2);
+        assert_eq!(outline[1].text, "Heading 2 with bold");
+        assert_eq!(outline[1].line, 2);
+
+        assert_eq!(outline[2].level, 3);
+        assert_eq!(outline[2].text, "Heading 3");
+        assert_eq!(outline[2].line, 6);
     }
 }

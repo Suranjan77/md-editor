@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::editor::buffer::{DocBuffer, EditorCommand, pdf_quote_link_markdown};
+use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
 use crate::messages::{Message, Shortcut, TrackerTab};
 use crate::pdf_links::{build_pdf_link, parse_pdf_link};
@@ -685,7 +685,27 @@ impl MdEditor {
                 Task::none()
             }
             Message::SidebarFileClicked(path) => {
-                let path = path.trim().to_string();
+                let mut path = path.trim().to_string();
+                if path.starts_with('<') && path.ends_with('>') {
+                    path = path[1..path.len() - 1].to_string();
+                }
+
+                // Resolve markdown reference links if present in the document
+                if !path.contains("://") && !path.contains('/') && !path.ends_with(".md") {
+                    let ref_def = format!("[{}]:", path.to_lowercase());
+                    for line in self.buffer.text().lines() {
+                        let trimmed = line.trim_start();
+                        if trimmed.to_lowercase().starts_with(&ref_def) {
+                            let mut resolved = trimmed[ref_def.len()..].trim().to_string();
+                            if resolved.starts_with('<') && resolved.ends_with('>') {
+                                resolved = resolved[1..resolved.len() - 1].to_string();
+                            }
+                            path = resolved;
+                            break;
+                        }
+                    }
+                }
+
                 if let Some(target) = parse_pdf_link(&path) {
                     let resolved_pdf_path = resolve_relative_link_path(
                         self.vault_root.as_deref(),
@@ -758,7 +778,7 @@ impl MdEditor {
                                     &self.highlighted_lines,
                                     &target_slug,
                                 ) {
-                                    let scroll_task = self.scroll_editor_to_line(line_idx);
+                                    let scroll_task = self.center_editor_line(line_idx);
                                     let cmd_task =
                                         self.run_editor_command(EditorCommand::SetCursor {
                                             line: line_idx,
@@ -781,30 +801,56 @@ impl MdEditor {
                                 if std::path::Path::new(&resolved_file).extension().is_none() {
                                     resolved_file.push_str(".md");
                                 }
-                                self.selected_path = Some(resolved_file.clone());
-                                let open_task = self.open_file_extended(&resolved_file, false);
 
-                                let target_slug = slugify(anchor_part);
-                                if let Some(line_idx) = find_heading_or_widget_line(
-                                    &self.buffer.text(),
-                                    &self.highlighted_lines,
-                                    &target_slug,
-                                ) {
-                                    let scroll_task = self.scroll_editor_to_line(line_idx);
-                                    let cmd_task =
-                                        self.run_editor_command(EditorCommand::SetCursor {
-                                            line: line_idx,
-                                            col: 0,
-                                        });
-                                    Task::batch(vec![open_task, cmd_task, scroll_task])
+                                let is_same_file =
+                                    self.active_path.as_deref() == Some(&resolved_file);
+                                if is_same_file {
+                                    let target_slug = slugify(anchor_part);
+                                    if let Some(line_idx) = find_heading_or_widget_line(
+                                        &self.buffer.text(),
+                                        &self.highlighted_lines,
+                                        &target_slug,
+                                    ) {
+                                        let scroll_task = self.center_editor_line(line_idx);
+                                        let cmd_task =
+                                            self.run_editor_command(EditorCommand::SetCursor {
+                                                line: line_idx,
+                                                col: 0,
+                                            });
+                                        Task::batch(vec![cmd_task, scroll_task])
+                                    } else {
+                                        self.toast = Some(format!(
+                                            "Heading or widget not found: #{}",
+                                            anchor_part
+                                        ));
+                                        Task::none()
+                                    }
                                 } else {
-                                    // If heading or widget not found in the new file, reset scroll to top!
-                                    self.editor_scroll_y = 0.0;
-                                    let scroll_task = operation::scroll_to(
-                                        iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
-                                        AbsoluteOffset { x: 0.0, y: 0.0 },
-                                    );
-                                    Task::batch(vec![open_task, scroll_task])
+                                    self.selected_path = Some(resolved_file.clone());
+                                    let open_task = self.open_file_extended(&resolved_file, false);
+
+                                    let target_slug = slugify(anchor_part);
+                                    if let Some(line_idx) = find_heading_or_widget_line(
+                                        &self.buffer.text(),
+                                        &self.highlighted_lines,
+                                        &target_slug,
+                                    ) {
+                                        let scroll_task = self.center_editor_line(line_idx);
+                                        let cmd_task =
+                                            self.run_editor_command(EditorCommand::SetCursor {
+                                                line: line_idx,
+                                                col: 0,
+                                            });
+                                        Task::batch(vec![open_task, cmd_task, scroll_task])
+                                    } else {
+                                        // If heading or widget not found in the new file, reset scroll to top!
+                                        self.editor_scroll_y = 0.0;
+                                        let scroll_task = operation::scroll_to(
+                                            iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                                            AbsoluteOffset { x: 0.0, y: 0.0 },
+                                        );
+                                        Task::batch(vec![open_task, scroll_task])
+                                    }
                                 }
                             }
                         } else {
@@ -1088,6 +1134,7 @@ impl MdEditor {
                     return Task::none();
                 }
                 self.highlighted_lines = lines;
+                self.md_toc_entries = views::toc::get_toc(&self.highlighted_lines);
                 Task::batch(vec![self.load_images(), self.load_math()])
             }
 
@@ -1480,6 +1527,8 @@ impl MdEditor {
                     Task::done(Message::PdfFitToWidth)
                 } else if self.pdf_fit_to_page && self.pdf_total_pages > 0 {
                     Task::done(Message::PdfFitToPage)
+                } else if let Some(page) = self.pdf_initial_target_page.take() {
+                    self.navigate_pdf_page(page)
                 } else {
                     Task::none()
                 }
@@ -1575,24 +1624,8 @@ impl MdEditor {
                     let target_page = index
                         .min(self.pdf_total_pages.saturating_sub(1) as usize)
                         .max(0) as u16;
-                    self.pdf_current_page = target_page;
-                    self.pdf_pending_pages.clear();
-                    self.pdf_pending_links.clear();
-                    self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
-                    self.pdf_toc_target_page = Some(target_page);
-                    self.pdf_programmatic_scroll = true;
                     self.active_panel = ActivePanel::Pdf;
-                    let scroll_y = self.pdf_page_offset(target_page);
-                    Task::batch(vec![
-                        self.render_visible_pdf_pages(),
-                        operation::scroll_to(
-                            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-                            AbsoluteOffset {
-                                x: 0.0,
-                                y: scroll_y,
-                            },
-                        ),
-                    ])
+                    self.navigate_pdf_page(target_page)
                 } else if self.split_view_active && self.active_path.is_some() {
                     // Split-view markdown focus — toc entries are headings.
                     Task::done(Message::EditorCursorMove(index, 0))
@@ -1601,7 +1634,9 @@ impl MdEditor {
                 }
             }
             Message::PdfScrolled { y, viewport_height } => {
-                if self.keyboard_modifiers.control() || self.keyboard_modifiers.command() {
+                if (self.keyboard_modifiers.control() || self.keyboard_modifiers.command())
+                    && !self.pdf_programmatic_scroll
+                {
                     return operation::scroll_to(
                         iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
                         AbsoluteOffset {
@@ -1614,16 +1649,56 @@ impl MdEditor {
                 self.active_panel = ActivePanel::Pdf;
                 self.pdf_scroll_y = y;
                 let new_page = self.pdf_page_at_scroll(y + viewport_height * 0.33);
+
+                let target_page_ready = if let Some(target_page) = self.pdf_toc_target_page {
+                    self.pdf_pages
+                        .get(target_page as usize)
+                        .is_some_and(|page| page.is_some())
+                } else {
+                    false
+                };
+
                 if self.pdf_programmatic_scroll {
-                    self.pdf_programmatic_scroll = false;
-                    let target_page = self.pdf_toc_target_page.take().unwrap_or(new_page);
-                    self.pdf_current_page = target_page.min(self.pdf_total_pages.saturating_sub(1));
-                    let start = self.pdf_current_page.saturating_sub(2);
-                    let end =
-                        (self.pdf_current_page + 2).min(self.pdf_total_pages.saturating_sub(1));
-                    self.update_pdf_page_cache();
-                    return self.render_pdf_page_range(start, end);
+                    if let Some(target_page) = self.pdf_toc_target_page {
+                        let target_y = self.pdf_page_offset(target_page);
+                        let max_scroll_y = (self.pdf_total_height() - viewport_height).max(0.0);
+                        let expected_y = target_y.min(max_scroll_y);
+                        if ((y - expected_y).abs() < 5.0 || new_page == target_page)
+                            && target_page_ready
+                        {
+                            self.pdf_programmatic_scroll = false;
+                        }
+                    } else {
+                        self.pdf_programmatic_scroll = false;
+                    }
+                } else {
+                    self.pdf_toc_target_page = None;
                 }
+
+                if let Some(target_page) = self.pdf_toc_target_page {
+                    let target_y = self.pdf_page_offset(target_page);
+                    let max_scroll_y = (self.pdf_total_height() - viewport_height).max(0.0);
+                    let expected_y = target_y.min(max_scroll_y);
+                    if ((y - expected_y).abs() < 5.0 || new_page == target_page)
+                        && target_page_ready
+                    {
+                        // Arrived! Clear programmatic scroll flags and render.
+                        self.pdf_toc_target_page = None;
+                        self.pdf_programmatic_scroll = false;
+                        self.pdf_current_page =
+                            target_page.min(self.pdf_total_pages.saturating_sub(1));
+                        let start = self.pdf_current_page.saturating_sub(2);
+                        let end =
+                            (self.pdf_current_page + 2).min(self.pdf_total_pages.saturating_sub(1));
+                        self.update_pdf_page_cache();
+                        return self.render_pdf_page_range(start, end);
+                    } else {
+                        // Still scrolling programmatically to target. Skip rendering intermediate pages.
+                        self.update_pdf_page_cache();
+                        return Task::none();
+                    }
+                }
+
                 if new_page != self.pdf_current_page && new_page < self.pdf_total_pages {
                     if new_page.abs_diff(self.pdf_current_page) > 8 {
                         self.pdf_pending_pages.clear();
@@ -1812,17 +1887,13 @@ impl MdEditor {
                     if let Some(command) = self.pdf_selection_quote_link_command() {
                         let EditorCommand::InsertPdfQuoteLink {
                             selected_text,
-                            page_number,
+                            page_number: _,
                             link,
                         } = command
                         else {
                             return Task::none();
                         };
-                        let Some(markdown) =
-                            pdf_quote_link_markdown(&selected_text, page_number, &link)
-                        else {
-                            return Task::none();
-                        };
+                        let markdown = format!("{selected_text}\n[label]({link})");
                         self.active_modal = None;
                         return iced::clipboard::write(markdown);
                     }
@@ -2460,14 +2531,22 @@ impl MdEditor {
                     }
                 }
 
-                let scroll_task = if let Some(page) = target_page {
-                    self.pdf_initial_target_page = None;
-                    self.pdf_initial_target_annotation = None;
-                    self.navigate_pdf_page(page)
-                } else if let Some(page) = self.pdf_initial_target_page {
-                    self.pdf_initial_target_page = None;
-                    self.navigate_pdf_page(page)
+                let scroll_task = if self.pdf_total_pages > 0 {
+                    if let Some(page) = target_page {
+                        self.pdf_initial_target_page = None;
+                        self.pdf_initial_target_annotation = None;
+                        self.navigate_pdf_page(page)
+                    } else if let Some(page) = self.pdf_initial_target_page {
+                        self.pdf_initial_target_page = None;
+                        self.navigate_pdf_page(page)
+                    } else {
+                        Task::none()
+                    }
                 } else {
+                    if let Some(page) = target_page {
+                        self.pdf_initial_target_page = Some(page);
+                        self.pdf_initial_target_annotation = None;
+                    }
                     Task::none()
                 };
 
@@ -3681,7 +3760,7 @@ impl MdEditor {
                 self.active_image = None;
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
-                self.md_toc_entries = views::toc::get_toc(&content);
+                self.md_toc_entries = Vec::new();
                 let highlight_task = self.refresh_highlighting_for_current_buffer(true);
                 self.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                     .unwrap_or_default();
@@ -4129,7 +4208,7 @@ impl MdEditor {
         let content_width = (self.window_width - chrome_width).max(320.0);
 
         if self.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
-            (content_width * (1.0 - self.split_ratio)).max(280.0)
+            (content_width * self.split_ratio).max(280.0)
         } else {
             content_width
         }
@@ -4346,6 +4425,7 @@ impl MdEditor {
 
         if opened_file && line_count > HUGE_DOC_LINE_THRESHOLD {
             self.highlighted_lines = plain_highlight_placeholders(&text);
+            self.md_toc_entries = views::toc::get_toc(&self.highlighted_lines);
             return Self::highlight_task(generation, text);
         }
 
@@ -4357,6 +4437,7 @@ impl MdEditor {
         }
 
         self.highlighted_lines = highlight::highlight_markdown(&text);
+        self.md_toc_entries = views::toc::get_toc(&self.highlighted_lines);
         Task::batch(vec![self.load_images(), self.load_math()])
     }
 
@@ -4437,7 +4518,7 @@ impl MdEditor {
             focus_line: item.line,
             focus_col: item.end_col,
         });
-        self.scroll_editor_to_line(item.line)
+        self.center_editor_line(item.line)
     }
 
     fn navigate_pdf_search(&mut self, forward: bool) -> Task<Message> {
@@ -4565,13 +4646,23 @@ impl MdEditor {
 
         self.pdf_programmatic_scroll = true;
         let scroll_y = self.pdf_page_offset(target_page);
-        tasks.push(operation::scroll_to(
-            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-            AbsoluteOffset {
-                x: 0.0,
-                y: scroll_y,
-            },
-        ));
+        let current_scroll_y = self.pdf_scroll_y;
+        if (current_scroll_y - scroll_y).abs() < 1.0 && target_image_ready {
+            self.pdf_programmatic_scroll = false;
+            self.pdf_toc_target_page = None;
+            let start = target_page.saturating_sub(2);
+            let end = (target_page + 2).min(self.pdf_total_pages.saturating_sub(1));
+            self.update_pdf_page_cache();
+            tasks.push(self.render_pdf_page_range(start, end));
+        } else {
+            tasks.push(operation::scroll_to(
+                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                AbsoluteOffset {
+                    x: 0.0,
+                    y: scroll_y,
+                },
+            ));
+        }
         Task::batch(tasks)
     }
 
@@ -4591,7 +4682,7 @@ impl MdEditor {
         let content_width = (self.window_width - chrome_width).max(320.0);
 
         if self.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
-            (content_width * self.split_ratio).max(280.0)
+            (content_width * (1.0 - self.split_ratio)).max(280.0)
         } else {
             content_width
         }
@@ -4715,13 +4806,30 @@ impl MdEditor {
         commands
     }
 
-    fn scroll_editor_to_line(&self, line: usize) -> Task<Message> {
+    fn center_editor_line(&self, line: usize) -> Task<Message> {
         let y = self.estimated_editor_line_y(line);
         let viewport_height = self.estimated_editor_viewport_height();
         // Always center the matched line in the viewport
         let target_y = (y - viewport_height / 2.0 + 18.0).max(0.0);
 
         Task::perform(async move { target_y }, Message::ScrollEditorToTarget)
+    }
+
+    fn ensure_editor_line_visible(&self, line: usize) -> Task<Message> {
+        let y = self.estimated_editor_line_y(line);
+        let viewport_height = self.estimated_editor_viewport_height();
+        let current_scroll = self.editor_scroll_y;
+        let margin = 40.0;
+
+        if y < current_scroll + margin {
+            let target_y = (y - margin).max(0.0);
+            Task::perform(async move { target_y }, Message::ScrollEditorToTarget)
+        } else if y > current_scroll + viewport_height - margin - 24.0 {
+            let target_y = (y - viewport_height + margin + 24.0).max(0.0);
+            Task::perform(async move { target_y }, Message::ScrollEditorToTarget)
+        } else {
+            Task::none()
+        }
     }
 
     fn replace_all_in_current_document(&mut self) -> Result<(usize, Task<Message>), String> {
@@ -4770,7 +4878,6 @@ impl MdEditor {
                 regex: self.editor_search.regex,
                 match_case: self.editor_search.match_case,
             });
-            self.md_toc_entries = views::toc::get_toc(&self.buffer.text());
             let task = self.highlight_all();
             return Ok((count, task));
         }
@@ -4857,13 +4964,7 @@ impl MdEditor {
     ) -> Task<Message> {
         let result = self.buffer.execute(command);
         let content_task = if result.projection_changed {
-            if result.text_changed {
-                self.md_toc_entries = views::toc::get_toc(&self.buffer.text());
-            }
             self.highlight_all()
-        } else if result.text_changed {
-            self.md_toc_entries = views::toc::get_toc(&self.buffer.text());
-            Task::none()
         } else {
             Task::none()
         };
@@ -4871,7 +4972,7 @@ impl MdEditor {
         if keep_cursor_visible {
             Task::batch(vec![
                 content_task,
-                self.scroll_editor_to_line(self.buffer.cursor_line),
+                self.ensure_editor_line_visible(self.buffer.cursor_line),
             ])
         } else {
             content_task
@@ -5631,7 +5732,7 @@ mod tests {
 
         assert_eq!(
             app.buffer.text(),
-            "> Important highlighted text\n> [PDF p. 5](pdf://papers/My%20PDF.pdf?page=5&annotation=ann%231)"
+            "[label](pdf://papers/My%20PDF.pdf?page=5&annotation=ann%231)"
         );
         assert!(app.buffer.undo());
         assert_eq!(app.buffer.text(), "");
@@ -5826,5 +5927,206 @@ mod tests {
         let _ = app.update(Message::PdfRotateClockwise);
         assert_eq!(app.pdf_rotation, 270);
         assert_eq!(app.pdf_state.layout.page_height(0), 100.0);
+    }
+
+    #[test]
+    fn test_pdf_link_click_in_split_view_navigates_and_preserves_scroll() {
+        let mut app = MdEditor::new().0;
+        app.split_view_active = true;
+        app.showing_pdf = true;
+        app.active_path = Some("note.md".to_string());
+        app.active_pdf_path = Some("paper.pdf".to_string());
+        app.pdf_total_pages = 10;
+        app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 10];
+        app.pdf_state.zoom = 1.0;
+
+        app.pdf_state.layout = PdfLayout::rebuild(
+            &app.pdf_state.page_sizes,
+            app.pdf_state.zoom,
+            app.pdf_placeholder_display_size(),
+            PDF_PAGE_SPACING,
+            PDF_PAGE_LIST_PADDING,
+            app.pdf_rotation,
+        );
+
+        app.editor_scroll_y = 120.0;
+
+        // Click on a relative link with hash delimiter and no schema prefix
+        let _ = app.update(Message::SidebarFileClicked("paper.pdf#page=5".to_string()));
+
+        // Assert editor scroll is preserved
+        assert_eq!(app.editor_scroll_y, 120.0);
+        // Assert PDF page navigated to page 4 (index of page 5)
+        assert_eq!(app.pdf_current_page, 4);
+    }
+
+    #[test]
+    fn test_pdf_open_race_condition_navigation() {
+        let mut app = MdEditor::new().0;
+        app.active_path = Some("note.md".to_string());
+        app.active_pdf_path = Some("paper.pdf".to_string());
+
+        // Initial target page starts at Some(4) when we click a link
+        app.pdf_initial_target_page = Some(4);
+
+        // Hashing finishes first before PDF pages count is loaded
+        let _ = app.update(Message::PdfDocumentIdComputed(Some((
+            "paper.pdf".to_string(),
+            "dummyhash".to_string(),
+            1000,
+            Some(0),
+        ))));
+
+        // Verify target page was deferred and not clamped/consumed yet
+        assert_eq!(app.pdf_initial_target_page, Some(4));
+
+        // PDF total pages finishes loading
+        let generation = app.pdf_render_generation;
+        let _ = app.update(Message::PdfLoaded(generation, 10));
+        assert_eq!(app.pdf_total_pages, 10);
+
+        // Page sizes finish loading, which triggers layout rebuild and PdfFitToWidth
+        let _ = app.update(Message::PdfPageSizesLoaded(
+            generation,
+            "paper.pdf".to_string(),
+            vec![(500.0, 700.0); 10],
+        ));
+
+        // Under the hood, PdfPageSizesLoaded dispatches PdfFitToWidth, which we execute here
+        let _ = app.update(Message::PdfFitToWidth);
+
+        // Now it should be consumed and navigated to page 4
+        assert_eq!(app.pdf_initial_target_page, None);
+        assert_eq!(app.pdf_current_page, 4);
+    }
+
+    #[test]
+    fn test_manual_scroll_clears_programmatic_scroll_target() {
+        let mut app = MdEditor::new().0;
+        app.pdf_total_pages = 10;
+        app.pdf_pages = vec![None; 10];
+        app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 10];
+        app.pdf_state.layout = PdfLayout::rebuild(
+            &app.pdf_state.page_sizes,
+            app.pdf_state.zoom,
+            app.pdf_placeholder_display_size(),
+            PDF_PAGE_SPACING,
+            PDF_PAGE_LIST_PADDING,
+            app.pdf_rotation,
+        );
+
+        // 1. Programmatic scroll to page 5 when page 5 is NOT ready (still loading)
+        app.pdf_toc_target_page = Some(5);
+        app.pdf_programmatic_scroll = true;
+
+        // Scroll event at expected placeholder position arrives
+        let target_y = app.pdf_page_offset(5);
+        let _ = app.update(Message::PdfScrolled {
+            y: target_y,
+            viewport_height: 500.0,
+        });
+        // Since page is not ready, programmatic scroll and target page are preserved
+        assert!(app.pdf_programmatic_scroll);
+        assert_eq!(app.pdf_toc_target_page, Some(5));
+
+        // 2. Now simulate page 5 finishing loading/rendering
+        let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]);
+        app.pdf_pages[5] = Some(handle);
+
+        // Scroll event arrives now that the page is ready
+        let _ = app.update(Message::PdfScrolled {
+            y: target_y,
+            viewport_height: 500.0,
+        });
+        // It arrives, so both flags are cleared
+        assert!(!app.pdf_programmatic_scroll);
+        assert_eq!(app.pdf_toc_target_page, None);
+
+        // 3. Manual scroll clears target page (when pdf_programmatic_scroll is false)
+        app.pdf_toc_target_page = Some(3);
+        let _ = app.update(Message::PdfScrolled {
+            y: 100.0,
+            viewport_height: 500.0,
+        });
+        assert_eq!(app.pdf_toc_target_page, None);
+    }
+
+    #[test]
+    fn test_split_view_width_calculations() {
+        let mut app = MdEditor::new().0;
+        app.window_width = 1200.0;
+        app.sidebar_visible = false;
+        app.toc_visible = false;
+        app.backlinks_visible = false;
+        app.pdf_annotations_visible = false;
+        app.editor_viewport_width = 0.0;
+
+        app.active_path = Some("note.md".to_string());
+        app.active_pdf_path = Some("paper.pdf".to_string());
+        app.split_view_active = true;
+        app.split_ratio = 0.6; // PDF gets 60%, Editor gets 40%
+
+        let pdf_width = app.pdf_available_width();
+        let editor_width = app.estimated_editor_viewport_width();
+
+        // 1200.0 * 0.6 = 720.0
+        assert!((pdf_width - 720.0).abs() < 1e-3);
+        // 1200.0 * 0.4 = 480.0
+        assert!((editor_width - 480.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_reference_link_resolves_and_preserves_scroll() {
+        let mut app = MdEditor::new().0;
+        app.active_path = Some("note.md".to_string());
+        app.editor_scroll_y = 120.0;
+        app.buffer = DocBuffer::from_text("# Heading 1\n\n[my-ref]\n\n[my-ref]: #heading-1\n");
+        app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
+
+        // Click on the reference "my-ref"
+        let _ = app.update(Message::SidebarFileClicked("my-ref".to_string()));
+
+        // Active path should still be note.md
+        assert_eq!(app.active_path.as_deref(), Some("note.md"));
+        // Editor cursor should be moved to heading 1 (line 0)
+        assert_eq!(app.buffer.cursor_line, 0);
+    }
+
+    #[test]
+    fn test_ctrl_click_programmatic_scroll_bypasses_cancellation() {
+        let mut app = MdEditor::new().0;
+        app.pdf_total_pages = 10;
+        app.pdf_pages = vec![None; 10];
+        app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 10];
+        app.pdf_state.layout = PdfLayout::rebuild(
+            &app.pdf_state.page_sizes,
+            app.pdf_state.zoom,
+            app.pdf_placeholder_display_size(),
+            PDF_PAGE_SPACING,
+            PDF_PAGE_LIST_PADDING,
+            app.pdf_rotation,
+        );
+
+        // Simulate Ctrl modifier active
+        app.keyboard_modifiers = iced::keyboard::Modifiers::CTRL;
+
+        // 1. Programmatic scroll is triggered
+        app.pdf_toc_target_page = Some(5);
+        app.pdf_programmatic_scroll = true;
+
+        // Populate page 5 in cache to mark as ready
+        let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]);
+        app.pdf_pages[5] = Some(handle);
+
+        // Scroll event arrives (with Ctrl held down)
+        let target_y = app.pdf_page_offset(5);
+        let _ = app.update(Message::PdfScrolled {
+            y: target_y,
+            viewport_height: 500.0,
+        });
+
+        // Programmatic scroll bypasses Ctrl key cancellation, sets self.pdf_programmatic_scroll = false, and clears target
+        assert!(!app.pdf_programmatic_scroll);
+        assert_eq!(app.pdf_toc_target_page, None);
     }
 }

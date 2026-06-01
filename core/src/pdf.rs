@@ -689,7 +689,10 @@ impl PdfRenderer {
         let visible_range_clone = visible_range.clone();
 
         // 1. Spawn Render Worker Thread
-        std::thread::spawn(move || {
+        std::thread::Builder::new()
+            .name("pdf_render_worker".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
             let pdfium = match bind_pdfium() {
                 Ok(pdfium) => pdfium,
                 Err(err) => {
@@ -937,133 +940,141 @@ impl PdfRenderer {
                     }
                 }
             }
-        });
+        }).expect("Failed to spawn PDF render thread");
 
         // 2. Spawn Query Worker Thread
-        std::thread::spawn(move || {
-            let pdfium = match bind_pdfium() {
-                Ok(pdfium) => pdfium,
-                Err(err) => {
-                    eprintln!("Failed to bind PDFium in query thread: {err}");
-                    return;
-                }
-            };
-
-            let mut current_document: Option<(String, PdfDocument)> = None;
-            let mut active_search: Option<ActivePdfSearch> = None;
-
-            loop {
-                let cmd = if active_search.is_some() {
-                    match query_receiver.try_recv() {
-                        Ok(c) => Some(c),
-                        Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
-                    }
-                } else {
-                    match query_receiver.recv() {
-                        Ok(c) => Some(c),
-                        Err(_) => break,
+        std::thread::Builder::new()
+            .name("pdf_query_worker".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                let pdfium = match bind_pdfium() {
+                    Ok(pdfium) => pdfium,
+                    Err(err) => {
+                        eprintln!("Failed to bind PDFium in query thread: {err}");
+                        return;
                     }
                 };
 
-                if let Some(cmd) = cmd {
-                    match cmd {
-                        QueryCommand::CancelSearch { search_id } => {
-                            if active_search
-                                .as_ref()
-                                .is_some_and(|active| active.search_id == search_id)
-                            {
-                                active_search = None;
-                            }
+                let mut current_document: Option<(String, PdfDocument)> = None;
+                let mut active_search: Option<ActivePdfSearch> = None;
+
+                loop {
+                    let cmd = if active_search.is_some() {
+                        match query_receiver.try_recv() {
+                            Ok(c) => Some(c),
+                            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
                         }
-                        QueryCommand::SearchText {
-                            path,
-                            query,
-                            regex,
-                            match_case,
-                            result_sender,
-                            done_sender,
-                            search_id,
-                        } => {
-                            if query.trim().is_empty() {
-                                let _ = done_sender.send(Ok(()));
-                                active_search = None;
-                            } else {
-                                let total_pages = (|| {
-                                    ensure_document(&pdfium, &mut current_document, &path)?;
-                                    let Some((_, doc)) = current_document.as_ref() else {
-                                        return Err("PDF document was not loaded".to_string());
-                                    };
-                                    Ok::<u16, String>(doc.pages().len() as u16)
-                                })();
-                                match total_pages {
-                                    Ok(total) => {
-                                        active_search = Some(ActivePdfSearch {
-                                            search_id,
-                                            path,
-                                            query,
-                                            regex,
-                                            match_case,
-                                            result_sender,
-                                            done_sender,
-                                            page_idx: 0,
-                                            total_pages: total,
-                                        });
-                                    }
-                                    Err(err) => {
-                                        let _ = done_sender.send(Err(err));
-                                        active_search = None;
+                    } else {
+                        match query_receiver.recv() {
+                            Ok(c) => Some(c),
+                            Err(_) => break,
+                        }
+                    };
+
+                    if let Some(cmd) = cmd {
+                        match cmd {
+                            QueryCommand::CancelSearch { search_id } => {
+                                if active_search
+                                    .as_ref()
+                                    .is_some_and(|active| active.search_id == search_id)
+                                {
+                                    active_search = None;
+                                }
+                            }
+                            QueryCommand::SearchText {
+                                path,
+                                query,
+                                regex,
+                                match_case,
+                                result_sender,
+                                done_sender,
+                                search_id,
+                            } => {
+                                if query.trim().is_empty() {
+                                    let _ = done_sender.send(Ok(()));
+                                    active_search = None;
+                                } else {
+                                    let total_pages = (|| {
+                                        ensure_document(&pdfium, &mut current_document, &path)?;
+                                        let Some((_, doc)) = current_document.as_ref() else {
+                                            return Err("PDF document was not loaded".to_string());
+                                        };
+                                        Ok::<u16, String>(doc.pages().len() as u16)
+                                    })();
+                                    match total_pages {
+                                        Ok(total) => {
+                                            active_search = Some(ActivePdfSearch {
+                                                search_id,
+                                                path,
+                                                query,
+                                                regex,
+                                                match_case,
+                                                result_sender,
+                                                done_sender,
+                                                page_idx: 0,
+                                                total_pages: total,
+                                            });
+                                        }
+                                        Err(err) => {
+                                            let _ = done_sender.send(Err(err));
+                                            active_search = None;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        QueryCommand::GetPageText(path, index, resp) => {
-                            let res =
-                                get_page_text_impl(&pdfium, &mut current_document, &path, index);
-                            let _ = resp.send(res);
-                        }
-                    }
-                }
-
-                if let Some(active) = active_search.as_ref() {
-                    if active.page_idx >= active.total_pages {
-                        let _ = active.done_sender.send(Ok(()));
-                        active_search = None;
-                    } else {
-                        let search_id = active.search_id;
-                        let path = active.path.clone();
-                        let query = active.query.clone();
-                        let regex = active.regex;
-                        let match_case = active.match_case;
-                        let page_idx = active.page_idx;
-                        let result_sender = active.result_sender.clone();
-                        let matches = scan_page_for_search(
-                            &pdfium,
-                            &mut current_document,
-                            &path,
-                            page_idx,
-                            &query,
-                            regex,
-                            match_case,
-                        );
-                        let mut send_err = false;
-                        for m in matches {
-                            if result_sender.send(m).is_err() {
-                                send_err = true;
-                                break;
+                            QueryCommand::GetPageText(path, index, resp) => {
+                                let res = get_page_text_impl(
+                                    &pdfium,
+                                    &mut current_document,
+                                    &path,
+                                    index,
+                                );
+                                let _ = resp.send(res);
                             }
                         }
-                        if send_err {
+                    }
+
+                    if let Some(active) = active_search.as_ref() {
+                        if active.page_idx >= active.total_pages {
+                            let _ = active.done_sender.send(Ok(()));
                             active_search = None;
-                        } else if let Some(active) = active_search.as_mut()
-                            && active.search_id == search_id
-                        {
-                            active.page_idx += 1;
+                        } else {
+                            let search_id = active.search_id;
+                            let path = active.path.clone();
+                            let query = active.query.clone();
+                            let regex = active.regex;
+                            let match_case = active.match_case;
+                            let page_idx = active.page_idx;
+                            let result_sender = active.result_sender.clone();
+                            let matches = scan_page_for_search(
+                                &pdfium,
+                                &mut current_document,
+                                &path,
+                                page_idx,
+                                &query,
+                                regex,
+                                match_case,
+                            );
+                            let mut send_err = false;
+                            for m in matches {
+                                if result_sender.send(m).is_err() {
+                                    send_err = true;
+                                    break;
+                                }
+                            }
+                            if send_err {
+                                active_search = None;
+                            } else if let Some(active) = active_search.as_mut()
+                                && active.search_id == search_id
+                            {
+                                active.page_idx += 1;
+                            }
                         }
                     }
                 }
-            }
-        });
+            })
+            .expect("Failed to spawn PDF query thread");
 
         Ok(Self {
             render_sender,
