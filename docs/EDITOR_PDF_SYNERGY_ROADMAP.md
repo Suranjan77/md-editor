@@ -101,6 +101,14 @@ Initial slices complete:
 - Add regression tests for large-doc debounce and stale highlight generation
   handling.
 
+Initial slices complete:
+
+- Reference-style link parsing (both full `[text][ref]` and shortcut `[ref]`)
+  added to `native/src/editor/highlight.rs` with full test coverage and fallback
+  to plain text for malformed syntax.
+- Parser extended to support nested emphasis, inline links and emphasis inside
+  headings, and footnote references (`[^1]`).
+
 ## Milestone 3: PDF Engine Upgrade
 
 - Separate PDF render, query, and search queues while preserving one PDFium

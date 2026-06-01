@@ -61,6 +61,13 @@ Implement the multi-month markdown editor and PDF reader synergy plan in
   - Split view now renders PDF on the left and markdown on the right.
   - Inserted PDF citations are more compact: no blank quoted spacer line and
     source label is `PDF p. N`.
+- Started Milestone 2 (Markdown Intelligence): Added reference-style link recognition
+  in `native/src/editor/highlight.rs` (both full and shortcut reference links),
+  ensuring they expose metadata while remaining visually inactive or correct.
+- Extended parser coverage in `highlight.rs` to support nested emphasis, inline
+  links/emphasis inside headings, and footnote references (`[^1]`).
+- Fixed Windows path separation mismatches and CRLF testing issues across several
+  app and parser tests.
 
 ## Completed Files
 
@@ -108,6 +115,12 @@ Focused tests added or updated:
 - `app::tests::pdf_quote_insert_requires_markdown_file`
 - `app::tests::escape_closing_pdf_link_preview_clears_hidden_context_menu`
 - `app::tests::split_view_places_pdf_before_markdown`
+- `editor::highlight::tests::reference_link_span_exposes_metadata_but_is_inactive`
+- `editor::highlight::tests::reference_link_span_reconstructs_source_lines`
+- `editor::highlight::tests::malformed_reference_syntax_remains_plain_text`
+- `editor::highlight::tests::headings_parse_inline_links_and_emphasis`
+- `editor::highlight::tests::nested_emphasis_combines_bold_and_italic`
+- `editor::highlight::tests::footnotes_parsed_as_links`
 
 ## Known Worktree State
 
@@ -117,21 +130,18 @@ Focused tests added or updated:
 
 ## Next Best Task
 
-Continue Milestone 1: Editor Command Expansion.
+Continue Milestone 2: Markdown Intelligence.
 
 Recommended next slice:
 
-1. Follow up on citation rendering quality in the actual editor renderer:
+1. Follow up on citation rendering quality in the actual editor renderer (from Milestone 1):
    inspect how blockquote links render after the compact citation format and add
    renderer/UI regression coverage if spacing or link hit testing is still off.
-2. Then start Milestone 2 markdown intelligence with a narrow parser-only
-   feature: add reference-style link recognition in `native/src/editor/highlight.rs`.
-3. Write parser tests first:
-   - `StyledSpan.text` still reconstructs source lines
-   - inactive reference link spans expose link metadata
-   - malformed reference syntax remains plain text
+2. Extend parser coverage in `highlight.rs` for robust table metadata, or expose
+   structural metadata for outline and backlinks.
+3. Write parser tests first for the chosen feature, following TDD.
 4. Do not add markdown rules in `renderer.rs`.
-5. Run required checks.
+5. Run required checks (`cargo fmt`, `clippy`, `cargo test`).
 6. Update this handoff with result, tests, and next task.
 
 UI testing rule for next slices:
