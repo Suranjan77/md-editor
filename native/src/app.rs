@@ -5085,7 +5085,7 @@ fn normalize_path(path: &std::path::Path) -> String {
         }
     }
     let normalized: std::path::PathBuf = components.into_iter().collect();
-    normalized.to_string_lossy().to_string()
+    normalized.to_string_lossy().to_string().replace('\\', "/")
 }
 
 fn resolve_relative_link_path(
@@ -5495,7 +5495,7 @@ mod tests {
 
     #[test]
     fn split_view_places_pdf_before_markdown() {
-        let source = include_str!("app.rs");
+        let source = include_str!("app.rs").replace("\r\n", "\n");
         let split_row = source
             .find("row![\n                container(pdf_view)")
             .expect("split view row should start with PDF pane");

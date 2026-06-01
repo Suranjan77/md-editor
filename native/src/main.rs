@@ -200,6 +200,7 @@ fn uninstall_linux_desktop_entry() -> bool {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CliAction {
     Install,
@@ -207,6 +208,7 @@ enum CliAction {
     RunApp,
 }
 
+#[allow(dead_code)]
 fn parse_cli_args(args: &[String]) -> CliAction {
     if args.len() > 1 {
         let cmd = args[1].as_str();
