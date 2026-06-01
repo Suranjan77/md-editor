@@ -22,9 +22,26 @@ pub fn build_pdf_link(path: &str, page: Option<u16>, annotation_id: Option<&str>
 }
 
 pub fn parse_pdf_link(link: &str) -> Option<PdfLinkTarget> {
-    let rest = link.strip_prefix("pdf://")?;
-    let (raw_path, raw_query) = rest.split_once('?').unwrap_or((rest, ""));
+    let rest = if link.starts_with("pdf://") {
+        &link[6..]
+    } else if link.contains(".pdf") {
+        link
+    } else {
+        return None;
+    };
+    let (raw_path, raw_query) = if let Some(idx) = rest.find('?') {
+        let (p, q) = rest.split_at(idx);
+        (p, &q[1..])
+    } else if let Some(idx) = rest.find('#') {
+        let (p, q) = rest.split_at(idx);
+        (p, &q[1..])
+    } else {
+        (rest, "")
+    };
     let path = percent_decode(raw_path).unwrap_or_else(|| raw_path.to_string());
+    if !path.to_lowercase().ends_with(".pdf") {
+        return None;
+    }
 
     let mut page = None;
     let mut annotation_id = None;
@@ -121,5 +138,30 @@ mod tests {
                 annotation_id: Some("abc".to_string()),
             })
         );
+    }
+
+    #[test]
+    fn parses_pdf_links_with_hash_delimiter() {
+        assert_eq!(
+            parse_pdf_link("pdf://papers/My PDF File.pdf#page=5&annotation=xyz"),
+            Some(PdfLinkTarget {
+                path: "papers/My PDF File.pdf".to_string(),
+                page: Some(5),
+                annotation_id: Some("xyz".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_pdf_links_without_prefix() {
+        assert_eq!(
+            parse_pdf_link("papers/My PDF File.pdf#page=5&annotation=xyz"),
+            Some(PdfLinkTarget {
+                path: "papers/My PDF File.pdf".to_string(),
+                page: Some(5),
+                annotation_id: Some("xyz".to_string()),
+            })
+        );
+        assert_eq!(parse_pdf_link("folder.pdf/file.md"), None);
     }
 }

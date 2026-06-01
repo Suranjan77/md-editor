@@ -4,36 +4,10 @@ use iced::{Element, Length, Padding, Renderer, Theme};
 use crate::messages::Message;
 use crate::theme;
 
-pub struct TocEntry {
-    pub level: u8,
-    pub text: String,
-    pub line: usize,
-}
+pub type TocEntry = crate::editor::highlight::OutlineEntry;
 
-pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
-    let mut toc = Vec::new();
-    for (i, line) in buffer_text.split('\n').enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('#') {
-            let mut level = 0;
-            for c in trimmed.chars() {
-                if c == '#' {
-                    level += 1;
-                } else {
-                    break;
-                }
-            }
-            if level > 0 && level <= 6 {
-                let text = trimmed[level..].trim().to_string();
-                toc.push(TocEntry {
-                    level: level as u8,
-                    text,
-                    line: i,
-                });
-            }
-        }
-    }
-    toc
+pub fn get_toc(lines: &[crate::editor::highlight::StyledLine]) -> Vec<TocEntry> {
+    crate::editor::highlight::extract_outline(lines)
 }
 
 pub fn view<'a>(toc: &'a [TocEntry]) -> Element<'a, Message, Theme, Renderer> {

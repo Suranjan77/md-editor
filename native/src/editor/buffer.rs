@@ -266,15 +266,15 @@ impl DocBuffer {
                 self.insert_text("| Column 1 | Column 2 |\n|---|---|\n| value | value |")
             }
             EditorCommand::InsertPdfQuoteLink {
-                selected_text,
-                page_number,
+                selected_text: _,
+                page_number: _,
                 link,
-            } => self.insert_pdf_quote_link(&selected_text, page_number, &link),
+            } => self.insert_pdf_quote_link(&link),
             EditorCommand::InsertPdfAnnotationLink {
-                selected_text,
-                page_number,
+                selected_text: _,
+                page_number: _,
                 link,
-            } => self.insert_pdf_annotation_link(&selected_text, page_number, &link),
+            } => self.insert_pdf_annotation_link(&link),
             EditorCommand::DuplicateLine => self.duplicate_line(),
             EditorCommand::MoveLineUp => self.move_line(-1),
             EditorCommand::MoveLineDown => self.move_line(1),
@@ -469,28 +469,12 @@ impl DocBuffer {
         CommandResult::changed()
     }
 
-    fn insert_pdf_quote_link(
-        &mut self,
-        selected_text: &str,
-        page_number: u16,
-        link: &str,
-    ) -> CommandResult {
-        match pdf_quote_link_markdown(selected_text, page_number, link) {
-            Some(markdown) => self.insert_text(&markdown),
-            None => CommandResult::default(),
-        }
+    fn insert_pdf_quote_link(&mut self, link: &str) -> CommandResult {
+        self.wrap_selection_or_insert("[", &format!("]({link})"), "label")
     }
 
-    fn insert_pdf_annotation_link(
-        &mut self,
-        selected_text: &str,
-        page_number: u16,
-        link: &str,
-    ) -> CommandResult {
-        match pdf_annotation_link_markdown(selected_text, page_number, link) {
-            Some(markdown) => self.insert_text(&markdown),
-            None => CommandResult::default(),
-        }
+    fn insert_pdf_annotation_link(&mut self, link: &str) -> CommandResult {
+        self.wrap_selection_or_insert("[", &format!("]({link})"), "label")
     }
 
     fn delete_selection(&mut self) -> CommandResult {
@@ -1245,49 +1229,6 @@ fn detect_numbered_list_marker(trimmed: &str) -> Option<usize> {
     }
 }
 
-pub fn pdf_quote_link_markdown(
-    selected_text: &str,
-    page_number: u16,
-    link: &str,
-) -> Option<String> {
-    let quote = markdown_quote(selected_text);
-    if quote.trim().is_empty() {
-        return None;
-    }
-    Some(format!("{quote}\n> [PDF p. {page_number}]({link})"))
-}
-
-pub fn pdf_annotation_link_markdown(
-    selected_text: &str,
-    page_number: u16,
-    link: &str,
-) -> Option<String> {
-    let quote = markdown_quote(selected_text);
-    if quote.trim().is_empty() || link.trim().is_empty() {
-        return None;
-    }
-    Some(format!("{quote}\n> [PDF p. {page_number}]({link})"))
-}
-
-fn markdown_quote(text: &str) -> String {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    trimmed
-        .lines()
-        .map(|line| {
-            if line.trim().is_empty() {
-                ">".to_string()
-            } else {
-                format!("> {}", line.trim_end())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
@@ -1770,14 +1711,14 @@ mod tests {
         buffer.set_cursor(1, 0);
 
         buffer.execute(EditorCommand::InsertPdfQuoteLink {
-            selected_text: " Quoted PDF\n\nsecond line ".to_string(),
+            selected_text: "".to_string(),
             page_number: 3,
             link: "pdf://papers/paper.pdf?page=3".to_string(),
         });
 
         assert_eq!(
             buffer.text(),
-            "notes\n> Quoted PDF\n>\n> second line\n> [PDF p. 3](pdf://papers/paper.pdf?page=3)"
+            "notes\n[label](pdf://papers/paper.pdf?page=3)"
         );
         assert!(buffer.undo());
         assert_eq!(buffer.text(), "notes\n");
@@ -1785,7 +1726,7 @@ mod tests {
         assert!(
             buffer
                 .text()
-                .contains("[PDF p. 3](pdf://papers/paper.pdf?page=3)")
+                .contains("[label](pdf://papers/paper.pdf?page=3)")
         );
     }
 
@@ -1795,38 +1736,18 @@ mod tests {
         buffer.set_cursor(1, 0);
 
         buffer.execute(EditorCommand::InsertPdfAnnotationLink {
-            selected_text: " Existing highlight ".to_string(),
+            selected_text: "".to_string(),
             page_number: 7,
             link: "pdf://papers/paper.pdf?page=7&annotation=ann%231".to_string(),
         });
 
         assert_eq!(
             buffer.text(),
-            "notes\n> Existing highlight\n> [PDF p. 7](pdf://papers/paper.pdf?page=7&annotation=ann%231)"
+            "notes\n[label](pdf://papers/paper.pdf?page=7&annotation=ann%231)"
         );
         assert!(buffer.undo());
         assert_eq!(buffer.text(), "notes\n");
         assert!(buffer.redo());
         assert!(buffer.text().contains("annotation=ann%231"));
-    }
-
-    #[test]
-    fn pdf_annotation_link_insert_requires_text_and_link() {
-        let mut buffer = DocBuffer::from_text("notes");
-        let result = buffer.execute(EditorCommand::InsertPdfAnnotationLink {
-            selected_text: " ".to_string(),
-            page_number: 7,
-            link: "pdf://papers/paper.pdf?page=7&annotation=ann".to_string(),
-        });
-        assert!(!result.text_changed);
-        assert_eq!(buffer.text(), "notes");
-
-        let result = buffer.execute(EditorCommand::InsertPdfAnnotationLink {
-            selected_text: "Existing highlight".to_string(),
-            page_number: 7,
-            link: " ".to_string(),
-        });
-        assert!(!result.text_changed);
-        assert_eq!(buffer.text(), "notes");
     }
 }
