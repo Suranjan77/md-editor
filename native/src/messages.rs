@@ -21,6 +21,7 @@ pub enum Message {
     SearchPrevious,
     SearchNext,
     SearchReplaceAll,
+    #[allow(dead_code)]
     SearchResultClicked(String),
     CommandPaletteOpen,
     CommandPaletteQueryChanged(String),
@@ -76,6 +77,7 @@ pub enum Message {
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfSearchMatchesFound(u64, Vec<md_editor_core::pdf::PdfSearchMatch>),
     PdfSearchFinished(u64, Result<(), String>),
+    #[allow(dead_code)]
     PdfSearchResultClicked(u16),
     PdfScrollBy(f32),
     PdfFirstPage,
@@ -145,6 +147,10 @@ pub enum Message {
     KeyboardShortcut(Shortcut),
     ToggleTOC,
     TocClicked(usize),
+    PdfTocClicked(usize),
+    UnifiedSearchMatchesFound(u64, Vec<md_editor_core::types::UnifiedSearchResult>),
+    UnifiedSearchFinished(u64, Result<(), String>),
+    UnifiedSearchResultClicked(md_editor_core::types::UnifiedSearchResult),
     SplitViewToggle,
     SplitViewDragStart,
     SplitViewDragging(f32),
@@ -188,4 +194,6 @@ pub enum Shortcut {
     PdfFirstPage,
     PdfLastPage,
     PdfZoomInput,
+    FollowCitation,
+    ShowUsages,
 }

@@ -3,6 +3,15 @@ use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+static PDFIUM_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn with_pdfium_access<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = PDFIUM_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f()
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PdfTextChar {
     pub char_index: u32,
@@ -32,6 +41,10 @@ pub struct PdfPageText {
 pub enum PdfAnnotationKind {
     Highlight,
     Note,
+    Underline,
+    Strike,
+    AreaNote,
+    FreeNote,
 }
 
 impl PdfAnnotationKind {
@@ -39,6 +52,10 @@ impl PdfAnnotationKind {
         match self {
             Self::Highlight => "Highlight",
             Self::Note => "Note",
+            Self::Underline => "Underline",
+            Self::Strike => "Strike",
+            Self::AreaNote => "AreaNote",
+            Self::FreeNote => "FreeNote",
         }
     }
 }
@@ -50,6 +67,10 @@ impl std::str::FromStr for PdfAnnotationKind {
         match s {
             "Highlight" => Ok(Self::Highlight),
             "Note" => Ok(Self::Note),
+            "Underline" => Ok(Self::Underline),
+            "Strike" => Ok(Self::Strike),
+            "AreaNote" => Ok(Self::AreaNote),
+            "FreeNote" => Ok(Self::FreeNote),
             _ => Err(format!("Unknown annotation kind: {s}")),
         }
     }
@@ -62,6 +83,8 @@ pub enum PdfAnnotationColor {
     Blue,
     Pink,
     Orange,
+    Red,
+    Purple,
 }
 
 impl PdfAnnotationColor {
@@ -72,6 +95,8 @@ impl PdfAnnotationColor {
             Self::Blue => "Blue",
             Self::Pink => "Pink",
             Self::Orange => "Orange",
+            Self::Red => "Red",
+            Self::Purple => "Purple",
         }
     }
 }
@@ -86,7 +111,36 @@ impl std::str::FromStr for PdfAnnotationColor {
             "Blue" => Ok(Self::Blue),
             "Pink" => Ok(Self::Pink),
             "Orange" => Ok(Self::Orange),
+            "Red" => Ok(Self::Red),
+            "Purple" => Ok(Self::Purple),
             _ => Err(format!("Unknown annotation color: {s}")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum PdfAnnotationStatus {
+    Unresolved,
+    Resolved,
+}
+
+impl PdfAnnotationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unresolved => "Unresolved",
+            Self::Resolved => "Resolved",
+        }
+    }
+}
+
+impl std::str::FromStr for PdfAnnotationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Unresolved" => Ok(Self::Unresolved),
+            "Resolved" => Ok(Self::Resolved),
+            _ => Err(format!("Unknown annotation status: {s}")),
         }
     }
 }
@@ -110,6 +164,8 @@ pub struct PdfAnnotation {
     pub note: Option<String>,
     pub linked_note_path: Option<String>,
     pub markdown_anchor: Option<String>,
+    pub tags: Vec<String>,
+    pub status: PdfAnnotationStatus,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -725,30 +781,32 @@ impl PdfRenderer {
                         priority = newer_priority;
                     }
 
-                    let res = render_page_from_cache(
-                        &pdfium,
-                        &mut current_document,
-                        &priority.path,
-                        priority.page_index,
-                        priority.scale,
-                    );
+                    let res = with_pdfium_access(|| {
+                        render_page_from_cache(
+                            &pdfium,
+                            &mut current_document,
+                            &priority.path,
+                            priority.page_index,
+                            priority.scale,
+                        )
+                    });
                     let _ = priority.resp.send(res);
                 }
 
                 match cmd {
                     RenderCommand::Wake => {}
                     RenderCommand::PageCount(path, resp) => {
-                        let res = (|| {
+                        let res = with_pdfium_access(|| {
                             ensure_document(&pdfium, &mut current_document, &path)?;
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
                             };
                             Ok(doc.pages().len() as u16)
-                        })();
+                        });
                         let _ = resp.send(res);
                     }
                     RenderCommand::PageSizes(path, resp) => {
-                        let res = (|| {
+                        let res = with_pdfium_access(|| {
                             ensure_document(&pdfium, &mut current_document, &path)?;
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
@@ -759,7 +817,7 @@ impl PdfRenderer {
                                 sizes.push((page.width().value, page.height().value));
                             }
                             Ok(sizes)
-                        })();
+                        });
                         let _ = resp.send(res);
                     }
                     RenderCommand::RenderPage(path, index, scale, resp) => {
@@ -784,18 +842,18 @@ impl PdfRenderer {
                         if skipped {
                             let _ = resp.send(Err("Skipped".to_string()));
                         } else {
-                            let res = render_page_from_cache(
+                            let res = with_pdfium_access(|| render_page_from_cache(
                                 &pdfium,
                                 &mut current_document,
                                 &path,
                                 index,
                                 scale,
-                            );
+                            ));
                             let _ = resp.send(res);
                         }
                     }
                     RenderCommand::GetToc(path, resp) => {
-                        let res = (|| {
+                        let res = with_pdfium_access(|| {
                             ensure_document(&pdfium, &mut current_document, &path)?;
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
@@ -807,11 +865,11 @@ impl PdfRenderer {
                                 bookmarks.push(bookmark);
                             }
                             Ok(Self::parse_bookmarks(&bookmarks))
-                        })();
+                        });
                         let _ = resp.send(res);
                     }
                     RenderCommand::GetLinks(path, index, resp) => {
-                        let res = (|| {
+                        let res = with_pdfium_access(|| {
                             ensure_document(&pdfium, &mut current_document, &path)?;
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
@@ -880,11 +938,11 @@ impl PdfRenderer {
                                 });
                             }
                             Ok(links)
-                        })();
+                        });
                         let _ = resp.send(res);
                     }
                     RenderCommand::RenderLinkPreview(path, index, dest_y, resp) => {
-                        let res = (|| {
+                        let res = with_pdfium_access(|| {
                             ensure_document(&pdfium, &mut current_document, &path)?;
                             let page_text = get_page_text_impl(
                                 &pdfium,
@@ -935,7 +993,7 @@ impl PdfRenderer {
                                 image_data: buf.into_inner(),
                                 center_ratio,
                             })
-                        })();
+                        });
                         let _ = resp.send(res);
                     }
                 }
@@ -995,13 +1053,13 @@ impl PdfRenderer {
                                     let _ = done_sender.send(Ok(()));
                                     active_search = None;
                                 } else {
-                                    let total_pages = (|| {
+                                    let total_pages = with_pdfium_access(|| {
                                         ensure_document(&pdfium, &mut current_document, &path)?;
                                         let Some((_, doc)) = current_document.as_ref() else {
                                             return Err("PDF document was not loaded".to_string());
                                         };
                                         Ok::<u16, String>(doc.pages().len() as u16)
-                                    })();
+                                    });
                                     match total_pages {
                                         Ok(total) => {
                                             active_search = Some(ActivePdfSearch {
@@ -1024,12 +1082,9 @@ impl PdfRenderer {
                                 }
                             }
                             QueryCommand::GetPageText(path, index, resp) => {
-                                let res = get_page_text_impl(
-                                    &pdfium,
-                                    &mut current_document,
-                                    &path,
-                                    index,
-                                );
+                                let res = with_pdfium_access(|| {
+                                    get_page_text_impl(&pdfium, &mut current_document, &path, index)
+                                });
                                 let _ = resp.send(res);
                             }
                         }
@@ -1047,15 +1102,17 @@ impl PdfRenderer {
                             let match_case = active.match_case;
                             let page_idx = active.page_idx;
                             let result_sender = active.result_sender.clone();
-                            let matches = scan_page_for_search(
-                                &pdfium,
-                                &mut current_document,
-                                &path,
-                                page_idx,
-                                &query,
-                                regex,
-                                match_case,
-                            );
+                            let matches = with_pdfium_access(|| {
+                                scan_page_for_search(
+                                    &pdfium,
+                                    &mut current_document,
+                                    &path,
+                                    page_idx,
+                                    &query,
+                                    regex,
+                                    match_case,
+                                )
+                            });
                             let mut send_err = false;
                             for m in matches {
                                 if result_sender.send(m).is_err() {
@@ -1447,6 +1504,46 @@ mod tests {
             results.len(),
             regex_results.len(),
             "Regex and non-regex search count should match"
+        );
+    }
+
+    #[test]
+    fn pdf_search_and_render_share_pdfium_safely() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let renderer = std::sync::Arc::new(PdfRenderer::new().unwrap());
+        let path = "../dummy.pdf".to_string();
+
+        let render_renderer = renderer.clone();
+        let render_path = path.clone();
+        let render_thread = std::thread::spawn(move || {
+            for _ in 0..20 {
+                let image = render_renderer
+                    .render_page(&render_path, 0, 1.0)
+                    .expect("concurrent PDF render should succeed");
+                assert!(image.width() > 0);
+                assert!(image.height() > 0);
+            }
+        });
+
+        let (res_rx, done_rx) = renderer
+            .search_text_stream(path, "dummy".to_string(), false, false, 42)
+            .expect("concurrent PDF search should start");
+
+        let mut matches = Vec::new();
+        while let Ok(result) = res_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            matches.push(result);
+        }
+        let done = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("concurrent PDF search should finish");
+        done.expect("concurrent PDF search should succeed");
+        render_thread
+            .join()
+            .expect("concurrent PDF render thread should not panic");
+
+        assert!(
+            !matches.is_empty(),
+            "concurrent PDF search should find dummy fixture text"
         );
     }
 

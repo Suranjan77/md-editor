@@ -134,6 +134,8 @@ fn get_annotation_color(color: md_editor_core::pdf::PdfAnnotationColor) -> Color
         md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgba(0.12, 0.53, 0.9, 0.35),
         md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgba(0.95, 0.3, 0.6, 0.35),
         md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgba(1.0, 0.6, 0.1, 0.35),
+        md_editor_core::pdf::PdfAnnotationColor::Red => Color::from_rgba(0.9, 0.1, 0.1, 0.35),
+        md_editor_core::pdf::PdfAnnotationColor::Purple => Color::from_rgba(0.6, 0.2, 0.8, 0.35),
     }
 }
 
@@ -794,6 +796,8 @@ mod tests {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            tags: Vec::new(),
+            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }

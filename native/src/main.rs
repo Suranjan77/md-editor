@@ -24,9 +24,11 @@
 
 mod app;
 mod editor;
+mod integrity;
 mod messages;
 mod pdf_layout;
 mod pdf_links;
+mod pdf_navigation;
 mod pdf_notes;
 mod pdf_page_cache;
 mod search;
