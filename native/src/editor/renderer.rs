@@ -2276,20 +2276,9 @@ where
                         state.is_focused,
                         state,
                     );
-                    state.is_focused = true;
-                    state.selection_anchor = Some((line_idx, col));
-                    state.selection_focus = Some((line_idx, col));
-                    state.desired_visual_x = None;
-                    shell.publish((self.on_pointer_command)(EditorCommand::SetCursor {
-                        line: line_idx,
-                        col,
-                    }));
-                    state.is_dragging = true;
 
-                    // Check for checkbox / link clicks
+                    // Check for checkbox / link clicks BEFORE mutating state or setting cursor
                     if let Some(line) = self.lines.get(line_idx) {
-                        let active_block_id =
-                            self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
                         let is_editing =
                             is_block_editing_line(line, active_block_id, state.is_focused);
                         let mut x_acc = 0.0_f32;
@@ -2328,6 +2317,16 @@ where
                             x_acc += w;
                         }
                     }
+
+                    state.is_focused = true;
+                    state.selection_anchor = Some((line_idx, col));
+                    state.selection_focus = Some((line_idx, col));
+                    state.desired_visual_x = None;
+                    shell.publish((self.on_pointer_command)(EditorCommand::SetCursor {
+                        line: line_idx,
+                        col,
+                    }));
+                    state.is_dragging = true;
                 } else {
                     state.is_focused = false;
                     state.selection_anchor = None;
