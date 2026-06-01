@@ -16,8 +16,28 @@ pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use md_editor_core::pdf::{PdfRect, PdfSearchMatch};
+    use md_editor_core::pdf::{
+        PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect, PdfSearchMatch,
+    };
     use std::collections::HashMap;
+
+    fn annotation() -> PdfAnnotation {
+        PdfAnnotation {
+            id: "ann-1".to_string(),
+            document_id: "doc".to_string(),
+            page_index: 4,
+            kind: PdfAnnotationKind::Highlight,
+            color: PdfAnnotationColor::Yellow,
+            selected_text: "Important highlight".to_string(),
+            ranges: vec![],
+            rects: vec![],
+            note: None,
+            linked_note_path: None,
+            markdown_anchor: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
 
     #[test]
     fn loading_placeholder_does_not_use_plain_loading_text() {
@@ -65,6 +85,57 @@ mod tests {
         assert_eq!(
             search_highlights_for_page(&matches, &by_page, None, 2),
             (matches[1].rects.clone(), Vec::new())
+        );
+    }
+
+    #[test]
+    fn focused_annotation_toolbar_cite_click_emits_insert_message() {
+        let ann = annotation();
+        let mut ui = iced_test::simulator(toolbar(
+            4,
+            10,
+            1.0,
+            true,
+            false,
+            false,
+            false,
+            false,
+            Some(&ann),
+            true,
+        ));
+
+        ui.click(" Cite").expect("Cite button should exist");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::PdfInsertAnnotationLink(id)] if id == "ann-1"
+        ));
+    }
+
+    #[test]
+    fn focused_annotation_toolbar_cite_is_inert_without_markdown_file() {
+        let ann = annotation();
+        let mut ui = iced_test::simulator(toolbar(
+            4,
+            10,
+            1.0,
+            true,
+            false,
+            false,
+            false,
+            false,
+            Some(&ann),
+            false,
+        ));
+
+        ui.click(" Cite")
+            .expect("disabled-looking Cite control should still render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(
+            messages.is_empty(),
+            "Cite must not insert without an active markdown note"
         );
     }
 }
@@ -180,6 +251,7 @@ pub fn toolbar<'a>(
     annotations_sidebar_visible: bool,
     selection_active: bool,
     focused_annotation: Option<&'a md_editor_core::pdf::PdfAnnotation>,
+    can_insert_annotation_link: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
     let page_label = if total_pages == 0 {
         "No PDF".to_string()
@@ -282,6 +354,29 @@ pub fn toolbar<'a>(
         .padding([4, 8])
         .style(button::text);
 
+        let cite_btn = if can_insert_annotation_link {
+            button(
+                row![
+                    icons::view(Icon::FileText, theme::ACCENT, 14.0),
+                    text(" Cite").size(12).color(theme::ACCENT)
+                ]
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::PdfInsertAnnotationLink(ann.id.clone()))
+            .padding([4, 8])
+            .style(button::text)
+        } else {
+            button(
+                row![
+                    icons::view(Icon::FileText, theme::TEXT_MUTED, 14.0),
+                    text(" Cite").size(12).color(theme::TEXT_MUTED)
+                ]
+                .align_y(Alignment::Center),
+            )
+            .padding([4, 8])
+            .style(button::text)
+        };
+
         let link_btn = if let Some(ref path) = ann.linked_note_path {
             if !path.is_empty() {
                 button(
@@ -331,6 +426,7 @@ pub fn toolbar<'a>(
         row![
             text("Highlight:").size(12).color(theme::TEXT_MUTED),
             note_btn,
+            cite_btn,
             link_btn,
             delete_btn,
         ]

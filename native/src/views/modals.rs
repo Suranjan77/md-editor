@@ -17,6 +17,7 @@ pub enum PdfContextMenuItem {
     HighlightOrange,
     SearchSelectedText,
     InsertQuoteLink,
+    InsertAnnotationLink { id: String, page: u16 },
     EditNote { id: String, page: u16 },
     LinkToNote { id: String, page: u16 },
     OpenLinkedNote(String),
@@ -29,6 +30,33 @@ pub enum PdfContextMenuItem {
 pub struct PdfContextMenuState {
     pub absolute_pos: iced::Point,
     pub items: Vec<PdfContextMenuItem>,
+}
+
+pub fn pdf_annotation_context_menu_items(
+    ann: &md_editor_core::pdf::PdfAnnotation,
+    markdown_open: bool,
+) -> Vec<PdfContextMenuItem> {
+    let mut items = Vec::new();
+    if markdown_open {
+        items.push(PdfContextMenuItem::InsertAnnotationLink {
+            id: ann.id.clone(),
+            page: ann.page_index,
+        });
+    }
+    items.push(PdfContextMenuItem::EditNote {
+        id: ann.id.clone(),
+        page: ann.page_index,
+    });
+    if let Some(path) = ann.linked_note_path.as_deref().filter(|p| !p.is_empty()) {
+        items.push(PdfContextMenuItem::OpenLinkedNote(path.to_string()));
+    } else {
+        items.push(PdfContextMenuItem::LinkToNote {
+            id: ann.id.clone(),
+            page: ann.page_index,
+        });
+    }
+    items.push(PdfContextMenuItem::DeleteHighlight(ann.id.clone()));
+    items
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,7 +153,9 @@ fn view_go_to_page<'a>(
     .into()
 }
 
-fn view_context_menu<'a>(state: &PdfContextMenuState) -> Element<'a, Message, Theme, Renderer> {
+pub(crate) fn view_context_menu<'a>(
+    state: &PdfContextMenuState,
+) -> Element<'a, Message, Theme, Renderer> {
     use iced::widget::Space;
     let mut menu_col = column![].spacing(1);
 
@@ -141,6 +171,7 @@ fn view_context_menu<'a>(state: &PdfContextMenuState) -> Element<'a, Message, Th
             PdfContextMenuItem::HighlightOrange => "Highlight: Orange",
             PdfContextMenuItem::SearchSelectedText => "Search selected text",
             PdfContextMenuItem::InsertQuoteLink => "Insert quote in note",
+            PdfContextMenuItem::InsertAnnotationLink { .. } => "Insert highlight in note",
             PdfContextMenuItem::EditNote { .. } => "Edit short note",
             PdfContextMenuItem::LinkToNote { .. } => "Link markdown note",
             PdfContextMenuItem::OpenLinkedNote(_) => "Open markdown note",
@@ -301,4 +332,79 @@ pub fn view<'a>(
         ..Default::default()
     })
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use md_editor_core::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind};
+
+    fn annotation(linked_note_path: Option<&str>) -> PdfAnnotation {
+        PdfAnnotation {
+            id: "ann-1".to_string(),
+            document_id: "doc".to_string(),
+            page_index: 4,
+            kind: PdfAnnotationKind::Highlight,
+            color: PdfAnnotationColor::Yellow,
+            selected_text: "Important highlight".to_string(),
+            ranges: vec![],
+            rects: vec![],
+            note: None,
+            linked_note_path: linked_note_path.map(str::to_string),
+            markdown_anchor: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn annotation_context_menu_includes_insert_only_when_markdown_open() {
+        let ann = annotation(None);
+
+        assert!(
+            pdf_annotation_context_menu_items(&ann, true)
+                .iter()
+                .any(|item| matches!(item, PdfContextMenuItem::InsertAnnotationLink { id, page } if id == "ann-1" && *page == 4))
+        );
+
+        assert!(
+            !pdf_annotation_context_menu_items(&ann, false)
+                .iter()
+                .any(|item| matches!(item, PdfContextMenuItem::InsertAnnotationLink { .. }))
+        );
+    }
+
+    #[test]
+    fn annotation_context_menu_prefers_open_linked_note_when_present() {
+        let ann = annotation(Some("notes/highlight.md"));
+        let items = pdf_annotation_context_menu_items(&ann, true);
+
+        assert!(items.iter().any(|item| {
+            matches!(item, PdfContextMenuItem::OpenLinkedNote(path) if path == "notes/highlight.md")
+        }));
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item, PdfContextMenuItem::LinkToNote { .. }))
+        );
+    }
+
+    #[test]
+    fn annotation_context_menu_insert_click_emits_action_message() {
+        let state = PdfContextMenuState {
+            absolute_pos: iced::Point::ORIGIN,
+            items: pdf_annotation_context_menu_items(&annotation(None), true),
+        };
+        let mut ui = iced_test::simulator(view_context_menu(&state));
+
+        ui.click("Insert highlight in note")
+            .expect("annotation insert item should render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::PdfContextMenuAction(PdfContextMenuItem::InsertAnnotationLink { id, page })]
+                if id == "ann-1" && *page == 4
+        ));
+    }
 }

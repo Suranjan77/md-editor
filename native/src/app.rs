@@ -11,13 +11,12 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::editor::buffer::{DocBuffer, EditorCommand};
+use crate::editor::buffer::{DocBuffer, EditorCommand, pdf_quote_link_markdown};
 use crate::editor::highlight;
 use crate::messages::{Message, Shortcut, TrackerTab};
 use crate::pdf_links::{build_pdf_link, parse_pdf_link};
 use crate::pdf_notes::{
-    append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path,
-    note_filename_from_path, slug_fragment,
+    build_linked_pdf_note_content, normalize_note_path, note_filename_from_path, slug_fragment,
 };
 use crate::search::DocumentMatch;
 use crate::theme as app_theme;
@@ -1724,22 +1723,9 @@ impl MdEditor {
                 }
 
                 if let Some(ann) = target_ann {
-                    items.push(views::modals::PdfContextMenuItem::EditNote {
-                        id: ann.id.clone(),
-                        page: ann.page_index,
-                    });
-                    if let Some(path) = ann.linked_note_path.as_deref().filter(|p| !p.is_empty()) {
-                        items.push(views::modals::PdfContextMenuItem::OpenLinkedNote(
-                            path.to_string(),
-                        ));
-                    } else {
-                        items.push(views::modals::PdfContextMenuItem::LinkToNote {
-                            id: ann.id.clone(),
-                            page: ann.page_index,
-                        });
-                    }
-                    items.push(views::modals::PdfContextMenuItem::DeleteHighlight(
-                        ann.id.clone(),
+                    items.extend(views::modals::pdf_annotation_context_menu_items(
+                        &ann,
+                        self.active_path.is_some(),
                     ));
                 }
 
@@ -1823,7 +1809,20 @@ impl MdEditor {
                     Task::none()
                 }
                 views::modals::PdfContextMenuItem::CopyWithSourceLink => {
-                    if let Some(markdown) = self.pdf_selection_quote_link_markdown() {
+                    if let Some(command) = self.pdf_selection_quote_link_command() {
+                        let EditorCommand::InsertPdfQuoteLink {
+                            selected_text,
+                            page_number,
+                            link,
+                        } = command
+                        else {
+                            return Task::none();
+                        };
+                        let Some(markdown) =
+                            pdf_quote_link_markdown(&selected_text, page_number, &link)
+                        else {
+                            return Task::none();
+                        };
                         self.active_modal = None;
                         return iced::clipboard::write(markdown);
                     }
@@ -1877,6 +1876,10 @@ impl MdEditor {
                 views::modals::PdfContextMenuItem::InsertQuoteLink => {
                     self.active_modal = None;
                     Task::done(Message::PdfInsertQuoteLink)
+                }
+                views::modals::PdfContextMenuItem::InsertAnnotationLink { id, page: _ } => {
+                    self.active_modal = None;
+                    Task::done(Message::PdfInsertAnnotationLink(id))
                 }
                 views::modals::PdfContextMenuItem::EditNote { id, page } => {
                     self.active_modal = None;
@@ -2525,12 +2528,30 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfInsertQuoteLink => {
-                let Some(markdown) = self.pdf_selection_quote_link_markdown() else {
+                if self.active_path.is_none() {
+                    self.toast =
+                        Some("Open a markdown file before inserting a quote link".to_string());
+                    return Task::none();
+                }
+                let Some(command) = self.pdf_selection_quote_link_command() else {
                     self.toast = Some("Select PDF text before inserting a quote link".to_string());
                     return Task::none();
                 };
                 self.active_panel = ActivePanel::Markdown;
-                self.run_editor_command(EditorCommand::InsertText(markdown))
+                self.run_editor_command(command)
+            }
+            Message::PdfInsertAnnotationLink(annotation_id) => {
+                if self.active_path.is_none() {
+                    self.toast =
+                        Some("Open a markdown file before inserting a highlight".to_string());
+                    return Task::none();
+                }
+                let Some(command) = self.pdf_annotation_link_command(&annotation_id) else {
+                    self.toast = Some("Select a PDF highlight before inserting it".to_string());
+                    return Task::none();
+                };
+                self.active_panel = ActivePanel::Markdown;
+                self.run_editor_command(command)
             }
             Message::PdfCreateHighlight(color) => {
                 if let (Some(sel), Some(doc_id)) = (&self.pdf_selection, &self.pdf_document_id) {
@@ -2759,6 +2780,7 @@ impl MdEditor {
                             self.focused_annotation_id = None;
                         } else if self.pdf_link_preview.is_some() {
                             self.pdf_link_preview = None;
+                            self.active_modal = None;
                         } else if self.active_modal.is_some() {
                             self.active_modal = None;
                             self.modal_input.clear();
@@ -2935,6 +2957,16 @@ impl MdEditor {
                                 Task::none()
                             }
                         } else {
+                            Task::none()
+                        }
+                    }
+                    Shortcut::InsertPdfQuote => Task::done(Message::PdfInsertQuoteLink),
+                    Shortcut::InsertPdfHighlight => {
+                        if let Some(annotation_id) = self.focused_annotation_id.clone() {
+                            Task::done(Message::PdfInsertAnnotationLink(annotation_id))
+                        } else {
+                            self.toast =
+                                Some("Select a PDF highlight before inserting it".to_string());
                             Task::none()
                         }
                     }
@@ -3261,6 +3293,7 @@ impl MdEditor {
                 self.pdf_annotations_visible,
                 self.pdf_selection.is_some(),
                 focused_ann,
+                self.active_path.is_some(),
             );
             let left_panel: Element<_, _, iced::Renderer> = container(column![
                 if pdf_search_active {
@@ -3394,10 +3427,8 @@ impl MdEditor {
             .interaction(iced::mouse::Interaction::ResizingHorizontally);
 
             row![
-                container(editor_view).width(Length::FillPortion(left_portion)),
-                divider,
                 container(pdf_view)
-                    .width(Length::FillPortion(right_portion))
+                    .width(Length::FillPortion(left_portion))
                     .style(|_| container::Style {
                         border: iced::Border {
                             color: app_theme::BORDER,
@@ -3405,7 +3436,9 @@ impl MdEditor {
                             ..Default::default()
                         },
                         ..Default::default()
-                    })
+                    }),
+                divider,
+                container(editor_view).width(Length::FillPortion(right_portion))
             ]
             .into()
         } else if self.showing_pdf && self.active_pdf_path.is_some() {
@@ -3427,6 +3460,7 @@ impl MdEditor {
                     &self.pdf_annotations,
                     self.pdf_annotations_filter_color,
                     self.focused_annotation_id.as_deref(),
+                    self.active_path.is_some(),
                 )
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
@@ -3483,7 +3517,7 @@ impl MdEditor {
             layers.push(
                 container(views::command_palette::view(
                     &self.command_palette_query,
-                    &self.commands,
+                    self.command_palette_commands(),
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -4290,8 +4324,10 @@ impl MdEditor {
             .ok()
             .and_then(|bytes| String::from_utf8(bytes).ok())
         {
-            Some(existing) => append_linked_pdf_note_section(&existing, pdf_path, ann),
-            None => new_linked_pdf_note_content(note_path, pdf_path, ann),
+            Some(existing) => {
+                build_linked_pdf_note_content(Some(&existing), note_path, pdf_path, ann).content
+            }
+            None => build_linked_pdf_note_content(None, note_path, pdf_path, ann).content,
         }
     }
 
@@ -4631,7 +4667,7 @@ impl MdEditor {
                     && self.active_panel == ActivePanel::Pdf))
     }
 
-    fn pdf_selection_quote_link_markdown(&self) -> Option<String> {
+    fn pdf_selection_quote_link_command(&self) -> Option<EditorCommand> {
         let sel = self.pdf_selection.as_ref()?;
         let page_text = self.pdf_page_text.get(&sel.page_index)?;
         let pdf_path = self.active_pdf_path.as_ref()?;
@@ -4642,23 +4678,41 @@ impl MdEditor {
             return None;
         }
 
-        let quote = selected
-            .trim()
-            .lines()
-            .map(|line| {
-                if line.trim().is_empty() {
-                    ">".to_string()
-                } else {
-                    format!("> {}", line.trim_end())
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         let link = build_pdf_link(pdf_path, Some(sel.page_index + 1), None);
-        Some(format!(
-            "{quote}\n>\n> [PDF, p. {}]({link})",
-            sel.page_index + 1
-        ))
+        Some(EditorCommand::InsertPdfQuoteLink {
+            selected_text: selected,
+            page_number: sel.page_index + 1,
+            link,
+        })
+    }
+
+    fn pdf_annotation_link_command(&self, annotation_id: &str) -> Option<EditorCommand> {
+        let (_, ann) = self.find_pdf_annotation(annotation_id)?;
+        let pdf_path = self.active_pdf_path.as_ref()?;
+        let page_number = ann.page_index + 1;
+        let link = build_pdf_link(pdf_path, Some(page_number), Some(&ann.id));
+        Some(EditorCommand::InsertPdfAnnotationLink {
+            selected_text: ann.selected_text,
+            page_number,
+            link,
+        })
+    }
+
+    fn command_palette_commands(&self) -> Vec<views::command_palette::Command> {
+        let mut commands = self.commands.clone();
+        if self.active_path.is_some() && self.pdf_selection_quote_link_command().is_some() {
+            commands.push(views::command_palette::insert_pdf_quote_command());
+        }
+        if self
+            .focused_annotation_id
+            .as_deref()
+            .and_then(|id| self.pdf_annotation_link_command(id))
+            .is_some()
+            && self.active_path.is_some()
+        {
+            commands.push(views::command_palette::insert_pdf_highlight_command());
+        }
+        commands
     }
 
     fn scroll_editor_to_line(&self, line: usize) -> Task<Message> {
@@ -4969,6 +5023,8 @@ fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
             | EditorCommand::InsertCodeBlock
             | EditorCommand::InsertMathBlock
             | EditorCommand::InsertTable
+            | EditorCommand::InsertPdfQuoteLink { .. }
+            | EditorCommand::InsertPdfAnnotationLink { .. }
             | EditorCommand::DuplicateLine
             | EditorCommand::MoveLineUp
             | EditorCommand::MoveLineDown
@@ -5417,6 +5473,46 @@ mod tests {
     }
 
     #[test]
+    fn escape_closing_pdf_link_preview_clears_hidden_context_menu() {
+        let mut app = MdEditor::new().0;
+        app.pdf_link_preview = Some(iced::widget::image::Handle::from_rgba(
+            1,
+            1,
+            vec![255, 255, 255, 255],
+        ));
+        app.active_modal = Some(views::modals::ModalType::PdfContextMenu(
+            views::modals::PdfContextMenuState {
+                absolute_pos: iced::Point::ORIGIN,
+                items: Vec::new(),
+            },
+        ));
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
+
+        assert!(app.pdf_link_preview.is_none());
+        assert!(app.active_modal.is_none());
+    }
+
+    #[test]
+    fn split_view_places_pdf_before_markdown() {
+        let source = include_str!("app.rs");
+        let split_row = source
+            .find("row![\n                container(pdf_view)")
+            .expect("split view row should start with PDF pane");
+        let pdf_pos = source[split_row..]
+            .find("container(pdf_view)")
+            .expect("PDF pane should exist in split row");
+        let editor_pos = source[split_row..]
+            .find("container(editor_view)")
+            .expect("editor pane should exist in split row");
+
+        assert!(
+            pdf_pos < editor_pos,
+            "split view should render PDF on the left and markdown on the right"
+        );
+    }
+
+    #[test]
     fn split_view_toggle_works_from_markdown_view_with_loaded_pdf() {
         let mut app = MdEditor::new().0;
         app.active_path = Some("note.md".to_string());
@@ -5474,13 +5570,13 @@ mod tests {
     }
 
     #[test]
-    fn pdf_selection_quote_link_markdown_targets_page() {
+    fn pdf_selection_quote_link_command_targets_page() {
         let mut app = MdEditor::new().0;
         app.active_pdf_path = Some("papers/paper.pdf".to_string());
         app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
             page_index: 2,
             anchor_idx: 0,
-            focus_idx: 10,
+            focus_idx: 9,
         });
         app.pdf_page_text.insert(
             2,
@@ -5494,10 +5590,137 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            app.pdf_selection_quote_link_markdown().as_deref(),
-            Some("> Quoted PDF\n>\n> [PDF, p. 3](pdf://papers/paper.pdf?page=3)")
+        let Some(EditorCommand::InsertPdfQuoteLink {
+            selected_text,
+            page_number,
+            link,
+        }) = app.pdf_selection_quote_link_command()
+        else {
+            panic!("expected PDF quote link command");
+        };
+        assert_eq!(selected_text, "Quoted PDF");
+        assert_eq!(page_number, 3);
+        assert_eq!(link, "pdf://papers/paper.pdf?page=3");
+    }
+
+    #[test]
+    fn pdf_insert_annotation_link_uses_annotation_target() {
+        let mut app = MdEditor::new().0;
+        app.active_path = Some("notes/current.md".to_string());
+        app.active_pdf_path = Some("papers/My PDF.pdf".to_string());
+        app.pdf_annotations.insert(
+            4,
+            vec![md_editor_core::pdf::PdfAnnotation {
+                id: "ann#1".to_string(),
+                document_id: "doc".to_string(),
+                page_index: 4,
+                kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
+                color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                selected_text: "Important highlighted text".to_string(),
+                ranges: vec![],
+                rects: vec![],
+                note: None,
+                linked_note_path: None,
+                markdown_anchor: None,
+                created_at: 0,
+                updated_at: 0,
+            }],
         );
+
+        let _ = app.update(Message::PdfInsertAnnotationLink("ann#1".to_string()));
+
+        assert_eq!(
+            app.buffer.text(),
+            "> Important highlighted text\n> [PDF p. 5](pdf://papers/My%20PDF.pdf?page=5&annotation=ann%231)"
+        );
+        assert!(app.buffer.undo());
+        assert_eq!(app.buffer.text(), "");
+    }
+
+    #[test]
+    fn command_palette_adds_pdf_insert_actions_only_when_available() {
+        let mut app = MdEditor::new().0;
+        assert!(!app.command_palette_commands().iter().any(|cmd| matches!(
+            cmd.shortcut,
+            Shortcut::InsertPdfQuote | Shortcut::InsertPdfHighlight
+        )));
+
+        app.active_path = Some("notes/current.md".to_string());
+        app.active_pdf_path = Some("papers/paper.pdf".to_string());
+        app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+            page_index: 2,
+            anchor_idx: 0,
+            focus_idx: 9,
+        });
+        app.pdf_page_text.insert(
+            2,
+            md_editor_core::pdf::PdfPageText {
+                page_index: 2,
+                page_width: 612.0,
+                page_height: 792.0,
+                text: "Quoted PDF text".to_string(),
+                chars: Vec::new(),
+                lines: Vec::new(),
+            },
+        );
+        app.focused_annotation_id = Some("ann#1".to_string());
+        app.pdf_annotations.insert(
+            4,
+            vec![md_editor_core::pdf::PdfAnnotation {
+                id: "ann#1".to_string(),
+                document_id: "doc".to_string(),
+                page_index: 4,
+                kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
+                color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                selected_text: "Important highlighted text".to_string(),
+                ranges: vec![],
+                rects: vec![],
+                note: None,
+                linked_note_path: None,
+                markdown_anchor: None,
+                created_at: 0,
+                updated_at: 0,
+            }],
+        );
+
+        let shortcuts = app
+            .command_palette_commands()
+            .into_iter()
+            .map(|cmd| cmd.shortcut)
+            .collect::<Vec<_>>();
+
+        assert!(shortcuts.contains(&Shortcut::InsertPdfQuote));
+        assert!(shortcuts.contains(&Shortcut::InsertPdfHighlight));
+    }
+
+    #[test]
+    fn pdf_quote_insert_requires_markdown_file() {
+        let mut app = MdEditor::new().0;
+        app.active_pdf_path = Some("papers/paper.pdf".to_string());
+        app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+            page_index: 2,
+            anchor_idx: 0,
+            focus_idx: 9,
+        });
+        app.pdf_page_text.insert(
+            2,
+            md_editor_core::pdf::PdfPageText {
+                page_index: 2,
+                page_width: 612.0,
+                page_height: 792.0,
+                text: "Quoted PDF text".to_string(),
+                chars: Vec::new(),
+                lines: Vec::new(),
+            },
+        );
+
+        let _ = app.update(Message::PdfInsertQuoteLink);
+
+        assert_eq!(
+            app.toast.as_deref(),
+            Some("Open a markdown file before inserting a quote link")
+        );
+        assert_eq!(app.buffer.text(), "");
     }
 
     #[test]
