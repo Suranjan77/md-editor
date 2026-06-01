@@ -83,6 +83,8 @@ pub fn view<'a>(
             md_editor_core::pdf::PdfAnnotationColor::Blue => "Blue",
             md_editor_core::pdf::PdfAnnotationColor::Pink => "Pink",
             md_editor_core::pdf::PdfAnnotationColor::Orange => "Orange",
+            md_editor_core::pdf::PdfAnnotationColor::Red => "Red",
+            md_editor_core::pdf::PdfAnnotationColor::Purple => "Purple",
         };
 
         let header = row![
@@ -96,6 +98,8 @@ pub fn view<'a>(
                 md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgb(0.1, 0.5, 0.9),
                 md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgb(0.9, 0.1, 0.5),
                 md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgb(0.9, 0.5, 0.0),
+                md_editor_core::pdf::PdfAnnotationColor::Red => Color::from_rgb(0.9, 0.1, 0.1),
+                md_editor_core::pdf::PdfAnnotationColor::Purple => Color::from_rgb(0.6, 0.2, 0.8),
             }),
         ]
         .align_y(Alignment::Center);
@@ -241,6 +245,8 @@ mod tests {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            tags: Vec::new(),
+            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }

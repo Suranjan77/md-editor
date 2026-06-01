@@ -5,7 +5,7 @@ use rusqlite::Connection;
 
 use crate::file_index::FileIndex;
 use crate::pdf::{
-    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect, PdfRenderer, PdfState,
+    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus, PdfRect, PdfRenderer, PdfState,
     PdfTextRange,
 };
 
@@ -107,12 +107,16 @@ impl AppState {
                 note TEXT,
                 linked_note_path TEXT,
                 markdown_anchor TEXT,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'Unresolved',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )",
             [],
         )
         .expect("Failed to create pdf_annotations table");
+
+        migrate_db(&db).expect("Failed to run migrations on settings DB");
 
         db.execute(
             "CREATE INDEX IF NOT EXISTS pdf_annotations_document_page
@@ -230,12 +234,16 @@ impl AppState {
                 note TEXT,
                 linked_note_path TEXT,
                 markdown_anchor TEXT,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'Unresolved',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )",
             [],
         )
         .expect("Failed to create pdf_annotations table");
+
+        migrate_db(&db).expect("Failed to run migrations on memory DB");
 
         db.execute(
             "CREATE INDEX IF NOT EXISTS pdf_annotations_document_page
@@ -321,13 +329,15 @@ impl AppState {
             .map_err(|e| format!("Failed to serialize ranges: {e}"))?;
         let rects_json = serde_json::to_string(&ann.rects)
             .map_err(|e| format!("Failed to serialize rects: {e}"))?;
+        let tags_json = serde_json::to_string(&ann.tags)
+            .map_err(|e| format!("Failed to serialize tags: {e}"))?;
 
         db.execute(
             "INSERT INTO pdf_annotations (
                 id, document_id, page_index, kind, color, selected_text,
                 ranges_json, rects_json, note, linked_note_path, markdown_anchor,
-                created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                tags_json, status, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT(id) DO UPDATE SET
                 color = excluded.color,
                 selected_text = excluded.selected_text,
@@ -336,6 +346,8 @@ impl AppState {
                 note = excluded.note,
                 linked_note_path = excluded.linked_note_path,
                 markdown_anchor = excluded.markdown_anchor,
+                tags_json = excluded.tags_json,
+                status = excluded.status,
                 updated_at = excluded.updated_at",
             rusqlite::params![
                 ann.id,
@@ -349,6 +361,8 @@ impl AppState {
                 ann.note,
                 ann.linked_note_path,
                 ann.markdown_anchor,
+                tags_json,
+                ann.status.as_str(),
                 ann.created_at,
                 ann.updated_at,
             ],
@@ -374,14 +388,14 @@ impl AppState {
         let query = if page_index.is_some() {
             "SELECT id, document_id, page_index, kind, color, selected_text,
                     ranges_json, rects_json, note, linked_note_path, markdown_anchor,
-                    created_at, updated_at
+                    created_at, updated_at, tags_json, status
              FROM pdf_annotations
              WHERE document_id = ?1 AND page_index = ?2
              ORDER BY created_at ASC"
         } else {
             "SELECT id, document_id, page_index, kind, color, selected_text,
                     ranges_json, rects_json, note, linked_note_path, markdown_anchor,
-                    created_at, updated_at
+                    created_at, updated_at, tags_json, status
              FROM pdf_annotations
              WHERE document_id = ?1
              ORDER BY created_at ASC"
@@ -411,6 +425,8 @@ impl AppState {
             let markdown_anchor: Option<String> = row.get(10).map_err(|e| e.to_string())?;
             let created_at: i64 = row.get(11).map_err(|e| e.to_string())?;
             let updated_at: i64 = row.get(12).map_err(|e| e.to_string())?;
+            let tags_json: String = row.get(13).map_err(|e| e.to_string())?;
+            let status_str: String = row.get(14).map_err(|e| e.to_string())?;
 
             let kind = kind_str.parse::<PdfAnnotationKind>()?;
             let color = color_str.parse::<PdfAnnotationColor>()?;
@@ -418,6 +434,9 @@ impl AppState {
                 .map_err(|e| format!("Failed to parse ranges JSON: {e}"))?;
             let rects: Vec<PdfRect> = serde_json::from_str(&rects_json)
                 .map_err(|e| format!("Failed to parse rects JSON: {e}"))?;
+            let tags: Vec<String> = serde_json::from_str(&tags_json)
+                .map_err(|e| format!("Failed to parse tags JSON: {e}"))?;
+            let status = status_str.parse::<PdfAnnotationStatus>()?;
 
             annotations.push(PdfAnnotation {
                 id,
@@ -431,6 +450,8 @@ impl AppState {
                 note,
                 linked_note_path,
                 markdown_anchor,
+                tags,
+                status,
                 created_at,
                 updated_at,
             });
@@ -464,4 +485,42 @@ fn config_dir() -> PathBuf {
     }
 
     PathBuf::from(".")
+}
+
+fn migrate_db(db: &Connection) -> Result<(), String> {
+    let mut has_tags_json = false;
+    let mut has_status = false;
+
+    let mut stmt = db
+        .prepare("PRAGMA table_info(pdf_annotations)")
+        .map_err(|e| format!("Failed to prepare pragma table_info: {e}"))?;
+    let mut rows = stmt
+        .query([])
+        .map_err(|e| format!("Failed to query pragma table_info: {e}"))?;
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let name: String = row.get(1).map_err(|e| e.to_string())?;
+        if name == "tags_json" {
+            has_tags_json = true;
+        } else if name == "status" {
+            has_status = true;
+        }
+    }
+
+    if !has_tags_json {
+        db.execute(
+            "ALTER TABLE pdf_annotations ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        )
+        .map_err(|e| format!("Failed to add tags_json column: {e}"))?;
+    }
+
+    if !has_status {
+        db.execute(
+            "ALTER TABLE pdf_annotations ADD COLUMN status TEXT NOT NULL DEFAULT 'Unresolved'",
+            [],
+        )
+        .map_err(|e| format!("Failed to add status column: {e}"))?;
+    }
+
+    Ok(())
 }

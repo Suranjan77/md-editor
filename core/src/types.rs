@@ -15,6 +15,26 @@ pub struct SearchResult {
     pub context: String,
 }
 
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SearchResultGroup {
+    MarkdownContent,
+    PdfContent,
+    Filename,
+    Heading,
+    Annotation,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedSearchResult {
+    pub group: SearchResultGroup,
+    pub path: String,
+    pub line: usize,
+    pub context: String,
+    pub score: f32,
+    pub page_index: Option<u16>,
+    pub annotation_id: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum BacklinkTarget {
     MarkdownFile {

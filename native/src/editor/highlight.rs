@@ -434,12 +434,91 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
         }
     }
 
+    // Post-process spans to resolve reference link targets
+    let reference_definitions = collect_reference_definitions(&lines);
+    for line in &mut lines {
+        if line.is_code_block || line.is_math_block {
+            continue;
+        }
+        for span in &mut line.spans {
+            if span.is_link {
+                if let Some(ref_id) = get_ref_id_from_span_text(&span.text) {
+                    if let Some(target) = reference_definitions.get(&ref_id.to_lowercase()) {
+                        span.link_target = Some(target.clone());
+                    }
+                }
+            }
+        }
+    }
+
     lines
 }
 
 fn highlight_line(line: &str) -> StyledLine {
-    let mut sl = StyledLine::new();
     let trimmed = line.trim_start();
+
+    if let Some((_label, _target, idx, target_start, target_len)) = parse_reference_definition(line)
+    {
+        let mut sl = StyledLine::new();
+        let leading_spaces_len = line.len() - trimmed.len();
+        if leading_spaces_len > 0 {
+            sl.spans
+                .push(StyledSpan::plain(&line[..leading_spaces_len]));
+        }
+
+        // Syntax: `[label]:`
+        sl.spans.push(StyledSpan {
+            text: trimmed[..idx + 2].to_string(),
+            display_text: Some(String::new()), // hidden in preview
+            color: theme::TEXT_MUTED,
+            is_syntax: true,
+            ..StyledSpan::plain("")
+        });
+
+        // Spaces between `:` and target
+        if target_start > idx + 2 {
+            sl.spans
+                .push(StyledSpan::plain(&trimmed[idx + 2..target_start]));
+        }
+
+        // Target link
+        let raw_target = &trimmed[target_start..target_start + target_len];
+        let is_angle_wrapped = raw_target.starts_with('<') && raw_target.ends_with('>');
+        let actual_target = if is_angle_wrapped {
+            &raw_target[1..raw_target.len() - 1]
+        } else {
+            raw_target
+        };
+
+        if is_angle_wrapped {
+            sl.spans
+                .push(StyledSpan::syntax("<", theme::TEXT_MUTED, 16.0));
+        }
+
+        sl.spans.push(StyledSpan {
+            text: actual_target.to_string(),
+            display_text: None,
+            color: theme::ACCENT,
+            is_link: true,
+            link_target: Some(actual_target.to_string()),
+            ..StyledSpan::plain("")
+        });
+
+        if is_angle_wrapped {
+            sl.spans
+                .push(StyledSpan::syntax(">", theme::TEXT_MUTED, 16.0));
+        }
+
+        // Rest of the line (optional title, spaces, etc.)
+        let rest_start = target_start + target_len;
+        if rest_start < trimmed.len() {
+            sl.spans.push(StyledSpan::plain(&trimmed[rest_start..]));
+        }
+
+        return sl;
+    }
+
+    let mut sl = StyledLine::new();
 
     // Headings
     if let Some(level) = detect_heading(trimmed) {
@@ -1158,6 +1237,53 @@ pub struct OutlineEntry {
     pub line: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkdownLinkKind {
+    Wiki,
+    Inline,
+    Reference,
+    Footnote,
+    ResolvedReference,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownLinkEntry {
+    pub line: usize,
+    pub target: String,
+    pub display_text: String,
+    pub source_text: String,
+    pub kind: MarkdownLinkKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkdownAnchorKind {
+    Heading,
+    SpanId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownAnchorEntry {
+    pub line: usize,
+    pub slug: String,
+    pub source_text: String,
+    pub kind: MarkdownAnchorKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownDocumentMetadata {
+    pub outline: Vec<OutlineEntry>,
+    pub links: Vec<MarkdownLinkEntry>,
+    pub anchors: Vec<MarkdownAnchorEntry>,
+    pub frontmatter: FrontmatterMetadata,
+    pub reference_definitions: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FrontmatterMetadata {
+    pub aliases: Vec<String>,
+    pub tags: Vec<String>,
+}
+
 pub fn extract_outline(lines: &[StyledLine]) -> Vec<OutlineEntry> {
     let mut outline = Vec::new();
     for (line_idx, line) in lines.iter().enumerate() {
@@ -1192,9 +1318,297 @@ pub fn extract_outline(lines: &[StyledLine]) -> Vec<OutlineEntry> {
     outline
 }
 
+pub fn extract_document_metadata(lines: &[StyledLine]) -> MarkdownDocumentMetadata {
+    MarkdownDocumentMetadata {
+        outline: extract_outline(lines),
+        links: extract_markdown_links(lines),
+        anchors: extract_markdown_anchors(lines),
+        frontmatter: extract_frontmatter_metadata(lines),
+        reference_definitions: collect_reference_definitions(lines),
+    }
+}
+
+pub fn extract_frontmatter_metadata(lines: &[StyledLine]) -> FrontmatterMetadata {
+    let Some(first_line) = lines.first() else {
+        return FrontmatterMetadata::default();
+    };
+    if styled_line_source(first_line).trim() != "---" {
+        return FrontmatterMetadata::default();
+    }
+
+    let mut metadata = FrontmatterMetadata::default();
+    let mut active_key: Option<&str> = None;
+
+    for line in lines.iter().skip(1) {
+        let source = styled_line_source(line);
+        let trimmed = source.trim();
+        if trimmed == "---" {
+            break;
+        }
+
+        if let Some(item) = trimmed.strip_prefix("- ") {
+            match active_key {
+                Some("aliases") => push_metadata_value(&mut metadata.aliases, item),
+                Some("tags") => push_metadata_value(&mut metadata.tags, item),
+                _ => {}
+            }
+            continue;
+        }
+
+        let Some((key, value)) = trimmed.split_once(':') else {
+            active_key = None;
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        active_key = match key {
+            "alias" | "aliases" => Some("aliases"),
+            "tag" | "tags" => Some("tags"),
+            _ => None,
+        };
+
+        match active_key {
+            Some("aliases") => push_metadata_values(&mut metadata.aliases, value),
+            Some("tags") => push_metadata_values(&mut metadata.tags, value),
+            _ => {}
+        }
+    }
+
+    metadata
+}
+
+pub fn extract_markdown_anchors(lines: &[StyledLine]) -> Vec<MarkdownAnchorEntry> {
+    let mut anchors = Vec::new();
+    for entry in extract_outline(lines) {
+        anchors.push(MarkdownAnchorEntry {
+            line: entry.line,
+            slug: markdown_anchor_slug(&entry.text),
+            source_text: entry.text,
+            kind: MarkdownAnchorKind::Heading,
+        });
+    }
+
+    for (line_idx, line) in lines.iter().enumerate() {
+        for span in &line.spans {
+            if let Some(id) = span.id.as_ref() {
+                anchors.push(MarkdownAnchorEntry {
+                    line: line_idx,
+                    slug: id.to_string(),
+                    source_text: span.text.clone(),
+                    kind: MarkdownAnchorKind::SpanId,
+                });
+            }
+        }
+    }
+
+    anchors
+}
+
+pub fn markdown_anchor_slug(s: &str) -> String {
+    let mut result = String::new();
+    let mut last_was_hyphen = false;
+    for c in s.to_lowercase().chars() {
+        if c.is_alphanumeric() || c == '_' {
+            result.push(c);
+            last_was_hyphen = false;
+        } else if c.is_whitespace() || c == '-' {
+            if !last_was_hyphen {
+                result.push('-');
+                last_was_hyphen = true;
+            }
+        }
+    }
+    result.trim_matches('-').to_string()
+}
+
+fn styled_line_source(line: &StyledLine) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.text.as_str())
+        .collect::<String>()
+}
+
+fn push_metadata_values(values: &mut Vec<String>, raw: &str) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    if let Some(list) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        for item in list.split(',') {
+            push_metadata_value(values, item);
+        }
+    } else {
+        push_metadata_value(values, trimmed);
+    }
+}
+
+fn push_metadata_value(values: &mut Vec<String>, raw: &str) {
+    let value = raw
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .trim_start_matches('#')
+        .trim();
+    if !value.is_empty() {
+        values.push(value.to_string());
+    }
+}
+
+pub fn collect_reference_definitions(
+    lines: &[StyledLine],
+) -> std::collections::HashMap<String, String> {
+    let mut defs = std::collections::HashMap::new();
+    for line in lines {
+        let source = styled_line_source(line);
+        if let Some((label, target, ..)) = parse_reference_definition(&source) {
+            defs.insert(label, target);
+        }
+    }
+    defs
+}
+
+pub fn get_ref_id_from_span_text(text: &str) -> Option<String> {
+    if !text.starts_with('[') || !text.ends_with(']') {
+        return None;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    if let Some(pos) = text.find("][") {
+        Some(chars[pos + 2..chars.len() - 1].iter().collect())
+    } else {
+        if text.starts_with("[^") {
+            None
+        } else {
+            Some(chars[1..chars.len() - 1].iter().collect())
+        }
+    }
+}
+
+pub fn parse_reference_definition(line: &str) -> Option<(String, String, usize, usize, usize)> {
+    let trimmed = line.trim_start();
+    let leading_spaces_len = line.len() - trimmed.len();
+    if leading_spaces_len > 3 {
+        return None;
+    }
+    if !trimmed.starts_with('[') {
+        return None;
+    }
+    let chars: Vec<char> = trimmed.chars().collect();
+    let mut end_label = None;
+    for i in 1..chars.len() {
+        if chars[i] == ']' {
+            if i + 1 < chars.len() && chars[i + 1] == ':' {
+                end_label = Some(i);
+                break;
+            }
+        }
+    }
+    let idx = end_label?;
+    let label: String = chars[1..idx].iter().collect();
+    let label = label.trim().to_lowercase();
+    if label.is_empty() {
+        return None;
+    }
+
+    let rest_start = idx + 2;
+    let rest = &trimmed[rest_start..];
+    let rest_trimmed = rest.trim_start();
+    let spaces_len = rest.len() - rest_trimmed.len();
+    let target_start = rest_start + spaces_len;
+
+    if rest_trimmed.is_empty() {
+        return None;
+    }
+
+    let target_len = if rest_trimmed.starts_with('<') {
+        if let Some(end_bracket) = rest_trimmed.find('>') {
+            end_bracket + 1
+        } else {
+            return None;
+        }
+    } else {
+        rest_trimmed.split_whitespace().next()?.len()
+    };
+
+    let target = if rest_trimmed.starts_with('<') {
+        &rest_trimmed[1..target_len - 1]
+    } else {
+        &rest_trimmed[..target_len]
+    };
+
+    Some((label, target.to_string(), idx, target_start, target_len))
+}
+
+pub fn extract_markdown_links(lines: &[StyledLine]) -> Vec<MarkdownLinkEntry> {
+    let defs = collect_reference_definitions(lines);
+    let mut links = Vec::new();
+
+    for (line_idx, line) in lines.iter().enumerate() {
+        for (span_idx, span) in line.spans.iter().enumerate() {
+            if !span.is_link {
+                continue;
+            }
+
+            let Some(target) = span.link_target.clone() else {
+                continue;
+            };
+            let display_text = span
+                .display_text
+                .clone()
+                .unwrap_or_else(|| span.text.clone());
+
+            let mut kind = markdown_link_kind(line, span_idx);
+
+            if kind == MarkdownLinkKind::Reference {
+                if let Some(ref_id) = get_ref_id_from_span_text(&span.text) {
+                    if defs.contains_key(&ref_id.to_lowercase()) {
+                        kind = MarkdownLinkKind::ResolvedReference;
+                    }
+                } else {
+                    kind = MarkdownLinkKind::ResolvedReference;
+                }
+            }
+
+            links.push(MarkdownLinkEntry {
+                line: line_idx,
+                target,
+                display_text,
+                source_text: span.text.clone(),
+                kind,
+            });
+        }
+    }
+
+    links
+}
+
+fn markdown_link_kind(line: &StyledLine, span_idx: usize) -> MarkdownLinkKind {
+    let span = &line.spans[span_idx];
+    if span.text.starts_with("[^") {
+        return MarkdownLinkKind::Footnote;
+    }
+    if line
+        .spans
+        .get(span_idx.saturating_sub(1))
+        .is_some_and(|prev| prev.is_syntax && prev.text == "[[")
+        && line
+            .spans
+            .get(span_idx + 1)
+            .is_some_and(|next| next.is_syntax && next.text == "]]")
+    {
+        return MarkdownLinkKind::Wiki;
+    }
+    if span.text.starts_with('[') && span.text.contains("](") {
+        return MarkdownLinkKind::Inline;
+    }
+    MarkdownLinkKind::Reference
+}
+
 #[cfg(test)]
 mod tests {
-    use super::highlight_markdown;
+    use super::{
+        MarkdownAnchorKind, MarkdownLinkEntry, MarkdownLinkKind, extract_document_metadata,
+        extract_frontmatter_metadata, extract_markdown_links, highlight_markdown,
+    };
 
     #[test]
     fn heading_is_not_math() {
@@ -1720,6 +2134,102 @@ mod tests {
     }
 
     #[test]
+    fn extract_markdown_links_reports_backlink_metadata() {
+        let text = "See [[notes/topic|Topic]], [site](https://example.com), [ref link][r1], [shortcut], and footnote[^n].\n## Heading with [[inside]]";
+        let lines = highlight_markdown(text);
+        let links = extract_markdown_links(&lines);
+
+        assert_eq!(links.len(), 6);
+        assert_eq!(
+            links[0],
+            MarkdownLinkEntry {
+                line: 0,
+                target: "notes/topic".to_string(),
+                display_text: "Topic".to_string(),
+                source_text: "notes/topic|Topic".to_string(),
+                kind: MarkdownLinkKind::Wiki,
+            }
+        );
+        assert_eq!(links[1].kind, MarkdownLinkKind::Inline);
+        assert_eq!(links[1].target, "https://example.com");
+        assert_eq!(links[1].display_text, "site");
+        assert_eq!(links[2].kind, MarkdownLinkKind::Reference);
+        assert_eq!(links[2].target, "r1");
+        assert_eq!(links[2].display_text, "ref link");
+        assert_eq!(links[3].kind, MarkdownLinkKind::Reference);
+        assert_eq!(links[3].target, "shortcut");
+        assert_eq!(links[4].kind, MarkdownLinkKind::Footnote);
+        assert_eq!(links[4].target, "^n");
+        assert_eq!(links[5].kind, MarkdownLinkKind::Wiki);
+        assert_eq!(links[5].line, 1);
+        assert_eq!(links[5].target, "inside");
+    }
+
+    #[test]
+    fn extract_document_metadata_reports_outline_links_and_anchors() {
+        let text = "# Heading One\n![Plot](plot.png)\n```rust\nfn main() {}\n```\nSee [[note]].";
+        let lines = highlight_markdown(text);
+        let metadata = extract_document_metadata(&lines);
+
+        assert_eq!(metadata.outline.len(), 1);
+        assert_eq!(metadata.outline[0].text, "Heading One");
+        assert_eq!(metadata.links.len(), 1);
+        assert!(
+            metadata
+                .links
+                .iter()
+                .any(|link| link.kind == MarkdownLinkKind::Wiki && link.target == "note")
+        );
+        assert!(
+            metadata
+                .anchors
+                .iter()
+                .any(|anchor| anchor.kind == MarkdownAnchorKind::Heading
+                    && anchor.slug == "heading-one"
+                    && anchor.line == 0)
+        );
+        assert!(
+            metadata
+                .anchors
+                .iter()
+                .any(|anchor| anchor.kind == MarkdownAnchorKind::SpanId
+                    && anchor.slug == "figure-1"
+                    && anchor.line == 1)
+        );
+        assert!(
+            metadata
+                .anchors
+                .iter()
+                .any(|anchor| anchor.kind == MarkdownAnchorKind::SpanId
+                    && anchor.slug == "code-1"
+                    && anchor.line == 2)
+        );
+    }
+
+    #[test]
+    fn extract_frontmatter_metadata_reports_aliases_and_tags() {
+        let text = "---\naliases: [Alpha Note, \"Beta Note\"]\ntags:\n  - #math\n  - reading\nalias: Gamma\n---\n# Body";
+        let lines = highlight_markdown(text);
+        let frontmatter = extract_frontmatter_metadata(&lines);
+
+        assert_eq!(
+            frontmatter.aliases,
+            vec![
+                "Alpha Note".to_string(),
+                "Beta Note".to_string(),
+                "Gamma".to_string()
+            ]
+        );
+        assert_eq!(
+            frontmatter.tags,
+            vec!["math".to_string(), "reading".to_string()]
+        );
+
+        let metadata = extract_document_metadata(&lines);
+        assert_eq!(metadata.frontmatter, frontmatter);
+    }
+
+    #[test]
     fn test_extract_outline() {
         use super::extract_outline;
         let text = "# Heading 1\nSome text\n## Heading 2 with **bold**\n```markdown\n# Not a heading in code\n```\n### Heading 3";
@@ -1738,5 +2248,75 @@ mod tests {
         assert_eq!(outline[2].level, 3);
         assert_eq!(outline[2].text, "Heading 3");
         assert_eq!(outline[2].line, 6);
+    }
+
+    #[test]
+    fn reference_style_link_resolution_and_indexing() {
+        let text = "Click [my text][ref1] and [shortcut_ref] and [unresolved_ref].\n\n[ref1]: paper.pdf#page=5\n[shortcut_ref]: <another_note.md>";
+        let lines = highlight_markdown(text);
+
+        let line0 = &lines[0];
+        let span_ref1 = line0
+            .spans
+            .iter()
+            .find(|s| s.text == "[my text][ref1]")
+            .unwrap();
+        assert_eq!(span_ref1.link_target.as_deref(), Some("paper.pdf#page=5"));
+        assert!(span_ref1.is_link);
+
+        let span_shortcut = line0
+            .spans
+            .iter()
+            .find(|s| s.text == "[shortcut_ref]")
+            .unwrap();
+        assert_eq!(
+            span_shortcut.link_target.as_deref(),
+            Some("another_note.md")
+        );
+        assert!(span_shortcut.is_link);
+
+        let span_unresolved = line0
+            .spans
+            .iter()
+            .find(|s| s.text == "[unresolved_ref]")
+            .unwrap();
+        assert_eq!(
+            span_unresolved.link_target.as_deref(),
+            Some("unresolved_ref")
+        );
+        assert!(span_unresolved.is_link);
+
+        let metadata = extract_document_metadata(&lines);
+        let ref1_link = metadata
+            .links
+            .iter()
+            .find(|l| l.source_text == "[my text][ref1]")
+            .unwrap();
+        assert_eq!(ref1_link.kind, MarkdownLinkKind::ResolvedReference);
+        assert_eq!(ref1_link.target, "paper.pdf#page=5");
+
+        let shortcut_link = metadata
+            .links
+            .iter()
+            .find(|l| l.source_text == "[shortcut_ref]")
+            .unwrap();
+        assert_eq!(shortcut_link.kind, MarkdownLinkKind::ResolvedReference);
+        assert_eq!(shortcut_link.target, "another_note.md");
+
+        let unresolved_link = metadata
+            .links
+            .iter()
+            .find(|l| l.source_text == "[unresolved_ref]")
+            .unwrap();
+        assert_eq!(unresolved_link.kind, MarkdownLinkKind::Reference);
+        assert_eq!(unresolved_link.target, "unresolved_ref");
+
+        let def1_link = metadata
+            .links
+            .iter()
+            .find(|l| l.source_text == "paper.pdf#page=5")
+            .unwrap();
+        assert_eq!(def1_link.kind, MarkdownLinkKind::ResolvedReference);
+        assert_eq!(def1_link.target, "paper.pdf#page=5");
     }
 }

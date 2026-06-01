@@ -108,15 +108,49 @@ Initial slices complete:
   to plain text for malformed syntax.
 - Parser extended to support nested emphasis, inline links and emphasis inside
   headings, and footnote references (`[^1]`).
+- Parser metadata extraction added in `native/src/editor/highlight.rs` for
+  outline entries, markdown links, and navigable anchors. App anchor lookup now
+  consumes parser metadata for headings and generated widget IDs before falling
+  back to raw explicit-anchor syntax.
+- Frontmatter metadata extraction added for top-of-file `---` blocks, covering
+  aliases and tags for future sidebar/backlink/search features.
+- Backlink indexing bridge added: native editor saves pass parser-derived local
+  markdown link targets into `core::FileIndex` without making `core` depend on
+  native parser code.
+- PDF linked-note creation now uses the same native parser-derived markdown save
+  helper, so generated notes participate in parser-backed backlink indexing.
+- Vault opening now runs a native parser-backed backlink reindex after core
+  vault setup, so local inline links are indexed and code-block/wiki text is not
+  treated as a backlink.
+- Markdown file opening now reindexes that file through parser metadata before
+  backlinks are refreshed, covering external edits after vault-open.
+- Parser-backed backlink indexing now resolves `pdf://` markdown links to their
+  vault PDF paths, so PDF documents can receive markdown backlinks from
+  generated citation links.
 
 ## Milestone 3: PDF Engine Upgrade
 
-- Separate PDF render, query, and search queues while preserving one PDFium
-  binding worker.
+- Separate PDF render, query, and search queues while preserving serialized
+  PDFium access.
 - Prioritize visible pages and newest navigation target.
 - Add cancelable streaming search with generation validation.
 - Add page text cache invalidation by document identity.
 - Add bounded high-zoom rendering strategy and eviction tests.
+
+Initial reliability slice complete:
+
+- PDF rendering and PDF query/search now use separate workers but share a
+  process-wide PDFium mutex through `with_pdfium_access` in `core/src/pdf.rs`.
+- This prevents native heap corruption when search text extraction interleaves
+  with page rendering.
+- `pdf::tests::pdf_search_and_render_share_pdfium_safely` covers the root
+  crash pattern by streaming search results while repeatedly rendering.
+- PDF engine replacement remains open for future evaluation. Current evidence
+  points to unsafe concurrent native access, not a PDFium feature gap. Any
+  replacement must match PDFium portability, text geometry, rendering, link
+  extraction, and packaging requirements before migration.
+- Engine review outcome: keep PDFium now. Consider MuPDF or Poppler only if
+  serialized PDFium remains unstable or packaging becomes unacceptable.
 
 ## Milestone 4: Deep Linking And Citations
 
@@ -193,3 +227,8 @@ Initial slices complete:
 - Add SQLite migration backup and rollback.
 - Add crash-safe markdown save path.
 - Add release smoke tests from `docs/LAUNCH.md`.
+
+## Milestone 12: User documentation
+
+- Create user guides and link it int he README.md.
+- Document example workflows higlighting the application's features.
