@@ -23,6 +23,7 @@
 )]
 
 mod app;
+mod app_shell;
 mod editor;
 mod integrity;
 mod messages;

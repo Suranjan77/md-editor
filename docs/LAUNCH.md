@@ -52,6 +52,20 @@ Use a fresh temporary vault and verify:
 - Open the study tracker, start/stop a session, edit tracker configuration, and
   confirm persisted state after restart.
 
+## UI/UX Regression Pass
+
+Run `docs/UI_UX_RELEASE_CHECKLIST.md` before release signoff. At minimum,
+verify:
+
+- layout overlap on desktop and narrow windows;
+- keyboard traps and Escape priority for overlays and modals;
+- missing labels or missing disabled reasons on icon-only and workflow-critical
+  controls;
+- stale loading states after search, PDF render, indexing, and recovery flows;
+- unreadable colors in light/dark themes and known high-contrast gaps;
+- reduced-motion limitations for programmatic scroll, progress, and status
+  transitions.
+
 ## PDFium Packaging
 
 PDF support requires the platform PDFium shared library:
