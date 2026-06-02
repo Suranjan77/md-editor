@@ -492,8 +492,7 @@ impl MdEditor {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let citation_palette_visible = self.citation_palette_visible;
-        let keyboard = iced::keyboard::listen().map(move |event| {
+        let keyboard = iced::keyboard::listen().map(|event| {
             match event {
                 iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
                     // Escape key — close overlays
@@ -501,10 +500,7 @@ impl MdEditor {
                         return Message::KeyboardShortcut(Shortcut::Escape);
                     }
                     if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) {
-                        if citation_palette_visible {
-                            return Message::CitationPaletteSubmitFirst;
-                        }
-                        return Message::NameModalSubmitCurrent;
+                        return Message::KeyboardShortcut(Shortcut::Submit);
                     }
                     if modifiers.alt() {
                         match key {
@@ -3492,6 +3488,13 @@ impl MdEditor {
                     }
                     Shortcut::ExcerptModeToggle => Task::done(Message::ExcerptModeToggle),
                     Shortcut::ExcerptInsertBatch => Task::done(Message::ExcerptQueueInsertBatch),
+                    Shortcut::Submit => {
+                        if self.citation_palette_visible {
+                            Task::done(Message::CitationPaletteSubmitFirst)
+                        } else {
+                            Task::done(Message::NameModalSubmitCurrent)
+                        }
+                    }
                     Shortcut::ToggleBacklinks => {
                         self.backlinks_visible = !self.backlinks_visible;
                         Task::none()

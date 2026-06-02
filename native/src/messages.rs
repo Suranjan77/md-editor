@@ -228,6 +228,7 @@ pub enum Shortcut {
     CitationPalette,
     ExcerptModeToggle,
     ExcerptInsertBatch,
+    Submit,
 }
 
 #[derive(Debug, Clone, PartialEq)]
