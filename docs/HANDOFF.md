@@ -119,6 +119,28 @@ Implement the multi-month UI and UX improvement plan in
   - Citation palette input is focused when opened from shortcut or command dispatch.
   - Pressing Enter in the citation palette submits the first result.
   - App-level coverage verifies first-result submission queues citations in excerpt mode.
+- UI/UX roadmap Milestone 0 has an initial baseline slice complete:
+  - Created `docs/UI_UX_AUDIT.md` with current primary surfaces, states, message paths, keyboard paths, style sources, accessibility gaps, and missing coverage.
+  - Added reusable app-state fixture helpers in `native/src/app.rs` tests for no-vault, markdown, PDF, split research, global search, command palette, active modal, and annotation-heavy PDF states.
+  - Added app-level `iced_test` smoke coverage proving representative baseline states render stable user-visible labels and status text.
+  - Extended Milestone 0 fixtures to cover large markdown, active file search, and narrow split research layout.
+  - Added keyboard accessibility smoke coverage for command palette, citation palette, file search, TOC, focus mode, and Escape overlay priority.
+  - Added deterministic app-shell layout smoke coverage asserting primary text labels do not overlap in markdown, PDF, and narrow split layouts.
+  - Extracted app focus targets into testable `FocusTarget` mappings.
+  - Added a deterministic command-palette input ID and default-focus task when opening the command palette.
+  - Extended focus-target coverage to verify rendered file search, global search, PDF search, command palette, and citation palette input IDs.
+  - Added large-annotation filter baseline counter coverage; current annotation filtering is explicitly measured as a linear pass with stable sorted output.
+  - Added `docs/UI_UX_RELEASE_CHECKLIST.md` and linked it from launch/features docs for layout overlap, keyboard traps, labels, contrast, stale loading, reduced motion, and platform checks.
+- UI/UX roadmap Milestone 1 has an initial app-shell model slice complete:
+  - Added `docs/APP_SHELL_SPEC.md` defining work zones, layout modes, panel persistence rules, active-pane rules, command groups, status-surface direction, and open integration work.
+  - Added `native/src/app_shell.rs` with a tested pure app-shell state model covering layout-mode derivation, split prerequisites, search/palette override, panel width clamping, narrow-window collapse, and command groups.
+  - `MdEditor::view` now derives an `AppShellState` snapshot and command-group set without changing rendered behavior, keeping the shell model live for incremental integration.
+  - Added app-shell document visibility predicates and routed `MdEditor::view` no-vault, split research, PDF, and image branch selection through the shell state.
+  - Added app-level regression coverage proving UI audit fixtures derive the expected shell modes, active panes, command groups, and narrow-window persistence collapse behavior.
+  - Added compact `app_shell_persistence` config storage for sidebar collapsed state, workflow tab, split ratio, reference width, and last focused pane.
+  - User-driven shell changes now save persistence on sidebar/workflow toggles, split toggles, split-resizer completion, Show Usages, and active-pane changes.
+  - Added an initial app-shell status model covering save state, search/PDF status text, active pane, toast, and background errors.
+  - `MdEditor::view` now derives the shell status snapshot without changing rendered behavior, and tests cover dirty markdown, PDF page/zoom labels, search progress, active pane, and toast/error priority.
 
 ## Completed Files
 
@@ -151,6 +173,10 @@ Implement the multi-month UI and UX improvement plan in
 - `core/src/pdf.rs`
 - `core/src/types.rs`
 - `docs/PDF_VIEWER_ARCH.md`
+- `docs/UI_UX_AUDIT.md`
+- `docs/UI_UX_RELEASE_CHECKLIST.md`
+- `docs/APP_SHELL_SPEC.md`
+- `native/src/app_shell.rs`
 
 ## Tests And Checks
 
@@ -229,6 +255,23 @@ Focused tests added:
 - `views::search::tests::visible_global_search_renders_error_and_pdf_status`
 - `views::citation_palette::tests::citation_palette_input_submits_first_item_message`
 - `app::tests::citation_palette_submit_first_queues_first_item_in_excerpt_mode`
+- `app::tests::ui_audit_fixture_no_vault_renders_welcome`
+- `app::tests::ui_audit_fixture_markdown_file_renders_shell_and_editor`
+- `app::tests::ui_audit_fixture_pdf_file_renders_pdf_toolbar`
+- `app::tests::ui_audit_fixture_split_research_renders_both_active_paths`
+- `app::tests::ui_audit_fixture_overlays_and_sidebars_render_stable_states`
+- `app::tests::ui_audit_fixture_large_and_narrow_states_render_stable_shell`
+- `app::tests::ui_audit_keyboard_shortcuts_expose_baseline_accessibility_paths`
+- `app::tests::ui_audit_focus_targets_map_to_rendered_input_ids`
+- `app::tests::ui_audit_escape_closes_modal_before_background_overlays`
+- `app::tests::ui_audit_shell_labels_do_not_overlap_in_baseline_layouts`
+- `views::command_palette::tests::command_palette_input_has_focusable_id`
+- `views::pdf_annotations::tests::large_annotation_filter_reports_linear_baseline_counter`
+- `app_shell::tests::derives_primary_layout_modes`
+- `app_shell::tests::split_research_requires_markdown_and_pdf`
+- `app_shell::tests::search_and_palette_modes_override_document_layout`
+- `app_shell::tests::persistence_clamps_widths_and_narrow_window_collapses_sidebars`
+- `app_shell::tests::command_groups_match_layout_context`
 
 ## Known Worktree State
 
@@ -238,12 +281,12 @@ Focused tests added:
 
 ## Next Best Task
 
-Start the UI/UX improvement roadmap in `docs/UI_UX_IMPROVEMENT_ROADMAP.md`.
+Continue Milestone 1 in `docs/UI_UX_IMPROVEMENT_ROADMAP.md`.
 
 Recommended next slice:
-1. Complete Milestone 0: UX Baseline And Test Harness.
-2. Create `docs/UI_UX_AUDIT.md` with current UI components, states, keyboard paths, style sources, and missing tests.
-3. Add `iced_test` helpers for representative app states before broad visual changes.
+1. Render active-pane/status indicators through a unified status surface using `AppShellStatus`.
+2. Replace remaining fixed sidebar width assumptions with the persisted shell width model.
+3. Add active-pane indicator tests once UI renders the indicator.
 
 ## Standards Reminder
 

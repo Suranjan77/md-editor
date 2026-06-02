@@ -4,6 +4,10 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 
+use crate::app_shell::{
+    AppShellInputs, AppShellMode, AppShellPane, AppShellPersistence, AppShellState, AppShellStatus,
+    AppShellStatusInputs, WorkflowSidebarTab,
+};
 use crate::pdf_layout::PdfLayout;
 use crate::pdf_page_cache::PdfPageCache;
 use image::GenericImageView;
@@ -37,6 +41,7 @@ const PDF_TEXT_INDEX_MAX_PAGES_PER_DOCUMENT: u16 = 3;
 const LARGE_DOC_LINE_THRESHOLD: usize = 1_000;
 const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
+const APP_SHELL_PERSISTENCE_CONFIG_KEY: &str = "app_shell_persistence";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActivePanel {
@@ -454,6 +459,7 @@ impl MdEditor {
         };
 
         app.tracker_config_content = text_editor::Content::with_text(&app.tracker_config_json);
+        app.load_shell_persistence();
 
         let mut task = Task::none();
         if let Some(path) = last_vault {
@@ -683,7 +689,7 @@ impl MdEditor {
                 self.index_registered_pdf_text_task()
             }
             Message::SidebarToggle => {
-                self.sidebar_visible = !self.sidebar_visible;
+                self.toggle_sidebar_visible();
                 Task::none()
             }
             Message::SidebarFileClicked(path) => {
@@ -722,7 +728,7 @@ impl MdEditor {
 
                     self.split_view_active = true;
                     self.showing_pdf = true;
-                    self.active_panel = ActivePanel::Pdf;
+                    self.set_active_panel(ActivePanel::Pdf);
 
                     if self.pdf_paths_match(self.active_pdf_path.as_deref(), &resolved_pdf_path) {
                         if let Some(ref ann_id) = target.annotation_id {
@@ -1112,7 +1118,7 @@ impl MdEditor {
                 viewport_width,
                 viewport_height,
             } => {
-                self.active_panel = ActivePanel::Markdown;
+                self.set_active_panel(ActivePanel::Markdown);
                 self.editor_scroll_y = y;
                 self.editor_viewport_width = viewport_width;
                 self.editor_viewport_height = viewport_height;
@@ -1647,7 +1653,7 @@ impl MdEditor {
                     } else if self.active_path.is_some() {
                         self.push_markdown_navigation_history();
                     }
-                    self.active_panel = ActivePanel::Markdown;
+                    self.set_active_panel(ActivePanel::Markdown);
                     Task::done(Message::EditorCursorMove(index, 0))
                 } else {
                     Task::none()
@@ -1663,7 +1669,7 @@ impl MdEditor {
                     let target_page = index
                         .min(self.pdf_total_pages.saturating_sub(1) as usize)
                         .max(0) as u16;
-                    self.active_panel = ActivePanel::Pdf;
+                    self.set_active_panel(ActivePanel::Pdf);
                     self.navigate_pdf_page(target_page)
                 } else {
                     Task::none()
@@ -1682,7 +1688,7 @@ impl MdEditor {
                     );
                 }
                 self.pdf_viewport_height = viewport_height;
-                self.active_panel = ActivePanel::Pdf;
+                self.set_active_panel(ActivePanel::Pdf);
                 self.pdf_scroll_y = y;
                 let new_page = self.pdf_page_at_scroll(y + viewport_height * 0.33);
 
@@ -1751,7 +1757,7 @@ impl MdEditor {
                 }
             }
             Message::PdfLeftClicked(page_idx, x, y, modifiers) => {
-                self.active_panel = ActivePanel::Pdf;
+                self.set_active_panel(ActivePanel::Pdf);
                 if let Some(link) = self.pdf_link_at(page_idx, x, y) {
                     if let Some(dest_page) = link.dest_page {
                         self.push_pdf_navigation_history();
@@ -1799,7 +1805,7 @@ impl MdEditor {
                 y,
                 absolute_pos,
             } => {
-                self.active_panel = ActivePanel::Pdf;
+                self.set_active_panel(ActivePanel::Pdf);
                 let mut items = Vec::new();
 
                 // 1. Text selection context
@@ -2126,6 +2132,7 @@ impl MdEditor {
 
             Message::TrackerToggle => {
                 self.tracker_visible = !self.tracker_visible;
+                self.persist_shell_state();
                 if self.tracker_visible {
                     self.tracker_kv = md_editor_core::tracker::get_kv(&self.state)
                         .unwrap_or_default()
@@ -2146,7 +2153,7 @@ impl MdEditor {
             Message::CommandPaletteOpen => {
                 self.command_palette_visible = true;
                 self.command_palette_query.clear();
-                Task::none()
+                focus_command_palette_input()
             }
             Message::CommandPaletteQueryChanged(query) => {
                 self.command_palette_query = query;
@@ -2219,7 +2226,7 @@ impl MdEditor {
                 }
 
                 self.excerpts_queue.clear();
-                self.active_panel = ActivePanel::Markdown;
+                self.set_active_panel(ActivePanel::Markdown);
                 self.run_editor_command(crate::editor::buffer::EditorCommand::InsertText(
                     batch_text,
                 ))
@@ -2734,7 +2741,7 @@ impl MdEditor {
                     md_editor_core::types::SearchResultGroup::Filename => {
                         if result.path.ends_with(".pdf") {
                             if self.pdf_paths_match(self.active_pdf_path.as_deref(), &result.path) {
-                                self.active_panel = ActivePanel::Pdf;
+                                self.set_active_panel(ActivePanel::Pdf);
                                 self.showing_pdf = true;
                                 Task::none()
                             } else {
@@ -2746,7 +2753,7 @@ impl MdEditor {
                     }
                     md_editor_core::types::SearchResultGroup::PdfContent => {
                         if self.pdf_paths_match(self.active_pdf_path.as_deref(), &result.path) {
-                            self.active_panel = ActivePanel::Pdf;
+                            self.set_active_panel(ActivePanel::Pdf);
                             self.showing_pdf = true;
                             if let Some(index) = result
                                 .annotation_id
@@ -2767,7 +2774,7 @@ impl MdEditor {
                     md_editor_core::types::SearchResultGroup::Annotation
                     | md_editor_core::types::SearchResultGroup::QuickNote => {
                         if self.pdf_paths_match(self.active_pdf_path.as_deref(), &result.path) {
-                            self.active_panel = ActivePanel::Pdf;
+                            self.set_active_panel(ActivePanel::Pdf);
                             self.showing_pdf = true;
                             let page = result.page_index.unwrap_or(0);
                             self.focused_annotation_id = result.annotation_id.clone();
@@ -2811,7 +2818,7 @@ impl MdEditor {
             Message::PdfSearchResultClicked(page) => {
                 self.search_visible = false;
                 self.pdf_state.search.visible = true;
-                self.active_panel = ActivePanel::Pdf;
+                self.set_active_panel(ActivePanel::Pdf);
                 self.pdf_state.search.active_index = self
                     .pdf_state
                     .search
@@ -3001,7 +3008,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfSelectionChanged(page, anchor, focus) => {
-                self.active_panel = ActivePanel::Pdf;
+                self.set_active_panel(ActivePanel::Pdf);
                 self.pdf_selection = Some(views::interactive_pdf::PdfSelection {
                     page_index: page,
                     anchor_idx: anchor,
@@ -3014,7 +3021,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfSelectionFinished(page, anchor, focus) => {
-                self.active_panel = ActivePanel::Pdf;
+                self.set_active_panel(ActivePanel::Pdf);
                 self.pdf_selection = Some(views::interactive_pdf::PdfSelection {
                     page_index: page,
                     anchor_idx: anchor,
@@ -3067,7 +3074,7 @@ impl MdEditor {
                     self.toast = Some("Select PDF text before inserting a quote link".to_string());
                     return Task::none();
                 };
-                self.active_panel = ActivePanel::Markdown;
+                self.set_active_panel(ActivePanel::Markdown);
                 self.run_editor_command(command)
             }
             Message::PdfInsertAnnotationLink(annotation_id) => {
@@ -3092,7 +3099,7 @@ impl MdEditor {
                     self.toast = Some("Select a PDF highlight before inserting it".to_string());
                     return Task::none();
                 };
-                self.active_panel = ActivePanel::Markdown;
+                self.set_active_panel(ActivePanel::Markdown);
                 self.run_editor_command(command)
             }
             Message::PdfCreateHighlight(color) => Task::done(Message::PdfCreateAnnotation(
@@ -3397,7 +3404,7 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::ToggleSidebar => {
-                        self.sidebar_visible = !self.sidebar_visible;
+                        self.toggle_sidebar_visible();
                         Task::none()
                     }
                     Shortcut::NavBack => Task::done(Message::PdfNavBack),
@@ -3474,7 +3481,7 @@ impl MdEditor {
                         self.command_palette_visible = true;
                         self.command_palette_query.clear();
                         self.citation_palette_visible = false;
-                        Task::none()
+                        focus_command_palette_input()
                     }
                     Shortcut::CitationPalette => {
                         self.citation_palette_visible = !self.citation_palette_visible;
@@ -3497,16 +3504,19 @@ impl MdEditor {
                     }
                     Shortcut::ToggleBacklinks => {
                         self.backlinks_visible = !self.backlinks_visible;
+                        self.persist_shell_state();
                         Task::none()
                     }
                     Shortcut::TableOfContents => {
                         if self.active_path.is_some() || self.active_pdf_path.is_some() {
                             self.toc_visible = !self.toc_visible;
+                            self.persist_shell_state();
                         }
                         Task::none()
                     }
                     Shortcut::StudyTracker => {
                         self.tracker_visible = !self.tracker_visible;
+                        self.persist_shell_state();
                         Task::none()
                     }
                     Shortcut::SplitView => Task::done(Message::SplitViewToggle),
@@ -3515,6 +3525,8 @@ impl MdEditor {
                         self.backlinks_visible = false;
                         self.toc_visible = false;
                         self.tracker_visible = false;
+                        self.pdf_annotations_visible = false;
+                        self.persist_shell_state();
                         Task::none()
                     }
                     Shortcut::ZoomIn => {
@@ -3617,6 +3629,7 @@ impl MdEditor {
             Message::SplitViewToggle => {
                 if self.active_path.is_some() && self.active_pdf_path.is_some() {
                     self.split_view_active = !self.split_view_active;
+                    self.persist_shell_state();
                     if self.pdf_fit_to_width {
                         return Task::done(Message::PdfFitToWidth);
                     } else if self.pdf_fit_to_page {
@@ -3627,6 +3640,7 @@ impl MdEditor {
                         md_editor_core::config::get_sys_config(&self.state, "last_pdf")
                     {
                         self.split_view_active = true;
+                        self.persist_shell_state();
                         return self.open_pdf(&last_pdf);
                     }
                     self.toast = Some("Open a PDF once to use split view".to_string());
@@ -3678,10 +3692,13 @@ impl MdEditor {
             Message::SplitViewDragEnd => {
                 self.is_resizing_split = false;
                 if self.pdf_fit_to_width && self.active_pdf_path.is_some() {
+                    self.persist_shell_state();
                     return Task::done(Message::PdfFitToWidth);
                 } else if self.pdf_fit_to_page && self.active_pdf_path.is_some() {
+                    self.persist_shell_state();
                     return Task::done(Message::PdfFitToPage);
                 }
+                self.persist_shell_state();
                 Task::none()
             }
             Message::WindowResized(width, height) => {
@@ -3697,12 +3714,14 @@ impl MdEditor {
             Message::ToggleTOC => {
                 if self.active_path.is_some() || self.active_pdf_path.is_some() {
                     self.toc_visible = !self.toc_visible;
+                    self.persist_shell_state();
                 }
                 Task::none()
             }
             Message::PdfToggleAnnotationsSidebar => {
                 if self.active_pdf_path.is_some() {
                     self.pdf_annotations_visible = !self.pdf_annotations_visible;
+                    self.persist_shell_state();
                 }
                 Task::none()
             }
@@ -3875,8 +3894,140 @@ impl MdEditor {
         }
     }
 
+    fn current_shell_persistence(&self) -> AppShellPersistence {
+        let active_workflow_tab = if self.tracker_visible {
+            WorkflowSidebarTab::Tracker
+        } else if self.toc_visible {
+            WorkflowSidebarTab::Outline
+        } else if self.pdf_annotations_visible {
+            WorkflowSidebarTab::Annotations
+        } else if self.backlinks_visible {
+            WorkflowSidebarTab::Backlinks
+        } else {
+            WorkflowSidebarTab::None
+        };
+        let last_focused_pane = match self.active_panel {
+            ActivePanel::Markdown => AppShellPane::Markdown,
+            ActivePanel::Pdf => AppShellPane::Pdf,
+        };
+
+        AppShellPersistence {
+            sidebar_width: 260.0,
+            reference_width: self.pdf_split_ratio * self.window_width,
+            workflow_width: 280.0,
+            split_ratio: self.split_ratio,
+            sidebar_collapsed: !self.sidebar_visible,
+            reference_collapsed: !self.split_view_active,
+            workflow_collapsed: !self.backlinks_visible
+                && !self.toc_visible
+                && !self.tracker_visible
+                && !self.pdf_annotations_visible,
+            active_workflow_tab,
+            last_focused_pane,
+        }
+    }
+
+    fn app_shell_state(&self) -> AppShellState {
+        let persistence = self
+            .current_shell_persistence()
+            .clamp_for_window(self.window_width);
+
+        AppShellState::derive(
+            AppShellInputs {
+                vault_open: self.vault_root.is_some(),
+                vault_has_entries: !self.vault_entries.is_empty(),
+                markdown_open: self.active_path.is_some(),
+                pdf_open: self.active_pdf_path.is_some(),
+                image_open: self.active_image_path.is_some(),
+                split_requested: self.split_view_active,
+                search_visible: self.search_visible,
+                command_palette_visible: self.command_palette_visible,
+                citation_palette_visible: self.citation_palette_visible,
+            },
+            persistence,
+        )
+    }
+
+    fn app_shell_status(&self, shell_state: AppShellState) -> AppShellStatus {
+        AppShellStatus::derive(AppShellStatusInputs {
+            document_open: self.active_path.is_some()
+                || self.active_pdf_path.is_some()
+                || self.active_image_path.is_some(),
+            document_dirty: self.active_path.is_some() && self.buffer.dirty,
+            global_search_searching: self.global_search_searching,
+            pdf_text_status: self.global_search_pdf_status.clone(),
+            pdf_open: self.active_pdf_path.is_some(),
+            page_index: self.pdf_current_page,
+            page_count: self.pdf_total_pages,
+            zoom: self.pdf_state.zoom,
+            active_pane: shell_state.active_pane,
+            toast: self.toast.clone(),
+            background_error: self
+                .global_search_error
+                .clone()
+                .or_else(|| self.pdf_search_error.clone()),
+        })
+    }
+
+    fn load_shell_persistence(&mut self) {
+        let Ok(Some(value)) =
+            md_editor_core::config::get_sys_config(&self.state, APP_SHELL_PERSISTENCE_CONFIG_KEY)
+        else {
+            return;
+        };
+        let Some(saved) = AppShellPersistence::deserialize(&value) else {
+            return;
+        };
+        let saved = saved.clamp_for_window(self.window_width);
+
+        self.sidebar_visible = !saved.sidebar_collapsed;
+        self.backlinks_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Backlinks)
+            && !saved.workflow_collapsed;
+        self.toc_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Outline)
+            && !saved.workflow_collapsed;
+        self.tracker_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Tracker)
+            && !saved.workflow_collapsed;
+        self.pdf_annotations_visible =
+            matches!(saved.active_workflow_tab, WorkflowSidebarTab::Annotations)
+                && !saved.workflow_collapsed;
+        self.split_ratio = saved.split_ratio;
+        self.pdf_split_ratio =
+            (saved.reference_width / self.window_width.max(1.0)).clamp(0.15, 0.75);
+        self.active_panel = if matches!(saved.last_focused_pane, AppShellPane::Pdf) {
+            ActivePanel::Pdf
+        } else {
+            ActivePanel::Markdown
+        };
+    }
+
+    fn persist_shell_state(&self) {
+        let _ = md_editor_core::config::set_sys_config(
+            &self.state,
+            APP_SHELL_PERSISTENCE_CONFIG_KEY,
+            &self.current_shell_persistence().serialize(),
+        );
+    }
+
+    fn toggle_sidebar_visible(&mut self) {
+        self.sidebar_visible = !self.sidebar_visible;
+        self.persist_shell_state();
+    }
+
+    fn set_active_panel(&mut self, active_panel: ActivePanel) {
+        if self.active_panel != active_panel {
+            self.active_panel = active_panel;
+            self.persist_shell_state();
+        } else {
+            self.active_panel = active_panel;
+        }
+    }
+
     pub fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        if self.vault_root.is_none() {
+        let shell_state = self.app_shell_state();
+        let _command_groups = shell_state.command_groups();
+        let _shell_status = self.app_shell_status(shell_state);
+
+        if matches!(shell_state.mode, AppShellMode::NoVault) {
             return views::welcome::view();
         }
 
@@ -4098,50 +4249,51 @@ impl MdEditor {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
 
-        let main_content: Element<Message, Theme, iced::Renderer> = if self.split_view_active
-            && self.active_path.is_some()
-            && self.active_pdf_path.is_some()
-        {
-            let left_portion = (self.split_ratio * 1000.0) as u16;
-            let right_portion = ((1.0 - self.split_ratio) * 1000.0) as u16;
+        let main_content: Element<Message, Theme, iced::Renderer> =
+            if shell_state.uses_split_research_layout() {
+                let left_portion = (self.split_ratio * 1000.0) as u16;
+                let right_portion = ((1.0 - self.split_ratio) * 1000.0) as u16;
 
-            let divider = mouse_area(
-                container(text("⋮").size(14).color(app_theme::TEXT_MUTED))
-                    .width(Length::Fixed(10.0))
-                    .height(Length::Fill)
-                    .center_x(Length::Fixed(10.0))
-                    .center_y(Length::Fill)
-                    .style(|_| container::Style {
-                        background: Some(iced::Background::Color(app_theme::BG_TERTIARY)),
-                        ..Default::default()
-                    }),
-            )
-            .on_press(Message::SplitViewDragStart)
-            .on_release(Message::SplitViewDragEnd)
-            .interaction(iced::mouse::Interaction::ResizingHorizontally);
-
-            row![
-                container(pdf_view)
-                    .width(Length::FillPortion(left_portion))
-                    .style(|_| container::Style {
-                        border: iced::Border {
-                            color: app_theme::BORDER,
-                            width: 1.0,
+                let divider = mouse_area(
+                    container(text("⋮").size(14).color(app_theme::TEXT_MUTED))
+                        .width(Length::Fixed(10.0))
+                        .height(Length::Fill)
+                        .center_x(Length::Fixed(10.0))
+                        .center_y(Length::Fill)
+                        .style(|_| container::Style {
+                            background: Some(iced::Background::Color(app_theme::BG_TERTIARY)),
                             ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
-                divider,
-                container(editor_view).width(Length::FillPortion(right_portion))
-            ]
-            .into()
-        } else if self.showing_pdf && self.active_pdf_path.is_some() {
-            pdf_view
-        } else if self.active_image.is_some() {
-            image_view
-        } else {
-            editor_view.into()
-        };
+                        }),
+                )
+                .on_press(Message::SplitViewDragStart)
+                .on_release(Message::SplitViewDragEnd)
+                .interaction(iced::mouse::Interaction::ResizingHorizontally);
+
+                row![
+                    container(pdf_view)
+                        .width(Length::FillPortion(left_portion))
+                        .style(|_| container::Style {
+                            border: iced::Border {
+                                color: app_theme::BORDER,
+                                width: 1.0,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }),
+                    divider,
+                    container(editor_view).width(Length::FillPortion(right_portion))
+                ]
+                .into()
+            } else if shell_state.shows_pdf_document()
+                && self.showing_pdf
+                && self.active_pdf_path.is_some()
+            {
+                pdf_view
+            } else if shell_state.shows_image_document() && self.active_image.is_some() {
+                image_view
+            } else {
+                editor_view.into()
+            };
 
         let content = column![toolbar, main_content].height(Length::Fill);
 
@@ -4441,6 +4593,7 @@ impl MdEditor {
             self.backlinks =
                 md_editor_core::vault::get_mixed_backlinks(&self.state, p).unwrap_or_default();
             self.backlinks_visible = true;
+            self.persist_shell_state();
         }
         Task::none()
     }
@@ -4467,7 +4620,7 @@ impl MdEditor {
                 self.active_image_path = None;
                 self.active_image = None;
                 self.showing_pdf = false;
-                self.active_panel = ActivePanel::Markdown;
+                self.set_active_panel(ActivePanel::Markdown);
                 self.md_toc_entries = Vec::new();
                 let highlight_task = self.refresh_highlighting_for_current_buffer(true);
                 self.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
@@ -4506,7 +4659,7 @@ impl MdEditor {
         self.active_image_path = None;
         self.active_image = None;
         self.showing_pdf = true;
-        self.active_panel = ActivePanel::Pdf;
+        self.set_active_panel(ActivePanel::Pdf);
         self.pdf_current_page = 0;
         self.pdf_total_pages = 0;
         self.pdf_rotation = 0;
@@ -4529,7 +4682,6 @@ impl MdEditor {
         self.pdf_state.search.searching = false;
         self.pdf_active_search_id = 0;
         self.pdf_programmatic_scroll = false;
-        self.pdf_split_ratio = 0.3;
         self.pdf_toc_target_page = None;
         self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
         let generation = self.pdf_render_generation;
@@ -4617,7 +4769,7 @@ impl MdEditor {
                 self.active_path = None;
                 self.active_pdf_path = None;
                 self.showing_pdf = false;
-                self.active_panel = ActivePanel::Markdown;
+                self.set_active_panel(ActivePanel::Markdown);
                 self.md_toc_entries.clear();
                 self.pdf_toc_entries_flat = None;
                 self.backlinks.clear();
@@ -5375,7 +5527,7 @@ impl MdEditor {
                     tasks.push(self.open_file_extended(&path, false));
                 } else {
                     self.showing_pdf = false;
-                    self.active_panel = ActivePanel::Markdown;
+                    self.set_active_panel(ActivePanel::Markdown);
                 }
 
                 tasks.push(Task::done(Message::EditorCommand(
@@ -5397,7 +5549,7 @@ impl MdEditor {
                     tasks.push(self.open_pdf(&path));
                 } else {
                     self.showing_pdf = true;
-                    self.active_panel = ActivePanel::Pdf;
+                    self.set_active_panel(ActivePanel::Pdf);
                 }
                 self.pdf_state.zoom = zoom;
                 self.pdf_current_page = page.min(self.pdf_total_pages.saturating_sub(1));
@@ -5752,7 +5904,7 @@ impl MdEditor {
                     page_number: page_index + 1,
                     link,
                 };
-                self.active_panel = ActivePanel::Markdown;
+                self.set_active_panel(ActivePanel::Markdown);
                 self.run_editor_command(command)
             }
         }
@@ -6163,22 +6315,45 @@ fn pdf_companion_note_key(pdf_path: &str) -> String {
     format!("pdf_companion_note:{}", pdf_path.replace('\\', "/"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusTarget {
+    FileSearch,
+    GlobalSearch,
+    PdfSearch,
+    CommandPalette,
+    CitationPalette,
+}
+
+impl FocusTarget {
+    fn widget_id(self) -> &'static str {
+        match self {
+            Self::FileSearch => views::search::FILE_SEARCH_INPUT_ID,
+            Self::GlobalSearch => views::search::GLOBAL_SEARCH_INPUT_ID,
+            Self::PdfSearch => views::pdf_viewer::PDF_SEARCH_INPUT_ID,
+            Self::CommandPalette => views::command_palette::COMMAND_PALETTE_INPUT_ID,
+            Self::CitationPalette => views::citation_palette::CITATION_PALETTE_INPUT_ID,
+        }
+    }
+}
+
+fn focus_target(target: FocusTarget) -> Task<Message> {
+    operation::focus(iced::advanced::widget::Id::new(target.widget_id()))
+}
+
 fn focus_file_search_input() -> Task<Message> {
-    operation::focus(iced::advanced::widget::Id::new(
-        views::search::FILE_SEARCH_INPUT_ID,
-    ))
+    focus_target(FocusTarget::FileSearch)
 }
 
 fn focus_global_search_input() -> Task<Message> {
-    operation::focus(iced::advanced::widget::Id::new(
-        views::search::GLOBAL_SEARCH_INPUT_ID,
-    ))
+    focus_target(FocusTarget::GlobalSearch)
+}
+
+fn focus_command_palette_input() -> Task<Message> {
+    focus_target(FocusTarget::CommandPalette)
 }
 
 fn focus_citation_palette_input() -> Task<Message> {
-    operation::focus(iced::advanced::widget::Id::new(
-        views::citation_palette::CITATION_PALETTE_INPUT_ID,
-    ))
+    focus_target(FocusTarget::CitationPalette)
 }
 
 fn search_registered_pdf_text_results(
@@ -6398,9 +6573,7 @@ fn registered_pdf_search_targets(
 }
 
 fn focus_pdf_search_input() -> Task<Message> {
-    operation::focus(iced::advanced::widget::Id::new(
-        views::pdf_viewer::PDF_SEARCH_INPUT_ID,
-    ))
+    focus_target(FocusTarget::PdfSearch)
 }
 
 fn normalize_path(path: &std::path::Path) -> String {
@@ -6684,6 +6857,44 @@ fn format_citation_item_as_markdown(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use md_editor_core::pdf::{
+        PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus,
+    };
+    use md_editor_core::types::FileEntry;
+
+    use crate::views::modals::ModalType;
+
+    fn text_layout_bounds(
+        ui: &mut iced_test::Simulator<'_, Message, Theme, iced::Renderer>,
+        text: &str,
+    ) -> iced::Rectangle {
+        ui.find(text)
+            .unwrap_or_else(|_| panic!("{text:?} should render"))
+            .bounds()
+    }
+
+    fn rectangles_overlap(a: iced::Rectangle, b: iced::Rectangle) -> bool {
+        let a_right = a.x + a.width;
+        let b_right = b.x + b.width;
+        let a_bottom = a.y + a.height;
+        let b_bottom = b.y + b.height;
+
+        a.x < b_right && b.x < a_right && a.y < b_bottom && b.y < a_bottom
+    }
+
+    fn assert_no_text_overlap(
+        ui: &mut iced_test::Simulator<'_, Message, Theme, iced::Renderer>,
+        first: &str,
+        second: &str,
+    ) {
+        let first_bounds = text_layout_bounds(ui, first);
+        let second_bounds = text_layout_bounds(ui, second);
+
+        assert!(
+            !rectangles_overlap(first_bounds, second_bounds),
+            "{first:?} at {first_bounds:?} should not overlap {second:?} at {second_bounds:?}"
+        );
+    }
 
     fn pdf_text_batch(
         results: Vec<md_editor_core::types::UnifiedSearchResult>,
@@ -6699,6 +6910,173 @@ mod tests {
             result_cap_reached,
             document_cap_reached,
         }
+    }
+
+    fn app_without_vault() -> MdEditor {
+        MdEditor::new().0
+    }
+
+    fn app_with_vault() -> MdEditor {
+        let mut app = app_without_vault();
+        app.sidebar_visible = true;
+        app.backlinks_visible = false;
+        app.toc_visible = false;
+        app.tracker_visible = false;
+        app.pdf_annotations_visible = false;
+        app.split_view_active = false;
+        app.split_ratio = 0.5;
+        app.pdf_split_ratio = 0.3;
+        app.active_panel = ActivePanel::Markdown;
+        app.vault_root = Some("/tmp/md-editor-ui-audit".to_string());
+        app.vault_entries = vec![
+            FileEntry {
+                path: "notes".to_string(),
+                name: "notes".to_string(),
+                is_dir: true,
+            },
+            FileEntry {
+                path: "notes/research.md".to_string(),
+                name: "research.md".to_string(),
+                is_dir: false,
+            },
+            FileEntry {
+                path: "papers/paper.pdf".to_string(),
+                name: "paper.pdf".to_string(),
+                is_dir: false,
+            },
+        ];
+        app
+    }
+
+    fn app_with_markdown_file() -> MdEditor {
+        let mut app = app_with_vault();
+        app.active_path = Some("notes/research.md".to_string());
+        app.selected_path = app.active_path.clone();
+        app.buffer = DocBuffer::from_text("# Research\n\nSee [[related]].\n");
+        app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
+        app.md_toc_entries = vec![views::toc::TocEntry {
+            level: 1,
+            text: "Research".to_string(),
+            line: 0,
+        }];
+        app
+    }
+
+    fn app_with_large_markdown_file() -> MdEditor {
+        let mut app = app_with_markdown_file();
+        let mut text = String::from("# Large Research\n\n");
+        for line in 0..1_500 {
+            text.push_str(&format!("- finding {line}\n"));
+        }
+        app.active_path = Some("notes/large.md".to_string());
+        app.selected_path = app.active_path.clone();
+        app.buffer = DocBuffer::from_text(&text);
+        app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
+        app.md_toc_entries = views::toc::get_toc(&app.highlighted_lines);
+        app
+    }
+
+    fn app_with_pdf_file() -> MdEditor {
+        let mut app = app_with_vault();
+        app.active_pdf_path = Some("papers/paper.pdf".to_string());
+        app.selected_path = app.active_pdf_path.clone();
+        app.showing_pdf = true;
+        app.pdf_total_pages = 3;
+        app.pdf_current_page = 0;
+        app.pdf_pages = vec![None, None, None];
+        app.pdf_dimensions = vec![None, None, None];
+        app.pdf_state.page_sizes = vec![Some((612.0, 792.0)); 3];
+        app.pdf_placeholder_page_size = Some((612.0, 792.0));
+        app.pdf_state.layout = PdfLayout::rebuild(
+            &app.pdf_state.page_sizes,
+            app.pdf_state.zoom,
+            app.pdf_placeholder_page_size.unwrap_or((612.0, 792.0)),
+            PDF_PAGE_SPACING,
+            PDF_PAGE_LIST_PADDING,
+            app.pdf_rotation,
+        );
+        app.active_panel = ActivePanel::Pdf;
+        app
+    }
+
+    fn app_with_split_research() -> MdEditor {
+        let mut app = app_with_pdf_file();
+        app.active_path = Some("notes/research.md".to_string());
+        app.buffer = DocBuffer::from_text("# Research\n\n[p. 1](pdf://papers/paper.pdf?page=1)\n");
+        app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
+        app.split_view_active = true;
+        app.active_panel = ActivePanel::Markdown;
+        app
+    }
+
+    fn app_with_global_search() -> MdEditor {
+        let mut app = app_with_markdown_file();
+        app.search_visible = true;
+        app.editor_search.query = "missing".to_string();
+        app.global_search_searching = false;
+        app.global_search_results.clear();
+        app
+    }
+
+    fn app_with_file_search() -> MdEditor {
+        let mut app = app_with_markdown_file();
+        app.editor_search.visible = true;
+        app.editor_search.query = "finding".to_string();
+        app.editor_search.matches.clear();
+        app.editor_search.active_index = None;
+        app
+    }
+
+    fn app_with_pdf_search() -> MdEditor {
+        let mut app = app_with_pdf_file();
+        app.pdf_state.search.visible = true;
+        app.pdf_state.search.query = "finding".to_string();
+        app
+    }
+
+    fn app_with_command_palette() -> MdEditor {
+        let mut app = app_with_markdown_file();
+        app.command_palette_visible = true;
+        app.command_palette_query = "navigate".to_string();
+        app
+    }
+
+    fn app_with_active_modal() -> MdEditor {
+        let mut app = app_with_markdown_file();
+        app.active_modal = Some(ModalType::CreateFile);
+        app.modal_input = "new-note.md".to_string();
+        app
+    }
+
+    fn app_with_annotation_heavy_pdf() -> MdEditor {
+        let mut app = app_with_pdf_file();
+        app.pdf_annotations_visible = true;
+        let annotations = (0..12)
+            .map(|index| PdfAnnotation {
+                id: format!("ann-{index}"),
+                document_id: "doc".to_string(),
+                page_index: index % 3,
+                kind: PdfAnnotationKind::Highlight,
+                color: PdfAnnotationColor::Yellow,
+                selected_text: format!("Important quote {index}"),
+                ranges: Vec::new(),
+                rects: Vec::new(),
+                note: None,
+                linked_note_path: None,
+                markdown_anchor: None,
+                tags: vec!["review".to_string()],
+                status: PdfAnnotationStatus::Unresolved,
+                created_at: index as i64,
+                updated_at: index as i64,
+            })
+            .collect::<Vec<_>>();
+        for annotation in annotations {
+            app.pdf_annotations
+                .entry(annotation.page_index)
+                .or_default()
+                .push(annotation);
+        }
+        app
     }
 
     #[test]
@@ -6763,6 +7141,361 @@ mod tests {
             source_text: target.to_string(),
             kind,
         }
+    }
+
+    #[test]
+    fn ui_audit_fixture_no_vault_renders_welcome() {
+        let app = app_without_vault();
+        let mut ui = iced_test::simulator(app.view());
+
+        ui.find("Open Existing Vault")
+            .expect("no-vault fixture should render vault opener");
+        ui.find("Press Ctrl+O to open a folder")
+            .expect("no-vault fixture should expose keyboard path");
+    }
+
+    #[test]
+    fn ui_audit_fixture_markdown_file_renders_shell_and_editor() {
+        let app = app_with_markdown_file();
+        let mut ui = iced_test::simulator(app.view());
+
+        ui.find("notes/research.md")
+            .expect("markdown fixture should render active path");
+        ui.find(" • Saved")
+            .expect("markdown fixture should render save status");
+    }
+
+    #[test]
+    fn ui_audit_fixture_pdf_file_renders_pdf_toolbar() {
+        let app = app_with_pdf_file();
+        let mut ui = iced_test::simulator(app.view());
+
+        ui.find("papers/paper.pdf")
+            .expect("PDF fixture should render active PDF path");
+        ui.find("1 / 3")
+            .expect("PDF fixture should render page status with 1-based label");
+    }
+
+    #[test]
+    fn ui_audit_fixture_split_research_renders_both_active_paths() {
+        let app = app_with_split_research();
+        let mut ui = iced_test::simulator(app.view());
+
+        ui.find("notes/research.md")
+            .expect("split fixture should keep markdown path visible");
+        ui.find("1 / 3")
+            .expect("split fixture should keep PDF controls visible");
+    }
+
+    #[test]
+    fn ui_audit_fixture_overlays_and_sidebars_render_stable_states() {
+        let search_app = app_with_global_search();
+        let mut search_ui = iced_test::simulator(search_app.view());
+        search_ui
+            .find("No results found")
+            .expect("global-search fixture should render empty state");
+
+        let command_app = app_with_command_palette();
+        let mut command_ui = iced_test::simulator(command_app.view());
+        command_ui
+            .find("Navigate Back")
+            .expect("command-palette fixture should render filtered command");
+
+        let modal_app = app_with_active_modal();
+        let mut modal_ui = iced_test::simulator(modal_app.view());
+        modal_ui
+            .find("Create New File")
+            .expect("modal fixture should render create action");
+
+        let annotation_app = app_with_annotation_heavy_pdf();
+        let mut annotation_ui = iced_test::simulator(annotation_app.view());
+        annotation_ui
+            .find("\"Important quote 0\"")
+            .expect("annotation-heavy fixture should render annotation row");
+        annotation_ui
+            .find("#review")
+            .expect("annotation-heavy fixture should render tag metadata");
+    }
+
+    #[test]
+    fn ui_audit_fixture_large_and_narrow_states_render_stable_shell() {
+        let large_app = app_with_large_markdown_file();
+        let mut large_ui = iced_test::simulator(large_app.view());
+        large_ui
+            .find("notes/large.md")
+            .expect("large markdown fixture should render active path");
+        large_ui
+            .find(" • Saved")
+            .expect("large markdown fixture should render save status");
+
+        let search_app = app_with_file_search();
+        let mut search_ui = iced_test::simulator(search_app.view());
+        search_ui
+            .find("0 matches")
+            .expect("file-search fixture should render no-result state");
+
+        let narrow_app = app_with_split_research();
+        let mut narrow_ui = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(420.0, 720.0),
+            narrow_app.view(),
+        );
+        narrow_ui
+            .find("notes/research.md")
+            .expect("narrow split fixture should preserve markdown path");
+        narrow_ui
+            .find("1 / 3")
+            .expect("narrow split fixture should preserve PDF page status");
+    }
+
+    #[test]
+    fn ui_audit_keyboard_shortcuts_expose_baseline_accessibility_paths() {
+        let mut app = app_with_markdown_file();
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::CommandPalette));
+        assert!(app.command_palette_visible);
+        assert!(!app.citation_palette_visible);
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::CitationPalette));
+        assert!(app.citation_palette_visible);
+        assert!(!app.command_palette_visible);
+        assert!(!app.search_visible);
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
+        assert!(!app.citation_palette_visible);
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
+        assert!(app.editor_search.visible);
+        assert!(!app.search_visible);
+        assert!(!app.pdf_state.search.visible);
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::TableOfContents));
+        assert!(app.toc_visible);
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::FocusMode));
+        assert!(!app.sidebar_visible);
+        assert!(!app.backlinks_visible);
+        assert!(!app.toc_visible);
+        assert!(!app.tracker_visible);
+    }
+
+    #[test]
+    fn ui_audit_focus_targets_map_to_rendered_input_ids() {
+        assert_eq!(
+            FocusTarget::FileSearch.widget_id(),
+            views::search::FILE_SEARCH_INPUT_ID
+        );
+        assert_eq!(
+            FocusTarget::GlobalSearch.widget_id(),
+            views::search::GLOBAL_SEARCH_INPUT_ID
+        );
+        assert_eq!(
+            FocusTarget::PdfSearch.widget_id(),
+            views::pdf_viewer::PDF_SEARCH_INPUT_ID
+        );
+        assert_eq!(
+            FocusTarget::CommandPalette.widget_id(),
+            views::command_palette::COMMAND_PALETTE_INPUT_ID
+        );
+        assert_eq!(
+            FocusTarget::CitationPalette.widget_id(),
+            views::citation_palette::CITATION_PALETTE_INPUT_ID
+        );
+
+        let mut command_app = app_with_markdown_file();
+        let _ = command_app.update(Message::CommandPaletteOpen);
+        let mut command_ui = iced_test::simulator(command_app.view());
+        command_ui
+            .find(iced_test::selector::id(
+                FocusTarget::CommandPalette.widget_id(),
+            ))
+            .expect("command palette shortcut target should exist when open");
+
+        let mut citation_app = app_with_annotation_heavy_pdf();
+        let _ = citation_app.update(Message::CitationPaletteToggle);
+        let mut citation_ui = iced_test::simulator(citation_app.view());
+        citation_ui
+            .find(iced_test::selector::id(
+                FocusTarget::CitationPalette.widget_id(),
+            ))
+            .expect("citation palette shortcut target should exist when open");
+
+        let file_search_app = app_with_file_search();
+        let mut file_search_ui = iced_test::simulator(file_search_app.view());
+        file_search_ui
+            .find(iced_test::selector::id(FocusTarget::FileSearch.widget_id()))
+            .expect("file search target should exist when open");
+
+        let global_search_app = app_with_global_search();
+        let mut global_search_ui = iced_test::simulator(global_search_app.view());
+        global_search_ui
+            .find(iced_test::selector::id(
+                FocusTarget::GlobalSearch.widget_id(),
+            ))
+            .expect("global search target should exist when open");
+
+        let pdf_search_app = app_with_pdf_search();
+        let mut pdf_search_ui = iced_test::simulator(pdf_search_app.view());
+        pdf_search_ui
+            .find(iced_test::selector::id(FocusTarget::PdfSearch.widget_id()))
+            .expect("PDF search target should exist when open");
+    }
+
+    #[test]
+    fn ui_audit_escape_closes_modal_before_background_overlays() {
+        let mut app = app_with_active_modal();
+        app.search_visible = true;
+        app.command_palette_visible = true;
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
+        assert!(app.active_modal.is_none());
+        assert!(app.search_visible);
+        assert!(app.command_palette_visible);
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
+        assert!(!app.search_visible);
+        assert!(app.command_palette_visible);
+    }
+
+    #[test]
+    fn ui_audit_shell_labels_do_not_overlap_in_baseline_layouts() {
+        let markdown_app = app_with_markdown_file();
+        let mut markdown_ui = iced_test::simulator(markdown_app.view());
+        assert_no_text_overlap(&mut markdown_ui, "notes/research.md", " • Saved");
+
+        let pdf_app = app_with_pdf_file();
+        let mut pdf_ui = iced_test::simulator(pdf_app.view());
+        assert_no_text_overlap(&mut pdf_ui, "papers/paper.pdf", " • Saved");
+        assert_no_text_overlap(&mut pdf_ui, "papers/paper.pdf", "1 / 3");
+
+        let narrow_app = app_with_split_research();
+        let mut narrow_ui = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(420.0, 720.0),
+            narrow_app.view(),
+        );
+        assert_no_text_overlap(&mut narrow_ui, "notes/research.md", " • Saved");
+        assert_no_text_overlap(&mut narrow_ui, "notes/research.md", "1 / 3");
+    }
+
+    #[test]
+    fn app_shell_state_matches_ui_audit_fixtures() {
+        let no_vault = app_without_vault().app_shell_state();
+        assert_eq!(no_vault.mode, AppShellMode::NoVault);
+        assert_eq!(no_vault.active_pane, AppShellPane::None);
+
+        let markdown = app_with_markdown_file().app_shell_state();
+        assert_eq!(markdown.mode, AppShellMode::EditorOnly);
+        assert_eq!(markdown.active_pane, AppShellPane::Markdown);
+
+        let pdf = app_with_pdf_file().app_shell_state();
+        assert_eq!(pdf.mode, AppShellMode::PdfOnly);
+        assert_eq!(pdf.active_pane, AppShellPane::Pdf);
+
+        let split = app_with_split_research().app_shell_state();
+        assert_eq!(split.mode, AppShellMode::SplitResearch);
+        assert_eq!(split.active_pane, AppShellPane::Markdown);
+        assert!(split.uses_split_research_layout());
+        assert!(
+            split
+                .command_groups()
+                .contains(&crate::app_shell::CommandGroup::Research)
+        );
+        assert!(
+            split
+                .command_groups()
+                .contains(&crate::app_shell::CommandGroup::Annotation)
+        );
+
+        let search = app_with_global_search().app_shell_state();
+        assert_eq!(search.mode, AppShellMode::SearchHeavy);
+        assert_eq!(search.active_pane, AppShellPane::Markdown);
+    }
+
+    #[test]
+    fn app_shell_status_matches_document_and_pdf_state() {
+        let mut app = app_with_split_research();
+        app.buffer.dirty = true;
+        app.pdf_current_page = 1;
+        app.pdf_total_pages = 3;
+        app.pdf_state.zoom = 1.5;
+        app.global_search_searching = true;
+        app.global_search_pdf_status = Some("Searched 2 PDFs".to_string());
+
+        let shell_state = app.app_shell_state();
+        let status = app.app_shell_status(shell_state);
+
+        assert_eq!(status.save_status, crate::app_shell::SaveStatus::Unsaved);
+        assert_eq!(status.search_status.as_deref(), Some("Searched 2 PDFs"));
+        assert_eq!(status.pdf_status.as_deref(), Some("2 / 3 · 150%"));
+        assert_eq!(status.active_pane, AppShellPane::Markdown);
+    }
+
+    #[test]
+    fn app_shell_status_surfaces_toast_before_background_error() {
+        let mut app = app_with_pdf_file();
+        app.toast = Some("Linked note created".to_string());
+        app.pdf_search_error = Some("PDF search failed".to_string());
+
+        let status = app.app_shell_status(app.app_shell_state());
+
+        assert_eq!(status.save_status, crate::app_shell::SaveStatus::Saved);
+        assert_eq!(status.message.as_deref(), Some("Linked note created"));
+    }
+
+    #[test]
+    fn app_shell_persistence_reflects_visible_panels_and_window_width() {
+        let mut app = app_with_split_research();
+        app.backlinks_visible = true;
+        app.window_width = 900.0;
+        let wide = app.app_shell_state();
+        assert!(!wide.persistence.sidebar_collapsed);
+        assert!(!wide.persistence.reference_collapsed);
+        assert!(!wide.persistence.workflow_collapsed);
+        assert_eq!(
+            wide.persistence.active_workflow_tab,
+            WorkflowSidebarTab::Backlinks
+        );
+
+        app.window_width = 600.0;
+        let narrow = app.app_shell_state();
+        assert!(!narrow.persistence.sidebar_collapsed);
+        assert!(narrow.persistence.reference_collapsed);
+        assert!(narrow.persistence.workflow_collapsed);
+    }
+
+    #[test]
+    fn app_shell_persistence_round_trips_through_config() {
+        let mut app = app_with_split_research();
+        app.sidebar_visible = false;
+        app.backlinks_visible = false;
+        app.toc_visible = true;
+        app.tracker_visible = false;
+        app.pdf_annotations_visible = false;
+        app.split_ratio = 0.62;
+        app.pdf_split_ratio = 0.4;
+        app.set_active_panel(ActivePanel::Pdf);
+        app.persist_shell_state();
+
+        let saved =
+            md_editor_core::config::get_sys_config(&app.state, APP_SHELL_PERSISTENCE_CONFIG_KEY)
+                .unwrap()
+                .expect("shell persistence should be written");
+        assert!(saved.contains("active_workflow_tab=outline"));
+        assert!(saved.contains("last_focused_pane=pdf"));
+
+        app.sidebar_visible = true;
+        app.toc_visible = false;
+        app.split_ratio = 0.5;
+        app.pdf_split_ratio = 0.3;
+        app.active_panel = ActivePanel::Markdown;
+        app.load_shell_persistence();
+
+        assert!(!app.sidebar_visible);
+        assert!(app.toc_visible);
+        assert_eq!(app.active_panel, ActivePanel::Pdf);
+        assert!((app.split_ratio - 0.62).abs() < f32::EPSILON);
+        assert!((app.pdf_split_ratio - 0.4).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -7245,8 +7978,8 @@ mod tests {
     fn split_view_places_pdf_before_markdown() {
         let source = include_str!("app.rs").replace("\r\n", "\n");
         let split_row = source
-            .find("row![\n                container(pdf_view)")
-            .expect("split view row should start with PDF pane");
+            .find("if shell_state.uses_split_research_layout()")
+            .expect("split view branch should use app shell state");
         let pdf_pos = source[split_row..]
             .find("container(pdf_view)")
             .expect("PDF pane should exist in split row");

@@ -129,4 +129,5 @@ Editor performance notes:
 
 See [LAUNCH.md](LAUNCH.md) for the release checklist, smoke-test flow, PDFium
 packaging notes, Linux desktop integration commands, and current known
-constraints.
+constraints. See [UI_UX_RELEASE_CHECKLIST.md](UI_UX_RELEASE_CHECKLIST.md) for
+layout, keyboard, label, contrast, loading, and reduced-motion release checks.
