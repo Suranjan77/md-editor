@@ -4,6 +4,8 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 use crate::messages::{Message, Shortcut};
 use crate::theme;
 
+pub const COMMAND_PALETTE_INPUT_ID: &str = "command_palette_input";
+
 #[derive(Debug, Clone)]
 pub struct Command {
     pub name: String,
@@ -114,6 +116,7 @@ pub fn get_commands() -> Vec<Command> {
 
 pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, Theme, Renderer> {
     let input = text_input("Type a command...", query)
+        .id(iced::advanced::widget::Id::new(COMMAND_PALETTE_INPUT_ID))
         .on_input(Message::CommandPaletteQueryChanged)
         .padding(12)
         .size(16);
@@ -245,6 +248,14 @@ mod tests {
                 Shortcut::InsertPdfQuote
             )]
         ));
+    }
+
+    #[test]
+    fn command_palette_input_has_focusable_id() {
+        let mut ui = iced_test::simulator(view("", get_commands()));
+
+        ui.find(iced_test::selector::id(COMMAND_PALETTE_INPUT_ID))
+            .expect("command palette input should expose deterministic focus id");
     }
 
     #[test]

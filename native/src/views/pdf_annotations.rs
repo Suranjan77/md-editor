@@ -232,6 +232,75 @@ fn color_dot_pill<'a>(
         .into()
 }
 
+#[derive(Clone, Copy)]
+struct AnnotationFilters<'a> {
+    color: Option<md_editor_core::pdf::PdfAnnotationColor>,
+    page: Option<u16>,
+    tag: Option<&'a str>,
+    linked: Option<bool>,
+    unresolved: Option<bool>,
+}
+
+struct FilteredAnnotations<'a> {
+    annotations: Vec<&'a md_editor_core::pdf::PdfAnnotation>,
+    inspected: usize,
+}
+
+fn filtered_annotations<'a>(
+    annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
+    filters: AnnotationFilters<'_>,
+) -> FilteredAnnotations<'a> {
+    let mut list = Vec::new();
+    let mut inspected = 0;
+    for page_anns in annotations.values() {
+        for ann in page_anns {
+            inspected += 1;
+            if let Some(fc) = filters.color {
+                if ann.color != fc {
+                    continue;
+                }
+            }
+            if let Some(fp) = filters.page {
+                if ann.page_index != fp {
+                    continue;
+                }
+            }
+            if let Some(ft) = filters.tag {
+                if !ann.tags.iter().any(|t| t == ft) {
+                    continue;
+                }
+            }
+            if let Some(fl) = filters.linked {
+                let is_linked = ann
+                    .linked_note_path
+                    .as_deref()
+                    .filter(|p| !p.is_empty())
+                    .is_some();
+                if is_linked != fl {
+                    continue;
+                }
+            }
+            if let Some(fu) = filters.unresolved {
+                let is_unresolved =
+                    ann.status == md_editor_core::pdf::PdfAnnotationStatus::Unresolved;
+                if is_unresolved != fu {
+                    continue;
+                }
+            }
+            list.push(ann);
+        }
+    }
+    list.sort_by_key(|ann| {
+        let start_idx = ann.ranges.first().map(|r| r.start_text_index).unwrap_or(0);
+        (ann.page_index, start_idx, ann.created_at)
+    });
+
+    FilteredAnnotations {
+        annotations: list,
+        inspected,
+    }
+}
+
 pub fn view<'a>(
     annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
     filter_color: Option<md_editor_core::pdf::PdfAnnotationColor>,
@@ -387,56 +456,24 @@ pub fn view<'a>(
         left: 0.0,
     });
 
-    // 5. Build filtered & sorted annotation list
-    let mut list = Vec::new();
-    for (&_, page_anns) in annotations {
-        for ann in page_anns {
-            if let Some(fc) = filter_color {
-                if ann.color != fc {
-                    continue;
-                }
-            }
-            if let Some(fp) = filter_page {
-                if ann.page_index != fp {
-                    continue;
-                }
-            }
-            if let Some(ft) = filter_tag {
-                if !ann.tags.iter().any(|t| t == ft) {
-                    continue;
-                }
-            }
-            if let Some(fl) = filter_linked {
-                let is_linked = ann
-                    .linked_note_path
-                    .as_deref()
-                    .filter(|p| !p.is_empty())
-                    .is_some();
-                if is_linked != fl {
-                    continue;
-                }
-            }
-            if let Some(fu) = filter_unresolved {
-                let is_unresolved =
-                    ann.status == md_editor_core::pdf::PdfAnnotationStatus::Unresolved;
-                if is_unresolved != fu {
-                    continue;
-                }
-            }
-            list.push(ann);
-        }
-    }
-    list.sort_by_key(|ann| {
-        let start_idx = ann.ranges.first().map(|r| r.start_text_index).unwrap_or(0);
-        (ann.page_index, start_idx, ann.created_at)
-    });
+    let filtered = filtered_annotations(
+        annotations,
+        AnnotationFilters {
+            color: filter_color,
+            page: filter_page,
+            tag: filter_tag,
+            linked: filter_linked,
+            unresolved: filter_unresolved,
+        },
+    );
+    let _inspected = filtered.inspected;
 
-    let total_count = list.len();
+    let total_count = filtered.annotations.len();
     let count_text = text(format!("Total: {}", total_count))
         .size(12)
         .color(theme::TEXT_MUTED);
 
-    let items = list.into_iter().map(|ann| {
+    let items = filtered.annotations.into_iter().map(|ann| {
         let is_focused = Some(ann.id.as_str()) == focused_id;
 
         let status_badge = match ann.status {
@@ -885,5 +922,45 @@ mod tests {
         ));
         assert!(ui_unresolved.find("\"GreenQuote\"").is_ok());
         assert!(ui_unresolved.find("\"YellowQuote\"").is_err());
+    }
+
+    #[test]
+    fn large_annotation_filter_reports_linear_baseline_counter() {
+        let mut annotations = HashMap::new();
+        let mut page = Vec::new();
+        for index in 0..600 {
+            let mut ann = annotation();
+            ann.id = format!("ann-{index}");
+            ann.page_index = (index % 12) as u16;
+            ann.selected_text = format!("Quote {index}");
+            ann.created_at = index;
+            ann.tags = if index % 3 == 0 {
+                vec!["review".to_string()]
+            } else {
+                Vec::new()
+            };
+            if index % 2 == 0 {
+                ann.color = PdfAnnotationColor::Green;
+            }
+            page.push(ann);
+        }
+        annotations.insert(0, page);
+
+        let filtered = filtered_annotations(
+            &annotations,
+            AnnotationFilters {
+                color: Some(PdfAnnotationColor::Green),
+                page: None,
+                tag: Some("review"),
+                linked: None,
+                unresolved: Some(true),
+            },
+        );
+
+        assert_eq!(filtered.inspected, 600);
+        assert_eq!(filtered.annotations.len(), 100);
+        assert!(filtered.annotations.windows(2).all(|pair| {
+            (pair[0].page_index, pair[0].created_at) <= (pair[1].page_index, pair[1].created_at)
+        }));
     }
 }
