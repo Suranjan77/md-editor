@@ -50,6 +50,16 @@ pub fn get_commands() -> Vec<Command> {
             icon: "S".to_string(),
         },
         Command {
+            name: "Navigate Back".to_string(),
+            shortcut: Shortcut::NavBack,
+            icon: "<".to_string(),
+        },
+        Command {
+            name: "Navigate Forward".to_string(),
+            shortcut: Shortcut::NavForward,
+            icon: ">".to_string(),
+        },
+        Command {
             name: "Toggle Backlinks".to_string(),
             shortcut: Shortcut::ToggleBacklinks,
             icon: "B".to_string(),
@@ -83,6 +93,21 @@ pub fn get_commands() -> Vec<Command> {
             name: "Show Usages".to_string(),
             shortcut: Shortcut::ShowUsages,
             icon: "U".to_string(),
+        },
+        Command {
+            name: "Citation Palette".to_string(),
+            shortcut: Shortcut::CitationPalette,
+            icon: "C".to_string(),
+        },
+        Command {
+            name: "Toggle Excerpt Mode".to_string(),
+            shortcut: Shortcut::ExcerptModeToggle,
+            icon: "E".to_string(),
+        },
+        Command {
+            name: "Insert Excerpts Batch".to_string(),
+            shortcut: Shortcut::ExcerptInsertBatch,
+            icon: "I".to_string(),
         },
     ]
 }
@@ -173,6 +198,8 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::Search => "Ctrl F",
         Shortcut::CommandPalette => "Ctrl P",
         Shortcut::ToggleSidebar => "Ctrl B",
+        Shortcut::NavBack => "Alt Left",
+        Shortcut::NavForward => "Alt Right",
         Shortcut::ToggleBacklinks => "Backlinks",
         Shortcut::FocusMode => "Focus",
         Shortcut::TableOfContents => "Ctrl T",
@@ -192,6 +219,9 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::PdfZoomInput => "Ctrl Z",
         Shortcut::FollowCitation => "Alt G",
         Shortcut::ShowUsages => "Alt U",
+        Shortcut::CitationPalette => "Alt C",
+        Shortcut::ExcerptModeToggle => "Alt E",
+        Shortcut::ExcerptInsertBatch => "Alt I",
     }
 }
 
@@ -230,6 +260,32 @@ mod tests {
             [Message::CommandPaletteCommandClicked(
                 Shortcut::InsertPdfHighlight
             )]
+        ));
+    }
+
+    #[test]
+    fn command_palette_navigation_clicks_emit_cross_pane_shortcuts() {
+        let commands = get_commands();
+        let mut ui = iced_test::simulator(view("navigate", commands));
+
+        ui.click("Navigate Back")
+            .expect("navigation back command should render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::CommandPaletteCommandClicked(Shortcut::NavBack)]
+        ));
+
+        let commands = get_commands();
+        let mut ui = iced_test::simulator(view("forward", commands));
+        ui.click("Navigate Forward")
+            .expect("navigation forward command should render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::CommandPaletteCommandClicked(Shortcut::NavForward)]
         ));
     }
 }

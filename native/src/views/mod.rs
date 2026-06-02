@@ -1,4 +1,5 @@
 pub mod backlinks;
+pub mod citation_palette;
 pub mod command_palette;
 pub mod icons;
 pub mod interactive_pdf;

@@ -134,20 +134,35 @@ impl PdfLayout {
     /// Returns `0` for empty layouts and the last page for scroll positions
     /// past the end.
     pub fn page_at_scroll(&self, scroll_y: f32) -> u16 {
+        self.page_at_scroll_with_probes(scroll_y).0
+    }
+
+    fn page_at_scroll_with_probes(&self, scroll_y: f32) -> (u16, usize) {
         let n = self.page_heights.len();
         if n == 0 {
-            return 0;
+            return (0, 0);
         }
 
         // page_offsets[i + 1] is the boundary just past page i (start of page
         // i+1). Find the smallest i such that scroll_y < page_offsets[i + 1].
-        // partition_point returns the index of the first element where the
-        // predicate is false, so we check `boundary <= scroll_y` (boundary is
-        // page_offsets index 1..=n).
-        let boundaries = &self.page_offsets[1..]; // length n
-        let idx = boundaries.partition_point(|&boundary| boundary <= scroll_y);
+        // This hand-rolled binary search keeps operation counts testable
+        // without relying on wall-clock timings.
+        let boundaries = &self.page_offsets[1..];
+        let mut lo = 0;
+        let mut hi = boundaries.len();
+        let mut probes = 0;
+        while lo < hi {
+            probes += 1;
+            let mid = lo + (hi - lo) / 2;
+            if boundaries[mid] <= scroll_y {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let idx = lo;
         let clamped = idx.min(n - 1);
-        clamped as u16
+        (clamped as u16, probes)
     }
 
     /// Compute a half-open page range that overlaps the viewport, expanded by
@@ -289,6 +304,22 @@ mod tests {
         // At very bottom: upper bound clamps to page_count.
         let range = layout.visible_range(layout.total_height(), 200.0, 3);
         assert_eq!(range.end, 20);
+    }
+
+    #[test]
+    fn large_pdf_layout_page_lookup_stays_logarithmic() {
+        let layout = build_uniform(50_000, 100.0, 1.0);
+        let target_y = layout.page_offset(40_000);
+
+        let (page, probes) = layout.page_at_scroll_with_probes(target_y);
+
+        assert_eq!(page, 40_000);
+        assert!(
+            probes <= 32,
+            "page lookup should remain logarithmic, got {probes}"
+        );
+        let range = layout.visible_range(target_y, 240.0, 3);
+        assert_eq!(range, 39_997..40_006);
     }
 
     #[test]

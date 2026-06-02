@@ -5,26 +5,250 @@ use crate::messages::Message;
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
+const BOLD_FONT: iced::Font = iced::Font {
+    weight: iced::font::Weight::Bold,
+    ..iced::Font::DEFAULT
+};
+
+fn custom_action_button<'a, Message: Clone + 'a>(
+    label: impl Into<String>,
+    on_press: Message,
+) -> Element<'a, Message, Theme, Renderer> {
+    button(text(label.into()).size(10).font(BOLD_FONT))
+        .on_press(on_press)
+        .height(Length::Fixed(28.0))
+        .padding([5, 10])
+        .style(|_theme, status| {
+            let (bg, fg) = if status == button::Status::Hovered {
+                (theme::BG_TERTIARY, theme::ACCENT)
+            } else {
+                (theme::BG_PRIMARY, theme::TEXT_SECONDARY)
+            };
+            button::Style {
+                background: Some(iced::Background::Color(bg)),
+                text_color: fg,
+                border: iced::Border {
+                    color: theme::BORDER,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+fn custom_cite_button<'a, Message: Clone + 'a>(
+    on_press: Option<Message>,
+) -> Element<'a, Message, Theme, Renderer> {
+    let content = container(text(" Cite").size(12))
+        .height(Length::Fixed(16.0))
+        .center_y(Length::Fixed(16.0));
+    let mut btn = button(content).width(Length::Fixed(48.0)).padding([5, 10]);
+    btn = btn.height(Length::Fixed(28.0));
+    if let Some(msg) = on_press {
+        btn = btn.on_press(msg);
+    }
+    btn.style(|_theme, status| {
+        if status == button::Status::Disabled {
+            button::Style {
+                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                text_color: theme::TEXT_MUTED,
+                border: iced::Border {
+                    color: theme::BORDER,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            }
+        } else {
+            let (bg, fg, border_color) = if status == button::Status::Hovered {
+                (
+                    theme::BG_TERTIARY,
+                    theme::ACCENT_SECONDARY,
+                    theme::ACCENT_SECONDARY,
+                )
+            } else {
+                (theme::BG_PRIMARY, theme::ACCENT, theme::ACCENT)
+            };
+            button::Style {
+                background: Some(iced::Background::Color(bg)),
+                text_color: fg,
+                border: iced::Border {
+                    color: border_color,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            }
+        }
+    })
+    .into()
+}
+
+fn pill_button<'a, Message: Clone + 'a>(
+    label: impl Into<String>,
+    is_active: bool,
+    on_press: Message,
+) -> Element<'a, Message, Theme, Renderer> {
+    button(text(label.into()).size(10).font(BOLD_FONT))
+        .on_press(on_press)
+        .padding([4, 10])
+        .style(move |_theme, status| {
+            if is_active {
+                button::Style {
+                    background: Some(iced::Background::Color(theme::ACCENT)),
+                    text_color: theme::BG_PRIMARY,
+                    border: iced::Border {
+                        color: theme::ACCENT,
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    },
+                    ..Default::default()
+                }
+            } else if status == button::Status::Hovered {
+                button::Style {
+                    background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                    text_color: theme::TEXT_PRIMARY,
+                    border: iced::Border {
+                        color: theme::BORDER,
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    },
+                    ..Default::default()
+                }
+            } else {
+                button::Style {
+                    background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+                    text_color: theme::TEXT_MUTED,
+                    border: iced::Border {
+                        color: theme::BORDER,
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    },
+                    ..Default::default()
+                }
+            }
+        })
+        .into()
+}
+
+fn color_dot_pill<'a>(
+    color_opt: Option<md_editor_core::pdf::PdfAnnotationColor>,
+    active_color: Option<md_editor_core::pdf::PdfAnnotationColor>,
+) -> Element<'a, Message, Theme, Renderer> {
+    let is_active = active_color == color_opt;
+    let label = match color_opt {
+        None => "All".to_string(),
+        Some(col) => match col {
+            md_editor_core::pdf::PdfAnnotationColor::Yellow => "Yellow".to_string(),
+            md_editor_core::pdf::PdfAnnotationColor::Green => "Green".to_string(),
+            md_editor_core::pdf::PdfAnnotationColor::Blue => "Blue".to_string(),
+            md_editor_core::pdf::PdfAnnotationColor::Pink => "Pink".to_string(),
+            md_editor_core::pdf::PdfAnnotationColor::Orange => "Orange".to_string(),
+            md_editor_core::pdf::PdfAnnotationColor::Red => "Red".to_string(),
+            md_editor_core::pdf::PdfAnnotationColor::Purple => "Purple".to_string(),
+        },
+    };
+
+    let color_dot = if let Some(col) = color_opt {
+        let rgb = match col {
+            md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgb(0.95, 0.85, 0.3),
+            md_editor_core::pdf::PdfAnnotationColor::Green => Color::from_rgb(0.3, 0.8, 0.4),
+            md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgb(0.3, 0.6, 0.95),
+            md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgb(0.95, 0.4, 0.65),
+            md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgb(0.95, 0.6, 0.3),
+            md_editor_core::pdf::PdfAnnotationColor::Red => Color::from_rgb(0.9, 0.3, 0.3),
+            md_editor_core::pdf::PdfAnnotationColor::Purple => Color::from_rgb(0.7, 0.4, 0.85),
+        };
+        container(
+            Space::new()
+                .width(Length::Fixed(8.0))
+                .height(Length::Fixed(8.0)),
+        )
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(rgb)),
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    } else {
+        container(
+            Space::new()
+                .width(Length::Fixed(0.0))
+                .height(Length::Fixed(0.0)),
+        )
+    };
+
+    let pill_content = row![
+        color_dot,
+        text(label).size(10).font(BOLD_FONT).color(if is_active {
+            theme::BG_PRIMARY
+        } else {
+            theme::TEXT_MUTED
+        })
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+
+    button(pill_content)
+        .on_press(Message::PdfFilterAnnotationsByColor(color_opt))
+        .padding([4, 10])
+        .style(move |_theme, status| {
+            if is_active {
+                button::Style {
+                    background: Some(iced::Background::Color(theme::ACCENT)),
+                    border: iced::Border {
+                        color: theme::ACCENT,
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    },
+                    ..Default::default()
+                }
+            } else if status == button::Status::Hovered {
+                button::Style {
+                    background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                    border: iced::Border {
+                        color: theme::BORDER,
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    },
+                    ..Default::default()
+                }
+            } else {
+                button::Style {
+                    background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+                    border: iced::Border {
+                        color: theme::BORDER,
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    },
+                    ..Default::default()
+                }
+            }
+        })
+        .into()
+}
+
 pub fn view<'a>(
     annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
     filter_color: Option<md_editor_core::pdf::PdfAnnotationColor>,
+    filter_page: Option<u16>,
+    filter_tag: Option<&str>,
+    filter_linked: Option<bool>,
+    filter_unresolved: Option<bool>,
     focused_id: Option<&'a str>,
     can_insert_annotation_link: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
-    let title = text("Annotations").size(16).color(theme::TEXT_PRIMARY);
+    let title = text("Annotations")
+        .size(16)
+        .font(BOLD_FONT)
+        .color(theme::TEXT_PRIMARY);
 
     // 1. Color filter row
-    let mut colors_filter = row![
-        button(text("All").size(11))
-            .on_press(Message::PdfFilterAnnotationsByColor(None))
-            .padding([4, 6])
-            .style(if filter_color.is_none() {
-                button::primary
-            } else {
-                button::secondary
-            })
-    ]
-    .spacing(4);
+    let mut colors_filter = row![color_dot_pill(None, filter_color)].spacing(4);
 
     let all_colors = [
         (md_editor_core::pdf::PdfAnnotationColor::Yellow, "Yellow"),
@@ -34,28 +258,136 @@ pub fn view<'a>(
         (md_editor_core::pdf::PdfAnnotationColor::Orange, "Orange"),
     ];
 
-    for &(col_enum, name) in &all_colors {
-        let is_selected = filter_color == Some(col_enum);
-        colors_filter = colors_filter.push(
-            button(text(name).size(11))
-                .on_press(Message::PdfFilterAnnotationsByColor(Some(col_enum)))
-                .padding([4, 6])
-                .style(if is_selected {
-                    button::primary
-                } else {
-                    button::secondary
-                }),
-        );
+    for &(col_enum, _) in &all_colors {
+        colors_filter = colors_filter.push(color_dot_pill(Some(col_enum), filter_color));
     }
 
-    let filter_container = container(colors_filter).padding(Padding {
+    let colors_scroll = scrollable(colors_filter).direction(scrollable::Direction::Horizontal(
+        scrollable::Scrollbar::default(),
+    ));
+
+    // 2. Page filter (pages with annotations)
+    let mut pages_with_anns = std::collections::BTreeSet::new();
+    for page_anns in annotations.values() {
+        for ann in page_anns {
+            pages_with_anns.insert(ann.page_index);
+        }
+    }
+
+    let mut pages_filter = row![pill_button(
+        "All Pages",
+        filter_page.is_none(),
+        Message::PdfFilterAnnotationsByPage(None)
+    )]
+    .spacing(4);
+
+    for &page_idx in &pages_with_anns {
+        let is_selected = filter_page == Some(page_idx);
+        pages_filter = pages_filter.push(pill_button(
+            format!("p. {}", page_idx + 1),
+            is_selected,
+            Message::PdfFilterAnnotationsByPage(Some(page_idx)),
+        ));
+    }
+
+    let pages_scroll = scrollable(pages_filter).direction(scrollable::Direction::Horizontal(
+        scrollable::Scrollbar::default(),
+    ));
+
+    // 3. Tag filter (unique tags)
+    let mut tags_set = std::collections::BTreeSet::new();
+    for page_anns in annotations.values() {
+        for ann in page_anns {
+            for tag in &ann.tags {
+                tags_set.insert(tag.as_str());
+            }
+        }
+    }
+
+    let mut tags_filter = row![pill_button(
+        "All Tags",
+        filter_tag.is_none(),
+        Message::PdfFilterAnnotationsByTag(None)
+    )]
+    .spacing(4);
+
+    for tag in &tags_set {
+        let is_selected = filter_tag == Some(*tag);
+        tags_filter = tags_filter.push(pill_button(
+            format!("#{}", tag),
+            is_selected,
+            Message::PdfFilterAnnotationsByTag(Some(tag.to_string())),
+        ));
+    }
+
+    let tags_scroll = scrollable(tags_filter).direction(scrollable::Direction::Horizontal(
+        scrollable::Scrollbar::default(),
+    ));
+
+    // 4. Linked and Unresolved filters
+    let linked_filter = row![
+        pill_button(
+            "All Notes",
+            filter_linked.is_none(),
+            Message::PdfFilterAnnotationsByLinked(None)
+        ),
+        pill_button(
+            "Linked",
+            filter_linked == Some(true),
+            Message::PdfFilterAnnotationsByLinked(Some(true))
+        ),
+        pill_button(
+            "Unlinked",
+            filter_linked == Some(false),
+            Message::PdfFilterAnnotationsByLinked(Some(false))
+        ),
+    ]
+    .spacing(4);
+
+    let unresolved_filter = row![
+        pill_button(
+            "All Status",
+            filter_unresolved.is_none(),
+            Message::PdfFilterAnnotationsByUnresolved(None)
+        ),
+        pill_button(
+            "Open",
+            filter_unresolved == Some(true),
+            Message::PdfFilterAnnotationsByUnresolved(Some(true))
+        ),
+        pill_button(
+            "Resolved",
+            filter_unresolved == Some(false),
+            Message::PdfFilterAnnotationsByUnresolved(Some(false))
+        ),
+    ]
+    .spacing(4);
+
+    let meta_filters = row![
+        linked_filter,
+        Space::new().width(Length::Fill),
+        unresolved_filter
+    ]
+    .align_y(Alignment::Center);
+
+    let mut filters_col = column![colors_scroll].spacing(6);
+
+    if !pages_with_anns.is_empty() {
+        filters_col = filters_col.push(pages_scroll);
+    }
+    if !tags_set.is_empty() {
+        filters_col = filters_col.push(tags_scroll);
+    }
+    filters_col = filters_col.push(meta_filters);
+
+    let filter_container = container(filters_col).padding(Padding {
         top: 0.0,
         right: 0.0,
         bottom: 8.0,
         left: 0.0,
     });
 
-    // 2. Build sorted annotation list
+    // 5. Build filtered & sorted annotation list
     let mut list = Vec::new();
     for (&_, page_anns) in annotations {
         for ann in page_anns {
@@ -64,10 +396,40 @@ pub fn view<'a>(
                     continue;
                 }
             }
+            if let Some(fp) = filter_page {
+                if ann.page_index != fp {
+                    continue;
+                }
+            }
+            if let Some(ft) = filter_tag {
+                if !ann.tags.iter().any(|t| t == ft) {
+                    continue;
+                }
+            }
+            if let Some(fl) = filter_linked {
+                let is_linked = ann
+                    .linked_note_path
+                    .as_deref()
+                    .filter(|p| !p.is_empty())
+                    .is_some();
+                if is_linked != fl {
+                    continue;
+                }
+            }
+            if let Some(fu) = filter_unresolved {
+                let is_unresolved =
+                    ann.status == md_editor_core::pdf::PdfAnnotationStatus::Unresolved;
+                if is_unresolved != fu {
+                    continue;
+                }
+            }
             list.push(ann);
         }
     }
-    list.sort_by_key(|ann| (ann.page_index, ann.created_at));
+    list.sort_by_key(|ann| {
+        let start_idx = ann.ranges.first().map(|r| r.start_text_index).unwrap_or(0);
+        (ann.page_index, start_idx, ann.created_at)
+    });
 
     let total_count = list.len();
     let count_text = text(format!("Total: {}", total_count))
@@ -77,57 +439,128 @@ pub fn view<'a>(
     let items = list.into_iter().map(|ann| {
         let is_focused = Some(ann.id.as_str()) == focused_id;
 
-        let col_text = match ann.color {
-            md_editor_core::pdf::PdfAnnotationColor::Yellow => "Yellow",
-            md_editor_core::pdf::PdfAnnotationColor::Green => "Green",
-            md_editor_core::pdf::PdfAnnotationColor::Blue => "Blue",
-            md_editor_core::pdf::PdfAnnotationColor::Pink => "Pink",
-            md_editor_core::pdf::PdfAnnotationColor::Orange => "Orange",
-            md_editor_core::pdf::PdfAnnotationColor::Red => "Red",
-            md_editor_core::pdf::PdfAnnotationColor::Purple => "Purple",
+        let status_badge = match ann.status {
+            md_editor_core::pdf::PdfAnnotationStatus::Unresolved => container(
+                text("Open")
+                    .size(9)
+                    .font(BOLD_FONT)
+                    .color(Color::from_rgb(0.95, 0.6, 0.2)),
+            )
+            .padding([2, 6])
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    0.95, 0.6, 0.2, 0.08,
+                ))),
+                border: iced::Border {
+                    color: Color::from_rgba(0.95, 0.6, 0.2, 0.2),
+                    width: 1.0,
+                    radius: 10.0.into(),
+                },
+                ..Default::default()
+            }),
+            md_editor_core::pdf::PdfAnnotationStatus::Resolved => container(
+                text("Resolved")
+                    .size(9)
+                    .font(BOLD_FONT)
+                    .color(Color::from_rgb(0.3, 0.8, 0.4)),
+            )
+            .padding([2, 6])
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    0.3, 0.8, 0.4, 0.08,
+                ))),
+                border: iced::Border {
+                    color: Color::from_rgba(0.3, 0.8, 0.4, 0.2),
+                    width: 1.0,
+                    radius: 10.0.into(),
+                },
+                ..Default::default()
+            }),
         };
 
         let header = row![
-            text(format!("p. {}", ann.page_index + 1))
+            text(format!("Page {}", ann.page_index + 1))
                 .size(12)
+                .font(BOLD_FONT)
                 .color(theme::TEXT_PRIMARY),
             Space::new().width(Length::Fixed(8.0)),
-            text(col_text).size(11).color(match ann.color {
-                md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgb(0.8, 0.7, 0.0),
-                md_editor_core::pdf::PdfAnnotationColor::Green => Color::from_rgb(0.1, 0.7, 0.1),
-                md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgb(0.1, 0.5, 0.9),
-                md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgb(0.9, 0.1, 0.5),
-                md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgb(0.9, 0.5, 0.0),
-                md_editor_core::pdf::PdfAnnotationColor::Red => Color::from_rgb(0.9, 0.1, 0.1),
-                md_editor_core::pdf::PdfAnnotationColor::Purple => Color::from_rgb(0.6, 0.2, 0.8),
-            }),
+            text(ann.kind.as_str()).size(11).color(theme::TEXT_MUTED),
+            Space::new().width(Length::Fill),
+            status_badge,
         ]
         .align_y(Alignment::Center);
 
-        let quote = container(
-            text(format!("\"{}\"", ann.selected_text.trim()))
-                .size(12)
-                .color(theme::TEXT_SECONDARY),
-        )
-        .padding([4, 8])
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(theme::BG_PRIMARY)),
-            border: iced::Border {
-                color: theme::BORDER,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        });
+        let indicator_color = match ann.color {
+            md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgb(0.95, 0.85, 0.3),
+            md_editor_core::pdf::PdfAnnotationColor::Green => Color::from_rgb(0.3, 0.8, 0.4),
+            md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgb(0.3, 0.6, 0.95),
+            md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgb(0.95, 0.4, 0.65),
+            md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgb(0.95, 0.6, 0.3),
+            md_editor_core::pdf::PdfAnnotationColor::Red => Color::from_rgb(0.9, 0.3, 0.3),
+            md_editor_core::pdf::PdfAnnotationColor::Purple => Color::from_rgb(0.7, 0.4, 0.85),
+        };
+
+        let quote = row![
+            container(Space::new().width(Length::Fixed(3.0)).height(Length::Fill)).style(
+                move |_| container::Style {
+                    background: Some(iced::Background::Color(indicator_color)),
+                    border: iced::Border {
+                        radius: iced::border::Radius {
+                            top_left: 4.0,
+                            bottom_left: 4.0,
+                            top_right: 0.0,
+                            bottom_right: 0.0,
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            ),
+            container(
+                text(format!("\"{}\"", ann.selected_text.trim()))
+                    .size(12)
+                    .color(theme::TEXT_SECONDARY)
+            )
+            .padding([6, 10])
+            .width(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                border: iced::Border {
+                    color: theme::BORDER,
+                    width: 1.0,
+                    radius: iced::border::Radius {
+                        top_left: 0.0,
+                        bottom_left: 0.0,
+                        top_right: 4.0,
+                        bottom_right: 4.0,
+                    },
+                },
+                ..Default::default()
+            })
+        ]
+        .width(Length::Fill);
 
         let note = if let Some(ref note_str) = ann.note {
             if !note_str.is_empty() {
                 container(
-                    text(format!("Note: {}", note_str))
-                        .size(11)
-                        .color(theme::TEXT_MUTED),
+                    row![
+                        icons::view(Icon::FileText, theme::TEXT_MUTED, 12.0),
+                        text(note_str).size(11).color(theme::TEXT_SECONDARY),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
                 )
-                .padding([2, 4])
+                .padding([6, 8])
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                    border: iced::Border {
+                        color: theme::BORDER,
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .width(Length::Fill)
             } else {
                 container(Space::new())
             }
@@ -135,47 +568,105 @@ pub fn view<'a>(
             container(Space::new())
         };
 
-        let actions = row![
-            button(text("Go").size(11))
-                .on_press(Message::PdfNavigateToAnnotation {
+        let tags_row = if !ann.tags.is_empty() {
+            let mut row_el = row![].spacing(4);
+            for tag in &ann.tags {
+                row_el = row_el.push(
+                    container(
+                        text(format!("#{}", tag))
+                            .size(9)
+                            .font(BOLD_FONT)
+                            .color(theme::ACCENT),
+                    )
+                    .padding([2, 6])
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                        border: iced::Border {
+                            color: theme::BORDER,
+                            width: 1.0,
+                            radius: 10.0.into(),
+                        },
+                        ..Default::default()
+                    }),
+                );
+            }
+            container(row_el)
+        } else {
+            container(Space::new())
+        };
+
+        let primary_actions = row![
+            custom_action_button(
+                "Go",
+                Message::PdfNavigateToAnnotation {
                     id: ann.id.clone(),
                     page: ann.page_index,
-                })
-                .padding([2, 6])
-                .style(button::secondary),
-            button(text("Note").size(11))
-                .on_press(Message::PdfEditAnnotationNote(
-                    ann.id.clone(),
-                    ann.page_index,
-                ))
-                .padding([2, 6])
-                .style(button::secondary),
+                }
+            ),
+            custom_action_button(
+                "Note",
+                Message::PdfEditAnnotationNote(ann.id.clone(), ann.page_index,)
+            ),
             if can_insert_annotation_link {
-                button(text("Cite").size(11))
-                    .on_press(Message::PdfInsertAnnotationLink(ann.id.clone()))
-                    .padding([2, 6])
-                    .style(button::secondary)
+                custom_cite_button(Some(Message::PdfInsertAnnotationLink(ann.id.clone())))
             } else {
-                button(text("Cite").size(11))
-                    .padding([2, 6])
-                    .style(button::secondary)
+                custom_cite_button(None)
             },
-            button(icons::view(
-                Icon::Trash,
-                Color::from_rgb(0.8, 0.2, 0.2),
-                11.0
-            ))
-            .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
-            .padding([2, 6])
-            .style(button::text),
         ]
-        .spacing(6)
+        .spacing(4)
         .align_y(Alignment::Center);
 
-        let card_content = column![header, quote, note, actions,].spacing(6);
+        let secondary_actions = row![
+            custom_action_button("Tags", Message::PdfEditAnnotationTags(ann.id.clone())),
+            custom_action_button(
+                match ann.status {
+                    md_editor_core::pdf::PdfAnnotationStatus::Unresolved => "Resolve",
+                    md_editor_core::pdf::PdfAnnotationStatus::Resolved => "Reopen",
+                },
+                Message::PdfToggleAnnotationStatus(ann.id.clone())
+            ),
+            button(icons::view(Icon::Trash, theme::DANGER, 12.0))
+                .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
+                .height(Length::Fixed(28.0))
+                .padding(6)
+                .style(|_theme, status| {
+                    let bg = if status == button::Status::Hovered {
+                        Color::from_rgba(theme::DANGER.r, theme::DANGER.g, theme::DANGER.b, 0.1)
+                    } else {
+                        Color::TRANSPARENT
+                    };
+                    button::Style {
+                        background: Some(iced::Background::Color(bg)),
+                        border: iced::Border {
+                            color: if status == button::Status::Hovered {
+                                Color::from_rgba(
+                                    theme::DANGER.r,
+                                    theme::DANGER.g,
+                                    theme::DANGER.b,
+                                    0.3,
+                                )
+                            } else {
+                                Color::TRANSPARENT
+                            },
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        ..Default::default()
+                    }
+                }),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
 
-        container(card_content)
-            .padding(10)
+        let actions = column![primary_actions, secondary_actions].spacing(4);
+
+        let card_content = column![header, quote, note, tags_row, actions].spacing(8);
+
+        let card_body = container(card_content)
+            .padding([10, 12])
+            .width(Length::Fill);
+
+        container(card_body)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(theme::BG_SECONDARY)),
                 border: iced::Border {
@@ -259,9 +750,18 @@ mod tests {
     #[test]
     fn annotation_sidebar_cite_click_emits_insert_message() {
         let annotations = annotations();
-        let mut ui = iced_test::simulator(view(&annotations, None, Some("ann-1"), true));
+        let mut ui = iced_test::simulator(view(
+            &annotations,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("ann-1"),
+            true,
+        ));
 
-        ui.click("Cite").expect("Cite button should exist");
+        ui.click(" Cite").expect("Cite button should exist");
 
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
@@ -273,9 +773,18 @@ mod tests {
     #[test]
     fn annotation_sidebar_cite_is_inert_without_markdown_file() {
         let annotations = annotations();
-        let mut ui = iced_test::simulator(view(&annotations, None, Some("ann-1"), false));
+        let mut ui = iced_test::simulator(view(
+            &annotations,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("ann-1"),
+            false,
+        ));
 
-        ui.click("Cite")
+        ui.click(" Cite")
             .expect("disabled-looking Cite control should still render");
 
         let messages = ui.into_messages().collect::<Vec<_>>();
@@ -283,5 +792,98 @@ mod tests {
             messages.is_empty(),
             "Cite must not insert without an active markdown note"
         );
+    }
+
+    #[test]
+    fn test_annotation_filtering() {
+        let mut ann1 = annotation();
+        ann1.id = "ann-1".to_string();
+        ann1.page_index = 0;
+        ann1.color = PdfAnnotationColor::Yellow;
+        ann1.selected_text = "YellowQuote".to_string();
+        ann1.tags = vec!["tagA".to_string()];
+        ann1.status = md_editor_core::pdf::PdfAnnotationStatus::Unresolved;
+        ann1.linked_note_path = None;
+
+        let mut ann2 = annotation();
+        ann2.id = "ann-2".to_string();
+        ann2.page_index = 1;
+        ann2.color = PdfAnnotationColor::Green;
+        ann2.selected_text = "GreenQuote".to_string();
+        ann2.tags = vec!["tagB".to_string()];
+        ann2.status = md_editor_core::pdf::PdfAnnotationStatus::Resolved;
+        ann2.linked_note_path = Some("note.md".to_string());
+
+        let annotations = HashMap::from([(0, vec![ann1]), (1, vec![ann2])]);
+
+        // Filter by color: Yellow
+        let mut ui_color = iced_test::simulator(view(
+            &annotations,
+            Some(PdfAnnotationColor::Yellow),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        ));
+        assert!(ui_color.find("\"YellowQuote\"").is_ok());
+        assert!(ui_color.find("\"GreenQuote\"").is_err());
+
+        // Filter by page: p. 2 (index 1)
+        let mut ui_page = iced_test::simulator(view(
+            &annotations,
+            None,
+            Some(1),
+            None,
+            None,
+            None,
+            None,
+            false,
+        ));
+        assert!(ui_page.find("\"GreenQuote\"").is_ok());
+        assert!(ui_page.find("\"YellowQuote\"").is_err());
+
+        // Filter by tag: tagB
+        let mut ui_tag = iced_test::simulator(view(
+            &annotations,
+            None,
+            None,
+            Some("tagB"),
+            None,
+            None,
+            None,
+            false,
+        ));
+        assert!(ui_tag.find("\"GreenQuote\"").is_ok());
+        assert!(ui_tag.find("\"YellowQuote\"").is_err());
+
+        // Filter by linked state: Linked
+        let mut ui_linked = iced_test::simulator(view(
+            &annotations,
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+            None,
+            false,
+        ));
+        assert!(ui_linked.find("\"GreenQuote\"").is_ok());
+        assert!(ui_linked.find("\"YellowQuote\"").is_err());
+
+        // Filter by unresolved state: Resolved (unresolved = false)
+        let mut ui_unresolved = iced_test::simulator(view(
+            &annotations,
+            None,
+            None,
+            None,
+            None,
+            Some(false),
+            None,
+            false,
+        ));
+        assert!(ui_unresolved.find("\"GreenQuote\"").is_ok());
+        assert!(ui_unresolved.find("\"YellowQuote\"").is_err());
     }
 }

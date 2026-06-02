@@ -82,3 +82,16 @@ pub fn view<'a>(
         .height(Length::Fill)
         .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_visible_backlinks_panel_renders_empty_state() {
+        let mut ui = iced_test::simulator(view(&[], true));
+
+        ui.find("No backlinks found")
+            .expect("visible backlinks panel should explain empty backlink state");
+    }
+}

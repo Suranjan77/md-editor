@@ -1,5 +1,170 @@
 use crate::pdf_links::build_pdf_link;
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkedNoteTemplate {
+    Default,
+    Detailed,
+    Minimal,
+}
+
+#[allow(dead_code)]
+impl LinkedNoteTemplate {
+    pub fn render(&self, pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
+        let link = build_pdf_link(pdf_path, Some(ann.page_index + 1), Some(&ann.id));
+        match self {
+            LinkedNoteTemplate::Default => {
+                format!(
+                    "## Page {}\n\n{}\n\n[Open highlight in PDF]({})\n\n### Notes\n\n",
+                    ann.page_index + 1,
+                    markdown_quote(&ann.selected_text),
+                    link
+                )
+            }
+            LinkedNoteTemplate::Detailed => {
+                let tags_str = if ann.tags.is_empty() {
+                    "None".to_string()
+                } else {
+                    ann.tags
+                        .iter()
+                        .map(|t| format!("#{t}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                format!(
+                    "## Page {}\n\n### Quote\n{}\n\n- **Type:** {}\n- **Color:** {:?}\n- **Status:** {}\n- **Tags:** {}\n\n[Open highlight in PDF]({})\n\n### Notes\n\n",
+                    ann.page_index + 1,
+                    markdown_quote(&ann.selected_text),
+                    ann.kind.as_str(),
+                    ann.color,
+                    ann.status.as_str(),
+                    tags_str,
+                    link
+                )
+            }
+            LinkedNoteTemplate::Minimal => {
+                format!(
+                    "- [Page {}]({}): {}\n",
+                    ann.page_index + 1,
+                    link,
+                    ann.selected_text.trim()
+                )
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadingSession {
+    pub pdf_path: String,
+    pub start_page: u16,
+    pub end_page: u16,
+    pub note_content: String,
+    pub date: String,
+}
+
+#[allow(dead_code)]
+pub fn build_reading_session_content(existing: Option<&str>, session: &ReadingSession) -> String {
+    let session_header = format!(
+        "## Reading Session: Pages {}-{}",
+        session.start_page, session.end_page
+    );
+    let link = build_pdf_link(&session.pdf_path, Some(session.start_page), None);
+
+    match existing {
+        Some(existing) => {
+            if existing.contains(&session_header) {
+                return existing.to_string();
+            }
+            let mut content = existing.trim_end().to_string();
+            if !content.is_empty() {
+                content.push_str("\n\n---\n\n");
+            }
+            content.push_str(&format!(
+                "{}\n\n- **Date:** {}\n- **Page Range:** {} - {}\n\n### Notes\n\n{}\n\n[Open PDF at Page {}]({})\n",
+                session_header,
+                session.date,
+                session.start_page,
+                session.end_page,
+                session.note_content.trim(),
+                session.start_page,
+                link
+            ));
+            content
+        }
+        None => {
+            let filename = std::path::Path::new(&session.pdf_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("document.pdf");
+            format!(
+                "---\ntype: reading-session\nsource_pdf: {}\npage_range: {}-{}\n---\n\n# Reading Session: {} (Pages {}-{})\n\n- **Date:** {}\n- **Page Range:** {} - {}\n\n{}\n\n- **Date:** {}\n- **Page Range:** {} - {}\n\n### Notes\n\n{}\n\n[Open PDF at Page {}]({})\n",
+                session.pdf_path,
+                session.start_page,
+                session.end_page,
+                filename,
+                session.start_page,
+                session.end_page,
+                session.date,
+                session.start_page,
+                session.end_page,
+                session_header,
+                session.date,
+                session.start_page,
+                session.end_page,
+                session.note_content.trim(),
+                session.start_page,
+                link
+            )
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub fn build_linked_pdf_note_content_with_template(
+    existing: Option<&str>,
+    note_path: &str,
+    pdf_path: &str,
+    ann: &md_editor_core::pdf::PdfAnnotation,
+    template: &LinkedNoteTemplate,
+) -> LinkedPdfNoteUpdate {
+    match existing {
+        Some(existing) => {
+            let link = build_pdf_link(pdf_path, Some(ann.page_index + 1), Some(&ann.id));
+            if existing.contains(&link) {
+                LinkedPdfNoteUpdate {
+                    content: existing.to_string(),
+                    action: LinkedPdfNoteAction::Unchanged,
+                }
+            } else {
+                let mut content = existing.trim_end().to_string();
+                if !content.is_empty() {
+                    content.push_str("\n\n---\n\n");
+                }
+                content.push_str(&template.render(pdf_path, ann));
+                LinkedPdfNoteUpdate {
+                    content,
+                    action: LinkedPdfNoteAction::Appended,
+                }
+            }
+        }
+        None => {
+            let body = template.render(pdf_path, ann);
+            let content = format!(
+                "---\ntype: pdf-note\nsource_pdf: {}\n---\n\n# {}\n\n{}",
+                pdf_path,
+                note_title_from_path(note_path),
+                body
+            );
+            LinkedPdfNoteUpdate {
+                content,
+                action: LinkedPdfNoteAction::Created,
+            }
+        }
+    }
+}
+
 pub fn slug_fragment(s: &str) -> String {
     let slug = slugify(s);
     if slug.is_empty() {
@@ -184,7 +349,10 @@ pub fn export_annotations_to_markdown(
     );
 
     let mut sorted_anns = annotations.to_vec();
-    sorted_anns.sort_by_key(|ann| (ann.page_index, ann.created_at));
+    sorted_anns.sort_by_key(|ann| {
+        let start_idx = ann.ranges.first().map(|r| r.start_text_index).unwrap_or(0);
+        (ann.page_index, start_idx, ann.created_at)
+    });
 
     for ann in sorted_anns {
         let col_text = match ann.color {
@@ -198,11 +366,24 @@ pub fn export_annotations_to_markdown(
         };
 
         doc.push_str(&format!(
-            "\n## Page {}\n\n{}\n\n**Colour:** {}\n",
+            "\n## Page {}\n\n{}\n\n**Type:** {}\n**Colour:** {}\n**Status:** {}\n",
             ann.page_index + 1,
             markdown_quote(&ann.selected_text),
-            col_text
+            ann.kind.as_str(),
+            col_text,
+            ann.status.as_str()
         ));
+
+        if !ann.tags.is_empty() {
+            doc.push_str(&format!(
+                "**Tags:** {}\n",
+                ann.tags
+                    .iter()
+                    .map(|t| format!("#{}", t))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
 
         if let Some(ref note_str) = ann.note {
             if !note_str.trim().is_empty() {
@@ -460,5 +641,119 @@ mod tests {
         let synced3 = sync_annotation_note_in_markdown(&synced2, "papers/paper.pdf", &ann_updated);
         assert!(synced3.contains("### Notes\n\n"));
         assert!(!synced3.contains("Updated message"));
+    }
+
+    #[test]
+    fn test_templates_linked_note_and_idempotency() {
+        let ann = annotation("ann-789", 1, "Template excerpt");
+
+        // Test Default Template
+        let default_res = build_linked_pdf_note_content_with_template(
+            None,
+            "note.md",
+            "paper.pdf",
+            &ann,
+            &LinkedNoteTemplate::Default,
+        );
+        assert_eq!(default_res.action, LinkedPdfNoteAction::Created);
+        assert!(default_res.content.contains("## Page 2"));
+        assert!(
+            default_res
+                .content
+                .contains("[Open highlight in PDF](pdf://paper.pdf?page=2&annotation=ann-789)")
+        );
+
+        // Append same annotation to default -> Action should be Unchanged
+        let default_dup = build_linked_pdf_note_content_with_template(
+            Some(&default_res.content),
+            "note.md",
+            "paper.pdf",
+            &ann,
+            &LinkedNoteTemplate::Default,
+        );
+        assert_eq!(default_dup.action, LinkedPdfNoteAction::Unchanged);
+        assert_eq!(default_dup.content, default_res.content);
+
+        // Test Detailed Template
+        let detailed_res = build_linked_pdf_note_content_with_template(
+            None,
+            "note.md",
+            "paper.pdf",
+            &ann,
+            &LinkedNoteTemplate::Detailed,
+        );
+        assert_eq!(detailed_res.action, LinkedPdfNoteAction::Created);
+        assert!(detailed_res.content.contains("- **Type:** Highlight"));
+        assert!(detailed_res.content.contains("- **Color:** Yellow"));
+
+        // Append same to detailed -> Action should be Unchanged
+        let detailed_dup = build_linked_pdf_note_content_with_template(
+            Some(&detailed_res.content),
+            "note.md",
+            "paper.pdf",
+            &ann,
+            &LinkedNoteTemplate::Detailed,
+        );
+        assert_eq!(detailed_dup.action, LinkedPdfNoteAction::Unchanged);
+        assert_eq!(detailed_dup.content, detailed_res.content);
+
+        // Test Minimal Template
+        let minimal_res = build_linked_pdf_note_content_with_template(
+            None,
+            "note.md",
+            "paper.pdf",
+            &ann,
+            &LinkedNoteTemplate::Minimal,
+        );
+        assert_eq!(minimal_res.action, LinkedPdfNoteAction::Created);
+        assert!(
+            minimal_res.content.contains(
+                "- [Page 2](pdf://paper.pdf?page=2&annotation=ann-789): Template excerpt"
+            )
+        );
+
+        // Append same to minimal -> Action should be Unchanged
+        let minimal_dup = build_linked_pdf_note_content_with_template(
+            Some(&minimal_res.content),
+            "note.md",
+            "paper.pdf",
+            &ann,
+            &LinkedNoteTemplate::Minimal,
+        );
+        assert_eq!(minimal_dup.action, LinkedPdfNoteAction::Unchanged);
+        assert_eq!(minimal_dup.content, minimal_res.content);
+    }
+
+    #[test]
+    fn test_reading_session_and_idempotency() {
+        let session = ReadingSession {
+            pdf_path: "paper.pdf".to_string(),
+            start_page: 5,
+            end_page: 10,
+            note_content: "Interesting pages about algorithms.".to_string(),
+            date: "2026-06-02".to_string(),
+        };
+
+        // Create new reading session note
+        let content1 = build_reading_session_content(None, &session);
+        assert!(content1.contains("type: reading-session"));
+        assert!(content1.contains("## Reading Session: Pages 5-10"));
+        assert!(content1.contains("Interesting pages about algorithms."));
+
+        // Try appending same session -> should be idempotent (unchanged content)
+        let content2 = build_reading_session_content(Some(&content1), &session);
+        assert_eq!(content1, content2);
+
+        // Append different session
+        let session2 = ReadingSession {
+            start_page: 11,
+            end_page: 15,
+            note_content: "More algorithm details.".to_string(),
+            ..session
+        };
+        let content3 = build_reading_session_content(Some(&content1), &session2);
+        assert!(content3.contains("## Reading Session: Pages 5-10"));
+        assert!(content3.contains("## Reading Session: Pages 11-15"));
+        assert!(content3.contains("More algorithm details."));
     }
 }
