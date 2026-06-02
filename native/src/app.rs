@@ -28,6 +28,10 @@ const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
 const PDF_RENDER_SUPERSAMPLE: f32 = 2.0;
 const PDF_TEXT_PAGE_CACHE_LIMIT: usize = 50;
+const GLOBAL_PDF_TEXT_SEARCH_MAX_DOCUMENTS: usize = 32;
+const GLOBAL_PDF_TEXT_SEARCH_MAX_RESULTS: usize = 200;
+const PDF_TEXT_INDEX_MAX_DOCUMENTS: usize = 16;
+const PDF_TEXT_INDEX_MAX_PAGES_PER_DOCUMENT: u16 = 3;
 const LARGE_DOC_LINE_THRESHOLD: usize = 1_000;
 const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
@@ -252,6 +256,12 @@ pub struct MdEditor {
     search_visible: bool,
     editor_search: EditorSearchState,
     global_search_id: u64,
+    global_search_pdf_search_id: Option<u64>,
+    global_search_pending_db: bool,
+    global_search_pending_pdf: bool,
+    global_search_pending_vault_pdf: bool,
+    global_search_pdf_status: Option<String>,
+    global_search_sources: Vec<md_editor_core::types::UnifiedSearchSource>,
     global_search_results: Vec<md_editor_core::types::UnifiedSearchResult>,
     global_search_searching: bool,
     global_search_error: Option<String>,
@@ -380,6 +390,13 @@ impl MdEditor {
             search_visible: false,
             editor_search: EditorSearchState::default(),
             global_search_id: 0,
+            global_search_pdf_search_id: None,
+            global_search_pending_db: false,
+            global_search_pending_pdf: false,
+            global_search_pending_vault_pdf: false,
+            global_search_pdf_status: None,
+            global_search_sources: md_editor_core::types::UnifiedSearchQuery::all_sources("")
+                .sources,
             global_search_results: Vec::new(),
             global_search_searching: false,
             global_search_error: None,
@@ -632,7 +649,7 @@ impl MdEditor {
             ),
             Message::VaultOpened(Some(path)) => {
                 self.open_vault(&path);
-                Task::none()
+                self.index_registered_pdf_text_task()
             }
             Message::SidebarToggle => {
                 self.sidebar_visible = !self.sidebar_visible;
@@ -2231,10 +2248,11 @@ impl MdEditor {
             }
             Message::SearchClose => {
                 self.search_visible = false;
+                self.global_search_id = self.global_search_id.wrapping_add(1);
                 self.editor_search.visible = false;
                 self.pdf_state.search.visible = false;
+                self.cancel_global_pdf_search();
                 self.global_search_results.clear();
-                self.global_search_searching = false;
                 self.global_search_error = None;
                 self.restore_scroll_positions()
             }
@@ -2260,17 +2278,15 @@ impl MdEditor {
                         let search_id = self.global_search_id;
 
                         let state = self.state.clone();
-                        let active_markdown = self.active_path.clone();
-                        let active_pdf = self.active_pdf_path.clone();
-                        let query = q.clone();
+                        let query = self.build_global_search_query(q.clone());
+                        let include_pdf_content =
+                            query.includes(md_editor_core::types::UnifiedSearchSource::PdfContent);
+                        let db_query = query.clone();
 
                         let db_task = Task::perform(
                             async move {
-                                let res = md_editor_core::vault::search_vault_unified(
-                                    &state,
-                                    &query,
-                                    active_markdown.as_deref(),
-                                    active_pdf.as_deref(),
+                                let res = md_editor_core::vault::search_vault_unified_query(
+                                    &state, &db_query,
                                 );
                                 (search_id, res)
                             },
@@ -2282,20 +2298,48 @@ impl MdEditor {
 
                         self.global_search_results.clear();
 
-                        let pdf_task = if self.active_pdf_path.is_some() {
+                        let active_pdf_task = if self.active_pdf_path.is_some()
+                            && include_pdf_content
+                        {
                             self.pdf_state.search.query = q.clone();
                             self.pdf_state.search.active_index = None;
                             self.pdf_search_error = None;
-                            self.search_pdf()
+                            let task = self.search_pdf();
+                            if self.pdf_state.search.searching {
+                                self.global_search_pdf_search_id = Some(self.pdf_active_search_id);
+                                self.global_search_pending_pdf = true;
+                            } else {
+                                self.global_search_pdf_search_id = None;
+                                self.global_search_pending_pdf = false;
+                            }
+                            task
                         } else {
+                            self.cancel_global_pdf_search();
                             Task::none()
                         };
+                        let vault_pdf_task = if include_pdf_content {
+                            self.global_search_pending_vault_pdf = true;
+                            self.global_search_pdf_status = Some(format!(
+                                "PDF text: searching up to {} registered PDFs",
+                                GLOBAL_PDF_TEXT_SEARCH_MAX_DOCUMENTS
+                            ));
+                            self.search_registered_pdf_text_task(search_id, query.clone())
+                        } else {
+                            self.global_search_pending_vault_pdf = false;
+                            self.global_search_pdf_status = None;
+                            Task::none()
+                        };
+                        self.global_search_pending_db = true;
+                        self.update_global_search_searching();
 
-                        Task::batch(vec![db_task, pdf_task])
+                        Task::batch(vec![db_task, active_pdf_task, vault_pdf_task])
                     } else {
                         self.global_search_results.clear();
-                        self.global_search_searching = false;
                         self.global_search_error = None;
+                        self.global_search_pdf_status = None;
+                        self.global_search_pending_db = false;
+                        self.cancel_global_pdf_search();
+                        self.global_search_id = self.global_search_id.wrapping_add(1);
                         if self.active_pdf_path.is_some() {
                             self.pdf_state.search.query = q.clone();
                             self.pdf_state.search.matches.clear();
@@ -2350,6 +2394,23 @@ impl MdEditor {
                     Task::none()
                 }
             }
+            Message::UnifiedSearchSourceToggled(source, enabled) => {
+                if enabled {
+                    if !self.global_search_sources.contains(&source) {
+                        self.global_search_sources.push(source);
+                    }
+                } else {
+                    self.global_search_sources.retain(|item| *item != source);
+                }
+
+                if self.search_visible {
+                    Task::done(Message::SearchQueryChanged(
+                        self.editor_search.query.clone(),
+                    ))
+                } else {
+                    Task::none()
+                }
+            }
             Message::SearchPrevious => {
                 if self.pdf_search_is_active() {
                     self.navigate_pdf_search(false)
@@ -2381,7 +2442,7 @@ impl MdEditor {
 
             Message::PdfSearchMatchesFound(search_id, matches) => {
                 if search_id == self.pdf_active_search_id {
-                    if self.search_visible {
+                    if self.search_visible && self.global_search_pdf_search_id == Some(search_id) {
                         if let Some(ref pdf_path) = self.active_pdf_path {
                             let query_lower = self.editor_search.query.to_lowercase();
                             let query_trimmed = self.editor_search.query.trim();
@@ -2391,21 +2452,32 @@ impl MdEditor {
                             let vault_root = vault_root_locked.as_ref().and_then(|r| r.as_ref());
 
                             let is_linked = |p1: &str, p2: &str| -> bool {
-                                if let (Some(index), Some(root)) = (index_locked.as_ref(), vault_root) {
+                                if let (Some(index), Some(root)) =
+                                    (index_locked.as_ref(), vault_root)
+                                {
                                     let path1 = md_editor_core::vault::resolve_vault_path(root, p1);
                                     let path2 = md_editor_core::vault::resolve_vault_path(root, p2);
-                                    index.outgoing.get(&path1).map_or(false, |set| set.contains(&path2))
-                                        || index.incoming.get(&path1).map_or(false, |set| set.contains(&path2))
+                                    index
+                                        .outgoing
+                                        .get(&path1)
+                                        .map_or(false, |set| set.contains(&path2))
+                                        || index
+                                            .incoming
+                                            .get(&path1)
+                                            .map_or(false, |set| set.contains(&path2))
                                 } else {
                                     false
                                 }
                             };
 
-                            for m in &matches {
+                            let match_index_base = self.pdf_state.search.matches.len();
+                            for (match_offset, m) in matches.iter().enumerate() {
                                 let mut score = 4.0;
                                 score *= 1.5;
                                 if m.context.to_lowercase().contains(&query_lower) {
-                                    if m.context.trim().to_lowercase() == query_trimmed.to_lowercase() {
+                                    if m.context.trim().to_lowercase()
+                                        == query_trimmed.to_lowercase()
+                                    {
                                         score *= 2.0;
                                     }
                                 }
@@ -2415,19 +2487,33 @@ impl MdEditor {
                                     }
                                 }
 
-                                self.global_search_results.push(md_editor_core::types::UnifiedSearchResult {
-                                    group: md_editor_core::types::SearchResultGroup::PdfContent,
-                                    path: pdf_path.clone(),
-                                    line: (m.page_index + 1) as usize,
-                                    context: m.context.clone(),
-                                    score,
-                                    page_index: Some(m.page_index),
-                                    annotation_id: None,
-                                });
+                                self.global_search_results.push(
+                                    md_editor_core::types::UnifiedSearchResult {
+                                        group: md_editor_core::types::SearchResultGroup::PdfContent,
+                                        path: pdf_path.clone(),
+                                        line: (m.page_index + 1) as usize,
+                                        context: format!(
+                                            "PDF text ({} areas): {}",
+                                            m.rects.len(),
+                                            md_editor_core::vault::search_result_preview(
+                                                &m.context,
+                                                query_trimmed,
+                                                None,
+                                            )
+                                        ),
+                                        score,
+                                        page_index: Some(m.page_index),
+                                        annotation_id: Some(
+                                            (match_index_base + match_offset).to_string(),
+                                        ),
+                                    },
+                                );
                             }
 
                             self.global_search_results.sort_by(|a, b| {
-                                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                                b.score
+                                    .partial_cmp(&a.score)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
                                     .then_with(|| a.group.cmp(&b.group))
                                     .then_with(|| a.path.cmp(&b.path))
                                     .then_with(|| a.line.cmp(&b.line))
@@ -2452,23 +2538,47 @@ impl MdEditor {
             }
             Message::UnifiedSearchMatchesFound(search_id, matches) => {
                 if search_id == self.global_search_id {
-                    self.global_search_results.retain(|r| r.group == md_editor_core::types::SearchResultGroup::PdfContent);
+                    self.global_search_results.retain(|r| {
+                        r.group == md_editor_core::types::SearchResultGroup::PdfContent
+                    });
                     self.global_search_results.extend(matches);
                     self.global_search_results.sort_by(|a, b| {
-                        b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
                             .then_with(|| a.group.cmp(&b.group))
                             .then_with(|| a.path.cmp(&b.path))
                             .then_with(|| a.line.cmp(&b.line))
                     });
+                    self.global_search_pending_db = false;
+                    self.update_global_search_searching();
+                }
+                Task::none()
+            }
+            Message::UnifiedPdfTextSearchMatchesFound(search_id, batch) => {
+                if self.search_visible && search_id == self.global_search_id {
+                    self.global_search_pdf_status = Some(format_pdf_search_status(&batch));
+                    self.global_search_results.extend(batch.results);
+                    self.global_search_results.sort_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| a.group.cmp(&b.group))
+                            .then_with(|| a.path.cmp(&b.path))
+                            .then_with(|| a.line.cmp(&b.line))
+                    });
+                    self.global_search_pending_vault_pdf = false;
+                    self.update_global_search_searching();
                 }
                 Task::none()
             }
             Message::UnifiedSearchFinished(search_id, result) => {
                 if search_id == self.global_search_id {
-                    self.global_search_searching = false;
+                    self.global_search_pending_db = false;
                     if let Err(err) = result {
                         self.global_search_error = Some(err);
                     }
+                    self.update_global_search_searching();
                 }
                 Task::none()
             }
@@ -2481,34 +2591,77 @@ impl MdEditor {
                 self.search_visible = false;
 
                 match result.group {
-                    md_editor_core::types::SearchResultGroup::MarkdownContent | md_editor_core::types::SearchResultGroup::Heading => {
+                    md_editor_core::types::SearchResultGroup::MarkdownContent
+                    | md_editor_core::types::SearchResultGroup::Heading => {
                         let open_task = self.open_file(&result.path);
-                        let cursor_task = Task::done(Message::EditorCursorMove(result.line.saturating_sub(1), 0));
+                        let cursor_task =
+                            Task::done(Message::EditorCursorMove(result.line.saturating_sub(1), 0));
                         Task::batch(vec![open_task, cursor_task])
                     }
                     md_editor_core::types::SearchResultGroup::Filename => {
                         if result.path.ends_with(".pdf") {
-                            self.open_pdf(&result.path)
+                            if self.pdf_paths_match(self.active_pdf_path.as_deref(), &result.path) {
+                                self.active_panel = ActivePanel::Pdf;
+                                self.showing_pdf = true;
+                                Task::none()
+                            } else {
+                                self.open_pdf(&result.path)
+                            }
                         } else {
                             self.open_file(&result.path)
                         }
                     }
                     md_editor_core::types::SearchResultGroup::PdfContent => {
-                        let page = result.page_index.unwrap_or(0);
-                        self.pdf_initial_target_page = Some(page);
-                        self.open_pdf(&result.path)
+                        if self.pdf_paths_match(self.active_pdf_path.as_deref(), &result.path) {
+                            self.active_panel = ActivePanel::Pdf;
+                            self.showing_pdf = true;
+                            if let Some(index) = result
+                                .annotation_id
+                                .as_deref()
+                                .and_then(|id| id.parse::<usize>().ok())
+                            {
+                                self.navigate_pdf_search_to_index(index)
+                            } else {
+                                let page = result.page_index.unwrap_or(0);
+                                self.navigate_pdf_page(page)
+                            }
+                        } else {
+                            let page = result.page_index.unwrap_or(0);
+                            self.pdf_initial_target_page = Some(page);
+                            self.open_pdf(&result.path)
+                        }
                     }
-                    md_editor_core::types::SearchResultGroup::Annotation => {
-                        let page = result.page_index.unwrap_or(0);
-                        self.pdf_initial_target_page = Some(page);
-                        self.pdf_initial_target_annotation = result.annotation_id.clone();
-                        self.open_pdf(&result.path)
+                    md_editor_core::types::SearchResultGroup::Annotation
+                    | md_editor_core::types::SearchResultGroup::QuickNote => {
+                        if self.pdf_paths_match(self.active_pdf_path.as_deref(), &result.path) {
+                            self.active_panel = ActivePanel::Pdf;
+                            self.showing_pdf = true;
+                            let page = result.page_index.unwrap_or(0);
+                            self.focused_annotation_id = result.annotation_id.clone();
+                            self.navigate_pdf_page(page)
+                        } else {
+                            let page = result.page_index.unwrap_or(0);
+                            self.pdf_initial_target_page = Some(page);
+                            self.pdf_initial_target_annotation = result.annotation_id.clone();
+                            self.open_pdf(&result.path)
+                        }
                     }
                 }
+            }
+            Message::PdfTextIndexFinished(result) => {
+                if let Err(err) = result {
+                    self.global_search_error = Some(err);
+                }
+                Task::none()
             }
             Message::PdfSearchFinished(search_id, result) => {
                 if search_id == self.pdf_active_search_id {
                     self.pdf_state.search.searching = false;
+                    if self.global_search_pdf_search_id == Some(search_id) {
+                        self.global_search_pending_pdf = false;
+                        self.global_search_pdf_search_id = None;
+                        self.update_global_search_searching();
+                    }
                     match result {
                         Ok(()) => Task::none(),
                         Err(err) => {
@@ -2700,6 +2853,9 @@ impl MdEditor {
                 self.pdf_pending_text.remove(&page);
                 if generation == self.pdf_render_generation {
                     if let Ok(page_text) = res {
+                        if let Some(path) = self.active_pdf_path.as_deref() {
+                            let _ = self.state.save_pdf_page_text(path, page, &page_text.text);
+                        }
                         self.pdf_page_text.insert(page, page_text);
                         self.pdf_text_lru.push_back(page);
                         if self.pdf_text_lru.len() > PDF_TEXT_PAGE_CACHE_LIMIT {
@@ -3764,6 +3920,8 @@ impl MdEditor {
                     self.global_search_searching,
                     self.global_search_error.as_deref(),
                     true,
+                    &self.global_search_sources,
+                    self.global_search_pdf_status.as_deref(),
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -4054,6 +4212,7 @@ impl MdEditor {
         self.showing_pdf = true;
         self.active_panel = ActivePanel::Pdf;
         self.pdf_current_page = 0;
+        self.pdf_total_pages = 0;
         self.pdf_rotation = 0;
         self.pdf_fit_to_width = true;
         self.pdf_fit_to_page = false;
@@ -5193,6 +5352,66 @@ impl MdEditor {
         Ok((count, Task::none()))
     }
 
+    fn build_global_search_query(&self, text: String) -> md_editor_core::types::UnifiedSearchQuery {
+        let mut query = md_editor_core::types::UnifiedSearchQuery::all_sources(text)
+            .with_active_paths(self.active_path.as_deref(), self.active_pdf_path.as_deref());
+        query.sources = self.global_search_sources.clone();
+        query
+    }
+
+    fn update_global_search_searching(&mut self) {
+        self.global_search_searching = self.global_search_pending_db
+            || self.global_search_pending_pdf
+            || self.global_search_pending_vault_pdf;
+    }
+
+    fn cancel_global_pdf_search(&mut self) {
+        if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+            let _ = renderer.cancel_search(self.pdf_active_search_id);
+        }
+        self.pdf_active_search_id = self.pdf_active_search_id.wrapping_add(1);
+        self.pdf_state.search.searching = false;
+        self.global_search_pdf_search_id = None;
+        self.global_search_pending_pdf = false;
+        self.global_search_pending_vault_pdf = false;
+        self.global_search_pending_db = false;
+        self.global_search_pdf_status = None;
+        self.update_global_search_searching();
+    }
+
+    fn search_registered_pdf_text_task(
+        &self,
+        search_id: u64,
+        query: md_editor_core::types::UnifiedSearchQuery,
+    ) -> Task<Message> {
+        let state = self.state.clone();
+        let active_pdf_path = self.active_pdf_path.clone();
+
+        Task::perform(
+            async move {
+                let results = tokio::task::spawn_blocking(move || {
+                    search_registered_pdf_text_results(&state, &query, active_pdf_path.as_deref())
+                })
+                .await
+                .unwrap_or_default();
+                (search_id, results)
+            },
+            |(id, results)| Message::UnifiedPdfTextSearchMatchesFound(id, results),
+        )
+    }
+
+    fn index_registered_pdf_text_task(&self) -> Task<Message> {
+        let state = self.state.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || index_registered_pdf_text_pages(&state))
+                    .await
+                    .unwrap_or_else(|err| Err(err.to_string()))
+            },
+            Message::PdfTextIndexFinished,
+        )
+    }
+
     fn search_pdf(&mut self) -> Task<Message> {
         let Some(path) = &self.active_pdf_path else {
             return Task::none();
@@ -5472,6 +5691,200 @@ fn focus_global_search_input() -> Task<Message> {
     ))
 }
 
+fn search_registered_pdf_text_results(
+    state: &Arc<md_editor_core::state::AppState>,
+    query: &md_editor_core::types::UnifiedSearchQuery,
+    active_pdf_path: Option<&str>,
+) -> md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+    let Some(renderer) = state.pdf_renderer.as_ref() else {
+        return empty_pdf_text_batch();
+    };
+    let Ok(vault_root) = state.vault_root.lock() else {
+        return empty_pdf_text_batch();
+    };
+    let Some(vault_root) = vault_root.as_ref().cloned() else {
+        return empty_pdf_text_batch();
+    };
+    let Ok(pdf_paths) = md_editor_core::vault::list_registered_pdf_paths(state) else {
+        return empty_pdf_text_batch();
+    };
+    let total_candidates = pdf_paths
+        .iter()
+        .filter(|path| active_pdf_path != Some(path.as_str()))
+        .count();
+    let targets = registered_pdf_search_targets(
+        pdf_paths,
+        active_pdf_path,
+        GLOBAL_PDF_TEXT_SEARCH_MAX_DOCUMENTS,
+    );
+    let document_cap_reached = total_candidates > targets.len();
+
+    let mut results =
+        md_editor_core::vault::search_cached_pdf_text(state, query.text.trim(), &targets)
+            .unwrap_or_default();
+    let cached_paths = results
+        .iter()
+        .map(|result| result.path.clone())
+        .collect::<std::collections::HashSet<_>>();
+    if results.len() >= GLOBAL_PDF_TEXT_SEARCH_MAX_RESULTS {
+        results.truncate(GLOBAL_PDF_TEXT_SEARCH_MAX_RESULTS);
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.path.cmp(&b.path))
+                .then_with(|| a.line.cmp(&b.line))
+        });
+        return md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+            results,
+            searched_documents: cached_paths.len(),
+            total_candidates,
+            result_cap_reached: true,
+            document_cap_reached,
+        };
+    }
+
+    let mut searched_documents = 0;
+    let mut result_cap_reached = false;
+    for vault_path in targets {
+        if cached_paths.contains(&vault_path) {
+            searched_documents += 1;
+            continue;
+        }
+        searched_documents += 1;
+        let abs_path = md_editor_core::vault::resolve_vault_path(&vault_root, &vault_path);
+        let abs_path = abs_path.to_string_lossy().to_string();
+        let Ok(matches) = renderer.search_text(&abs_path, &query.text, false, false) else {
+            continue;
+        };
+
+        for search_match in matches {
+            let mut score = 4.0;
+            if search_match
+                .context
+                .trim()
+                .eq_ignore_ascii_case(query.text.trim())
+            {
+                score *= query.ranking.exact_phrase_boost;
+            }
+            results.push(md_editor_core::types::UnifiedSearchResult {
+                group: md_editor_core::types::SearchResultGroup::PdfContent,
+                path: vault_path.clone(),
+                line: (search_match.page_index + 1) as usize,
+                context: format!(
+                    "PDF text ({} areas): {}",
+                    search_match.rects.len(),
+                    md_editor_core::vault::search_result_preview(
+                        &search_match.context,
+                        query.text.trim(),
+                        None,
+                    )
+                ),
+                score,
+                page_index: Some(search_match.page_index),
+                annotation_id: None,
+            });
+            if results.len() >= GLOBAL_PDF_TEXT_SEARCH_MAX_RESULTS {
+                result_cap_reached = true;
+                break;
+            }
+        }
+        if results.len() >= GLOBAL_PDF_TEXT_SEARCH_MAX_RESULTS {
+            result_cap_reached = true;
+            break;
+        }
+    }
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.line.cmp(&b.line))
+    });
+    md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+        results,
+        searched_documents,
+        total_candidates,
+        result_cap_reached,
+        document_cap_reached,
+    }
+}
+
+fn empty_pdf_text_batch() -> md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+    md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+        results: Vec::new(),
+        searched_documents: 0,
+        total_candidates: 0,
+        result_cap_reached: false,
+        document_cap_reached: false,
+    }
+}
+
+fn format_pdf_search_status(
+    batch: &md_editor_core::types::UnifiedPdfTextSearchResultBatch,
+) -> String {
+    let mut status = format!(
+        "PDF text: searched {} of {} registered PDFs",
+        batch.searched_documents, batch.total_candidates
+    );
+    if batch.result_cap_reached {
+        status.push_str("; result cap reached");
+    } else if batch.document_cap_reached {
+        status.push_str("; document cap reached");
+    }
+    status
+}
+
+fn index_registered_pdf_text_pages(
+    state: &Arc<md_editor_core::state::AppState>,
+) -> Result<usize, String> {
+    let Some(renderer) = state.pdf_renderer.as_ref() else {
+        return Ok(0);
+    };
+    let vault_root = state
+        .vault_root
+        .lock()
+        .map_err(|err| err.to_string())?
+        .as_ref()
+        .cloned();
+    let Some(vault_root) = vault_root else {
+        return Ok(0);
+    };
+    let pdf_paths = md_editor_core::vault::list_registered_pdf_paths(state)?;
+    let targets = registered_pdf_index_targets(pdf_paths, PDF_TEXT_INDEX_MAX_DOCUMENTS);
+
+    let mut indexed_pages = 0;
+    for vault_path in targets {
+        let abs_path = md_editor_core::vault::resolve_vault_path(&vault_root, &vault_path);
+        let abs_path = abs_path.to_string_lossy().to_string();
+        let page_count = renderer.page_count(&abs_path).unwrap_or(0);
+        let pages_to_index = page_count.min(PDF_TEXT_INDEX_MAX_PAGES_PER_DOCUMENT);
+        for page_index in 0..pages_to_index {
+            if let Ok(page_text) = renderer.get_page_text(&abs_path, page_index) {
+                state.save_pdf_page_text(&vault_path, page_index, &page_text.text)?;
+                indexed_pages += 1;
+            }
+        }
+    }
+    Ok(indexed_pages)
+}
+
+fn registered_pdf_index_targets(pdf_paths: Vec<String>, max_documents: usize) -> Vec<String> {
+    pdf_paths.into_iter().take(max_documents).collect()
+}
+
+fn registered_pdf_search_targets(
+    pdf_paths: Vec<String>,
+    active_pdf_path: Option<&str>,
+    max_documents: usize,
+) -> Vec<String> {
+    pdf_paths
+        .into_iter()
+        .filter(|path| active_pdf_path != Some(path.as_str()))
+        .take(max_documents)
+        .collect()
+}
+
 fn focus_pdf_search_input() -> Task<Message> {
     operation::focus(iced::advanced::widget::Id::new(
         views::pdf_viewer::PDF_SEARCH_INPUT_ID,
@@ -5714,6 +6127,22 @@ fn find_heading_or_widget_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pdf_text_batch(
+        results: Vec<md_editor_core::types::UnifiedSearchResult>,
+        searched_documents: usize,
+        total_candidates: usize,
+        result_cap_reached: bool,
+        document_cap_reached: bool,
+    ) -> md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+        md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+            results,
+            searched_documents,
+            total_candidates,
+            result_cap_reached,
+            document_cap_reached,
+        }
+    }
 
     #[test]
     fn test_slugify_and_find_heading_line() {
@@ -7125,7 +7554,15 @@ mod tests {
         ));
 
         assert_eq!(app.global_search_results.len(), 1);
-        assert_eq!(app.global_search_results[0].context, "# Welcome to the Vault");
+        assert_eq!(
+            app.global_search_results[0].context,
+            "# Welcome to the Vault"
+        );
+        let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
+            app.global_search_id,
+            pdf_text_batch(Vec::new(), 0, 0, false, false),
+        ));
+        assert!(!app.global_search_searching);
 
         let _ = app.update(Message::UnifiedSearchFinished(app.global_search_id, Ok(())));
         assert!(!app.global_search_searching);
@@ -7136,5 +7573,204 @@ mod tests {
         assert!(!app.search_visible);
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stale_pdf_matches_do_not_enter_global_results() {
+        let mut app = MdEditor::new().0;
+        app.search_visible = true;
+        app.active_pdf_path = Some("paper.pdf".to_string());
+        app.editor_search.query = "needle".to_string();
+        app.pdf_active_search_id = 7;
+        app.global_search_pdf_search_id = Some(8);
+
+        let _ = app.update(Message::PdfSearchMatchesFound(
+            7,
+            vec![md_editor_core::pdf::PdfSearchMatch {
+                page_index: 0,
+                context: "needle context".to_string(),
+                rects: Vec::new(),
+            }],
+        ));
+
+        assert!(app.global_search_results.is_empty());
+        assert_eq!(app.pdf_state.search.matches.len(), 1);
+    }
+
+    #[test]
+    fn global_search_query_uses_source_toggles() {
+        let mut app = MdEditor::new().0;
+        let source = md_editor_core::types::UnifiedSearchSource::PdfContent;
+
+        let _ = app.update(Message::UnifiedSearchSourceToggled(source, false));
+        let query = app.build_global_search_query("needle".to_string());
+
+        assert!(!query.includes(source));
+        assert!(query.includes(md_editor_core::types::UnifiedSearchSource::MarkdownContent));
+    }
+
+    #[test]
+    fn pdf_content_global_result_activates_matching_search_hit() {
+        let mut app = MdEditor::new().0;
+        app.active_pdf_path = Some("paper.pdf".to_string());
+        app.showing_pdf = true;
+        app.pdf_total_pages = 3;
+        app.pdf_state.search.matches = vec![md_editor_core::pdf::PdfSearchMatch {
+            page_index: 1,
+            context: "needle context".to_string(),
+            rects: vec![md_editor_core::pdf::PdfRect {
+                x: 10.0,
+                y: 20.0,
+                width: 30.0,
+                height: 10.0,
+            }],
+        }];
+        app.rebuild_pdf_search_page_index();
+
+        let _ = app.update(Message::UnifiedSearchResultClicked(
+            md_editor_core::types::UnifiedSearchResult {
+                group: md_editor_core::types::SearchResultGroup::PdfContent,
+                path: "paper.pdf".to_string(),
+                line: 2,
+                context: "PDF text (1 areas): needle context".to_string(),
+                score: 6.0,
+                page_index: Some(1),
+                annotation_id: Some("0".to_string()),
+            },
+        ));
+
+        assert_eq!(app.pdf_state.search.active_index, Some(0));
+        assert_eq!(app.pdf_current_page, 1);
+        assert!(app.pdf_programmatic_scroll);
+    }
+
+    #[test]
+    fn pdf_content_global_result_navigates_page_when_already_open_without_annotation_id() {
+        let mut app = MdEditor::new().0;
+        app.active_pdf_path = Some("paper.pdf".to_string());
+        app.showing_pdf = true;
+        app.pdf_total_pages = 3;
+        app.pdf_pages = vec![None; 3];
+        app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 3];
+        app.pdf_state.layout = PdfLayout::rebuild(
+            &app.pdf_state.page_sizes,
+            app.pdf_state.zoom,
+            app.pdf_placeholder_display_size(),
+            PDF_PAGE_SPACING,
+            PDF_PAGE_LIST_PADDING,
+            app.pdf_rotation,
+        );
+
+        let _ = app.update(Message::UnifiedSearchResultClicked(
+            md_editor_core::types::UnifiedSearchResult {
+                group: md_editor_core::types::SearchResultGroup::PdfContent,
+                path: "paper.pdf".to_string(),
+                line: 2,
+                context: "needle context".to_string(),
+                score: 6.0,
+                page_index: Some(1),
+                annotation_id: None,
+            },
+        ));
+
+        // It should navigate directly, setting current page to index 1 (page 2)
+        assert_eq!(app.pdf_current_page, 1);
+        assert!(app.pdf_programmatic_scroll);
+        // It shouldn't clear pages/total pages since it was already open
+        assert_eq!(app.pdf_pages.len(), 3);
+        assert_eq!(app.pdf_total_pages, 3);
+    }
+
+    #[test]
+    fn vault_pdf_text_results_merge_only_for_visible_current_search() {
+        let mut app = MdEditor::new().0;
+        app.search_visible = true;
+        app.global_search_id = 5;
+        app.global_search_pending_vault_pdf = true;
+
+        let pdf_result = md_editor_core::types::UnifiedSearchResult {
+            group: md_editor_core::types::SearchResultGroup::PdfContent,
+            path: "other.pdf".to_string(),
+            line: 3,
+            context: "PDF text (1 areas): needle".to_string(),
+            score: 4.0,
+            page_index: Some(2),
+            annotation_id: None,
+        };
+
+        let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
+            4,
+            pdf_text_batch(vec![pdf_result.clone()], 1, 2, false, false),
+        ));
+        assert!(app.global_search_results.is_empty());
+        assert!(app.global_search_pending_vault_pdf);
+
+        let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
+            5,
+            pdf_text_batch(vec![pdf_result], 1, 2, false, true),
+        ));
+        assert_eq!(app.global_search_results.len(), 1);
+        assert!(!app.global_search_pending_vault_pdf);
+        assert_eq!(
+            app.global_search_pdf_status.as_deref(),
+            Some("PDF text: searched 1 of 2 registered PDFs; document cap reached")
+        );
+
+        app.search_visible = false;
+        app.global_search_id = 6;
+        let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
+            6,
+            pdf_text_batch(
+                vec![md_editor_core::types::UnifiedSearchResult {
+                    group: md_editor_core::types::SearchResultGroup::PdfContent,
+                    path: "stale.pdf".to_string(),
+                    line: 1,
+                    context: "stale".to_string(),
+                    score: 4.0,
+                    page_index: Some(0),
+                    annotation_id: None,
+                }],
+                1,
+                1,
+                false,
+                false,
+            ),
+        ));
+        assert_eq!(app.global_search_results.len(), 1);
+    }
+
+    #[test]
+    fn registered_pdf_search_targets_skip_active_and_cap_work() {
+        let paths = (0..40)
+            .map(|idx| format!("paper-{idx}.pdf"))
+            .collect::<Vec<_>>();
+
+        let targets = registered_pdf_search_targets(paths, Some("paper-3.pdf"), 5);
+
+        assert_eq!(targets.len(), 5);
+        assert!(!targets.iter().any(|path| path == "paper-3.pdf"));
+        assert_eq!(targets[0], "paper-0.pdf");
+        assert_eq!(targets[4], "paper-5.pdf");
+    }
+
+    #[test]
+    fn registered_pdf_index_targets_cap_documents() {
+        let paths = (0..40)
+            .map(|idx| format!("paper-{idx}.pdf"))
+            .collect::<Vec<_>>();
+
+        let targets = registered_pdf_index_targets(paths, 3);
+
+        assert_eq!(targets, vec!["paper-0.pdf", "paper-1.pdf", "paper-2.pdf"]);
+    }
+
+    #[test]
+    fn pdf_search_status_reports_result_cap_first() {
+        let batch = pdf_text_batch(Vec::new(), 32, 100, true, true);
+
+        assert_eq!(
+            format_pdf_search_status(&batch),
+            "PDF text: searched 32 of 100 registered PDFs; result cap reached"
+        );
     }
 }
