@@ -1,6 +1,6 @@
 # Live Handoff
 
-Last updated: 2026-06-01
+Last updated: 2026-06-02
 
 ## Purpose
 
@@ -65,6 +65,27 @@ Implement the multi-month markdown editor and PDF reader synergy plan in
   - Follow Citation locates the link under the editor cursor and triggers navigation.
   - Show Usages queries all referencing markdown files in the vault and opens/focuses the backlinks sidebar.
   - Combined Outline and TOC navigator sidebar implemented to display both Markdown headings and PDF bookmarks simultaneously.
+- Milestone 6 has an initial query-model slice complete:
+  - Added `UnifiedSearchQuery`, `UnifiedSearchSource`, and `UnifiedSearchRanking` in `core/src/types.rs`.
+  - `search_vault_unified` now delegates to `search_vault_unified_query`, preserving existing call sites while enabling typed source selection.
+  - Query sources cover markdown content, PDF content, filenames, headings, annotations, and quick notes.
+  - Quick notes now have a distinct `SearchResultGroup::QuickNote` and render/navigate like PDF annotation results.
+  - Ranking boosts for current document, exact phrase, and linked notes are part of the query model.
+  - App-level global search now builds and passes `UnifiedSearchQuery` to the core search path.
+  - Global search tracks DB and active-PDF streaming completion separately, so successful DB results clear the spinner and active PDF streaming keeps it alive until finished.
+  - Stale active-PDF search results are suppressed from global results when query/source state changes or global search closes.
+  - Global search overlay now has explicit source toggles for files, headings, markdown, PDF text, annotations, and quick notes.
+  - App state persists selected global search sources and feeds them into `UnifiedSearchQuery`; disabling PDF text cancels/suppresses active PDF streaming results.
+  - Search result previews now use centered snippets around the matched text for markdown, annotations, quick notes, and active-PDF streamed results.
+  - Active-PDF streamed global results include the number of PDF text rect areas in the preview context, making multi-rect PDF hits clearer.
+  - Active-PDF streamed global results now carry the underlying PDF search match index, and clicking them activates the exact search hit so PDF highlight rects and scroll target are preserved.
+  - Global PDF text search now also searches registered vault PDFs beyond the active PDF via a background task, merging results by search generation.
+  - Vault-wide registered-PDF results are ignored when stale or when the global overlay is closed; active-PDF streaming remains separate so exact-hit activation still works for the open PDF.
+  - Vault-wide registered-PDF search is bounded to 32 documents and 200 results per query, skips the active PDF, and stops collecting once the cap is reached.
+  - Global search overlay now shows bounded PDF text search status such as searched document counts and whether document/result caps were reached.
+  - Added durable `pdf_text_search` FTS cache table for PDF page text.
+  - Loaded visible PDF page text is written into the durable cache, and registered-PDF global search consults cached page text before falling back to extraction.
+  - Opening a vault now kicks off a bounded background PDF text index pass for registered PDFs, indexing up to 16 documents and 3 pages per document into the durable cache.
 
 ## Completed Files
 
@@ -87,6 +108,7 @@ Implement the multi-month markdown editor and PDF reader synergy plan in
 - `core/src/file_index.rs`
 - `core/src/vault.rs`
 - `core/src/pdf.rs`
+- `core/src/types.rs`
 - `docs/PDF_VIEWER_ARCH.md`
 
 ## Tests And Checks
@@ -129,6 +151,17 @@ Focused tests added:
 - `app::tests::test_follow_citation`
 - `app::tests::test_show_usages`
 - `app::tests::test_combined_outline_toc_navigator`
+- `vault::tests::unified_search_query_filters_sources_and_splits_quick_notes`
+- `vault::tests::search_result_preview_centers_match_and_preserves_label`
+- `vault::tests::unified_search_markdown_results_use_context_preview`
+- `vault::tests::cached_pdf_text_search_returns_page_results`
+- `app::tests::stale_pdf_matches_do_not_enter_global_results`
+- `app::tests::global_search_query_uses_source_toggles`
+- `app::tests::pdf_content_global_result_activates_matching_search_hit`
+- `app::tests::vault_pdf_text_results_merge_only_for_visible_current_search`
+- `app::tests::registered_pdf_search_targets_skip_active_and_cap_work`
+- `app::tests::pdf_search_status_reports_result_cap_first`
+- `app::tests::registered_pdf_index_targets_cap_documents`
 
 ## Known Worktree State
 
@@ -138,10 +171,10 @@ Focused tests added:
 
 ## Next Best Task
 
-Begin Milestone 6: Unified Search.
+Continue Milestone 6: Unified Search.
 
 Recommended next slice:
-1. Define the query model for global search to encompass markdown, PDF text, filenames, headings, annotations, and quick notes.
+1. Add cache freshness/invalidation for `pdf_text_search` using PDF file size/modified time so stale cached page text is cleared when PDFs change.
 
 ## Standards Reminder
 

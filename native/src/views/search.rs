@@ -102,6 +102,8 @@ pub fn view<'a>(
     searching: bool,
     error: Option<&'a str>,
     visible: bool,
+    enabled_sources: &'a [md_editor_core::types::UnifiedSearchSource],
+    pdf_status: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
     if !visible {
         return container(text(""))
@@ -131,7 +133,10 @@ pub fn view<'a>(
     let header = column![
         row![
             icons::view(Icon::Search, theme::ACCENT, 18.0),
-            text("Global search").size(15).font(BOLD_FONT).color(theme::ACCENT),
+            text("Global search")
+                .size(15)
+                .font(BOLD_FONT)
+                .color(theme::ACCENT),
             search_input,
             close_btn,
         ]
@@ -165,9 +170,48 @@ pub fn view<'a>(
                 text("Searching...").size(11).color(theme::ACCENT)
             } else {
                 text("").size(11)
-            }
+            },
+            if let Some(status) = pdf_status {
+                text(status).size(11).color(theme::TEXT_MUTED)
+            } else {
+                text("").size(11)
+            },
         ]
         .spacing(16)
+        .align_y(Alignment::Center),
+        row![
+            source_checkbox(
+                enabled_sources,
+                md_editor_core::types::UnifiedSearchSource::Filename,
+                "Files"
+            ),
+            source_checkbox(
+                enabled_sources,
+                md_editor_core::types::UnifiedSearchSource::Heading,
+                "Headings"
+            ),
+            source_checkbox(
+                enabled_sources,
+                md_editor_core::types::UnifiedSearchSource::MarkdownContent,
+                "Markdown"
+            ),
+            source_checkbox(
+                enabled_sources,
+                md_editor_core::types::UnifiedSearchSource::PdfContent,
+                "PDF text"
+            ),
+            source_checkbox(
+                enabled_sources,
+                md_editor_core::types::UnifiedSearchSource::Annotation,
+                "Annotations"
+            ),
+            source_checkbox(
+                enabled_sources,
+                md_editor_core::types::UnifiedSearchSource::QuickNote,
+                "Notes"
+            ),
+        ]
+        .spacing(12)
         .align_y(Alignment::Center),
     ]
     .spacing(10)
@@ -193,6 +237,10 @@ pub fn view<'a>(
         .iter()
         .filter(|r| r.group == md_editor_core::types::SearchResultGroup::Annotation)
         .collect();
+    let quick_note_results: Vec<_> = global_results
+        .iter()
+        .filter(|r| r.group == md_editor_core::types::SearchResultGroup::QuickNote)
+        .collect();
 
     let result_scroll = scrollable(
         column![
@@ -201,9 +249,10 @@ pub fn view<'a>(
             render_group_section("Markdown Content", &md_content_results),
             render_group_section("PDF Content", &pdf_content_results),
             render_group_section("Annotations & Notes", &annotation_results),
+            render_group_section("Quick Notes", &quick_note_results),
         ]
         .spacing(8)
-        .padding([0, 16])
+        .padding([0, 16]),
     )
     .height(Length::Fill);
 
@@ -247,6 +296,18 @@ pub fn view<'a>(
         .into()
 }
 
+fn source_checkbox<'a>(
+    enabled_sources: &'a [md_editor_core::types::UnifiedSearchSource],
+    source: md_editor_core::types::UnifiedSearchSource,
+    label: &'a str,
+) -> Element<'a, Message, Theme, Renderer> {
+    checkbox(enabled_sources.contains(&source))
+        .label(label)
+        .on_toggle(move |enabled| Message::UnifiedSearchSourceToggled(source, enabled))
+        .size(13)
+        .into()
+}
+
 fn render_group_section<'a>(
     title: &str,
     items: &[&'a md_editor_core::types::UnifiedSearchResult],
@@ -264,11 +325,22 @@ fn render_group_section<'a>(
         let path_text = text(&result.path).size(13).color(theme::ACCENT);
 
         let label = match result.group {
-            md_editor_core::types::SearchResultGroup::Heading => format!("Heading (Line {})", result.line),
-            md_editor_core::types::SearchResultGroup::MarkdownContent => format!("Line {}", result.line),
+            md_editor_core::types::SearchResultGroup::Heading => {
+                format!("Heading (Line {})", result.line)
+            }
+            md_editor_core::types::SearchResultGroup::MarkdownContent => {
+                format!("Line {}", result.line)
+            }
             md_editor_core::types::SearchResultGroup::Filename => "Filename".to_string(),
-            md_editor_core::types::SearchResultGroup::PdfContent => format!("PDF Page {}", result.line),
-            md_editor_core::types::SearchResultGroup::Annotation => format!("PDF Page {} Annotation", result.line),
+            md_editor_core::types::SearchResultGroup::PdfContent => {
+                format!("PDF Page {}", result.line)
+            }
+            md_editor_core::types::SearchResultGroup::Annotation => {
+                format!("PDF Page {} Annotation", result.line)
+            }
+            md_editor_core::types::SearchResultGroup::QuickNote => {
+                format!("PDF Page {} Note", result.line)
+            }
         };
         let label_text = text(label).size(11).color(theme::TEXT_MUTED);
 
@@ -276,7 +348,9 @@ fn render_group_section<'a>(
 
         let item = button(
             column![
-                row![path_text, label_text].spacing(8).align_y(Alignment::Center),
+                row![path_text, label_text]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
                 context_text
             ]
             .spacing(2),

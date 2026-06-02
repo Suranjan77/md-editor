@@ -5,8 +5,8 @@ use rusqlite::Connection;
 
 use crate::file_index::FileIndex;
 use crate::pdf::{
-    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus, PdfRect, PdfRenderer, PdfState,
-    PdfTextRange,
+    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus, PdfRect,
+    PdfRenderer, PdfState, PdfTextRange,
 };
 
 /// Application-wide shared state.
@@ -74,6 +74,15 @@ impl AppState {
             [],
         )
         .expect("Failed to create file_search fts table");
+        db.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS pdf_text_search USING fts5(
+                path,
+                page_index UNINDEXED,
+                content
+            )",
+            [],
+        )
+        .expect("Failed to create pdf_text_search fts table");
 
         db.execute(
             "CREATE TABLE IF NOT EXISTS pdf_documents (
@@ -201,6 +210,15 @@ impl AppState {
             [],
         )
         .expect("Failed to create file_search fts table");
+        db.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS pdf_text_search USING fts5(
+                path,
+                page_index UNINDEXED,
+                content
+            )",
+            [],
+        )
+        .expect("Failed to create pdf_text_search fts table");
 
         db.execute(
             "CREATE TABLE IF NOT EXISTS pdf_documents (
@@ -321,6 +339,26 @@ impl AppState {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn save_pdf_page_text(
+        &self,
+        vault_relative_path: &str,
+        page_index: u16,
+        content: &str,
+    ) -> Result<(), String> {
+        let db = self.db.lock().map_err(|e| e.to_string())?;
+        db.execute(
+            "DELETE FROM pdf_text_search WHERE path = ?1 AND page_index = ?2",
+            rusqlite::params![vault_relative_path, page_index as i64],
+        )
+        .map_err(|e| format!("Failed to clear cached PDF text: {e}"))?;
+        db.execute(
+            "INSERT INTO pdf_text_search (path, page_index, content) VALUES (?1, ?2, ?3)",
+            rusqlite::params![vault_relative_path, page_index as i64, content],
+        )
+        .map_err(|e| format!("Failed to cache PDF text: {e}"))?;
+        Ok(())
     }
 
     pub fn save_pdf_annotation(&self, ann: &PdfAnnotation) -> Result<(), String> {
