@@ -99,6 +99,10 @@ pub enum Message {
     PdfInsertQuoteLink,
     PdfInsertAnnotationLink(String),
     PdfCreateHighlight(md_editor_core::pdf::PdfAnnotationColor),
+    PdfCreateAnnotation(
+        md_editor_core::pdf::PdfAnnotationKind,
+        md_editor_core::pdf::PdfAnnotationColor,
+    ),
     PdfDeleteHighlight(String),
     PdfAddQuickNote(String, String),
     PdfLinkNote(String, String),
@@ -111,14 +115,34 @@ pub enum Message {
 
     PdfToggleAnnotationsSidebar,
     PdfFilterAnnotationsByColor(Option<md_editor_core::pdf::PdfAnnotationColor>),
+    PdfFilterAnnotationsByPage(Option<u16>),
+    PdfFilterAnnotationsByTag(Option<String>),
+    PdfFilterAnnotationsByLinked(Option<bool>),
+    PdfFilterAnnotationsByUnresolved(Option<bool>),
     PdfNavigateToAnnotation {
         id: String,
         page: u16,
     },
     PdfEditAnnotationNote(String, u16),
+    PdfToggleAnnotationStatus(String),
+    PdfEditAnnotationTags(String),
+    PdfUpdateAnnotationTags(String, String),
     PdfExportAnnotations,
     PdfAnnotationsExported(Result<String, String>),
     PdfContextMenuAction(crate::views::modals::PdfContextMenuItem),
+    #[allow(dead_code)]
+    CitationPaletteToggle,
+    CitationPaletteQueryChanged(String),
+    CitationPaletteSubmitFirst,
+    CitationPaletteChoose(CitationItem),
+    ExcerptModeToggle,
+    #[allow(dead_code)]
+    ExcerptQueueAdd(CitationItem),
+    #[allow(dead_code)]
+    ExcerptQueueRemove(usize),
+    #[allow(dead_code)]
+    ExcerptQueueClear,
+    ExcerptQueueInsertBatch,
     // ── Tracker ──────────────────────────────────────────────────
     TrackerToggle,
     TrackerStart,
@@ -180,6 +204,8 @@ pub enum Shortcut {
     Search,
     CommandPalette,
     ToggleSidebar,
+    NavBack,
+    NavForward,
     ToggleBacklinks,
     FocusMode,
     TableOfContents,
@@ -199,4 +225,25 @@ pub enum Shortcut {
     PdfZoomInput,
     FollowCitation,
     ShowUsages,
+    CitationPalette,
+    ExcerptModeToggle,
+    ExcerptInsertBatch,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CitationItem {
+    Selection {
+        text: String,
+        page_index: u16,
+    },
+    Annotation {
+        id: String,
+        text: String,
+        page_index: u16,
+    },
+    SearchHit {
+        path: String,
+        page_index: u16,
+        snippet: String,
+    },
 }

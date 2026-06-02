@@ -152,10 +152,12 @@ pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
 
 /// Rename a file or directory.
 pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<(), String> {
-    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_old = resolve_vault_path(vault_root, old_path);
-    let abs_new = resolve_vault_path(vault_root, new_path);
+    let vault_root_path = {
+        let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
+        vault_root.as_ref().ok_or("No vault root set")?.clone()
+    };
+    let abs_old = resolve_vault_path(&vault_root_path, old_path);
+    let abs_new = resolve_vault_path(&vault_root_path, new_path);
 
     if abs_old.is_file() && is_markdown_path(&abs_old) {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
@@ -192,6 +194,133 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
             rusqlite::params![new_path, &content],
         )
         .ok();
+    }
+
+    repair_rename_references(state, &vault_root_path, old_path, new_path)?;
+
+    Ok(())
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+pub fn repair_rename_references(
+    state: &AppState,
+    vault_root: &Path,
+    old_path: &str,
+    new_path: &str,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    // Update pdf_documents
+    db.execute(
+        "UPDATE pdf_documents SET vault_relative_path = ?1 WHERE vault_relative_path = ?2",
+        rusqlite::params![new_path, old_path],
+    )
+    .ok();
+
+    // Update pdf_text_search
+    db.execute(
+        "UPDATE pdf_text_search SET path = ?1 WHERE path = ?2",
+        rusqlite::params![new_path, old_path],
+    )
+    .ok();
+
+    // Update pdf_annotations linked_note_path
+    db.execute(
+        "UPDATE pdf_annotations SET linked_note_path = ?1 WHERE linked_note_path = ?2",
+        rusqlite::params![new_path, old_path],
+    )
+    .ok();
+
+    // Update links inside markdown files
+    let md_files = list_all_md_files(vault_root)?;
+    let old_encoded = percent_encode(old_path);
+    let new_encoded = percent_encode(new_path);
+
+    let old_path_stem = if old_path.ends_with(".md") {
+        old_path.strip_suffix(".md").unwrap_or(old_path)
+    } else if old_path.ends_with(".markdown") {
+        old_path.strip_suffix(".markdown").unwrap_or(old_path)
+    } else {
+        old_path
+    };
+
+    let new_path_stem = if new_path.ends_with(".md") {
+        new_path.strip_suffix(".md").unwrap_or(new_path)
+    } else if new_path.ends_with(".markdown") {
+        new_path.strip_suffix(".markdown").unwrap_or(new_path)
+    } else {
+        new_path
+    };
+
+    for md_path in md_files {
+        let content = match fs::read_to_string(&md_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let mut new_content = content.clone();
+
+        // Replace pdf:// encoded and raw
+        let old_pdf_encoded = format!("pdf://{}", old_encoded);
+        let new_pdf_encoded = format!("pdf://{}", new_encoded);
+        new_content = new_content.replace(&old_pdf_encoded, &new_pdf_encoded);
+
+        let old_pdf_raw = format!("pdf://{}", old_path);
+        let new_pdf_raw = format!("pdf://{}", new_path);
+        new_content = new_content.replace(&old_pdf_raw, &new_pdf_raw);
+
+        // Replace inline markdown links
+        new_content = new_content.replace(&format!("({old_path})"), &format!("({new_path})"));
+        new_content = new_content.replace(&format!("(./{old_path})"), &format!("(./{new_path})"));
+
+        if old_path_stem != old_path {
+            // Replace wiki links
+            new_content = new_content.replace(
+                &format!("[[{old_path_stem}]]"),
+                &format!("[[{new_path_stem}]]"),
+            );
+            new_content = new_content.replace(
+                &format!("[[{old_path_stem}#"),
+                &format!("[[{new_path_stem}#"),
+            );
+            new_content = new_content.replace(
+                &format!("[[{old_path_stem}|"),
+                &format!("[[{new_path_stem}|"),
+            );
+            new_content =
+                new_content.replace(&format!("[[{old_path}]]"), &format!("[[{new_path}]]"));
+            new_content = new_content.replace(&format!("[[{old_path}#"), &format!("[[{new_path}#"));
+            new_content = new_content.replace(&format!("[[{old_path}|"), &format!("[[{new_path}|"));
+
+            // Replace inline link without extension
+            new_content =
+                new_content.replace(&format!("({old_path_stem})"), &format!("({new_path_stem})"));
+            new_content = new_content.replace(
+                &format!("(./{old_path_stem})"),
+                &format!("(./{new_path_stem})"),
+            );
+        }
+
+        if new_content != content {
+            fs::write(&md_path, &new_content).map_err(|e| {
+                format!(
+                    "Failed to write updated links to {}: {}",
+                    md_path.display(),
+                    e
+                )
+            })?;
+        }
     }
 
     Ok(())
@@ -481,7 +610,7 @@ fn list_vault_recursive(
     Ok(())
 }
 
-fn path_to_relative_string(path: &Path, root: &Path) -> String {
+pub fn path_to_relative_string(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
@@ -513,6 +642,33 @@ fn list_all_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(
             .extension()
             .is_some_and(|e| e == "md" || e == "markdown")
         {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+pub fn list_all_pdf_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    list_all_pdf_files_recursive(root, &mut files)?;
+    Ok(files)
+}
+
+fn list_all_pdf_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let read_dir = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        if name.starts_with('.') {
+            continue;
+        }
+
+        if path.is_dir() {
+            list_all_pdf_files_recursive(&path, files)?;
+        } else if path.extension().is_some_and(|e| e == "pdf") {
             files.push(path);
         }
     }
@@ -808,6 +964,11 @@ pub fn search_cached_pdf_text(
         return Ok(Vec::new());
     }
 
+    // Invalidate stale caches before locking db
+    for path in paths {
+        let _ = state.validate_and_invalidate_pdf_cache(path);
+    }
+
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let fts_query = format!("\"{}\"", query_trimmed.replace('"', "\"\""));
     let mut results = Vec::new();
@@ -1010,6 +1171,92 @@ mod tests {
             !results.iter().any(|result| result.path == "source.md"),
             "FTS index should not retain old markdown path: {results:?}"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_rename_pdf_and_markdown_repairs_references() {
+        let root = unique_temp_dir("rename_repair_test");
+        fs::create_dir_all(&root).unwrap();
+
+        // 1. Create a PDF doc, save some content and index it
+        let pdf_path = "subfolder/document.pdf";
+        fs::create_dir_all(root.join("subfolder")).unwrap();
+        fs::write(root.join(pdf_path), "PDF dummy content").unwrap();
+
+        // 2. Create markdown note with references to the PDF
+        let note_path = "note.md";
+        let note_content = "Check [pdf annotation](pdf://subfolder/document.pdf?page=2&annotation=ann-123) and raw link pdf://subfolder/document.pdf.";
+        fs::write(root.join(note_path), note_content).unwrap();
+
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, root.to_str().unwrap()).unwrap();
+
+        // Save doc metadata in db
+        state
+            .save_pdf_document("doc-id-123", pdf_path, 100, Some(12345))
+            .unwrap();
+
+        // Cache some text search content for this PDF
+        state
+            .save_pdf_page_text(pdf_path, 2, "Important cached text needle")
+            .unwrap();
+
+        // Save annotation with linked note path pointing to note.md
+        let ann = crate::pdf::PdfAnnotation {
+            id: "ann-123".to_string(),
+            document_id: "doc-id-123".to_string(),
+            page_index: 2,
+            kind: crate::pdf::PdfAnnotationKind::Highlight,
+            color: crate::pdf::PdfAnnotationColor::Yellow,
+            selected_text: "Important highlight".to_string(),
+            ranges: vec![],
+            rects: vec![],
+            note: None,
+            linked_note_path: Some(note_path.to_string()),
+            markdown_anchor: None,
+            tags: vec!["tag1".to_string()],
+            status: crate::pdf::PdfAnnotationStatus::Unresolved,
+            created_at: 0,
+            updated_at: 0,
+        };
+        state.save_pdf_annotation(&ann).unwrap();
+
+        // 3. Rename the PDF file
+        let new_pdf_path = "subfolder/new_document.pdf";
+        rename_entry(&state, pdf_path, new_pdf_path).unwrap();
+
+        // Check if database updated vault_relative_path in pdf_documents
+        {
+            let db = state.db.lock().unwrap();
+            let mut stmt = db.prepare("SELECT vault_relative_path FROM pdf_documents WHERE document_id = 'doc-id-123'").unwrap();
+            let db_path: String = stmt.query_row([], |r| r.get(0)).unwrap();
+            assert_eq!(db_path, new_pdf_path);
+
+            // Check if pdf_text_search path updated
+            let mut stmt2 = db
+                .prepare("SELECT path FROM pdf_text_search WHERE content LIKE '%needle%'")
+                .unwrap();
+            let fts_path: String = stmt2.query_row([], |r| r.get(0)).unwrap();
+            assert_eq!(fts_path, new_pdf_path);
+        }
+
+        // Check if note.md links got updated to new PDF path!
+        let updated_note = fs::read_to_string(root.join(note_path)).unwrap();
+        assert!(
+            updated_note.contains("pdf://subfolder/new_document.pdf?page=2&annotation=ann-123")
+        );
+        assert!(updated_note.contains("pdf://subfolder/new_document.pdf."));
+
+        // 4. Rename the markdown note
+        let new_note_path = "new_note.md";
+        rename_entry(&state, note_path, new_note_path).unwrap();
+
+        // Check if pdf_annotations linked_note_path was updated to new_note.md
+        let anns = state.get_pdf_annotations("doc-id-123", None).unwrap();
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].linked_note_path.as_deref(), Some(new_note_path));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1231,5 +1478,77 @@ mod tests {
         assert_eq!(results[0].page_index, Some(2));
         assert!(results[0].context.contains("Cached PDF text"));
         assert!(results[0].context.contains("needle"));
+    }
+
+    #[test]
+    fn test_pdf_cache_freshness_and_invalidation() {
+        let root = unique_temp_dir("pdf_cache_freshness");
+        fs::create_dir_all(&root).unwrap();
+
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, root.to_str().unwrap()).unwrap();
+
+        let pdf_path = "sample.pdf";
+        let abs_path = root.join(pdf_path);
+
+        // 1. Create file on disk
+        fs::write(&abs_path, "Initial Content").unwrap();
+        let metadata = fs::metadata(&abs_path).unwrap();
+        let size = metadata.len();
+        let mtime = metadata
+            .modified()
+            .unwrap()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Save PDF document details in DB
+        state
+            .save_pdf_document("doc-hash-1", pdf_path, size, Some(mtime))
+            .unwrap();
+
+        // Initially no page is cached, so cache is empty (not fresh)
+        assert!(!state.validate_and_invalidate_pdf_cache(pdf_path).unwrap());
+
+        // Cache page text
+        state
+            .save_pdf_page_text(pdf_path, 0, "Initial Page Text Content")
+            .unwrap();
+
+        // Cache should now be fresh
+        assert!(state.validate_and_invalidate_pdf_cache(pdf_path).unwrap());
+
+        // Verify search finds it
+        let results = search_cached_pdf_text(&state, "Content", &[pdf_path.to_string()]).unwrap();
+        assert_eq!(results.len(), 1);
+
+        // 2. Modify the file (size changes)
+        fs::write(&abs_path, "Newer Content with different length").unwrap();
+
+        // Cache should be detected as stale and invalidated
+        assert!(!state.validate_and_invalidate_pdf_cache(pdf_path).unwrap());
+
+        // Verify search now finds nothing since cache was cleared
+        let results = search_cached_pdf_text(&state, "Content", &[pdf_path.to_string()]).unwrap();
+        assert_eq!(results.len(), 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_list_all_pdf_files_discovers_unregistered_pdfs() {
+        let root = unique_temp_dir("list_pdf_test");
+        fs::create_dir_all(&root).unwrap();
+
+        // Write a PDF file
+        let pdf_path = root.join("unopened.pdf");
+        fs::write(&pdf_path, "PDF Content").unwrap();
+
+        // Discover
+        let files = list_all_pdf_files(&root).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_name().unwrap(), "unopened.pdf");
+
+        let _ = fs::remove_dir_all(root);
     }
 }

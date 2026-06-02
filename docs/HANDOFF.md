@@ -65,7 +65,7 @@ Implement the multi-month markdown editor and PDF reader synergy plan in
   - Follow Citation locates the link under the editor cursor and triggers navigation.
   - Show Usages queries all referencing markdown files in the vault and opens/focuses the backlinks sidebar.
   - Combined Outline and TOC navigator sidebar implemented to display both Markdown headings and PDF bookmarks simultaneously.
-- Milestone 6 has an initial query-model slice complete:
+- Milestone 6 is complete:
   - Added `UnifiedSearchQuery`, `UnifiedSearchSource`, and `UnifiedSearchRanking` in `core/src/types.rs`.
   - `search_vault_unified` now delegates to `search_vault_unified_query`, preserving existing call sites while enabling typed source selection.
   - Query sources cover markdown content, PDF content, filenames, headings, annotations, and quick notes.
@@ -84,8 +84,40 @@ Implement the multi-month markdown editor and PDF reader synergy plan in
   - Vault-wide registered-PDF search is bounded to 32 documents and 200 results per query, skips the active PDF, and stops collecting once the cap is reached.
   - Global search overlay now shows bounded PDF text search status such as searched document counts and whether document/result caps were reached.
   - Added durable `pdf_text_search` FTS cache table for PDF page text.
-  - Loaded visible PDF page text is written into the durable cache, and registered-PDF global search consults cached page text before falling back to extraction.
-  - Opening a vault now kicks off a bounded background PDF text index pass for registered PDFs, indexing up to 16 documents and 3 pages per document into the durable cache.
+  - Loaded visible PDF page text is written into the durable cache, and vault-wide global PDF search (discovering all PDFs from disk) consults cached page text before falling back to extraction.
+  - Opening a vault now kicks off a bounded background PDF text index pass for all PDFs discovered on disk, indexing up to 16 documents and 3 pages per document into the durable cache.
+  - Optimized background PDF indexing to skip documents whose caches are already fresh and populated.
+- Milestone 7 is complete:
+  - Added new annotation types: Highlights, Underlines (in blue), Strikeouts (in red), notes, tags, and unresolved/resolved status.
+  - Implemented multi-layered annotation filters (color, page, tag, linked note state, and unresolved/resolved status) rendering dynamic compact controls in the annotations panel.
+  - Annotation sidebar action layout keeps `Cite` visible/clickable with the expanded filter controls, including enabled and disabled `iced_test` coverage.
+  - Refactored batch markdown annotation exporter with reading-flow stable ordering `(page_capacity, text_capacity, timestamp)` including all metadata fields.
+  - Built a reference repair engine in `rename_entry` that updates FTS searches, PDF metadata, annotation link bindings, and rewrites markdown link URLs in-place across the vault.
+  - SQLite schema migration setup automatically updates tables to preserve tags and status fields.
+- Milestone 8 is complete:
+  - Added Citation Palette sourced from selection, annotations, and SQLite FTS search matches.
+  - Implemented collect-excerpts queue mode to collect citations and batch insert them into markdown files.
+  - Added templating support for generated linked-note sections with Default, Detailed, and Minimal layout options.
+  - Added page-range reading session notes with customizable date, page-range, and session notes formatting.
+  - Guaranteed idempotency for all templates and reading session note appends.
+- Milestone 9 has an initial editor hot-path slice complete:
+  - Large code/table/math block draw metadata in `native/src/editor/renderer.rs` now scans a bounded visible/hovered-line window instead of scanning entire blocks every frame.
+  - Code/table captions now use cached `block_ranges` starts instead of searching the whole document during draw.
+  - Horizontal scrollbar width checks use the hovered line as a bounded scan hint.
+  - Regression tests cover the bounded scan cap and large-block width hint behavior.
+  - PDF render scheduling now uses named preload/cap constants, derives viewport ranges from `PdfLayout::visible_range`, and caps accidental large render ranges before queueing page render/text work.
+  - CI-stable performance smoke tests now assert logarithmic operation counters for large `HeightTree` and `PdfLayout` lookups instead of relying on wall-clock timing.
+- Milestone 10 has an initial command-palette slice complete:
+  - Command palette now exposes unified cross-pane navigation back/forward commands.
+  - `Shortcut::NavBack` and `Shortcut::NavForward` dispatch through the existing unified `PdfNavBack`/`PdfNavForward` handlers.
+  - `iced_test` coverage verifies command-palette clicks emit the new navigation shortcuts.
+- Milestone 10 has an initial UI state slice complete:
+  - TOC panel now renders its empty state whenever the panel is visible instead of being suppressed when both markdown outline and PDF TOC are empty.
+  - `iced_test` coverage verifies TOC, backlinks, and global-search empty/error states, including PDF search status text.
+- Milestone 10 has an initial keyboard-first citation slice complete:
+  - Citation palette input is focused when opened from shortcut or command dispatch.
+  - Pressing Enter in the citation palette submits the first result.
+  - App-level coverage verifies first-result submission queues citations in excerpt mode.
 
 ## Completed Files
 
@@ -97,11 +129,18 @@ Implement the multi-month markdown editor and PDF reader synergy plan in
 - `native/src/views/pdf_viewer.rs`
 - `native/src/views/modals.rs`
 - `native/src/views/pdf_annotations.rs`
+- `native/src/views/command_palette.rs`
+- `native/src/views/search.rs`
+- `native/src/views/backlinks.rs`
 - `native/Cargo.toml`
 - `Cargo.lock`
 - `native/src/pdf_notes.rs`
 - `native/src/pdf_links.rs`
+- `native/src/views/citation_palette.rs`
 - `native/src/pdf_navigation.rs`
+- `native/src/editor/renderer.rs`
+- `native/src/editor/layout_tree.rs`
+- `native/src/pdf_layout.rs`
 - `native/src/views/toc.rs`
 - `native/src/editor/highlight.rs`
 - `native/src/integrity.rs`
@@ -162,6 +201,32 @@ Focused tests added:
 - `app::tests::registered_pdf_search_targets_skip_active_and_cap_work`
 - `app::tests::pdf_search_status_reports_result_cap_first`
 - `app::tests::registered_pdf_index_targets_cap_documents`
+- `vault::tests::test_pdf_cache_freshness_and_invalidation`
+- `vault::tests::test_list_all_pdf_files_discovers_unregistered_pdfs`
+- `app::tests::test_search_registered_pdf_text_results_does_not_deadlock`
+- `app::tests::test_search_unopened_pdf_discovered_from_disk`
+- `app::tests::test_pdf_toc_navigation_completes_if_already_scrolled`
+- `views::pdf_annotations::tests::test_annotation_filtering`
+- `vault::tests::test_rename_pdf_and_markdown_repairs_references`
+- `views::citation_palette::tests::test_citation_palette_selection_renders_and_clicks`
+- `views::citation_palette::tests::test_citation_palette_annotation_renders_and_clicks`
+- `views::citation_palette::tests::test_citation_palette_search_hit_renders_and_clicks`
+- `app::tests::test_excerpt_mode_queue_and_batch_insert`
+- `pdf_notes::tests::test_templates_linked_note_and_idempotency`
+- `pdf_notes::tests::test_reading_session_and_idempotency`
+- `editor::renderer::tests::bounded_block_scan_range_caps_large_blocks`
+- `editor::renderer::tests::block_content_width_uses_bounded_scan_hint`
+- `app::tests::pdf_render_page_range_caps_accidental_large_spans`
+- `app::tests::pdf_viewport_render_range_uses_visible_pages_plus_small_preload`
+- `editor::layout_tree::tests::large_height_tree_queries_stay_logarithmic`
+- `pdf_layout::tests::large_pdf_layout_page_lookup_stays_logarithmic`
+- `views::command_palette::tests::command_palette_navigation_clicks_emit_cross_pane_shortcuts`
+- `views::toc::tests::empty_toc_renders_empty_state`
+- `views::backlinks::tests::empty_visible_backlinks_panel_renders_empty_state`
+- `views::search::tests::visible_global_search_renders_empty_state_when_query_has_no_results`
+- `views::search::tests::visible_global_search_renders_error_and_pdf_status`
+- `views::citation_palette::tests::citation_palette_input_submits_first_item_message`
+- `app::tests::citation_palette_submit_first_queues_first_item_in_excerpt_mode`
 
 ## Known Worktree State
 
@@ -171,10 +236,12 @@ Focused tests added:
 
 ## Next Best Task
 
-Continue Milestone 6: Unified Search.
+Continue Milestone 10: UX Completion.
 
 Recommended next slice:
-1. Add cache freshness/invalidation for `pdf_text_search` using PDF file size/modified time so stale cached page text is cleared when PDFs change.
+1. Add layout/accessibility coverage for editor-only, PDF-only, split, and synced research modes.
+2. Then audit remaining loading states in split/PDF/editor workflows for any missing user-facing feedback.
+3. Then add any remaining keyboard-first annotation actions not covered by citation palette/excerpt mode.
 
 ## Standards Reminder
 

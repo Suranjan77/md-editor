@@ -371,3 +371,60 @@ fn render_group_section<'a>(
     ]
     .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use md_editor_core::types::UnifiedSearchSource;
+
+    const SOURCES: &[UnifiedSearchSource] = &[
+        UnifiedSearchSource::Filename,
+        UnifiedSearchSource::Heading,
+        UnifiedSearchSource::MarkdownContent,
+        UnifiedSearchSource::PdfContent,
+        UnifiedSearchSource::Annotation,
+        UnifiedSearchSource::QuickNote,
+    ];
+
+    #[test]
+    fn visible_global_search_renders_empty_state_when_query_has_no_results() {
+        let mut ui = iced_test::simulator(view(
+            "missing",
+            "",
+            false,
+            false,
+            0,
+            &[],
+            false,
+            None,
+            true,
+            SOURCES,
+            None,
+        ));
+
+        ui.find("No results found")
+            .expect("visible global search should explain empty query results");
+    }
+
+    #[test]
+    fn visible_global_search_renders_error_and_pdf_status() {
+        let mut ui = iced_test::simulator(view(
+            "query",
+            "",
+            false,
+            false,
+            0,
+            &[],
+            true,
+            Some("Index unavailable"),
+            true,
+            SOURCES,
+            Some("Searched 3 PDFs"),
+        ));
+
+        ui.find("Index unavailable")
+            .expect("global search error should render");
+        ui.find("Searched 3 PDFs")
+            .expect("global search PDF status should render");
+    }
+}
