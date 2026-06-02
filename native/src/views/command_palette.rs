@@ -222,6 +222,7 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::CitationPalette => "Alt C",
         Shortcut::ExcerptModeToggle => "Alt E",
         Shortcut::ExcerptInsertBatch => "Alt I",
+        Shortcut::Submit => "Enter",
     }
 }
 
