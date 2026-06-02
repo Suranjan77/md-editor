@@ -208,6 +208,21 @@ Initial reliability slice complete:
 - Add performance thresholds to CI for hot paths.
 - Add debug assertions or counters for accidental full-document hot-path scans.
 
+Initial editor hot-path slice complete:
+
+- Large code/table/math block draw metadata now scans only a bounded window
+  around visible or hovered lines instead of scanning the full block each frame.
+- Block captions use cached block ranges instead of a full document scan.
+- Horizontal scrollbar width checks use the hovered line as a bounded scan hint.
+- Regression coverage verifies the bounded scan cap and large-block width hint
+  behavior.
+- PDF page rendering now uses named preload/cap constants, viewport scheduling
+  comes from `PdfLayout::visible_range`, and page-range scheduling is capped to
+  prevent accidental full-document render queues.
+- CI-stable performance smoke tests now assert logarithmic operation counters
+  for large editor height-tree lookups and large PDF layout page lookups,
+  avoiding flaky wall-clock thresholds.
+
 ## Milestone 10: UX Completion
 
 - Build and maintain an `iced_test` regression suite for critical UI flows:
@@ -219,6 +234,27 @@ Initial reliability slice complete:
 - Add layouts for editor-only, PDF-only, split, and synced research mode.
 - Add accessibility pass for focus order, labels, contrast, and keyboard
   navigation.
+
+Initial command-palette slice complete:
+
+- Added command-palette entries for unified cross-pane navigation back/forward.
+- Added `iced_test` coverage proving the palette emits the cross-pane
+  navigation shortcuts.
+
+Initial UI state slice complete:
+
+- TOC panel now renders its empty state whenever the panel is visible instead
+  of being suppressed when both markdown outline and PDF TOC are empty.
+- Added `iced_test` coverage for TOC, backlinks, and global-search empty/error
+  states, including PDF search status text.
+
+Initial keyboard-first citation slice complete:
+
+- Citation palette input is focused when opened from shortcut or command
+  dispatch.
+- Pressing Enter in the citation palette submits the first result.
+- App-level coverage verifies first-result submission queues citations in
+  excerpt mode.
 
 ## Milestone 11: Release Hardening
 

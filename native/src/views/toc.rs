@@ -115,3 +115,16 @@ pub fn view<'a>(
     })
     .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_toc_renders_empty_state() {
+        let mut ui = iced_test::simulator(view(&[], &[]));
+
+        ui.find("No outline or TOC available")
+            .expect("visible TOC panel should explain empty outline state");
+    }
+}

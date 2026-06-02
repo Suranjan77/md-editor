@@ -15,6 +15,8 @@ pub enum PdfContextMenuItem {
     HighlightBlue,
     HighlightPink,
     HighlightOrange,
+    UnderlineBlue,
+    StrikeRed,
     SearchSelectedText,
     InsertQuoteLink,
     InsertAnnotationLink { id: String, page: u16 },
@@ -64,9 +66,10 @@ pub enum ModalType {
     PdfContextMenu(PdfContextMenuState),
     CreateFile,
     CreateFolder,
-    Delete(String),    // path
-    QuickNote(String), // annotation ID
-    LinkNote(String),  // annotation ID
+    Delete(String),         // path
+    QuickNote(String),      // annotation ID
+    LinkNote(String),       // annotation ID
+    AnnotationTags(String), // annotation ID
     GoToPage { total: u16, error: Option<String> },
 }
 
@@ -169,6 +172,8 @@ pub(crate) fn view_context_menu<'a>(
             PdfContextMenuItem::HighlightBlue => "Highlight: Blue",
             PdfContextMenuItem::HighlightPink => "Highlight: Pink",
             PdfContextMenuItem::HighlightOrange => "Highlight: Orange",
+            PdfContextMenuItem::UnderlineBlue => "Underline: Blue",
+            PdfContextMenuItem::StrikeRed => "Strikeout: Red",
             PdfContextMenuItem::SearchSelectedText => "Search selected text",
             PdfContextMenuItem::InsertQuoteLink => "Insert quote in note",
             PdfContextMenuItem::InsertAnnotationLink { .. } => "Insert highlight in note",
@@ -250,6 +255,7 @@ pub fn view<'a>(
         ModalType::Delete(_) => "Delete Confirmation",
         ModalType::QuickNote(_) => "Short Note",
         ModalType::LinkNote(_) => "Link Markdown Note",
+        ModalType::AnnotationTags(_) => "Edit Annotation Tags",
     };
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
@@ -277,6 +283,7 @@ pub fn view<'a>(
         _ => {
             let (placeholder, confirm_label) = match modal_type {
                 ModalType::QuickNote(_) => ("Write a short note...", "Save Note"),
+                ModalType::AnnotationTags(_) => ("tag1, tag2, ...", "Save Tags"),
                 ModalType::CreateFile => ("File name...", "Create File"),
                 ModalType::CreateFolder => ("Folder name...", "Create Folder"),
                 _ => ("Enter name...", "Confirm"),

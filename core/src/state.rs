@@ -301,6 +301,42 @@ impl AppState {
         modified_at: Option<i64>,
     ) -> Result<(), String> {
         let db = self.db.lock().map_err(|e| e.to_string())?;
+
+        // Detect if any existing document record for this path has mismatched metadata
+        let mut check_stmt = db
+            .prepare(
+                "SELECT document_id, file_size, modified_at FROM pdf_documents
+                 WHERE vault_relative_path = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut rows = check_stmt
+            .query([vault_relative_path])
+            .map_err(|e| e.to_string())?;
+        let mut changed = false;
+        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            let db_id: String = row.get(0).map_err(|e| e.to_string())?;
+            let db_size: i64 = row.get(1).map_err(|e| e.to_string())?;
+            let db_mtime: Option<i64> = row.get(2).map_err(|e| e.to_string())?;
+            if db_id != document_id || db_size != file_size as i64 || db_mtime != modified_at {
+                changed = true;
+                break;
+            }
+        }
+
+        if changed {
+            // Invalidate cached page text and remove conflicting documents for this path
+            db.execute(
+                "DELETE FROM pdf_text_search WHERE path = ?1",
+                rusqlite::params![vault_relative_path],
+            )
+            .map_err(|e| format!("Failed to clear stale cached text: {e}"))?;
+            db.execute(
+                "DELETE FROM pdf_documents WHERE vault_relative_path = ?1",
+                rusqlite::params![vault_relative_path],
+            )
+            .map_err(|e| format!("Failed to clear stale documents: {e}"))?;
+        }
+
         let now = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -325,6 +361,95 @@ impl AppState {
         .map_err(|e| format!("Failed to save pdf document: {e}"))?;
 
         Ok(())
+    }
+
+    pub fn validate_and_invalidate_pdf_cache(
+        &self,
+        vault_relative_path: &str,
+    ) -> Result<bool, String> {
+        let db = self.db.lock().map_err(|e| e.to_string())?;
+
+        // 1. Resolve path
+        let vault_root = self.vault_root.lock().map_err(|e| e.to_string())?;
+        let Some(ref root) = *vault_root else {
+            return Ok(false);
+        };
+        let abs_path = root.join(vault_relative_path);
+
+        // 2. Get disk metadata
+        let metadata = match std::fs::metadata(&abs_path) {
+            Ok(m) => m,
+            Err(_) => {
+                // File does not exist on disk, clear cache and document records
+                db.execute(
+                    "DELETE FROM pdf_text_search WHERE path = ?1",
+                    rusqlite::params![vault_relative_path],
+                )
+                .map_err(|e| e.to_string())?;
+                db.execute(
+                    "DELETE FROM pdf_documents WHERE vault_relative_path = ?1",
+                    rusqlite::params![vault_relative_path],
+                )
+                .map_err(|e| e.to_string())?;
+                return Ok(false);
+            }
+        };
+        let disk_size = metadata.len() as i64;
+        let disk_mtime = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64);
+
+        // 3. Query DB for matching document
+        let mut stmt = db
+            .prepare(
+                "SELECT file_size, modified_at FROM pdf_documents
+                 WHERE vault_relative_path = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut rows = stmt
+            .query([vault_relative_path])
+            .map_err(|e| e.to_string())?;
+
+        let mut matched = false;
+        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            let db_size: i64 = row.get(0).map_err(|e| e.to_string())?;
+            let db_mtime: Option<i64> = row.get(1).map_err(|e| e.to_string())?;
+            if db_size == disk_size && db_mtime == disk_mtime {
+                matched = true;
+                break;
+            }
+        }
+
+        if matched {
+            // Check if there actually are cached pages
+            let mut count_stmt = db
+                .prepare("SELECT COUNT(*) FROM pdf_text_search WHERE path = ?1")
+                .map_err(|e| e.to_string())?;
+            let count: i64 = count_stmt
+                .query_row([vault_relative_path], |r| r.get(0))
+                .unwrap_or(0);
+            if count > 0 {
+                return Ok(true);
+            } else {
+                return Ok(false);
+            }
+        }
+
+        // Cache is stale. Invalidate.
+        db.execute(
+            "DELETE FROM pdf_text_search WHERE path = ?1",
+            rusqlite::params![vault_relative_path],
+        )
+        .map_err(|e| e.to_string())?;
+        db.execute(
+            "DELETE FROM pdf_documents WHERE vault_relative_path = ?1",
+            rusqlite::params![vault_relative_path],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(false)
     }
 
     pub fn get_pdf_path_by_id(&self, document_id: &str) -> Result<Option<String>, String> {

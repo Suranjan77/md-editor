@@ -48,25 +48,36 @@ impl HeightTree {
 
     /// Prefix sum of heights from line 0 up to idx (exclusive)
     pub fn prefix_sum(&self, idx: usize) -> f32 {
+        self.prefix_sum_with_steps(idx).0
+    }
+
+    fn prefix_sum_with_steps(&self, idx: usize) -> (f32, usize) {
         let mut sum = 0.0;
         let mut i = idx;
+        let mut steps = 0;
         while i > 0 {
             sum += self.tree[i];
             let step = i & (!i + 1);
             i -= step;
+            steps += 1;
         }
-        sum
+        (sum, steps)
     }
 
     /// Finds the line index whose visual range [start_y, start_y + height] contains y.
     /// This uses O(log N) binary lifting on the Fenwick tree.
     pub fn find_line_at_y(&self, y: f32) -> usize {
+        self.find_line_at_y_with_steps(y).0
+    }
+
+    fn find_line_at_y_with_steps(&self, y: f32) -> (usize, usize) {
         if self.heights.is_empty() {
-            return 0;
+            return (0, 0);
         }
         let len = self.heights.len();
         let mut idx = 0;
         let mut sum = 0.0;
+        let mut steps_taken = 0;
 
         let mut step = 1;
         while step <= len {
@@ -84,9 +95,10 @@ impl HeightTree {
                 }
             }
             step >>= 1;
+            steps_taken += 1;
         }
 
-        idx.min(len - 1)
+        (idx.min(len - 1), steps_taken)
     }
 }
 
@@ -115,5 +127,26 @@ mod tests {
         assert_eq!(tree.find_line_at_y(30.0), 2);
         assert_eq!(tree.find_line_at_y(59.9), 2);
         assert_eq!(tree.find_line_at_y(65.0), 2);
+    }
+
+    #[test]
+    fn large_height_tree_queries_stay_logarithmic() {
+        let mut tree = HeightTree::new(50_000);
+        for idx in 0..50_000 {
+            tree.update_height(idx, 24.0);
+        }
+
+        let (prefix, prefix_steps) = tree.prefix_sum_with_steps(49_999);
+        let (line, find_steps) = tree.find_line_at_y_with_steps(prefix);
+
+        assert_eq!(line, 49_999);
+        assert!(
+            prefix_steps <= 32,
+            "prefix sum should remain logarithmic, got {prefix_steps}"
+        );
+        assert!(
+            find_steps <= 32,
+            "line lookup should remain logarithmic, got {find_steps}"
+        );
     }
 }

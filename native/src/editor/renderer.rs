@@ -21,6 +21,7 @@ const TOP_PAD: f32 = 24.0;
 const BASE_LINE_HEIGHT: f32 = 36.0;
 const IMAGE_HEIGHT: f32 = 280.0;
 const HORIZONTAL_SCROLLBAR_GUTTER: f32 = 16.0;
+const HOT_PATH_BLOCK_SCAN_LIMIT: usize = 256;
 
 // ── Widget ───────────────────────────────────────────────────────────
 
@@ -208,40 +209,45 @@ where
     measured_inline_height::<R>(line, math_cache, available_width, is_editing, active_col)
 }
 
-fn get_table_number(
+fn block_number_from_start(
     lines: &[crate::editor::highlight::StyledLine],
-    block_id: usize,
+    start: usize,
+    prefix: &str,
 ) -> Option<usize> {
-    if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id) {
-        if let Some(first_span) = first_line.spans.first() {
-            if let Some(ref id) = first_span.id {
-                if let Some(num_str) = id.strip_prefix("table-") {
-                    if let Ok(num) = num_str.parse::<usize>() {
-                        return Some(num);
-                    }
-                }
-            }
-        }
-    }
-    None
+    let first_line = lines.get(start)?;
+    let first_span = first_line.spans.first()?;
+    let num_str = first_span.id.as_ref()?.strip_prefix(prefix)?;
+    num_str.parse::<usize>().ok()
 }
 
-fn get_code_number(
-    lines: &[crate::editor::highlight::StyledLine],
-    block_id: usize,
-) -> Option<usize> {
-    if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id) {
-        if let Some(first_span) = first_line.spans.first() {
-            if let Some(ref id) = first_span.id {
-                if let Some(num_str) = id.strip_prefix("code-") {
-                    if let Ok(num) = num_str.parse::<usize>() {
-                        return Some(num);
-                    }
-                }
-            }
-        }
+fn bounded_block_scan_range(
+    start: usize,
+    end: usize,
+    preferred_start: usize,
+    preferred_end: usize,
+) -> Option<(usize, usize)> {
+    if start > end {
+        return None;
     }
-    None
+    let preferred_start = preferred_start.clamp(start, end);
+    let preferred_end = preferred_end.clamp(start, end).max(preferred_start);
+    let preferred_len = preferred_end
+        .saturating_sub(preferred_start)
+        .saturating_add(1);
+
+    if preferred_len >= HOT_PATH_BLOCK_SCAN_LIMIT {
+        let scan_end = preferred_start
+            .saturating_add(HOT_PATH_BLOCK_SCAN_LIMIT - 1)
+            .min(end);
+        return Some((preferred_start, scan_end));
+    }
+
+    let remaining = HOT_PATH_BLOCK_SCAN_LIMIT - preferred_len;
+    let before = remaining / 2;
+    let after = remaining - before;
+    let scan_start = preferred_start.saturating_sub(before).max(start);
+    let scan_end = preferred_end.saturating_add(after).min(end);
+    Some((scan_start, scan_end))
 }
 
 fn get_equation_number(
@@ -1110,7 +1116,13 @@ where
                 code_lang: first_line.code_block_lang.clone(),
             };
 
-            for line in &self.lines[start..=end] {
+            let Some((scan_start, scan_end)) =
+                bounded_block_scan_range(start, end, visible_start, visible_end.saturating_sub(1))
+            else {
+                continue;
+            };
+
+            for line in &self.lines[scan_start..=scan_end] {
                 if meta.code_lang.is_none() && line.code_block_lang.is_some() {
                     meta.code_lang = line.code_block_lang.clone();
                 }
@@ -1233,7 +1245,11 @@ where
                 );
 
                 // Draw Table X caption
-                let table_num = get_table_number(self.lines, block_id).unwrap_or(1);
+                let table_num = state
+                    .block_ranges
+                    .get(&block_id)
+                    .and_then(|(start, _)| block_number_from_start(self.lines, *start, "table-"))
+                    .unwrap_or(1);
                 let caption_text = format!("Table {}", table_num);
                 let text_size = 11.0;
                 let caption_font = iced::Font {
@@ -1297,7 +1313,13 @@ where
                     // If it's a code block and not editing, draw the language badge!
                     if meta.is_code && !meta.is_editing {
                         // Draw Listing X caption
-                        let code_num = get_code_number(self.lines, block_id).unwrap_or(1);
+                        let code_num = state
+                            .block_ranges
+                            .get(&block_id)
+                            .and_then(|(start, _)| {
+                                block_number_from_start(self.lines, *start, "code-")
+                            })
+                            .unwrap_or(1);
                         let caption_text = format!("Listing {}", code_num);
                         let text_size = 11.0;
                         let caption_font = iced::Font {
@@ -2395,7 +2417,9 @@ where
                 };
                 let mut block_table = false;
                 let mut block_math = false;
-                if let Some(first_line) = self.lines.iter().find(|l| l.block_id == block_id) {
+                if let Some((start, _)) = state.block_ranges.get(&block_id)
+                    && let Some(first_line) = self.lines.get(*start)
+                {
                     block_table = first_line.is_table_row;
                     block_math = first_line.is_math_block;
                 }
@@ -2408,10 +2432,13 @@ where
                     available_w - 24.0
                 }
                 .max(80.0);
+                let scan_line = self.line_at_widget_y(pos.y, state).unwrap_or(0);
                 let content_w = self.block_content_width::<R>(
                     block_id,
                     _layout.bounds().width,
                     state.is_focused,
+                    Some((scan_line, scan_line)),
+                    state,
                 );
                 let max_scroll = (content_w - viewport_w).max(0.0);
                 if max_scroll <= 0.0 {
@@ -3315,29 +3342,30 @@ impl<'a, Message> Editor<'a, Message> {
         }
     }
 
-    fn block_content_width<R>(&self, block_id: usize, available_width: f32, focused: bool) -> f32
+    fn block_content_width<R>(
+        &self,
+        block_id: usize,
+        available_width: f32,
+        focused: bool,
+        scan_hint: Option<(usize, usize)>,
+        state: &State,
+    ) -> f32
     where
         R: iced::advanced::text::Renderer<Font = iced::Font>,
     {
         let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
         let mut max_width = 0.0_f32;
         let mut table_widths: Vec<f32> = Vec::new();
-        let Some((start, end)) = self
-            .lines
-            .iter()
-            .position(|line| line.block_id == block_id)
-            .map(|start| {
-                let end = self.lines[start..]
-                    .iter()
-                    .position(|line| line.block_id != block_id)
-                    .map(|offset| start + offset.saturating_sub(1))
-                    .unwrap_or_else(|| self.lines.len().saturating_sub(1));
-                (start, end)
-            })
+        let Some(&(start, end)) = state.block_ranges.get(&block_id) else {
+            return (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
+        };
+        let (preferred_start, preferred_end) = scan_hint.unwrap_or((start, end));
+        let Some((scan_start, scan_end)) =
+            bounded_block_scan_range(start, end, preferred_start, preferred_end)
         else {
             return (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
         };
-        for line in &self.lines[start..=end] {
+        for line in &self.lines[scan_start..=scan_end] {
             let is_editing = is_block_editing_line(line, active_block_id, focused);
             if line.is_code_block {
                 let width = line
@@ -3425,6 +3453,7 @@ impl<'a, Message> Editor<'a, Message> {
             viewport_w,
             available_width,
             state.is_focused,
+            Some((line_idx, line_idx)),
             state,
         )
     }
@@ -3440,12 +3469,14 @@ impl<'a, Message> Editor<'a, Message> {
         viewport_w: f32,
         available_width: f32,
         focused: bool,
+        scan_hint: Option<(usize, usize)>,
         state: &State,
     ) -> Option<HorizontalScrollDrag>
     where
         R: iced::advanced::text::Renderer<Font = iced::Font>,
     {
-        let content_w = self.block_content_width::<R>(block_id, available_width, focused);
+        let content_w =
+            self.block_content_width::<R>(block_id, available_width, focused, scan_hint, state);
         if content_w <= viewport_w + 1.0 {
             return None;
         }
@@ -4255,6 +4286,46 @@ mod tests {
     }
 
     #[test]
+    fn bounded_block_scan_range_caps_large_blocks() {
+        let (start, end) = bounded_block_scan_range(0, 49_999, 25_000, 25_000).expect("range");
+
+        assert!(start <= 25_000);
+        assert!(end >= 25_000);
+        assert!(end.saturating_sub(start).saturating_add(1) <= HOT_PATH_BLOCK_SCAN_LIMIT);
+    }
+
+    #[test]
+    fn block_content_width_uses_bounded_scan_hint() {
+        let mut lines = Vec::new();
+        for idx in 0..1_000 {
+            let mut line = make_line(
+                7,
+                vec![StyledSpan::plain(if idx == 500 {
+                    "wide code line far inside large block"
+                } else {
+                    "x"
+                })],
+            );
+            line.is_code_block = true;
+            lines.push(line);
+        }
+        let mut buffer = DocBuffer::from_text(&vec!["x"; 1_000].join("\n"));
+        buffer.execute(EditorCommand::SetCursor { line: 500, col: 0 });
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let editor = editor_for(&buffer, &lines, &image_cache, &math_cache);
+        let mut state = test_state();
+        state.block_ranges.insert(7, (0, 999));
+
+        let width_near =
+            editor.block_content_width::<iced::Renderer>(7, 200.0, true, Some((500, 500)), &state);
+        let width_far =
+            editor.block_content_width::<iced::Renderer>(7, 200.0, true, Some((0, 0)), &state);
+
+        assert!(width_near > width_far);
+    }
+
+    #[test]
     fn test_code_block_badge_logic() {
         use crate::editor::highlight::highlight_markdown;
         let md = "```rust\nfn main() {}\n```";
@@ -4311,14 +4382,24 @@ mod tests {
     fn test_get_table_and_code_number() {
         let md = "Here is a code block:\n```rust\nfn main() {}\n```\nAnd a table:\n| a | b |\n|---|---|\n| 1 | 2 |\nAnother code:\n```\nhello\n```";
         let lines = highlight_markdown(md);
+        let block_start = |block_id| {
+            lines
+                .iter()
+                .position(|line| line.block_id == block_id)
+                .expect("block start")
+        };
 
-        // Find code blocks and tables
-        let first_code_block_id = lines[1].block_id;
-        let table_block_id = lines[5].block_id;
-        let second_code_block_id = lines[10].block_id;
-
-        assert_eq!(get_code_number(&lines, first_code_block_id), Some(1));
-        assert_eq!(get_table_number(&lines, table_block_id), Some(1));
-        assert_eq!(get_code_number(&lines, second_code_block_id), Some(2));
+        assert_eq!(
+            block_number_from_start(&lines, block_start(lines[1].block_id), "code-"),
+            Some(1)
+        );
+        assert_eq!(
+            block_number_from_start(&lines, block_start(lines[5].block_id), "table-"),
+            Some(1)
+        );
+        assert_eq!(
+            block_number_from_start(&lines, block_start(lines[10].block_id), "code-"),
+            Some(2)
+        );
     }
 }
