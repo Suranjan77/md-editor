@@ -11,12 +11,13 @@ next step.
 
 ## Current Objective
 
-Implement the multi-month markdown editor and PDF reader synergy plan in
-`docs/EDITOR_PDF_SYNERGY_ROADMAP.md`, using TDD and the repository standards.
+Implement the multi-month UI and UX improvement plan in
+`docs/UI_UX_IMPROVEMENT_ROADMAP.md`, using TDD and the repository standards.
 
 ## Current State
 
 - Roadmap exists in `docs/EDITOR_PDF_SYNERGY_ROADMAP.md`.
+- UI/UX roadmap exists in `docs/UI_UX_IMPROVEMENT_ROADMAP.md`.
 - Milestone 1 is complete:
   - PDF quote insertion uses `EditorCommand::InsertPdfQuoteLink`.
   - PDF annotation insertion uses `EditorCommand::InsertPdfAnnotationLink`.
@@ -122,6 +123,7 @@ Implement the multi-month markdown editor and PDF reader synergy plan in
 ## Completed Files
 
 - `docs/EDITOR_PDF_SYNERGY_ROADMAP.md`
+- `docs/UI_UX_IMPROVEMENT_ROADMAP.md`
 - `native/src/editor/buffer.rs`
 - `native/src/app.rs`
 - `native/src/views/interactive_pdf.rs`
@@ -232,16 +234,16 @@ Focused tests added:
 
 - `core/pdfium/libpdfium.so` was already modified before this work. Do not
   revert it unless user explicitly asks.
-- Roadmap and handoff docs are new files.
+- UI/UX roadmap and handoff docs were updated in this session.
 
 ## Next Best Task
 
-Continue Milestone 10: UX Completion.
+Start the UI/UX improvement roadmap in `docs/UI_UX_IMPROVEMENT_ROADMAP.md`.
 
 Recommended next slice:
-1. Add layout/accessibility coverage for editor-only, PDF-only, split, and synced research modes.
-2. Then audit remaining loading states in split/PDF/editor workflows for any missing user-facing feedback.
-3. Then add any remaining keyboard-first annotation actions not covered by citation palette/excerpt mode.
+1. Complete Milestone 0: UX Baseline And Test Harness.
+2. Create `docs/UI_UX_AUDIT.md` with current UI components, states, keyboard paths, style sources, and missing tests.
+3. Add `iced_test` helpers for representative app states before broad visual changes.
 
 ## Standards Reminder
 
