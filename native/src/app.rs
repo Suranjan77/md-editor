@@ -4055,6 +4055,7 @@ impl MdEditor {
                 .or(self.active_image_path.as_deref()),
             &self.expanded_folders,
             !self.sidebar_visible,
+            shell_state.persistence.sidebar_width,
         );
 
         let editor_search_active = self.editor_search_is_active();
@@ -4215,7 +4216,7 @@ impl MdEditor {
                 &[]
             };
         let toc_view: Element<Message, Theme, iced::Renderer> = if self.toc_visible {
-            views::toc::view(md_toc, pdf_toc)
+            views::toc::view(md_toc, pdf_toc, shell_state.persistence.workflow_width)
         } else {
             container(Space::new()).width(Length::Fixed(0.0)).into()
         };
@@ -4297,8 +4298,11 @@ impl MdEditor {
 
         let content = column![toolbar, main_content].height(Length::Fill);
 
-        let backlinks_view: Element<Message, Theme, iced::Renderer> =
-            views::backlinks::view(&self.backlinks, self.backlinks_visible);
+        let backlinks_view: Element<Message, Theme, iced::Renderer> = views::backlinks::view(
+            &self.backlinks,
+            self.backlinks_visible,
+            shell_state.persistence.workflow_width,
+        );
 
         let pdf_annotations_view: Element<Message, Theme, iced::Renderer> =
             if self.pdf_annotations_visible && self.active_pdf_path.is_some() {
@@ -4311,17 +4315,24 @@ impl MdEditor {
                     self.pdf_annotations_filter_unresolved,
                     self.focused_annotation_id.as_deref(),
                     self.active_path.is_some(),
+                    shell_state.persistence.workflow_width,
                 )
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
 
-        let layout = row![
-            sidebar,
-            content,
-            pdf_annotations_view,
-            backlinks_view,
-            toc_view
+        let status_bar = views::status_bar::view(_shell_status);
+
+        let layout = column![
+            row![
+                sidebar,
+                content,
+                pdf_annotations_view,
+                backlinks_view,
+                toc_view
+            ]
+            .height(Length::Fill),
+            status_bar
         ]
         .height(Length::Fill);
 
@@ -7444,6 +7455,21 @@ mod tests {
     }
 
     #[test]
+    fn app_shell_status_bar_active_pane_indicators_render() {
+        let app_md = app_with_markdown_file();
+        let mut ui_md = iced_test::simulator(app_md.view());
+        ui_md
+            .find("EDITOR")
+            .expect("should render EDITOR active pane indicator");
+
+        let app_pdf = app_with_pdf_file();
+        let mut ui_pdf = iced_test::simulator(app_pdf.view());
+        ui_pdf
+            .find("PDF")
+            .expect("should render PDF active pane indicator");
+    }
+
+    #[test]
     fn app_shell_persistence_reflects_visible_panels_and_window_width() {
         let mut app = app_with_split_research();
         app.backlinks_visible = true;
@@ -8864,7 +8890,7 @@ mod tests {
             line: 12,
         }];
 
-        let _element = views::toc::view(&md_toc, &pdf_toc);
+        let _element = views::toc::view(&md_toc, &pdf_toc, 250.0);
     }
 
     #[test]

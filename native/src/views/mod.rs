@@ -9,6 +9,7 @@ pub mod pdf_annotations;
 pub mod pdf_viewer;
 pub mod search;
 pub mod sidebar;
+pub mod status_bar;
 pub mod toast;
 pub mod toc;
 pub mod toolbar;

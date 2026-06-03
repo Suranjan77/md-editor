@@ -18,16 +18,17 @@ pub fn get_toc(lines: &[crate::editor::highlight::StyledLine]) -> Vec<TocEntry> 
 pub fn view<'a>(
     md_toc: &'a [TocEntry],
     pdf_toc: &'a [TocEntry],
+    width: f32,
 ) -> Element<'a, Message, Theme, Renderer> {
     let title = text("Outline & TOC")
         .size(16)
         .font(BOLD_FONT)
         .color(theme::TEXT_PRIMARY);
 
-    let mut content = column![].spacing(12);
-
     let has_md = !md_toc.is_empty();
     let has_pdf = !pdf_toc.is_empty();
+
+    let mut content = column![].spacing(12);
 
     if has_md {
         content = content.push(
@@ -102,7 +103,7 @@ pub fn view<'a>(
         ]
         .padding(15),
     )
-    .width(Length::Fixed(250.0))
+    .width(Length::Fixed(width))
     .height(Length::Fill)
     .style(|_| container::Style {
         background: Some(iced::Background::Color(theme::BG_SECONDARY)),
@@ -122,7 +123,7 @@ mod tests {
 
     #[test]
     fn empty_toc_renders_empty_state() {
-        let mut ui = iced_test::simulator(view(&[], &[]));
+        let mut ui = iced_test::simulator(view(&[], &[], 250.0));
 
         ui.find("No outline or TOC available")
             .expect("visible TOC panel should explain empty outline state");

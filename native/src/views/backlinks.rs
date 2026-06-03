@@ -8,6 +8,7 @@ use crate::theme;
 pub fn view<'a>(
     backlinks: &'a [md_editor_core::types::BacklinkItem],
     visible: bool,
+    width: f32,
 ) -> Element<'a, Message, Theme, Renderer> {
     if !visible {
         return container(text("")).width(Length::Fixed(0.0)).into();
@@ -67,7 +68,7 @@ pub fn view<'a>(
         column![header, count_text].spacing(4).padding([12, 14]),
         scrollable(list.padding([0, 14])).height(Length::Fill),
     ]
-    .width(Length::Fixed(220.0));
+    .width(Length::Fixed(width));
 
     container(content)
         .style(|_theme| container::Style {
@@ -89,7 +90,7 @@ mod tests {
 
     #[test]
     fn empty_visible_backlinks_panel_renders_empty_state() {
-        let mut ui = iced_test::simulator(view(&[], true));
+        let mut ui = iced_test::simulator(view(&[], true, 220.0));
 
         ui.find("No backlinks found")
             .expect("visible backlinks panel should explain empty backlink state");
