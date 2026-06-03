@@ -200,6 +200,7 @@ pub fn view<'a>(
     active_path: Option<&'a str>,
     expanded_folders: &'a BTreeSet<String>,
     collapsed: bool,
+    width: f32,
 ) -> Element<'a, Message, Theme, Renderer> {
     if collapsed {
         return container(Space::new()).width(Length::Fixed(0.0)).into();
@@ -238,7 +239,7 @@ pub fn view<'a>(
             .padding([0, 8])
             .height(Length::Fill)
     ]
-    .width(Length::Fixed(260.0));
+    .width(Length::Fixed(width));
 
     container(content)
         .style(|_| container::Style {

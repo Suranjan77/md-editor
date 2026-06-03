@@ -310,6 +310,7 @@ pub fn view<'a>(
     filter_unresolved: Option<bool>,
     focused_id: Option<&'a str>,
     can_insert_annotation_link: bool,
+    width: f32,
 ) -> Element<'a, Message, Theme, Renderer> {
     let title = text("Annotations")
         .size(16)
@@ -740,7 +741,7 @@ pub fn view<'a>(
         ]
         .padding(12),
     )
-    .width(Length::Fixed(270.0))
+    .width(Length::Fixed(width))
     .height(Length::Fill)
     .style(|_| container::Style {
         background: Some(iced::Background::Color(theme::BG_SECONDARY)),
@@ -796,6 +797,7 @@ mod tests {
             None,
             Some("ann-1"),
             true,
+            270.0,
         ));
 
         ui.click(" Cite").expect("Cite button should exist");
@@ -819,6 +821,7 @@ mod tests {
             None,
             Some("ann-1"),
             false,
+            270.0,
         ));
 
         ui.click(" Cite")
@@ -863,6 +866,7 @@ mod tests {
             None,
             None,
             false,
+            270.0,
         ));
         assert!(ui_color.find("\"YellowQuote\"").is_ok());
         assert!(ui_color.find("\"GreenQuote\"").is_err());
@@ -877,6 +881,7 @@ mod tests {
             None,
             None,
             false,
+            270.0,
         ));
         assert!(ui_page.find("\"GreenQuote\"").is_ok());
         assert!(ui_page.find("\"YellowQuote\"").is_err());
@@ -891,6 +896,7 @@ mod tests {
             None,
             None,
             false,
+            270.0,
         ));
         assert!(ui_tag.find("\"GreenQuote\"").is_ok());
         assert!(ui_tag.find("\"YellowQuote\"").is_err());
@@ -905,6 +911,7 @@ mod tests {
             None,
             None,
             false,
+            270.0,
         ));
         assert!(ui_linked.find("\"GreenQuote\"").is_ok());
         assert!(ui_linked.find("\"YellowQuote\"").is_err());
@@ -919,6 +926,7 @@ mod tests {
             Some(false),
             None,
             false,
+            270.0,
         ));
         assert!(ui_unresolved.find("\"GreenQuote\"").is_ok());
         assert!(ui_unresolved.find("\"YellowQuote\"").is_err());

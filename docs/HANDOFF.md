@@ -131,7 +131,7 @@ Implement the multi-month UI and UX improvement plan in
   - Extended focus-target coverage to verify rendered file search, global search, PDF search, command palette, and citation palette input IDs.
   - Added large-annotation filter baseline counter coverage; current annotation filtering is explicitly measured as a linear pass with stable sorted output.
   - Added `docs/UI_UX_RELEASE_CHECKLIST.md` and linked it from launch/features docs for layout overlap, keyboard traps, labels, contrast, stale loading, reduced motion, and platform checks.
-- UI/UX roadmap Milestone 1 has an initial app-shell model slice complete:
+- UI/UX roadmap Milestone 1 is complete:
   - Added `docs/APP_SHELL_SPEC.md` defining work zones, layout modes, panel persistence rules, active-pane rules, command groups, status-surface direction, and open integration work.
   - Added `native/src/app_shell.rs` with a tested pure app-shell state model covering layout-mode derivation, split prerequisites, search/palette override, panel width clamping, narrow-window collapse, and command groups.
   - `MdEditor::view` now derives an `AppShellState` snapshot and command-group set without changing rendered behavior, keeping the shell model live for incremental integration.
@@ -140,7 +140,10 @@ Implement the multi-month UI and UX improvement plan in
   - Added compact `app_shell_persistence` config storage for sidebar collapsed state, workflow tab, split ratio, reference width, and last focused pane.
   - User-driven shell changes now save persistence on sidebar/workflow toggles, split toggles, split-resizer completion, Show Usages, and active-pane changes.
   - Added an initial app-shell status model covering save state, search/PDF status text, active pane, toast, and background errors.
-  - `MdEditor::view` now derives the shell status snapshot without changing rendered behavior, and tests cover dirty markdown, PDF page/zoom labels, search progress, active pane, and toast/error priority.
+  - `MdEditor::view` now derives the shell status snapshot, and tests cover dirty markdown, PDF page/zoom labels, search progress, active pane, and toast/error priority.
+  - Rendered active-pane/status indicators through a unified status surface at the bottom of the window using `AppShellStatus`.
+  - Replaced remaining fixed sidebar/panel width assumptions in sidebar, backlinks, outline TOC, and annotations view with the persisted shell width model.
+  - Added layout integration and active-pane rendering simulator tests.
 
 ## Completed Files
 
@@ -177,6 +180,7 @@ Implement the multi-month UI and UX improvement plan in
 - `docs/UI_UX_RELEASE_CHECKLIST.md`
 - `docs/APP_SHELL_SPEC.md`
 - `native/src/app_shell.rs`
+- `native/src/views/status_bar.rs`
 
 ## Tests And Checks
 
@@ -272,6 +276,7 @@ Focused tests added:
 - `app_shell::tests::search_and_palette_modes_override_document_layout`
 - `app_shell::tests::persistence_clamps_widths_and_narrow_window_collapses_sidebars`
 - `app_shell::tests::command_groups_match_layout_context`
+- `app::tests::app_shell_status_bar_active_pane_indicators_render`
 
 ## Known Worktree State
 
@@ -281,12 +286,11 @@ Focused tests added:
 
 ## Next Best Task
 
-Continue Milestone 1 in `docs/UI_UX_IMPROVEMENT_ROADMAP.md`.
+Continue Milestone 2 (Visual Design System) in `docs/UI_UX_IMPROVEMENT_ROADMAP.md`.
 
 Recommended next slice:
-1. Render active-pane/status indicators through a unified status surface using `AppShellStatus`.
-2. Replace remaining fixed sidebar width assumptions with the persisted shell width model.
-3. Add active-pane indicator tests once UI renders the indicator.
+1. Define design tokens for spacing, typography scale, border radius, colors, focus rings, shadows, divider strength, and semantic states.
+2. Move reusable colors and component metrics into `native/src/theme.rs` or view-local style helpers to avoid scattering raw colors.
 
 ## Standards Reminder
 
