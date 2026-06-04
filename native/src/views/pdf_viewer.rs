@@ -187,7 +187,7 @@ pub fn search_bar<'a>(
 
     container(
         row![
-            icons::view(Icon::Search, theme::ACCENT, 18.0),
+            icons::view(Icon::Search, theme::accent(), 18.0),
             search_input,
             checkbox(regex)
                 .label("Regex")
@@ -197,11 +197,11 @@ pub fn search_bar<'a>(
                 .label("Case")
                 .on_toggle(Message::SearchMatchCaseToggled)
                 .size(14),
-            button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
+            button(icons::view(Icon::ChevronUp, theme::text_muted(), 16.0))
                 .on_press(Message::SearchPrevious)
                 .padding(8)
                 .style(button::text),
-            button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
+            button(icons::view(Icon::ChevronDown, theme::text_muted(), 16.0))
                 .on_press(Message::SearchNext)
                 .padding(8)
                 .style(button::text),
@@ -220,8 +220,8 @@ pub fn search_bar<'a>(
                     },
             })
             .size(12)
-            .color(theme::TEXT_MUTED),
-            button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
+            .color(theme::text_muted()),
+            button(icons::view(Icon::X, theme::text_muted(), 16.0))
                 .on_press(Message::SearchClose)
                 .padding(8)
                 .style(button::text),
@@ -232,9 +232,9 @@ pub fn search_bar<'a>(
     )
     .width(Length::Fill)
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+        background: Some(iced::Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER,
+            color: theme::border(),
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -315,9 +315,9 @@ pub fn toolbar<'a>(
         row![
             container(
                 row![
-                    text("Highlight").size(12).color(theme::TEXT_MUTED),
+                    text("Highlight").size(12).color(theme::text_muted()),
                     color_row,
-                    button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
+                    button(icons::view(Icon::X, theme::text_muted(), 14.0))
                         .on_press(Message::PdfSelectionCleared)
                         .padding(5)
                         .style(button::text),
@@ -327,9 +327,9 @@ pub fn toolbar<'a>(
             )
             .padding([4, 8])
             .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                background: Some(iced::Background::Color(theme::bg_primary())),
                 border: iced::Border {
-                    color: theme::BORDER,
+                    color: theme::border(),
                     width: 1.0,
                     radius: 6.0.into(),
                 },
@@ -344,8 +344,8 @@ pub fn toolbar<'a>(
     let annotation_controls = if let Some(ann) = focused_annotation {
         let note_btn = button(
             row![
-                icons::view(Icon::FileText, theme::TEXT_PRIMARY, 14.0),
-                text(" Note").size(12).color(theme::TEXT_PRIMARY)
+                icons::view(Icon::FileText, theme::text_primary(), 14.0),
+                text(" Note").size(12).color(theme::text_primary())
             ]
             .align_y(Alignment::Center),
         )
@@ -359,8 +359,8 @@ pub fn toolbar<'a>(
         let cite_btn = if can_insert_annotation_link {
             button(
                 row![
-                    icons::view(Icon::FileText, theme::ACCENT, 14.0),
-                    text(" Cite").size(12).color(theme::ACCENT)
+                    icons::view(Icon::FileText, theme::accent(), 14.0),
+                    text(" Cite").size(12).color(theme::accent())
                 ]
                 .align_y(Alignment::Center),
             )
@@ -370,8 +370,8 @@ pub fn toolbar<'a>(
         } else {
             button(
                 row![
-                    icons::view(Icon::FileText, theme::TEXT_MUTED, 14.0),
-                    text(" Cite").size(12).color(theme::TEXT_MUTED)
+                    icons::view(Icon::FileText, theme::text_muted(), 14.0),
+                    text(" Cite").size(12).color(theme::text_muted())
                 ]
                 .align_y(Alignment::Center),
             )
@@ -383,8 +383,8 @@ pub fn toolbar<'a>(
             if !path.is_empty() {
                 button(
                     row![
-                        icons::view(Icon::FolderOpen, theme::ACCENT, 14.0),
-                        text(" Open Note").size(12).color(theme::ACCENT)
+                        icons::view(Icon::FolderOpen, theme::accent(), 14.0),
+                        text(" Open Note").size(12).color(theme::accent())
                     ]
                     .align_y(Alignment::Center),
                 )
@@ -394,8 +394,8 @@ pub fn toolbar<'a>(
             } else {
                 button(
                     row![
-                        icons::view(Icon::Folder, theme::TEXT_MUTED, 14.0),
-                        text(" Link Note").size(12).color(theme::TEXT_MUTED)
+                        icons::view(Icon::Folder, theme::text_muted(), 14.0),
+                        text(" Link Note").size(12).color(theme::text_muted())
                     ]
                     .align_y(Alignment::Center),
                 )
@@ -406,8 +406,8 @@ pub fn toolbar<'a>(
         } else {
             button(
                 row![
-                    icons::view(Icon::Folder, theme::TEXT_MUTED, 14.0),
-                    text(" Link Note").size(12).color(theme::TEXT_MUTED)
+                    icons::view(Icon::Folder, theme::text_muted(), 14.0),
+                    text(" Link Note").size(12).color(theme::text_muted())
                 ]
                 .align_y(Alignment::Center),
             )
@@ -426,7 +426,7 @@ pub fn toolbar<'a>(
         .style(button::text);
 
         row![
-            text("Highlight:").size(12).color(theme::TEXT_MUTED),
+            text("Highlight:").size(12).color(theme::text_muted()),
             note_btn,
             cite_btn,
             link_btn,
@@ -441,9 +441,9 @@ pub fn toolbar<'a>(
     container(
         row![
             button(text("☰").size(14).color(if toc_visible {
-                theme::ACCENT
+                theme::accent()
             } else {
-                theme::TEXT_MUTED
+                theme::text_muted()
             }))
             .on_press(Message::ToggleTOC)
             .padding(8)
@@ -451,9 +451,9 @@ pub fn toolbar<'a>(
             button(icons::view(
                 Icon::FileText,
                 if annotations_sidebar_visible {
-                    theme::ACCENT
+                    theme::accent()
                 } else {
-                    theme::TEXT_MUTED
+                    theme::text_muted()
                 },
                 14.0
             ))
@@ -470,33 +470,33 @@ pub fn toolbar<'a>(
                 .style(button::text),
             text(format!("{:.0}%", zoom * 100.0))
                 .size(12)
-                .color(theme::TEXT_MUTED),
+                .color(theme::text_muted()),
             button(text("+").size(16))
                 .on_press(Message::PdfZoomChanged((zoom + 0.1).min(4.0)))
                 .padding([4, 10])
                 .style(button::text),
             button(text("Fit W").size(12).color(if fit_to_width {
-                theme::ACCENT
+                theme::accent()
             } else {
-                theme::TEXT_MUTED
+                theme::text_muted()
             }),)
             .on_press(Message::PdfFitToWidth)
             .padding([4, 10])
             .style(button::text),
             button(text("Fit P").size(12).color(if fit_to_page {
-                theme::ACCENT
+                theme::accent()
             } else {
-                theme::TEXT_MUTED
+                theme::text_muted()
             }),)
             .on_press(Message::PdfFitToPage)
             .padding([4, 10])
             .style(button::text),
-            button(text("Rotate ⟳").size(12).color(theme::TEXT_MUTED),)
+            button(text("Rotate ⟳").size(12).color(theme::text_muted()),)
                 .on_press(Message::PdfRotateClockwise)
                 .padding([4, 10])
                 .style(button::text),
             Space::new().width(Length::Fill),
-            button(text(page_label).size(12).color(theme::TEXT_SECONDARY))
+            button(text(page_label).size(12).color(theme::text_secondary()))
                 .on_press(Message::PdfGoToPage)
                 .padding(0)
                 .style(button::text),
@@ -507,9 +507,9 @@ pub fn toolbar<'a>(
     )
     .width(Length::Fill)
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+        background: Some(iced::Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER,
+            color: theme::border(),
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -537,13 +537,13 @@ pub fn view_continuous<'a>(
     viewport_height: f32,
 ) -> Element<'a, Message, Theme, Renderer> {
     if pages.is_empty() {
-        return container(text("Loading PDF...").color(theme::TEXT_MUTED).size(14))
+        return container(text("Loading PDF...").color(theme::text_muted()).size(14))
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
             .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                background: Some(iced::Background::Color(theme::bg_primary())),
                 ..Default::default()
             })
             .into();
@@ -695,7 +695,7 @@ pub fn view_continuous<'a>(
             page_list = page_list.push(
                 container(
                     text(format!("{}", usize::from(page_index) + 1))
-                        .color(theme::TEXT_MUTED)
+                        .color(theme::text_muted())
                         .size(16),
                 )
                 .width(Length::Fixed(display_size.0))
@@ -703,9 +703,9 @@ pub fn view_continuous<'a>(
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
                 .style(|_| container::Style {
-                    background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+                    background: Some(iced::Background::Color(theme::bg_secondary())),
                     border: iced::Border {
-                        color: theme::BORDER,
+                        color: theme::border(),
                         width: 1.0,
                         radius: 0.0.into(),
                     },
@@ -723,7 +723,7 @@ pub fn view_continuous<'a>(
         .width(Length::Fill)
         .center_x(Length::Fill)
         .style(|_| container::Style {
-            background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+            background: Some(iced::Background::Color(theme::bg_primary())),
             ..Default::default()
         })
         .into()

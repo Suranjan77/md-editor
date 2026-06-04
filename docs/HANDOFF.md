@@ -1,6 +1,6 @@
 # Live Handoff
 
-Last updated: 2026-06-02
+Last updated: 2026-06-04
 
 ## Purpose
 
@@ -26,7 +26,7 @@ Implement the multi-month UI and UX improvement plan in
   - PDF/Markdown panes split view correctly placed.
   - Delimiters `?` and `#` both supported in `pdf_links.rs`.
   - PDF stuck in loading bug fixed.
-- Milestone 2 is complete/partially complete:
+- Milestone 2 is complete:
   - Reference link parsing support in `highlight.rs`.
   - Inline links, emphasis in headings, footnote references (`[^1]`), nested emphasis added.
   - Table of Contents outline generation moved to `highlight.rs` with `extract_outline`, decoupling it from the UI thread and preventing parsing errors.
@@ -45,13 +45,24 @@ Implement the multi-month UI and UX improvement plan in
   - Backlink indexing now accepts parser-derived wiki links, local inline markdown links, and `pdf://` links resolved to vault PDF paths, while filtering external schemes and local anchors.
   - Reference-style link definitions `[ref]: target` are now parsed, highlighted as clickable links in the editor, and resolved `[text][ref]` / `[ref]` references index as backlinks using their resolved targets.
   - Regression tests for large-document highlight debounce and stale highlight generation handling are now added and verified.
-- Milestone 3 has an initial reliability slice complete:
+  - Visual Design Tokens specified in `docs/DESIGN_TOKENS.md` and moved into `native/src/theme.rs`.
+  - Added support for three color themes: Premium Dark, Premium Light, and High Contrast.
+  - Dynamic color resolver functions refactored across all 18 view/renderer/highlighting source files.
+  - Exposed theme switching via Command Palette commands (Dark, Light, High Contrast).
+  - Integrated theme preference persistence inside `AppShellPersistence` serialized configuration, automatically restoring theme on launch.
+- Milestone 3 is complete:
+  - Unified command registry in `native/src/command_registry.rs` mapping shortcuts, metadata, default keys, and command groups.
+  - Context-aware validation checks for all commands (e.g. Save disabled if no markdown is open, Split View disabled if markdown/PDF not both open).
+  - Integrated command registry with the Command Palette, styling disabled commands with custom error reasons and grouping/ranking results by workflow.
+  - Automated shortcut conflict detection in `command_registry::detect_shortcut_conflicts` with full test coverage.
   - PDF render and query/search workers are protected by `with_pdfium_access`, a process-wide PDFium mutex wrapper.
   - This fixes `malloc(): smallbin double linked list corrupted` crashes seen when PDF search interleaved with rendering.
   - Regression coverage now runs streamed PDF search while repeatedly rendering the same document.
   - Subagent docs scan found no additional stale PDFium worker/search docs after the architecture updates.
   - Subagent engine review recommends keeping PDFium: current app needs rendering, text geometry, search rects, links, TOC, preview crops, and portable packaging; MuPDF/Poppler remain migration candidates only if instability persists after serialization.
   - Page text cache invalidation by document identity (clearing cached page text on opening a new PDF document) has been verified and tested.
+  - Added new physical keyboard shortcuts in `subscription()` (Ctrl+Alt+B for ToggleBacklinks, Ctrl+Alt+S for StudyTracker, Alt+P for SwitchPane focus).
+  - Implemented routing logic inside `app::update` based on active pane (e.g. routing Ctrl+F contextually to PDF search or Markdown search).
 - Milestone 4 is complete:
   - Added `native/src/integrity.rs` for vault-wide reference checking (detecting missing PDFs, deleted annotations, missing notes, and moved vault paths).
   - Fixed database schemas (`document_id` primary key and non-null required columns) in the integrity checking code and mock database inserts.
@@ -144,6 +155,9 @@ Implement the multi-month UI and UX improvement plan in
   - Rendered active-pane/status indicators through a unified status surface at the bottom of the window using `AppShellStatus`.
   - Replaced remaining fixed sidebar/panel width assumptions in sidebar, backlinks, outline TOC, and annotations view with the persisted shell width model.
   - Added layout integration and active-pane rendering simulator tests.
+- UI/UX roadmap Milestone 4 (Editor UX Polish) is in progress:
+  - Replaced all hardcoded raw layout colors in the editor renderer (`editor/renderer.rs`) with theme-aware dynamic color resolvers.
+  - Implemented subtle active line background highlight using the new `theme::active_line_bg()` resolver.
 
 ## Completed Files
 
@@ -181,6 +195,8 @@ Implement the multi-month UI and UX improvement plan in
 - `docs/APP_SHELL_SPEC.md`
 - `native/src/app_shell.rs`
 - `native/src/views/status_bar.rs`
+- `docs/DESIGN_TOKENS.md`
+- `native/src/command_registry.rs`
 
 ## Tests And Checks
 
@@ -277,6 +293,7 @@ Focused tests added:
 - `app_shell::tests::persistence_clamps_widths_and_narrow_window_collapses_sidebars`
 - `app_shell::tests::command_groups_match_layout_context`
 - `app::tests::app_shell_status_bar_active_pane_indicators_render`
+- `app::tests::test_active_pane_shortcut_routing_and_switching`
 
 ## Known Worktree State
 
@@ -284,13 +301,7 @@ Focused tests added:
   revert it unless user explicitly asks.
 - UI/UX roadmap and handoff docs were updated in this session.
 
-## Next Best Task
-
-Continue Milestone 2 (Visual Design System) in `docs/UI_UX_IMPROVEMENT_ROADMAP.md`.
-
-Recommended next slice:
-1. Define design tokens for spacing, typography scale, border radius, colors, focus rings, shadows, divider strength, and semantic states.
-2. Move reusable colors and component metrics into `native/src/theme.rs` or view-local style helpers to avoid scattering raw colors.
+Continue with Milestone 4 (Editor UX Polish) or other remaining tasks in `docs/UI_UX_IMPROVEMENT_ROADMAP.md`.
 
 ## Standards Reminder
 

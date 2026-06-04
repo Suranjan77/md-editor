@@ -268,18 +268,18 @@ fn kpi_card<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     container(
         column![
-            text(title).size(9).color(theme::TEXT_MUTED).font(BOLD),
-            text(value).size(18).color(theme::ACCENT).font(BOLD),
-            text(sub).size(8).color(theme::TEXT_MUTED),
+            text(title).size(9).color(theme::text_muted()).font(BOLD),
+            text(value).size(18).color(theme::accent()).font(BOLD),
+            text(sub).size(8).color(theme::text_muted()),
         ]
         .spacing(2),
     )
     .padding(10)
     .width(Length::FillPortion(1))
     .style(|_| container::Style {
-        background: Some(Background::Color(theme::BG_SECONDARY)),
+        background: Some(Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER_SUBTLE,
+            color: theme::border_subtle(),
             width: 1.0,
             radius: 6.0.into(),
         },
@@ -313,9 +313,9 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
         let bar_height = ((hours / max_hours) * 88.0).max(4.0);
         let is_today = day == today;
         let color = if is_today {
-            theme::ACCENT_SECONDARY
+            theme::accent_secondary()
         } else {
-            theme::ACCENT
+            theme::accent()
         };
         bars = bars.push(
             column![
@@ -341,9 +341,9 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
                 )
                 .size(9)
                 .color(if is_today {
-                    theme::ACCENT_SECONDARY
+                    theme::accent_secondary()
                 } else {
-                    theme::TEXT_MUTED
+                    theme::text_muted()
                 }),
             ]
             .spacing(5)
@@ -356,7 +356,7 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
         column![
             text("Weekly Activity")
                 .size(13)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(BOLD),
             bars,
         ]
@@ -365,9 +365,9 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
     .padding(12)
     .width(Length::Fill)
     .style(|_| container::Style {
-        background: Some(Background::Color(theme::BG_SECONDARY)),
+        background: Some(Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER_SUBTLE,
+            color: theme::border_subtle(),
             width: 1.0,
             radius: 6.0.into(),
         },
@@ -382,15 +382,15 @@ fn curriculum_panel<'a>(phases: Vec<PhaseConfig>) -> Element<'a, Message, Theme,
         phase_list = phase_list.push(
             container(
                 row![
-                    text(phase.id).size(12).color(theme::ACCENT).font(BOLD),
+                    text(phase.id).size(12).color(theme::accent()).font(BOLD),
                     column![
                         text(phase.title)
                             .size(13)
-                            .color(theme::TEXT_PRIMARY)
+                            .color(theme::text_primary())
                             .font(BOLD),
                         text(format!("{} - {}", phase.year, phase.months))
                             .size(10)
-                            .color(theme::TEXT_MUTED),
+                            .color(theme::text_muted()),
                     ]
                     .spacing(1)
                     .width(Length::Fill),
@@ -400,9 +400,9 @@ fn curriculum_panel<'a>(phases: Vec<PhaseConfig>) -> Element<'a, Message, Theme,
             )
             .padding(8)
             .style(|_| container::Style {
-                background: Some(Background::Color(theme::BG_SECONDARY)),
+                background: Some(Background::Color(theme::bg_secondary())),
                 border: iced::Border {
-                    color: theme::BORDER_SUBTLE,
+                    color: theme::border_subtle(),
                     width: 1.0,
                     radius: 6.0.into(),
                 },
@@ -415,7 +415,7 @@ fn curriculum_panel<'a>(phases: Vec<PhaseConfig>) -> Element<'a, Message, Theme,
         column![
             text("Curriculum Roadmap")
                 .size(14)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(BOLD),
             scrollable(phase_list).height(Length::Fill),
         ]
@@ -448,9 +448,9 @@ fn milestones_panel<'a>(
                     column![
                         text(section.section)
                             .size(12)
-                            .color(theme::ACCENT)
+                            .color(theme::accent())
                             .font(BOLD),
-                        text(body).size(11).color(theme::TEXT_MUTED),
+                        text(body).size(11).color(theme::text_muted()),
                     ]
                     .spacing(2),
                 )
@@ -460,7 +460,7 @@ fn milestones_panel<'a>(
         column![
             text("Projects, Gates, Reading")
                 .size(14)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(BOLD),
             row![
                 kpi_card(
@@ -473,7 +473,7 @@ fn milestones_panel<'a>(
             .spacing(8),
             text("Reading Tracks")
                 .size(13)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(BOLD),
             reading,
         ]
@@ -487,9 +487,9 @@ fn milestones_panel<'a>(
 
 fn panel_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(theme::BG_PRIMARY)),
+        background: Some(Background::Color(theme::bg_primary())),
         border: iced::Border {
-            color: theme::BORDER,
+            color: theme::border(),
             width: 1.0,
             radius: 8.0.into(),
         },
@@ -514,7 +514,7 @@ pub fn view<'a>(
 
     let title = text("Study Tracker")
         .size(18)
-        .color(theme::ACCENT)
+        .color(theme::accent())
         .font(BOLD);
 
     let total_hours = sessions.iter().map(|s| s.hours).sum::<f32>();
@@ -570,18 +570,18 @@ pub fn view<'a>(
             row![
                 text("Timer running")
                     .size(12)
-                    .color(theme::ACCENT_SECONDARY)
+                    .color(theme::accent_secondary())
                     .font(BOLD),
                 Space::new().width(Length::Fill),
-                text("Focus session").size(10).color(theme::TEXT_MUTED),
+                text("Focus session").size(10).color(theme::text_muted()),
             ]
             .align_y(Alignment::Center),
         )
         .padding(10)
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(theme::BG_SURFACE)),
+            background: Some(Background::Color(theme::bg_surface())),
             border: iced::Border {
-                color: theme::ACCENT,
+                color: theme::accent(),
                 width: 1.0,
                 radius: 6.0.into(),
             },
@@ -592,13 +592,13 @@ pub fn view<'a>(
         container(
             text("Ready to log focused study time")
                 .size(12)
-                .color(theme::TEXT_MUTED),
+                .color(theme::text_muted()),
         )
         .padding(10)
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(theme::BG_SECONDARY)),
+            background: Some(Background::Color(theme::bg_secondary())),
             border: iced::Border {
-                color: theme::BORDER_SUBTLE,
+                color: theme::border_subtle(),
                 width: 1.0,
                 radius: 6.0.into(),
             },
@@ -658,9 +658,9 @@ fn tab_button<'a>(
         text(label)
             .size(12)
             .color(if tab == active {
-                theme::ACCENT
+                theme::accent()
             } else {
-                theme::TEXT_MUTED
+                theme::text_muted()
             })
             .font(BOLD),
     )
@@ -686,7 +686,7 @@ fn dashboard_body<'a>(
             activity_chart(sessions),
             text("Recent Sessions")
                 .size(14)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(BOLD),
             sessions_list,
         ]
@@ -710,7 +710,7 @@ fn log_body<'a>(
         column![
             text("Session Log")
                 .size(15)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(BOLD),
             row![
                 text_input("YYYY-MM-DD", manual_date)
@@ -746,7 +746,7 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme
     if sessions.is_empty() {
         return container(
             text("No sessions yet. Start studying!")
-                .color(theme::TEXT_MUTED)
+                .color(theme::text_muted())
                 .size(13),
         )
         .width(Length::Fill)
@@ -762,21 +762,21 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme
             container(
                 row![
                     column![
-                        text(&session.date).size(10).color(theme::TEXT_MUTED),
+                        text(&session.date).size(10).color(theme::text_muted()),
                         text(format!("{:.1} hours", session.hours))
                             .size(14)
-                            .color(theme::TEXT_PRIMARY)
+                            .color(theme::text_primary())
                             .font(BOLD),
                         text(session.notes.as_deref().unwrap_or(&session.phase))
                             .size(11)
-                            .color(theme::TEXT_MUTED),
+                            .color(theme::text_muted()),
                     ]
                     .width(Length::Fill),
                     text(&session.activity_type)
                         .size(11)
-                        .color(theme::ACCENT)
+                        .color(theme::accent())
                         .font(BOLD),
-                    button(text("Delete").size(11).color(theme::TEXT_MUTED))
+                    button(text("Delete").size(11).color(theme::text_muted()))
                         .on_press(Message::TrackerSessionDelete(session.id))
                         .padding([5, 8])
                         .style(button::text),
@@ -786,9 +786,9 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme
                 .padding(8),
             )
             .style(|_| container::Style {
-                background: Some(Background::Color(theme::BG_SECONDARY)),
+                background: Some(Background::Color(theme::bg_secondary())),
                 border: iced::Border {
-                    color: theme::BORDER_SUBTLE,
+                    color: theme::border_subtle(),
                     width: 1.0,
                     radius: 6.0.into(),
                 },
@@ -846,7 +846,7 @@ fn projects_body<'a>(
                     column![
                         text(format!("{} - {}", project.id, project.name))
                             .size(13)
-                            .color(theme::TEXT_PRIMARY)
+                            .color(theme::text_primary())
                             .font(BOLD),
                         text(format!(
                             "Phase {} - {}",
@@ -854,7 +854,7 @@ fn projects_body<'a>(
                             status_label(status)
                         ))
                         .size(10)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::text_muted()),
                     ]
                     .width(Length::Fill),
                     status_button(project_id.clone(), "not_started", "Todo", status),
@@ -879,9 +879,9 @@ fn status_button<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     let active = current == value;
     button(text(label).size(11).color(if active {
-        theme::BG_PRIMARY
+        theme::bg_primary()
     } else {
-        theme::TEXT_MUTED
+        theme::text_muted()
     }))
     .on_press(Message::TrackerProjectStatusChanged(id, value.to_string()))
     .padding([6, 10])
@@ -943,7 +943,7 @@ fn gates_body<'a>(
         let mut item_col = column![
             text(gate.title)
                 .size(14)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(BOLD),
             progress_bar(completed, gate.items.len())
         ]
@@ -1014,7 +1014,7 @@ fn reading_body<'a>(
         let mut item_col = column![
             text(section.section)
                 .size(14)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(BOLD),
             progress_bar(completed, section.items.len())
         ]
@@ -1040,8 +1040,8 @@ fn reading_body<'a>(
 
 fn config_body<'a>(config_json: &'a text_editor::Content) -> Element<'a, Message, Theme, Renderer> {
     container(column![
-        text("Tracker JSON Configuration").size(15).color(theme::TEXT_PRIMARY).font(BOLD),
-        text("Projects, gates, reading lists, and phases are read from this JSON. Save to apply it to every tracker tab.").size(12).color(theme::TEXT_MUTED),
+        text("Tracker JSON Configuration").size(15).color(theme::text_primary()).font(BOLD),
+        text("Projects, gates, reading lists, and phases are read from this JSON. Save to apply it to every tracker tab.").size(12).color(theme::text_muted()),
         text_editor(config_json)
             .placeholder("Tracker JSON")
             .on_action(Message::TrackerConfigEdited)
@@ -1071,14 +1071,14 @@ fn section_summary<'a>(
         column![
             row![
                 column![
-                    text(title).size(15).color(theme::TEXT_PRIMARY).font(BOLD),
-                    text(subtitle).size(11).color(theme::TEXT_MUTED),
+                    text(title).size(15).color(theme::text_primary()).font(BOLD),
+                    text(subtitle).size(11).color(theme::text_muted()),
                 ]
                 .spacing(2)
                 .width(Length::Fill),
                 text(format!("{}/{}", done, total))
                     .size(14)
-                    .color(theme::ACCENT)
+                    .color(theme::accent())
                     .font(BOLD),
             ]
             .align_y(Alignment::Center),
@@ -1102,7 +1102,7 @@ fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message, Theme, Re
             .height(Length::Fixed(6.0))
             .width(Length::Fill)
             .style(|_| container::Style {
-                background: Some(Background::Color(theme::BG_TERTIARY)),
+                background: Some(Background::Color(theme::bg_tertiary())),
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()
@@ -1121,7 +1121,7 @@ fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message, Theme, Re
                 .height(Length::Fixed(6.0))
                 .width(Length::FillPortion(fill))
                 .style(|_| container::Style {
-                    background: Some(Background::Color(theme::ACCENT)),
+                    background: Some(Background::Color(theme::accent())),
                     border: iced::Border {
                         radius: 3.0.into(),
                         ..Default::default()
@@ -1132,7 +1132,7 @@ fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message, Theme, Re
                 .height(Length::Fixed(6.0))
                 .width(Length::FillPortion(rest.max(1)))
                 .style(|_| container::Style {
-                    background: Some(Background::Color(theme::BG_TERTIARY)),
+                    background: Some(Background::Color(theme::bg_tertiary())),
                     border: iced::Border {
                         radius: 3.0.into(),
                         ..Default::default()
@@ -1149,9 +1149,9 @@ fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message, Theme, Re
 
 fn status_dot<'a>(status: &str) -> Element<'a, Message, Theme, Renderer> {
     let color = match status {
-        "complete" => theme::SUCCESS,
-        "in_progress" => theme::ACCENT,
-        _ => theme::TEXT_MUTED,
+        "complete" => theme::success(),
+        "in_progress" => theme::accent(),
+        _ => theme::text_muted(),
     };
 
     container(Space::new())

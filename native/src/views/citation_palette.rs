@@ -49,20 +49,20 @@ pub fn view<'a>(query: &str, items: Vec<CitationItem>) -> Element<'a, Message, T
         list = list.push(
             button(
                 row![
-                    container(text(badge).size(10).color(theme::TEXT_MUTED))
+                    container(text(badge).size(10).color(theme::text_muted()))
                         .padding([2, 6])
                         .style(|_| container::Style {
-                            background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                            background: Some(iced::Background::Color(theme::bg_tertiary())),
                             border: iced::Border {
-                                color: theme::BORDER,
+                                color: theme::border(),
                                 width: 1.0,
                                 radius: 4.0.into(),
                             },
                             ..Default::default()
                         }),
                     column![
-                        text(label).size(13).color(theme::TEXT_PRIMARY),
-                        text(details).size(11).color(theme::TEXT_MUTED),
+                        text(label).size(13).color(theme::text_primary()),
+                        text(details).size(11).color(theme::text_muted()),
                     ]
                     .spacing(2)
                     .width(Length::Fill),
@@ -81,7 +81,7 @@ pub fn view<'a>(query: &str, items: Vec<CitationItem>) -> Element<'a, Message, T
         column![
             container(input).style(|_| container::Style {
                 border: iced::Border {
-                    color: theme::BORDER,
+                    color: theme::border(),
                     width: 0.0,
                     radius: 0.0.into(),
                 },
@@ -93,9 +93,9 @@ pub fn view<'a>(query: &str, items: Vec<CitationItem>) -> Element<'a, Message, T
     )
     .width(Length::Fixed(520.0))
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+        background: Some(iced::Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER,
+            color: theme::border(),
             width: 1.0,
             radius: 8.0.into(),
         },

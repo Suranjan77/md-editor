@@ -20,9 +20,9 @@ pub fn view<'a>(
     let sidebar_toggle: Button<'_, Message, Theme, Renderer> = button(icons::view(
         Icon::LayoutPanelLeft,
         if sidebar_visible {
-            theme::ACCENT
+            theme::accent()
         } else {
-            theme::TEXT_MUTED
+            theme::text_muted()
         },
         18.0,
     ))
@@ -34,23 +34,23 @@ pub fn view<'a>(
         row![
             text(path)
                 .size(13)
-                .color(theme::TEXT_PRIMARY)
+                .color(theme::text_primary())
                 .font(iced::Font::default()),
-            text(" • Saved").size(11).color(theme::TEXT_MUTED),
+            text(" • Saved").size(11).color(theme::text_muted()),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
     } else {
-        row![text("No file open").size(13).color(theme::TEXT_MUTED)]
+        row![text("No file open").size(13).color(theme::text_muted())]
     };
 
     let split_button: Element<'_, Message, Theme, Renderer> = if split_available {
         button(icons::view(
             Icon::Split,
             if split_view_active {
-                theme::ACCENT
+                theme::accent()
             } else {
-                theme::TEXT_MUTED
+                theme::text_muted()
             },
             18.0,
         ))
@@ -66,9 +66,9 @@ pub fn view<'a>(
         button(icons::view(
             Icon::ListTree,
             if toc_visible {
-                theme::ACCENT
+                theme::accent()
             } else {
-                theme::TEXT_MUTED
+                theme::text_muted()
             },
             18.0,
         ))
@@ -81,11 +81,11 @@ pub fn view<'a>(
     };
 
     let actions = row![
-        button(icons::view(Icon::Search, theme::TEXT_MUTED, 18.0))
+        button(icons::view(Icon::Search, theme::text_muted(), 18.0))
             .on_press(Message::GlobalSearchOpen)
             .padding(8)
             .style(button::text),
-        button(icons::view(Icon::Command, theme::TEXT_MUTED, 18.0))
+        button(icons::view(Icon::Command, theme::text_muted(), 18.0))
             .on_press(Message::CommandPaletteOpen)
             .padding(8)
             .style(button::text),
@@ -94,9 +94,9 @@ pub fn view<'a>(
         button(icons::view(
             Icon::Clock,
             if tracker_visible {
-                theme::ACCENT
+                theme::accent()
             } else {
-                theme::TEXT_MUTED
+                theme::text_muted()
             },
             18.0
         ))
@@ -121,9 +121,9 @@ pub fn view<'a>(
         .width(Length::Fill)
         .height(Length::Fixed(48.0))
         .style(|_| container::Style {
-            background: Some(Background::Color(theme::BG_PRIMARY)),
+            background: Some(Background::Color(theme::bg_primary())),
             border: Border {
-                color: theme::BORDER,
+                color: theme::border(),
                 width: 1.0,
                 radius: 0.0.into(),
             },

@@ -75,7 +75,7 @@ fn render_tree_level<'a>(
                 } else {
                     Icon::ChevronRight
                 },
-                theme::TEXT_MUTED,
+                theme::text_muted(),
                 13.0,
             )
         } else {
@@ -94,11 +94,11 @@ fn render_tree_level<'a>(
         };
 
         let name_color = if is_active {
-            theme::ACCENT
+            theme::accent()
         } else if is_selected {
-            theme::TEXT_PRIMARY
+            theme::text_primary()
         } else {
-            theme::TEXT_SECONDARY
+            theme::text_secondary()
         };
 
         let content = row![
@@ -124,11 +124,11 @@ fn render_tree_level<'a>(
             let mut style = button::text(theme, status);
             style.border.radius = 6.0.into();
             if is_active {
-                style.background = Some(Background::Color(theme::ACCENT_DIM));
-                style.border.color = theme::ACCENT;
+                style.background = Some(Background::Color(theme::accent_dim()));
+                style.border.color = theme::accent();
                 style.border.width = 1.0;
             } else if is_selected {
-                style.background = Some(Background::Color(theme::BG_TERTIARY));
+                style.background = Some(Background::Color(theme::bg_tertiary()));
             } else if status == button::Status::Hovered {
                 style.background = Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)));
             }
@@ -141,7 +141,7 @@ fn render_tree_level<'a>(
             .width(Length::Fill)
             .style(style);
 
-        let delete_btn = button(icons::view(Icon::Trash, theme::TEXT_MUTED, 14.0))
+        let delete_btn = button(icons::view(Icon::Trash, theme::text_muted(), 14.0))
             .on_press(Message::DeleteFileDialog(path.clone()))
             .padding(7)
             .style(button::text);
@@ -155,7 +155,7 @@ fn render_tree_level<'a>(
                         .height(Length::Fixed(22.0))
                 )
                 .style(|_| container::Style {
-                    background: Some(Background::Color(theme::ACCENT)),
+                    background: Some(Background::Color(theme::accent())),
                     border: Border {
                         radius: 1.0.into(),
                         ..Default::default()
@@ -209,18 +209,18 @@ pub fn view<'a>(
     let header = row![
         text("FILES")
             .size(11)
-            .color(theme::TEXT_MUTED)
+            .color(theme::text_muted())
             .font(iced::Font::default()),
         Space::new().width(Length::Fill),
-        button(icons::view(Icon::FolderOpen, theme::TEXT_MUTED, 16.0))
+        button(icons::view(Icon::FolderOpen, theme::text_muted(), 16.0))
             .on_press(Message::OpenVaultDialog)
             .padding(8)
             .style(button::text),
-        button(icons::view(Icon::FileText, theme::TEXT_MUTED, 16.0))
+        button(icons::view(Icon::FileText, theme::text_muted(), 16.0))
             .on_press(Message::CreateFileDialog)
             .padding(8)
             .style(button::text),
-        button(icons::view(Icon::Folder, theme::TEXT_MUTED, 16.0))
+        button(icons::view(Icon::Folder, theme::text_muted(), 16.0))
             .on_press(Message::CreateFolderDialog)
             .padding(8)
             .style(button::text),
@@ -243,9 +243,9 @@ pub fn view<'a>(
 
     container(content)
         .style(|_| container::Style {
-            background: Some(Background::Color(theme::BG_SECONDARY)),
+            background: Some(Background::Color(theme::bg_secondary())),
             border: Border {
-                color: theme::BORDER,
+                color: theme::border(),
                 width: 1.0,
                 radius: 0.0.into(),
             },

@@ -23,7 +23,7 @@ pub fn view<'a>(
     let title = text("Outline & TOC")
         .size(16)
         .font(BOLD_FONT)
-        .color(theme::TEXT_PRIMARY);
+        .color(theme::text_primary());
 
     let has_md = !md_toc.is_empty();
     let has_pdf = !pdf_toc.is_empty();
@@ -35,12 +35,12 @@ pub fn view<'a>(
             text("Markdown Outline")
                 .size(13)
                 .font(BOLD_FONT)
-                .color(theme::TEXT_PRIMARY),
+                .color(theme::text_primary()),
         );
         let md_items = md_toc.iter().map(|entry| {
             let indent = (entry.level.saturating_sub(1) as f32) * 15.0;
             container(
-                button(text(&entry.text).size(13).color(theme::TEXT_SECONDARY))
+                button(text(&entry.text).size(13).color(theme::text_secondary()))
                     .on_press(Message::TocClicked(entry.line))
                     .padding([2, 4])
                     .style(button::text)
@@ -65,12 +65,12 @@ pub fn view<'a>(
             text("PDF Table of Contents")
                 .size(13)
                 .font(BOLD_FONT)
-                .color(theme::TEXT_PRIMARY),
+                .color(theme::text_primary()),
         );
         let pdf_items = pdf_toc.iter().map(|entry| {
             let indent = (entry.level.saturating_sub(1) as f32) * 15.0;
             container(
-                button(text(&entry.text).size(13).color(theme::TEXT_SECONDARY))
+                button(text(&entry.text).size(13).color(theme::text_secondary()))
                     .on_press(Message::PdfTocClicked(entry.line))
                     .padding([2, 4])
                     .style(button::text)
@@ -91,7 +91,7 @@ pub fn view<'a>(
         content = content.push(
             text("No outline or TOC available")
                 .size(13)
-                .color(theme::TEXT_MUTED),
+                .color(theme::text_muted()),
         );
     }
 
@@ -106,9 +106,9 @@ pub fn view<'a>(
     .width(Length::Fixed(width))
     .height(Length::Fill)
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+        background: Some(iced::Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER,
+            color: theme::border(),
             width: 1.0,
             ..Default::default()
         },
