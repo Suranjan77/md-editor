@@ -122,8 +122,54 @@ pub enum EditorCommand {
         regex: bool,
         match_case: bool,
     },
+    ReplaceTextRange {
+        line: usize,
+        start_col: usize,
+        end_col: usize,
+        replacement: String,
+    },
     Undo,
     Redo,
+    ConvertToH1 {
+        line: usize,
+    },
+    ConvertToH2 {
+        line: usize,
+    },
+    ConvertToH3 {
+        line: usize,
+    },
+    ConvertToParagraph {
+        line: usize,
+    },
+    RemoveCheckbox {
+        line: usize,
+    },
+    InsertRowAbove {
+        line: usize,
+    },
+    InsertRowBelow {
+        line: usize,
+    },
+    DeleteRow {
+        line: usize,
+    },
+    InsertColumnLeft {
+        line: usize,
+    },
+    InsertColumnRight {
+        line: usize,
+    },
+    DeleteColumn {
+        line: usize,
+    },
+    SetCodeLanguage {
+        line: usize,
+        language: String,
+    },
+    ConvertQuoteToParagraph {
+        line: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -238,6 +284,17 @@ impl DocBuffer {
                 self.set_cursor(line, col);
                 CommandResult::default()
             }
+            EditorCommand::ReplaceTextRange {
+                line,
+                start_col,
+                end_col,
+                replacement,
+            } => {
+                let line_start = self.rope.line_to_char(line);
+                let start_offset = line_start + start_col;
+                let end_offset = line_start + end_col;
+                self.replace_range(start_offset, end_offset, &replacement)
+            }
             EditorCommand::SetSelection {
                 anchor_line,
                 anchor_col,
@@ -297,6 +354,135 @@ impl DocBuffer {
                 } else {
                     CommandResult::default()
                 }
+            }
+            EditorCommand::ConvertToH1 { line } => {
+                let text = self.line_text(line);
+                let trimmed = text.trim_start();
+                let indent_len = text.len() - trimmed.len();
+                let level = trimmed.chars().take_while(|ch| *ch == '#').count();
+                let has_heading = level > 0 && trimmed.chars().nth(level) == Some(' ');
+                let delete_len = if has_heading { level + 1 } else { 0 };
+                self.replace_line_prefix(line, indent_len, delete_len, "# ")
+            }
+            EditorCommand::ConvertToH2 { line } => {
+                let text = self.line_text(line);
+                let trimmed = text.trim_start();
+                let indent_len = text.len() - trimmed.len();
+                let level = trimmed.chars().take_while(|ch| *ch == '#').count();
+                let has_heading = level > 0 && trimmed.chars().nth(level) == Some(' ');
+                let delete_len = if has_heading { level + 1 } else { 0 };
+                self.replace_line_prefix(line, indent_len, delete_len, "## ")
+            }
+            EditorCommand::ConvertToH3 { line } => {
+                let text = self.line_text(line);
+                let trimmed = text.trim_start();
+                let indent_len = text.len() - trimmed.len();
+                let level = trimmed.chars().take_while(|ch| *ch == '#').count();
+                let has_heading = level > 0 && trimmed.chars().nth(level) == Some(' ');
+                let delete_len = if has_heading { level + 1 } else { 0 };
+                self.replace_line_prefix(line, indent_len, delete_len, "### ")
+            }
+            EditorCommand::ConvertToParagraph { line } => {
+                let text = self.line_text(line);
+                let trimmed = text.trim_start();
+                let indent_len = text.len() - trimmed.len();
+                let level = trimmed.chars().take_while(|ch| *ch == '#').count();
+                let has_heading = level > 0 && trimmed.chars().nth(level) == Some(' ');
+                let delete_len = if has_heading { level + 1 } else { 0 };
+                self.replace_line_prefix(line, indent_len, delete_len, "")
+            }
+            EditorCommand::RemoveCheckbox { line } => {
+                let line_text = self.line_text(line);
+                let trimmed = line_text.trim_start();
+                let indent_len = line_text.len() - trimmed.len();
+                if trimmed.starts_with("- [ ]")
+                    || trimmed.starts_with("- [x]")
+                    || trimmed.starts_with("- [X]")
+                {
+                    self.replace_line_prefix(line, indent_len, 5, "-")
+                } else if trimmed.starts_with("* [ ]")
+                    || trimmed.starts_with("* [x]")
+                    || trimmed.starts_with("* [X]")
+                {
+                    self.replace_line_prefix(line, indent_len, 5, "*")
+                } else {
+                    CommandResult::default()
+                }
+            }
+            EditorCommand::InsertRowAbove { line } => {
+                let row_text = self.line_text(line);
+                let columns_count = get_table_row_columns_count(&row_text);
+                let start_offset = self.rope.line_to_char(line);
+                let new_row = "|".to_string() + &"  |".repeat(columns_count) + "\n";
+                self.insert_text_at(start_offset, &new_row)
+            }
+            EditorCommand::InsertRowBelow { line } => {
+                let row_text = self.line_text(line);
+                let columns_count = get_table_row_columns_count(&row_text);
+                let start_offset = self.rope.line_to_char(line + 1);
+                let last_char_is_newline =
+                    start_offset > 0 && self.rope.char(start_offset - 1) == '\n';
+                let mut new_row = "|".to_string() + &"  |".repeat(columns_count) + "\n";
+                if start_offset == self.rope.len_chars() && !last_char_is_newline {
+                    new_row = "\n".to_string() + &new_row;
+                }
+                self.insert_text_at(start_offset, &new_row)
+            }
+            EditorCommand::DeleteRow { line } => {
+                let start_offset = self.rope.line_to_char(line);
+                let end_offset = self.rope.line_to_char(line + 1);
+                if end_offset > start_offset {
+                    let last_char = self.rope.char(end_offset - 1);
+                    if last_char != '\n' && start_offset > 0 {
+                        let prev_newline = self.rope.line_to_char(line) - 1;
+                        self.delete_range(prev_newline, end_offset)
+                    } else {
+                        self.delete_range(start_offset, end_offset)
+                    }
+                } else {
+                    self.delete_range(start_offset, end_offset)
+                }
+            }
+            EditorCommand::InsertColumnLeft { line } => {
+                let (table_start, table_end) = self.get_table_bounds(line);
+                let cell_idx = self.get_current_table_column_idx(line);
+                self.insert_column_at(table_start, table_end, cell_idx)
+            }
+            EditorCommand::InsertColumnRight { line } => {
+                let (table_start, table_end) = self.get_table_bounds(line);
+                let cell_idx = self.get_current_table_column_idx(line);
+                self.insert_column_at(table_start, table_end, cell_idx + 1)
+            }
+            EditorCommand::DeleteColumn { line } => {
+                let (table_start, table_end) = self.get_table_bounds(line);
+                let cell_idx = self.get_current_table_column_idx(line);
+                self.delete_column_at(table_start, table_end, cell_idx)
+            }
+            EditorCommand::SetCodeLanguage { line, language } => {
+                let text = self.line_text(line);
+                let trimmed = text.trim_start();
+                let indent_len = text.len() - trimmed.len();
+                if trimmed.starts_with("```") {
+                    let start_offset = self.rope.line_to_char(line);
+                    let end_offset = self.rope.line_to_char(line + 1);
+                    let new_line = text[..indent_len].to_string() + "```" + &language + "\n";
+                    self.replace_range(start_offset, end_offset, &new_line)
+                } else {
+                    CommandResult::default()
+                }
+            }
+            EditorCommand::ConvertQuoteToParagraph { line } => {
+                let text = self.line_text(line);
+                let trimmed = text.trim_start();
+                let indent_len = text.len() - trimmed.len();
+                let delete_len = if trimmed.starts_with("> ") {
+                    2
+                } else if trimmed.starts_with(">") {
+                    1
+                } else {
+                    0
+                };
+                self.replace_line_prefix(line, indent_len, delete_len, "")
             }
         }
     }
@@ -1108,6 +1294,181 @@ impl DocBuffer {
             (start_line, start_col, end_line, end_col)
         });
     }
+
+    fn get_table_bounds(&self, line: usize) -> (usize, usize) {
+        let mut table_start = line;
+        while table_start > 0 && is_table_row_line(&self.line_text(table_start - 1)) {
+            table_start -= 1;
+        }
+        let mut table_end = line;
+        while table_end + 1 < self.rope.len_lines()
+            && is_table_row_line(&self.line_text(table_end + 1))
+        {
+            table_end += 1;
+        }
+        (table_start, table_end)
+    }
+
+    fn get_current_table_column_idx(&self, line: usize) -> usize {
+        let cursor_col = if self.cursor_line == line {
+            self.cursor_col
+        } else {
+            0
+        };
+        let line_text = self.line_text(line);
+        let mut col_idx: usize = 0;
+        let mut char_count = 0;
+        let mut chars = line_text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if char_count >= cursor_col {
+                break;
+            }
+            if ch == '\\' {
+                let _ = chars.next();
+                char_count += 2;
+            } else {
+                if ch == '|' {
+                    col_idx += 1;
+                }
+                char_count += 1;
+            }
+        }
+        col_idx.saturating_sub(1)
+    }
+
+    fn insert_column_at(
+        &mut self,
+        table_start: usize,
+        table_end: usize,
+        cell_idx: usize,
+    ) -> CommandResult {
+        let table_start_offset = self.rope.line_to_char(table_start);
+        let table_end_offset = self.rope.line_to_char(table_end + 1);
+        let mut new_table_text = String::new();
+        for r in table_start..=table_end {
+            let row_text = self.line_text(r);
+            let clean_row = row_text.trim_end_matches(&['\r', '\n'][..]);
+            let mut cells = parse_table_row_cells(clean_row);
+            let is_separator = cells.iter().all(|c| {
+                let t = c.trim();
+                !t.is_empty() && t.chars().all(|ch| ch == '-' || ch == ':')
+            });
+            let new_cell = if is_separator {
+                " --- ".to_string()
+            } else {
+                "  ".to_string()
+            };
+            if cell_idx < cells.len() {
+                cells.insert(cell_idx, new_cell);
+            } else {
+                cells.push(new_cell);
+            }
+            new_table_text.push('|');
+            for cell in cells {
+                new_table_text.push_str(&cell);
+                new_table_text.push('|');
+            }
+            new_table_text.push('\n');
+        }
+        self.replace_range(table_start_offset, table_end_offset, &new_table_text)
+    }
+
+    fn delete_column_at(
+        &mut self,
+        table_start: usize,
+        table_end: usize,
+        cell_idx: usize,
+    ) -> CommandResult {
+        let table_start_offset = self.rope.line_to_char(table_start);
+        let table_end_offset = self.rope.line_to_char(table_end + 1);
+        let mut new_table_text = String::new();
+        for r in table_start..=table_end {
+            let row_text = self.line_text(r);
+            let clean_row = row_text.trim_end_matches(&['\r', '\n'][..]);
+            let mut cells = parse_table_row_cells(clean_row);
+            if cell_idx < cells.len() {
+                cells.remove(cell_idx);
+            }
+            new_table_text.push('|');
+            for cell in cells {
+                new_table_text.push_str(&cell);
+                new_table_text.push('|');
+            }
+            new_table_text.push('\n');
+        }
+        self.replace_range(table_start_offset, table_end_offset, &new_table_text)
+    }
+
+    fn replace_range(&mut self, start: usize, end: usize, text: &str) -> CommandResult {
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+        let mut ops = Vec::new();
+        if start < end {
+            let old = self.rope.slice(start..end).to_string();
+            self.rope.remove(start..end);
+            ops.push(EditOp::Delete {
+                char_offset: start,
+                text: old,
+            });
+        }
+        if !text.is_empty() {
+            self.rope.insert(start, text);
+            ops.push(EditOp::Insert {
+                char_offset: start,
+                text: text.to_string(),
+            });
+        }
+        if ops.is_empty() {
+            return CommandResult::default();
+        }
+        self.commit_transaction(ops, before_cursor, before_selection);
+        CommandResult::changed()
+    }
+
+    fn insert_text_at(&mut self, char_offset: usize, text: &str) -> CommandResult {
+        self.replace_range(char_offset, char_offset, text)
+    }
+}
+
+fn is_table_row_line(row_text: &str) -> bool {
+    let trimmed = row_text.trim();
+    trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() > 1
+}
+
+fn get_table_row_columns_count(row_text: &str) -> usize {
+    let mut count: usize = 0;
+    let mut chars = row_text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            let _ = chars.next();
+        } else if ch == '|' {
+            count += 1;
+        }
+    }
+    count.saturating_sub(1)
+}
+
+fn parse_table_row_cells(row_text: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut current_cell = String::new();
+    let mut chars = row_text.chars().peekable();
+    if chars.peek() == Some(&'|') {
+        chars.next();
+    }
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            current_cell.push(ch);
+            if let Some(next_ch) = chars.next() {
+                current_cell.push(next_ch);
+            }
+        } else if ch == '|' {
+            cells.push(current_cell.clone());
+            current_cell.clear();
+        } else {
+            current_cell.push(ch);
+        }
+    }
+    cells
 }
 
 struct ListItem {
@@ -1749,5 +2110,71 @@ mod tests {
         assert_eq!(buffer.text(), "notes\n");
         assert!(buffer.redo());
         assert!(buffer.text().contains("annotation=ann%231"));
+    }
+
+    #[test]
+    fn test_editor_block_actions() {
+        let mut buffer = DocBuffer::from_text("hello\n# world\n### test");
+        buffer.execute(EditorCommand::ConvertToH1 { line: 0 });
+        assert_eq!(buffer.text(), "# hello\n# world\n### test");
+
+        buffer.execute(EditorCommand::ConvertToH2 { line: 1 });
+        assert_eq!(buffer.text(), "# hello\n## world\n### test");
+
+        buffer.execute(EditorCommand::ConvertToParagraph { line: 2 });
+        assert_eq!(buffer.text(), "# hello\n## world\ntest");
+
+        let mut buffer = DocBuffer::from_text("- [ ] task 1\n* [x] task 2\n- plain");
+        buffer.execute(EditorCommand::RemoveCheckbox { line: 0 });
+        assert_eq!(buffer.text(), "- task 1\n* [x] task 2\n- plain");
+        buffer.execute(EditorCommand::RemoveCheckbox { line: 1 });
+        assert_eq!(buffer.text(), "- task 1\n* task 2\n- plain");
+        buffer.execute(EditorCommand::RemoveCheckbox { line: 2 });
+        assert_eq!(buffer.text(), "- task 1\n* task 2\n- plain");
+
+        let mut buffer = DocBuffer::from_text("```\nlet x = 5;\n```");
+        buffer.execute(EditorCommand::SetCodeLanguage {
+            line: 0,
+            language: "rust".to_string(),
+        });
+        assert_eq!(buffer.text(), "```rust\nlet x = 5;\n```");
+
+        let mut buffer = DocBuffer::from_text("> hello\n>world");
+        buffer.execute(EditorCommand::ConvertQuoteToParagraph { line: 0 });
+        assert_eq!(buffer.text(), "hello\n>world");
+        buffer.execute(EditorCommand::ConvertQuoteToParagraph { line: 1 });
+        assert_eq!(buffer.text(), "hello\nworld");
+
+        let mut buffer = DocBuffer::from_text("| A | B |\n|---|---|\n| 1 | 2 |\n");
+        buffer.execute(EditorCommand::InsertRowAbove { line: 2 });
+        assert_eq!(buffer.text(), "| A | B |\n|---|---|\n|  |  |\n| 1 | 2 |\n");
+
+        buffer.execute(EditorCommand::InsertRowBelow { line: 0 });
+        assert_eq!(
+            buffer.text(),
+            "| A | B |\n|  |  |\n|---|---|\n|  |  |\n| 1 | 2 |\n"
+        );
+
+        let mut buffer = DocBuffer::from_text("| A | B |\n|---|---|\n| 1 | 2 |\n");
+        buffer.execute(EditorCommand::DeleteRow { line: 2 });
+        assert_eq!(buffer.text(), "| A | B |\n|---|---|\n");
+
+        let mut buffer = DocBuffer::from_text("| A | B |\n|---|---|\n| 1 | 2 |\n");
+        buffer.execute(EditorCommand::InsertColumnLeft { line: 0 });
+        assert_eq!(
+            buffer.text(),
+            "|  | A | B |\n| --- |---|---|\n|  | 1 | 2 |\n"
+        );
+
+        let mut buffer = DocBuffer::from_text("| A | B |\n|---|---|\n| 1 | 2 |\n");
+        buffer.execute(EditorCommand::InsertColumnRight { line: 0 });
+        assert_eq!(
+            buffer.text(),
+            "| A |  | B |\n|---| --- |---|\n| 1 |  | 2 |\n"
+        );
+
+        let mut buffer = DocBuffer::from_text("| A | B |\n|---|---|\n| 1 | 2 |\n");
+        buffer.execute(EditorCommand::DeleteColumn { line: 0 });
+        assert_eq!(buffer.text(), "| B |\n|---|\n| 2 |\n");
     }
 }

@@ -40,7 +40,7 @@ impl StyledSpan {
         Self {
             text: text.to_string(),
             display_text: None,
-            color: theme::TEXT_PRIMARY,
+            color: theme::text_primary(),
             bold: false,
             italic: false,
             font_size: 17.0,
@@ -151,7 +151,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(String::new()),
-                    color: theme::TEXT_MUTED,
+                    color: theme::text_muted(),
                     is_syntax: true,
                     font_size: 13.0,
                     is_code: true,
@@ -182,7 +182,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(String::new()),
-                    color: theme::TEXT_MUTED,
+                    color: theme::text_muted(),
                     is_syntax: true,
                     font_size: 14.0,
                     is_code: true,
@@ -208,7 +208,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(String::new()),
-                color: theme::WARNING,
+                color: theme::warning(),
                 is_syntax: true,
                 is_math: true,
                 font_size: 16.0,
@@ -229,7 +229,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(inline_math.to_string()),
-                    color: theme::WARNING,
+                    color: theme::warning(),
                     italic: true,
                     font_size: 16.0,
                     is_math: true,
@@ -249,7 +249,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(String::new()),
-                color: theme::WARNING,
+                color: theme::warning(),
                 is_syntax: true,
                 is_math: true,
                 font_size: 16.0,
@@ -278,7 +278,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: None,
-                color: theme::WARNING,
+                color: theme::warning(),
                 italic: true,
                 font_size: 16.0,
                 is_math: true,
@@ -306,7 +306,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             if is_separator {
                 // We can mark this as an empty row or skip spans, but let's just make it a row
                 sl.spans
-                    .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
+                    .push(StyledSpan::syntax(raw_line, theme::text_muted(), 16.0));
             } else {
                 let mut parts = split_table_cells(trimmed);
                 if parts.first() == Some(&"") {
@@ -470,7 +470,7 @@ fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: trimmed[..idx + 2].to_string(),
             display_text: Some(String::new()), // hidden in preview
-            color: theme::TEXT_MUTED,
+            color: theme::text_muted(),
             is_syntax: true,
             ..StyledSpan::plain("")
         });
@@ -492,13 +492,13 @@ fn highlight_line(line: &str) -> StyledLine {
 
         if is_angle_wrapped {
             sl.spans
-                .push(StyledSpan::syntax("<", theme::TEXT_MUTED, 16.0));
+                .push(StyledSpan::syntax("<", theme::text_muted(), 16.0));
         }
 
         sl.spans.push(StyledSpan {
             text: actual_target.to_string(),
             display_text: None,
-            color: theme::ACCENT,
+            color: theme::accent(),
             is_link: true,
             link_target: Some(actual_target.to_string()),
             ..StyledSpan::plain("")
@@ -506,7 +506,7 @@ fn highlight_line(line: &str) -> StyledLine {
 
         if is_angle_wrapped {
             sl.spans
-                .push(StyledSpan::syntax(">", theme::TEXT_MUTED, 16.0));
+                .push(StyledSpan::syntax(">", theme::text_muted(), 16.0));
         }
 
         // Rest of the line (optional title, spaces, etc.)
@@ -538,7 +538,7 @@ fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: hash_part.to_string(),
             display_text: Some(String::new()),
-            color: theme::TEXT_MUTED,
+            color: theme::text_muted(),
             is_syntax: true,
             font_size: heading_size(level),
             is_heading: true,
@@ -551,7 +551,7 @@ fn highlight_line(line: &str) -> StyledLine {
         parse_inline_spans(display, &mut sl.spans);
         for span in &mut sl.spans[start_idx..] {
             if !span.is_syntax {
-                span.color = theme::ACCENT;
+                span.color = theme::accent();
             }
             span.bold = true;
             span.font_size = heading_size(level);
@@ -567,7 +567,7 @@ fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line.to_string(),
             display_text: Some(String::new()),
-            color: theme::BORDER,
+            color: theme::border(),
             is_rule: true,
             is_syntax: true,
             ..StyledSpan::plain("")
@@ -588,7 +588,7 @@ fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line[..rest_start].to_string(),
             display_text: Some(String::new()),
-            color: theme::ACCENT,
+            color: theme::accent(),
             is_syntax: true,
             ..StyledSpan::plain("")
         });
@@ -596,7 +596,7 @@ fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line[rest_start..].to_string(),
             display_text: None,
-            color: theme::ACCENT,
+            color: theme::accent(),
             italic: true,
             ..StyledSpan::plain("")
         });
@@ -618,9 +618,9 @@ fn highlight_line(line: &str) -> StyledLine {
                 "☐ ".to_string()
             }),
             color: if is_checked {
-                theme::ACCENT
+                theme::accent()
             } else {
-                theme::TEXT_MUTED
+                theme::text_muted()
             },
             is_checkbox: true,
             is_checked,
@@ -630,7 +630,7 @@ fn highlight_line(line: &str) -> StyledLine {
         parse_inline_spans(&line[checkbox_end..], &mut sl.spans);
         if is_checked {
             for span in &mut sl.spans[start_idx..] {
-                span.color = theme::TEXT_MUTED;
+                span.color = theme::text_muted();
             }
         }
         return sl;
@@ -643,7 +643,7 @@ fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line[..bullet_end].to_string(),
             display_text: Some("  • ".to_string()),
-            color: theme::ACCENT,
+            color: theme::accent(),
             ..StyledSpan::plain("")
         });
         parse_inline_spans(&line[bullet_end..], &mut sl.spans);
@@ -656,7 +656,7 @@ fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line[..prefix_end].to_string(),
             display_text: None,
-            color: theme::ACCENT,
+            color: theme::accent(),
             ..StyledSpan::plain("")
         });
         parse_inline_spans(&line[prefix_end..], &mut sl.spans);
@@ -688,18 +688,18 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
             if let Some(end) = find_unescaped_char(&chars, i + 1, '`') {
                 let code_text: String = chars[i + 1..end].iter().collect();
                 // Opening backtick — syntax marker
-                spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 14.0));
+                spans.push(StyledSpan::syntax("`", theme::text_muted(), 14.0));
                 // Code content
                 spans.push(StyledSpan {
                     text: code_text,
                     display_text: None,
-                    color: theme::ACCENT_SECONDARY,
+                    color: theme::accent_secondary(),
                     font_size: 14.0,
                     is_code: true,
                     ..StyledSpan::plain("")
                 });
                 // Closing backtick — syntax marker
-                spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 14.0));
+                spans.push(StyledSpan::syntax("`", theme::text_muted(), 14.0));
                 i = end + 1;
                 continue;
             }
@@ -714,7 +714,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
             if let Some(end) = find_unescaped_double(&chars, i + 2, '*') {
                 let bold_text: String = chars[i + 2..end].iter().collect();
                 // Opening ** — syntax marker
-                spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax("**", theme::text_muted(), 16.0));
 
                 let start_idx = spans.len();
                 parse_inline_spans(&bold_text, spans);
@@ -730,7 +730,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 }
 
                 // Closing ** — syntax marker
-                spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax("**", theme::text_muted(), 16.0));
                 i = end + 2;
                 continue;
             }
@@ -744,7 +744,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
             }
             if let Some(end) = find_unescaped_char(&chars, i + 1, '*') {
                 let italic_text: String = chars[i + 1..end].iter().collect();
-                spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax("*", theme::text_muted(), 16.0));
 
                 let start_idx = spans.len();
                 parse_inline_spans(&italic_text, spans);
@@ -759,7 +759,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                     });
                 }
 
-                spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax("*", theme::text_muted(), 16.0));
                 i = end + 1;
                 continue;
             }
@@ -777,7 +777,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan {
                     text: raw,
                     display_text: None,
-                    color: theme::ACCENT,
+                    color: theme::accent(),
                     is_link: true,
                     link_target: Some(format!("^{}", fn_id)),
                     ..StyledSpan::plain("")
@@ -804,17 +804,17 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                     .map(|d| d.to_string())
                     .unwrap_or_else(|| extract_display_name(target));
                 // [[ — syntax marker
-                spans.push(StyledSpan::syntax("[[", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax("[[", theme::text_muted(), 16.0));
                 spans.push(StyledSpan {
                     text: link_text.clone(),
                     display_text: Some(display.to_string()),
-                    color: theme::ACCENT,
+                    color: theme::accent(),
                     is_link: true,
                     link_target: Some(target.to_string()),
                     ..StyledSpan::plain("")
                 });
                 // ]] — syntax marker
-                spans.push(StyledSpan::syntax("]]", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax("]]", theme::text_muted(), 16.0));
                 i = end + 2;
                 continue;
             }
@@ -837,7 +837,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                         spans.push(StyledSpan {
                             text: raw,
                             display_text: Some(link_display.clone()),
-                            color: theme::ACCENT,
+                            color: theme::accent(),
                             is_link: true,
                             link_target: Some(url),
                             ..StyledSpan::plain("")
@@ -857,7 +857,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                             spans.push(StyledSpan {
                                 text: raw,
                                 display_text: Some(link_display),
-                                color: theme::ACCENT,
+                                color: theme::accent(),
                                 is_link: true,
                                 link_target: Some(ref_id),
                                 ..StyledSpan::plain("")
@@ -889,7 +889,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                     spans.push(StyledSpan {
                         text: raw,
                         display_text: Some(link_display.clone()),
-                        color: theme::ACCENT,
+                        color: theme::accent(),
                         is_link: true,
                         link_target: Some(link_display.clone()),
                         ..StyledSpan::plain("")
@@ -910,7 +910,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 let math_raw: String = chars[i..=end].iter().collect();
                 spans.push(StyledSpan {
                     text: math_raw,
-                    color: theme::WARNING,
+                    color: theme::warning(),
                     italic: true,
                     font_size: 16.0,
                     is_math: true,
@@ -936,7 +936,7 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                         spans.push(StyledSpan {
                             text: raw,
                             display_text: Some(String::new()), // hidden in preview, image is drawn separately
-                            color: theme::WARNING,
+                            color: theme::warning(),
                             italic: true,
                             font_size: 14.0,
                             is_image: true,
@@ -1161,7 +1161,7 @@ fn highlight_code_spans(
     lang: Option<&str>,
 ) -> Vec<StyledSpan> {
     let Some((syntax_set, _)) = syntect_defaults() else {
-        return vec![code_span(line, theme::TEXT_PRIMARY)];
+        return vec![code_span(line, theme::text_primary())];
     };
 
     if highlighter.is_none() {
@@ -1169,7 +1169,7 @@ fn highlight_code_spans(
     }
 
     let Some(highlighter) = highlighter.as_mut() else {
-        return vec![code_span(line, theme::TEXT_PRIMARY)];
+        return vec![code_span(line, theme::text_primary())];
     };
 
     match highlighter.highlight_line(line, syntax_set) {
@@ -1186,12 +1186,12 @@ fn highlight_code_spans(
                 })
                 .collect::<Vec<_>>();
             if spans.is_empty() {
-                vec![code_span(line, theme::TEXT_PRIMARY)]
+                vec![code_span(line, theme::text_primary())]
             } else {
                 spans
             }
         }
-        Err(_) => vec![code_span(line, theme::TEXT_PRIMARY)],
+        Err(_) => vec![code_span(line, theme::text_primary())],
     }
 }
 
@@ -1744,7 +1744,7 @@ mod tests {
             lines[1]
                 .spans
                 .iter()
-                .any(|span| span.color != crate::theme::TEXT_PRIMARY)
+                .any(|span| span.color != crate::theme::text_primary())
         );
     }
 

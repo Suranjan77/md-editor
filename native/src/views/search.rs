@@ -3,7 +3,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, SearchWrapStatus};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -22,6 +22,7 @@ pub fn file_bar<'a>(
     match_case: bool,
     current_match_count: usize,
     active_match_index: Option<usize>,
+    wrap_status: Option<SearchWrapStatus>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let search_input = text_input("Find in current file", query)
         .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
@@ -37,11 +38,51 @@ pub fn file_bar<'a>(
         .size(14)
         .width(Length::FillPortion(2));
 
+    let count_color = if !query.is_empty() && current_match_count == 0 {
+        theme::danger()
+    } else {
+        theme::text_muted()
+    };
+
+    let count_str = if !query.is_empty() && current_match_count == 0 {
+        "No matches".to_string()
+    } else {
+        match active_match_index {
+            Some(index) if current_match_count > 0 => {
+                if let Some(wrap) = wrap_status {
+                    match wrap {
+                        SearchWrapStatus::WrappedForward => {
+                            format!(
+                                "{} of {} (wrapped search, first match)",
+                                index + 1,
+                                current_match_count
+                            )
+                        }
+                        SearchWrapStatus::WrappedBackward => {
+                            format!(
+                                "{} of {} (wrapped search, last match)",
+                                index + 1,
+                                current_match_count
+                            )
+                        }
+                    }
+                } else {
+                    format!("{} of {}", index + 1, current_match_count)
+                }
+            }
+            _ => format!("{} matches", current_match_count),
+        }
+    };
+
     container(
         row![
-            icons::view(Icon::Search, theme::ACCENT, 18.0),
+            icons::view(Icon::Search, theme::accent(), 18.0),
             search_input,
             replace_input,
+            button(text("Replace").size(12))
+                .on_press(Message::SearchReplace)
+                .padding([8, 12])
+                .style(button::secondary),
             button(text("Replace all").size(12))
                 .on_press(Message::SearchReplaceAll)
                 .padding([8, 12])
@@ -54,22 +95,16 @@ pub fn file_bar<'a>(
                 .label("Case")
                 .on_toggle(Message::SearchMatchCaseToggled)
                 .size(14),
-            button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
+            button(icons::view(Icon::ChevronUp, theme::text_muted(), 16.0))
                 .on_press(Message::SearchPrevious)
                 .padding(8)
                 .style(button::text),
-            button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
+            button(icons::view(Icon::ChevronDown, theme::text_muted(), 16.0))
                 .on_press(Message::SearchNext)
                 .padding(8)
                 .style(button::text),
-            text(match active_match_index {
-                Some(index) if current_match_count > 0 =>
-                    format!("{} of {}", index + 1, current_match_count),
-                _ => format!("{} matches", current_match_count),
-            })
-            .size(12)
-            .color(theme::TEXT_MUTED),
-            button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
+            text(count_str).size(12).color(count_color),
+            button(icons::view(Icon::X, theme::text_muted(), 16.0))
                 .on_press(Message::SearchClose)
                 .padding(8)
                 .style(button::text),
@@ -80,9 +115,9 @@ pub fn file_bar<'a>(
     )
     .width(Length::Fill)
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+        background: Some(iced::Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER,
+            color: theme::border(),
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -125,18 +160,18 @@ pub fn view<'a>(
         .size(13)
         .width(Length::Fill);
 
-    let close_btn = button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
+    let close_btn = button(icons::view(Icon::X, theme::text_muted(), 16.0))
         .on_press(Message::SearchClose)
         .padding(8)
         .style(button::text);
 
     let header = column![
         row![
-            icons::view(Icon::Search, theme::ACCENT, 18.0),
+            icons::view(Icon::Search, theme::accent(), 18.0),
             text("Global search")
                 .size(15)
                 .font(BOLD_FONT)
-                .color(theme::ACCENT),
+                .color(theme::accent()),
             search_input,
             close_btn,
         ]
@@ -165,14 +200,14 @@ pub fn view<'a>(
                 current_match_count
             ))
             .size(11)
-            .color(theme::TEXT_MUTED),
+            .color(theme::text_muted()),
             if searching {
-                text("Searching...").size(11).color(theme::ACCENT)
+                text("Searching...").size(11).color(theme::accent())
             } else {
                 text("").size(11)
             },
             if let Some(status) = pdf_status {
-                text(status).size(11).color(theme::TEXT_MUTED)
+                text(status).size(11).color(theme::text_muted())
             } else {
                 text("").size(11)
             },
@@ -257,7 +292,7 @@ pub fn view<'a>(
     .height(Length::Fill);
 
     let empty_state = if global_results.is_empty() && !query.is_empty() && !searching {
-        Some(text("No results found").size(12).color(theme::TEXT_MUTED))
+        Some(text("No results found").size(12).color(theme::text_muted()))
     } else {
         None
     };
@@ -266,7 +301,7 @@ pub fn view<'a>(
 
     if let Some(err) = error {
         content = content.push(
-            container(text(err).size(11).color(theme::TEXT_MUTED))
+            container(text(err).size(11).color(theme::text_muted()))
                 .padding([0, 16])
                 .width(Length::Fill),
         );
@@ -280,9 +315,9 @@ pub fn view<'a>(
         .width(Length::Fixed(620.0))
         .max_height(620.0)
         .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+            background: Some(iced::Background::Color(theme::bg_secondary())),
             border: iced::Border {
-                color: theme::BORDER,
+                color: theme::border(),
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -319,10 +354,10 @@ fn render_group_section<'a>(
     let group_header = text(format!("{} ({} matches)", title, items.len()))
         .size(12)
         .font(BOLD_FONT)
-        .color(theme::TEXT_PRIMARY);
+        .color(theme::text_primary());
 
     let list = items.iter().fold(Column::new().spacing(4), |col, result| {
-        let path_text = text(&result.path).size(13).color(theme::ACCENT);
+        let path_text = text(&result.path).size(13).color(theme::accent());
 
         let label = match result.group {
             md_editor_core::types::SearchResultGroup::Heading => {
@@ -342,9 +377,11 @@ fn render_group_section<'a>(
                 format!("PDF Page {} Note", result.line)
             }
         };
-        let label_text = text(label).size(11).color(theme::TEXT_MUTED);
+        let label_text = text(label).size(11).color(theme::text_muted());
 
-        let context_text = text(&result.context).size(12).color(theme::TEXT_SECONDARY);
+        let context_text = text(&result.context)
+            .size(12)
+            .color(theme::text_secondary());
 
         let item = button(
             column![

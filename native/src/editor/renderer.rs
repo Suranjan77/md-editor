@@ -1,3 +1,5 @@
+use crate::app::resolve_relative_link_path;
+use crate::pdf_links::parse_pdf_link;
 use iced::advanced::graphics::core::event::Event;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -6,7 +8,7 @@ use iced::advanced::{Clipboard, Shell};
 use iced::keyboard;
 use iced::mouse;
 use iced::{Color, Element, Length, Point, Rectangle, Size};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
@@ -25,6 +27,7 @@ const HOT_PATH_BLOCK_SCAN_LIMIT: usize = 256;
 
 // ── Widget ───────────────────────────────────────────────────────────
 
+#[allow(clippy::type_complexity)]
 pub struct Editor<'a, Message> {
     buffer: &'a DocBuffer,
     lines: &'a [StyledLine],
@@ -39,6 +42,11 @@ pub struct Editor<'a, Message> {
     on_pointer_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
     on_checkbox_toggle: Box<dyn Fn(usize) -> Message + 'a>,
+    on_block_context_menu: Option<Box<dyn Fn(usize, Point) -> Message + 'a>>,
+    on_context_menu: Option<Box<dyn Fn(usize, usize, Point) -> Message + 'a>>,
+    vault_root: Option<&'a str>,
+    active_path: Option<&'a str>,
+    existing_files: Option<HashSet<String>>,
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -98,7 +106,40 @@ impl<'a, Message> Editor<'a, Message> {
             on_pointer_command: Box::new(on_pointer_command),
             on_link_click: Box::new(on_link_click),
             on_checkbox_toggle: Box::new(on_checkbox_toggle),
+            on_block_context_menu: None,
+            on_context_menu: None,
+            vault_root: None,
+            active_path: None,
+            existing_files: None,
         }
+    }
+
+    pub fn on_block_context_menu(
+        mut self,
+        on_block_context_menu: impl Fn(usize, Point) -> Message + 'a,
+    ) -> Self {
+        self.on_block_context_menu = Some(Box::new(on_block_context_menu));
+        self
+    }
+
+    pub fn on_context_menu(
+        mut self,
+        on_context_menu: impl Fn(usize, usize, Point) -> Message + 'a,
+    ) -> Self {
+        self.on_context_menu = Some(Box::new(on_context_menu));
+        self
+    }
+
+    pub fn vault_context(
+        mut self,
+        vault_root: Option<&'a str>,
+        active_path: Option<&'a str>,
+        existing_files: &HashSet<String>,
+    ) -> Self {
+        self.vault_root = vault_root;
+        self.active_path = active_path;
+        self.existing_files = Some(existing_files.clone());
+        self
     }
 
     pub fn search(
@@ -452,6 +493,63 @@ where
     (y + row_step).max(BASE_LINE_HEIGHT)
 }
 
+fn is_heading_line(line: &crate::editor::highlight::StyledLine) -> bool {
+    line.spans
+        .iter()
+        .any(|span| span.is_syntax && span.visible_text(true).starts_with('#'))
+}
+
+fn is_checkbox_line(line: &crate::editor::highlight::StyledLine) -> bool {
+    line.spans.iter().any(|span| span.is_checkbox)
+}
+
+fn is_pdf_citation_line(line: &crate::editor::highlight::StyledLine) -> bool {
+    line.spans
+        .iter()
+        .any(|span| span.is_link && span.visible_text(true).starts_with("pdf://"))
+}
+
+pub fn get_block_context_menu_items(
+    lines: &[crate::editor::highlight::StyledLine],
+    line_idx: usize,
+) -> Option<Vec<crate::views::modals::EditorBlockContextMenuItem>> {
+    use crate::views::modals::EditorBlockContextMenuItem;
+    let line = lines.get(line_idx)?;
+    if line.is_code_block {
+        Some(vec![
+            EditorBlockContextMenuItem::CopyCode,
+            EditorBlockContextMenuItem::SetCodeLanguage,
+        ])
+    } else if line.is_table_row {
+        Some(vec![
+            EditorBlockContextMenuItem::InsertRowAbove,
+            EditorBlockContextMenuItem::InsertRowBelow,
+            EditorBlockContextMenuItem::DeleteRow,
+            EditorBlockContextMenuItem::InsertColumnLeft,
+            EditorBlockContextMenuItem::InsertColumnRight,
+            EditorBlockContextMenuItem::DeleteColumn,
+        ])
+    } else if line.is_blockquote {
+        Some(vec![EditorBlockContextMenuItem::ConvertQuoteToParagraph])
+    } else if is_heading_line(line) {
+        Some(vec![
+            EditorBlockContextMenuItem::ConvertToH1,
+            EditorBlockContextMenuItem::ConvertToH2,
+            EditorBlockContextMenuItem::ConvertToH3,
+            EditorBlockContextMenuItem::ConvertToParagraph,
+        ])
+    } else if is_checkbox_line(line) {
+        Some(vec![
+            EditorBlockContextMenuItem::ToggleCheckbox,
+            EditorBlockContextMenuItem::RemoveCheckbox,
+        ])
+    } else if is_pdf_citation_line(line) {
+        Some(vec![EditorBlockContextMenuItem::OpenPdfCitation])
+    } else {
+        None
+    }
+}
+
 fn visual_line_step(font_size: f32) -> f32 {
     (font_size * 1.45).max(BASE_LINE_HEIGHT)
 }
@@ -776,7 +874,7 @@ fn draw_horizontal_scrollbar<R>(
             },
             ..Default::default()
         },
-        Color::from_rgba(1.0, 1.0, 1.0, 0.06),
+        theme::border_subtle(),
     );
     renderer.fill_quad(
         renderer::Quad {
@@ -792,7 +890,7 @@ fn draw_horizontal_scrollbar<R>(
             },
             ..Default::default()
         },
-        theme::ACCENT_DIM,
+        theme::accent_dim(),
     );
 }
 
@@ -1044,6 +1142,16 @@ where
         let state = _state.state.downcast_ref::<State>();
         let focused = state.is_focused;
 
+        let cursor_pos = _cursor.position_in(bounds);
+        let hovered_line_idx = cursor_pos.and_then(|pos| {
+            let relative_y = pos.y - bounds.y - TOP_PAD;
+            if relative_y >= 0.0 {
+                Some(state.layout_tree.find_line_at_y(relative_y))
+            } else {
+                None
+            }
+        });
+
         // Background
         renderer.fill_quad(
             renderer::Quad {
@@ -1051,7 +1159,7 @@ where
                 border: iced::Border::default(),
                 ..Default::default()
             },
-            theme::BG_PRIMARY,
+            theme::bg_primary(),
         );
 
         let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
@@ -1197,7 +1305,7 @@ where
                         },
                         ..Default::default()
                     },
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.012),
+                    theme::bg_secondary(),
                 );
 
                 // Draw left accent border with rounded left corners
@@ -1220,7 +1328,7 @@ where
                         },
                         ..Default::default()
                     },
-                    theme::ACCENT,
+                    theme::accent(),
                 );
             } else if meta.is_table && !meta.is_editing {
                 let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
@@ -1235,13 +1343,13 @@ where
                             height: meta.height,
                         },
                         border: iced::Border {
-                            color: theme::BORDER,
+                            color: theme::border(),
                             width: 1.0,
                             radius: 8.0.into(),
                         },
                         ..Default::default()
                     },
-                    theme::BG_SECONDARY,
+                    theme::bg_secondary(),
                 );
 
                 // Draw Table X caption
@@ -1269,16 +1377,16 @@ where
                         wrapping: iced::advanced::text::Wrapping::None,
                     },
                     Point::new(table_x + table_width / 2.0, meta.y + 12.0),
-                    theme::TEXT_MUTED,
+                    theme::text_muted(),
                     *viewport,
                 );
             } else {
                 let bg = if meta.is_editing && meta.is_code {
-                    theme::BG_SECONDARY
+                    theme::bg_secondary()
                 } else if meta.is_editing && meta.is_math {
-                    theme::BG_SECONDARY
+                    theme::bg_secondary()
                 } else if meta.is_code {
-                    theme::BG_SECONDARY
+                    theme::bg_secondary()
                 } else {
                     Color::TRANSPARENT
                 };
@@ -1297,14 +1405,14 @@ where
                                 height: meta.height,
                             },
                             border: iced::Border {
-                                color: theme::BORDER_SUBTLE,
+                                color: theme::border_subtle(),
                                 width: 1.0,
                                 radius: 8.0.into(),
                             },
                             ..Default::default()
                         },
                         if meta.is_math && !meta.is_editing {
-                            theme::BG_SECONDARY
+                            theme::bg_secondary()
                         } else {
                             bg
                         },
@@ -1339,7 +1447,7 @@ where
                                 wrapping: iced::advanced::text::Wrapping::None,
                             },
                             Point::new(block_x + block_w / 2.0, meta.y + 12.0),
-                            theme::TEXT_MUTED,
+                            theme::text_muted(),
                             *viewport,
                         );
                         if let Some(ref lang) = meta.code_lang {
@@ -1369,7 +1477,7 @@ where
                                         },
                                         ..Default::default()
                                     },
-                                    theme::BG_TERTIARY,
+                                    theme::bg_tertiary(),
                                 );
                                 // Draw badge text centered inside the badge container
                                 renderer.fill_text(
@@ -1388,7 +1496,7 @@ where
                                         badge_rect.x + badge_w / 2.0,
                                         badge_rect.y + badge_h / 2.0,
                                     ),
-                                    theme::ACCENT,
+                                    theme::accent(),
                                     *viewport,
                                 );
                             }
@@ -1400,8 +1508,21 @@ where
 
         let mut y = bounds.y + TOP_PAD + state.layout_tree.prefix_sum(visible_start);
         let mut last_table_block = None;
+        let selection = normalized_selection(state.selection_anchor, state.selection_focus)
+            .or_else(|| {
+                self.buffer.selection.map(|(sl, sc, el, ec)| {
+                    if (sl, sc) <= (el, ec) {
+                        ((sl, sc), (el, ec))
+                    } else {
+                        ((el, ec), (sl, sc))
+                    }
+                })
+            });
+
         for (i, line) in self.lines.iter().enumerate().skip(visible_start) {
-            let is_editing = is_block_editing_line(line, active_block_id, focused);
+            let line_has_selection = selection.is_some_and(|((sl, _), (el, _))| i >= sl && i <= el);
+            let is_editing =
+                is_block_editing_line(line, active_block_id, focused) || line_has_selection;
             let is_new_block =
                 (line.is_code_block || line.is_table_row) && is_first_block_line(self.lines, i);
 
@@ -1432,18 +1553,24 @@ where
                 continue;
             }
 
-            // (Active line highlight removed)
+            // Active line highlight
+            if focused && i == self.buffer.cursor_line {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: bounds.x,
+                            y,
+                            width: bounds.width,
+                            height: lh,
+                        },
+                        border: iced::Border::default(),
+                        ..Default::default()
+                    },
+                    theme::active_line_bg(),
+                );
+            }
 
-            let selection = normalized_selection(state.selection_anchor, state.selection_focus)
-                .or_else(|| {
-                    self.buffer.selection.map(|(sl, sc, el, ec)| {
-                        if (sl, sc) <= (el, ec) {
-                            ((sl, sc), (el, ec))
-                        } else {
-                            ((el, ec), (sl, sc))
-                        }
-                    })
-                });
+            // selection already calculated outside loop
 
             if let Some(((start_line, start_col), (end_line, end_col))) = selection {
                 if i >= start_line && i <= end_line {
@@ -1494,7 +1621,7 @@ where
                                 },
                                 ..Default::default()
                             },
-                            Color::from_rgba(0.69, 0.80, 0.78, 0.24),
+                            theme::accent_dim(),
                         );
                     }
                 }
@@ -1541,9 +1668,9 @@ where
                             ..Default::default()
                         },
                         if active {
-                            Color::from_rgba(0.92, 0.70, 0.30, 0.45)
+                            theme::warning()
                         } else {
-                            Color::from_rgba(0.92, 0.70, 0.30, 0.24)
+                            theme::accent_dim()
                         },
                     );
                 }
@@ -1566,7 +1693,7 @@ where
                         },
                         ..Default::default()
                     },
-                    theme::ACCENT_GLOW, // using a visible accent color for HR
+                    theme::accent_glow(), // using a visible accent color for HR
                 );
                 self.draw_standard_cursor::<R>(renderer, focused, i, bounds, y, lh);
                 y += lh;
@@ -1607,7 +1734,7 @@ where
                         .iter()
                         .find(|span| !span.visible_text(false).is_empty())
                         .map(|span| span.color)
-                        .unwrap_or(theme::TEXT_PRIMARY);
+                        .unwrap_or(theme::text_primary());
                     let font = if line.spans.iter().any(|span| span.bold) {
                         iced::Font {
                             weight: iced::font::Weight::Bold,
@@ -1694,7 +1821,7 @@ where
                             },
                             ..Default::default()
                         },
-                        theme::ACCENT_SECONDARY,
+                        theme::accent_secondary(),
                     );
                 }
 
@@ -1750,7 +1877,7 @@ where
                                 },
                                 ..Default::default()
                             },
-                            theme::BORDER,
+                            theme::border(),
                         );
                         y += lh + gutter;
                         continue;
@@ -1763,9 +1890,9 @@ where
                     });
 
                     let row_bg = if is_header {
-                        Some(theme::BG_TERTIARY)
+                        Some(theme::bg_tertiary())
                     } else if ((row_y - meta.y) / row_h).round() as usize % 2 == 1 {
-                        Some(Color::from_rgba(1.0, 1.0, 1.0, 0.025))
+                        Some(theme::bg_secondary())
                     } else {
                         None
                     };
@@ -1811,7 +1938,7 @@ where
                                     },
                                     ..Default::default()
                                 },
-                                theme::BORDER_SUBTLE,
+                                theme::border_subtle(),
                             );
                         }
 
@@ -1849,7 +1976,7 @@ where
                                 },
                                 Point::new(px, ty),
                                 if is_header {
-                                    theme::TEXT_PRIMARY
+                                    theme::text_primary()
                                 } else {
                                     span.color
                                 },
@@ -1884,7 +2011,7 @@ where
             let mut line_draw_y = y;
 
             for (span_idx, span) in line.spans.iter().enumerate() {
-                let font = span_font(span, line);
+                let _font = span_font(span, line);
                 let is_math = span.is_math || line.is_math_block;
                 let span_editing = is_editing
                     || active_col
@@ -1936,7 +2063,7 @@ where
                                     wrapping: iced::advanced::text::Wrapping::WordOrGlyph,
                                 },
                                 Point::new(draw_x + draw_w / 2.0, y + draw_h + 12.0),
-                                theme::TEXT_MUTED,
+                                theme::text_muted(),
                                 *viewport,
                             );
 
@@ -2027,7 +2154,7 @@ where
                                             bounds.x + TEXT_X_OFFSET + available_w - eq_w,
                                             eq_y + draw_h / 2.0,
                                         ),
-                                        theme::TEXT_MUTED,
+                                        theme::text_muted(),
                                         *viewport,
                                     );
                                 }
@@ -2127,7 +2254,7 @@ where
                                     wrapping: iced::advanced::text::Wrapping::None,
                                 },
                                 Point::new(bounds.x + TEXT_X_OFFSET - scroll_x, text_y),
-                                theme::TEXT_SECONDARY,
+                                theme::text_secondary(),
                                 math_viewport,
                             );
                             text_y += BASE_LINE_HEIGHT;
@@ -2158,7 +2285,7 @@ where
                                 wrapping: iced::advanced::text::Wrapping::None,
                             },
                             Point::new(bounds.x + TEXT_X_OFFSET + available_w - eq_w, y + lh / 2.0),
-                            theme::TEXT_MUTED,
+                            theme::text_muted(),
                             *viewport,
                         );
                         continue;
@@ -2171,6 +2298,46 @@ where
                 if display_text.is_empty() {
                     continue;
                 }
+
+                let font = span_font(span, line);
+                let w = if span.is_checkbox && !span_editing {
+                    26.0
+                } else {
+                    measure_width::<R>(display_text, fs, font)
+                };
+
+                let is_hovered = cursor_pos.is_some_and(|pos| {
+                    hovered_line_idx == Some(i)
+                        && pos.x >= (x - bounds.x)
+                        && pos.x < (x - bounds.x) + w
+                });
+
+                let is_broken = if span.is_link {
+                    if let Some(ref existing) = self.existing_files {
+                        if let Some(ref target) = span.link_target {
+                            is_link_target_broken(
+                                target,
+                                self.vault_root,
+                                self.active_path,
+                                existing,
+                            )
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                let text_color = if is_broken {
+                    theme::danger()
+                } else if span.is_link && is_hovered {
+                    theme::accent()
+                } else {
+                    span.color
+                };
 
                 if span.is_checkbox && !span_editing {
                     // Draw a premium custom checkbox quad!
@@ -2193,7 +2360,7 @@ where
                                 },
                                 ..Default::default()
                             },
-                            theme::ACCENT,
+                            theme::accent(),
                         );
 
                         let check_font = iced::Font {
@@ -2218,7 +2385,7 @@ where
                                 x + (box_size - check_w) / 2.0,
                                 box_y + (box_size - check_size) / 2.0 - 0.5,
                             ),
-                            theme::BG_PRIMARY,
+                            theme::bg_primary(),
                             *viewport,
                         );
                     } else {
@@ -2226,7 +2393,7 @@ where
                             renderer::Quad {
                                 bounds: box_rect,
                                 border: iced::Border {
-                                    color: theme::BORDER,
+                                    color: theme::border(),
                                     width: 1.5,
                                     radius: 4.0.into(),
                                 },
@@ -2240,6 +2407,9 @@ where
                     continue;
                 }
 
+                let start_x = x;
+                let start_y = line_draw_y;
+
                 draw_wrapped_text::<R>(
                     renderer,
                     display_text,
@@ -2249,15 +2419,127 @@ where
                     bounds.x + bounds.width - MARGIN_RIGHT,
                     fs,
                     font,
-                    span.color,
+                    text_color,
                     viewport,
                 );
+
+                if span.is_link && (is_hovered || is_broken) {
+                    let underline_color = if is_broken {
+                        theme::danger()
+                    } else {
+                        theme::accent()
+                    };
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: start_x,
+                                y: start_y + fs + 2.0,
+                                width: w,
+                                height: 1.0,
+                            },
+                            ..Default::default()
+                        },
+                        underline_color,
+                    );
+                }
             }
 
             // ── cursor ───────────────────────────────────────────
             self.draw_standard_cursor::<R>(renderer, focused, i, bounds, y, lh);
 
             y += lh;
+        }
+
+        // Draw lightweight block control handle on hover
+        if let Some(pos) = _cursor.position_in(bounds) {
+            let relative_y = pos.y - bounds.y - TOP_PAD;
+            if relative_y >= 0.0 {
+                let hovered_line_idx = state.layout_tree.find_line_at_y(relative_y);
+                if hovered_line_idx < self.lines.len() {
+                    if let Some(line) = self.lines.get(hovered_line_idx) {
+                        let block_id = line.block_id;
+                        let block_start_idx = state
+                            .block_ranges
+                            .get(&block_id)
+                            .map(|(s, _)| *s)
+                            .unwrap_or(hovered_line_idx);
+
+                        if get_block_context_menu_items(self.lines, block_start_idx).is_some() {
+                            let block_y =
+                                bounds.y + TOP_PAD + state.layout_tree.prefix_sum(block_start_idx);
+                            let spacer = if (line.is_code_block || line.is_table_row)
+                                && is_first_block_line(self.lines, block_start_idx)
+                                && !is_block_editing_line(line, active_block_id, focused)
+                            {
+                                24.0
+                            } else {
+                                0.0
+                            };
+                            let grip_x = bounds.x + 24.0;
+                            let grip_y = block_y + spacer + 4.0;
+                            let grip_rect = Rectangle {
+                                x: grip_x - 8.0,
+                                y: grip_y,
+                                width: 16.0,
+                                height: 16.0,
+                            };
+
+                            let is_grip_hovered = pos.x >= 12.0
+                                && pos.x <= 36.0
+                                && (pos.y - (grip_y - bounds.y)).abs() <= 12.0;
+                            let is_grip_hovered = is_grip_hovered
+                                || grip_rect
+                                    .contains(Point::new(pos.x + bounds.x, pos.y + bounds.y));
+
+                            // Draw a subtle background for the grip button
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: grip_rect,
+                                    border: iced::Border {
+                                        radius: 4.0.into(),
+                                        color: if is_grip_hovered {
+                                            theme::accent()
+                                        } else {
+                                            theme::border_subtle()
+                                        },
+                                        width: if is_grip_hovered { 1.0 } else { 0.0 },
+                                    },
+                                    ..Default::default()
+                                },
+                                if is_grip_hovered {
+                                    theme::bg_secondary()
+                                } else {
+                                    Color::TRANSPARENT
+                                },
+                            );
+
+                            // Draw grip text symbol (⋮)
+                            let text_size = 12.0;
+                            let grip_font = iced::Font::default();
+                            renderer.fill_text(
+                                iced::advanced::text::Text {
+                                    content: "⋮".to_string(),
+                                    bounds: Size::new(16.0, 16.0),
+                                    size: text_size.into(),
+                                    line_height: iced::advanced::text::LineHeight::default(),
+                                    font: grip_font,
+                                    align_x: iced::alignment::Horizontal::Center.into(),
+                                    align_y: iced::alignment::Vertical::Center.into(),
+                                    shaping: iced::advanced::text::Shaping::Basic,
+                                    wrapping: iced::advanced::text::Wrapping::None,
+                                },
+                                Point::new(grip_rect.x + 8.0, grip_rect.y + 8.0),
+                                if is_grip_hovered {
+                                    theme::accent()
+                                } else {
+                                    theme::text_muted()
+                                },
+                                *viewport,
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2278,8 +2560,94 @@ where
 
         match event {
             // ── mouse click ──────────────────────────────────────
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                if let Some(pos) = _cursor.position_in(_layout.bounds()) {
+                    let active_block_id =
+                        self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
+                    let _active_col = (state.is_focused
+                        && self.buffer.cursor_line < self.lines.len())
+                    .then_some(self.buffer.cursor_col);
+                    let (line_idx, col) = self.hit_test::<R>(
+                        pos,
+                        _layout.bounds().width,
+                        active_block_id,
+                        state.is_focused,
+                        state,
+                    );
+
+                    let absolute_pos = _cursor.position().unwrap_or_default();
+
+                    shell.publish((self.on_pointer_command)(EditorCommand::SetCursor {
+                        line: line_idx,
+                        col,
+                    }));
+
+                    if let Some(ref cb) = self.on_context_menu {
+                        shell.publish(cb(line_idx, col, absolute_pos));
+                    }
+                    shell.capture_event();
+                }
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = _cursor.position_in(_layout.bounds()) {
+                    // Check for block handle click
+                    let relative_y = pos.y - _layout.bounds().y - TOP_PAD;
+                    if relative_y >= 0.0 {
+                        let hovered_line_idx = state.layout_tree.find_line_at_y(relative_y);
+                        if hovered_line_idx < self.lines.len() {
+                            if let Some(line) = self.lines.get(hovered_line_idx) {
+                                let block_id = line.block_id;
+                                let block_start_idx = state
+                                    .block_ranges
+                                    .get(&block_id)
+                                    .map(|(s, _)| *s)
+                                    .unwrap_or(hovered_line_idx);
+
+                                if get_block_context_menu_items(self.lines, block_start_idx)
+                                    .is_some()
+                                {
+                                    let active_block_id =
+                                        self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
+                                    let block_y = _layout.bounds().y
+                                        + TOP_PAD
+                                        + state.layout_tree.prefix_sum(block_start_idx);
+                                    let spacer = if (line.is_code_block || line.is_table_row)
+                                        && is_first_block_line(self.lines, block_start_idx)
+                                        && !is_block_editing_line(
+                                            line,
+                                            active_block_id,
+                                            state.is_focused,
+                                        ) {
+                                        24.0
+                                    } else {
+                                        0.0
+                                    };
+                                    let grip_x = _layout.bounds().x + 24.0;
+                                    let grip_y = block_y + spacer + 4.0;
+                                    let grip_rect = Rectangle {
+                                        x: grip_x - 8.0,
+                                        y: grip_y,
+                                        width: 16.0,
+                                        height: 16.0,
+                                    };
+
+                                    let click_pt = Point::new(
+                                        pos.x + _layout.bounds().x,
+                                        pos.y + _layout.bounds().y,
+                                    );
+                                    if grip_rect.contains(click_pt) {
+                                        let absolute_pos = _cursor.position().unwrap_or_default();
+                                        if let Some(ref cb) = self.on_block_context_menu {
+                                            shell.publish(cb(block_start_idx, absolute_pos));
+                                        }
+                                        shell.capture_event();
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(drag) =
                         self.horizontal_scrollbar_hit::<R>(pos, _layout.bounds().width, state)
                     {
@@ -2742,7 +3110,12 @@ where
 
             if let Some(line_idx) = line_idx {
                 if let Some(line) = self.lines.get(line_idx) {
-                    let is_editing = is_block_editing_line(line, active_block_id, state.is_focused);
+                    let selection =
+                        normalized_selection(state.selection_anchor, state.selection_focus);
+                    let line_has_selection = selection
+                        .is_some_and(|((sl, _), (el, _))| line_idx >= sl && line_idx <= el);
+                    let is_editing = is_block_editing_line(line, active_block_id, state.is_focused)
+                        || line_has_selection;
                     let mut x_acc = 0.0_f32;
                     let active_col =
                         (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
@@ -2762,9 +3135,7 @@ where
                             if span.is_checkbox {
                                 return mouse::Interaction::Pointer;
                             }
-                            if span.is_link
-                                && (state.modifiers.control() || state.modifiers.command())
-                            {
+                            if span.is_link {
                                 return mouse::Interaction::Pointer;
                             }
                         }
@@ -2775,6 +3146,32 @@ where
             return mouse::Interaction::Text;
         }
         mouse::Interaction::Idle
+    }
+}
+
+pub(crate) fn is_link_target_broken(
+    target: &str,
+    vault_root: Option<&str>,
+    active_path: Option<&str>,
+    existing_files: &HashSet<String>,
+) -> bool {
+    let is_url = target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.contains("://") && !target.starts_with("pdf://");
+    if is_url {
+        return false;
+    }
+    if let Some(pdf_target) = parse_pdf_link(target) {
+        let resolved = resolve_relative_link_path(vault_root, active_path, &pdf_target.path);
+        !existing_files.contains(&resolved)
+    } else {
+        let resolved = resolve_relative_link_path(vault_root, active_path, target);
+        let mut exists = existing_files.contains(&resolved);
+        if !exists {
+            exists = existing_files.contains(&format!("{}.md", resolved))
+                || existing_files.contains(&format!("{}.markdown", resolved));
+        }
+        !exists
     }
 }
 
@@ -2792,8 +3189,12 @@ impl<'a, Message> Editor<'a, Message> {
         let mut seen_code_blocks = std::collections::HashSet::new();
         let mut seen_table_blocks = std::collections::HashSet::new();
 
+        let selection = normalized_selection(state.selection_anchor, state.selection_focus);
+
         for (i, line) in self.lines.iter().enumerate() {
-            let is_editing = is_block_editing_line(line, active_block_id, state.is_focused);
+            let line_has_selection = selection.is_some_and(|((sl, _), (el, _))| i >= sl && i <= el);
+            let is_editing = is_block_editing_line(line, active_block_id, state.is_focused)
+                || line_has_selection;
             let active_col = (state.is_focused && i == self.buffer.cursor_line)
                 .then_some(self.buffer.cursor_col);
 
@@ -2899,7 +3300,7 @@ impl<'a, Message> Editor<'a, Message> {
                 },
                 ..Default::default()
             },
-            theme::ACCENT,
+            theme::accent(),
         );
     }
 
@@ -3538,7 +3939,11 @@ impl<'a, Message> Editor<'a, Message> {
             return (line_idx, 0);
         }
 
-        let is_editing = is_block_editing_line(line, active_block_id, focused);
+        let selection = normalized_selection(state.selection_anchor, state.selection_focus);
+        let line_has_selection =
+            selection.is_some_and(|((sl, _), (el, _))| line_idx >= sl && line_idx <= el);
+        let is_editing =
+            is_block_editing_line(line, active_block_id, focused) || line_has_selection;
         let col = self.col_for_visual_point::<R>(
             line,
             click_x,

@@ -22,6 +22,7 @@ pub enum Message {
     SearchPrevious,
     SearchNext,
     SearchReplaceAll,
+    SearchReplace,
     #[allow(dead_code)]
     SearchResultClicked(String),
     CommandPaletteOpen,
@@ -42,6 +43,26 @@ pub enum Message {
     EditorCommandNoScroll(crate::editor::buffer::EditorCommand),
     EditorSave,
     EditorCheckboxToggle(usize),
+    EditorBlockContextMenu {
+        line_idx: usize,
+        absolute_pos: iced::Point,
+    },
+    EditorBlockAction {
+        line_idx: usize,
+        action: EditorBlockActionKind,
+    },
+    EditorContextMenu {
+        line_idx: usize,
+        col: usize,
+        absolute_pos: iced::Point,
+    },
+    EditorLinkAction {
+        line_idx: usize,
+        start_col: usize,
+        end_col: usize,
+        link_target: String,
+        action: EditorLinkActionKind,
+    },
     EditorCursorMove(usize, usize),
     EditorScrolled {
         y: f32,
@@ -229,6 +250,10 @@ pub enum Shortcut {
     ExcerptModeToggle,
     ExcerptInsertBatch,
     Submit,
+    ThemeDark,
+    ThemeLight,
+    ThemeHighContrast,
+    SwitchPane,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -247,4 +272,38 @@ pub enum CitationItem {
         page_index: u16,
         snippet: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditorBlockActionKind {
+    ConvertToH1,
+    ConvertToH2,
+    ConvertToH3,
+    ConvertToParagraph,
+    ToggleCheckbox,
+    RemoveCheckbox,
+    InsertRowAbove,
+    InsertRowBelow,
+    DeleteRow,
+    InsertColumnLeft,
+    InsertColumnRight,
+    DeleteColumn,
+    CopyCode,
+    SetCodeLanguage(String),
+    ConvertQuoteToParagraph,
+    OpenPdfCitation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchWrapStatus {
+    WrappedForward,
+    WrappedBackward,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditorLinkActionKind {
+    OpenLink,
+    CopyLinkTarget,
+    CreateNote,
+    RepairLink(String),
 }
