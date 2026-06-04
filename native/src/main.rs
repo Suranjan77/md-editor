@@ -24,6 +24,7 @@
 
 mod app;
 mod app_shell;
+mod command_registry;
 mod editor;
 mod integrity;
 mod messages;

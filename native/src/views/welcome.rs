@@ -16,16 +16,16 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
 
     let content = column![
         logo,
-        text("Md-editor").size(42).color(theme::TEXT_PRIMARY),
+        text("Md-editor").size(42).color(theme::text_primary()),
         text("The ultimate markdown workspace")
             .size(16)
-            .color(theme::TEXT_MUTED),
+            .color(theme::text_muted()),
         Space::new().height(Length::Fixed(40.0)),
         open_btn,
         Space::new().height(Length::Fixed(20.0)),
         text("Press Ctrl+O to open a folder")
             .size(12)
-            .color(theme::TEXT_MUTED),
+            .color(theme::text_muted()),
     ]
     .spacing(16)
     .align_x(Alignment::Center);
@@ -36,7 +36,7 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
         .center_x(Length::Fill)
         .center_y(Length::Fill)
         .style(|_| container::Style {
-            background: Some(Background::Color(theme::BG_PRIMARY)),
+            background: Some(Background::Color(theme::bg_primary())),
             ..Default::default()
         })
         .into()

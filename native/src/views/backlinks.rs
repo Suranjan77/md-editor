@@ -14,14 +14,16 @@ pub fn view<'a>(
         return container(text("")).width(Length::Fixed(0.0)).into();
     }
 
-    let header = text("BACKLINKS").size(10).color(theme::TEXT_MUTED);
+    let header = text("BACKLINKS").size(10).color(theme::text_muted());
 
     let count_text = if backlinks.is_empty() {
-        text("No backlinks found").size(12).color(theme::TEXT_MUTED)
+        text("No backlinks found")
+            .size(12)
+            .color(theme::text_muted())
     } else {
         text(format!("{} links", backlinks.len()))
             .size(10)
-            .color(theme::ACCENT)
+            .color(theme::accent())
     };
 
     let list: Column<'_, Message, Theme, Renderer> =
@@ -47,11 +49,12 @@ pub fn view<'a>(
                 };
 
                 let mut btn_content =
-                    column![text(&item.label).size(12).color(theme::TEXT_SECONDARY)].spacing(2);
+                    column![text(&item.label).size(12).color(theme::text_secondary())].spacing(2);
 
                 if let Some(ctx) = &item.context {
                     if !ctx.trim().is_empty() {
-                        btn_content = btn_content.push(text(ctx).size(10).color(theme::TEXT_MUTED));
+                        btn_content =
+                            btn_content.push(text(ctx).size(10).color(theme::text_muted()));
                     }
                 }
 
@@ -72,9 +75,9 @@ pub fn view<'a>(
 
     container(content)
         .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+            background: Some(iced::Background::Color(theme::bg_secondary())),
             border: iced::Border {
-                color: theme::BORDER,
+                color: theme::border(),
                 width: 1.0,
                 radius: 0.0.into(),
             },

@@ -38,7 +38,7 @@ pub fn view<'a>(
     }
 
     let list: Element<'a, Message, Theme, Renderer> = if items.is_empty() {
-        column![text("No matching folders or markdown notes.").color(theme::TEXT_MUTED)].into()
+        column![text("No matching folders or markdown notes.").color(theme::text_muted())].into()
     } else {
         Column::with_children(items).spacing(3).into()
     };
@@ -46,10 +46,10 @@ pub fn view<'a>(
     column![
         text("Link PDF Highlight")
             .size(18)
-            .color(theme::TEXT_PRIMARY),
+            .color(theme::text_primary()),
         text("Select an existing note, or select a folder and edit the note filename.")
             .size(12)
-            .color(theme::TEXT_MUTED),
+            .color(theme::text_muted()),
         text_input("Search folders and notes...", search_query)
             .on_input(Message::PdfLinkNotePickerSearchChanged)
             .padding(10),
@@ -57,9 +57,9 @@ pub fn view<'a>(
             .height(Length::Fixed(300.0))
             .padding(8)
             .style(|_| container::Style {
-                background: Some(Background::Color(theme::BG_PRIMARY)),
+                background: Some(Background::Color(theme::bg_primary())),
                 border: Border {
-                    color: theme::BORDER,
+                    color: theme::border(),
                     width: 1.0,
                     radius: 6.0.into(),
                 },
@@ -107,9 +107,9 @@ fn picker_row<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     let icon = if is_dir { Icon::Folder } else { Icon::FileText };
     let color = if selected {
-        theme::TEXT_PRIMARY
+        theme::text_primary()
     } else {
-        theme::TEXT_SECONDARY
+        theme::text_secondary()
     };
     let msg = if is_dir {
         Message::PdfLinkNoteFolderSelected(path.to_string())
@@ -133,8 +133,8 @@ fn picker_row<'a>(
         let mut style = button::text(theme, status);
         style.border.radius = 6.0.into();
         if selected {
-            style.background = Some(Background::Color(crate::theme::BG_TERTIARY));
-            style.border.color = crate::theme::BORDER;
+            style.background = Some(Background::Color(crate::theme::bg_tertiary()));
+            style.border.color = crate::theme::border();
             style.border.width = 1.0;
         } else if status == button::Status::Hovered {
             style.background = Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)));

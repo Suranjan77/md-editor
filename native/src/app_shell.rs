@@ -82,6 +82,7 @@ pub struct AppShellPersistence {
     pub workflow_collapsed: bool,
     pub active_workflow_tab: WorkflowSidebarTab,
     pub last_focused_pane: AppShellPane,
+    pub theme: crate::theme::AppTheme,
 }
 
 impl Default for AppShellPersistence {
@@ -96,6 +97,7 @@ impl Default for AppShellPersistence {
             workflow_collapsed: true,
             active_workflow_tab: WorkflowSidebarTab::None,
             last_focused_pane: AppShellPane::None,
+            theme: crate::theme::AppTheme::Dark,
         }
     }
 }
@@ -103,7 +105,7 @@ impl Default for AppShellPersistence {
 impl AppShellPersistence {
     pub fn serialize(self) -> String {
         format!(
-            "sidebar_width={};reference_width={};workflow_width={};split_ratio={};sidebar_collapsed={};reference_collapsed={};workflow_collapsed={};active_workflow_tab={};last_focused_pane={}",
+            "sidebar_width={};reference_width={};workflow_width={};split_ratio={};sidebar_collapsed={};reference_collapsed={};workflow_collapsed={};active_workflow_tab={};last_focused_pane={};theme={}",
             self.sidebar_width,
             self.reference_width,
             self.workflow_width,
@@ -112,7 +114,8 @@ impl AppShellPersistence {
             self.reference_collapsed,
             self.workflow_collapsed,
             self.active_workflow_tab.as_str(),
-            self.last_focused_pane.as_str()
+            self.last_focused_pane.as_str(),
+            self.theme.as_str()
         )
     }
 
@@ -142,6 +145,9 @@ impl AppShellPersistence {
                 }
                 "last_focused_pane" => {
                     persistence.last_focused_pane = AppShellPane::from_str(raw_value)?;
+                }
+                "theme" => {
+                    persistence.theme = crate::theme::AppTheme::from_str(raw_value)?;
                 }
                 _ => {}
             }
@@ -536,6 +542,7 @@ mod tests {
             workflow_collapsed: false,
             active_workflow_tab: WorkflowSidebarTab::Outline,
             last_focused_pane: AppShellPane::Pdf,
+            theme: crate::theme::AppTheme::Dark,
         };
 
         let serialized = persistence.serialize();

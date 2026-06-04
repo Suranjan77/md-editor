@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
@@ -11,6 +13,9 @@ pub struct Command {
     pub name: String,
     pub shortcut: Shortcut,
     pub icon: String,
+    pub group_name: &'static str,
+    pub shortcut_label: Option<String>,
+    pub disabled_reason: Option<&'static str>,
 }
 
 pub fn insert_pdf_quote_command() -> Command {
@@ -18,6 +23,9 @@ pub fn insert_pdf_quote_command() -> Command {
         name: "Insert PDF Quote".to_string(),
         shortcut: Shortcut::InsertPdfQuote,
         icon: "Q".to_string(),
+        group_name: "Research",
+        shortcut_label: Some("Quote".to_string()),
+        disabled_reason: None,
     }
 }
 
@@ -26,92 +34,32 @@ pub fn insert_pdf_highlight_command() -> Command {
         name: "Insert PDF Highlight".to_string(),
         shortcut: Shortcut::InsertPdfHighlight,
         icon: "H".to_string(),
+        group_name: "Research",
+        shortcut_label: Some("Cite".to_string()),
+        disabled_reason: None,
     }
 }
 
 pub fn get_commands() -> Vec<Command> {
-    vec![
-        Command {
-            name: "New File".to_string(),
-            shortcut: Shortcut::NewFile,
-            icon: "+".to_string(),
-        },
-        Command {
-            name: "Open Vault".to_string(),
-            shortcut: Shortcut::OpenVault,
-            icon: "O".to_string(),
-        },
-        Command {
-            name: "Search Vault".to_string(),
-            shortcut: Shortcut::Search,
-            icon: "/".to_string(),
-        },
-        Command {
-            name: "Toggle Sidebar".to_string(),
-            shortcut: Shortcut::ToggleSidebar,
-            icon: "S".to_string(),
-        },
-        Command {
-            name: "Navigate Back".to_string(),
-            shortcut: Shortcut::NavBack,
-            icon: "<".to_string(),
-        },
-        Command {
-            name: "Navigate Forward".to_string(),
-            shortcut: Shortcut::NavForward,
-            icon: ">".to_string(),
-        },
-        Command {
-            name: "Toggle Backlinks".to_string(),
-            shortcut: Shortcut::ToggleBacklinks,
-            icon: "B".to_string(),
-        },
-        Command {
-            name: "Toggle Table of Contents".to_string(),
-            shortcut: Shortcut::TableOfContents,
-            icon: "T".to_string(),
-        },
-        Command {
-            name: "Study Tracker".to_string(),
-            shortcut: Shortcut::StudyTracker,
-            icon: "R".to_string(),
-        },
-        Command {
-            name: "Split View".to_string(),
-            shortcut: Shortcut::SplitView,
-            icon: "|".to_string(),
-        },
-        Command {
-            name: "Focus Mode".to_string(),
-            shortcut: Shortcut::FocusMode,
-            icon: "F".to_string(),
-        },
-        Command {
-            name: "Follow Citation".to_string(),
-            shortcut: Shortcut::FollowCitation,
-            icon: "G".to_string(),
-        },
-        Command {
-            name: "Show Usages".to_string(),
-            shortcut: Shortcut::ShowUsages,
-            icon: "U".to_string(),
-        },
-        Command {
-            name: "Citation Palette".to_string(),
-            shortcut: Shortcut::CitationPalette,
-            icon: "C".to_string(),
-        },
-        Command {
-            name: "Toggle Excerpt Mode".to_string(),
-            shortcut: Shortcut::ExcerptModeToggle,
-            icon: "E".to_string(),
-        },
-        Command {
-            name: "Insert Excerpts Batch".to_string(),
-            shortcut: Shortcut::ExcerptInsertBatch,
-            icon: "I".to_string(),
-        },
-    ]
+    crate::command_registry::get_command_registry()
+        .into_iter()
+        .map(|meta| Command {
+            name: meta.name.to_string(),
+            shortcut: meta.id,
+            icon: meta.icon.to_string(),
+            group_name: match meta.group {
+                crate::app_shell::CommandGroup::File => "File",
+                crate::app_shell::CommandGroup::Edit => "Edit",
+                crate::app_shell::CommandGroup::Navigation => "Navigation",
+                crate::app_shell::CommandGroup::View => "View",
+                crate::app_shell::CommandGroup::Research => "Research",
+                crate::app_shell::CommandGroup::Annotation => "Annotation",
+                crate::app_shell::CommandGroup::Search => "Search",
+            },
+            shortcut_label: meta.default_shortcut.map(|s| s.to_string()),
+            disabled_reason: None,
+        })
+        .collect()
 }
 
 pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, Theme, Renderer> {
@@ -123,54 +71,117 @@ pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, The
 
     let mut list = column![].spacing(5);
 
-    let filtered: Vec<Command> = if query.is_empty() {
-        commands
+    let mut filtered = commands;
+    if !query.is_empty() {
+        let q = query.to_lowercase();
+        filtered.retain(|c| c.name.to_lowercase().contains(&q));
+        filtered.sort_by(|a, b| {
+            let a_enabled = a.disabled_reason.is_none();
+            let b_enabled = b.disabled_reason.is_none();
+            if a_enabled != b_enabled {
+                return b_enabled.cmp(&a_enabled);
+            }
+            let a_starts = a.name.to_lowercase().starts_with(&q);
+            let b_starts = b.name.to_lowercase().starts_with(&q);
+            if a_starts != b_starts {
+                return b_starts.cmp(&a_starts);
+            }
+            a.name.cmp(&b.name)
+        });
     } else {
-        commands
-            .into_iter()
-            .filter(|c| c.name.to_lowercase().contains(&query.to_lowercase()))
-            .collect()
-    };
+        filtered.sort_by(|a, b| {
+            let a_enabled = a.disabled_reason.is_none();
+            let b_enabled = b.disabled_reason.is_none();
+            if a_enabled != b_enabled {
+                return b_enabled.cmp(&a_enabled);
+            }
+            let group_cmp = a.group_name.cmp(b.group_name);
+            if group_cmp != std::cmp::Ordering::Equal {
+                return group_cmp;
+            }
+            a.name.cmp(&b.name)
+        });
+    }
 
     for cmd in filtered {
-        list = list.push(
-            button(
-                row![
-                    container(text(cmd.icon).size(12).color(theme::TEXT_SECONDARY))
-                        .width(Length::Fixed(24.0))
-                        .height(Length::Fixed(24.0))
-                        .center_x(Length::Fixed(24.0))
-                        .center_y(Length::Fixed(24.0))
-                        .style(|_| container::Style {
-                            background: Some(iced::Background::Color(theme::BG_TERTIARY)),
-                            border: iced::Border {
-                                color: theme::BORDER,
-                                width: 1.0,
-                                radius: 6.0.into(),
-                            },
-                            ..Default::default()
-                        }),
-                    text(cmd.name).size(14).color(theme::TEXT_PRIMARY),
-                    Space::new().width(Length::Fill),
-                    text(shortcut_label(cmd.shortcut))
-                        .size(11)
-                        .color(theme::TEXT_MUTED),
+        let is_disabled = cmd.disabled_reason.is_some();
+        let content = if let Some(reason) = cmd.disabled_reason {
+            row![
+                container(text(cmd.icon.clone()).size(12).color(theme::text_muted()))
+                    .width(Length::Fixed(24.0))
+                    .height(Length::Fixed(24.0))
+                    .center_x(Length::Fixed(24.0))
+                    .center_y(Length::Fixed(24.0))
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(theme::bg_tertiary())),
+                        border: iced::Border {
+                            color: theme::border_subtle(),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        ..Default::default()
+                    }),
+                column![
+                    text(cmd.name.clone()).size(14).color(theme::text_muted()),
+                    text(reason).size(11).color(theme::danger())
                 ]
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .padding([8, 12]),
-            )
-            .width(Length::Fill)
-            .on_press(Message::CommandPaletteCommandClicked(cmd.shortcut))
-            .style(button::text),
-        );
+                .spacing(2),
+                Space::new().width(Length::Fill),
+                text(cmd.group_name).size(10).color(theme::text_muted()),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .padding([8, 12])
+        } else {
+            row![
+                container(
+                    text(cmd.icon.clone())
+                        .size(12)
+                        .color(theme::text_secondary())
+                )
+                .width(Length::Fixed(24.0))
+                .height(Length::Fixed(24.0))
+                .center_x(Length::Fixed(24.0))
+                .center_y(Length::Fixed(24.0))
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(theme::bg_tertiary())),
+                    border: iced::Border {
+                        color: theme::border(),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }),
+                text(cmd.name.clone()).size(14).color(theme::text_primary()),
+                Space::new().width(Length::Fill),
+                text(
+                    cmd.shortcut_label
+                        .clone()
+                        .unwrap_or_else(|| shortcut_label(cmd.shortcut).to_string())
+                )
+                .size(11)
+                .color(theme::text_muted()),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .padding([8, 12])
+        };
+
+        let btn = button(content).width(Length::Fill);
+        let btn = if is_disabled {
+            btn.style(button::text)
+        } else {
+            btn.on_press(Message::CommandPaletteCommandClicked(cmd.shortcut))
+                .style(button::text)
+        };
+        list = list.push(btn);
     }
 
     container(
         column![
             container(input).style(|_| container::Style {
                 border: iced::Border {
-                    color: theme::BORDER,
+                    color: theme::border(),
                     width: 0.0,
                     radius: 0.0.into(),
                 },
@@ -182,9 +193,9 @@ pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, The
     )
     .width(Length::Fixed(520.0))
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+        background: Some(iced::Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER,
+            color: theme::border(),
             width: 1.0,
             radius: 8.0.into(),
         },
@@ -203,10 +214,10 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::ToggleSidebar => "Ctrl B",
         Shortcut::NavBack => "Alt Left",
         Shortcut::NavForward => "Alt Right",
-        Shortcut::ToggleBacklinks => "Backlinks",
+        Shortcut::ToggleBacklinks => "Ctrl Alt B",
         Shortcut::FocusMode => "Focus",
         Shortcut::TableOfContents => "Ctrl T",
-        Shortcut::StudyTracker => "Tracker",
+        Shortcut::StudyTracker => "Ctrl Alt S",
         Shortcut::SplitView => "Split",
         Shortcut::Escape => "Esc",
         Shortcut::ZoomIn => "Ctrl +",
@@ -226,6 +237,10 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::ExcerptModeToggle => "Alt E",
         Shortcut::ExcerptInsertBatch => "Alt I",
         Shortcut::Submit => "Enter",
+        Shortcut::ThemeDark => "Dark Theme",
+        Shortcut::ThemeLight => "Light Theme",
+        Shortcut::ThemeHighContrast => "High Contrast",
+        Shortcut::SwitchPane => "Alt P",
     }
 }
 

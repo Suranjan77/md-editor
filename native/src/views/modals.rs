@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{EditorBlockActionKind, Message};
 use crate::theme;
 use crate::views::link_note_picker;
 
@@ -62,8 +62,118 @@ pub fn pdf_annotation_context_menu_items(
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EditorBlockContextMenuState {
+    pub absolute_pos: iced::Point,
+    pub line_idx: usize,
+    pub items: Vec<EditorBlockContextMenuItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditorBlockContextMenuItem {
+    ConvertToH1,
+    ConvertToH2,
+    ConvertToH3,
+    ConvertToParagraph,
+    ToggleCheckbox,
+    RemoveCheckbox,
+    InsertRowAbove,
+    InsertRowBelow,
+    DeleteRow,
+    InsertColumnLeft,
+    InsertColumnRight,
+    DeleteColumn,
+    CopyCode,
+    SetCodeLanguage,
+    ConvertQuoteToParagraph,
+    OpenPdfCitation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditorLinkContextMenuState {
+    pub absolute_pos: iced::Point,
+    pub line_idx: usize,
+    pub start_col: usize,
+    pub end_col: usize,
+    pub link_target: String,
+    pub source_text: String,
+    pub display_text: String,
+    pub items: Vec<EditorLinkContextMenuItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditorLinkContextMenuItem {
+    OpenLink,
+    CopyLinkTarget,
+    CreateNote { filename: String },
+    RepairLink { suggested_path: String },
+    OpenPdfCitation,
+}
+
+pub fn get_link_context_menu_items(
+    target: &str,
+    vault_root: Option<&str>,
+    active_path: Option<&str>,
+    existing_files: &std::collections::HashSet<String>,
+) -> Vec<EditorLinkContextMenuItem> {
+    let mut items = Vec::new();
+    items.push(EditorLinkContextMenuItem::OpenLink);
+    items.push(EditorLinkContextMenuItem::CopyLinkTarget);
+
+    let is_pdf = target.starts_with("pdf://") || target.to_lowercase().contains(".pdf");
+    if is_pdf {
+        items.push(EditorLinkContextMenuItem::OpenPdfCitation);
+    }
+
+    let is_url = target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.contains("://") && !target.starts_with("pdf://");
+
+    if !is_url {
+        let is_broken = crate::editor::renderer::is_link_target_broken(
+            target,
+            vault_root,
+            active_path,
+            existing_files,
+        );
+        if is_broken {
+            let path_buf = std::path::Path::new(target);
+            let stem = path_buf
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| target.to_string());
+            let filename = if stem.to_lowercase().ends_with(".md")
+                || stem.to_lowercase().ends_with(".markdown")
+                || stem.to_lowercase().ends_with(".pdf")
+            {
+                stem.clone()
+            } else {
+                format!("{}.md", stem)
+            };
+            items.push(EditorLinkContextMenuItem::CreateNote { filename });
+
+            let target_stem_lower = stem.to_lowercase();
+            for existing_path in existing_files {
+                let exp = std::path::Path::new(existing_path);
+                if let Some(estem) = exp.file_stem() {
+                    if estem.to_string_lossy().to_string().to_lowercase() == target_stem_lower {
+                        items.push(EditorLinkContextMenuItem::RepairLink {
+                            suggested_path: existing_path.clone(),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    items
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ModalType {
     PdfContextMenu(PdfContextMenuState),
+    EditorBlockContextMenu(EditorBlockContextMenuState),
+    EditorLinkContextMenu(EditorLinkContextMenuState),
     CreateFile,
     CreateFolder,
     Delete(String),         // path
@@ -91,7 +201,7 @@ fn view_go_to_page<'a>(
     let input_box = if error.is_some() {
         input_box.style(|_| container::Style {
             border: iced::Border {
-                color: theme::DANGER,
+                color: theme::danger(),
                 width: 1.5,
                 radius: 4.0.into(),
             },
@@ -104,17 +214,17 @@ fn view_go_to_page<'a>(
     container(
         container(
             column![
-                text("Go to Page").size(18).color(theme::TEXT_PRIMARY),
+                text("Go to Page").size(18).color(theme::text_primary()),
                 input_box,
                 text(format!("/ {}", total_pages))
                     .size(16)
-                    .color(theme::TEXT_MUTED),
+                    .color(theme::text_muted()),
                 if let Some(err) = error {
-                    text(err).size(12).color(theme::DANGER)
+                    text(err).size(12).color(theme::danger())
                 } else {
                     text("Press Enter to navigate, Esc to cancel.")
                         .size(11)
-                        .color(theme::TEXT_MUTED)
+                        .color(theme::text_muted())
                 },
                 row![
                     button(text("Cancel").size(14))
@@ -134,9 +244,9 @@ fn view_go_to_page<'a>(
         )
         .width(Length::Fixed(320.0))
         .style(|_| container::Style {
-            background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+            background: Some(iced::Background::Color(theme::bg_secondary())),
             border: iced::Border {
-                color: theme::BORDER,
+                color: theme::border(),
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -186,7 +296,7 @@ pub(crate) fn view_context_menu<'a>(
         };
 
         menu_col = menu_col.push(
-            button(text(label).size(12).color(theme::TEXT_PRIMARY))
+            button(text(label).size(12).color(theme::text_primary()))
                 .on_press(Message::PdfContextMenuAction(item.clone()))
                 .padding([6, 12])
                 .style(button::text)
@@ -197,9 +307,265 @@ pub(crate) fn view_context_menu<'a>(
     let menu_card = container(menu_col)
         .width(Length::Fixed(220.0))
         .style(|_| container::Style {
-            background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+            background: Some(iced::Background::Color(theme::bg_secondary())),
             border: iced::Border {
-                color: theme::BORDER,
+                color: theme::border(),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.25),
+                offset: iced::Vector::new(0.0, 2.0),
+                blur_radius: 8.0,
+            },
+            ..Default::default()
+        });
+
+    let x = state.absolute_pos.x;
+    let y = state.absolute_pos.y;
+
+    let content = row![
+        Space::new().width(Length::Fixed(x.max(0.0))),
+        column![Space::new().height(Length::Fixed(y.max(0.0))), menu_card,]
+    ];
+
+    container(
+        button(content)
+            .on_press(Message::NameModalCancel)
+            .style(button::text)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(0),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+pub(crate) fn view_editor_block_context_menu<'a>(
+    state: &EditorBlockContextMenuState,
+) -> Element<'a, Message, Theme, Renderer> {
+    use iced::widget::Space;
+    let mut menu_col = column![].spacing(1);
+
+    for item in &state.items {
+        let label = match item {
+            EditorBlockContextMenuItem::ConvertToH1 => "Convert to H1 Heading",
+            EditorBlockContextMenuItem::ConvertToH2 => "Convert to H2 Heading",
+            EditorBlockContextMenuItem::ConvertToH3 => "Convert to H3 Heading",
+            EditorBlockContextMenuItem::ConvertToParagraph => "Convert to Paragraph",
+            EditorBlockContextMenuItem::ToggleCheckbox => "Toggle Checkbox",
+            EditorBlockContextMenuItem::RemoveCheckbox => "Remove Checkbox",
+            EditorBlockContextMenuItem::InsertRowAbove => "Insert Row Above",
+            EditorBlockContextMenuItem::InsertRowBelow => "Insert Row Below",
+            EditorBlockContextMenuItem::DeleteRow => "Delete Current Row",
+            EditorBlockContextMenuItem::InsertColumnLeft => "Insert Column Left",
+            EditorBlockContextMenuItem::InsertColumnRight => "Insert Column Right",
+            EditorBlockContextMenuItem::DeleteColumn => "Delete Current Column",
+            EditorBlockContextMenuItem::CopyCode => "Copy Code block",
+            EditorBlockContextMenuItem::SetCodeLanguage => "Set Language",
+            EditorBlockContextMenuItem::ConvertQuoteToParagraph => "Convert to Paragraph",
+            EditorBlockContextMenuItem::OpenPdfCitation => "Open Citation PDF Source",
+        };
+
+        let action_msg = match item {
+            EditorBlockContextMenuItem::ConvertToH1 => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::ConvertToH1,
+            },
+            EditorBlockContextMenuItem::ConvertToH2 => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::ConvertToH2,
+            },
+            EditorBlockContextMenuItem::ConvertToH3 => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::ConvertToH3,
+            },
+            EditorBlockContextMenuItem::ConvertToParagraph => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::ConvertToParagraph,
+            },
+            EditorBlockContextMenuItem::ToggleCheckbox => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::ToggleCheckbox,
+            },
+            EditorBlockContextMenuItem::RemoveCheckbox => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::RemoveCheckbox,
+            },
+            EditorBlockContextMenuItem::InsertRowAbove => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::InsertRowAbove,
+            },
+            EditorBlockContextMenuItem::InsertRowBelow => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::InsertRowBelow,
+            },
+            EditorBlockContextMenuItem::DeleteRow => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::DeleteRow,
+            },
+            EditorBlockContextMenuItem::InsertColumnLeft => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::InsertColumnLeft,
+            },
+            EditorBlockContextMenuItem::InsertColumnRight => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::InsertColumnRight,
+            },
+            EditorBlockContextMenuItem::DeleteColumn => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::DeleteColumn,
+            },
+            EditorBlockContextMenuItem::CopyCode => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::CopyCode,
+            },
+            EditorBlockContextMenuItem::SetCodeLanguage => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::SetCodeLanguage("rust".to_string()),
+            },
+            EditorBlockContextMenuItem::ConvertQuoteToParagraph => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::ConvertQuoteToParagraph,
+            },
+            EditorBlockContextMenuItem::OpenPdfCitation => Message::EditorBlockAction {
+                line_idx: state.line_idx,
+                action: EditorBlockActionKind::OpenPdfCitation,
+            },
+        };
+
+        menu_col = menu_col.push(
+            button(text(label).size(12).color(theme::text_primary()))
+                .on_press(action_msg)
+                .padding([6, 12])
+                .style(button::text)
+                .width(Length::Fill),
+        );
+    }
+
+    let menu_card = container(menu_col)
+        .width(Length::Fixed(220.0))
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(theme::bg_secondary())),
+            border: iced::Border {
+                color: theme::border(),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.25),
+                offset: iced::Vector::new(0.0, 2.0),
+                blur_radius: 8.0,
+            },
+            ..Default::default()
+        });
+
+    let x = state.absolute_pos.x;
+    let y = state.absolute_pos.y;
+
+    let content = row![
+        Space::new().width(Length::Fixed(x.max(0.0))),
+        column![Space::new().height(Length::Fixed(y.max(0.0))), menu_card,]
+    ];
+
+    container(
+        button(content)
+            .on_press(Message::NameModalCancel)
+            .style(button::text)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(0),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+pub(crate) fn view_editor_link_context_menu<'a>(
+    state: &EditorLinkContextMenuState,
+) -> Element<'a, Message, Theme, Renderer> {
+    use iced::widget::Space;
+    let mut menu_col = column![].spacing(1);
+
+    for item in &state.items {
+        let label = match item {
+            EditorLinkContextMenuItem::OpenLink => {
+                if state.link_target.starts_with("http") {
+                    "Open Link in Browser".to_string()
+                } else {
+                    "Open Note".to_string()
+                }
+            }
+            EditorLinkContextMenuItem::CopyLinkTarget => {
+                if state.link_target.starts_with("http") {
+                    "Copy URL".to_string()
+                } else {
+                    "Copy Link Path".to_string()
+                }
+            }
+            EditorLinkContextMenuItem::CreateNote { filename } => {
+                format!("Create Note: {}", filename)
+            }
+            EditorLinkContextMenuItem::RepairLink { suggested_path } => {
+                format!("Repair Link to {}", suggested_path)
+            }
+            EditorLinkContextMenuItem::OpenPdfCitation => "Open Citation PDF Source".to_string(),
+        };
+
+        let action_msg = match item {
+            EditorLinkContextMenuItem::OpenLink => Message::EditorLinkAction {
+                line_idx: state.line_idx,
+                start_col: state.start_col,
+                end_col: state.end_col,
+                link_target: state.link_target.clone(),
+                action: crate::messages::EditorLinkActionKind::OpenLink,
+            },
+            EditorLinkContextMenuItem::CopyLinkTarget => Message::EditorLinkAction {
+                line_idx: state.line_idx,
+                start_col: state.start_col,
+                end_col: state.end_col,
+                link_target: state.link_target.clone(),
+                action: crate::messages::EditorLinkActionKind::CopyLinkTarget,
+            },
+            EditorLinkContextMenuItem::CreateNote { .. } => Message::EditorLinkAction {
+                line_idx: state.line_idx,
+                start_col: state.start_col,
+                end_col: state.end_col,
+                link_target: state.link_target.clone(),
+                action: crate::messages::EditorLinkActionKind::CreateNote,
+            },
+            EditorLinkContextMenuItem::RepairLink { suggested_path } => Message::EditorLinkAction {
+                line_idx: state.line_idx,
+                start_col: state.start_col,
+                end_col: state.end_col,
+                link_target: state.link_target.clone(),
+                action: crate::messages::EditorLinkActionKind::RepairLink(suggested_path.clone()),
+            },
+            EditorLinkContextMenuItem::OpenPdfCitation => Message::EditorLinkAction {
+                line_idx: state.line_idx,
+                start_col: state.start_col,
+                end_col: state.end_col,
+                link_target: state.link_target.clone(),
+                action: crate::messages::EditorLinkActionKind::OpenLink,
+            },
+        };
+
+        menu_col = menu_col.push(
+            button(text(label).size(12).color(theme::text_primary()))
+                .on_press(action_msg)
+                .padding([6, 12])
+                .style(button::text)
+                .width(Length::Fill),
+        );
+    }
+
+    let menu_card = container(menu_col)
+        .width(Length::Fixed(240.0))
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(theme::bg_secondary())),
+            border: iced::Border {
+                color: theme::border(),
                 width: 1.0,
                 radius: 4.0.into(),
             },
@@ -241,6 +607,12 @@ pub fn view<'a>(
     if let ModalType::PdfContextMenu(state) = modal_type {
         return view_context_menu(state);
     }
+    if let ModalType::EditorBlockContextMenu(state) = modal_type {
+        return view_editor_block_context_menu(state);
+    }
+    if let ModalType::EditorLinkContextMenu(state) = modal_type {
+        return view_editor_link_context_menu(state);
+    }
 
     // GoToPage renders its own full-screen overlay with focused input.
     if let ModalType::GoToPage { total, error } = modal_type {
@@ -250,6 +622,8 @@ pub fn view<'a>(
     let title = match modal_type {
         ModalType::GoToPage { .. } => "", // unreachable — handled above
         ModalType::PdfContextMenu(_) => "",
+        ModalType::EditorBlockContextMenu(_) => "",
+        ModalType::EditorLinkContextMenu(_) => "",
         ModalType::CreateFile => "Create New File",
         ModalType::CreateFolder => "Create New Folder",
         ModalType::Delete(_) => "Delete Confirmation",
@@ -260,10 +634,11 @@ pub fn view<'a>(
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
         ModalType::Delete(path) => column![
-            text(format!("Are you sure you want to delete '{}'?", path)).color(theme::TEXT_PRIMARY),
+            text(format!("Are you sure you want to delete '{}'?", path))
+                .color(theme::text_primary()),
             text("This action cannot be undone.")
                 .size(12)
-                .color(theme::TEXT_MUTED),
+                .color(theme::text_muted()),
             row![
                 button(text("Cancel").size(14))
                     .on_press(Message::NameModalCancel)
@@ -289,7 +664,7 @@ pub fn view<'a>(
                 _ => ("Enter name...", "Confirm"),
             };
             column![
-                text(title).size(18).color(theme::TEXT_PRIMARY),
+                text(title).size(18).color(theme::text_primary()),
                 text_input(placeholder, input_value)
                     .on_input(Message::NameModalInputChanged)
                     .padding(10),
@@ -319,9 +694,9 @@ pub fn view<'a>(
             }))
             .padding(30)
             .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+                background: Some(iced::Background::Color(theme::bg_secondary())),
                 border: iced::Border {
-                    color: theme::BORDER,
+                    color: theme::border(),
                     width: 1.0,
                     radius: 8.0.into(),
                 },

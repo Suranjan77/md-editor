@@ -20,15 +20,15 @@ fn custom_action_button<'a, Message: Clone + 'a>(
         .padding([5, 10])
         .style(|_theme, status| {
             let (bg, fg) = if status == button::Status::Hovered {
-                (theme::BG_TERTIARY, theme::ACCENT)
+                (theme::bg_tertiary(), theme::accent())
             } else {
-                (theme::BG_PRIMARY, theme::TEXT_SECONDARY)
+                (theme::bg_primary(), theme::text_secondary())
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
                 text_color: fg,
                 border: iced::Border {
-                    color: theme::BORDER,
+                    color: theme::border(),
                     width: 1.0,
                     radius: 4.0.into(),
                 },
@@ -52,10 +52,10 @@ fn custom_cite_button<'a, Message: Clone + 'a>(
     btn.style(|_theme, status| {
         if status == button::Status::Disabled {
             button::Style {
-                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
-                text_color: theme::TEXT_MUTED,
+                background: Some(iced::Background::Color(theme::bg_primary())),
+                text_color: theme::text_muted(),
                 border: iced::Border {
-                    color: theme::BORDER,
+                    color: theme::border(),
                     width: 1.0,
                     radius: 4.0.into(),
                 },
@@ -64,12 +64,12 @@ fn custom_cite_button<'a, Message: Clone + 'a>(
         } else {
             let (bg, fg, border_color) = if status == button::Status::Hovered {
                 (
-                    theme::BG_TERTIARY,
-                    theme::ACCENT_SECONDARY,
-                    theme::ACCENT_SECONDARY,
+                    theme::bg_tertiary(),
+                    theme::accent_secondary(),
+                    theme::accent_secondary(),
                 )
             } else {
-                (theme::BG_PRIMARY, theme::ACCENT, theme::ACCENT)
+                (theme::bg_primary(), theme::accent(), theme::accent())
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
@@ -97,10 +97,10 @@ fn pill_button<'a, Message: Clone + 'a>(
         .style(move |_theme, status| {
             if is_active {
                 button::Style {
-                    background: Some(iced::Background::Color(theme::ACCENT)),
-                    text_color: theme::BG_PRIMARY,
+                    background: Some(iced::Background::Color(theme::accent())),
+                    text_color: theme::bg_primary(),
                     border: iced::Border {
-                        color: theme::ACCENT,
+                        color: theme::accent(),
                         width: 1.0,
                         radius: 12.0.into(),
                     },
@@ -108,10 +108,10 @@ fn pill_button<'a, Message: Clone + 'a>(
                 }
             } else if status == button::Status::Hovered {
                 button::Style {
-                    background: Some(iced::Background::Color(theme::BG_TERTIARY)),
-                    text_color: theme::TEXT_PRIMARY,
+                    background: Some(iced::Background::Color(theme::bg_tertiary())),
+                    text_color: theme::text_primary(),
                     border: iced::Border {
-                        color: theme::BORDER,
+                        color: theme::border(),
                         width: 1.0,
                         radius: 12.0.into(),
                     },
@@ -119,10 +119,10 @@ fn pill_button<'a, Message: Clone + 'a>(
                 }
             } else {
                 button::Style {
-                    background: Some(iced::Background::Color(theme::BG_SECONDARY)),
-                    text_color: theme::TEXT_MUTED,
+                    background: Some(iced::Background::Color(theme::bg_secondary())),
+                    text_color: theme::text_muted(),
                     border: iced::Border {
-                        color: theme::BORDER,
+                        color: theme::border(),
                         width: 1.0,
                         radius: 12.0.into(),
                     },
@@ -185,9 +185,9 @@ fn color_dot_pill<'a>(
     let pill_content = row![
         color_dot,
         text(label).size(10).font(BOLD_FONT).color(if is_active {
-            theme::BG_PRIMARY
+            theme::bg_primary()
         } else {
-            theme::TEXT_MUTED
+            theme::text_muted()
         })
     ]
     .spacing(6)
@@ -199,9 +199,9 @@ fn color_dot_pill<'a>(
         .style(move |_theme, status| {
             if is_active {
                 button::Style {
-                    background: Some(iced::Background::Color(theme::ACCENT)),
+                    background: Some(iced::Background::Color(theme::accent())),
                     border: iced::Border {
-                        color: theme::ACCENT,
+                        color: theme::accent(),
                         width: 1.0,
                         radius: 12.0.into(),
                     },
@@ -209,9 +209,9 @@ fn color_dot_pill<'a>(
                 }
             } else if status == button::Status::Hovered {
                 button::Style {
-                    background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                    background: Some(iced::Background::Color(theme::bg_tertiary())),
                     border: iced::Border {
-                        color: theme::BORDER,
+                        color: theme::border(),
                         width: 1.0,
                         radius: 12.0.into(),
                     },
@@ -219,9 +219,9 @@ fn color_dot_pill<'a>(
                 }
             } else {
                 button::Style {
-                    background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+                    background: Some(iced::Background::Color(theme::bg_secondary())),
                     border: iced::Border {
-                        color: theme::BORDER,
+                        color: theme::border(),
                         width: 1.0,
                         radius: 12.0.into(),
                     },
@@ -315,7 +315,7 @@ pub fn view<'a>(
     let title = text("Annotations")
         .size(16)
         .font(BOLD_FONT)
-        .color(theme::TEXT_PRIMARY);
+        .color(theme::text_primary());
 
     // 1. Color filter row
     let mut colors_filter = row![color_dot_pill(None, filter_color)].spacing(4);
@@ -472,7 +472,7 @@ pub fn view<'a>(
     let total_count = filtered.annotations.len();
     let count_text = text(format!("Total: {}", total_count))
         .size(12)
-        .color(theme::TEXT_MUTED);
+        .color(theme::text_muted());
 
     let items = filtered.annotations.into_iter().map(|ann| {
         let is_focused = Some(ann.id.as_str()) == focused_id;
@@ -520,9 +520,9 @@ pub fn view<'a>(
             text(format!("Page {}", ann.page_index + 1))
                 .size(12)
                 .font(BOLD_FONT)
-                .color(theme::TEXT_PRIMARY),
+                .color(theme::text_primary()),
             Space::new().width(Length::Fixed(8.0)),
-            text(ann.kind.as_str()).size(11).color(theme::TEXT_MUTED),
+            text(ann.kind.as_str()).size(11).color(theme::text_muted()),
             Space::new().width(Length::Fill),
             status_badge,
         ]
@@ -557,14 +557,14 @@ pub fn view<'a>(
             container(
                 text(format!("\"{}\"", ann.selected_text.trim()))
                     .size(12)
-                    .color(theme::TEXT_SECONDARY)
+                    .color(theme::text_secondary())
             )
             .padding([6, 10])
             .width(Length::Fill)
             .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                background: Some(iced::Background::Color(theme::bg_primary())),
                 border: iced::Border {
-                    color: theme::BORDER,
+                    color: theme::border(),
                     width: 1.0,
                     radius: iced::border::Radius {
                         top_left: 0.0,
@@ -582,17 +582,17 @@ pub fn view<'a>(
             if !note_str.is_empty() {
                 container(
                     row![
-                        icons::view(Icon::FileText, theme::TEXT_MUTED, 12.0),
-                        text(note_str).size(11).color(theme::TEXT_SECONDARY),
+                        icons::view(Icon::FileText, theme::text_muted(), 12.0),
+                        text(note_str).size(11).color(theme::text_secondary()),
                     ]
                     .spacing(6)
                     .align_y(Alignment::Center),
                 )
                 .padding([6, 8])
                 .style(|_| container::Style {
-                    background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                    background: Some(iced::Background::Color(theme::bg_tertiary())),
                     border: iced::Border {
-                        color: theme::BORDER,
+                        color: theme::border(),
                         width: 1.0,
                         radius: 4.0.into(),
                     },
@@ -614,13 +614,13 @@ pub fn view<'a>(
                         text(format!("#{}", tag))
                             .size(9)
                             .font(BOLD_FONT)
-                            .color(theme::ACCENT),
+                            .color(theme::accent()),
                     )
                     .padding([2, 6])
                     .style(|_| container::Style {
-                        background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                        background: Some(iced::Background::Color(theme::bg_tertiary())),
                         border: iced::Border {
-                            color: theme::BORDER,
+                            color: theme::border(),
                             width: 1.0,
                             radius: 10.0.into(),
                         },
@@ -663,13 +663,18 @@ pub fn view<'a>(
                 },
                 Message::PdfToggleAnnotationStatus(ann.id.clone())
             ),
-            button(icons::view(Icon::Trash, theme::DANGER, 12.0))
+            button(icons::view(Icon::Trash, theme::danger(), 12.0))
                 .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
                 .height(Length::Fixed(28.0))
                 .padding(6)
                 .style(|_theme, status| {
                     let bg = if status == button::Status::Hovered {
-                        Color::from_rgba(theme::DANGER.r, theme::DANGER.g, theme::DANGER.b, 0.1)
+                        Color::from_rgba(
+                            theme::danger().r,
+                            theme::danger().g,
+                            theme::danger().b,
+                            0.1,
+                        )
                     } else {
                         Color::TRANSPARENT
                     };
@@ -678,9 +683,9 @@ pub fn view<'a>(
                         border: iced::Border {
                             color: if status == button::Status::Hovered {
                                 Color::from_rgba(
-                                    theme::DANGER.r,
-                                    theme::DANGER.g,
-                                    theme::DANGER.b,
+                                    theme::danger().r,
+                                    theme::danger().g,
+                                    theme::danger().b,
                                     0.3,
                                 )
                             } else {
@@ -706,12 +711,12 @@ pub fn view<'a>(
 
         container(card_body)
             .style(move |_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+                background: Some(iced::Background::Color(theme::bg_secondary())),
                 border: iced::Border {
                     color: if is_focused {
-                        theme::ACCENT
+                        theme::accent()
                     } else {
-                        theme::BORDER
+                        theme::border()
                     },
                     width: if is_focused { 1.5 } else { 1.0 },
                     radius: 6.0.into(),
@@ -727,7 +732,7 @@ pub fn view<'a>(
             row![
                 title,
                 Space::new().width(Length::Fill),
-                button(icons::view(Icon::File, theme::TEXT_MUTED, 14.0))
+                button(icons::view(Icon::File, theme::text_muted(), 14.0))
                     .on_press(Message::PdfExportAnnotations)
                     .padding(4)
                     .style(button::text),
@@ -744,9 +749,9 @@ pub fn view<'a>(
     .width(Length::Fixed(width))
     .height(Length::Fill)
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
+        background: Some(iced::Background::Color(theme::bg_secondary())),
         border: iced::Border {
-            color: theme::BORDER,
+            color: theme::border(),
             width: 1.0,
             ..Default::default()
         },

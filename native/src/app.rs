@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
-use crate::messages::{Message, Shortcut, TrackerTab};
+use crate::messages::{EditorBlockActionKind, Message, SearchWrapStatus, Shortcut, TrackerTab};
 use crate::pdf_links::{build_pdf_link, parse_pdf_link};
 use crate::pdf_notes::{
     build_linked_pdf_note_content, normalize_note_path, note_filename_from_path, slug_fragment,
@@ -131,6 +131,7 @@ pub struct EditorSearchState {
     pub matches: Vec<EditorMatch>,
     pub active_index: Option<usize>,
     pub visible: bool,
+    pub wrap_status: Option<SearchWrapStatus>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +156,7 @@ impl Default for EditorSearchState {
             matches: Vec::new(),
             active_index: None,
             visible: false,
+            wrap_status: None,
         }
     }
 }
@@ -254,7 +256,6 @@ pub struct MdEditor {
     // Command palette
     command_palette_visible: bool,
     command_palette_query: String,
-    commands: Vec<views::command_palette::Command>,
 
     // Citation palette
     citation_palette_visible: bool,
@@ -404,7 +405,6 @@ impl MdEditor {
             link_note_picker_search: String::new(),
             command_palette_visible: false,
             command_palette_query: String::new(),
-            commands: views::command_palette::get_commands(),
             citation_palette_visible: false,
             citation_palette_query: String::new(),
             excerpt_mode_active: false,
@@ -508,6 +508,17 @@ impl MdEditor {
                     if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) {
                         return Message::KeyboardShortcut(Shortcut::Submit);
                     }
+                    if modifiers.alt() && (modifiers.command() || modifiers.control()) {
+                        match key {
+                            iced::keyboard::Key::Character(c) if c == "b" => {
+                                return Message::KeyboardShortcut(Shortcut::ToggleBacklinks);
+                            }
+                            iced::keyboard::Key::Character(c) if c == "s" => {
+                                return Message::KeyboardShortcut(Shortcut::StudyTracker);
+                            }
+                            _ => {}
+                        }
+                    }
                     if modifiers.alt() {
                         match key {
                             iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft) => {
@@ -515,6 +526,9 @@ impl MdEditor {
                             }
                             iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight) => {
                                 return Message::PdfNavForward;
+                            }
+                            iced::keyboard::Key::Character(c) if c == "p" => {
+                                return Message::KeyboardShortcut(Shortcut::SwitchPane);
                             }
                             iced::keyboard::Key::Character(c) if c == "g" => {
                                 return Message::KeyboardShortcut(Shortcut::FollowCitation);
@@ -1109,6 +1123,90 @@ impl MdEditor {
             }
             Message::EditorCheckboxToggle(line_idx) => {
                 self.run_editor_command(EditorCommand::ToggleCheckbox { line: line_idx })
+            }
+            Message::EditorBlockContextMenu {
+                line_idx,
+                absolute_pos,
+            } => {
+                if let Some(items) = crate::editor::renderer::get_block_context_menu_items(
+                    &self.highlighted_lines,
+                    line_idx,
+                ) {
+                    self.active_modal = Some(views::modals::ModalType::EditorBlockContextMenu(
+                        views::modals::EditorBlockContextMenuState {
+                            absolute_pos,
+                            line_idx,
+                            items,
+                        },
+                    ));
+                }
+                Task::none()
+            }
+            Message::EditorBlockAction { line_idx, action } => {
+                self.active_modal = None;
+                self.handle_editor_block_action(line_idx, action)
+            }
+            Message::EditorContextMenu {
+                line_idx,
+                col,
+                absolute_pos,
+            } => {
+                // Build the link context-menu if the cursor lands on a link span.
+                if let Some(line) = self.highlighted_lines.get(line_idx) {
+                    let existing_files: HashSet<String> = self
+                        .vault_entries
+                        .iter()
+                        .filter(|e| !e.is_dir)
+                        .map(|e| e.path.clone())
+                        .collect();
+
+                    let mut x_acc = 0usize;
+                    for span in &line.spans {
+                        let span_len = span.text.chars().count();
+                        let span_end = x_acc + span_len;
+                        if span.is_link && col >= x_acc && col < span_end {
+                            if let Some(ref target) = span.link_target {
+                                let items = crate::views::modals::get_link_context_menu_items(
+                                    target,
+                                    self.vault_root.as_deref(),
+                                    self.active_path.as_deref(),
+                                    &existing_files,
+                                );
+                                let source_text = span.text.clone();
+                                let display_text = span
+                                    .display_text
+                                    .clone()
+                                    .unwrap_or_else(|| span.text.clone());
+                                self.active_modal =
+                                    Some(views::modals::ModalType::EditorLinkContextMenu(
+                                        views::modals::EditorLinkContextMenuState {
+                                            absolute_pos,
+                                            line_idx,
+                                            start_col: x_acc,
+                                            end_col: span_end,
+                                            link_target: target.clone(),
+                                            source_text,
+                                            display_text,
+                                            items,
+                                        },
+                                    ));
+                            }
+                            break;
+                        }
+                        x_acc = span_end;
+                    }
+                }
+                Task::none()
+            }
+            Message::EditorLinkAction {
+                line_idx,
+                start_col,
+                end_col,
+                link_target,
+                action,
+            } => {
+                self.active_modal = None;
+                self.handle_editor_link_action(line_idx, start_col, end_col, link_target, action)
             }
             Message::EditorCursorMove(line, col) => {
                 self.run_editor_command(EditorCommand::SetCursor { line, col })
@@ -2411,6 +2509,7 @@ impl MdEditor {
                 } else if self.search_visible {
                     self.editor_search.query = q.clone();
                     self.editor_search.active_index = None;
+                    self.editor_search.wrap_status = None;
                     if q.trim().len() > 2 {
                         self.global_search_searching = true;
                         self.global_search_error = None;
@@ -2490,6 +2589,7 @@ impl MdEditor {
                 } else {
                     self.editor_search.query = q.clone();
                     self.editor_search.active_index = None;
+                    self.editor_search.wrap_status = None;
                     if q.len() > 2 && !self.editor_search.regex {
                         if let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q) {
                             self.editor_search.matches = res;
@@ -2516,6 +2616,7 @@ impl MdEditor {
                 } else {
                     self.editor_search.regex = value;
                     self.editor_search.active_index = None;
+                    self.editor_search.wrap_status = None;
                     Task::none()
                 }
             }
@@ -2531,6 +2632,7 @@ impl MdEditor {
                 } else {
                     self.editor_search.match_case = value;
                     self.editor_search.active_index = None;
+                    self.editor_search.wrap_status = None;
                     Task::none()
                 }
             }
@@ -2574,6 +2676,13 @@ impl MdEditor {
                     self.toast = Some(format!("Replaced {} matches", count));
                     task
                 }
+                Err(err) => {
+                    self.toast = Some(err);
+                    Task::none()
+                }
+            },
+            Message::SearchReplace => match self.replace_current_match() {
+                Ok(task) => task,
                 Err(err) => {
                     self.toast = Some(err);
                     Task::none()
@@ -3520,6 +3629,37 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::SplitView => Task::done(Message::SplitViewToggle),
+                    Shortcut::SwitchPane => {
+                        if self.split_view_active
+                            && self.active_path.is_some()
+                            && self.active_pdf_path.is_some()
+                        {
+                            let next_panel = match self.active_panel {
+                                ActivePanel::Markdown => ActivePanel::Pdf,
+                                ActivePanel::Pdf => ActivePanel::Markdown,
+                            };
+                            self.set_active_panel(next_panel);
+                        }
+                        Task::none()
+                    }
+                    Shortcut::ThemeDark => {
+                        app_theme::set_active_theme(app_theme::AppTheme::Dark);
+                        self.command_palette_visible = false;
+                        self.persist_shell_state();
+                        Task::none()
+                    }
+                    Shortcut::ThemeLight => {
+                        app_theme::set_active_theme(app_theme::AppTheme::Light);
+                        self.command_palette_visible = false;
+                        self.persist_shell_state();
+                        Task::none()
+                    }
+                    Shortcut::ThemeHighContrast => {
+                        app_theme::set_active_theme(app_theme::AppTheme::HighContrast);
+                        self.command_palette_visible = false;
+                        self.persist_shell_state();
+                        Task::none()
+                    }
                     Shortcut::FocusMode => {
                         self.sidebar_visible = false;
                         self.backlinks_visible = false;
@@ -3924,6 +4064,7 @@ impl MdEditor {
                 && !self.pdf_annotations_visible,
             active_workflow_tab,
             last_focused_pane,
+            theme: app_theme::get_active_theme(),
         }
     }
 
@@ -3998,6 +4139,7 @@ impl MdEditor {
         } else {
             ActivePanel::Markdown
         };
+        app_theme::set_active_theme(saved.theme);
     }
 
     fn persist_shell_state(&self) {
@@ -4071,6 +4213,12 @@ impl MdEditor {
         } else {
             ""
         };
+        let existing_files: HashSet<String> = self
+            .vault_entries
+            .iter()
+            .filter(|e| !e.is_dir)
+            .map(|e| e.path.clone())
+            .collect();
         let editor_scroll = scrollable(
             container(
                 crate::editor::renderer::Editor::new(
@@ -4082,6 +4230,20 @@ impl MdEditor {
                     Message::EditorCommandNoScroll,
                     Message::SidebarFileClicked,
                     Message::EditorCheckboxToggle,
+                )
+                .on_block_context_menu(|line_idx, absolute_pos| Message::EditorBlockContextMenu {
+                    line_idx,
+                    absolute_pos,
+                })
+                .on_context_menu(|line_idx, col, absolute_pos| Message::EditorContextMenu {
+                    line_idx,
+                    col,
+                    absolute_pos,
+                })
+                .vault_context(
+                    self.vault_root.as_deref(),
+                    self.active_path.as_deref(),
+                    &existing_files,
                 )
                 .search(
                     editor_search_query,
@@ -4111,6 +4273,7 @@ impl MdEditor {
                     self.editor_search.match_case,
                     self.current_document_match_count(),
                     self.editor_search.active_index,
+                    self.editor_search.wrap_status,
                 )
                 .into()
             } else {
@@ -4226,14 +4389,14 @@ impl MdEditor {
                 let label = self.active_image_path.as_deref().unwrap_or("Image");
                 container(
                     column![
-                        text(label).size(13).color(app_theme::TEXT_MUTED),
+                        text(label).size(13).color(app_theme::text_muted()),
                         iced::widget::image(handle.clone())
                             .width(Length::Fill)
                             .height(Length::Fill)
                             .content_fit(iced::ContentFit::Contain),
                         text(format!("{:.0} x {:.0}", width, height))
                             .size(11)
-                            .color(app_theme::TEXT_MUTED),
+                            .color(app_theme::text_muted()),
                     ]
                     .spacing(12)
                     .align_x(Alignment::Center)
@@ -4242,7 +4405,7 @@ impl MdEditor {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|_| container::Style {
-                    background: Some(iced::Background::Color(app_theme::BG_PRIMARY)),
+                    background: Some(iced::Background::Color(app_theme::bg_primary())),
                     ..Default::default()
                 })
                 .into()
@@ -4256,13 +4419,13 @@ impl MdEditor {
                 let right_portion = ((1.0 - self.split_ratio) * 1000.0) as u16;
 
                 let divider = mouse_area(
-                    container(text("⋮").size(14).color(app_theme::TEXT_MUTED))
+                    container(text("⋮").size(14).color(app_theme::text_muted()))
                         .width(Length::Fixed(10.0))
                         .height(Length::Fill)
                         .center_x(Length::Fixed(10.0))
                         .center_y(Length::Fill)
                         .style(|_| container::Style {
-                            background: Some(iced::Background::Color(app_theme::BG_TERTIARY)),
+                            background: Some(iced::Background::Color(app_theme::bg_tertiary())),
                             ..Default::default()
                         }),
                 )
@@ -4275,7 +4438,7 @@ impl MdEditor {
                         .width(Length::FillPortion(left_portion))
                         .style(|_| container::Style {
                             border: iced::Border {
-                                color: app_theme::BORDER,
+                                color: app_theme::border(),
                                 width: 1.0,
                                 ..Default::default()
                             },
@@ -4341,7 +4504,7 @@ impl MdEditor {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|_| container::Style {
-                    background: Some(iced::Background::Color(app_theme::BG_PRIMARY)),
+                    background: Some(iced::Background::Color(app_theme::bg_primary())),
                     ..Default::default()
                 })
                 .into(),
@@ -5423,17 +5586,30 @@ impl MdEditor {
         let matches = self.current_document_matches();
         if matches.is_empty() {
             self.editor_search.active_index = None;
+            self.editor_search.wrap_status = None;
             return Task::none();
         }
 
+        let mut wrap_status = None;
         let next_index = match self.editor_search.active_index {
-            Some(index) if forward => (index + 1) % matches.len(),
-            Some(0) if !forward => matches.len() - 1,
+            Some(index) if forward => {
+                if index + 1 >= matches.len() {
+                    wrap_status = Some(SearchWrapStatus::WrappedForward);
+                    0
+                } else {
+                    index + 1
+                }
+            }
+            Some(0) if !forward => {
+                wrap_status = Some(SearchWrapStatus::WrappedBackward);
+                matches.len() - 1
+            }
             Some(index) => index.saturating_sub(1),
             None if forward => 0,
             None => matches.len() - 1,
         };
         self.editor_search.active_index = Some(next_index);
+        self.editor_search.wrap_status = wrap_status;
         let item = matches[next_index];
         self.buffer.execute(EditorCommand::SetSelection {
             anchor_line: item.line,
@@ -5769,20 +5945,57 @@ impl MdEditor {
     }
 
     fn command_palette_commands(&self) -> Vec<views::command_palette::Command> {
-        let mut commands = self.commands.clone();
-        if self.active_path.is_some() && self.pdf_selection_quote_link_command().is_some() {
-            commands.push(views::command_palette::insert_pdf_quote_command());
-        }
-        if self
-            .focused_annotation_id
-            .as_deref()
-            .and_then(|id| self.pdf_annotation_link_command(id))
-            .is_some()
-            && self.active_path.is_some()
-        {
-            commands.push(views::command_palette::insert_pdf_highlight_command());
-        }
-        commands
+        let ctx = crate::command_registry::CommandContext {
+            markdown_open: self.active_path.is_some(),
+            pdf_open: self.active_pdf_path.is_some(),
+            image_open: self.active_image_path.is_some(),
+            active_pane: match self.active_panel {
+                ActivePanel::Markdown => crate::app_shell::AppShellPane::Markdown,
+                ActivePanel::Pdf => crate::app_shell::AppShellPane::Pdf,
+            },
+            has_vault: self.vault_root.is_some(),
+            pdf_has_selection: self.active_path.is_some()
+                && self.pdf_selection_quote_link_command().is_some(),
+            has_focused_annotation: self.active_path.is_some()
+                && self
+                    .focused_annotation_id
+                    .as_deref()
+                    .and_then(|id| self.pdf_annotation_link_command(id))
+                    .is_some(),
+        };
+
+        crate::command_registry::get_command_registry()
+            .into_iter()
+            .filter(|meta| {
+                if matches!(
+                    meta.id,
+                    Shortcut::InsertPdfQuote | Shortcut::InsertPdfHighlight
+                ) {
+                    meta.is_enabled(ctx).is_ok()
+                } else {
+                    true
+                }
+            })
+            .map(|meta| {
+                let disabled_reason = meta.is_enabled(ctx).err();
+                views::command_palette::Command {
+                    name: meta.name.to_string(),
+                    shortcut: meta.id,
+                    icon: meta.icon.to_string(),
+                    group_name: match meta.group {
+                        crate::app_shell::CommandGroup::File => "File",
+                        crate::app_shell::CommandGroup::Edit => "Edit",
+                        crate::app_shell::CommandGroup::Navigation => "Navigation",
+                        crate::app_shell::CommandGroup::View => "View",
+                        crate::app_shell::CommandGroup::Research => "Research",
+                        crate::app_shell::CommandGroup::Annotation => "Annotation",
+                        crate::app_shell::CommandGroup::Search => "Search",
+                    },
+                    shortcut_label: meta.default_shortcut.map(|s| s.to_string()),
+                    disabled_reason,
+                }
+            })
+            .collect()
     }
 
     fn citation_palette_items(&self) -> Vec<crate::messages::CitationItem> {
@@ -5999,6 +6212,70 @@ impl MdEditor {
         Ok((count, Task::none()))
     }
 
+    fn replace_current_match(&mut self) -> Result<Task<Message>, String> {
+        if self.active_path.is_none() {
+            return Err("Open a markdown file before replacing text".to_string());
+        }
+        if self.editor_search.query.is_empty() {
+            return Err("Search query is empty".to_string());
+        }
+        let Some(active_idx) = self.editor_search.active_index else {
+            return Err("No active search match selected".to_string());
+        };
+        let matches = self.current_document_matches();
+        let Some(m) = matches.get(active_idx) else {
+            return Err("Active search match is invalid".to_string());
+        };
+
+        let replace_text = self.editor_search.replace.clone();
+
+        self.buffer.execute(EditorCommand::SetSelection {
+            anchor_line: m.line,
+            anchor_col: m.start_col,
+            focus_line: m.line,
+            focus_col: m.end_col,
+        });
+
+        let result = self.buffer.execute(EditorCommand::InsertText(replace_text));
+
+        let highlight_task = if result.projection_changed {
+            self.highlight_all()
+        } else {
+            Task::none()
+        };
+
+        self.editor_search.wrap_status = None;
+
+        let new_matches = self.current_document_matches();
+        if new_matches.is_empty() {
+            self.editor_search.active_index = None;
+            return Ok(highlight_task);
+        }
+
+        let (cursor_line, cursor_col) = (self.buffer.cursor_line, self.buffer.cursor_col);
+        let mut next_idx = 0;
+        for (i, nm) in new_matches.iter().enumerate() {
+            if nm.line > cursor_line || (nm.line == cursor_line && nm.start_col >= cursor_col) {
+                next_idx = i;
+                break;
+            }
+        }
+
+        self.editor_search.active_index = Some(next_idx);
+        let next_match = new_matches[next_idx];
+
+        self.buffer.execute(EditorCommand::SetSelection {
+            anchor_line: next_match.line,
+            anchor_col: next_match.start_col,
+            focus_line: next_match.line,
+            focus_col: next_match.end_col,
+        });
+
+        let center_task = self.center_editor_line(next_match.line);
+
+        Ok(Task::batch(vec![highlight_task, center_task]))
+    }
+
     fn build_global_search_query(&self, text: String) -> md_editor_core::types::UnifiedSearchQuery {
         let mut query = md_editor_core::types::UnifiedSearchQuery::all_sources(text)
             .with_active_paths(self.active_path.as_deref(), self.active_pdf_path.as_deref());
@@ -6130,6 +6407,156 @@ impl MdEditor {
     fn run_editor_command(&mut self, command: EditorCommand) -> Task<Message> {
         let keep_cursor_visible = editor_command_keeps_cursor_visible(&command);
         self.run_editor_command_with_scroll(command, keep_cursor_visible)
+    }
+
+    fn handle_editor_block_action(
+        &mut self,
+        line_idx: usize,
+        action: EditorBlockActionKind,
+    ) -> Task<Message> {
+        match action {
+            EditorBlockActionKind::ConvertToH1 => {
+                self.run_editor_command(EditorCommand::ConvertToH1 { line: line_idx })
+            }
+            EditorBlockActionKind::ConvertToH2 => {
+                self.run_editor_command(EditorCommand::ConvertToH2 { line: line_idx })
+            }
+            EditorBlockActionKind::ConvertToH3 => {
+                self.run_editor_command(EditorCommand::ConvertToH3 { line: line_idx })
+            }
+            EditorBlockActionKind::ConvertToParagraph => {
+                self.run_editor_command(EditorCommand::ConvertToParagraph { line: line_idx })
+            }
+            EditorBlockActionKind::ToggleCheckbox => {
+                self.run_editor_command(EditorCommand::ToggleCheckbox { line: line_idx })
+            }
+            EditorBlockActionKind::RemoveCheckbox => {
+                self.run_editor_command(EditorCommand::RemoveCheckbox { line: line_idx })
+            }
+            EditorBlockActionKind::InsertRowAbove => {
+                self.run_editor_command(EditorCommand::InsertRowAbove { line: line_idx })
+            }
+            EditorBlockActionKind::InsertRowBelow => {
+                self.run_editor_command(EditorCommand::InsertRowBelow { line: line_idx })
+            }
+            EditorBlockActionKind::DeleteRow => {
+                self.run_editor_command(EditorCommand::DeleteRow { line: line_idx })
+            }
+            EditorBlockActionKind::InsertColumnLeft => {
+                self.run_editor_command(EditorCommand::InsertColumnLeft { line: line_idx })
+            }
+            EditorBlockActionKind::InsertColumnRight => {
+                self.run_editor_command(EditorCommand::InsertColumnRight { line: line_idx })
+            }
+            EditorBlockActionKind::DeleteColumn => {
+                self.run_editor_command(EditorCommand::DeleteColumn { line: line_idx })
+            }
+            EditorBlockActionKind::CopyCode => {
+                let mut code_text = String::new();
+                let mut line = line_idx + 1;
+                while line < self.buffer.line_count() {
+                    let text = self.buffer.line_text(line);
+                    if text.trim_start().starts_with("```") {
+                        break;
+                    }
+                    code_text.push_str(&text);
+                    line += 1;
+                }
+                iced::clipboard::write(code_text)
+            }
+            EditorBlockActionKind::SetCodeLanguage(lang) => {
+                self.run_editor_command(EditorCommand::SetCodeLanguage {
+                    line: line_idx,
+                    language: lang,
+                })
+            }
+            EditorBlockActionKind::ConvertQuoteToParagraph => {
+                self.run_editor_command(EditorCommand::ConvertQuoteToParagraph { line: line_idx })
+            }
+            EditorBlockActionKind::OpenPdfCitation => {
+                let line_text = self.buffer.line_text(line_idx);
+                if let Some(start_idx) = line_text.find("pdf://") {
+                    let rest = &line_text[start_idx..];
+                    let end_idx = rest.find(')').unwrap_or(rest.len());
+                    let link = rest[..end_idx].to_string();
+                    Task::done(Message::SidebarFileClicked(link))
+                } else {
+                    Task::none()
+                }
+            }
+        }
+    }
+
+    fn handle_editor_link_action(
+        &mut self,
+        line_idx: usize,
+        start_col: usize,
+        end_col: usize,
+        link_target: String,
+        action: crate::messages::EditorLinkActionKind,
+    ) -> Task<Message> {
+        use crate::messages::EditorLinkActionKind;
+        match action {
+            EditorLinkActionKind::OpenLink => Task::done(Message::SidebarFileClicked(link_target)),
+            EditorLinkActionKind::CopyLinkTarget => {
+                self.toast = Some("Copied".to_string());
+                iced::clipboard::write::<Message>(link_target)
+            }
+            EditorLinkActionKind::CreateNote => {
+                // Derive filename from link target stem.
+                let stem = std::path::Path::new(&link_target)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| link_target.clone());
+                let filename = if stem.to_lowercase().ends_with(".md")
+                    || stem.to_lowercase().ends_with(".markdown")
+                {
+                    stem
+                } else {
+                    format!("{}.md", stem)
+                };
+                // Create the note adjacent to the current file.
+                let new_path = if let Some(ref active) = self.active_path {
+                    if let Some(parent) = std::path::Path::new(active).parent() {
+                        let parent_s = parent.to_string_lossy();
+                        if parent_s.is_empty() {
+                            filename
+                        } else {
+                            format!("{}/{}", parent_s.trim_end_matches('/'), filename)
+                        }
+                    } else {
+                        filename
+                    }
+                } else {
+                    filename
+                };
+                match md_editor_core::vault::create_file(&self.state, &new_path) {
+                    Ok(()) => {
+                        self.vault_entries =
+                            md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+                        self.toast = Some(format!("Created {}", new_path));
+                        Task::done(Message::SidebarFileClicked(new_path))
+                    }
+                    Err(e) => {
+                        self.toast = Some(e);
+                        Task::none()
+                    }
+                }
+            }
+            EditorLinkActionKind::RepairLink(suggested_path) => {
+                // Replace the link target text in the buffer.
+                // Build replacement: keep display text from original span if any.
+                let replacement = suggested_path.clone();
+                let task = self.run_editor_command(EditorCommand::ReplaceTextRange {
+                    line: line_idx,
+                    start_col,
+                    end_col,
+                    replacement,
+                });
+                self.toast = Some(format!("Link repaired → {}", suggested_path));
+                task
+            }
+        }
     }
 
     fn run_editor_command_with_scroll(
@@ -7242,7 +7669,7 @@ mod tests {
         let search_app = app_with_file_search();
         let mut search_ui = iced_test::simulator(search_app.view());
         search_ui
-            .find("0 matches")
+            .find("No matches")
             .expect("file-search fixture should render no-result state");
 
         let narrow_app = app_with_split_research();
@@ -7288,6 +7715,34 @@ mod tests {
         assert!(!app.backlinks_visible);
         assert!(!app.toc_visible);
         assert!(!app.tracker_visible);
+    }
+
+    #[test]
+    fn test_active_pane_shortcut_routing_and_switching() {
+        let mut app = app_with_markdown_file();
+        app.active_path = Some("notes/research.md".to_string());
+        app.active_pdf_path = Some("vault/paper.pdf".to_string());
+        app.split_view_active = true;
+        app.active_panel = ActivePanel::Markdown;
+
+        // Switch to PDF pane
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::SwitchPane));
+        assert_eq!(app.active_panel, ActivePanel::Pdf);
+
+        // Search is routed to PDF search
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
+        assert!(app.pdf_state.search.visible);
+        assert!(!app.editor_search.visible);
+
+        // Switch back to Markdown pane
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::SwitchPane));
+        assert_eq!(app.active_panel, ActivePanel::Markdown);
+
+        // Search is routed to Markdown/editor search
+        app.pdf_state.search.visible = false;
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
+        assert!(app.editor_search.visible);
+        assert!(!app.pdf_state.search.visible);
     }
 
     #[test]
@@ -9307,5 +9762,126 @@ mod tests {
             app.excerpts_queue.as_slice(),
             [crate::messages::CitationItem::Annotation { id, .. }] if id == "ann-keyboard"
         ));
+    }
+
+    #[test]
+    fn test_command_registry_is_enabled_context_rules() {
+        use crate::command_registry::{CommandContext, get_command_registry};
+        use crate::messages::Shortcut;
+
+        let registry = get_command_registry();
+        let save_cmd = registry.iter().find(|c| c.id == Shortcut::Save).unwrap();
+
+        // 1. Save disabled when no markdown is open
+        let ctx_no_md = CommandContext {
+            markdown_open: false,
+            pdf_open: false,
+            image_open: false,
+            active_pane: crate::app_shell::AppShellPane::None,
+            has_vault: true,
+            pdf_has_selection: false,
+            has_focused_annotation: false,
+        };
+        assert_eq!(
+            save_cmd.is_enabled(ctx_no_md),
+            Err("No active markdown file to save")
+        );
+
+        // 2. Save enabled when markdown is open
+        let ctx_md = CommandContext {
+            markdown_open: true,
+            pdf_open: false,
+            image_open: false,
+            active_pane: crate::app_shell::AppShellPane::Markdown,
+            has_vault: true,
+            pdf_has_selection: false,
+            has_focused_annotation: false,
+        };
+        assert_eq!(save_cmd.is_enabled(ctx_md), Ok(()));
+    }
+
+    #[test]
+    fn test_command_palette_context_aware_ranking_and_grouping() {
+        let mut app = MdEditor::new().0;
+        app.active_path = None; // No markdown file open
+
+        // Querying commands with no markdown open
+        let commands = app.command_palette_commands();
+
+        // Verify Save command has a disabled reason
+        let save_cmd = commands
+            .iter()
+            .find(|c| c.shortcut == crate::messages::Shortcut::Save)
+            .unwrap();
+        assert_eq!(
+            save_cmd.disabled_reason,
+            Some("No active markdown file to save")
+        );
+
+        // Open a markdown file
+        app.active_path = Some("test.md".to_string());
+        let commands_with_md = app.command_palette_commands();
+        let save_cmd_enabled = commands_with_md
+            .iter()
+            .find(|c| c.shortcut == crate::messages::Shortcut::Save)
+            .unwrap();
+        assert_eq!(save_cmd_enabled.disabled_reason, None);
+    }
+
+    #[test]
+    fn test_search_wrap_and_replace() {
+        let mut app = MdEditor::new().0;
+        app.active_path = Some("test.md".to_string());
+        app.editor_search.visible = true;
+        app.buffer.set_text("banana apple banana");
+        app.highlighted_lines =
+            crate::editor::highlight::highlight_markdown(app.buffer.text().as_str());
+
+        // 1. Check search queries reset wrap_status
+        let _ = app.update(Message::SearchQueryChanged("banana".to_string()));
+        assert_eq!(app.current_document_match_count(), 2);
+        assert_eq!(app.editor_search.wrap_status, None);
+
+        // First Next: active_index goes to 0 (first match)
+        let _ = app.update(Message::SearchNext);
+        assert_eq!(app.editor_search.active_index, Some(0));
+        assert_eq!(app.editor_search.wrap_status, None);
+
+        // Second Next: active_index goes to 1 (second match)
+        let _ = app.update(Message::SearchNext);
+        assert_eq!(app.editor_search.active_index, Some(1));
+        assert_eq!(app.editor_search.wrap_status, None);
+
+        // Third Next: wraps around to 0
+        let _ = app.update(Message::SearchNext);
+        assert_eq!(app.editor_search.active_index, Some(0));
+        assert_eq!(
+            app.editor_search.wrap_status,
+            Some(SearchWrapStatus::WrappedForward)
+        );
+
+        // Triggering SearchPrevious when active_index is 0 wraps to 1 (last match)
+        let _ = app.update(Message::SearchPrevious);
+        assert_eq!(app.editor_search.active_index, Some(1));
+        assert_eq!(
+            app.editor_search.wrap_status,
+            Some(SearchWrapStatus::WrappedBackward)
+        );
+
+        // 2. Query changes reset wrap_status
+        let _ = app.update(Message::SearchQueryChanged("apple".to_string()));
+        assert_eq!(app.current_document_match_count(), 1);
+        assert_eq!(app.editor_search.wrap_status, None);
+
+        // 3. Single match replace
+        let _ = app.update(Message::SearchReplaceChanged("pear".to_string()));
+        let _ = app.update(Message::SearchNext); // Focus apple (index 0)
+        assert_eq!(app.editor_search.active_index, Some(0));
+
+        let _ = app.update(Message::SearchReplace);
+        assert_eq!(app.buffer.text(), "banana pear banana");
+        // After replacement, query "apple" has no matches in the document
+        assert_eq!(app.current_document_match_count(), 0);
+        assert_eq!(app.editor_search.active_index, None);
     }
 }
