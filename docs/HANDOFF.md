@@ -11,8 +11,9 @@ next step.
 
 ## Current Objective
 
-Complete **Phase A** (visual polish) and **Milestone 5** (PDF Annotation UX) from
-`docs/UI_UX_IMPROVEMENT_ROADMAP.md`. Phase B and Milestone 4 have been successfully completed.
+Continue with **Milestone 5** (PDF Annotation UX) from
+`docs/UI_UX_IMPROVEMENT_ROADMAP.md`. Phase B, Phase A, and Milestone 4 have
+been successfully completed.
 
 ## Why Phase B And Phase A Exist
 
@@ -51,10 +52,10 @@ actual app behavior. This handoff corrects the record.
 |-----------|--------|-------|
 | 0 Baseline | DONE | Audit, fixtures, release checklist |
 | 1 App Shell | DONE | Shell model, persistence, status bar surface |
-| 2 Visual Design System | INCOMPLETE | Tokens exist; views don't apply hover/focus states |
+| 2 Visual Design System | DONE | Phase A applied hover/header/container conventions across main panels |
 | 3 Keyboard / Command | DONE | Registry, palette, shortcuts, conflict detection |
 | 4 Editor UX Polish | DONE | Renderer colors done; active line alpha 0.06; selection/search/link hover added; internal link resolution fixed |
-| 5 PDF Annotation UX | NOT STARTED | Phase B (B3-B5) must restructure PDF toolbar first |
+| 5 PDF Annotation UX | IN PROGRESS | PDF toolbar reading-state groups, selection Cite, and core annotation tests done |
 | 6 Split Research UX | NOT STARTED | |
 | 7 Search / Outline | PARTIAL | Backend done; result row styling not done |
 | 8 Onboarding / Recovery | PARTIAL | Citation palette done; welcome/recovery not done |
@@ -105,12 +106,34 @@ Each task targets one view file. Assign independently, merge independently.
       active-line highlight param.
 - [x] **A6** `backlinks.rs` — 11px header, hover bg on rows, annotation backlink
       left accent border.
-- [ ] **A7** `command_palette.rs` — Group separators, icon mapping, hover states,
+- [x] **A7** `command_palette.rs` — Group separators, icon mapping, hover states,
       window-width clamping.
-- [ ] **A8** Consistency pass — all panels match header/row/container conventions.
+- [x] **A8** Consistency pass — all panels match header/row/container conventions.
+      Global search rows now use matching hover styling and muted section headers;
+      annotation panel now renders an empty state.
 
 **Phase A acceptance gate**: running the app shows hover backgrounds on all
 panel rows, toolbar tooltips, 28px status bar, sidebar empty-vault state.
+
+### Latest Session Notes — 2026-06-05
+
+- `native/src/views/command_palette.rs`: completed A7 with shell-ordered group
+  headers/dividers, icon widgets, hover styling, and narrow-window clamp helper.
+- `native/src/views/icons.rs`: added `Icon::ChevronLeft` for back navigation.
+- `native/src/views/search.rs`: global search result rows now use panel hover
+  styling; group headers use muted 11px panel hierarchy.
+- `native/src/views/pdf_annotations.rs`: empty annotation/filter result state
+  now renders `"No annotations found"`.
+- `native/src/views/pdf_viewer.rs`: started Milestone 5 by redesigning the PDF
+  toolbar into stable `PAGE` and `ZOOM` reading-state groups with hover styling.
+- `native/src/views/pdf_viewer.rs` + `native/src/app.rs`: selection toolbar now
+  exposes `Cite`, `Ctrl+H` missing-selection path shows a toast, and tests cover
+  selection citation plus annotation creation from selected text.
+
+## Milestone 5 Next Steps
+
+- Add keyboard-first annotation variants beyond default yellow highlight.
+- Strengthen visual selection feedback in the PDF page overlay.
 
 ---
 

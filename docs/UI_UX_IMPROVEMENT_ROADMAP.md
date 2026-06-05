@@ -386,6 +386,8 @@ After B1-B8:
 
 **File**: `native/src/views/command_palette.rs`
 
+**Status**: Done 2026-06-05.
+
 **Current problems**:
 - No group separator labels between groups.
 - Icon column uses emoji/text chars, not `Icon` values.
@@ -403,6 +405,8 @@ After B1-B8:
 
 ### A8: Consistency Pass
 
+**Status**: Done 2026-06-05.
+
 After A1-A7 merged:
 - All panel headers: 11px uppercase `text_muted()`, 1px bottom `border_subtle()`,
   `[12, 14]` padding.
@@ -410,6 +414,12 @@ After A1-A7 merged:
 - All panel containers: `bg_secondary()` bg, 1px `border()` on relevant edge.
 - Smoke test asserting expected label text across toolbar, sidebar, status bar,
   TOC.
+
+Completion notes:
+- Command palette uses group headers, divider rows, icon widgets, hover styling,
+  shell group ordering, and narrow-window width clamp.
+- Global search rows use matching hover styling and muted section headers.
+- Annotation panel renders a matching empty state when filters return no rows.
 
 ---
 
@@ -455,6 +465,24 @@ Completed:
 - Text selection feedback and quote insertion affordance.
 - Tests for page nav, zoom, selection-to-citation, annotation creation.
 - Note: Phase B (B3-B5) resolves the structural issues before milestone 5 work.
+
+Progress 2026-06-05:
+- PDF toolbar now has stable page and zoom command groups with visible `PAGE`
+  and `ZOOM` labels, bounded button hover states, and left-aligned reading
+  state.
+- Focused annotation and selection controls remain context-sensitive in the PDF
+  toolbar.
+- Added `iced_test` smoke coverage for toolbar reading state labels.
+- Selected PDF text now exposes a toolbar `Cite` action that dispatches quote
+  insertion, with `Ctrl+H` shown beside highlight swatches.
+- `Ctrl+H` without an active PDF selection now shows a toast instead of doing
+  nothing.
+- Added regression coverage for selection citation, missing-selection keyboard
+  feedback, and annotation creation from selected PDF text.
+
+Remaining:
+- Keyboard-first annotation flow beyond default yellow highlight.
+- Stronger text selection feedback in the page overlay.
 
 ## Milestone 6: Split Research Workflow UX
 

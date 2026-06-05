@@ -754,6 +754,32 @@ pub fn view<'a>(
 
     let header = column![header_row, divider];
 
+    let annotation_list: Element<'_, Message, Theme, Renderer> = if total_count == 0 {
+        container(
+            text("No annotations found")
+                .size(12)
+                .color(theme::text_muted()),
+        )
+        .padding(iced::Padding {
+            top: 8.0,
+            right: 14.0,
+            bottom: 14.0,
+            left: 14.0,
+        })
+        .width(Length::Fill)
+        .into()
+    } else {
+        column(items)
+            .spacing(8)
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 14.0,
+                bottom: 14.0,
+                left: 14.0,
+            })
+            .into()
+    };
+
     container(column![
         header,
         scrollable(column![
@@ -763,12 +789,7 @@ pub fn view<'a>(
                 bottom: 8.0,
                 left: 14.0
             }),
-            column(items).spacing(8).padding(iced::Padding {
-                top: 0.0,
-                right: 14.0,
-                bottom: 14.0,
-                left: 14.0
-            })
+            annotation_list
         ])
         .height(Length::Fill)
     ])
@@ -863,6 +884,25 @@ mod tests {
             messages.is_empty(),
             "Cite must not insert without an active markdown note"
         );
+    }
+
+    #[test]
+    fn annotation_sidebar_renders_empty_state() {
+        let annotations = HashMap::new();
+        let mut ui = iced_test::simulator(view(
+            &annotations,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            270.0,
+        ));
+
+        ui.find("No annotations found")
+            .expect("empty annotation panel should explain missing rows");
     }
 
     #[test]
