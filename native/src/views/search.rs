@@ -343,6 +343,19 @@ fn source_checkbox<'a>(
         .into()
 }
 
+fn result_row_style() -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let mut style = button::text(theme, status);
+        style.border.radius = theme::RADIUS_SMALL.into();
+
+        if status == button::Status::Hovered || status == button::Status::Pressed {
+            style.background = Some(iced::Background::Color(theme::bg_tertiary()));
+        }
+
+        style
+    }
+}
+
 fn render_group_section<'a>(
     title: &str,
     items: &[&'a md_editor_core::types::UnifiedSearchResult],
@@ -352,9 +365,9 @@ fn render_group_section<'a>(
     }
 
     let group_header = text(format!("{} ({} matches)", title, items.len()))
-        .size(12)
+        .size(11)
         .font(BOLD_FONT)
-        .color(theme::text_primary());
+        .color(theme::text_muted());
 
     let list = items.iter().fold(Column::new().spacing(4), |col, result| {
         let path_text = text(&result.path).size(13).color(theme::accent());
@@ -395,7 +408,7 @@ fn render_group_section<'a>(
         .on_press(Message::UnifiedSearchResultClicked((*result).clone()))
         .padding([8, 12])
         .width(Length::Fill)
-        .style(button::text);
+        .style(result_row_style());
 
         col.push(item)
     });

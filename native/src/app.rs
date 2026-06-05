@@ -3720,6 +3720,8 @@ impl MdEditor {
                                 let color = md_editor_core::pdf::PdfAnnotationColor::Yellow;
                                 Task::done(Message::PdfCreateHighlight(color))
                             } else {
+                                self.toast =
+                                    Some("Select PDF text before highlighting".to_string());
                                 Task::none()
                             }
                         } else {
@@ -8709,6 +8711,65 @@ mod tests {
             Some("Open a markdown file before inserting a quote link")
         );
         assert_eq!(app.buffer.text(), "");
+    }
+
+    #[test]
+    fn pdf_highlight_shortcut_without_selection_shows_toast() {
+        let mut app = app_with_pdf_file();
+
+        let _ = app.update(Message::KeyboardShortcut(Shortcut::PdfHighlight));
+
+        assert_eq!(
+            app.toast.as_deref(),
+            Some("Select PDF text before highlighting")
+        );
+        assert!(app.pdf_annotations.values().all(Vec::is_empty));
+    }
+
+    #[test]
+    fn pdf_create_annotation_uses_selected_pdf_text() {
+        let mut app = app_with_pdf_file();
+        app.pdf_document_id = Some("doc-1".to_string());
+        app.state
+            .save_pdf_document("doc-1", "papers/paper.pdf", 100, Some(1))
+            .expect("test PDF document should register");
+        app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+            page_index: 0,
+            anchor_idx: 0,
+            focus_idx: 8,
+        });
+        app.pdf_page_text.insert(
+            0,
+            md_editor_core::pdf::PdfPageText {
+                page_index: 0,
+                page_width: 612.0,
+                page_height: 792.0,
+                text: "Keyboard highlight text".to_string(),
+                chars: Vec::new(),
+                lines: Vec::new(),
+            },
+        );
+
+        let _ = app.update(Message::PdfCreateAnnotation(
+            md_editor_core::pdf::PdfAnnotationKind::Highlight,
+            md_editor_core::pdf::PdfAnnotationColor::Yellow,
+        ));
+
+        let page_annotations = app
+            .pdf_annotations
+            .get(&0)
+            .expect("highlight shortcut should create page annotation");
+        assert_eq!(page_annotations.len(), 1);
+        assert_eq!(page_annotations[0].selected_text, "Keyboard ");
+        assert_eq!(
+            page_annotations[0].kind,
+            md_editor_core::pdf::PdfAnnotationKind::Highlight
+        );
+        assert_eq!(
+            page_annotations[0].color,
+            md_editor_core::pdf::PdfAnnotationColor::Yellow
+        );
+        assert!(app.pdf_selection.is_none());
     }
 
     #[test]

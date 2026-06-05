@@ -13,6 +13,7 @@ pub enum Icon {
     LayoutPanelLeft,
     ListTree,
     Search,
+    ChevronLeft,
     ChevronDown,
     ChevronRight,
     ChevronUp,
@@ -79,6 +80,10 @@ impl<Message> canvas::Program<Message> for IconCanvas {
             Icon::ChevronDown => {
                 stroke_line(&mut frame, p(6.0, 9.0), p(12.0, 15.0), stroke);
                 stroke_line(&mut frame, p(12.0, 15.0), p(18.0, 9.0), stroke);
+            }
+            Icon::ChevronLeft => {
+                stroke_line(&mut frame, p(15.0, 6.0), p(9.0, 12.0), stroke);
+                stroke_line(&mut frame, p(9.0, 12.0), p(15.0, 18.0), stroke);
             }
             Icon::ChevronRight => {
                 stroke_line(&mut frame, p(9.0, 6.0), p(15.0, 12.0), stroke);

@@ -75,6 +75,57 @@ fn command_button_style() -> impl Fn(&Theme, button::Status) -> button::Style {
     }
 }
 
+fn group_rank(group_name: &str) -> usize {
+    match group_name {
+        "File" => 0,
+        "Edit" => 1,
+        "Search" => 2,
+        "Navigation" => 3,
+        "View" => 4,
+        "Research" => 5,
+        "Annotation" => 6,
+        _ => 7,
+    }
+}
+
+fn palette_width(window_width: f32) -> f32 {
+    let available_width = (window_width - 40.0).max(0.0);
+    if available_width < 300.0 {
+        available_width.max(160.0)
+    } else {
+        available_width.min(520.0)
+    }
+}
+
+fn group_header(
+    group_name: &'static str,
+    show_divider: bool,
+) -> Element<'static, Message, Theme, Renderer> {
+    let label =
+        container(text(group_name).size(11).color(theme::text_muted())).padding(iced::Padding {
+            top: if show_divider { 10.0 } else { 8.0 },
+            right: 12.0,
+            bottom: 4.0,
+            left: 12.0,
+        });
+
+    if !show_divider {
+        return label.into();
+    }
+
+    column![
+        container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fixed(1.0))
+            .style(|_| container::Style {
+                background: Some(Background::Color(theme::border_subtle())),
+                ..Default::default()
+            }),
+        label,
+    ]
+    .into()
+}
+
 pub fn view<'a>(
     query: &str,
     commands: Vec<Command>,
@@ -112,7 +163,7 @@ pub fn view<'a>(
             if a_enabled != b_enabled {
                 return b_enabled.cmp(&a_enabled);
             }
-            let group_cmp = a.group_name.cmp(b.group_name);
+            let group_cmp = group_rank(a.group_name).cmp(&group_rank(b.group_name));
             if group_cmp != std::cmp::Ordering::Equal {
                 return group_cmp;
             }
@@ -121,27 +172,20 @@ pub fn view<'a>(
     }
 
     let mut last_group = "";
+    let mut has_rendered_group = false;
 
     for cmd in filtered {
         if cmd.group_name != last_group {
             if query.is_empty() {
-                list = list.push(
-                    container(text(cmd.group_name).size(10).color(theme::text_muted())).padding(
-                        iced::Padding {
-                            top: 8.0,
-                            right: 12.0,
-                            bottom: 4.0,
-                            left: 12.0,
-                        },
-                    ),
-                );
+                list = list.push(group_header(cmd.group_name, has_rendered_group));
+                has_rendered_group = true;
             }
             last_group = cmd.group_name;
         }
 
         let is_disabled = cmd.disabled_reason.is_some();
         let icon_widget = container(icons::view(
-            shortcut_to_icon(cmd.shortcut),
+            command_icon(&cmd),
             if is_disabled {
                 theme::text_muted()
             } else {
@@ -209,7 +253,7 @@ pub fn view<'a>(
         list = list.push(btn);
     }
 
-    let palette_width = f32::min(520.0, window_width.max(40.0) - 40.0).max(300.0);
+    let palette_width = palette_width(window_width);
 
     container(
         column![
@@ -238,6 +282,18 @@ pub fn view<'a>(
     .into()
 }
 
+fn command_icon(command: &Command) -> Icon {
+    match command.icon.as_str() {
+        "/" => Icon::Search,
+        "<" => Icon::ChevronLeft,
+        ">" => Icon::ChevronRight,
+        "|" => Icon::Split,
+        "+" => Icon::File,
+        "0" => Icon::Search,
+        _ => shortcut_to_icon(command.shortcut),
+    }
+}
+
 fn shortcut_to_icon(shortcut: Shortcut) -> Icon {
     match shortcut {
         Shortcut::Save => Icon::FileText,
@@ -246,7 +302,7 @@ fn shortcut_to_icon(shortcut: Shortcut) -> Icon {
         Shortcut::Search => Icon::Search,
         Shortcut::CommandPalette => Icon::Command,
         Shortcut::ToggleSidebar => Icon::LayoutPanelLeft,
-        Shortcut::NavBack => Icon::ChevronDown, // ChevronLeft doesn't exist yet
+        Shortcut::NavBack => Icon::ChevronLeft,
         Shortcut::NavForward => Icon::ChevronRight,
         Shortcut::ToggleBacklinks => Icon::ListTree,
         Shortcut::FocusMode => Icon::Split,
@@ -395,5 +451,19 @@ mod tests {
 
         ui.find("Research")
             .expect("group separator should be visible when query is empty");
+    }
+
+    #[test]
+    fn palette_width_stays_inside_narrow_windows() {
+        assert_eq!(palette_width(200.0), 160.0);
+        assert_eq!(palette_width(340.0), 300.0);
+        assert_eq!(palette_width(900.0), 520.0);
+    }
+
+    #[test]
+    fn command_groups_use_shell_order() {
+        assert!(group_rank("File") < group_rank("Navigation"));
+        assert!(group_rank("Navigation") < group_rank("View"));
+        assert!(group_rank("View") < group_rank("Research"));
     }
 }
