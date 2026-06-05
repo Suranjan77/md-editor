@@ -464,4 +464,12 @@ mod tests {
         ui.find("Searched 3 PDFs")
             .expect("global search PDF status should render");
     }
+    #[test]
+    fn file_bar_renders_match_count() {
+        let mut ui =
+            iced_test::simulator(file_bar("test query", "", false, false, 42, Some(3), None));
+
+        ui.find("4 of 42")
+            .expect("file bar should render active match out of total matches");
+    }
 }

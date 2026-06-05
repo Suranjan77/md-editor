@@ -57,7 +57,7 @@ pub fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer>
         .align_y(Alignment::Center)
         .into(),
         SaveStatus::Saved => row![
-            text("✓").size(11).color(theme::success()),
+            text("✓").size(11).color(theme::accent()),
             text("Saved").size(11).color(theme::text_muted())
         ]
         .spacing(4)
@@ -76,7 +76,7 @@ pub fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer>
     .align_y(Alignment::Center);
 
     // 3. Center messages (toast/errors)
-    let center_group = if let Some(msg) = status.message {
+    let center_group: Element<'_, Message, Theme, Renderer> = if let Some(msg) = status.message {
         let text_color = if msg.to_lowercase().contains("fail")
             || msg.to_lowercase().contains("error")
             || msg.to_lowercase().contains("corrupt")
@@ -89,14 +89,12 @@ pub fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer>
             .size(11)
             .color(text_color)
             .align_x(iced::alignment::Horizontal::Center)
+            .into()
     } else {
-        text("")
-            .size(11)
-            .color(theme::text_muted())
-            .align_x(iced::alignment::Horizontal::Center)
+        Space::new().width(Length::Fixed(0.0)).into()
     };
 
-    // 4. Right group: search status, pdf status
+    // 4. Right group: search status only (pdf page/zoom lives in the PDF toolbar)
     let mut right_elements = Vec::new();
 
     if let Some(search) = status.search_status {
@@ -104,18 +102,6 @@ pub fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer>
             row![
                 icons::view(Icon::Search, theme::text_muted(), 12.0),
                 text(search).size(11).color(theme::text_secondary())
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center)
-            .into(),
-        );
-    }
-
-    if let Some(pdf) = status.pdf_status {
-        right_elements.push(
-            row![
-                icons::view(Icon::File, theme::text_muted(), 12.0),
-                text(pdf).size(11).color(theme::text_secondary())
             ]
             .spacing(4)
             .align_y(Alignment::Center)
@@ -137,7 +123,7 @@ pub fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer>
 
     container(content)
         .width(Length::Fill)
-        .height(Length::Fixed(24.0))
+        .height(Length::Fixed(28.0))
         .padding([2, 12])
         .style(|_| container::Style {
             background: Some(Background::Color(theme::bg_secondary())),

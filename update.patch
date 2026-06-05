@@ -1,0 +1,82 @@
+--- native/src/views/pdf_annotations.rs
++++ native/src/views/pdf_annotations.rs
+@@ -312,11 +312,11 @@
+     can_insert_annotation_link: bool,
+     width: f32,
+ ) -> Element<'a, Message, Theme, Renderer> {
+-    let header_text = text("ANNOTATIONS")
++    let title = text("ANNOTATIONS")
+         .size(11)
+         .color(theme::text_muted())
+         .font(iced::Font::default());
+-
+-    // Wait, the header has a button inside it for Export (line 735)
+ 
+     // 1. Color filter row
+     let mut colors_filter = row![color_dot_pill(None, filter_color)].spacing(4);
+@@ -470,9 +470,12 @@
+     let _inspected = filtered.inspected;
+ 
+     let total_count = filtered.annotations.len();
+-    let count_text = text(format!("Total: {}", total_count))
+-        .size(12)
+-        .color(theme::text_muted());
++    let count_text = if total_count == 0 {
++        text("0").size(11).color(theme::text_muted())
++    } else {
++        text(format!("{}", total_count))
++            .size(11)
++            .color(theme::accent())
++    };
+ 
+     let items = filtered.annotations.into_iter().map(|ann| {
+@@ -728,24 +731,34 @@
+             .into()
+     });
+ 
++    let header_row = row![
++        title,
++        Space::new().width(Length::Fill),
++        button(icons::view(Icon::FileText, theme::text_muted(), 14.0))
++            .on_press(Message::PdfExportAnnotations)
++            .padding(4)
++            .style(button::text),
++        Space::new().width(Length::Fixed(8.0)),
++        count_text
++    ]
++    .align_y(Alignment::Center)
++    .padding([12, 14]);
++
++    let divider = container(Space::new())
++        .width(Length::Fill)
++        .height(Length::Fixed(1.0))
++        .style(|_| container::Style {
++            background: Some(iced::Background::Color(theme::border_subtle())),
++            ..Default::default()
++        });
++
++    let header = column![header_row, divider];
++
+     container(
+         column![
+-            row![
+-                title,
+-                Space::new().width(Length::Fill),
+-                button(icons::view(Icon::File, theme::text_muted(), 14.0))
+-                    .on_press(Message::PdfExportAnnotations)
+-                    .padding(4)
+-                    .style(button::text),
+-                Space::new().width(Length::Fixed(8.0)),
+-                count_text
+-            ]
+-            .align_y(Alignment::Center),
+-            Space::new().height(Length::Fixed(8.0)),
+-            filter_container,
+-            scrollable(column(items).spacing(8)).height(Length::Fill)
++            header,
++            scrollable(column![filter_container.padding([12, 14, 8, 14]), column(items).spacing(8).padding([0, 14, 14, 14])]).height(Length::Fill)
+         ]
+-        .padding(12),
+     )
+     .width(Length::Fixed(width))
+     .height(Length::Fill)
