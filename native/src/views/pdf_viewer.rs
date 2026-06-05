@@ -106,6 +106,17 @@ mod tests {
     }
 
     #[test]
+    fn selection_toolbar_cite_click_emits_quote_insert_message() {
+        let mut ui = iced_test::simulator(toolbar(4, 10, 1.0, true, false, true, None, true));
+
+        ui.click(" Cite")
+            .expect("selection Cite button should exist");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(messages.as_slice(), [Message::PdfInsertQuoteLink]));
+    }
+
+    #[test]
     fn focused_annotation_toolbar_cite_is_inert_without_markdown_file() {
         let ann = annotation();
         let mut ui =
@@ -119,6 +130,20 @@ mod tests {
             messages.is_empty(),
             "Cite must not insert without an active markdown note"
         );
+    }
+
+    #[test]
+    fn pdf_toolbar_exposes_reading_state_groups() {
+        let mut ui = iced_test::simulator(toolbar(0, 3, 1.25, true, false, false, None, false));
+
+        ui.find("PAGE")
+            .expect("PDF toolbar should label page navigation group");
+        ui.find("1 / 3")
+            .expect("PDF toolbar should show current page status once");
+        ui.find("ZOOM")
+            .expect("PDF toolbar should label zoom group");
+        ui.find("125%")
+            .expect("PDF toolbar should show current zoom");
     }
 }
 
@@ -147,6 +172,54 @@ fn search_highlights_for_page(
         .collect::<Vec<_>>();
 
     (search_highlights, active_search_highlights)
+}
+
+fn toolbar_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let mut style = button::text(theme, status);
+        style.border.radius = theme::RADIUS_REGULAR.into();
+        style.text_color = if active {
+            theme::accent()
+        } else {
+            theme::text_secondary()
+        };
+
+        if active {
+            style.background = Some(iced::Background::Color(theme::accent_dim()));
+        } else if status == button::Status::Hovered || status == button::Status::Pressed {
+            style.background = Some(iced::Background::Color(theme::bg_tertiary()));
+        }
+
+        style
+    }
+}
+
+fn toolbar_divider<'a>() -> Element<'a, Message, Theme, Renderer> {
+    container(Space::new())
+        .width(Length::Fixed(1.0))
+        .height(Length::Fixed(18.0))
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(theme::border_subtle())),
+            ..Default::default()
+        })
+        .into()
+}
+
+fn toolbar_group<'a>(
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+) -> Element<'a, Message, Theme, Renderer> {
+    container(content.into())
+        .padding([4, 8])
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(theme::bg_primary())),
+            border: iced::Border {
+                color: theme::border_subtle(),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 pub fn search_bar<'a>(
@@ -290,30 +363,43 @@ pub fn toolbar<'a>(
             );
         }
 
-        row![
-            container(
+        let cite_btn = if can_insert_annotation_link {
+            button(
                 row![
-                    text("Highlight").size(12).color(theme::text_muted()),
-                    color_row,
-                    button(icons::view(Icon::X, theme::text_muted(), 14.0))
-                        .on_press(Message::PdfSelectionCleared)
-                        .padding(5)
-                        .style(button::text),
+                    icons::view(Icon::FileText, theme::accent(), 14.0),
+                    text(" Cite").size(12).color(theme::accent())
                 ]
-                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::PdfInsertQuoteLink)
+            .padding([4, 8])
+            .style(toolbar_button_style(true))
+        } else {
+            button(
+                row![
+                    icons::view(Icon::FileText, theme::text_muted(), 14.0),
+                    text(" Cite").size(12).color(theme::text_muted())
+                ]
                 .align_y(Alignment::Center),
             )
             .padding([4, 8])
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::bg_primary())),
-                border: iced::Border {
-                    color: theme::border(),
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            }),
-        ]
+            .style(toolbar_button_style(false))
+        };
+
+        row![toolbar_group(
+            row![
+                text("Selection").size(11).color(theme::text_muted()),
+                color_row,
+                cite_btn,
+                text("Ctrl+H").size(11).color(theme::text_muted()),
+                button(icons::view(Icon::X, theme::text_muted(), 14.0))
+                    .on_press(Message::PdfSelectionCleared)
+                    .padding(5)
+                    .style(toolbar_button_style(false)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ),]
         .align_y(Alignment::Center)
     } else {
         row![]
@@ -332,7 +418,7 @@ pub fn toolbar<'a>(
             ann.page_index,
         ))
         .padding([4, 8])
-        .style(button::text);
+        .style(toolbar_button_style(false));
 
         let cite_btn = if can_insert_annotation_link {
             button(
@@ -344,7 +430,7 @@ pub fn toolbar<'a>(
             )
             .on_press(Message::PdfInsertAnnotationLink(ann.id.clone()))
             .padding([4, 8])
-            .style(button::text)
+            .style(toolbar_button_style(true))
         } else {
             button(
                 row![
@@ -354,7 +440,7 @@ pub fn toolbar<'a>(
                 .align_y(Alignment::Center),
             )
             .padding([4, 8])
-            .style(button::text)
+            .style(toolbar_button_style(false))
         };
 
         let link_btn = if let Some(ref path) = ann.linked_note_path {
@@ -368,7 +454,7 @@ pub fn toolbar<'a>(
                 )
                 .on_press(Message::PdfOpenLinkedNote(path.clone()))
                 .padding([4, 8])
-                .style(button::text)
+                .style(toolbar_button_style(true))
             } else {
                 button(
                     row![
@@ -379,7 +465,7 @@ pub fn toolbar<'a>(
                 )
                 .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
                 .padding([4, 8])
-                .style(button::text)
+                .style(toolbar_button_style(false))
             }
         } else {
             button(
@@ -391,7 +477,7 @@ pub fn toolbar<'a>(
             )
             .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
             .padding([4, 8])
-            .style(button::text)
+            .style(toolbar_button_style(false))
         };
 
         let delete_btn = button(icons::view(
@@ -401,38 +487,50 @@ pub fn toolbar<'a>(
         ))
         .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
         .padding([4, 8])
-        .style(button::text);
+        .style(toolbar_button_style(false));
 
-        row![
-            text("Highlight:").size(12).color(theme::text_muted()),
-            note_btn,
-            cite_btn,
-            link_btn,
-            delete_btn,
-        ]
-        .spacing(8)
+        row![toolbar_group(
+            row![
+                text("Annotation").size(11).color(theme::text_muted()),
+                note_btn,
+                cite_btn,
+                link_btn,
+                delete_btn,
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ),]
         .align_y(Alignment::Center)
     } else {
         row![]
     };
 
-    container(
+    let page_group = toolbar_group(
         row![
-            Space::new().width(Length::Fill),
-            study_controls,
-            annotation_controls,
-            Space::new().width(Length::Fill),
+            text("PAGE").size(11).color(theme::text_muted()),
+            button(text(page_label).size(12).color(theme::text_secondary()))
+                .on_press(Message::PdfGoToPage)
+                .padding([4, 8])
+                .style(toolbar_button_style(false)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    );
+
+    let zoom_group = toolbar_group(
+        row![
+            text("ZOOM").size(11).color(theme::text_muted()),
             button(text("-").size(16))
                 .on_press(Message::PdfZoomChanged((zoom - 0.1).max(0.5)))
                 .padding([4, 10])
-                .style(button::text),
+                .style(toolbar_button_style(false)),
             text(format!("{:.0}%", zoom * 100.0))
                 .size(12)
-                .color(theme::text_muted()),
+                .color(theme::text_secondary()),
             button(text("+").size(16))
                 .on_press(Message::PdfZoomChanged((zoom + 0.1).min(4.0)))
                 .padding([4, 10])
-                .style(button::text),
+                .style(toolbar_button_style(false)),
             button(text("Fit W").size(12).color(if fit_to_width {
                 theme::accent()
             } else {
@@ -440,7 +538,7 @@ pub fn toolbar<'a>(
             }),)
             .on_press(Message::PdfFitToWidth)
             .padding([4, 10])
-            .style(button::text),
+            .style(toolbar_button_style(fit_to_width)),
             button(text("Fit P").size(12).color(if fit_to_page {
                 theme::accent()
             } else {
@@ -448,16 +546,24 @@ pub fn toolbar<'a>(
             }),)
             .on_press(Message::PdfFitToPage)
             .padding([4, 10])
-            .style(button::text),
+            .style(toolbar_button_style(fit_to_page)),
             button(text("Rotate").size(12).color(theme::text_muted()),)
                 .on_press(Message::PdfRotateClockwise)
                 .padding([4, 10])
-                .style(button::text),
+                .style(toolbar_button_style(false)),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    );
+
+    container(
+        row![
+            page_group,
+            toolbar_divider(),
+            zoom_group,
             Space::new().width(Length::Fill),
-            button(text(page_label).size(12).color(theme::text_secondary()))
-                .on_press(Message::PdfGoToPage)
-                .padding(0)
-                .style(button::text),
+            study_controls,
+            annotation_controls,
         ]
         .spacing(10)
         .align_y(Alignment::Center)
