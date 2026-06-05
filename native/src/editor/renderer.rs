@@ -2437,7 +2437,7 @@ where
                         renderer::Quad {
                             bounds: Rectangle {
                                 x: start_x,
-                                y: start_y + fs + 2.0,
+                                y: start_y + (BASE_LINE_HEIGHT + fs) / 2.0 + 2.0,
                                 width: w,
                                 height: 1.0,
                             },
