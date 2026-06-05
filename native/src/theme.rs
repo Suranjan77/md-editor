@@ -49,7 +49,7 @@ pub const DARK_TEXT_MUTED: Color = Color::from_rgb8(157, 158, 163); // #9d9ea3
 pub const DARK_ACCENT: Color = Color::from_rgb8(177, 204, 198); // #b1ccc6
 pub const DARK_ACCENT_SECONDARY: Color = Color::from_rgb8(205, 232, 226); // #cde8e2
 pub const DARK_ACCENT_GLOW: Color = Color::from_rgba8(177, 204, 198, 0.5);
-pub const DARK_ACCENT_DIM: Color = Color::from_rgba8(177, 204, 198, 0.2);
+pub const DARK_ACCENT_DIM: Color = Color::from_rgba8(177, 204, 198, 0.25);
 pub const DARK_DANGER: Color = Color::from_rgb8(238, 125, 119); // #ee7d77
 pub const DARK_SUCCESS: Color = Color::from_rgb8(217, 242, 210); // #d9f2d2
 pub const DARK_WARNING: Color = Color::from_rgb8(191, 218, 212); // #bfdad4
@@ -67,7 +67,7 @@ pub const LIGHT_TEXT_MUTED: Color = Color::from_rgb8(118, 128, 135); // #768087
 pub const LIGHT_ACCENT: Color = Color::from_rgb8(46, 92, 84); // #2e5c54
 pub const LIGHT_ACCENT_SECONDARY: Color = Color::from_rgb8(65, 125, 114); // #417d72
 pub const LIGHT_ACCENT_GLOW: Color = Color::from_rgba8(46, 92, 84, 0.5);
-pub const LIGHT_ACCENT_DIM: Color = Color::from_rgba8(46, 92, 84, 0.2);
+pub const LIGHT_ACCENT_DIM: Color = Color::from_rgba8(46, 92, 84, 0.25);
 pub const LIGHT_DANGER: Color = Color::from_rgb8(192, 57, 43); // #c0392b
 pub const LIGHT_SUCCESS: Color = Color::from_rgb8(39, 174, 96); // #27ae60
 pub const LIGHT_WARNING: Color = Color::from_rgb8(230, 126, 34); // #e67e22
@@ -268,8 +268,8 @@ pub fn warning() -> Color {
 
 pub fn active_line_bg() -> Color {
     match get_active_theme() {
-        AppTheme::Dark => Color::from_rgba8(177, 204, 198, 0.03),
-        AppTheme::Light => Color::from_rgba8(46, 92, 84, 0.03),
+        AppTheme::Dark => Color::from_rgba8(177, 204, 198, 0.06),
+        AppTheme::Light => Color::from_rgba8(46, 92, 84, 0.06),
         AppTheme::HighContrast => Color::from_rgba8(0, 255, 255, 0.08),
     }
 }

@@ -93,18 +93,8 @@ mod tests {
     #[test]
     fn focused_annotation_toolbar_cite_click_emits_insert_message() {
         let ann = annotation();
-        let mut ui = iced_test::simulator(toolbar(
-            4,
-            10,
-            1.0,
-            true,
-            false,
-            false,
-            false,
-            false,
-            Some(&ann),
-            true,
-        ));
+        let mut ui =
+            iced_test::simulator(toolbar(4, 10, 1.0, true, false, false, Some(&ann), true));
 
         ui.click(" Cite").expect("Cite button should exist");
 
@@ -118,18 +108,8 @@ mod tests {
     #[test]
     fn focused_annotation_toolbar_cite_is_inert_without_markdown_file() {
         let ann = annotation();
-        let mut ui = iced_test::simulator(toolbar(
-            4,
-            10,
-            1.0,
-            true,
-            false,
-            false,
-            false,
-            false,
-            Some(&ann),
-            false,
-        ));
+        let mut ui =
+            iced_test::simulator(toolbar(4, 10, 1.0, true, false, false, Some(&ann), false));
 
         ui.click(" Cite")
             .expect("disabled-looking Cite control should still render");
@@ -249,8 +229,6 @@ pub fn toolbar<'a>(
     zoom: f32,
     fit_to_width: bool,
     fit_to_page: bool,
-    toc_visible: bool,
-    annotations_sidebar_visible: bool,
     selection_active: bool,
     focused_annotation: Option<&'a md_editor_core::pdf::PdfAnnotation>,
     can_insert_annotation_link: bool,
@@ -440,26 +418,6 @@ pub fn toolbar<'a>(
 
     container(
         row![
-            button(text("☰").size(14).color(if toc_visible {
-                theme::accent()
-            } else {
-                theme::text_muted()
-            }))
-            .on_press(Message::ToggleTOC)
-            .padding(8)
-            .style(button::text),
-            button(icons::view(
-                Icon::FileText,
-                if annotations_sidebar_visible {
-                    theme::accent()
-                } else {
-                    theme::text_muted()
-                },
-                14.0
-            ))
-            .on_press(Message::PdfToggleAnnotationsSidebar)
-            .padding(8)
-            .style(button::text),
             Space::new().width(Length::Fill),
             study_controls,
             annotation_controls,
@@ -491,7 +449,7 @@ pub fn toolbar<'a>(
             .on_press(Message::PdfFitToPage)
             .padding([4, 10])
             .style(button::text),
-            button(text("Rotate ⟳").size(12).color(theme::text_muted()),)
+            button(text("Rotate").size(12).color(theme::text_muted()),)
                 .on_press(Message::PdfRotateClockwise)
                 .padding([4, 10])
                 .style(button::text),

@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 
 use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Element, Length, Renderer, Theme};
+use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
 use crate::messages::{Message, Shortcut};
 use crate::theme;
+use crate::views::icons::{self, Icon};
 
 pub const COMMAND_PALETTE_INPUT_ID: &str = "command_palette_input";
 
@@ -22,7 +23,7 @@ pub fn insert_pdf_quote_command() -> Command {
     Command {
         name: "Insert PDF Quote".to_string(),
         shortcut: Shortcut::InsertPdfQuote,
-        icon: "Q".to_string(),
+        icon: "Q".to_string(), // we can keep icon field but we'll use shortcut mapping for visual
         group_name: "Research",
         shortcut_label: Some("Quote".to_string()),
         disabled_reason: None,
@@ -62,7 +63,23 @@ pub fn get_commands() -> Vec<Command> {
         .collect()
 }
 
-pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, Theme, Renderer> {
+fn command_button_style() -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let mut style = button::text(theme, status);
+        style.border.radius = theme::RADIUS_SMALL.into();
+
+        if status == button::Status::Hovered || status == button::Status::Pressed {
+            style.background = Some(Background::Color(theme::bg_tertiary()));
+        }
+        style
+    }
+}
+
+pub fn view<'a>(
+    query: &str,
+    commands: Vec<Command>,
+    window_width: f32,
+) -> Element<'a, Message, Theme, Renderer> {
     let input = text_input("Type a command...", query)
         .id(iced::advanced::widget::Id::new(COMMAND_PALETTE_INPUT_ID))
         .on_input(Message::CommandPaletteQueryChanged)
@@ -103,24 +120,56 @@ pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, The
         });
     }
 
+    let mut last_group = "";
+
     for cmd in filtered {
+        if cmd.group_name != last_group {
+            if query.is_empty() {
+                list = list.push(
+                    container(text(cmd.group_name).size(10).color(theme::text_muted())).padding(
+                        iced::Padding {
+                            top: 8.0,
+                            right: 12.0,
+                            bottom: 4.0,
+                            left: 12.0,
+                        },
+                    ),
+                );
+            }
+            last_group = cmd.group_name;
+        }
+
         let is_disabled = cmd.disabled_reason.is_some();
+        let icon_widget = container(icons::view(
+            shortcut_to_icon(cmd.shortcut),
+            if is_disabled {
+                theme::text_muted()
+            } else {
+                theme::text_secondary()
+            },
+            14.0,
+        ))
+        .width(Length::Fixed(24.0))
+        .height(Length::Fixed(24.0))
+        .center_x(Length::Fixed(24.0))
+        .center_y(Length::Fixed(24.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(theme::bg_tertiary())),
+            border: Border {
+                color: if is_disabled {
+                    theme::border_subtle()
+                } else {
+                    theme::border()
+                },
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        });
+
         let content = if let Some(reason) = cmd.disabled_reason {
             row![
-                container(text(cmd.icon.clone()).size(12).color(theme::text_muted()))
-                    .width(Length::Fixed(24.0))
-                    .height(Length::Fixed(24.0))
-                    .center_x(Length::Fixed(24.0))
-                    .center_y(Length::Fixed(24.0))
-                    .style(|_| container::Style {
-                        background: Some(iced::Background::Color(theme::bg_tertiary())),
-                        border: iced::Border {
-                            color: theme::border_subtle(),
-                            width: 1.0,
-                            radius: 6.0.into(),
-                        },
-                        ..Default::default()
-                    }),
+                icon_widget,
                 column![
                     text(cmd.name.clone()).size(14).color(theme::text_muted()),
                     text(reason).size(11).color(theme::danger())
@@ -134,24 +183,7 @@ pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, The
             .padding([8, 12])
         } else {
             row![
-                container(
-                    text(cmd.icon.clone())
-                        .size(12)
-                        .color(theme::text_secondary())
-                )
-                .width(Length::Fixed(24.0))
-                .height(Length::Fixed(24.0))
-                .center_x(Length::Fixed(24.0))
-                .center_y(Length::Fixed(24.0))
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(theme::bg_tertiary())),
-                    border: iced::Border {
-                        color: theme::border(),
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..Default::default()
-                }),
+                icon_widget,
                 text(cmd.name.clone()).size(14).color(theme::text_primary()),
                 Space::new().width(Length::Fill),
                 text(
@@ -172,15 +204,17 @@ pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, The
             btn.style(button::text)
         } else {
             btn.on_press(Message::CommandPaletteCommandClicked(cmd.shortcut))
-                .style(button::text)
+                .style(command_button_style())
         };
         list = list.push(btn);
     }
 
+    let palette_width = f32::min(520.0, window_width.max(40.0) - 40.0).max(300.0);
+
     container(
         column![
             container(input).style(|_| container::Style {
-                border: iced::Border {
+                border: Border {
                     color: theme::border(),
                     width: 0.0,
                     radius: 0.0.into(),
@@ -191,10 +225,10 @@ pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, The
         ]
         .spacing(0),
     )
-    .width(Length::Fixed(520.0))
+    .width(Length::Fixed(palette_width))
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::bg_secondary())),
-        border: iced::Border {
+        background: Some(Background::Color(theme::bg_secondary())),
+        border: Border {
             color: theme::border(),
             width: 1.0,
             radius: 8.0.into(),
@@ -202,6 +236,44 @@ pub fn view<'a>(query: &str, commands: Vec<Command>) -> Element<'a, Message, The
         ..Default::default()
     })
     .into()
+}
+
+fn shortcut_to_icon(shortcut: Shortcut) -> Icon {
+    match shortcut {
+        Shortcut::Save => Icon::FileText,
+        Shortcut::OpenVault => Icon::FolderOpen,
+        Shortcut::NewFile => Icon::File,
+        Shortcut::Search => Icon::Search,
+        Shortcut::CommandPalette => Icon::Command,
+        Shortcut::ToggleSidebar => Icon::LayoutPanelLeft,
+        Shortcut::NavBack => Icon::ChevronDown, // ChevronLeft doesn't exist yet
+        Shortcut::NavForward => Icon::ChevronRight,
+        Shortcut::ToggleBacklinks => Icon::ListTree,
+        Shortcut::FocusMode => Icon::Split,
+        Shortcut::TableOfContents => Icon::ListTree,
+        Shortcut::StudyTracker => Icon::Clock,
+        Shortcut::SplitView => Icon::Split,
+        Shortcut::ZoomIn => Icon::Search,
+        Shortcut::ZoomOut => Icon::Search,
+        Shortcut::ZoomFit => Icon::Search,
+        Shortcut::GoToPage => Icon::FileText,
+        Shortcut::PdfSearch => Icon::Search,
+        Shortcut::PdfHighlight => Icon::FileText,
+        Shortcut::InsertPdfQuote => Icon::FileText,
+        Shortcut::InsertPdfHighlight => Icon::FileText,
+        Shortcut::PdfFirstPage => Icon::ChevronUp,
+        Shortcut::PdfLastPage => Icon::ChevronDown,
+        Shortcut::FollowCitation => Icon::FileText,
+        Shortcut::ShowUsages => Icon::ListTree,
+        Shortcut::CitationPalette => Icon::Command,
+        Shortcut::ExcerptModeToggle => Icon::ListTree,
+        Shortcut::ExcerptInsertBatch => Icon::File,
+        Shortcut::ThemeDark => Icon::Command,
+        Shortcut::ThemeLight => Icon::Command,
+        Shortcut::ThemeHighContrast => Icon::Command,
+        Shortcut::SwitchPane => Icon::Split,
+        _ => Icon::Command,
+    }
 }
 
 fn shortcut_label(shortcut: Shortcut) -> &'static str {
@@ -251,7 +323,7 @@ mod tests {
     #[test]
     fn command_palette_pdf_quote_click_emits_shortcut() {
         let commands = vec![insert_pdf_quote_command()];
-        let mut ui = iced_test::simulator(view("", commands));
+        let mut ui = iced_test::simulator(view("", commands, 1000.0));
 
         ui.click("Insert PDF Quote")
             .expect("PDF quote command should render");
@@ -267,7 +339,7 @@ mod tests {
 
     #[test]
     fn command_palette_input_has_focusable_id() {
-        let mut ui = iced_test::simulator(view("", get_commands()));
+        let mut ui = iced_test::simulator(view("", get_commands(), 1000.0));
 
         ui.find(iced_test::selector::id(COMMAND_PALETTE_INPUT_ID))
             .expect("command palette input should expose deterministic focus id");
@@ -276,7 +348,7 @@ mod tests {
     #[test]
     fn command_palette_pdf_highlight_click_emits_shortcut() {
         let commands = vec![insert_pdf_highlight_command()];
-        let mut ui = iced_test::simulator(view("", commands));
+        let mut ui = iced_test::simulator(view("", commands, 1000.0));
 
         ui.click("Insert PDF Highlight")
             .expect("PDF highlight command should render");
@@ -293,7 +365,7 @@ mod tests {
     #[test]
     fn command_palette_navigation_clicks_emit_cross_pane_shortcuts() {
         let commands = get_commands();
-        let mut ui = iced_test::simulator(view("navigate", commands));
+        let mut ui = iced_test::simulator(view("navigate", commands, 1000.0));
 
         ui.click("Navigate Back")
             .expect("navigation back command should render");
@@ -305,7 +377,7 @@ mod tests {
         ));
 
         let commands = get_commands();
-        let mut ui = iced_test::simulator(view("forward", commands));
+        let mut ui = iced_test::simulator(view("forward", commands, 1000.0));
         ui.click("Navigate Forward")
             .expect("navigation forward command should render");
 
@@ -314,5 +386,14 @@ mod tests {
             messages.as_slice(),
             [Message::CommandPaletteCommandClicked(Shortcut::NavForward)]
         ));
+    }
+
+    #[test]
+    fn command_palette_renders_group_separator_when_query_empty() {
+        let commands = vec![insert_pdf_quote_command()];
+        let mut ui = iced_test::simulator(view("", commands, 1000.0));
+
+        ui.find("Research")
+            .expect("group separator should be visible when query is empty");
     }
 }
