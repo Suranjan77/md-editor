@@ -152,12 +152,12 @@ fn render_tree_level<'a>(
                 container(
                     Space::new()
                         .width(Length::Fixed(3.0))
-                        .height(Length::Fixed(22.0))
+                        .height(Length::Fixed(20.0))
                 )
                 .style(|_| container::Style {
                     background: Some(Background::Color(theme::accent())),
                     border: Border {
-                        radius: 1.0.into(),
+                        radius: 1.5.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -214,32 +214,56 @@ pub fn view<'a>(
         Space::new().width(Length::Fill),
         button(icons::view(Icon::FolderOpen, theme::text_muted(), 16.0))
             .on_press(Message::OpenVaultDialog)
-            .padding(8)
+            .padding(4)
             .style(button::text),
         button(icons::view(Icon::FileText, theme::text_muted(), 16.0))
             .on_press(Message::CreateFileDialog)
-            .padding(8)
+            .padding(4)
             .style(button::text),
         button(icons::view(Icon::Folder, theme::text_muted(), 16.0))
             .on_press(Message::CreateFolderDialog)
-            .padding(8)
+            .padding(4)
             .style(button::text),
     ]
-    .spacing(8)
+    .spacing(4)
     .align_y(Alignment::Center)
     .padding([12, 16]);
 
+    let divider = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .style(|_| container::Style {
+            background: Some(Background::Color(theme::border_subtle())),
+            ..Default::default()
+        });
+
     let tree_elements =
         render_tree_level(entries, "", 0, selected_path, active_path, expanded_folders);
-    let file_list = Column::with_children(tree_elements).spacing(3);
 
-    let content = column![
-        header,
+    let main_content: Element<'_, Message, Theme, Renderer> = if tree_elements.is_empty() {
+        container(
+            column![
+                icons::view(Icon::FolderOpen, theme::text_muted(), 32.0),
+                text("No files yet").size(13).color(theme::text_muted()),
+                button(text("Create file").size(12))
+                    .on_press(Message::CreateFileDialog)
+                    .padding([6, 12])
+            ]
+            .spacing(12)
+            .align_x(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding([40, 20])
+        .into()
+    } else {
+        let file_list = Column::with_children(tree_elements).spacing(3);
         container(scrollable(file_list.padding([0, 8])).height(Length::Fill))
-            .padding([0, 8])
+            .padding([8, 8])
             .height(Length::Fill)
-    ]
-    .width(Length::Fixed(width));
+            .into()
+    };
+
+    let content = column![header, divider, main_content].width(Length::Fixed(width));
 
     container(content)
         .style(|_| container::Style {

@@ -1668,9 +1668,13 @@ where
                             ..Default::default()
                         },
                         if active {
-                            theme::warning()
+                            let mut c = theme::accent();
+                            c.a = 0.50;
+                            c
                         } else {
-                            theme::accent_dim()
+                            let mut c = theme::warning();
+                            c.a = 0.30;
+                            c
                         },
                     );
                 }
@@ -3158,14 +3162,18 @@ pub(crate) fn is_link_target_broken(
     let is_url = target.starts_with("http://")
         || target.starts_with("https://")
         || target.contains("://") && !target.starts_with("pdf://");
-    if is_url {
+    if is_url || target.starts_with('#') {
         return false;
     }
-    if let Some(pdf_target) = parse_pdf_link(target) {
+
+    // Strip hash fragment if any
+    let file_target = target.split('#').next().unwrap_or(target);
+
+    if let Some(pdf_target) = parse_pdf_link(file_target) {
         let resolved = resolve_relative_link_path(vault_root, active_path, &pdf_target.path);
         !existing_files.contains(&resolved)
     } else {
-        let resolved = resolve_relative_link_path(vault_root, active_path, target);
+        let resolved = resolve_relative_link_path(vault_root, active_path, file_target);
         let mut exists = existing_files.contains(&resolved);
         if !exists {
             exists = existing_files.contains(&format!("{}.md", resolved))

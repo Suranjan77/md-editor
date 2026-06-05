@@ -212,11 +212,8 @@ pub struct AppShellStatusInputs {
     pub document_open: bool,
     pub document_dirty: bool,
     pub global_search_searching: bool,
-    pub pdf_text_status: Option<String>,
-    pub pdf_open: bool,
-    pub page_index: u16,
-    pub page_count: u16,
-    pub zoom: f32,
+    pub global_search_status: Option<String>,
+    pub global_search_visible: bool,
     pub active_pane: AppShellPane,
     pub toast: Option<String>,
     pub background_error: Option<String>,
@@ -226,7 +223,6 @@ pub struct AppShellStatusInputs {
 pub struct AppShellStatus {
     pub save_status: SaveStatus,
     pub search_status: Option<String>,
-    pub pdf_status: Option<String>,
     pub active_pane: AppShellPane,
     pub message: Option<String>,
 }
@@ -241,32 +237,24 @@ impl AppShellStatus {
             SaveStatus::Saved
         };
 
-        let search_status = if inputs.global_search_searching {
+        // Only show search status when the global search overlay is closed.
+        // When the overlay is open it shows its own status; no need to duplicate.
+        let search_status = if inputs.global_search_visible {
+            None
+        } else if inputs.global_search_searching {
             Some(
                 inputs
-                    .pdf_text_status
+                    .global_search_status
                     .clone()
-                    .unwrap_or_else(|| "Search running".to_string()),
+                    .unwrap_or_else(|| "Searching...".to_string()),
             )
         } else {
-            inputs.pdf_text_status.clone()
-        };
-
-        let pdf_status = if inputs.pdf_open && inputs.page_count > 0 {
-            Some(format!(
-                "{} / {} · {:.0}%",
-                inputs.page_index.saturating_add(1),
-                inputs.page_count,
-                inputs.zoom * 100.0
-            ))
-        } else {
-            None
+            inputs.global_search_status.clone()
         };
 
         Self {
             save_status,
             search_status,
-            pdf_status,
             active_pane: inputs.active_pane,
             message: inputs.toast.or(inputs.background_error),
         }
@@ -609,16 +597,13 @@ mod tests {
     }
 
     #[test]
-    fn status_model_reports_document_search_pdf_and_errors() {
+    fn status_model_reports_document_search_and_errors() {
         let status = AppShellStatus::derive(AppShellStatusInputs {
             document_open: true,
             document_dirty: true,
             global_search_searching: true,
-            pdf_text_status: Some("Searched 3 PDFs".to_string()),
-            pdf_open: true,
-            page_index: 2,
-            page_count: 10,
-            zoom: 1.25,
+            global_search_status: Some("Searched 3 PDFs".to_string()),
+            global_search_visible: false,
             active_pane: AppShellPane::Pdf,
             toast: None,
             background_error: Some("Index failed".to_string()),
@@ -626,7 +611,6 @@ mod tests {
 
         assert_eq!(status.save_status, SaveStatus::Unsaved);
         assert_eq!(status.search_status.as_deref(), Some("Searched 3 PDFs"));
-        assert_eq!(status.pdf_status.as_deref(), Some("3 / 10 · 125%"));
         assert_eq!(status.active_pane, AppShellPane::Pdf);
         assert_eq!(status.message.as_deref(), Some("Index failed"));
     }
@@ -637,11 +621,8 @@ mod tests {
             document_open: false,
             document_dirty: false,
             global_search_searching: false,
-            pdf_text_status: None,
-            pdf_open: false,
-            page_index: 0,
-            page_count: 0,
-            zoom: 1.0,
+            global_search_status: None,
+            global_search_visible: false,
             active_pane: AppShellPane::None,
             toast: Some("Saved".to_string()),
             background_error: Some("Hidden".to_string()),
@@ -649,7 +630,23 @@ mod tests {
 
         assert_eq!(status.save_status, SaveStatus::NoDocument);
         assert!(status.search_status.is_none());
-        assert!(status.pdf_status.is_none());
         assert_eq!(status.message.as_deref(), Some("Saved"));
+    }
+
+    #[test]
+    fn status_model_suppresses_search_status_when_overlay_visible() {
+        let status = AppShellStatus::derive(AppShellStatusInputs {
+            document_open: true,
+            document_dirty: false,
+            global_search_searching: true,
+            global_search_status: Some("Searching...".to_string()),
+            global_search_visible: true,
+            active_pane: AppShellPane::Markdown,
+            toast: None,
+            background_error: None,
+        });
+
+        // When overlay is open, status bar should NOT duplicate the status text.
+        assert!(status.search_status.is_none());
     }
 }

@@ -1,49 +1,77 @@
-use iced::widget::{Space, button, column, container, scrollable, text};
-use iced::{Element, Length, Padding, Renderer, Theme};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
 
 pub type TocEntry = crate::editor::highlight::OutlineEntry;
 
-const BOLD_FONT: iced::Font = iced::Font {
-    weight: iced::font::Weight::Bold,
-    ..iced::Font::DEFAULT
-};
-
 pub fn get_toc(lines: &[crate::editor::highlight::StyledLine]) -> Vec<TocEntry> {
     crate::editor::highlight::extract_outline(lines)
+}
+
+fn toc_entry_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let mut style = button::text(theme, status);
+        style.border.radius = 4.0.into();
+
+        if active {
+            style.background = Some(Background::Color(theme::bg_tertiary()));
+        } else if status == button::Status::Hovered || status == button::Status::Pressed {
+            style.background = Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)));
+        }
+        style
+    }
 }
 
 pub fn view<'a>(
     md_toc: &'a [TocEntry],
     pdf_toc: &'a [TocEntry],
     width: f32,
+    active_md_line: Option<usize>,
+    active_pdf_page: Option<usize>,
 ) -> Element<'a, Message, Theme, Renderer> {
-    let title = text("Outline & TOC")
-        .size(16)
-        .font(BOLD_FONT)
-        .color(theme::text_primary());
+    let header = row![
+        text("OUTLINE")
+            .size(11)
+            .color(theme::text_muted())
+            .font(iced::Font::default()),
+        Space::new().width(Length::Fill),
+    ]
+    .align_y(Alignment::Center)
+    .padding([12, 16]);
+
+    let divider = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .style(|_| container::Style {
+            background: Some(Background::Color(theme::border_subtle())),
+            ..Default::default()
+        });
 
     let has_md = !md_toc.is_empty();
     let has_pdf = !pdf_toc.is_empty();
 
-    let mut content = column![].spacing(12);
+    let mut content = column![].spacing(12).padding([8, 8]);
 
     if has_md {
-        content = content.push(
-            text("Markdown Outline")
-                .size(13)
-                .font(BOLD_FONT)
-                .color(theme::text_primary()),
-        );
+        content = content
+            .push(container(text("MARKDOWN").size(11).color(theme::text_muted())).padding([4, 8]));
         let md_items = md_toc.iter().map(|entry| {
-            let indent = (entry.level.saturating_sub(1) as f32) * 15.0;
+            let indent = (entry.level.saturating_sub(1) as f32) * 12.0;
+            let active = active_md_line.map_or(false, |line| line == entry.line);
+
+            let color = match entry.level {
+                1 => theme::text_primary(),
+                2 => theme::text_secondary(),
+                _ => theme::text_muted(),
+            };
+
             container(
-                button(text(&entry.text).size(13).color(theme::text_secondary()))
+                button(text(&entry.text).size(13).color(color))
                     .on_press(Message::TocClicked(entry.line))
-                    .padding([2, 4])
-                    .style(button::text)
+                    .padding([4, 8])
+                    .style(toc_entry_style(active))
                     .width(Length::Fill),
             )
             .padding(Padding {
@@ -59,21 +87,33 @@ pub fn view<'a>(
 
     if has_pdf {
         if has_md {
-            content = content.push(Space::new().height(Length::Fixed(10.0)));
+            content = content.push(
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(1.0))
+                    .style(|_| container::Style {
+                        background: Some(Background::Color(theme::border_subtle())),
+                        ..Default::default()
+                    }),
+            );
         }
-        content = content.push(
-            text("PDF Table of Contents")
-                .size(13)
-                .font(BOLD_FONT)
-                .color(theme::text_primary()),
-        );
+        content = content
+            .push(container(text("PDF").size(11).color(theme::text_muted())).padding([4, 8]));
         let pdf_items = pdf_toc.iter().map(|entry| {
-            let indent = (entry.level.saturating_sub(1) as f32) * 15.0;
+            let indent = (entry.level.saturating_sub(1) as f32) * 12.0;
+            let active = active_pdf_page.map_or(false, |page| page == entry.line);
+
+            let color = match entry.level {
+                1 => theme::text_primary(),
+                2 => theme::text_secondary(),
+                _ => theme::text_muted(),
+            };
+
             container(
-                button(text(&entry.text).size(13).color(theme::text_secondary()))
+                button(text(&entry.text).size(13).color(color))
                     .on_press(Message::PdfTocClicked(entry.line))
-                    .padding([2, 4])
-                    .style(button::text)
+                    .padding([4, 8])
+                    .style(toc_entry_style(active))
                     .width(Length::Fill),
             )
             .padding(Padding {
@@ -89,25 +129,25 @@ pub fn view<'a>(
 
     if !has_md && !has_pdf {
         content = content.push(
-            text("No outline or TOC available")
-                .size(13)
-                .color(theme::text_muted()),
+            container(
+                text("No outline or TOC available")
+                    .size(13)
+                    .color(theme::text_muted()),
+            )
+            .padding([8, 8]),
         );
     }
 
-    container(
-        column![
-            title,
-            Space::new().height(Length::Fixed(10.0)),
-            scrollable(content)
-        ]
-        .padding(15),
-    )
+    container(column![
+        header,
+        divider,
+        scrollable(content).height(Length::Fill)
+    ])
     .width(Length::Fixed(width))
     .height(Length::Fill)
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::bg_secondary())),
-        border: iced::Border {
+        background: Some(Background::Color(theme::bg_secondary())),
+        border: Border {
             color: theme::border(),
             width: 1.0,
             ..Default::default()
@@ -123,7 +163,7 @@ mod tests {
 
     #[test]
     fn empty_toc_renders_empty_state() {
-        let mut ui = iced_test::simulator(view(&[], &[], 250.0));
+        let mut ui = iced_test::simulator(view(&[], &[], 250.0, None, None));
 
         ui.find("No outline or TOC available")
             .expect("visible TOC panel should explain empty outline state");

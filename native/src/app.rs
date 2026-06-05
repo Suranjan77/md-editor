@@ -4096,11 +4096,8 @@ impl MdEditor {
                 || self.active_image_path.is_some(),
             document_dirty: self.active_path.is_some() && self.buffer.dirty,
             global_search_searching: self.global_search_searching,
-            pdf_text_status: self.global_search_pdf_status.clone(),
-            pdf_open: self.active_pdf_path.is_some(),
-            page_index: self.pdf_current_page,
-            page_count: self.pdf_total_pages,
-            zoom: self.pdf_state.zoom,
+            global_search_status: self.global_search_pdf_status.clone(),
+            global_search_visible: self.search_visible,
             active_pane: shell_state.active_pane,
             toast: self.toast.clone(),
             background_error: self
@@ -4167,7 +4164,7 @@ impl MdEditor {
     pub fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
         let shell_state = self.app_shell_state();
         let _command_groups = shell_state.command_groups();
-        let _shell_status = self.app_shell_status(shell_state);
+        let shell_status = self.app_shell_status(shell_state);
 
         if matches!(shell_state.mode, AppShellMode::NoVault) {
             return views::welcome::view();
@@ -4178,14 +4175,14 @@ impl MdEditor {
             self.active_pdf_path
                 .as_deref()
                 .or(self.active_image_path.as_deref()),
-            None,
             self.sidebar_visible,
-            self.backlinks_visible,
             self.tracker_visible,
             self.toc_visible,
             self.active_path.is_some() || self.active_pdf_path.is_some(),
             self.split_view_active,
             self.active_path.is_some(),
+            self.pdf_annotations_visible,
+            self.active_pdf_path.is_some(),
         );
 
         let sidebar = views::sidebar::view(
@@ -4298,28 +4295,30 @@ impl MdEditor {
                 self.pdf_state.zoom,
                 self.pdf_fit_to_width,
                 self.pdf_fit_to_page,
-                self.toc_visible,
-                self.pdf_annotations_visible,
                 self.pdf_selection.is_some(),
                 focused_ann,
                 self.active_path.is_some(),
             );
+            // B5: pdf_toolbar now at TOP of the pdf pane.
+            // search_bar or zero-height space appears between toolbar and content.
+            let pdf_search_bar: Element<_, _, iced::Renderer> = if pdf_search_active {
+                views::pdf_viewer::search_bar(
+                    &self.pdf_state.search.query,
+                    self.pdf_state.search.regex,
+                    self.pdf_state.search.match_case,
+                    self.pdf_state.search.matches.len(),
+                    self.pdf_state.search.active_index,
+                    self.pdf_state.search.searching,
+                )
+            } else {
+                container(Space::new())
+                    .height(Length::Fixed(0.0))
+                    .width(Length::Fill)
+                    .into()
+            };
             let left_panel: Element<_, _, iced::Renderer> = container(column![
-                if pdf_search_active {
-                    views::pdf_viewer::search_bar(
-                        &self.pdf_state.search.query,
-                        self.pdf_state.search.regex,
-                        self.pdf_state.search.match_case,
-                        self.pdf_state.search.matches.len(),
-                        self.pdf_state.search.active_index,
-                        self.pdf_state.search.searching,
-                    )
-                } else {
-                    container(Space::new())
-                        .height(Length::Fixed(0.0))
-                        .width(Length::Fill)
-                        .into()
-                },
+                pdf_toolbar,
+                pdf_search_bar,
                 scrollable(views::pdf_viewer::view_continuous(
                     &self.pdf_pages,
                     self.pdf_state.zoom,
@@ -4357,12 +4356,8 @@ impl MdEditor {
             .height(Length::Fill)
             .into();
 
-            if self.active_panel == ActivePanel::Pdf && !self.split_view_active {
-                column![left_panel, pdf_toolbar].height(Length::Fill).into()
-            } else {
-                // Markdown-only or Split view: no horizontal divider, just column
-                column![left_panel, pdf_toolbar].height(Length::Fill).into()
-            }
+            // pdf_toolbar is at TOP of pane (B5); no second column wrap needed.
+            left_panel
         } else {
             container(Space::new()).width(Length::Fixed(0.0)).into()
         };
@@ -4378,8 +4373,38 @@ impl MdEditor {
             } else {
                 &[]
             };
+
+        let active_md_line = if self.active_path.is_some() {
+            self.md_toc_entries
+                .iter()
+                .rev()
+                .find(|e| e.line <= self.buffer.cursor_line)
+                .map(|e| e.line)
+        } else {
+            None
+        };
+
+        let active_pdf_page = if self.active_pdf_path.is_some() {
+            let current_page = self.pdf_current_page as usize;
+            self.pdf_toc_entries_flat
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .rev()
+                .find(|e| e.line <= current_page)
+                .map(|e| e.line)
+        } else {
+            None
+        };
+
         let toc_view: Element<Message, Theme, iced::Renderer> = if self.toc_visible {
-            views::toc::view(md_toc, pdf_toc, shell_state.persistence.workflow_width)
+            views::toc::view(
+                md_toc,
+                pdf_toc,
+                shell_state.persistence.workflow_width,
+                active_md_line,
+                active_pdf_page,
+            )
         } else {
             container(Space::new()).width(Length::Fixed(0.0)).into()
         };
@@ -4484,7 +4509,7 @@ impl MdEditor {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
 
-        let status_bar = views::status_bar::view(_shell_status);
+        let status_bar = views::status_bar::view(shell_status);
 
         let layout = column![
             row![
@@ -4544,6 +4569,7 @@ impl MdEditor {
                 container(views::command_palette::view(
                     &self.command_palette_query,
                     self.command_palette_commands(),
+                    self.window_width,
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -7586,9 +7612,9 @@ mod tests {
         let app = app_without_vault();
         let mut ui = iced_test::simulator(app.view());
 
-        ui.find("Open Existing Vault")
+        ui.find("Open Vault")
             .expect("no-vault fixture should render vault opener");
-        ui.find("Press Ctrl+O to open a folder")
+        ui.find("Ctrl+O")
             .expect("no-vault fixture should expose keyboard path");
     }
 
@@ -7597,10 +7623,9 @@ mod tests {
         let app = app_with_markdown_file();
         let mut ui = iced_test::simulator(app.view());
 
-        ui.find("notes/research.md")
-            .expect("markdown fixture should render active path");
-        ui.find(" • Saved")
-            .expect("markdown fixture should render save status");
+        // Toolbar now shows basename only (B1: full path removed, "• Saved" removed)
+        ui.find("research.md")
+            .expect("markdown fixture should render active basename");
     }
 
     #[test]
@@ -7608,8 +7633,9 @@ mod tests {
         let app = app_with_pdf_file();
         let mut ui = iced_test::simulator(app.view());
 
-        ui.find("papers/paper.pdf")
-            .expect("PDF fixture should render active PDF path");
+        // Toolbar shows basename only (B1). Page still visible in PDF toolbar (B5).
+        ui.find("paper.pdf")
+            .expect("PDF fixture should render active PDF basename");
         ui.find("1 / 3")
             .expect("PDF fixture should render page status with 1-based label");
     }
@@ -7619,8 +7645,9 @@ mod tests {
         let app = app_with_split_research();
         let mut ui = iced_test::simulator(app.view());
 
-        ui.find("notes/research.md")
-            .expect("split fixture should keep markdown path visible");
+        // Toolbar shows active-pane basename; PDF controls always visible when PDF open.
+        ui.find("research.md")
+            .expect("split fixture should keep markdown basename visible");
         ui.find("1 / 3")
             .expect("split fixture should keep PDF controls visible");
     }
@@ -7660,11 +7687,8 @@ mod tests {
         let large_app = app_with_large_markdown_file();
         let mut large_ui = iced_test::simulator(large_app.view());
         large_ui
-            .find("notes/large.md")
-            .expect("large markdown fixture should render active path");
-        large_ui
-            .find(" • Saved")
-            .expect("large markdown fixture should render save status");
+            .find("large.md")
+            .expect("large markdown fixture should render active basename");
 
         let search_app = app_with_file_search();
         let mut search_ui = iced_test::simulator(search_app.view());
@@ -7679,8 +7703,8 @@ mod tests {
             narrow_app.view(),
         );
         narrow_ui
-            .find("notes/research.md")
-            .expect("narrow split fixture should preserve markdown path");
+            .find("research.md")
+            .expect("narrow split fixture should preserve markdown basename");
         narrow_ui
             .find("1 / 3")
             .expect("narrow split fixture should preserve PDF page status");
@@ -7825,14 +7849,11 @@ mod tests {
 
     #[test]
     fn ui_audit_shell_labels_do_not_overlap_in_baseline_layouts() {
-        let markdown_app = app_with_markdown_file();
-        let mut markdown_ui = iced_test::simulator(markdown_app.view());
-        assert_no_text_overlap(&mut markdown_ui, "notes/research.md", " • Saved");
-
+        // Toolbar now shows basename + no "• Saved" text (B1).
+        // Verify page status and filename do not overlap in PDF and split layouts.
         let pdf_app = app_with_pdf_file();
         let mut pdf_ui = iced_test::simulator(pdf_app.view());
-        assert_no_text_overlap(&mut pdf_ui, "papers/paper.pdf", " • Saved");
-        assert_no_text_overlap(&mut pdf_ui, "papers/paper.pdf", "1 / 3");
+        assert_no_text_overlap(&mut pdf_ui, "paper.pdf", "1 / 3");
 
         let narrow_app = app_with_split_research();
         let mut narrow_ui = iced_test::Simulator::with_size(
@@ -7840,8 +7861,7 @@ mod tests {
             iced::Size::new(420.0, 720.0),
             narrow_app.view(),
         );
-        assert_no_text_overlap(&mut narrow_ui, "notes/research.md", " • Saved");
-        assert_no_text_overlap(&mut narrow_ui, "notes/research.md", "1 / 3");
+        assert_no_text_overlap(&mut narrow_ui, "research.md", "1 / 3");
     }
 
     #[test]
@@ -7893,7 +7913,7 @@ mod tests {
 
         assert_eq!(status.save_status, crate::app_shell::SaveStatus::Unsaved);
         assert_eq!(status.search_status.as_deref(), Some("Searched 2 PDFs"));
-        assert_eq!(status.pdf_status.as_deref(), Some("2 / 3 · 150%"));
+        // pdf_status removed from status bar — page/zoom live in PDF toolbar only.
         assert_eq!(status.active_pane, AppShellPane::Markdown);
     }
 
@@ -9345,7 +9365,7 @@ mod tests {
             line: 12,
         }];
 
-        let _element = views::toc::view(&md_toc, &pdf_toc, 250.0);
+        let _element = views::toc::view(&md_toc, &pdf_toc, 250.0, None, None);
     }
 
     #[test]

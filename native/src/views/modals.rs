@@ -633,27 +633,37 @@ pub fn view<'a>(
     };
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
-        ModalType::Delete(path) => column![
-            text(format!("Are you sure you want to delete '{}'?", path))
+        ModalType::Delete(path) => {
+            let display_path = if path.len() > 35 {
+                format!("...{}", &path[path.len() - 32..])
+            } else {
+                path.clone()
+            };
+            column![
+                text(format!(
+                    "Are you sure you want to delete '{}'?",
+                    display_path
+                ))
                 .color(theme::text_primary()),
-            text("This action cannot be undone.")
-                .size(12)
-                .color(theme::text_muted()),
-            row![
-                button(text("Cancel").size(14))
-                    .on_press(Message::NameModalCancel)
-                    .padding([8, 20])
-                    .style(button::text),
-                button(text("Delete").size(14))
-                    .on_press(Message::DeleteFile(path.clone()))
-                    .padding([8, 20])
-                    .style(button::secondary),
+                text("This action cannot be undone.")
+                    .size(12)
+                    .color(theme::text_muted()),
+                row![
+                    button(text("Cancel").size(14))
+                        .on_press(Message::NameModalCancel)
+                        .padding([8, 20])
+                        .style(button::text),
+                    button(text("Delete").size(14))
+                        .on_press(Message::DeleteFile(path.clone()))
+                        .padding([8, 20])
+                        .style(button::secondary),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
             ]
-            .spacing(10)
-            .align_y(Alignment::Center)
-        ]
-        .spacing(20)
-        .into(),
+            .spacing(20)
+            .into()
+        }
         ModalType::LinkNote(_) => link_note_picker::view(input_value, picker_search, vault_entries),
         _ => {
             let (placeholder, confirm_label) = match modal_type {

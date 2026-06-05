@@ -312,10 +312,10 @@ pub fn view<'a>(
     can_insert_annotation_link: bool,
     width: f32,
 ) -> Element<'a, Message, Theme, Renderer> {
-    let title = text("Annotations")
-        .size(16)
-        .font(BOLD_FONT)
-        .color(theme::text_primary());
+    let title = text("ANNOTATIONS")
+        .size(11)
+        .color(theme::text_muted())
+        .font(iced::Font::default());
 
     // 1. Color filter row
     let mut colors_filter = row![color_dot_pill(None, filter_color)].spacing(4);
@@ -470,9 +470,13 @@ pub fn view<'a>(
     let _inspected = filtered.inspected;
 
     let total_count = filtered.annotations.len();
-    let count_text = text(format!("Total: {}", total_count))
-        .size(12)
-        .color(theme::text_muted());
+    let count_text = if total_count == 0 {
+        text("0").size(11).color(theme::text_muted())
+    } else {
+        text(format!("{}", total_count))
+            .size(11)
+            .color(theme::accent())
+    };
 
     let items = filtered.annotations.into_iter().map(|ann| {
         let is_focused = Some(ann.id.as_str()) == focused_id;
@@ -727,25 +731,47 @@ pub fn view<'a>(
             .into()
     });
 
-    container(
-        column![
-            row![
-                title,
-                Space::new().width(Length::Fill),
-                button(icons::view(Icon::File, theme::text_muted(), 14.0))
-                    .on_press(Message::PdfExportAnnotations)
-                    .padding(4)
-                    .style(button::text),
-                Space::new().width(Length::Fixed(8.0)),
-                count_text
-            ]
-            .align_y(Alignment::Center),
-            Space::new().height(Length::Fixed(8.0)),
-            filter_container,
-            scrollable(column(items).spacing(8)).height(Length::Fill)
-        ]
-        .padding(12),
-    )
+    let header_row = row![
+        title,
+        Space::new().width(Length::Fill),
+        button(icons::view(Icon::FileText, theme::text_muted(), 14.0))
+            .on_press(Message::PdfExportAnnotations)
+            .padding(4)
+            .style(button::text),
+        Space::new().width(Length::Fixed(8.0)),
+        count_text
+    ]
+    .align_y(Alignment::Center)
+    .padding([12, 14]);
+
+    let divider = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(theme::border_subtle())),
+            ..Default::default()
+        });
+
+    let header = column![header_row, divider];
+
+    container(column![
+        header,
+        scrollable(column![
+            filter_container.padding(iced::Padding {
+                top: 12.0,
+                right: 14.0,
+                bottom: 8.0,
+                left: 14.0
+            }),
+            column(items).spacing(8).padding(iced::Padding {
+                top: 0.0,
+                right: 14.0,
+                bottom: 14.0,
+                left: 14.0
+            })
+        ])
+        .height(Length::Fill)
+    ])
     .width(Length::Fixed(width))
     .height(Length::Fill)
     .style(|_| container::Style {
