@@ -9,14 +9,15 @@ use crate::app_shell::{
 use crate::pdf_layout::PdfLayout;
 use crate::pdf_page_cache::PdfPageCache;
 use image::GenericImageView;
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
 use crate::features::overlays::OverlayState;
+use crate::features::search::{PdfSearchState, SearchState};
 use crate::features::tracker::TrackerState;
+use crate::features::workspace::WorkspaceState;
 use crate::messages::{EditorBlockActionKind, Message, SearchWrapStatus, Shortcut};
 use crate::pdf_links::{build_pdf_link, parse_pdf_link};
 use crate::pdf_notes::{
@@ -119,63 +120,9 @@ fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
     text.chars().skip(start).take(end - start).collect()
 }
 
-use crate::pdf_navigation::{NavigationHistory, NavigationTarget};
-
-pub type EditorMatch = md_editor_core::types::SearchResult;
-
-#[derive(Debug, Clone)]
-pub struct EditorSearchState {
-    pub query: String,
-    pub replace: String,
-    pub regex: bool,
-    pub match_case: bool,
-    pub matches: Vec<EditorMatch>,
-    pub active_index: Option<usize>,
-    pub visible: bool,
-    pub wrap_status: Option<SearchWrapStatus>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PdfSearchState {
-    pub query: String,
-    pub regex: bool,
-    pub match_case: bool,
-    pub matches: Vec<md_editor_core::pdf::PdfSearchMatch>,
-    pub active_index: Option<usize>,
-    pub page_index: std::collections::HashMap<u16, Vec<usize>>,
-    pub searching: bool,
-    pub visible: bool,
-}
-
-impl Default for EditorSearchState {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            replace: String::new(),
-            regex: false,
-            match_case: false,
-            matches: Vec::new(),
-            active_index: None,
-            visible: false,
-            wrap_status: None,
-        }
-    }
-}
-
-impl Default for PdfSearchState {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            regex: false,
-            match_case: false,
-            matches: Vec::new(),
-            active_index: None,
-            page_index: std::collections::HashMap::new(),
-            searching: false,
-            visible: false,
-        }
-    }
-}
+#[cfg(test)]
+use crate::pdf_navigation::NavigationHistory;
+use crate::pdf_navigation::NavigationTarget;
 
 #[derive(Debug, Clone)]
 pub struct PdfViewState {
@@ -188,15 +135,8 @@ pub struct PdfViewState {
 
 pub struct MdEditor {
     state: Arc<md_editor_core::state::AppState>,
-    vault_root: Option<String>,
-    vault_entries: Vec<md_editor_core::types::FileEntry>,
-    selected_path: Option<String>,
-    active_path: Option<String>,
-    expanded_folders: BTreeSet<String>,
+    workspace: WorkspaceState,
     sidebar_visible: bool,
-    backlinks_visible: bool,
-    backlinks: Vec<md_editor_core::types::BacklinkItem>,
-    navigation_history: NavigationHistory,
 
     // Editor state
     buffer: DocBuffer,
@@ -240,22 +180,7 @@ pub struct MdEditor {
     tracker: TrackerState,
     overlays: OverlayState,
 
-    // Search
-    search_visible: bool,
-    editor_search: EditorSearchState,
-    global_search_id: u64,
-    global_search_pdf_search_id: Option<u64>,
-    global_search_pending_db: bool,
-    global_search_pending_pdf: bool,
-    global_search_pending_vault_pdf: bool,
-    global_search_pdf_status: Option<String>,
-    global_search_sources: Vec<md_editor_core::types::UnifiedSearchSource>,
-    global_search_results: Vec<md_editor_core::types::UnifiedSearchResult>,
-    global_search_searching: bool,
-    global_search_error: Option<String>,
-
-    pdf_search_error: Option<String>,
-    pdf_active_search_id: u64,
+    search: SearchState,
 
     // TOC
     toc_visible: bool,
@@ -310,15 +235,8 @@ impl MdEditor {
 
         let mut app = Self {
             state: state.clone(),
-            vault_root: None,
-            vault_entries: Vec::new(),
-            selected_path: None,
-            active_path: None,
-            expanded_folders: BTreeSet::new(),
+            workspace: WorkspaceState::default(),
             sidebar_visible: true,
-            backlinks_visible: false,
-            backlinks: Vec::new(),
-            navigation_history: NavigationHistory::default(),
             buffer: DocBuffer::new(),
             highlighted_lines: Vec::new(),
             highlight_generation: 0,
@@ -369,22 +287,7 @@ impl MdEditor {
                 chrono::Local::now().format("%Y-%m-%d").to_string(),
             ),
             overlays: OverlayState::default(),
-            search_visible: false,
-            editor_search: EditorSearchState::default(),
-            global_search_id: 0,
-            global_search_pdf_search_id: None,
-            global_search_pending_db: false,
-            global_search_pending_pdf: false,
-            global_search_pending_vault_pdf: false,
-            global_search_pdf_status: None,
-            global_search_sources: md_editor_core::types::UnifiedSearchQuery::all_sources("")
-                .sources,
-            global_search_results: Vec::new(),
-            global_search_searching: false,
-            global_search_error: None,
-
-            pdf_search_error: None,
-            pdf_active_search_id: 0,
+            search: SearchState::default(),
             toc_visible: false,
             pdf_annotations_visible: false,
             pdf_annotations_filter_color: None,
@@ -443,7 +346,8 @@ impl MdEditor {
         format!(
             "{}Md-editor — {}",
             if self.buffer.dirty { "● " } else { "" },
-            self.active_path
+            self.workspace
+                .active_path
                 .as_deref()
                 .or(self.active_pdf_path.as_deref())
                 .or(self.active_image_path.as_deref())
@@ -675,7 +579,7 @@ impl MdEditor {
             Message::SidebarFileClicked(path) => {
                 if self.showing_pdf && self.active_pdf_path.is_some() {
                     self.push_pdf_navigation_history();
-                } else if self.active_path.is_some() {
+                } else if self.workspace.active_path.is_some() {
                     self.push_markdown_navigation_history();
                 }
                 let mut path = path.trim().to_string();
@@ -701,8 +605,8 @@ impl MdEditor {
 
                 if let Some(target) = parse_pdf_link(&path) {
                     let resolved_pdf_path = resolve_relative_link_path(
-                        self.vault_root.as_deref(),
-                        self.active_path.as_deref(),
+                        self.workspace.vault_root.as_deref(),
+                        self.workspace.active_path.as_deref(),
                         &target.path,
                     );
 
@@ -787,8 +691,8 @@ impl MdEditor {
                                 }
                             } else {
                                 let mut resolved_file = resolve_relative_link_path(
-                                    self.vault_root.as_deref(),
-                                    self.active_path.as_deref(),
+                                    self.workspace.vault_root.as_deref(),
+                                    self.workspace.active_path.as_deref(),
                                     file_part,
                                 );
                                 if std::path::Path::new(&resolved_file).extension().is_none() {
@@ -796,7 +700,7 @@ impl MdEditor {
                                 }
 
                                 let is_same_file =
-                                    self.active_path.as_deref() == Some(&resolved_file);
+                                    self.workspace.active_path.as_deref() == Some(&resolved_file);
                                 if is_same_file {
                                     let target_slug = slugify(anchor_part);
                                     if let Some(line_idx) = find_heading_or_widget_line(
@@ -819,7 +723,7 @@ impl MdEditor {
                                         Task::none()
                                     }
                                 } else {
-                                    self.selected_path = Some(resolved_file.clone());
+                                    self.workspace.selected_path = Some(resolved_file.clone());
                                     let open_task = self.open_file_extended(&resolved_file, false);
 
                                     let target_slug = slugify(anchor_part);
@@ -848,14 +752,14 @@ impl MdEditor {
                             }
                         } else {
                             let mut resolved_path = resolve_relative_link_path(
-                                self.vault_root.as_deref(),
-                                self.active_path.as_deref(),
+                                self.workspace.vault_root.as_deref(),
+                                self.workspace.active_path.as_deref(),
                                 &path,
                             );
                             if std::path::Path::new(&resolved_path).extension().is_none() {
                                 resolved_path.push_str(".md");
                             }
-                            self.selected_path = Some(resolved_path.clone());
+                            self.workspace.selected_path = Some(resolved_path.clone());
                             let lower = resolved_path.to_lowercase();
                             if lower.ends_with(".md") || lower.ends_with(".markdown") {
                                 self.showing_pdf = false;
@@ -874,11 +778,7 @@ impl MdEditor {
                 }
             }
             Message::SidebarFolderToggled(path) => {
-                if self.expanded_folders.contains(&path) {
-                    self.expanded_folders.remove(&path);
-                } else {
-                    self.expanded_folders.insert(path);
-                }
+                self.workspace.toggle_folder(path);
                 Task::none()
             }
             Message::CreateFileDialog => {
@@ -1015,7 +915,7 @@ impl MdEditor {
 
                 match result {
                     Ok(()) => {
-                        self.vault_entries =
+                        self.workspace.vault_entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         self.overlays.active_modal = None;
                         self.overlays.modal_input.clear();
@@ -1029,10 +929,10 @@ impl MdEditor {
             Message::DeleteFile(path) => {
                 match md_editor_core::vault::delete_entry(&self.state, &path) {
                     Ok(()) => {
-                        self.vault_entries =
+                        self.workspace.vault_entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                        if self.active_path.as_deref() == Some(path.as_str()) {
-                            self.active_path = None;
+                        if self.workspace.active_path.as_deref() == Some(path.as_str()) {
+                            self.workspace.active_path = None;
                             self.buffer = DocBuffer::new();
                             self.highlighted_lines.clear();
                         }
@@ -1076,7 +976,7 @@ impl MdEditor {
             }
             Message::EditorSave(is_autosave) => {
                 self.pending_editor_save = None;
-                if let Some(path) = &self.active_path {
+                if let Some(path) = &self.workspace.active_path {
                     let content = self.buffer.text();
                     let _ = save_markdown_file_with_parser_targets(&self.state, path, &content);
                     self.buffer.dirty = false;
@@ -1120,6 +1020,7 @@ impl MdEditor {
                 // Build the link context-menu if the cursor lands on a link span.
                 if let Some(line) = self.highlighted_lines.get(line_idx) {
                     let existing_files: HashSet<String> = self
+                        .workspace
                         .vault_entries
                         .iter()
                         .filter(|e| !e.is_dir)
@@ -1134,8 +1035,8 @@ impl MdEditor {
                             if let Some(ref target) = span.link_target {
                                 let items = crate::views::modals::get_link_context_menu_items(
                                     target,
-                                    self.vault_root.as_deref(),
-                                    self.active_path.as_deref(),
+                                    self.workspace.vault_root.as_deref(),
+                                    self.workspace.active_path.as_deref(),
                                     &existing_files,
                                 );
                                 let source_text = span.text.clone();
@@ -1720,10 +1621,10 @@ impl MdEditor {
                 Task::none()
             }
             Message::TocClicked(index) => {
-                if self.active_path.is_some() {
+                if self.workspace.active_path.is_some() {
                     if self.showing_pdf && self.active_pdf_path.is_some() {
                         self.push_pdf_navigation_history();
-                    } else if self.active_path.is_some() {
+                    } else if self.workspace.active_path.is_some() {
                         self.push_markdown_navigation_history();
                     }
                     self.set_active_panel(ActivePanel::Markdown);
@@ -1736,7 +1637,7 @@ impl MdEditor {
                 if self.active_pdf_path.is_some() {
                     if self.showing_pdf && self.active_pdf_path.is_some() {
                         self.push_pdf_navigation_history();
-                    } else if self.active_path.is_some() {
+                    } else if self.workspace.active_path.is_some() {
                         self.push_markdown_navigation_history();
                     }
                     let target_page = index
@@ -1894,7 +1795,7 @@ impl MdEditor {
                     items.push(views::modals::PdfContextMenuItem::UnderlineBlue);
                     items.push(views::modals::PdfContextMenuItem::StrikeRed);
                     items.push(views::modals::PdfContextMenuItem::SearchSelectedText);
-                    if self.active_path.is_some() {
+                    if self.workspace.active_path.is_some() {
                         items.push(views::modals::PdfContextMenuItem::InsertQuoteLink);
                     }
                 }
@@ -1917,7 +1818,7 @@ impl MdEditor {
                 if let Some(ann) = target_ann {
                     items.extend(views::modals::pdf_annotation_context_menu_items(
                         &ann,
-                        self.active_path.is_some(),
+                        self.workspace.active_path.is_some(),
                     ));
                 }
 
@@ -2064,7 +1965,7 @@ impl MdEditor {
                                 self.pdf_selection = None;
                                 self.overlays.active_modal = None;
                                 self.pdf_state.search.visible = true;
-                                self.search_visible = false;
+                                self.search.visible = false;
                                 return Task::batch(vec![
                                     self.search_pdf(),
                                     focus_pdf_search_input(),
@@ -2240,7 +2141,7 @@ impl MdEditor {
                 self.overlays.citation_palette_query.clear();
                 if self.overlays.citation_palette_visible {
                     self.overlays.command_palette_visible = false;
-                    self.search_visible = false;
+                    self.search.visible = false;
                     return focus_citation_palette_input();
                 }
                 Task::none()
@@ -2279,7 +2180,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::ExcerptQueueInsertBatch => {
-                if self.active_path.is_none() {
+                if self.workspace.active_path.is_none() {
                     self.overlays.toast =
                         Some("Open a markdown file before inserting batch".to_string());
                     return Task::none();
@@ -2452,7 +2353,7 @@ impl MdEditor {
             }
 
             Message::GlobalSearchOpen => {
-                self.search_visible = true;
+                self.search.visible = true;
                 if self.active_pdf_path.is_some() && !self.pdf_state.search.query.trim().is_empty()
                 {
                     Task::batch(vec![self.search_pdf(), focus_global_search_input()])
@@ -2461,20 +2362,20 @@ impl MdEditor {
                 }
             }
             Message::SearchClose => {
-                self.search_visible = false;
-                self.global_search_id = self.global_search_id.wrapping_add(1);
-                self.editor_search.visible = false;
+                self.search.visible = false;
+                self.search.global.id = self.search.global.id.wrapping_add(1);
+                self.search.editor.visible = false;
                 self.pdf_state.search.visible = false;
                 self.cancel_global_pdf_search();
-                self.global_search_results.clear();
-                self.global_search_error = None;
+                self.search.global.results.clear();
+                self.search.global.error = None;
                 self.restore_scroll_positions()
             }
             Message::SearchQueryChanged(q) => {
                 if self.pdf_search_is_active() {
                     self.pdf_state.search.query = q.clone();
                     self.pdf_state.search.active_index = None;
-                    self.pdf_search_error = None;
+                    self.search.pdf_error = None;
                     if q.len() > 1 {
                         self.search_pdf()
                     } else {
@@ -2482,15 +2383,15 @@ impl MdEditor {
                         self.pdf_state.search.page_index.clear();
                         Task::none()
                     }
-                } else if self.search_visible {
-                    self.editor_search.query = q.clone();
-                    self.editor_search.active_index = None;
-                    self.editor_search.wrap_status = None;
+                } else if self.search.visible {
+                    self.search.editor.query = q.clone();
+                    self.search.editor.active_index = None;
+                    self.search.editor.wrap_status = None;
                     if q.trim().len() > 2 {
-                        self.global_search_searching = true;
-                        self.global_search_error = None;
-                        self.global_search_id = self.global_search_id.wrapping_add(1);
-                        let search_id = self.global_search_id;
+                        self.search.global.searching = true;
+                        self.search.global.error = None;
+                        self.search.global.id = self.search.global.id.wrapping_add(1);
+                        let search_id = self.search.global.id;
 
                         let state = self.state.clone();
                         let query = self.build_global_search_query(q.clone());
@@ -2511,21 +2412,21 @@ impl MdEditor {
                             },
                         );
 
-                        self.global_search_results.clear();
+                        self.search.global.results.clear();
 
                         let active_pdf_task = if self.active_pdf_path.is_some()
                             && include_pdf_content
                         {
                             self.pdf_state.search.query = q.clone();
                             self.pdf_state.search.active_index = None;
-                            self.pdf_search_error = None;
+                            self.search.pdf_error = None;
                             let task = self.search_pdf();
                             if self.pdf_state.search.searching {
-                                self.global_search_pdf_search_id = Some(self.pdf_active_search_id);
-                                self.global_search_pending_pdf = true;
+                                self.search.global.pdf_search_id = Some(self.search.pdf_active_id);
+                                self.search.global.pending_pdf = true;
                             } else {
-                                self.global_search_pdf_search_id = None;
-                                self.global_search_pending_pdf = false;
+                                self.search.global.pdf_search_id = None;
+                                self.search.global.pending_pdf = false;
                             }
                             task
                         } else {
@@ -2533,28 +2434,28 @@ impl MdEditor {
                             Task::none()
                         };
                         let vault_pdf_task = if include_pdf_content {
-                            self.global_search_pending_vault_pdf = true;
-                            self.global_search_pdf_status = Some(format!(
+                            self.search.global.pending_vault_pdf = true;
+                            self.search.global.pdf_status = Some(format!(
                                 "PDF text: searching up to {} registered PDFs",
                                 GLOBAL_PDF_TEXT_SEARCH_MAX_DOCUMENTS
                             ));
                             self.search_registered_pdf_text_task(search_id, query.clone())
                         } else {
-                            self.global_search_pending_vault_pdf = false;
-                            self.global_search_pdf_status = None;
+                            self.search.global.pending_vault_pdf = false;
+                            self.search.global.pdf_status = None;
                             Task::none()
                         };
-                        self.global_search_pending_db = true;
+                        self.search.global.pending_db = true;
                         self.update_global_search_searching();
 
                         Task::batch(vec![db_task, active_pdf_task, vault_pdf_task])
                     } else {
-                        self.global_search_results.clear();
-                        self.global_search_error = None;
-                        self.global_search_pdf_status = None;
-                        self.global_search_pending_db = false;
+                        self.search.global.results.clear();
+                        self.search.global.error = None;
+                        self.search.global.pdf_status = None;
+                        self.search.global.pending_db = false;
                         self.cancel_global_pdf_search();
-                        self.global_search_id = self.global_search_id.wrapping_add(1);
+                        self.search.global.id = self.search.global.id.wrapping_add(1);
                         if self.active_pdf_path.is_some() {
                             self.pdf_state.search.query = q.clone();
                             self.pdf_state.search.matches.clear();
@@ -2563,21 +2464,21 @@ impl MdEditor {
                         Task::none()
                     }
                 } else {
-                    self.editor_search.query = q.clone();
-                    self.editor_search.active_index = None;
-                    self.editor_search.wrap_status = None;
-                    if q.len() > 2 && !self.editor_search.regex {
+                    self.search.editor.query = q.clone();
+                    self.search.editor.active_index = None;
+                    self.search.editor.wrap_status = None;
+                    if q.len() > 2 && !self.search.editor.regex {
                         if let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q) {
-                            self.editor_search.matches = res;
+                            self.search.editor.matches = res;
                         }
                     } else {
-                        self.editor_search.matches.clear();
+                        self.search.editor.matches.clear();
                     }
                     Task::none()
                 }
             }
             Message::SearchReplaceChanged(replace) => {
-                self.editor_search.replace = replace;
+                self.search.editor.replace = replace;
                 Task::none()
             }
             Message::SearchRegexToggled(value) => {
@@ -2590,9 +2491,9 @@ impl MdEditor {
                         Task::none()
                     }
                 } else {
-                    self.editor_search.regex = value;
-                    self.editor_search.active_index = None;
-                    self.editor_search.wrap_status = None;
+                    self.search.editor.regex = value;
+                    self.search.editor.active_index = None;
+                    self.search.editor.wrap_status = None;
                     Task::none()
                 }
             }
@@ -2606,24 +2507,24 @@ impl MdEditor {
                         Task::none()
                     }
                 } else {
-                    self.editor_search.match_case = value;
-                    self.editor_search.active_index = None;
-                    self.editor_search.wrap_status = None;
+                    self.search.editor.match_case = value;
+                    self.search.editor.active_index = None;
+                    self.search.editor.wrap_status = None;
                     Task::none()
                 }
             }
             Message::UnifiedSearchSourceToggled(source, enabled) => {
                 if enabled {
-                    if !self.global_search_sources.contains(&source) {
-                        self.global_search_sources.push(source);
+                    if !self.search.global.sources.contains(&source) {
+                        self.search.global.sources.push(source);
                     }
                 } else {
-                    self.global_search_sources.retain(|item| *item != source);
+                    self.search.global.sources.retain(|item| *item != source);
                 }
 
-                if self.search_visible {
+                if self.search.visible {
                     Task::done(Message::SearchQueryChanged(
-                        self.editor_search.query.clone(),
+                        self.search.editor.query.clone(),
                     ))
                 } else {
                     Task::none()
@@ -2666,11 +2567,11 @@ impl MdEditor {
             },
 
             Message::PdfSearchMatchesFound(search_id, matches) => {
-                if search_id == self.pdf_active_search_id {
-                    if self.search_visible && self.global_search_pdf_search_id == Some(search_id) {
+                if search_id == self.search.pdf_active_id {
+                    if self.search.visible && self.search.global.pdf_search_id == Some(search_id) {
                         if let Some(ref pdf_path) = self.active_pdf_path {
-                            let query_lower = self.editor_search.query.to_lowercase();
-                            let query_trimmed = self.editor_search.query.trim();
+                            let query_lower = self.search.editor.query.to_lowercase();
+                            let query_trimmed = self.search.editor.query.trim();
 
                             let is_linked =
                                 |p1: &str, p2: &str| self.state.vault_paths_are_linked(p1, p2);
@@ -2686,13 +2587,13 @@ impl MdEditor {
                                         score *= 2.0;
                                     }
                                 }
-                                if let Some(ref active) = self.active_path {
+                                if let Some(ref active) = self.workspace.active_path {
                                     if is_linked(pdf_path, active) {
                                         score *= 1.3;
                                     }
                                 }
 
-                                self.global_search_results.push(
+                                self.search.global.results.push(
                                     md_editor_core::types::UnifiedSearchResult {
                                         group: md_editor_core::types::SearchResultGroup::PdfContent,
                                         path: pdf_path.clone(),
@@ -2715,7 +2616,7 @@ impl MdEditor {
                                 );
                             }
 
-                            self.global_search_results.sort_by(|a, b| {
+                            self.search.global.results.sort_by(|a, b| {
                                 b.score
                                     .partial_cmp(&a.score)
                                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -2730,7 +2631,7 @@ impl MdEditor {
                     self.rebuild_pdf_search_page_index();
                     if self.pdf_state.search.active_index.is_none()
                         && !self.pdf_state.search.matches.is_empty()
-                        && !self.search_visible
+                        && !self.search.visible
                     {
                         self.pdf_state.search.active_index = Some(0);
                         self.navigate_pdf_search_to_index(0)
@@ -2742,12 +2643,12 @@ impl MdEditor {
                 }
             }
             Message::UnifiedSearchMatchesFound(search_id, matches) => {
-                if search_id == self.global_search_id {
-                    self.global_search_results.retain(|r| {
+                if search_id == self.search.global.id {
+                    self.search.global.results.retain(|r| {
                         r.group == md_editor_core::types::SearchResultGroup::PdfContent
                     });
-                    self.global_search_results.extend(matches);
-                    self.global_search_results.sort_by(|a, b| {
+                    self.search.global.results.extend(matches);
+                    self.search.global.results.sort_by(|a, b| {
                         b.score
                             .partial_cmp(&a.score)
                             .unwrap_or(std::cmp::Ordering::Equal)
@@ -2755,16 +2656,16 @@ impl MdEditor {
                             .then_with(|| a.path.cmp(&b.path))
                             .then_with(|| a.line.cmp(&b.line))
                     });
-                    self.global_search_pending_db = false;
+                    self.search.global.pending_db = false;
                     self.update_global_search_searching();
                 }
                 Task::none()
             }
             Message::UnifiedPdfTextSearchMatchesFound(search_id, batch) => {
-                if self.search_visible && search_id == self.global_search_id {
-                    self.global_search_pdf_status = Some(format_pdf_search_status(&batch));
-                    self.global_search_results.extend(batch.results);
-                    self.global_search_results.sort_by(|a, b| {
+                if self.search.visible && search_id == self.search.global.id {
+                    self.search.global.pdf_status = Some(format_pdf_search_status(&batch));
+                    self.search.global.results.extend(batch.results);
+                    self.search.global.results.sort_by(|a, b| {
                         b.score
                             .partial_cmp(&a.score)
                             .unwrap_or(std::cmp::Ordering::Equal)
@@ -2772,16 +2673,16 @@ impl MdEditor {
                             .then_with(|| a.path.cmp(&b.path))
                             .then_with(|| a.line.cmp(&b.line))
                     });
-                    self.global_search_pending_vault_pdf = false;
+                    self.search.global.pending_vault_pdf = false;
                     self.update_global_search_searching();
                 }
                 Task::none()
             }
             Message::UnifiedSearchFinished(search_id, result) => {
-                if search_id == self.global_search_id {
-                    self.global_search_pending_db = false;
+                if search_id == self.search.global.id {
+                    self.search.global.pending_db = false;
                     if let Err(err) = result {
-                        self.global_search_error = Some(err);
+                        self.search.global.error = Some(err);
                     }
                     self.update_global_search_searching();
                 }
@@ -2790,10 +2691,10 @@ impl MdEditor {
             Message::UnifiedSearchResultClicked(result) => {
                 if self.showing_pdf && self.active_pdf_path.is_some() {
                     self.push_pdf_navigation_history();
-                } else if self.active_path.is_some() {
+                } else if self.workspace.active_path.is_some() {
                     self.push_markdown_navigation_history();
                 }
-                self.search_visible = false;
+                self.search.visible = false;
 
                 match result.group {
                     md_editor_core::types::SearchResultGroup::MarkdownContent
@@ -2855,22 +2756,22 @@ impl MdEditor {
             }
             Message::PdfTextIndexFinished(result) => {
                 if let Err(err) = result {
-                    self.global_search_error = Some(err);
+                    self.search.global.error = Some(err);
                 }
                 Task::none()
             }
             Message::PdfSearchFinished(search_id, result) => {
-                if search_id == self.pdf_active_search_id {
+                if search_id == self.search.pdf_active_id {
                     self.pdf_state.search.searching = false;
-                    if self.global_search_pdf_search_id == Some(search_id) {
-                        self.global_search_pending_pdf = false;
-                        self.global_search_pdf_search_id = None;
+                    if self.search.global.pdf_search_id == Some(search_id) {
+                        self.search.global.pending_pdf = false;
+                        self.search.global.pdf_search_id = None;
                         self.update_global_search_searching();
                     }
                     match result {
                         Ok(()) => Task::none(),
                         Err(err) => {
-                            self.pdf_search_error = Some(err);
+                            self.search.pdf_error = Some(err);
                             self.pdf_state.search.matches.clear();
                             self.pdf_state.search.page_index.clear();
                             Task::none()
@@ -2881,7 +2782,7 @@ impl MdEditor {
                 }
             }
             Message::PdfSearchResultClicked(page) => {
-                self.search_visible = false;
+                self.search.visible = false;
                 self.pdf_state.search.visible = true;
                 self.set_active_panel(ActivePanel::Pdf);
                 self.pdf_state.search.active_index = self
@@ -2900,12 +2801,12 @@ impl MdEditor {
             Message::PdfScrollBy(delta) => {
                 if self.active_pdf_path.is_none()
                     || (!self.showing_pdf
-                        && !(self.split_view_active && self.active_path.is_some()))
+                        && !(self.split_view_active && self.workspace.active_path.is_some()))
                     || (self.split_view_active
-                        && self.active_path.is_some()
+                        && self.workspace.active_path.is_some()
                         && self.active_panel != ActivePanel::Pdf)
-                    || self.search_visible
-                    || self.editor_search.visible
+                    || self.search.visible
+                    || self.search.editor.visible
                     || self.pdf_state.search.visible
                     || self.overlays.active_modal.is_some()
                     || self.overlays.command_palette_visible
@@ -2942,7 +2843,8 @@ impl MdEditor {
                         zoom: self.pdf_state.zoom,
                     })
                 } else {
-                    self.active_path
+                    self.workspace
+                        .active_path
                         .as_ref()
                         .map(|path| NavigationTarget::Markdown {
                             path: path.clone(),
@@ -2952,27 +2854,27 @@ impl MdEditor {
                 };
 
                 if let Some(target) = current_target {
-                    if !self.navigation_history.entries.is_empty() {
-                        if self.navigation_history.current_index
-                            == self.navigation_history.entries.len() - 1
-                            && self.navigation_history.entries
-                                [self.navigation_history.current_index]
+                    if !self.workspace.navigation_history.entries.is_empty() {
+                        if self.workspace.navigation_history.current_index
+                            == self.workspace.navigation_history.entries.len() - 1
+                            && self.workspace.navigation_history.entries
+                                [self.workspace.navigation_history.current_index]
                                 .target
                                 != target
                         {
-                            self.navigation_history.push(target);
+                            self.workspace.navigation_history.push(target);
                         }
                     }
                 }
 
-                if let Some(target) = self.navigation_history.go_back() {
+                if let Some(target) = self.workspace.navigation_history.go_back() {
                     self.navigate_to_target(target)
                 } else {
                     Task::none()
                 }
             }
             Message::PdfNavForward => {
-                if let Some(target) = self.navigation_history.go_forward() {
+                if let Some(target) = self.workspace.navigation_history.go_forward() {
                     self.navigate_to_target(target)
                 } else {
                     Task::none()
@@ -2986,7 +2888,7 @@ impl MdEditor {
                         self.pdf_state.search.page_index.clear();
                     } else {
                         self.pdf_state.search.visible = true;
-                        self.search_visible = false;
+                        self.search.visible = false;
                     }
                     Task::none()
                 } else {
@@ -3111,7 +3013,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfInsertQuoteLink => {
-                if self.active_path.is_none() {
+                if self.workspace.active_path.is_none() {
                     self.overlays.toast =
                         Some("Open a markdown file before inserting a quote link".to_string());
                     return Task::none();
@@ -3144,7 +3046,7 @@ impl MdEditor {
                 self.run_editor_command(command)
             }
             Message::PdfInsertAnnotationLink(annotation_id) => {
-                if self.active_path.is_none() {
+                if self.workspace.active_path.is_none() {
                     self.overlays.toast =
                         Some("Open a markdown file before inserting a highlight".to_string());
                     return Task::none();
@@ -3227,7 +3129,7 @@ impl MdEditor {
                                 .push(ann);
                             self.pdf_selection = None;
                             if let Some(ref path) = self.active_pdf_path {
-                                self.backlinks =
+                                self.workspace.backlinks =
                                     md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                         .unwrap_or_default();
                             }
@@ -3255,7 +3157,7 @@ impl MdEditor {
                         }
                     }
                     if let Some(ref path) = self.active_pdf_path {
-                        self.backlinks =
+                        self.workspace.backlinks =
                             md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                 .unwrap_or_default();
                     }
@@ -3286,7 +3188,7 @@ impl MdEditor {
                         self.overlays.toast = Some(format!("Failed to save note: {}", e));
                     } else {
                         if let Some(ref path) = self.active_pdf_path {
-                            self.backlinks =
+                            self.workspace.backlinks =
                                 md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                     .unwrap_or_default();
 
@@ -3311,7 +3213,8 @@ impl MdEditor {
                                                     "Failed to sync linked note: {}",
                                                     e
                                                 ));
-                                            } else if self.active_path.as_deref() == Some(note_path)
+                                            } else if self.workspace.active_path.as_deref()
+                                                == Some(note_path)
                                             {
                                                 self.buffer =
                                                     DocBuffer::from_text(&updated_content);
@@ -3381,7 +3284,7 @@ impl MdEditor {
                                 break;
                             }
                         }
-                        self.vault_entries =
+                        self.workspace.vault_entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         if let Some(ref pdf_path) = self.active_pdf_path {
                             let _ = md_editor_core::config::set_sys_config(
@@ -3411,8 +3314,8 @@ impl MdEditor {
                 page,
             } => {
                 let resolved_pdf_path = resolve_relative_link_path(
-                    self.vault_root.as_deref(),
-                    self.active_path.as_deref(),
+                    self.workspace.vault_root.as_deref(),
+                    self.workspace.active_path.as_deref(),
                     &document_path,
                 );
 
@@ -3431,10 +3334,10 @@ impl MdEditor {
             Message::SearchResultClicked(path) => {
                 if self.showing_pdf && self.active_pdf_path.is_some() {
                     self.push_pdf_navigation_history();
-                } else if self.active_path.is_some() {
+                } else if self.workspace.active_path.is_some() {
                     self.push_markdown_navigation_history();
                 }
-                self.search_visible = false;
+                self.search.visible = false;
                 self.open_file(&path)
             }
 
@@ -3457,12 +3360,12 @@ impl MdEditor {
                             self.overlays.close_modal();
                         } else if self.tracker.visible {
                             self.tracker.visible = false;
-                        } else if self.editor_search.visible || self.pdf_state.search.visible {
-                            self.editor_search.visible = false;
+                        } else if self.search.editor.visible || self.pdf_state.search.visible {
+                            self.search.editor.visible = false;
                             self.pdf_state.search.visible = false;
                             return self.restore_scroll_positions();
-                        } else if self.search_visible {
-                            self.search_visible = false;
+                        } else if self.search.visible {
+                            self.search.visible = false;
                             return self.restore_scroll_positions();
                         } else if self.overlays.command_palette_visible {
                             self.overlays.command_palette_visible = false;
@@ -3483,13 +3386,13 @@ impl MdEditor {
                     Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
                     Shortcut::NewFile => Task::done(Message::CreateFileDialog),
                     Shortcut::Search => {
-                        if self.split_view_active && self.active_path.is_some() {
+                        if self.split_view_active && self.workspace.active_path.is_some() {
                             if self.active_panel == ActivePanel::Pdf
                                 && self.active_pdf_path.is_some()
                             {
                                 self.pdf_state.search.visible = !self.pdf_state.search.visible;
-                                self.editor_search.visible = false;
-                                self.search_visible = false;
+                                self.search.editor.visible = false;
+                                self.search.visible = false;
                                 if self.pdf_state.search.visible {
                                     if !self.pdf_state.search.query.trim().is_empty() {
                                         return Task::batch(vec![
@@ -3504,10 +3407,10 @@ impl MdEditor {
                                     ]);
                                 }
                             } else {
-                                self.editor_search.visible = !self.editor_search.visible;
+                                self.search.editor.visible = !self.search.editor.visible;
                                 self.pdf_state.search.visible = false;
-                                self.search_visible = false;
-                                if self.editor_search.visible {
+                                self.search.visible = false;
+                                if self.search.editor.visible {
                                     return Task::batch(vec![
                                         focus_file_search_input(),
                                         self.restore_scroll_positions(),
@@ -3516,8 +3419,8 @@ impl MdEditor {
                             }
                         } else if self.active_pdf_path.is_some() && self.showing_pdf {
                             self.pdf_state.search.visible = !self.pdf_state.search.visible;
-                            self.editor_search.visible = false;
-                            self.search_visible = false;
+                            self.search.editor.visible = false;
+                            self.search.visible = false;
                             if self.pdf_state.search.visible {
                                 if !self.pdf_state.search.query.trim().is_empty() {
                                     return Task::batch(vec![
@@ -3531,18 +3434,18 @@ impl MdEditor {
                                     self.restore_scroll_positions(),
                                 ]);
                             }
-                        } else if self.active_path.is_some() {
-                            self.editor_search.visible = !self.editor_search.visible;
+                        } else if self.workspace.active_path.is_some() {
+                            self.search.editor.visible = !self.search.editor.visible;
                             self.pdf_state.search.visible = false;
-                            self.search_visible = false;
-                            if self.editor_search.visible {
+                            self.search.visible = false;
+                            if self.search.editor.visible {
                                 return Task::batch(vec![
                                     focus_file_search_input(),
                                     self.restore_scroll_positions(),
                                 ]);
                             }
                         } else {
-                            self.search_visible = true;
+                            self.search.visible = true;
                             return focus_global_search_input();
                         }
                         Task::none()
@@ -3559,7 +3462,7 @@ impl MdEditor {
                         self.overlays.citation_palette_query.clear();
                         if self.overlays.citation_palette_visible {
                             self.overlays.command_palette_visible = false;
-                            self.search_visible = false;
+                            self.search.visible = false;
                             return focus_citation_palette_input();
                         }
                         Task::none()
@@ -3574,12 +3477,12 @@ impl MdEditor {
                         }
                     }
                     Shortcut::ToggleBacklinks => {
-                        self.backlinks_visible = !self.backlinks_visible;
+                        self.workspace.backlinks_visible = !self.workspace.backlinks_visible;
                         self.persist_shell_state();
                         Task::none()
                     }
                     Shortcut::TableOfContents => {
-                        if self.active_path.is_some() || self.active_pdf_path.is_some() {
+                        if self.workspace.active_path.is_some() || self.active_pdf_path.is_some() {
                             self.toc_visible = !self.toc_visible;
                             self.persist_shell_state();
                         }
@@ -3593,7 +3496,7 @@ impl MdEditor {
                     Shortcut::SplitView => Task::done(Message::SplitViewToggle),
                     Shortcut::SwitchPane => {
                         if self.split_view_active
-                            && self.active_path.is_some()
+                            && self.workspace.active_path.is_some()
                             && self.active_pdf_path.is_some()
                         {
                             let next_panel = match self.active_panel {
@@ -3624,7 +3527,7 @@ impl MdEditor {
                     }
                     Shortcut::FocusMode => {
                         self.sidebar_visible = false;
-                        self.backlinks_visible = false;
+                        self.workspace.backlinks_visible = false;
                         self.toc_visible = false;
                         self.tracker.visible = false;
                         self.pdf_annotations_visible = false;
@@ -3732,7 +3635,7 @@ impl MdEditor {
                 }
             }
             Message::SplitViewToggle => {
-                if self.active_path.is_some() && self.active_pdf_path.is_some() {
+                if self.workspace.active_path.is_some() && self.active_pdf_path.is_some() {
                     self.split_view_active = !self.split_view_active;
                     self.persist_shell_state();
                     if self.pdf_fit_to_width {
@@ -3740,7 +3643,7 @@ impl MdEditor {
                     } else if self.pdf_fit_to_page {
                         return Task::done(Message::PdfFitToPage);
                     }
-                } else if self.active_path.is_some() {
+                } else if self.workspace.active_path.is_some() {
                     if let Ok(Some(last_pdf)) =
                         md_editor_core::config::get_sys_config(&self.state, "last_pdf")
                     {
@@ -3817,7 +3720,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::ToggleTOC => {
-                if self.active_path.is_some() || self.active_pdf_path.is_some() {
+                if self.workspace.active_path.is_some() || self.active_pdf_path.is_some() {
                     self.toc_visible = !self.toc_visible;
                     self.persist_shell_state();
                 }
@@ -4008,7 +3911,7 @@ impl MdEditor {
             WorkflowSidebarTab::Outline
         } else if self.pdf_annotations_visible {
             WorkflowSidebarTab::Annotations
-        } else if self.backlinks_visible {
+        } else if self.workspace.backlinks_visible {
             WorkflowSidebarTab::Backlinks
         } else {
             WorkflowSidebarTab::None
@@ -4026,7 +3929,7 @@ impl MdEditor {
             split_ratio: self.split_ratio,
             sidebar_collapsed: !self.sidebar_visible,
             reference_collapsed: !self.split_view_active,
-            workflow_collapsed: !self.backlinks_visible
+            workflow_collapsed: !self.workspace.backlinks_visible
                 && !self.toc_visible
                 && !self.tracker.visible
                 && !self.pdf_annotations_visible,
@@ -4044,13 +3947,13 @@ impl MdEditor {
         AppShellState::derive(
             AppShellInputs {
                 active_pane: AppShellPane::Markdown,
-                vault_open: self.vault_root.is_some(),
-                vault_has_entries: !self.vault_entries.is_empty(),
-                markdown_open: self.active_path.is_some(),
+                vault_open: self.workspace.vault_root.is_some(),
+                vault_has_entries: !self.workspace.vault_entries.is_empty(),
+                markdown_open: self.workspace.active_path.is_some(),
                 pdf_open: self.active_pdf_path.is_some(),
                 image_open: self.active_image_path.is_some(),
                 split_requested: self.split_view_active,
-                search_visible: self.search_visible,
+                search_visible: self.search.visible,
                 command_palette_visible: self.overlays.command_palette_visible,
                 citation_palette_visible: self.overlays.citation_palette_visible,
             },
@@ -4062,18 +3965,20 @@ impl MdEditor {
         AppShellStatus::derive(AppShellStatusInputs {
             background_status: None,
             toast: self.overlays.toast.clone(),
-            document_open: self.active_path.is_some()
+            document_open: self.workspace.active_path.is_some()
                 || self.active_pdf_path.is_some()
                 || self.active_image_path.is_some(),
-            document_dirty: self.active_path.is_some() && self.buffer.dirty,
-            global_search_searching: self.global_search_searching,
-            global_search_status: self.global_search_pdf_status.clone(),
-            global_search_visible: self.search_visible,
+            document_dirty: self.workspace.active_path.is_some() && self.buffer.dirty,
+            global_search_searching: self.search.global.searching,
+            global_search_status: self.search.global.pdf_status.clone(),
+            global_search_visible: self.search.visible,
             active_pane: shell_state.active_pane,
             background_error: self
-                .global_search_error
+                .search
+                .global
+                .error
                 .clone()
-                .or_else(|| self.pdf_search_error.clone()),
+                .or_else(|| self.search.pdf_error.clone()),
         })
     }
 
@@ -4089,8 +3994,9 @@ impl MdEditor {
         let saved = saved.clamp_for_window(self.window_width);
 
         self.sidebar_visible = !saved.sidebar_collapsed;
-        self.backlinks_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Backlinks)
-            && !saved.workflow_collapsed;
+        self.workspace.backlinks_visible =
+            matches!(saved.active_workflow_tab, WorkflowSidebarTab::Backlinks)
+                && !saved.workflow_collapsed;
         self.toc_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Outline)
             && !saved.workflow_collapsed;
         self.tracker.visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Tracker)
@@ -4141,28 +4047,29 @@ impl MdEditor {
         }
 
         let toolbar = views::toolbar::view(
-            self.active_path.as_deref(),
+            self.workspace.active_path.as_deref(),
             self.active_pdf_path
                 .as_deref()
                 .or(self.active_image_path.as_deref()),
             self.sidebar_visible,
             self.tracker.visible,
             self.toc_visible,
-            self.active_path.is_some() || self.active_pdf_path.is_some(),
+            self.workspace.active_path.is_some() || self.active_pdf_path.is_some(),
             self.split_view_active,
-            self.active_path.is_some(),
+            self.workspace.active_path.is_some(),
             self.pdf_annotations_visible,
             self.active_pdf_path.is_some(),
         );
 
         let sidebar = views::sidebar::view(
-            &self.vault_entries,
-            self.selected_path.as_deref(),
-            self.active_path
+            &self.workspace.vault_entries,
+            self.workspace.selected_path.as_deref(),
+            self.workspace
+                .active_path
                 .as_deref()
                 .or(self.active_pdf_path.as_deref())
                 .or(self.active_image_path.as_deref()),
-            &self.expanded_folders,
+            &self.workspace.expanded_folders,
             !self.sidebar_visible,
             shell_state.persistence.sidebar_width,
         );
@@ -4176,11 +4083,12 @@ impl MdEditor {
             None
         };
         let editor_search_query = if editor_search_active {
-            self.editor_search.query.as_str()
+            self.search.editor.query.as_str()
         } else {
             ""
         };
         let existing_files: HashSet<String> = self
+            .workspace
             .vault_entries
             .iter()
             .filter(|e| !e.is_dir)
@@ -4208,14 +4116,14 @@ impl MdEditor {
                     absolute_pos,
                 })
                 .vault_context(
-                    self.vault_root.as_deref(),
-                    self.active_path.as_deref(),
+                    self.workspace.vault_root.as_deref(),
+                    self.workspace.active_path.as_deref(),
                     &existing_files,
                 )
                 .search(
                     editor_search_query,
-                    self.editor_search.regex,
-                    self.editor_search.match_case,
+                    self.search.editor.regex,
+                    self.search.editor.match_case,
                     active_search_match,
                 )
                 .modifiers(self.keyboard_modifiers),
@@ -4234,13 +4142,13 @@ impl MdEditor {
         let editor_view: Element<Message, Theme, iced::Renderer> = {
             let file_bar: Element<'_, Message, Theme, iced::Renderer> = if editor_search_active {
                 views::search::file_bar(
-                    &self.editor_search.query,
-                    &self.editor_search.replace,
-                    self.editor_search.regex,
-                    self.editor_search.match_case,
+                    &self.search.editor.query,
+                    &self.search.editor.replace,
+                    self.search.editor.regex,
+                    self.search.editor.match_case,
                     self.current_document_match_count(),
-                    self.editor_search.active_index,
-                    self.editor_search.wrap_status,
+                    self.search.editor.active_index,
+                    self.search.editor.wrap_status,
                 )
                 .into()
             } else {
@@ -4267,7 +4175,7 @@ impl MdEditor {
                 self.pdf_fit_to_page,
                 self.pdf_selection.is_some(),
                 focused_ann,
-                self.active_path.is_some(),
+                self.workspace.active_path.is_some(),
                 None,
             );
             // B5: pdf_toolbar now at TOP of the pdf pane.
@@ -4298,8 +4206,8 @@ impl MdEditor {
                     &self.pdf_state.page_sizes,
                     self.pdf_placeholder_page_size,
                     if pdf_search_active
-                        || self.search_visible
-                        || self.editor_search.visible
+                        || self.search.visible
+                        || self.search.editor.visible
                         || self.pdf_state.search.visible
                     {
                         &self.pdf_state.search.matches
@@ -4334,7 +4242,7 @@ impl MdEditor {
             container(Space::new()).width(Length::Fixed(0.0)).into()
         };
 
-        let md_toc: &[views::toc::TocEntry] = if self.active_path.is_some() {
+        let md_toc: &[views::toc::TocEntry] = if self.workspace.active_path.is_some() {
             &self.md_toc_entries
         } else {
             &[]
@@ -4346,7 +4254,7 @@ impl MdEditor {
                 &[]
             };
 
-        let active_md_line = if self.active_path.is_some() {
+        let active_md_line = if self.workspace.active_path.is_some() {
             self.md_toc_entries
                 .iter()
                 .rev()
@@ -4459,8 +4367,8 @@ impl MdEditor {
         let content = column![toolbar, main_content].height(Length::Fill);
 
         let backlinks_view: Element<Message, Theme, iced::Renderer> = views::backlinks::view(
-            &self.backlinks,
-            self.backlinks_visible,
+            &self.workspace.backlinks,
+            self.workspace.backlinks_visible,
             shell_state.persistence.workflow_width,
             false,
         );
@@ -4475,7 +4383,7 @@ impl MdEditor {
                     self.pdf_annotations_filter_unresolved,
                     self.pdf_annotations_filter_linked,
                     self.focused_annotation_id.as_deref(),
-                    self.active_path.is_some(),
+                    self.workspace.active_path.is_some(),
                     shell_state.persistence.workflow_width,
                 )
             } else {
@@ -4508,20 +4416,20 @@ impl MdEditor {
                 .into(),
         ];
 
-        if self.search_visible {
+        if self.search.visible {
             layers.push(
                 container(views::search::view(
-                    &self.editor_search.query,
-                    &self.editor_search.replace,
-                    self.editor_search.regex,
-                    self.editor_search.match_case,
+                    &self.search.editor.query,
+                    &self.search.editor.replace,
+                    self.search.editor.regex,
+                    self.search.editor.match_case,
                     self.current_document_match_count(),
-                    &self.global_search_results,
-                    self.global_search_searching,
-                    self.global_search_error.as_deref(),
+                    &self.search.global.results,
+                    self.search.global.searching,
+                    self.search.global.error.as_deref(),
                     true,
-                    &self.global_search_sources,
-                    self.global_search_pdf_status.as_deref(),
+                    &self.search.global.sources,
+                    self.search.global.pdf_status.as_deref(),
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -4583,7 +4491,7 @@ impl MdEditor {
                 modal_type,
                 &self.overlays.modal_input,
                 &self.overlays.link_note_picker_search,
-                &self.vault_entries,
+                &self.workspace.vault_entries,
             ));
         }
 
@@ -4678,9 +4586,9 @@ impl MdEditor {
     }
 
     fn open_vault(&mut self, path: &str) {
-        self.vault_root = Some(path.to_string());
+        self.workspace.vault_root = Some(path.to_string());
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_vault", path);
-        self.vault_entries =
+        self.workspace.vault_entries =
             md_editor_core::vault::set_vault_root(&self.state, path).unwrap_or_default();
         let _ = reindex_vault_with_parser_targets(&self.state, std::path::Path::new(path));
 
@@ -4697,8 +4605,9 @@ impl MdEditor {
     }
 
     fn new_entry_path(&self, name: &str) -> String {
-        let parent = self.selected_path.as_deref().and_then(|path| {
+        let parent = self.workspace.selected_path.as_deref().and_then(|path| {
             if self
+                .workspace
                 .vault_entries
                 .iter()
                 .any(|entry| entry.path == path && entry.is_dir)
@@ -4759,13 +4668,13 @@ impl MdEditor {
         {
             self.active_pdf_path.clone()
         } else {
-            self.active_path.clone()
+            self.workspace.active_path.clone()
         };
 
         if let Some(ref p) = path {
-            self.backlinks =
+            self.workspace.backlinks =
                 md_editor_core::vault::get_mixed_backlinks(&self.state, p).unwrap_or_default();
-            self.backlinks_visible = true;
+            self.workspace.backlinks_visible = true;
             self.persist_shell_state();
         }
         Task::none()
@@ -4776,18 +4685,18 @@ impl MdEditor {
     }
 
     fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
-        let is_different = self.active_path.as_deref() != Some(path);
+        let is_different = self.workspace.active_path.as_deref() != Some(path);
         if is_different {
             if self.showing_pdf && self.active_pdf_path.is_some() {
                 self.push_pdf_navigation_history();
-            } else if self.active_path.is_some() {
+            } else if self.workspace.active_path.is_some() {
                 self.push_markdown_navigation_history();
             }
         }
         if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
             if let Ok(content) = String::from_utf8(bytes) {
                 self.buffer = DocBuffer::from_text(&content);
-                self.active_path = Some(path.to_string());
+                self.workspace.active_path = Some(path.to_string());
                 let _ = reindex_markdown_file_with_parser_targets(&self.state, path, &content);
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image_path = None;
@@ -4796,8 +4705,9 @@ impl MdEditor {
                 self.set_active_panel(ActivePanel::Markdown);
                 self.md_toc_entries = Vec::new();
                 let highlight_task = self.refresh_highlighting_for_current_buffer(true);
-                self.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
-                    .unwrap_or_default();
+                self.workspace.backlinks =
+                    md_editor_core::vault::get_mixed_backlinks(&self.state, path)
+                        .unwrap_or_default();
                 if is_different && reset_scroll {
                     self.editor_scroll_y = 0.0;
                     let scroll_task = operation::scroll_to(
@@ -4817,7 +4727,7 @@ impl MdEditor {
         if is_different {
             if self.showing_pdf && self.active_pdf_path.is_some() {
                 self.push_pdf_navigation_history();
-            } else if self.active_path.is_some() {
+            } else if self.workspace.active_path.is_some() {
                 self.push_markdown_navigation_history();
             }
         }
@@ -4851,9 +4761,9 @@ impl MdEditor {
         self.pdf_page_links.clear();
         self.pdf_state.search.matches.clear();
         self.pdf_state.search.page_index.clear();
-        self.pdf_search_error = None;
+        self.search.pdf_error = None;
         self.pdf_state.search.searching = false;
-        self.pdf_active_search_id = 0;
+        self.search.pdf_active_id = 0;
         self.pdf_programmatic_scroll = false;
         self.pdf_toc_target_page = None;
         self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
@@ -4867,7 +4777,7 @@ impl MdEditor {
         self.focused_annotation_id = None;
         self.pdf_pending_text.clear();
         self.pdf_text_lru.clear();
-        self.backlinks =
+        self.workspace.backlinks =
             md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
 
         let path_for_hash = path.to_string();
@@ -4939,13 +4849,12 @@ impl MdEditor {
                 self.active_image_path = Some(path.to_string());
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image = Some((handle, width as f32, height as f32));
-                self.active_path = None;
+                self.workspace.clear_active_markdown();
                 self.active_pdf_path = None;
                 self.showing_pdf = false;
                 self.set_active_panel(ActivePanel::Markdown);
                 self.md_toc_entries.clear();
                 self.pdf_toc_entries_flat = None;
-                self.backlinks.clear();
             }
             Err(err) => {
                 self.overlays.toast = Some(format!("Could not open image: {err}"));
@@ -5287,11 +5196,18 @@ impl MdEditor {
     fn pdf_available_width(&self) -> f32 {
         let sidebar_width = if self.sidebar_visible { 260.0 } else { 0.0 };
         let toc_width = if self.toc_visible { 260.0 } else { 0.0 };
-        let backlinks_width = if self.backlinks_visible { 260.0 } else { 0.0 };
+        let backlinks_width = if self.workspace.backlinks_visible {
+            260.0
+        } else {
+            0.0
+        };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.window_width - chrome_width).max(320.0);
 
-        if self.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
+        if self.split_view_active
+            && self.workspace.active_path.is_some()
+            && self.active_pdf_path.is_some()
+        {
             (content_width * self.split_ratio).max(280.0)
         } else {
             content_width
@@ -5380,7 +5296,7 @@ impl MdEditor {
             return true;
         }
 
-        let Some(vault_root) = self.vault_root.as_deref() else {
+        let Some(vault_root) = self.workspace.vault_root.as_deref() else {
             return false;
         };
         let active_abs = md_editor_core::vault::resolve_vault_path(
@@ -5454,7 +5370,7 @@ impl MdEditor {
     }
 
     fn resolve_active_path(&self, path: &str) -> Option<std::path::PathBuf> {
-        let root = self.vault_root.as_deref()?;
+        let root = self.workspace.vault_root.as_deref()?;
         Some(md_editor_core::vault::resolve_vault_path(
             std::path::Path::new(root),
             path,
@@ -5538,14 +5454,14 @@ impl MdEditor {
 
     fn active_search_match_position(&self) -> Option<(usize, usize)> {
         let matches = self.current_document_matches();
-        let index = self.editor_search.active_index?;
+        let index = self.search.editor.active_index?;
         matches
             .get(index.min(matches.len().saturating_sub(1)))
             .map(|m| (m.line, m.start_col))
     }
 
     fn current_document_matches(&self) -> Vec<DocumentMatch> {
-        if self.editor_search.query.is_empty() || self.active_path.is_none() {
+        if self.search.editor.query.is_empty() || self.workspace.active_path.is_none() {
             return Vec::new();
         }
 
@@ -5554,9 +5470,9 @@ impl MdEditor {
                 let text = self.buffer.line_text(line);
                 crate::search::line_matches(
                     &text,
-                    &self.editor_search.query,
-                    self.editor_search.regex,
-                    self.editor_search.match_case,
+                    &self.search.editor.query,
+                    self.search.editor.regex,
+                    self.search.editor.match_case,
                 )
                 .into_iter()
                 .map(move |line_match| DocumentMatch {
@@ -5583,13 +5499,13 @@ impl MdEditor {
     fn navigate_file_search(&mut self, forward: bool) -> Task<Message> {
         let matches = self.current_document_matches();
         if matches.is_empty() {
-            self.editor_search.active_index = None;
-            self.editor_search.wrap_status = None;
+            self.search.editor.active_index = None;
+            self.search.editor.wrap_status = None;
             return Task::none();
         }
 
         let mut wrap_status = None;
-        let next_index = match self.editor_search.active_index {
+        let next_index = match self.search.editor.active_index {
             Some(index) if forward => {
                 if index + 1 >= matches.len() {
                     wrap_status = Some(SearchWrapStatus::WrappedForward);
@@ -5606,8 +5522,8 @@ impl MdEditor {
             None if forward => 0,
             None => matches.len() - 1,
         };
-        self.editor_search.active_index = Some(next_index);
-        self.editor_search.wrap_status = wrap_status;
+        self.search.editor.active_index = Some(next_index);
+        self.search.editor.wrap_status = wrap_status;
         let item = matches[next_index];
         self.buffer.execute(EditorCommand::SetSelection {
             anchor_line: item.line,
@@ -5687,19 +5603,19 @@ impl MdEditor {
                     scroll_offset: self.pdf_scroll_y,
                     zoom: self.pdf_state.zoom,
                 };
-                self.navigation_history.push(target);
+                self.workspace.navigation_history.push(target);
             }
         }
     }
 
     fn push_markdown_navigation_history(&mut self) {
-        if let Some(ref path) = self.active_path {
+        if let Some(ref path) = self.workspace.active_path {
             let target = NavigationTarget::Markdown {
                 path: path.clone(),
                 line: self.buffer.cursor_line,
                 column: self.buffer.cursor_col,
             };
-            self.navigation_history.push(target);
+            self.workspace.navigation_history.push(target);
         }
     }
 
@@ -5707,7 +5623,7 @@ impl MdEditor {
         match target {
             NavigationTarget::Markdown { path, line, column } => {
                 let mut tasks = Vec::new();
-                let is_different_file = self.active_path.as_deref() != Some(&path);
+                let is_different_file = self.workspace.active_path.as_deref() != Some(&path);
                 if is_different_file {
                     tasks.push(self.open_file_extended(&path, false));
                 } else {
@@ -5825,7 +5741,11 @@ impl MdEditor {
         }
         let sidebar_width = if self.sidebar_visible { 260.0 } else { 0.0 };
         let toc_width = if self.toc_visible { 260.0 } else { 0.0 };
-        let backlinks_width = if self.backlinks_visible { 260.0 } else { 0.0 };
+        let backlinks_width = if self.workspace.backlinks_visible {
+            260.0
+        } else {
+            0.0
+        };
         let pdf_ann_width = if self.pdf_annotations_visible && self.active_pdf_path.is_some() {
             270.0
         } else {
@@ -5834,7 +5754,10 @@ impl MdEditor {
         let chrome_width = sidebar_width + toc_width + backlinks_width + pdf_ann_width;
         let content_width = (self.window_width - chrome_width).max(320.0);
 
-        if self.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
+        if self.split_view_active
+            && self.workspace.active_path.is_some()
+            && self.active_pdf_path.is_some()
+        {
             (content_width * (1.0 - self.split_ratio)).max(280.0)
         } else {
             content_width
@@ -5846,7 +5769,7 @@ impl MdEditor {
             return self.editor_viewport_height;
         }
         let mut height = self.window_height - 48.0; // toolbar ~48px
-        if self.editor_search.visible && self.active_path.is_some() {
+        if self.search.editor.visible && self.workspace.active_path.is_some() {
             height -= 40.0; // search bar ~40px
         }
         height.max(200.0)
@@ -5892,13 +5815,13 @@ impl MdEditor {
             && self.active_pdf_path.is_some()
             && (self.showing_pdf
                 || (self.split_view_active
-                    && self.active_path.is_some()
+                    && self.workspace.active_path.is_some()
                     && self.active_panel == ActivePanel::Pdf))
     }
 
     fn editor_search_is_active(&self) -> bool {
-        self.editor_search.visible
-            && self.active_path.is_some()
+        self.search.editor.visible
+            && self.workspace.active_path.is_some()
             && (!self.split_view_active || self.active_panel == ActivePanel::Markdown)
     }
 
@@ -5907,7 +5830,7 @@ impl MdEditor {
             && self.active_pdf_path.is_some()
             && (self.showing_pdf
                 || (self.split_view_active
-                    && self.active_path.is_some()
+                    && self.workspace.active_path.is_some()
                     && self.active_panel == ActivePanel::Pdf))
     }
 
@@ -5944,17 +5867,17 @@ impl MdEditor {
 
     fn command_palette_commands(&self) -> Vec<views::command_palette::Command> {
         let ctx = crate::command_registry::CommandContext {
-            markdown_open: self.active_path.is_some(),
+            markdown_open: self.workspace.active_path.is_some(),
             pdf_open: self.active_pdf_path.is_some(),
             image_open: self.active_image_path.is_some(),
             active_pane: match self.active_panel {
                 ActivePanel::Markdown => crate::app_shell::AppShellPane::Markdown,
                 ActivePanel::Pdf => crate::app_shell::AppShellPane::Pdf,
             },
-            has_vault: self.vault_root.is_some(),
-            pdf_has_selection: self.active_path.is_some()
+            has_vault: self.workspace.vault_root.is_some(),
+            pdf_has_selection: self.workspace.active_path.is_some()
                 && self.pdf_selection_quote_link_command().is_some(),
-            has_focused_annotation: self.active_path.is_some()
+            has_focused_annotation: self.workspace.active_path.is_some()
                 && self
                     .focused_annotation_id
                     .as_deref()
@@ -6081,7 +6004,7 @@ impl MdEditor {
     }
 
     fn choose_citation_item(&mut self, item: crate::messages::CitationItem) -> Task<Message> {
-        if self.active_path.is_none() {
+        if self.workspace.active_path.is_none() {
             self.overlays.toast =
                 Some("Open a markdown file before inserting a citation".to_string());
             return Task::none();
@@ -6143,39 +6066,39 @@ impl MdEditor {
     }
 
     fn replace_all_in_current_document(&mut self) -> Result<(usize, Task<Message>), String> {
-        if self.active_path.is_none() {
+        if self.workspace.active_path.is_none() {
             return Err("Open a markdown file before replacing text".to_string());
         }
-        if self.editor_search.query.is_empty() {
+        if self.search.editor.query.is_empty() {
             return Err("Search query is empty".to_string());
         }
 
         let text = self.buffer.text();
-        let (_, count) = if self.editor_search.regex {
-            let re = regex::RegexBuilder::new(&self.editor_search.query)
-                .case_insensitive(!self.editor_search.match_case)
+        let (_, count) = if self.search.editor.regex {
+            let re = regex::RegexBuilder::new(&self.search.editor.query)
+                .case_insensitive(!self.search.editor.match_case)
                 .build()
                 .map_err(|err| format!("Invalid regex: {err}"))?;
             let count = re.find_iter(&text).count();
             (
-                re.replace_all(&text, self.editor_search.replace.as_str())
+                re.replace_all(&text, self.search.editor.replace.as_str())
                     .to_string(),
                 count,
             )
-        } else if self.editor_search.match_case {
-            let count = text.match_indices(&self.editor_search.query).count();
+        } else if self.search.editor.match_case {
+            let count = text.match_indices(&self.search.editor.query).count();
             (
-                text.replace(&self.editor_search.query, &self.editor_search.replace),
+                text.replace(&self.search.editor.query, &self.search.editor.replace),
                 count,
             )
         } else {
-            let re = regex::RegexBuilder::new(&regex::escape(&self.editor_search.query))
+            let re = regex::RegexBuilder::new(&regex::escape(&self.search.editor.query))
                 .case_insensitive(true)
                 .build()
                 .map_err(|err| err.to_string())?;
             let count = re.find_iter(&text).count();
             (
-                re.replace_all(&text, self.editor_search.replace.as_str())
+                re.replace_all(&text, self.search.editor.replace.as_str())
                     .to_string(),
                 count,
             )
@@ -6183,10 +6106,10 @@ impl MdEditor {
 
         if count > 0 {
             self.buffer.execute(EditorCommand::ReplaceAll {
-                query: self.editor_search.query.clone(),
-                replacement: self.editor_search.replace.clone(),
-                regex: self.editor_search.regex,
-                match_case: self.editor_search.match_case,
+                query: self.search.editor.query.clone(),
+                replacement: self.search.editor.replace.clone(),
+                regex: self.search.editor.regex,
+                match_case: self.search.editor.match_case,
             });
             let task = self.highlight_all();
             return Ok((count, task));
@@ -6195,13 +6118,13 @@ impl MdEditor {
     }
 
     fn replace_current_match(&mut self) -> Result<Task<Message>, String> {
-        if self.active_path.is_none() {
+        if self.workspace.active_path.is_none() {
             return Err("Open a markdown file before replacing text".to_string());
         }
-        if self.editor_search.query.is_empty() {
+        if self.search.editor.query.is_empty() {
             return Err("Search query is empty".to_string());
         }
-        let Some(active_idx) = self.editor_search.active_index else {
+        let Some(active_idx) = self.search.editor.active_index else {
             return Err("No active search match selected".to_string());
         };
         let matches = self.current_document_matches();
@@ -6209,7 +6132,7 @@ impl MdEditor {
             return Err("Active search match is invalid".to_string());
         };
 
-        let replace_text = self.editor_search.replace.clone();
+        let replace_text = self.search.editor.replace.clone();
 
         self.buffer.execute(EditorCommand::SetSelection {
             anchor_line: m.line,
@@ -6226,11 +6149,11 @@ impl MdEditor {
             Task::none()
         };
 
-        self.editor_search.wrap_status = None;
+        self.search.editor.wrap_status = None;
 
         let new_matches = self.current_document_matches();
         if new_matches.is_empty() {
-            self.editor_search.active_index = None;
+            self.search.editor.active_index = None;
             return Ok(highlight_task);
         }
 
@@ -6243,7 +6166,7 @@ impl MdEditor {
             }
         }
 
-        self.editor_search.active_index = Some(next_idx);
+        self.search.editor.active_index = Some(next_idx);
         let next_match = new_matches[next_idx];
 
         self.buffer.execute(EditorCommand::SetSelection {
@@ -6260,28 +6183,29 @@ impl MdEditor {
 
     fn build_global_search_query(&self, text: String) -> md_editor_core::types::UnifiedSearchQuery {
         let mut query = md_editor_core::types::UnifiedSearchQuery::all_sources(text)
-            .with_active_paths(self.active_path.as_deref(), self.active_pdf_path.as_deref());
-        query.sources = self.global_search_sources.clone();
+            .with_active_paths(
+                self.workspace.active_path.as_deref(),
+                self.active_pdf_path.as_deref(),
+            );
+        query.sources = self.search.global.sources.clone();
         query
     }
 
     fn update_global_search_searching(&mut self) {
-        self.global_search_searching = self.global_search_pending_db
-            || self.global_search_pending_pdf
-            || self.global_search_pending_vault_pdf;
+        self.search.global.update_searching();
     }
 
     fn cancel_global_pdf_search(&mut self) {
         if let Some(renderer) = self.state.pdf_renderer() {
-            let _ = renderer.cancel_search(self.pdf_active_search_id);
+            let _ = renderer.cancel_search(self.search.pdf_active_id);
         }
-        self.pdf_active_search_id = self.pdf_active_search_id.wrapping_add(1);
+        self.search.pdf_active_id = self.search.pdf_active_id.wrapping_add(1);
         self.pdf_state.search.searching = false;
-        self.global_search_pdf_search_id = None;
-        self.global_search_pending_pdf = false;
-        self.global_search_pending_vault_pdf = false;
-        self.global_search_pending_db = false;
-        self.global_search_pdf_status = None;
+        self.search.global.pdf_search_id = None;
+        self.search.global.pending_pdf = false;
+        self.search.global.pending_vault_pdf = false;
+        self.search.global.pending_db = false;
+        self.search.global.pdf_status = None;
         self.update_global_search_searching();
     }
 
@@ -6342,8 +6266,8 @@ impl MdEditor {
 
         // Increment active search id and set searching = true
         self.pdf_state.search.searching = true;
-        self.pdf_active_search_id = self.pdf_active_search_id.wrapping_add(1);
-        let search_id = self.pdf_active_search_id;
+        self.search.pdf_active_id = self.search.pdf_active_id.wrapping_add(1);
+        let search_id = self.search.pdf_active_id;
 
         // Cancel previous search
         let _ = renderer.cancel_search(search_id.wrapping_sub(1));
@@ -6379,7 +6303,7 @@ impl MdEditor {
                 Task::stream(stream)
             }
             Err(err) => {
-                self.pdf_search_error = Some(err);
+                self.search.pdf_error = Some(err);
                 self.pdf_state.search.searching = false;
                 Task::none()
             }
@@ -6498,7 +6422,7 @@ impl MdEditor {
                     format!("{}.md", stem)
                 };
                 // Create the note adjacent to the current file.
-                let new_path = if let Some(ref active) = self.active_path {
+                let new_path = if let Some(ref active) = self.workspace.active_path {
                     if let Some(parent) = std::path::Path::new(active).parent() {
                         let parent_s = parent.to_string_lossy();
                         if parent_s.is_empty() {
@@ -6514,7 +6438,7 @@ impl MdEditor {
                 };
                 match md_editor_core::vault::create_file(&self.state, &new_path) {
                     Ok(()) => {
-                        self.vault_entries =
+                        self.workspace.vault_entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         self.overlays.toast = Some(format!("Created {}", new_path));
                         Task::done(Message::SidebarFileClicked(new_path))
@@ -6568,10 +6492,10 @@ impl MdEditor {
 
     fn load_images(&mut self) -> Task<Message> {
         let mut failures = Vec::new();
-        let Some(active_path) = &self.active_path else {
+        let Some(active_path) = &self.workspace.active_path else {
             return Task::none();
         };
-        let Some(vault_root) = &self.vault_root else {
+        let Some(vault_root) = &self.workspace.vault_root else {
             return Task::none();
         };
         let Some(base_path) = std::path::Path::new(vault_root)
@@ -7320,23 +7244,23 @@ mod tests {
 
     fn app_without_vault() -> MdEditor {
         let mut app = MdEditor::new().0;
-        app.vault_root = None;
-        app.vault_entries.clear();
-        app.selected_path = None;
-        app.active_path = None;
+        app.workspace.vault_root = None;
+        app.workspace.vault_entries.clear();
+        app.workspace.selected_path = None;
+        app.workspace.active_path = None;
         app.active_pdf_path = None;
         app.active_image_path = None;
         app.active_image = None;
         app.showing_pdf = false;
         app.split_view_active = false;
-        app.navigation_history = NavigationHistory::default();
+        app.workspace.navigation_history = NavigationHistory::default();
         app
     }
 
     fn app_with_vault() -> MdEditor {
         let mut app = app_without_vault();
         app.sidebar_visible = true;
-        app.backlinks_visible = false;
+        app.workspace.backlinks_visible = false;
         app.toc_visible = false;
         app.tracker.visible = false;
         app.pdf_annotations_visible = false;
@@ -7344,8 +7268,8 @@ mod tests {
         app.split_ratio = 0.5;
         app.pdf_split_ratio = 0.3;
         app.active_panel = ActivePanel::Markdown;
-        app.vault_root = Some("/tmp/md-editor-ui-audit".to_string());
-        app.vault_entries = vec![
+        app.workspace.vault_root = Some("/tmp/md-editor-ui-audit".to_string());
+        app.workspace.vault_entries = vec![
             FileEntry {
                 path: "notes".to_string(),
                 name: "notes".to_string(),
@@ -7367,8 +7291,8 @@ mod tests {
 
     fn app_with_markdown_file() -> MdEditor {
         let mut app = app_with_vault();
-        app.active_path = Some("notes/research.md".to_string());
-        app.selected_path = app.active_path.clone();
+        app.workspace.active_path = Some("notes/research.md".to_string());
+        app.workspace.selected_path = app.workspace.active_path.clone();
         app.buffer = DocBuffer::from_text("# Research\n\nSee [[related]].\n");
         app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
         app.md_toc_entries = vec![views::toc::TocEntry {
@@ -7385,8 +7309,8 @@ mod tests {
         for line in 0..1_500 {
             text.push_str(&format!("- finding {line}\n"));
         }
-        app.active_path = Some("notes/large.md".to_string());
-        app.selected_path = app.active_path.clone();
+        app.workspace.active_path = Some("notes/large.md".to_string());
+        app.workspace.selected_path = app.workspace.active_path.clone();
         app.buffer = DocBuffer::from_text(&text);
         app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
         app.md_toc_entries = views::toc::get_toc(&app.highlighted_lines);
@@ -7396,7 +7320,7 @@ mod tests {
     fn app_with_pdf_file() -> MdEditor {
         let mut app = app_with_vault();
         app.active_pdf_path = Some("papers/paper.pdf".to_string());
-        app.selected_path = app.active_pdf_path.clone();
+        app.workspace.selected_path = app.active_pdf_path.clone();
         app.showing_pdf = true;
         app.pdf_total_pages = 3;
         app.pdf_current_page = 0;
@@ -7418,7 +7342,7 @@ mod tests {
 
     fn app_with_split_research() -> MdEditor {
         let mut app = app_with_pdf_file();
-        app.active_path = Some("notes/research.md".to_string());
+        app.workspace.active_path = Some("notes/research.md".to_string());
         app.buffer = DocBuffer::from_text("# Research\n\n[p. 1](pdf://papers/paper.pdf?page=1)\n");
         app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
         app.split_view_active = true;
@@ -7428,19 +7352,19 @@ mod tests {
 
     fn app_with_global_search() -> MdEditor {
         let mut app = app_with_markdown_file();
-        app.search_visible = true;
-        app.editor_search.query = "missing".to_string();
-        app.global_search_searching = false;
-        app.global_search_results.clear();
+        app.search.visible = true;
+        app.search.editor.query = "missing".to_string();
+        app.search.global.searching = false;
+        app.search.global.results.clear();
         app
     }
 
     fn app_with_file_search() -> MdEditor {
         let mut app = app_with_markdown_file();
-        app.editor_search.visible = true;
-        app.editor_search.query = "finding".to_string();
-        app.editor_search.matches.clear();
-        app.editor_search.active_index = None;
+        app.search.editor.visible = true;
+        app.search.editor.query = "finding".to_string();
+        app.search.editor.matches.clear();
+        app.search.editor.active_index = None;
         app
     }
 
@@ -7674,14 +7598,14 @@ mod tests {
         let _ = app.update(Message::KeyboardShortcut(Shortcut::CitationPalette));
         assert!(app.overlays.citation_palette_visible);
         assert!(!app.overlays.command_palette_visible);
-        assert!(!app.search_visible);
+        assert!(!app.search.visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
         assert!(!app.overlays.citation_palette_visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
-        assert!(app.editor_search.visible);
-        assert!(!app.search_visible);
+        assert!(app.search.editor.visible);
+        assert!(!app.search.visible);
         assert!(!app.pdf_state.search.visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::TableOfContents));
@@ -7689,7 +7613,7 @@ mod tests {
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::FocusMode));
         assert!(!app.sidebar_visible);
-        assert!(!app.backlinks_visible);
+        assert!(!app.workspace.backlinks_visible);
         assert!(!app.toc_visible);
         assert!(!app.tracker.visible);
     }
@@ -7697,7 +7621,7 @@ mod tests {
     #[test]
     fn test_active_pane_shortcut_routing_and_switching() {
         let mut app = app_with_markdown_file();
-        app.active_path = Some("notes/research.md".to_string());
+        app.workspace.active_path = Some("notes/research.md".to_string());
         app.active_pdf_path = Some("vault/paper.pdf".to_string());
         app.split_view_active = true;
         app.active_panel = ActivePanel::Markdown;
@@ -7709,7 +7633,7 @@ mod tests {
         // Search is routed to PDF search
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
         assert!(app.pdf_state.search.visible);
-        assert!(!app.editor_search.visible);
+        assert!(!app.search.editor.visible);
 
         // Switch back to Markdown pane
         let _ = app.update(Message::KeyboardShortcut(Shortcut::SwitchPane));
@@ -7718,7 +7642,7 @@ mod tests {
         // Search is routed to Markdown/editor search
         app.pdf_state.search.visible = false;
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
-        assert!(app.editor_search.visible);
+        assert!(app.search.editor.visible);
         assert!(!app.pdf_state.search.visible);
     }
 
@@ -7787,16 +7711,16 @@ mod tests {
     #[test]
     fn ui_audit_escape_closes_modal_before_background_overlays() {
         let mut app = app_with_active_modal();
-        app.search_visible = true;
+        app.search.visible = true;
         app.overlays.command_palette_visible = true;
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
         assert!(app.overlays.active_modal.is_none());
-        assert!(app.search_visible);
+        assert!(app.search.visible);
         assert!(app.overlays.command_palette_visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
-        assert!(!app.search_visible);
+        assert!(!app.search.visible);
         assert!(app.overlays.command_palette_visible);
     }
 
@@ -7858,8 +7782,8 @@ mod tests {
         app.pdf_current_page = 1;
         app.pdf_total_pages = 3;
         app.pdf_state.zoom = 1.5;
-        app.global_search_searching = true;
-        app.global_search_pdf_status = Some("Searched 2 PDFs".to_string());
+        app.search.global.searching = true;
+        app.search.global.pdf_status = Some("Searched 2 PDFs".to_string());
 
         let shell_state = app.app_shell_state();
         let status = app.app_shell_status(shell_state);
@@ -7874,7 +7798,7 @@ mod tests {
     fn app_shell_status_surfaces_toast_before_background_error() {
         let mut app = app_with_pdf_file();
         app.overlays.toast = Some("Linked note created".to_string());
-        app.pdf_search_error = Some("PDF search failed".to_string());
+        app.search.pdf_error = Some("PDF search failed".to_string());
 
         let status = app.app_shell_status(app.app_shell_state());
 
@@ -7900,7 +7824,7 @@ mod tests {
     #[test]
     fn app_shell_persistence_reflects_visible_panels_and_window_width() {
         let mut app = app_with_split_research();
-        app.backlinks_visible = true;
+        app.workspace.backlinks_visible = true;
         app.window_width = 900.0;
         let wide = app.app_shell_state();
         assert!(!wide.persistence.sidebar_collapsed);
@@ -7922,7 +7846,7 @@ mod tests {
     fn app_shell_persistence_round_trips_through_config() {
         let mut app = app_with_split_research();
         app.sidebar_visible = false;
-        app.backlinks_visible = false;
+        app.workspace.backlinks_visible = false;
         app.toc_visible = true;
         app.tracker.visible = false;
         app.pdf_annotations_visible = false;
@@ -8450,7 +8374,7 @@ mod tests {
     #[test]
     fn split_view_toggle_works_from_markdown_view_with_loaded_pdf() {
         let mut app = MdEditor::new().0;
-        app.active_path = Some("note.md".to_string());
+        app.workspace.active_path = Some("note.md".to_string());
         app.active_pdf_path = Some("paper.pdf".to_string());
         app.showing_pdf = false;
         app.active_panel = ActivePanel::Markdown;
@@ -8543,7 +8467,7 @@ mod tests {
     #[test]
     fn pdf_insert_annotation_link_uses_annotation_target() {
         let mut app = MdEditor::new().0;
-        app.active_path = Some("notes/current.md".to_string());
+        app.workspace.active_path = Some("notes/current.md".to_string());
         app.active_pdf_path = Some("papers/My PDF.pdf".to_string());
         app.pdf_annotations.insert(
             4,
@@ -8584,7 +8508,7 @@ mod tests {
             Shortcut::InsertPdfQuote | Shortcut::InsertPdfHighlight
         )));
 
-        app.active_path = Some("notes/current.md".to_string());
+        app.workspace.active_path = Some("notes/current.md".to_string());
         app.active_pdf_path = Some("papers/paper.pdf".to_string());
         app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
             page_index: 2,
@@ -8836,7 +8760,7 @@ mod tests {
         let mut app = MdEditor::new().0;
         app.split_view_active = true;
         app.showing_pdf = true;
-        app.active_path = Some("note.md".to_string());
+        app.workspace.active_path = Some("note.md".to_string());
         app.active_pdf_path = Some("paper.pdf".to_string());
         app.pdf_total_pages = 10;
         app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 10];
@@ -8865,7 +8789,7 @@ mod tests {
     #[test]
     fn test_pdf_open_race_condition_navigation() {
         let mut app = MdEditor::new().0;
-        app.active_path = Some("note.md".to_string());
+        app.workspace.active_path = Some("note.md".to_string());
         app.active_pdf_path = Some("paper.pdf".to_string());
 
         // Initial target page starts at Some(4) when we click a link
@@ -8959,11 +8883,11 @@ mod tests {
         app.window_width = 1200.0;
         app.sidebar_visible = false;
         app.toc_visible = false;
-        app.backlinks_visible = false;
+        app.workspace.backlinks_visible = false;
         app.pdf_annotations_visible = false;
         app.editor_viewport_width = 0.0;
 
-        app.active_path = Some("note.md".to_string());
+        app.workspace.active_path = Some("note.md".to_string());
         app.active_pdf_path = Some("paper.pdf".to_string());
         app.split_view_active = true;
         app.split_ratio = 0.6; // PDF gets 60%, Editor gets 40%
@@ -8980,7 +8904,7 @@ mod tests {
     #[test]
     fn test_reference_link_resolves_and_preserves_scroll() {
         let mut app = MdEditor::new().0;
-        app.active_path = Some("note.md".to_string());
+        app.workspace.active_path = Some("note.md".to_string());
         app.editor_scroll_y = 120.0;
         app.buffer = DocBuffer::from_text("# Heading 1\n\n[my-ref]\n\n[my-ref]: #heading-1\n");
         app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
@@ -8989,7 +8913,7 @@ mod tests {
         let _ = app.update(Message::SidebarFileClicked("my-ref".to_string()));
 
         // Active path should still be note.md
-        assert_eq!(app.active_path.as_deref(), Some("note.md"));
+        assert_eq!(app.workspace.active_path.as_deref(), Some("note.md"));
         // Editor cursor should be moved to heading 1 (line 0)
         assert_eq!(app.buffer.cursor_line, 0);
     }
@@ -9110,7 +9034,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let root_str = root.to_str().unwrap().to_string();
         md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
-        app.vault_root = Some(root_str);
+        app.workspace.vault_root = Some(root_str);
 
         // Create a dummy pdf file so resolve_active_path works
         let pdf_path = root.join("test.pdf");
@@ -9131,7 +9055,7 @@ mod tests {
         let root = unique_temp_dir("sync_quick_note_test");
         std::fs::create_dir_all(&root).unwrap();
         let root_str = root.to_str().unwrap().to_string();
-        app.vault_root = Some(root_str.clone());
+        app.workspace.vault_root = Some(root_str.clone());
         md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
 
         // 1. Create a dummy linked note file
@@ -9173,7 +9097,7 @@ mod tests {
         app.pdf_annotations.insert(0, vec![ann.clone()]);
 
         // Open the file as active in the editor so we test real-time buffer reload
-        app.active_path = Some(note_path.to_string());
+        app.workspace.active_path = Some(note_path.to_string());
         app.buffer = crate::editor::buffer::DocBuffer::from_text(&initial_content);
 
         // 2. Fire PdfAddQuickNote
@@ -9226,7 +9150,7 @@ mod tests {
         let root = unique_temp_dir("cross_pane_nav_test");
         std::fs::create_dir_all(&root).unwrap();
         let root_str = root.to_str().unwrap().to_string();
-        app.vault_root = Some(root_str.clone());
+        app.workspace.vault_root = Some(root_str.clone());
         md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
 
         // Create a markdown file and a dummy PDF file
@@ -9237,7 +9161,7 @@ mod tests {
 
         // 1. Open the markdown file
         let _ = app.open_file(note_path);
-        assert_eq!(app.active_path.as_deref(), Some(note_path));
+        assert_eq!(app.workspace.active_path.as_deref(), Some(note_path));
         assert!(!app.showing_pdf);
 
         // 2. Open the PDF (this should trigger history push of markdown path)
@@ -9246,8 +9170,8 @@ mod tests {
         assert!(app.showing_pdf);
 
         // 3. Verify history has 1 entry (for Markdown)
-        assert_eq!(app.navigation_history.entries.len(), 1);
-        match &app.navigation_history.entries[0].target {
+        assert_eq!(app.workspace.navigation_history.entries.len(), 1);
+        match &app.workspace.navigation_history.entries[0].target {
             NavigationTarget::Markdown { path, .. } => {
                 assert_eq!(path, note_path);
             }
@@ -9256,7 +9180,7 @@ mod tests {
 
         // 4. Trigger PdfNavBack to return to Markdown
         let _ = app.update(Message::PdfNavBack);
-        assert_eq!(app.active_path.as_deref(), Some(note_path));
+        assert_eq!(app.workspace.active_path.as_deref(), Some(note_path));
         assert!(!app.showing_pdf);
 
         // 5. Trigger PdfNavForward to return to PDF
@@ -9322,7 +9246,7 @@ mod tests {
         let root = unique_temp_dir("test_show_usages_dir");
         std::fs::create_dir_all(&root).unwrap();
         let root_str = root.to_str().unwrap().to_string();
-        app.vault_root = Some(root_str.clone());
+        app.workspace.vault_root = Some(root_str.clone());
         md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
 
         save_markdown_file_with_parser_targets(
@@ -9337,9 +9261,10 @@ mod tests {
 
         let _ = app.show_usages();
 
-        assert!(app.backlinks_visible);
-        assert!(!app.backlinks.is_empty());
+        assert!(app.workspace.backlinks_visible);
+        assert!(!app.workspace.backlinks.is_empty());
         let backlink_labels = app
+            .workspace
             .backlinks
             .iter()
             .map(|b| b.label.clone())
@@ -9371,14 +9296,14 @@ mod tests {
         let root = unique_temp_dir("test_global_unified_search_dir");
         std::fs::create_dir_all(&root).unwrap();
         let root_str = root.to_str().unwrap().to_string();
-        app.vault_root = Some(root_str.clone());
+        app.workspace.vault_root = Some(root_str.clone());
         md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
 
-        app.search_visible = true;
+        app.search.visible = true;
         let _ = app.update(Message::SearchQueryChanged("vault".to_string()));
 
-        assert_eq!(app.editor_search.query, "vault");
-        assert!(app.global_search_searching);
+        assert_eq!(app.search.editor.query, "vault");
+        assert!(app.search.global.searching);
 
         let match_item = md_editor_core::types::UnifiedSearchResult {
             group: md_editor_core::types::SearchResultGroup::Heading,
@@ -9391,28 +9316,28 @@ mod tests {
         };
 
         let _ = app.update(Message::UnifiedSearchMatchesFound(
-            app.global_search_id,
+            app.search.global.id,
             vec![match_item],
         ));
 
-        assert_eq!(app.global_search_results.len(), 1);
+        assert_eq!(app.search.global.results.len(), 1);
         assert_eq!(
-            app.global_search_results[0].context,
+            app.search.global.results[0].context,
             "# Welcome to the Vault"
         );
         let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
-            app.global_search_id,
+            app.search.global.id,
             pdf_text_batch(Vec::new(), 0, 0, false, false),
         ));
-        assert!(!app.global_search_searching);
+        assert!(!app.search.global.searching);
 
-        let _ = app.update(Message::UnifiedSearchFinished(app.global_search_id, Ok(())));
-        assert!(!app.global_search_searching);
+        let _ = app.update(Message::UnifiedSearchFinished(app.search.global.id, Ok(())));
+        assert!(!app.search.global.searching);
 
         let _click_task = app.update(Message::UnifiedSearchResultClicked(
-            app.global_search_results[0].clone(),
+            app.search.global.results[0].clone(),
         ));
-        assert!(!app.search_visible);
+        assert!(!app.search.visible);
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -9506,11 +9431,11 @@ mod tests {
     #[test]
     fn stale_pdf_matches_do_not_enter_global_results() {
         let mut app = MdEditor::new().0;
-        app.search_visible = true;
+        app.search.visible = true;
         app.active_pdf_path = Some("paper.pdf".to_string());
-        app.editor_search.query = "needle".to_string();
-        app.pdf_active_search_id = 7;
-        app.global_search_pdf_search_id = Some(8);
+        app.search.editor.query = "needle".to_string();
+        app.search.pdf_active_id = 7;
+        app.search.global.pdf_search_id = Some(8);
 
         let _ = app.update(Message::PdfSearchMatchesFound(
             7,
@@ -9521,7 +9446,7 @@ mod tests {
             }],
         ));
 
-        assert!(app.global_search_results.is_empty());
+        assert!(app.search.global.results.is_empty());
         assert_eq!(app.pdf_state.search.matches.len(), 1);
     }
 
@@ -9612,9 +9537,9 @@ mod tests {
     #[test]
     fn vault_pdf_text_results_merge_only_for_visible_current_search() {
         let mut app = MdEditor::new().0;
-        app.search_visible = true;
-        app.global_search_id = 5;
-        app.global_search_pending_vault_pdf = true;
+        app.search.visible = true;
+        app.search.global.id = 5;
+        app.search.global.pending_vault_pdf = true;
 
         let pdf_result = md_editor_core::types::UnifiedSearchResult {
             group: md_editor_core::types::SearchResultGroup::PdfContent,
@@ -9630,22 +9555,22 @@ mod tests {
             4,
             pdf_text_batch(vec![pdf_result.clone()], 1, 2, false, false),
         ));
-        assert!(app.global_search_results.is_empty());
-        assert!(app.global_search_pending_vault_pdf);
+        assert!(app.search.global.results.is_empty());
+        assert!(app.search.global.pending_vault_pdf);
 
         let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
             5,
             pdf_text_batch(vec![pdf_result], 1, 2, false, true),
         ));
-        assert_eq!(app.global_search_results.len(), 1);
-        assert!(!app.global_search_pending_vault_pdf);
+        assert_eq!(app.search.global.results.len(), 1);
+        assert!(!app.search.global.pending_vault_pdf);
         assert_eq!(
-            app.global_search_pdf_status.as_deref(),
+            app.search.global.pdf_status.as_deref(),
             Some("PDF text: searched 1 of 2 registered PDFs; document cap reached")
         );
 
-        app.search_visible = false;
-        app.global_search_id = 6;
+        app.search.visible = false;
+        app.search.global.id = 6;
         let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
             6,
             pdf_text_batch(
@@ -9664,7 +9589,7 @@ mod tests {
                 false,
             ),
         ));
-        assert_eq!(app.global_search_results.len(), 1);
+        assert_eq!(app.search.global.results.len(), 1);
     }
 
     #[test]
@@ -9705,7 +9630,7 @@ mod tests {
     #[test]
     fn test_excerpt_mode_queue_and_batch_insert() {
         let mut app = MdEditor::new().0;
-        app.active_path = Some("test_note.md".to_string());
+        app.workspace.active_path = Some("test_note.md".to_string());
         app.active_pdf_path = Some("document.pdf".to_string());
 
         // Toggle excerpt mode
@@ -9747,7 +9672,7 @@ mod tests {
     #[test]
     fn citation_palette_submit_first_queues_first_item_in_excerpt_mode() {
         let mut app = MdEditor::new().0;
-        app.active_path = Some("test_note.md".to_string());
+        app.workspace.active_path = Some("test_note.md".to_string());
         app.overlays.citation_palette_visible = true;
         app.overlays.excerpt_mode_active = true;
         app.pdf_annotations.insert(
@@ -9820,7 +9745,7 @@ mod tests {
     #[test]
     fn test_command_palette_context_aware_ranking_and_grouping() {
         let mut app = MdEditor::new().0;
-        app.active_path = None; // No markdown file open
+        app.workspace.active_path = None; // No markdown file open
 
         // Querying commands with no markdown open
         let commands = app.command_palette_commands();
@@ -9836,7 +9761,7 @@ mod tests {
         );
 
         // Open a markdown file
-        app.active_path = Some("test.md".to_string());
+        app.workspace.active_path = Some("test.md".to_string());
         let commands_with_md = app.command_palette_commands();
         let save_cmd_enabled = commands_with_md
             .iter()
@@ -9848,8 +9773,8 @@ mod tests {
     #[test]
     fn test_search_wrap_and_replace() {
         let mut app = MdEditor::new().0;
-        app.active_path = Some("test.md".to_string());
-        app.editor_search.visible = true;
+        app.workspace.active_path = Some("test.md".to_string());
+        app.search.editor.visible = true;
         app.buffer.set_text("banana apple banana");
         app.highlighted_lines =
             crate::editor::highlight::highlight_markdown(app.buffer.text().as_str());
@@ -9857,48 +9782,48 @@ mod tests {
         // 1. Check search queries reset wrap_status
         let _ = app.update(Message::SearchQueryChanged("banana".to_string()));
         assert_eq!(app.current_document_match_count(), 2);
-        assert_eq!(app.editor_search.wrap_status, None);
+        assert_eq!(app.search.editor.wrap_status, None);
 
         // First Next: active_index goes to 0 (first match)
         let _ = app.update(Message::SearchNext);
-        assert_eq!(app.editor_search.active_index, Some(0));
-        assert_eq!(app.editor_search.wrap_status, None);
+        assert_eq!(app.search.editor.active_index, Some(0));
+        assert_eq!(app.search.editor.wrap_status, None);
 
         // Second Next: active_index goes to 1 (second match)
         let _ = app.update(Message::SearchNext);
-        assert_eq!(app.editor_search.active_index, Some(1));
-        assert_eq!(app.editor_search.wrap_status, None);
+        assert_eq!(app.search.editor.active_index, Some(1));
+        assert_eq!(app.search.editor.wrap_status, None);
 
         // Third Next: wraps around to 0
         let _ = app.update(Message::SearchNext);
-        assert_eq!(app.editor_search.active_index, Some(0));
+        assert_eq!(app.search.editor.active_index, Some(0));
         assert_eq!(
-            app.editor_search.wrap_status,
+            app.search.editor.wrap_status,
             Some(SearchWrapStatus::WrappedForward)
         );
 
         // Triggering SearchPrevious when active_index is 0 wraps to 1 (last match)
         let _ = app.update(Message::SearchPrevious);
-        assert_eq!(app.editor_search.active_index, Some(1));
+        assert_eq!(app.search.editor.active_index, Some(1));
         assert_eq!(
-            app.editor_search.wrap_status,
+            app.search.editor.wrap_status,
             Some(SearchWrapStatus::WrappedBackward)
         );
 
         // 2. Query changes reset wrap_status
         let _ = app.update(Message::SearchQueryChanged("apple".to_string()));
         assert_eq!(app.current_document_match_count(), 1);
-        assert_eq!(app.editor_search.wrap_status, None);
+        assert_eq!(app.search.editor.wrap_status, None);
 
         // 3. Single match replace
         let _ = app.update(Message::SearchReplaceChanged("pear".to_string()));
         let _ = app.update(Message::SearchNext); // Focus apple (index 0)
-        assert_eq!(app.editor_search.active_index, Some(0));
+        assert_eq!(app.search.editor.active_index, Some(0));
 
         let _ = app.update(Message::SearchReplace);
         assert_eq!(app.buffer.text(), "banana pear banana");
         // After replacement, query "apple" has no matches in the document
         assert_eq!(app.current_document_match_count(), 0);
-        assert_eq!(app.editor_search.active_index, None);
+        assert_eq!(app.search.editor.active_index, None);
     }
 }
