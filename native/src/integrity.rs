@@ -1,5 +1,5 @@
 use crate::editor::parser;
-use crate::pdf_links::parse_pdf_link;
+use crate::features::pdf::navigation::parse_pdf_link;
 use md_editor_core::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

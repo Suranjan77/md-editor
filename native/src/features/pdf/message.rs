@@ -1,0 +1,83 @@
+use crate::views::modals::PdfContextMenuItem;
+use iced::Point;
+use iced::keyboard::Modifiers;
+use md_editor_core::application::pdf_service::{LinkPreviewResult, PdfSearchMatch, TocEntry};
+use md_editor_core::domain::pdf::{LinkInfo, PdfAnnotationColor, PdfAnnotationKind, PdfPageText};
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum PdfMessage {
+    ZoomChanged(f32),
+    WheelScrolledForZoom(f32),
+    FitToWidth,
+    FitToPage,
+    RotateClockwise,
+    Loaded(u64, u16), // render generation, total pages
+    PageSizesLoaded(u64, String, Vec<(f32, f32)>),
+    Rendered(u64, u16, image::DynamicImage),
+    RenderFailed(u64, u16),
+    RenderSkipped(u64, u16),
+    Scrolled {
+        y: f32,
+        viewport_height: f32,
+    },
+    LeftClicked(u16, f32, f32, Modifiers),
+    RightClicked {
+        page_index: u16,
+        x: f32,
+        y: f32,
+        absolute_pos: Point,
+    },
+    TocLoaded(u64, Vec<TocEntry>),
+    PageLinksLoaded(u64, u16, Vec<LinkInfo>),
+    SearchMatchesFound(u64, Vec<PdfSearchMatch>),
+    SearchFinished(u64, Result<(), String>),
+    SearchResultClicked(u16),
+    ScrollBy(f32),
+    FirstPage,
+    LastPage,
+    SearchToggle,
+    GoToPage,
+    LinkPreviewResult(Result<LinkPreviewResult, String>),
+    NavBack,
+    NavForward,
+    CloseLinkPreview,
+    DocumentIdComputed(Option<(String, String, u64, Option<i64>)>),
+    PageTextLoaded(u64, u16, Result<PdfPageText, String>),
+    SelectionChanged(u16, usize, usize),
+    SelectionCleared,
+    SelectionFinished(u16, usize, usize),
+    CopySelection,
+    InsertQuoteLink,
+    InsertAnnotationLink(String),
+    CreateHighlight(PdfAnnotationColor),
+    CreateAnnotation(PdfAnnotationKind, PdfAnnotationColor),
+    DeleteHighlight(String),
+    AddQuickNote(String, String),
+    LinkNote(String, String),
+    OpenLinkedNote(String),
+    OpenCompanionNote(String),
+    AnnotationFocused {
+        document_path: String,
+        annotation_id: String,
+        page: u16,
+    },
+    ToggleAnnotationsSidebar,
+    FilterAnnotationsByColor(Option<PdfAnnotationColor>),
+    FilterAnnotationsByPage(Option<u16>),
+    FilterAnnotationsByTag(Option<String>),
+    FilterAnnotationsByLinked(Option<bool>),
+    FilterAnnotationsByUnresolved(Option<bool>),
+    NavigateToAnnotation {
+        id: String,
+        page: u16,
+    },
+    EditAnnotationNote(String, u16),
+    ToggleAnnotationStatus(String),
+    EditAnnotationTags(String),
+    UpdateAnnotationTags(String, String),
+    ExportAnnotations,
+    AnnotationsExported(Result<String, String>),
+    ContextMenuAction(PdfContextMenuItem),
+    TocClicked(usize),
+}

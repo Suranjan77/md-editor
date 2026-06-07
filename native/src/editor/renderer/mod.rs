@@ -19,7 +19,7 @@ pub mod widget;
 pub use state::{CharCacheKey, HorizontalScrollDrag, State};
 pub use widget::Editor;
 
-pub use draw::*;
+pub(crate) use draw::*;
 pub use hit_test::*;
 pub use measure::*;
-pub use scrollbar::*;
+pub(crate) use scrollbar::*;

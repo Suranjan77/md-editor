@@ -356,3 +356,15 @@ mod tests {
         assert!(cache.contains(2));
     }
 }
+
+use crate::features::pdf::search::PdfSearchState;
+use crate::features::pdf::view_model::PdfLayout;
+
+#[derive(Debug, Clone)]
+pub struct PdfViewState {
+    pub zoom: f32,
+    pub page_sizes: Vec<Option<(f32, f32)>>,
+    pub page_cache: PdfPageCache,
+    pub layout: PdfLayout,
+    pub search: PdfSearchState,
+}
