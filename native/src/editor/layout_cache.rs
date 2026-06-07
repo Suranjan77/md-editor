@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-use crate::editor::highlight::StyledLine;
+use crate::editor::parser::StyledLine;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LineHeightCache {
@@ -58,7 +58,7 @@ pub fn resource_hash(
     hasher.finish()
 }
 
-fn hash_span(span: &crate::editor::highlight::StyledSpan, hasher: &mut impl Hasher) {
+fn hash_span(span: &crate::editor::parser::StyledSpan, hasher: &mut impl Hasher) {
     span.text.hash(hasher);
     span.display_text.hash(hasher);
     span.bold.hash(hasher);

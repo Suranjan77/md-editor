@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
-use crate::editor::highlight;
+use crate::editor::parser;
 use crate::features::overlays::OverlayState;
 use crate::features::search::{PdfSearchState, SearchState};
 use crate::features::tracker::TrackerState;
@@ -140,7 +140,7 @@ pub struct MdEditor {
 
     // Editor state
     buffer: DocBuffer,
-    highlighted_lines: Vec<highlight::StyledLine>,
+    highlighted_lines: Vec<parser::StyledLine>,
     highlight_generation: u64,
     pending_highlight_generation: Option<u64>,
     pending_highlight_requested_at: Option<Instant>,
@@ -5436,14 +5436,14 @@ impl MdEditor {
             return Task::none();
         }
 
-        self.highlighted_lines = highlight::highlight_markdown(&text);
+        self.highlighted_lines = parser::highlight_markdown(&text);
         self.md_toc_entries = views::toc::get_toc(&self.highlighted_lines);
         Task::batch(vec![self.load_images(), self.load_math()])
     }
 
     fn highlight_task(generation: u64, text: String) -> Task<Message> {
         Task::perform(
-            async move { highlight::highlight_markdown(&text) },
+            async move { parser::highlight_markdown(&text) },
             move |lines| Message::HighlightReady(generation, lines),
         )
     }
@@ -6646,13 +6646,13 @@ fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
     )
 }
 
-fn plain_highlight_placeholders(text: &str) -> Vec<highlight::StyledLine> {
+fn plain_highlight_placeholders(text: &str) -> Vec<parser::StyledLine> {
     text.split('\n')
         .enumerate()
         .map(|(idx, line)| {
-            let mut styled = highlight::StyledLine::new();
+            let mut styled = parser::StyledLine::new();
             styled.block_id = idx;
-            styled.spans.push(highlight::StyledSpan::plain(line));
+            styled.spans.push(parser::StyledSpan::plain(line));
             styled
         })
         .collect()
@@ -6967,7 +6967,7 @@ pub(crate) fn resolve_relative_link_path(
 }
 
 fn slugify(s: &str) -> String {
-    crate::editor::highlight::markdown_anchor_slug(s)
+    crate::editor::parser::markdown_anchor_slug(s)
 }
 
 fn save_markdown_file_with_parser_targets(
@@ -7009,8 +7009,8 @@ fn reindex_vault_with_parser_targets(
 }
 
 fn parser_index_targets(content: &str) -> Vec<String> {
-    let highlighted = highlight::highlight_markdown(content);
-    let metadata = highlight::extract_document_metadata(&highlighted);
+    let highlighted = parser::highlight_markdown(content);
+    let metadata = parser::extract_document_metadata(&highlighted);
     metadata
         .links
         .iter()
@@ -7019,13 +7019,13 @@ fn parser_index_targets(content: &str) -> Vec<String> {
 }
 
 fn indexable_markdown_link_target(
-    link: &crate::editor::highlight::MarkdownLinkEntry,
+    link: &crate::editor::parser::MarkdownLinkEntry,
 ) -> Option<String> {
     if !matches!(
         link.kind,
-        crate::editor::highlight::MarkdownLinkKind::Wiki
-            | crate::editor::highlight::MarkdownLinkKind::Inline
-            | crate::editor::highlight::MarkdownLinkKind::ResolvedReference
+        crate::editor::parser::MarkdownLinkKind::Wiki
+            | crate::editor::parser::MarkdownLinkKind::Inline
+            | crate::editor::parser::MarkdownLinkKind::ResolvedReference
     ) {
         return None;
     }
@@ -7084,7 +7084,7 @@ fn find_heading_line(text: &str, target_slug: &str) -> Option<usize> {
 
 fn find_heading_or_widget_line(
     text: &str,
-    highlighted_lines: &[crate::editor::highlight::StyledLine],
+    highlighted_lines: &[crate::editor::parser::StyledLine],
     target_slug: &str,
 ) -> Option<usize> {
     // If target_slug is "listing-N", we also want to look for "code-N", and vice-versa
@@ -7096,7 +7096,7 @@ fn find_heading_or_widget_line(
         None
     };
 
-    let metadata = crate::editor::highlight::extract_document_metadata(highlighted_lines);
+    let metadata = crate::editor::parser::extract_document_metadata(highlighted_lines);
     for anchor in &metadata.anchors {
         if anchor.slug.eq_ignore_ascii_case(target_slug) {
             return Some(anchor.line);
@@ -7294,7 +7294,7 @@ mod tests {
         app.workspace.active_path = Some("notes/research.md".to_string());
         app.workspace.selected_path = app.workspace.active_path.clone();
         app.buffer = DocBuffer::from_text("# Research\n\nSee [[related]].\n");
-        app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
+        app.highlighted_lines = parser::highlight_markdown(&app.buffer.text());
         app.md_toc_entries = vec![views::toc::TocEntry {
             level: 1,
             text: "Research".to_string(),
@@ -7312,7 +7312,7 @@ mod tests {
         app.workspace.active_path = Some("notes/large.md".to_string());
         app.workspace.selected_path = app.workspace.active_path.clone();
         app.buffer = DocBuffer::from_text(&text);
-        app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
+        app.highlighted_lines = parser::highlight_markdown(&app.buffer.text());
         app.md_toc_entries = views::toc::get_toc(&app.highlighted_lines);
         app
     }
@@ -7344,7 +7344,7 @@ mod tests {
         let mut app = app_with_pdf_file();
         app.workspace.active_path = Some("notes/research.md".to_string());
         app.buffer = DocBuffer::from_text("# Research\n\n[p. 1](pdf://papers/paper.pdf?page=1)\n");
-        app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
+        app.highlighted_lines = parser::highlight_markdown(&app.buffer.text());
         app.split_view_active = true;
         app.active_panel = ActivePanel::Markdown;
         app
@@ -7435,20 +7435,17 @@ mod tests {
 
     #[test]
     fn indexable_markdown_link_target_filters_external_links() {
-        let wiki = markdown_link("notes/topic", highlight::MarkdownLinkKind::Wiki);
-        let local_inline =
-            markdown_link("../paper.md#section", highlight::MarkdownLinkKind::Inline);
-        let external = markdown_link("https://example.com", highlight::MarkdownLinkKind::Inline);
+        let wiki = markdown_link("notes/topic", parser::MarkdownLinkKind::Wiki);
+        let local_inline = markdown_link("../paper.md#section", parser::MarkdownLinkKind::Inline);
+        let external = markdown_link("https://example.com", parser::MarkdownLinkKind::Inline);
         let pdf = markdown_link(
             "pdf://papers/a.pdf?page=2",
-            highlight::MarkdownLinkKind::Inline,
+            parser::MarkdownLinkKind::Inline,
         );
-        let reference = markdown_link("ref-id", highlight::MarkdownLinkKind::Reference);
-        let anchor = markdown_link("#local", highlight::MarkdownLinkKind::Wiki);
-        let resolved_reference = markdown_link(
-            "papers/b.pdf",
-            highlight::MarkdownLinkKind::ResolvedReference,
-        );
+        let reference = markdown_link("ref-id", parser::MarkdownLinkKind::Reference);
+        let anchor = markdown_link("#local", parser::MarkdownLinkKind::Wiki);
+        let resolved_reference =
+            markdown_link("papers/b.pdf", parser::MarkdownLinkKind::ResolvedReference);
 
         assert_eq!(
             indexable_markdown_link_target(&wiki).as_deref(),
@@ -7471,11 +7468,8 @@ mod tests {
         );
     }
 
-    fn markdown_link(
-        target: &str,
-        kind: highlight::MarkdownLinkKind,
-    ) -> highlight::MarkdownLinkEntry {
-        highlight::MarkdownLinkEntry {
+    fn markdown_link(target: &str, kind: parser::MarkdownLinkKind) -> parser::MarkdownLinkEntry {
+        parser::MarkdownLinkEntry {
             line: 0,
             target: target.to_string(),
             display_text: target.to_string(),
@@ -8090,7 +8084,7 @@ mod tests {
     #[test]
     fn test_find_heading_or_widget_line() {
         let text = "Line 0\n$$E = mc^2$$ \\label{equation-1}\nLine 2\n<div id=\"figure-1\">\nLine 4\n$$E = h\\nu$$ { #equation-2 }";
-        let highlighted = highlight::highlight_markdown(text);
+        let highlighted = parser::highlight_markdown(text);
         assert_eq!(
             find_heading_or_widget_line(text, &highlighted, "equation-1"),
             Some(1)
@@ -8110,7 +8104,7 @@ mod tests {
 
         // Also test the dynamic numbering of figures and math equations
         let dynamic_text = "Here is an image:\n![Alt](image.png)\nAnd a math block:\n$$\nE = mc^2\n$$\nAnother image:\n![Alt2](pic.png)";
-        let dyn_highlighted = highlight::highlight_markdown(dynamic_text);
+        let dyn_highlighted = parser::highlight_markdown(dynamic_text);
         assert_eq!(
             find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "figure-1"),
             Some(1)
@@ -8907,7 +8901,7 @@ mod tests {
         app.workspace.active_path = Some("note.md".to_string());
         app.editor_scroll_y = 120.0;
         app.buffer = DocBuffer::from_text("# Heading 1\n\n[my-ref]\n\n[my-ref]: #heading-1\n");
-        app.highlighted_lines = highlight::highlight_markdown(&app.buffer.text());
+        app.highlighted_lines = parser::highlight_markdown(&app.buffer.text());
 
         // Click on the reference "my-ref"
         let _ = app.update(Message::SidebarFileClicked("my-ref".to_string()));
@@ -8995,11 +8989,11 @@ mod tests {
         let mut app = MdEditor::new().0;
         app.highlight_generation = 5;
 
-        let dummy_lines_stale = vec![crate::editor::highlight::StyledLine::new()];
-        let mut dummy_lines_newer = vec![crate::editor::highlight::StyledLine::new()];
+        let dummy_lines_stale = vec![crate::editor::parser::StyledLine::new()];
+        let mut dummy_lines_newer = vec![crate::editor::parser::StyledLine::new()];
         dummy_lines_newer[0]
             .spans
-            .push(crate::editor::highlight::StyledSpan::plain("newer"));
+            .push(crate::editor::parser::StyledSpan::plain("newer"));
 
         // 1. Stale highlight ready (generation 4 < 5) should be ignored
         let _ = app.update(Message::HighlightReady(4, dummy_lines_stale));
@@ -9195,7 +9189,7 @@ mod tests {
     fn test_follow_citation() {
         let mut app = MdEditor::new().0;
 
-        let link_span = highlight::StyledSpan {
+        let link_span = parser::StyledSpan {
             text: "[citation](pdf://papers/a.pdf)".to_string(),
             display_text: Some("citation".to_string()),
             color: iced::Color::BLACK,
@@ -9217,7 +9211,7 @@ mod tests {
             is_syntax: false,
             id: None,
         };
-        app.highlighted_lines = vec![highlight::StyledLine {
+        app.highlighted_lines = vec![parser::StyledLine {
             spans: vec![link_span],
             is_code_block: false,
             is_math_block: false,
@@ -9276,12 +9270,12 @@ mod tests {
 
     #[test]
     fn test_combined_outline_toc_navigator() {
-        let md_toc = vec![highlight::OutlineEntry {
+        let md_toc = vec![parser::OutlineEntry {
             level: 1,
             text: "Heading 1".to_string(),
             line: 5,
         }];
-        let pdf_toc = vec![highlight::OutlineEntry {
+        let pdf_toc = vec![parser::OutlineEntry {
             level: 2,
             text: "Bookmark 2".to_string(),
             line: 12,
@@ -9777,7 +9771,7 @@ mod tests {
         app.search.editor.visible = true;
         app.buffer.set_text("banana apple banana");
         app.highlighted_lines =
-            crate::editor::highlight::highlight_markdown(app.buffer.text().as_str());
+            crate::editor::parser::highlight_markdown(app.buffer.text().as_str());
 
         // 1. Check search queries reset wrap_status
         let _ = app.update(Message::SearchQueryChanged("banana".to_string()));
