@@ -134,32 +134,44 @@ fn filter_button<'a, Message: Clone + 'a>(
 }
 
 fn color_dot_button<'a>(
-    color_opt: Option<md_editor_core::pdf::PdfAnnotationColor>,
-    active_color: Option<md_editor_core::pdf::PdfAnnotationColor>,
+    color_opt: Option<md_editor_core::domain::pdf::PdfAnnotationColor>,
+    active_color: Option<md_editor_core::domain::pdf::PdfAnnotationColor>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let is_active = active_color == color_opt;
     let label = match color_opt {
         None => "All".to_string(),
         Some(col) => match col {
-            md_editor_core::pdf::PdfAnnotationColor::Yellow => "Yellow".to_string(),
-            md_editor_core::pdf::PdfAnnotationColor::Green => "Green".to_string(),
-            md_editor_core::pdf::PdfAnnotationColor::Blue => "Blue".to_string(),
-            md_editor_core::pdf::PdfAnnotationColor::Pink => "Pink".to_string(),
-            md_editor_core::pdf::PdfAnnotationColor::Orange => "Orange".to_string(),
-            md_editor_core::pdf::PdfAnnotationColor::Red => "Red".to_string(),
-            md_editor_core::pdf::PdfAnnotationColor::Purple => "Purple".to_string(),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Yellow => "Yellow".to_string(),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Green => "Green".to_string(),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Blue => "Blue".to_string(),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Pink => "Pink".to_string(),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Orange => "Orange".to_string(),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Red => "Red".to_string(),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Purple => "Purple".to_string(),
         },
     };
 
     let color_dot = if let Some(col) = color_opt {
         let rgb = match col {
-            md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgb(0.95, 0.85, 0.3),
-            md_editor_core::pdf::PdfAnnotationColor::Green => Color::from_rgb(0.3, 0.8, 0.4),
-            md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgb(0.3, 0.6, 0.95),
-            md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgb(0.95, 0.4, 0.65),
-            md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgb(0.95, 0.6, 0.3),
-            md_editor_core::pdf::PdfAnnotationColor::Red => Color::from_rgb(0.9, 0.3, 0.3),
-            md_editor_core::pdf::PdfAnnotationColor::Purple => Color::from_rgb(0.7, 0.4, 0.85),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Yellow => {
+                Color::from_rgb(0.95, 0.85, 0.3)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Green => {
+                Color::from_rgb(0.3, 0.8, 0.4)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Blue => {
+                Color::from_rgb(0.3, 0.6, 0.95)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Pink => {
+                Color::from_rgb(0.95, 0.4, 0.65)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Orange => {
+                Color::from_rgb(0.95, 0.6, 0.3)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Red => Color::from_rgb(0.9, 0.3, 0.3),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Purple => {
+                Color::from_rgb(0.7, 0.4, 0.85)
+            }
         };
         container(
             Space::new()
@@ -234,7 +246,7 @@ fn color_dot_button<'a>(
 
 #[derive(Clone, Copy)]
 struct AnnotationFilters<'a> {
-    color: Option<md_editor_core::pdf::PdfAnnotationColor>,
+    color: Option<md_editor_core::domain::pdf::PdfAnnotationColor>,
     page: Option<u16>,
     tag: Option<&'a str>,
     linked: Option<bool>,
@@ -242,12 +254,15 @@ struct AnnotationFilters<'a> {
 }
 
 struct FilteredAnnotations<'a> {
-    annotations: Vec<&'a md_editor_core::pdf::PdfAnnotation>,
+    annotations: Vec<&'a md_editor_core::domain::pdf::PdfAnnotation>,
     inspected: usize,
 }
 
 fn filtered_annotations<'a>(
-    annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
+    annotations: &'a std::collections::HashMap<
+        u16,
+        Vec<md_editor_core::domain::pdf::PdfAnnotation>,
+    >,
     filters: AnnotationFilters<'_>,
 ) -> FilteredAnnotations<'a> {
     let mut list = Vec::new();
@@ -282,7 +297,7 @@ fn filtered_annotations<'a>(
             }
             if let Some(fu) = filters.unresolved {
                 let is_unresolved =
-                    ann.status == md_editor_core::pdf::PdfAnnotationStatus::Unresolved;
+                    ann.status == md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved;
                 if is_unresolved != fu {
                     continue;
                 }
@@ -302,8 +317,11 @@ fn filtered_annotations<'a>(
 }
 
 pub fn view<'a>(
-    annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
-    filter_color: Option<md_editor_core::pdf::PdfAnnotationColor>,
+    annotations: &'a std::collections::HashMap<
+        u16,
+        Vec<md_editor_core::domain::pdf::PdfAnnotation>,
+    >,
+    filter_color: Option<md_editor_core::domain::pdf::PdfAnnotationColor>,
     filter_page: Option<u16>,
     filter_tag: Option<&str>,
     filter_linked: Option<bool>,
@@ -321,11 +339,26 @@ pub fn view<'a>(
     let mut colors_filter = row![color_dot_button(None, filter_color)].spacing(4);
 
     let all_colors = [
-        (md_editor_core::pdf::PdfAnnotationColor::Yellow, "Yellow"),
-        (md_editor_core::pdf::PdfAnnotationColor::Green, "Green"),
-        (md_editor_core::pdf::PdfAnnotationColor::Blue, "Blue"),
-        (md_editor_core::pdf::PdfAnnotationColor::Pink, "Pink"),
-        (md_editor_core::pdf::PdfAnnotationColor::Orange, "Orange"),
+        (
+            md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
+            "Yellow",
+        ),
+        (
+            md_editor_core::domain::pdf::PdfAnnotationColor::Green,
+            "Green",
+        ),
+        (
+            md_editor_core::domain::pdf::PdfAnnotationColor::Blue,
+            "Blue",
+        ),
+        (
+            md_editor_core::domain::pdf::PdfAnnotationColor::Pink,
+            "Pink",
+        ),
+        (
+            md_editor_core::domain::pdf::PdfAnnotationColor::Orange,
+            "Orange",
+        ),
     ];
 
     for &(col_enum, _) in &all_colors {
@@ -479,7 +512,7 @@ pub fn view<'a>(
         let is_focused = Some(ann.id.as_str()) == focused_id;
 
         let status_badge = match ann.status {
-            md_editor_core::pdf::PdfAnnotationStatus::Unresolved => container(
+            md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved => container(
                 text("Open")
                     .size(9)
                     .font(BOLD_FONT)
@@ -497,7 +530,7 @@ pub fn view<'a>(
                 },
                 ..Default::default()
             }),
-            md_editor_core::pdf::PdfAnnotationStatus::Resolved => container(
+            md_editor_core::domain::pdf::PdfAnnotationStatus::Resolved => container(
                 text("Resolved")
                     .size(9)
                     .font(BOLD_FONT)
@@ -530,13 +563,25 @@ pub fn view<'a>(
         .align_y(Alignment::Center);
 
         let indicator_color = match ann.color {
-            md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgb(0.95, 0.85, 0.3),
-            md_editor_core::pdf::PdfAnnotationColor::Green => Color::from_rgb(0.3, 0.8, 0.4),
-            md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgb(0.3, 0.6, 0.95),
-            md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgb(0.95, 0.4, 0.65),
-            md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgb(0.95, 0.6, 0.3),
-            md_editor_core::pdf::PdfAnnotationColor::Red => Color::from_rgb(0.9, 0.3, 0.3),
-            md_editor_core::pdf::PdfAnnotationColor::Purple => Color::from_rgb(0.7, 0.4, 0.85),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Yellow => {
+                Color::from_rgb(0.95, 0.85, 0.3)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Green => {
+                Color::from_rgb(0.3, 0.8, 0.4)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Blue => {
+                Color::from_rgb(0.3, 0.6, 0.95)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Pink => {
+                Color::from_rgb(0.95, 0.4, 0.65)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Orange => {
+                Color::from_rgb(0.95, 0.6, 0.3)
+            }
+            md_editor_core::domain::pdf::PdfAnnotationColor::Red => Color::from_rgb(0.9, 0.3, 0.3),
+            md_editor_core::domain::pdf::PdfAnnotationColor::Purple => {
+                Color::from_rgb(0.7, 0.4, 0.85)
+            }
         };
 
         let quote = row![
@@ -659,8 +704,8 @@ pub fn view<'a>(
             custom_action_button("Tags", Message::PdfEditAnnotationTags(ann.id.clone())),
             custom_action_button(
                 match ann.status {
-                    md_editor_core::pdf::PdfAnnotationStatus::Unresolved => "Resolve",
-                    md_editor_core::pdf::PdfAnnotationStatus::Resolved => "Reopen",
+                    md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved => "Resolve",
+                    md_editor_core::domain::pdf::PdfAnnotationStatus::Resolved => "Reopen",
                 },
                 Message::PdfToggleAnnotationStatus(ann.id.clone())
             ),
@@ -807,7 +852,7 @@ pub fn view<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use md_editor_core::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind};
+    use md_editor_core::domain::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind};
     use std::collections::HashMap;
 
     fn annotation() -> PdfAnnotation {
@@ -824,7 +869,7 @@ mod tests {
             linked_note_path: None,
             markdown_anchor: None,
             tags: Vec::new(),
-            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }
@@ -910,7 +955,7 @@ mod tests {
         ann1.color = PdfAnnotationColor::Yellow;
         ann1.selected_text = "YellowQuote".to_string();
         ann1.tags = vec!["tagA".to_string()];
-        ann1.status = md_editor_core::pdf::PdfAnnotationStatus::Unresolved;
+        ann1.status = md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved;
         ann1.linked_note_path = None;
 
         let mut ann2 = annotation();
@@ -919,7 +964,7 @@ mod tests {
         ann2.color = PdfAnnotationColor::Green;
         ann2.selected_text = "GreenQuote".to_string();
         ann2.tags = vec!["tagB".to_string()];
-        ann2.status = md_editor_core::pdf::PdfAnnotationStatus::Resolved;
+        ann2.status = md_editor_core::domain::pdf::PdfAnnotationStatus::Resolved;
         ann2.linked_note_path = Some("note.md".to_string());
 
         let annotations = HashMap::from([(0, vec![ann1]), (1, vec![ann2])]);

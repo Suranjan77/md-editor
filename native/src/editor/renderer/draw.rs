@@ -1,21 +1,10 @@
 use super::*;
 use crate::app::resolve_relative_link_path;
-use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
-use crate::editor::parser::{StyledLine, StyledSpan};
-use crate::editor::layout_cache::{LineHeightCache, line_hash, resource_hash};
-use crate::editor::renderer::geometry::{clip_viewport, normalized_selection};
 use crate::pdf_links::parse_pdf_link;
-use crate::{search, theme};
-use iced::advanced::graphics::core::event::Event;
-use iced::advanced::layout::{self, Layout};
+use crate::theme;
 use iced::advanced::renderer;
-use iced::advanced::widget::{self, Widget};
-use iced::advanced::{Clipboard, Shell};
-use iced::keyboard;
-use iced::mouse;
-use iced::{Color, Element, Length, Point, Rectangle, Size};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use iced::{Color, Point, Rectangle, Size};
+use std::collections::HashSet;
 
 pub(crate) fn draw_text_chunk<R>(
     renderer: &mut R,

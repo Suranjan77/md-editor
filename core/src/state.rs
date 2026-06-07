@@ -3,13 +3,13 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 
+use crate::application::pdf_service::PdfRenderer;
 use crate::database;
-use crate::file_index::FileIndex;
-use crate::pdf::{
-    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus, PdfRect,
-    PdfRenderer, PdfTextRange,
+use crate::domain::pdf::{
+    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus, PdfRect, 
+    PdfTextRange,
 };
-
+use crate::file_index::FileIndex;
 /// Application-wide shared state.
 /// Wrap in `Arc<AppState>` when sharing across threads.
 pub struct AppState {

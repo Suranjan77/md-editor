@@ -1,18 +1,8 @@
 use super::*;
-use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
-use crate::editor::parser::{StyledLine, StyledSpan};
-use crate::editor::layout_cache::{LineHeightCache, line_hash, resource_hash};
-use crate::editor::renderer::geometry::{clip_viewport, normalized_selection};
-use crate::{search, theme};
-use iced::advanced::graphics::core::event::Event;
-use iced::advanced::layout::{self, Layout};
-use iced::advanced::renderer;
-use iced::advanced::widget::{self, Widget};
-use iced::advanced::{Clipboard, Shell};
-use iced::keyboard;
-use iced::mouse;
-use iced::{Color, Element, Length, Point, Rectangle, Size};
-use std::collections::{HashMap, HashSet};
+use crate::editor::parser::StyledLine;
+use crate::editor::renderer::geometry::normalized_selection;
+use iced::Size;
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 pub(crate) fn line_height_for<R>(
@@ -132,10 +122,7 @@ pub(crate) fn bounded_block_scan_range(
 }
 
 /// Pick the iced font for a span.
-pub(crate) fn span_font(
-    span: &crate::editor::parser::StyledSpan,
-    line: &StyledLine,
-) -> iced::Font {
+pub(crate) fn span_font(span: &crate::editor::parser::StyledSpan, line: &StyledLine) -> iced::Font {
     if span.is_code || line.is_code_block || line.is_math_block {
         iced::Font::MONOSPACE
     } else if span.bold {

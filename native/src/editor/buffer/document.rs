@@ -1,7 +1,5 @@
 use ropey::Rope;
-use serde::{Deserialize, Serialize};
 
-use super::command::Movement;
 use super::command::{CommandResult, EditorCommand};
 use super::table::get_table_row_columns_count;
 use super::transaction::EditTransaction;

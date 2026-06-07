@@ -22,5 +22,4 @@ pub use widget::Editor;
 pub use draw::*;
 pub use hit_test::*;
 pub use measure::*;
-pub use movement::*;
 pub use scrollbar::*;
