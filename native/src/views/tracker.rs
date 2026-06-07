@@ -15,7 +15,7 @@ const BOLD: iced::Font = iced::Font {
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackerConfig {
+pub(crate) struct TrackerConfig {
     #[serde(rename = "PHASES")]
     pub phases: Vec<PhaseConfig>,
     #[serde(rename = "PROJECTS")]
@@ -27,7 +27,7 @@ pub struct TrackerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PhaseConfig {
+pub(crate) struct PhaseConfig {
     pub id: String,
     pub title: String,
     pub year: String,
@@ -35,27 +35,27 @@ pub struct PhaseConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectConfig {
+pub(crate) struct ProjectConfig {
     pub id: String,
     pub phase: String,
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GateConfig {
+pub(crate) struct GateConfig {
     pub id: String,
     pub title: String,
     pub items: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReadingSectionConfig {
+pub(crate) struct ReadingSectionConfig {
     pub section: String,
     pub items: Vec<ReadingItemConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReadingItemConfig {
+pub(crate) struct ReadingItemConfig {
     pub priority: String,
     pub title: String,
 }
@@ -199,11 +199,11 @@ const READING_ITEMS: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-pub fn default_config_json() -> String {
+pub(crate) fn default_config_json() -> String {
     serde_json::to_string_pretty(&default_config()).unwrap_or_else(|_| "{}".to_string())
 }
 
-pub fn parse_config(json: &str) -> Result<TrackerConfig, String> {
+pub(crate) fn parse_config(json: &str) -> Result<TrackerConfig, String> {
     let config: TrackerConfig = serde_json::from_str(json).map_err(|err| err.to_string())?;
     if config.phases.is_empty() {
         return Err("PHASES must contain at least one phase".to_string());
@@ -214,7 +214,7 @@ pub fn parse_config(json: &str) -> Result<TrackerConfig, String> {
     Ok(config)
 }
 
-pub fn config_or_default(json: &str) -> TrackerConfig {
+pub(crate) fn config_or_default(json: &str) -> TrackerConfig {
     parse_config(json).unwrap_or_else(|_| default_config())
 }
 
@@ -497,7 +497,7 @@ fn panel_style() -> container::Style {
     }
 }
 
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     visible: bool,
     running: bool,
     sessions: &'a [StudySession],

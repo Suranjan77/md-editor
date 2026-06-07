@@ -1,7 +1,7 @@
 use super::model::StyledSpan;
 use crate::theme;
 
-pub fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
+pub(crate) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
     let mut i = 0;
@@ -329,7 +329,7 @@ fn find_link_url_end(chars: &[char], start: usize) -> Option<usize> {
     None
 }
 
-pub fn split_table_cells(line: &str) -> Vec<&str> {
+pub(crate) fn split_table_cells(line: &str) -> Vec<&str> {
     let mut cells = Vec::new();
     let mut start = 0;
     let mut escaped = false;

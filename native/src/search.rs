@@ -1,17 +1,22 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LineMatch {
+pub(crate) struct LineMatch {
     pub start_col: usize,
     pub end_col: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DocumentMatch {
+pub(crate) struct DocumentMatch {
     pub line: usize,
     pub start_col: usize,
     pub end_col: usize,
 }
 
-pub fn line_matches(text: &str, query: &str, regex: bool, match_case: bool) -> Vec<LineMatch> {
+pub(crate) fn line_matches(
+    text: &str,
+    query: &str,
+    regex: bool,
+    match_case: bool,
+) -> Vec<LineMatch> {
     if query.is_empty() {
         return Vec::new();
     }

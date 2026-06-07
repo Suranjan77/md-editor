@@ -6,7 +6,7 @@ use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 use crate::messages::Message;
 use crate::theme;
 
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     pdf_cached_pages: usize,
     pdf_cache_bytes: usize,
     pdf_text_pages: usize,

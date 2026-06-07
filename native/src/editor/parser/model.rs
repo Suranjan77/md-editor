@@ -2,7 +2,7 @@ use crate::theme;
 use iced::Color;
 
 #[derive(Debug, Clone)]
-pub struct StyledSpan {
+pub(crate) struct StyledSpan {
     /// The raw markdown source text for this span.
     pub text: String,
     /// Text to display in preview/rendered mode. If `None`, uses `text`.
@@ -33,7 +33,7 @@ pub struct StyledSpan {
 }
 
 impl StyledSpan {
-    pub fn plain(text: &str) -> Self {
+    pub(crate) fn plain(text: &str) -> Self {
         Self {
             text: text.to_string(),
             display_text: None,
@@ -59,7 +59,7 @@ impl StyledSpan {
     }
 
     /// Create a syntax-marker span that is hidden in preview mode.
-    pub fn syntax(text: &str, color: Color, font_size: f32) -> Self {
+    pub(crate) fn syntax(text: &str, color: Color, font_size: f32) -> Self {
         Self {
             text: text.to_string(),
             display_text: Some(String::new()),
@@ -71,7 +71,7 @@ impl StyledSpan {
     }
 
     /// Get the text to display based on editing mode.
-    pub fn visible_text(&self, editing: bool) -> &str {
+    pub(crate) fn visible_text(&self, editing: bool) -> &str {
         if editing {
             &self.text
         } else if let Some(ref dt) = self.display_text {
@@ -84,7 +84,7 @@ impl StyledSpan {
 
 /// A line of styled spans for the editor to render.
 #[derive(Debug, Clone)]
-pub struct StyledLine {
+pub(crate) struct StyledLine {
     pub spans: Vec<StyledSpan>,
     pub is_code_block: bool,
     pub is_math_block: bool,
@@ -101,7 +101,7 @@ pub struct StyledLine {
 }
 
 impl StyledLine {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             spans: Vec::new(),
             is_code_block: false,

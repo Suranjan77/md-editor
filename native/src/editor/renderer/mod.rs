@@ -7,19 +7,19 @@ pub(crate) const IMAGE_HEIGHT: f32 = 280.0;
 pub(crate) const HORIZONTAL_SCROLLBAR_GUTTER: f32 = 16.0;
 pub(crate) const HOT_PATH_BLOCK_SCAN_LIMIT: usize = 256;
 
-pub mod draw;
-pub mod geometry;
-pub mod hit_test;
-pub mod measure;
-pub mod movement;
-pub mod scrollbar;
-pub mod state;
-pub mod widget;
+pub(crate) mod draw;
+pub(crate) mod geometry;
+pub(crate) mod hit_test;
+pub(crate) mod measure;
+pub(crate) mod movement;
+pub(crate) mod scrollbar;
+pub(crate) mod state;
+pub(crate) mod widget;
 
-pub use state::{CharCacheKey, HorizontalScrollDrag, State};
-pub use widget::Editor;
+pub(crate) use state::{CharCacheKey, HorizontalScrollDrag, State};
+pub(crate) use widget::Editor;
 
 pub(crate) use draw::*;
-pub use hit_test::*;
-pub use measure::*;
+pub(crate) use hit_test::*;
+pub(crate) use measure::*;
 pub(crate) use scrollbar::*;

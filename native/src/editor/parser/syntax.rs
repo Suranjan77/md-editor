@@ -3,7 +3,7 @@ use crate::theme;
 use iced::Color;
 use std::sync::OnceLock;
 
-pub fn highlight_code_spans(
+pub(crate) fn highlight_code_spans(
     line: &str,
     highlighter: &mut Option<syntect::easy::HighlightLines<'static>>,
     lang: Option<&str>,
@@ -43,7 +43,9 @@ pub fn highlight_code_spans(
     }
 }
 
-pub fn make_code_highlighter(lang: Option<&str>) -> Option<syntect::easy::HighlightLines<'static>> {
+pub(crate) fn make_code_highlighter(
+    lang: Option<&str>,
+) -> Option<syntect::easy::HighlightLines<'static>> {
     let (syntax_set, theme_set) = syntect_defaults()?;
     let syntax = lang
         .and_then(|lang| syntax_set.find_syntax_by_token(lang))

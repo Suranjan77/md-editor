@@ -1,5 +1,3 @@
-#![allow(clippy::needless_range_loop, clippy::useless_vec)]
-
 pub mod config;
 mod database;
 pub mod domain;

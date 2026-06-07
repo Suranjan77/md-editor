@@ -3,14 +3,14 @@ use iced::keyboard;
 use std::collections::HashMap;
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
-pub struct CharCacheKey {
+pub(crate) struct CharCacheKey {
     pub ch: char,
     pub font: iced::Font,
     pub size_bits: u32,
 }
 
 #[derive(Default)]
-pub struct State {
+pub(crate) struct State {
     pub(crate) is_dragging: bool,
     pub(crate) is_focused: bool,
     pub(crate) modifiers: keyboard::Modifiers,
@@ -26,7 +26,7 @@ pub struct State {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct HorizontalScrollDrag {
+pub(crate) struct HorizontalScrollDrag {
     pub(crate) block_id: usize,
     pub(crate) viewport_x: f32,
     pub(crate) viewport_w: f32,

@@ -26,6 +26,8 @@ jobs:
         run: ./scripts/architecture-check.sh
 
       - name: Report architecture metrics
+n      - name: Check budget
+        run: ./scripts/check-budget.sh
         run: ./scripts/architecture-metrics.sh
 
   rust:

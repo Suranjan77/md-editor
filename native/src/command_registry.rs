@@ -4,7 +4,7 @@ use crate::app_shell::{AppShellPane, CommandGroup};
 use crate::messages::Shortcut;
 
 #[derive(Debug, Clone, Copy)]
-pub struct CommandContext {
+pub(crate) struct CommandContext {
     pub markdown_open: bool,
     pub pdf_open: bool,
     pub image_open: bool,
@@ -15,7 +15,7 @@ pub struct CommandContext {
 }
 
 #[derive(Debug, Clone)]
-pub struct CommandMetadata {
+pub(crate) struct CommandMetadata {
     pub id: Shortcut,
     pub name: &'static str,
     pub icon: &'static str,
@@ -24,7 +24,7 @@ pub struct CommandMetadata {
 }
 
 impl CommandMetadata {
-    pub fn is_enabled(&self, ctx: CommandContext) -> Result<(), &'static str> {
+    pub(crate) fn is_enabled(&self, ctx: CommandContext) -> Result<(), &'static str> {
         let id = self.id;
         if id == Shortcut::Save && !ctx.markdown_open {
             return Err("No active markdown file to save");
@@ -105,7 +105,7 @@ impl CommandMetadata {
     }
 }
 
-pub fn get_command_registry() -> Vec<CommandMetadata> {
+pub(crate) fn get_command_registry() -> Vec<CommandMetadata> {
     vec![
         CommandMetadata {
             id: Shortcut::NewFile,
@@ -369,7 +369,7 @@ pub fn get_command_registry() -> Vec<CommandMetadata> {
     ]
 }
 
-pub fn detect_shortcut_conflicts() -> Vec<(&'static str, Vec<Shortcut>)> {
+pub(crate) fn detect_shortcut_conflicts() -> Vec<(&'static str, Vec<Shortcut>)> {
     use std::collections::HashMap;
     let registry = get_command_registry();
     let mut shortcut_map: HashMap<&'static str, Vec<Shortcut>> = HashMap::new();

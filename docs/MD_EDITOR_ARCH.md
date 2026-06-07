@@ -7,7 +7,7 @@ This document describes the markdown editor pipeline in `md-editor-native`: text
 The editor is split into four native modules:
 
 1. `buffer.rs`: owns mutable document text, cursor state, selection state, undo/redo transactions, and editor commands.
-2. `highlight.rs`: parses markdown text into `StyledLine` and `StyledSpan` values.
+2. `native/src/editor/parser`: parses markdown text into `StyledLine` and `StyledSpan` values.
 3. `layout_tree.rs` and `layout_cache.rs`: track measured line heights and cache expensive layout measurements.
 4. `renderer.rs`: implements the custom iced editor widget, including layout, drawing, hit testing, selection painting, and block-level horizontal scrolling.
 
@@ -24,7 +24,7 @@ graph TD
 
 ## Text Buffer
 
-`DocBuffer` in `native/src/editor/buffer.rs` uses a `ropey::Rope`, which keeps inserts, deletes, line lookup, and character-offset conversion efficient for large files.
+`DocBuffer` in `native/src/editor/buffer` uses a `ropey::Rope`, which keeps inserts, deletes, line lookup, and character-offset conversion efficient for large files.
 
 Editor actions are expressed as `EditorCommand` values and applied through `DocBuffer::execute()`. The result tells the app whether text or projection state changed, so the app can decide whether to refresh parsing, media caches, and scroll position.
 
@@ -37,7 +37,7 @@ Important behavior:
 
 ## Markdown Parsing
 
-`highlight.rs` turns raw markdown into renderer-ready structures:
+`native/src/editor/parser` turns raw markdown into renderer-ready structures:
 
 - `StyledLine`: one physical source line plus block metadata such as code block, math block, table row, blockquote, fence, and `block_id`.
 - `StyledSpan`: a styled text segment with flags for links, images, math, checkboxes, headings, syntax markers, and inline code.
@@ -134,7 +134,7 @@ Active edit view:
 
 ## Maintenance Notes
 
-- Keep parsing in `highlight.rs`; do not add parsing rules directly in the renderer.
+- Keep parsing in `native/src/editor/parser`; do not add parsing rules directly in the renderer.
 - Keep height and cache invalidation logic in `layout_tree.rs` and `layout_cache.rs`.
 - Keep draw proportional to visible content, not total document length.
 - When adding media that can affect layout height, include its dimensions in the line resource hash.

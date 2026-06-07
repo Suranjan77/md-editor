@@ -22,7 +22,7 @@ presentation -> feature coordination -> application services -> domain
 
 - `core` must never depend on `native`.
 - `core` must not import Iced or native presentation modules.
-- `native/src/views` may compose UI and map messages. It must not import
+- `native/src/app` may compose UI and map messages. It must not import
   `rusqlite` or `pdfium-render`.
 - Filesystem, SQLite, PDFium, and OS APIs stay behind core or platform
   boundaries as those boundaries are extracted.
@@ -50,17 +50,17 @@ See [ADR-0002](adr/0002-feature-reducers-and-messages.md).
 
 Ownership order:
 
-1. `native/src/editor/buffer.rs`: source, cursor, selection, undo/redo, commands.
-2. `native/src/editor/highlight.rs`: markdown parsing and styled projection.
+1. `native/src/editor/buffer`: source, cursor, selection, undo/redo, commands.
+2. `native/src/editor/parser`: markdown parsing and styled projection.
 3. `native/src/editor/layout_tree.rs` and `layout_cache.rs`: measured layout.
-4. `native/src/editor/renderer.rs`: widget layout, drawing, hit testing, movement.
+4. `native/src/editor/renderer`: widget layout, drawing, hit testing, movement.
 
 Rules:
 
 - Markdown document mutations go through `EditorCommand`.
 - Direct `DocBuffer::set_text` is allowed only for file load, an explicit
   whole-buffer transaction, or tests.
-- Markdown grammar and parsing stay in `native/src/editor/highlight.rs` or its
+- Markdown grammar and parsing stay in `native/src/editor/parser` or its
   future submodules under `native/src/editor`.
 - Renderer consumes parser output. It must not call markdown parsers or import
   parser implementation crates.
@@ -71,10 +71,10 @@ Rules:
 
 Ownership order:
 
-1. `core/src/pdf.rs`: PDFium adapter, extraction, search, annotations.
-2. `native/src/pdf_layout.rs`: page geometry and visible ranges.
-3. `native/src/pdf_page_cache.rs`: image cache and eviction.
-4. `native/src/views/interactive_pdf.rs`: drawing and pointer interaction.
+1. `core/src/infrastructure/pdfium`: PDFium adapter, extraction, search, annotations.
+2. `native/src/features/pdf/navigation.rs`: page geometry and visible ranges.
+3. `native/src/features/pdf/tasks.rs`: image cache and eviction.
+4. `native/src/app/interactive_pdf.rs`: drawing and pointer interaction.
 5. Application coordination: task scheduling and pane state.
 
 Rules:

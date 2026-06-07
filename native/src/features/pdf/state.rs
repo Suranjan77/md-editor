@@ -21,21 +21,21 @@ use std::collections::{HashMap, VecDeque};
 use iced::widget::image::Handle;
 
 #[derive(Debug, Clone)]
-pub struct CachedPage {
+pub(crate) struct CachedPage {
     pub handle: Handle,
     pub dimensions: (u32, u32),
     pub byte_size: usize,
 }
 
 /// Default cap on the number of cached page images.
-pub const DEFAULT_MAX_PAGES: usize = 30;
+pub(crate) const DEFAULT_MAX_PAGES: usize = 30;
 /// Default cap on cumulative RGBA bytes (~512 MiB).
-pub const DEFAULT_MAX_BYTES: usize = 512 * 1024 * 1024;
+pub(crate) const DEFAULT_MAX_BYTES: usize = 512 * 1024 * 1024;
 /// How far on each side of the visible range we refuse to evict.
-pub const VISIBLE_GUARD_PAGES: u16 = 3;
+pub(crate) const VISIBLE_GUARD_PAGES: u16 = 3;
 
 #[derive(Debug, Clone)]
-pub struct PdfPageCache {
+pub(crate) struct PdfPageCache {
     pages: HashMap<u16, CachedPage>,
     /// Most-recently-used pages live near the back of the deque.
     lru_order: VecDeque<u16>,
@@ -54,7 +54,7 @@ impl Default for PdfPageCache {
 }
 
 impl PdfPageCache {
-    pub fn new(max_pages: usize, max_bytes: usize) -> Self {
+    pub(crate) fn new(max_pages: usize, max_bytes: usize) -> Self {
         Self {
             pages: HashMap::new(),
             lru_order: VecDeque::new(),
@@ -66,53 +66,59 @@ impl PdfPageCache {
     }
 
     /// Drop every cached page.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.pages.clear();
         self.lru_order.clear();
         self.total_bytes = 0;
         self.visible_range = None;
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.pages.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.pages.is_empty()
     }
 
-    pub fn total_bytes(&self) -> usize {
+    pub(crate) fn total_bytes(&self) -> usize {
         self.total_bytes
     }
 
     /// Set the visible page range so eviction can protect those pages.
     /// Range is inclusive on both ends.
-    pub fn set_visible_range(&mut self, range: Option<(u16, u16)>) {
+    pub(crate) fn set_visible_range(&mut self, range: Option<(u16, u16)>) {
         self.visible_range = range;
     }
 
     /// Look up a cached page handle without changing recency. Used by the view
     /// builder where touching every visible page on each frame would defeat
     /// the LRU policy.
-    pub fn get_handle(&self, page: u16) -> Option<&Handle> {
+    pub(crate) fn get_handle(&self, page: u16) -> Option<&Handle> {
         self.pages.get(&page).map(|c| &c.handle)
     }
 
     /// Look up the rendered logical dimensions of a cached page.
-    pub fn get_dimensions(&self, page: u16) -> Option<(u32, u32)> {
+    pub(crate) fn get_dimensions(&self, page: u16) -> Option<(u32, u32)> {
         self.pages.get(&page).map(|c| c.dimensions)
     }
 
-    pub fn contains(&self, page: u16) -> bool {
+    pub(crate) fn contains(&self, page: u16) -> bool {
         self.pages.contains_key(&page)
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = &u16> {
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &u16> {
         self.pages.keys()
     }
 
     /// Insert a freshly rendered page, evicting older entries if necessary.
-    pub fn insert(&mut self, page: u16, handle: Handle, dimensions: (u32, u32), byte_size: usize) {
+    pub(crate) fn insert(
+        &mut self,
+        page: u16,
+        handle: Handle,
+        dimensions: (u32, u32),
+        byte_size: usize,
+    ) {
         if let Some(prev) = self.pages.remove(&page) {
             self.total_bytes = self.total_bytes.saturating_sub(prev.byte_size);
             self.lru_order.retain(|&p| p != page);
@@ -134,7 +140,7 @@ impl PdfPageCache {
 
     /// Mark a page as recently used. Caller is responsible for being judicious
     /// here (touching the same page many times per frame is wasteful but safe).
-    pub fn touch(&mut self, page: u16) {
+    pub(crate) fn touch(&mut self, page: u16) {
         if !self.pages.contains_key(&page) {
             return;
         }
@@ -145,7 +151,7 @@ impl PdfPageCache {
     }
 
     /// Touch every page in the visible range so they are treated as MRU.
-    pub fn touch_visible(&mut self) {
+    pub(crate) fn touch_visible(&mut self) {
         let Some((start, end)) = self.visible_range else {
             return;
         };
@@ -361,7 +367,7 @@ use crate::features::pdf::search::PdfSearchState;
 use crate::features::pdf::view_model::PdfLayout;
 
 #[derive(Debug, Clone)]
-pub struct PdfViewState {
+pub(crate) struct PdfViewState {
     pub zoom: f32,
     pub page_sizes: Vec<Option<(f32, f32)>>,
     pub page_cache: PdfPageCache,

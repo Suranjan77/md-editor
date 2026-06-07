@@ -8,8 +8,8 @@ use crate::messages::{Message, SearchWrapStatus};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
-pub const FILE_SEARCH_INPUT_ID: &str = "file_search_input";
-pub const GLOBAL_SEARCH_INPUT_ID: &str = "global_search_input";
+pub(crate) const FILE_SEARCH_INPUT_ID: &str = "file_search_input";
+pub(crate) const GLOBAL_SEARCH_INPUT_ID: &str = "global_search_input";
 
 const BOLD_FONT: iced::Font = iced::Font {
     weight: iced::font::Weight::Bold,
@@ -32,7 +32,7 @@ fn focus_visible_input_style(theme: &Theme, status: text_input::Status) -> text_
     style
 }
 
-pub fn file_bar<'a>(
+pub(crate) fn file_bar<'a>(
     query: &'a str,
     replace: &'a str,
     regex: bool,
@@ -146,7 +146,7 @@ pub fn file_bar<'a>(
 }
 
 /// Render the vault search overlay with typed result groups.
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     query: &'a str,
     replace: &'a str,
     regex: bool,

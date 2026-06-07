@@ -3,13 +3,13 @@ use serde::{Deserialize, Serialize};
 
 const MAX_UNDO_TRANSACTIONS: usize = 1000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Selection {
+pub(crate) struct Selection {
     pub anchor: usize,
     pub focus: usize,
 }
 
 impl Selection {
-    pub fn new(anchor: usize, focus: usize) -> Option<Self> {
+    pub(crate) fn new(anchor: usize, focus: usize) -> Option<Self> {
         if anchor == focus {
             None
         } else {
@@ -17,7 +17,7 @@ impl Selection {
         }
     }
 
-    pub fn range(self) -> (usize, usize) {
+    pub(crate) fn range(self) -> (usize, usize) {
         if self.anchor <= self.focus {
             (self.anchor, self.focus)
         } else {
@@ -27,7 +27,7 @@ impl Selection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum EditOp {
+pub(crate) enum EditOp {
     Insert { char_offset: usize, text: String },
     Delete { char_offset: usize, text: String },
 }
@@ -48,7 +48,7 @@ impl EditOp {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EditTransaction {
+pub(crate) struct EditTransaction {
     ops: Vec<EditOp>,
     before_cursor: usize,
     after_cursor: usize,
@@ -57,7 +57,7 @@ pub struct EditTransaction {
 }
 
 impl DocBuffer {
-    pub fn undo(&mut self) -> bool {
+    pub(crate) fn undo(&mut self) -> bool {
         let Some(transaction) = self.undo_stack.pop() else {
             return false;
         };
@@ -72,7 +72,7 @@ impl DocBuffer {
         self.sync_public_state();
         true
     }
-    pub fn redo(&mut self) -> bool {
+    pub(crate) fn redo(&mut self) -> bool {
         let Some(transaction) = self.redo_stack.pop() else {
             return false;
         };

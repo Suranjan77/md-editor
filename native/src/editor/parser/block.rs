@@ -8,7 +8,7 @@ use super::syntax::highlight_code_spans;
 use super::syntax::make_code_highlighter;
 use crate::theme;
 
-pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
+pub(crate) fn highlight_markdown(text: &str) -> Vec<StyledLine> {
     let mut lines = Vec::new();
 
     let mut in_code_block = false;
@@ -637,7 +637,7 @@ fn detect_numbered_list(trimmed: &str) -> Option<usize> {
     None
 }
 
-pub fn heading_size(level: u8) -> f32 {
+pub(crate) fn heading_size(level: u8) -> f32 {
     match level {
         1 => 34.0,
         2 => 28.0,

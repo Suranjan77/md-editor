@@ -62,7 +62,7 @@ fn action_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> butto
     }
 }
 
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     active_path: Option<&'a str>,
     active_pdf_path: Option<&'a str>,
     sidebar_visible: bool,
