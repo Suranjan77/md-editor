@@ -15,7 +15,7 @@ use iced::{Color, Element, Length, Point, Rectangle, Size};
 use std::collections::{HashMap, HashSet};
 
 #[allow(clippy::type_complexity)]
-pub struct Editor<'a, Message> {
+pub(crate) struct Editor<'a, Message> {
     pub(crate) buffer: &'a DocBuffer,
     pub(crate) lines: &'a [StyledLine],
     pub(crate) image_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
@@ -37,7 +37,7 @@ pub struct Editor<'a, Message> {
 }
 
 impl<'a, Message> Editor<'a, Message> {
-    pub fn new(
+    pub(crate) fn new(
         buffer: &'a DocBuffer,
         lines: &'a [StyledLine],
         image_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
@@ -69,7 +69,7 @@ impl<'a, Message> Editor<'a, Message> {
         }
     }
 
-    pub fn on_block_context_menu(
+    pub(crate) fn on_block_context_menu(
         mut self,
         on_block_context_menu: impl Fn(usize, Point) -> Message + 'a,
     ) -> Self {
@@ -77,7 +77,7 @@ impl<'a, Message> Editor<'a, Message> {
         self
     }
 
-    pub fn on_context_menu(
+    pub(crate) fn on_context_menu(
         mut self,
         on_context_menu: impl Fn(usize, usize, Point) -> Message + 'a,
     ) -> Self {
@@ -85,7 +85,7 @@ impl<'a, Message> Editor<'a, Message> {
         self
     }
 
-    pub fn vault_context(
+    pub(crate) fn vault_context(
         mut self,
         vault_root: Option<&'a str>,
         active_path: Option<&'a str>,
@@ -97,7 +97,7 @@ impl<'a, Message> Editor<'a, Message> {
         self
     }
 
-    pub fn search(
+    pub(crate) fn search(
         mut self,
         query: &'a str,
         regex: bool,
@@ -111,7 +111,7 @@ impl<'a, Message> Editor<'a, Message> {
         self
     }
 
-    pub fn modifiers(mut self, modifiers: keyboard::Modifiers) -> Self {
+    pub(crate) fn modifiers(mut self, modifiers: keyboard::Modifiers) -> Self {
         self.modifiers = modifiers;
         self
     }

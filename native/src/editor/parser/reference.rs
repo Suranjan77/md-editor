@@ -1,7 +1,7 @@
 use super::metadata::styled_line_source;
 use super::model::StyledLine;
 
-pub fn collect_reference_definitions(
+pub(crate) fn collect_reference_definitions(
     lines: &[StyledLine],
 ) -> std::collections::HashMap<String, String> {
     let mut defs = std::collections::HashMap::new();
@@ -14,7 +14,7 @@ pub fn collect_reference_definitions(
     defs
 }
 
-pub fn get_ref_id_from_span_text(text: &str) -> Option<String> {
+pub(crate) fn get_ref_id_from_span_text(text: &str) -> Option<String> {
     if !text.starts_with('[') || !text.ends_with(']') {
         return None;
     }
@@ -30,7 +30,9 @@ pub fn get_ref_id_from_span_text(text: &str) -> Option<String> {
     }
 }
 
-pub fn parse_reference_definition(line: &str) -> Option<(String, String, usize, usize, usize)> {
+pub(crate) fn parse_reference_definition(
+    line: &str,
+) -> Option<(String, String, usize, usize, usize)> {
     let trimmed = line.trim_start();
     let leading_spaces_len = line.len() - trimmed.len();
     if leading_spaces_len > 3 {

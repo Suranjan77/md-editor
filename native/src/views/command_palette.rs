@@ -7,10 +7,10 @@ use crate::messages::{Message, Shortcut};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
-pub const COMMAND_PALETTE_INPUT_ID: &str = "command_palette_input";
+pub(crate) const COMMAND_PALETTE_INPUT_ID: &str = "command_palette_input";
 
 #[derive(Debug, Clone)]
-pub struct Command {
+pub(crate) struct Command {
     pub name: String,
     pub shortcut: Shortcut,
     pub icon: String,
@@ -19,7 +19,7 @@ pub struct Command {
     pub disabled_reason: Option<&'static str>,
 }
 
-pub fn insert_pdf_quote_command() -> Command {
+pub(crate) fn insert_pdf_quote_command() -> Command {
     Command {
         name: "Insert PDF Quote".to_string(),
         shortcut: Shortcut::InsertPdfQuote,
@@ -30,7 +30,7 @@ pub fn insert_pdf_quote_command() -> Command {
     }
 }
 
-pub fn insert_pdf_highlight_command() -> Command {
+pub(crate) fn insert_pdf_highlight_command() -> Command {
     Command {
         name: "Insert PDF Highlight".to_string(),
         shortcut: Shortcut::InsertPdfHighlight,
@@ -41,7 +41,7 @@ pub fn insert_pdf_highlight_command() -> Command {
     }
 }
 
-pub fn get_commands() -> Vec<Command> {
+pub(crate) fn get_commands() -> Vec<Command> {
     crate::command_registry::get_command_registry()
         .into_iter()
         .map(|meta| Command {
@@ -135,7 +135,7 @@ fn group_header(
     .into()
 }
 
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     query: &str,
     commands: Vec<Command>,
     window_width: f32,

@@ -11,7 +11,7 @@ use crate::views::interactive_pdf::{
 
 pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
 pub(crate) const PDF_PAGE_SPACING: f32 = 20.0;
-pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
+pub(crate) const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
 
 #[cfg(test)]
 mod tests {
@@ -281,7 +281,7 @@ fn toolbar_group<'a>(
         .into()
 }
 
-pub fn search_bar<'a>(
+pub(crate) fn search_bar<'a>(
     query: &'a str,
     regex: bool,
     match_case: bool,
@@ -356,7 +356,7 @@ pub fn search_bar<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn toolbar_with_companion_note<'a>(
+pub(crate) fn toolbar_with_companion_note<'a>(
     current_page: u16,
     total_pages: u16,
     zoom: f32,
@@ -702,7 +702,7 @@ impl<Message> iced::widget::canvas::Program<Message> for SpinnerProgram {
     }
 }
 
-pub fn view_continuous<'a>(
+pub(crate) fn view_continuous<'a>(
     pages: &'a [Option<iced::widget::image::Handle>],
     zoom: f32,
     rotation: u16,

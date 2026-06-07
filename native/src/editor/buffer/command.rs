@@ -1,5 +1,6 @@
+#![allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Movement {
+pub(crate) enum Movement {
     Left,
     Right,
     Up,
@@ -9,7 +10,7 @@ pub enum Movement {
 }
 
 #[derive(Debug, Clone)]
-pub enum EditorCommand {
+pub(crate) enum EditorCommand {
     InsertText(String),
     DeleteSelection,
     DeleteBackward,
@@ -113,7 +114,7 @@ pub enum EditorCommand {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CommandResult {
+pub(crate) struct CommandResult {
     pub text_changed: bool,
     pub projection_changed: bool,
     pub media_changed: bool,
@@ -130,7 +131,7 @@ impl CommandResult {
 }
 
 impl EditorCommand {
-    pub fn changes_text(&self) -> bool {
+    pub(crate) fn changes_text(&self) -> bool {
         !matches!(
             self,
             EditorCommand::MoveCursor { .. }
@@ -140,15 +141,15 @@ impl EditorCommand {
         )
     }
 
-    pub fn changes_projection(&self) -> bool {
+    pub(crate) fn changes_projection(&self) -> bool {
         self.changes_text()
     }
 
-    pub fn may_change_media(&self) -> bool {
+    pub(crate) fn may_change_media(&self) -> bool {
         self.changes_text()
     }
 
-    pub fn should_keep_cursor_visible(&self) -> bool {
+    pub(crate) fn should_keep_cursor_visible(&self) -> bool {
         matches!(
             self,
             EditorCommand::InsertText(_)

@@ -1,8 +1,8 @@
-pub mod annotations;
-pub mod message;
-pub mod navigation;
-pub mod search;
-pub mod state;
-pub mod tasks;
-pub mod update;
-pub mod view_model;
+pub(crate) mod annotations;
+pub(crate) mod message;
+pub(crate) mod navigation;
+pub(crate) mod search;
+pub(crate) mod state;
+pub(crate) mod tasks;
+pub(crate) mod update;
+pub(crate) mod view_model;

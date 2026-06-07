@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use crate::editor::parser::StyledLine;
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct LineHeightCache {
+pub(crate) struct LineHeightCache {
     pub hash: u64,
     pub is_editing: bool,
     pub active_col: Option<usize>,
@@ -12,7 +12,7 @@ pub struct LineHeightCache {
     pub valid: bool,
 }
 
-pub fn line_hash(line: &StyledLine) -> u64 {
+pub(crate) fn line_hash(line: &StyledLine) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     line.is_code_block.hash(&mut hasher);
     line.is_math_block.hash(&mut hasher);
@@ -32,7 +32,7 @@ pub fn line_hash(line: &StyledLine) -> u64 {
     hasher.finish()
 }
 
-pub fn resource_hash(
+pub(crate) fn resource_hash(
     line: &StyledLine,
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,

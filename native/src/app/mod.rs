@@ -1,10 +1,10 @@
-pub mod effects;
-pub mod model;
-pub mod startup;
-pub mod subscription;
-pub mod update;
-pub mod view;
+pub(crate) mod effects;
+pub(crate) mod model;
+pub(crate) mod startup;
+pub(crate) mod subscription;
+pub(crate) mod update;
+pub(crate) mod view;
 
-pub use effects::*;
-pub use model::MdEditor;
-pub use model::*;
+pub(crate) use effects::*;
+pub(crate) use model::MdEditor;
+pub(crate) use model::*;

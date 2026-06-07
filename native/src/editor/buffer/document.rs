@@ -1,11 +1,12 @@
+#![allow(dead_code)]
 use ropey::Rope;
 
 use super::command::{CommandResult, EditorCommand};
 use super::table::get_table_row_columns_count;
 use super::transaction::EditTransaction;
-pub use super::transaction::Selection;
+pub(crate) use super::transaction::Selection;
 
-pub struct DocBuffer {
+pub(crate) struct DocBuffer {
     pub(crate) rope: Rope,
     pub(crate) cursor_offset: usize,
     pub(crate) selection_offsets: Option<Selection>,
@@ -21,10 +22,10 @@ pub struct DocBuffer {
 }
 
 impl DocBuffer {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::from_text("")
     }
-    pub fn from_text(text: &str) -> Self {
+    pub(crate) fn from_text(text: &str) -> Self {
         let mut buffer = Self {
             rope: Rope::from_str(text),
             cursor_offset: 0,
@@ -40,10 +41,10 @@ impl DocBuffer {
         buffer.sync_public_state();
         buffer
     }
-    pub fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         self.rope.to_string()
     }
-    pub fn set_text(&mut self, text: &str) {
+    pub(crate) fn set_text(&mut self, text: &str) {
         self.rope = Rope::from_str(text);
         self.cursor_offset = self.cursor_offset.min(self.rope.len_chars());
         self.selection_offsets = None;
@@ -53,10 +54,10 @@ impl DocBuffer {
         self.dirty = true;
         self.sync_public_state();
     }
-    pub fn line_count(&self) -> usize {
+    pub(crate) fn line_count(&self) -> usize {
         self.rope.len_lines()
     }
-    pub fn line_text(&self, line: usize) -> String {
+    pub(crate) fn line_text(&self, line: usize) -> String {
         if line < self.line_count() {
             self.rope
                 .line(line)
@@ -67,17 +68,17 @@ impl DocBuffer {
             String::new()
         }
     }
-    pub fn cursor_offset(&self) -> usize {
+    pub(crate) fn cursor_offset(&self) -> usize {
         self.cursor_offset
     }
-    pub fn selection_offsets(&self) -> Option<Selection> {
+    pub(crate) fn selection_offsets(&self) -> Option<Selection> {
         self.selection_offsets
     }
-    pub fn selected_text(&self) -> Option<String> {
+    pub(crate) fn selected_text(&self) -> Option<String> {
         let (start, end) = self.selection_offsets?.range();
         Some(self.rope.slice(start..end).to_string())
     }
-    pub fn execute(&mut self, command: EditorCommand) -> CommandResult {
+    pub(crate) fn execute(&mut self, command: EditorCommand) -> CommandResult {
         match command {
             EditorCommand::InsertText(text) => self.insert_text(&text),
             EditorCommand::DeleteSelection => self.delete_selection(),

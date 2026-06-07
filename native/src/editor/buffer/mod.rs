@@ -1,9 +1,9 @@
-pub mod command;
-pub mod document;
-pub mod formatting;
-pub mod movement;
-pub mod table;
-pub mod transaction;
+pub(crate) mod command;
+pub(crate) mod document;
+pub(crate) mod formatting;
+pub(crate) mod movement;
+pub(crate) mod table;
+pub(crate) mod transaction;
 
-pub use command::{EditorCommand, Movement};
-pub use document::DocBuffer;
+pub(crate) use command::{EditorCommand, Movement};
+pub(crate) use document::DocBuffer;

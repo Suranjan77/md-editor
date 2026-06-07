@@ -1,5 +1,5 @@
-use iced::widget::operation::{self};
 use iced::Task;
+use iced::widget::operation::{self};
 
 use image::GenericImageView;
 use std::sync::Arc;

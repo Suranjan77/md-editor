@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum BrokenReferenceKind {
+pub(crate) enum BrokenReferenceKind {
     MissingPdf,
     DeletedAnnotation,
     MissingNote,
@@ -14,7 +14,7 @@ pub enum BrokenReferenceKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BrokenReference {
+pub(crate) struct BrokenReference {
     pub kind: BrokenReferenceKind,
     pub source_file: String, // vault-relative path
     pub target: String,      // vault-relative path or annotation ID
@@ -22,7 +22,7 @@ pub struct BrokenReference {
 }
 
 /// Recursively scan the vault to find all .md and .pdf files.
-pub fn list_all_files(root: &Path) -> Result<(HashSet<String>, HashSet<String>), String> {
+pub(crate) fn list_all_files(root: &Path) -> Result<(HashSet<String>, HashSet<String>), String> {
     let mut mds = HashSet::new();
     let mut pdfs = HashSet::new();
     list_all_files_recursive(root, root, &mut mds, &mut pdfs)?;
@@ -69,7 +69,7 @@ fn list_all_files_recursive(
 }
 
 /// Find a suggested path for a missing filename in the vault.
-pub fn find_suggested_path(
+pub(crate) fn find_suggested_path(
     target: &str,
     existing_mds: &HashSet<String>,
     existing_pdfs: &HashSet<String>,
@@ -100,7 +100,7 @@ pub fn find_suggested_path(
 }
 
 /// Check the vault for missing PDFs, deleted annotations, missing notes, and moved vault paths.
-pub fn check_vault_integrity(
+pub(crate) fn check_vault_integrity(
     state: &AppState,
     vault_root: &Path,
 ) -> Result<Vec<BrokenReference>, String> {

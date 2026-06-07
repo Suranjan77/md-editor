@@ -59,7 +59,7 @@ pub(crate) fn is_pdf_citation_line(line: &crate::editor::parser::StyledLine) -> 
         .any(|span| span.is_link && span.visible_text(true).starts_with("pdf://"))
 }
 
-pub fn get_block_context_menu_items(
+pub(crate) fn get_block_context_menu_items(
     lines: &[crate::editor::parser::StyledLine],
     line_idx: usize,
 ) -> Option<Vec<crate::views::modals::EditorBlockContextMenuItem>> {

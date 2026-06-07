@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 #[derive(Debug, Clone)]
-pub enum Message {
+pub(crate) enum Message {
     // ── Vault ────────────────────────────────────────────────────
     OpenVaultDialog,
     CreateVaultDialog,
@@ -230,7 +230,7 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrackerTab {
+pub(crate) enum TrackerTab {
     Dashboard,
     Log,
     Projects,
@@ -240,7 +240,7 @@ pub enum TrackerTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Shortcut {
+pub(crate) enum Shortcut {
     Save,
     OpenVault,
     NewFile,
@@ -285,7 +285,7 @@ pub enum Shortcut {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum CitationItem {
+pub(crate) enum CitationItem {
     Selection {
         text: String,
         page_index: u16,
@@ -303,7 +303,7 @@ pub enum CitationItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum EditorBlockActionKind {
+pub(crate) enum EditorBlockActionKind {
     ConvertToH1,
     ConvertToH2,
     ConvertToH3,
@@ -323,13 +323,13 @@ pub enum EditorBlockActionKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchWrapStatus {
+pub(crate) enum SearchWrapStatus {
     WrappedForward,
     WrappedBackward,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum EditorLinkActionKind {
+pub(crate) enum EditorLinkActionKind {
     OpenLink,
     CopyLinkTarget,
     CreateNote,

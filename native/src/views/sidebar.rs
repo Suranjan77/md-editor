@@ -194,7 +194,7 @@ fn render_tree_level<'a>(
 }
 
 /// Render the file tree sidebar.
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     entries: &'a [md_editor_core::types::FileEntry],
     selected_path: Option<&'a str>,
     active_path: Option<&'a str>,

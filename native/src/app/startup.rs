@@ -19,7 +19,7 @@ use super::model::*;
 use crate::app::*;
 
 impl MdEditor {
-    pub fn new() -> (Self, Task<Message>) {
+    pub(crate) fn new() -> (Self, Task<Message>) {
         let state = Arc::new(md_editor_core::state::AppState::new());
         let last_vault = md_editor_core::config::get_sys_config(&state, "last_vault")
             .ok()

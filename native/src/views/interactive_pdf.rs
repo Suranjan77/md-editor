@@ -7,20 +7,20 @@ use iced::mouse;
 use iced::{Color, Element, Length, Rectangle, Size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PdfSelection {
+pub(crate) struct PdfSelection {
     pub page_index: u16,
     pub anchor_idx: usize,
     pub focus_idx: usize,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
-pub struct State {
+pub(crate) struct State {
     pub modifiers: iced::keyboard::Modifiers,
     pub drag_start: Option<iced::Point>,
     pub is_dragging: bool,
 }
 
-pub struct InteractivePdf<'a, Message> {
+pub(crate) struct InteractivePdf<'a, Message> {
     handle: iced::widget::image::Handle,
     width: f32,
     height: f32,
@@ -40,7 +40,7 @@ pub struct InteractivePdf<'a, Message> {
 }
 
 impl<'a, Message> InteractivePdf<'a, Message> {
-    pub fn new(
+    pub(crate) fn new(
         handle: iced::widget::image::Handle,
         width: f32,
         height: f32,
@@ -172,7 +172,7 @@ struct OverlayQuad {
 }
 
 #[derive(Clone, Debug)]
-pub struct HighlightRect {
+pub(crate) struct HighlightRect {
     pub rect: Rectangle,
     pub color: Color,
     pub border: iced::Border,
@@ -308,7 +308,7 @@ fn build_overlay_quads(
     quads
 }
 
-pub fn pdf_highlight_rects(
+pub(crate) fn pdf_highlight_rects(
     page_index: u16,
     page_width: f32,
     page_height: f32,
@@ -707,14 +707,14 @@ where
     }
 }
 
-pub struct PdfHighlights {
+pub(crate) struct PdfHighlights {
     width: f32,
     height: f32,
     rects: Vec<HighlightRect>,
 }
 
 impl PdfHighlights {
-    pub fn new(width: f32, height: f32, rects: Vec<HighlightRect>) -> Self {
+    pub(crate) fn new(width: f32, height: f32, rects: Vec<HighlightRect>) -> Self {
         Self {
             width,
             height,

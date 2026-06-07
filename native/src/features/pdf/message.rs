@@ -6,7 +6,7 @@ use md_editor_core::domain::pdf::{LinkInfo, PdfAnnotationColor, PdfAnnotationKin
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub enum PdfMessage {
+pub(crate) enum PdfMessage {
     ZoomChanged(f32),
     WheelScrolledForZoom(f32),
     FitToWidth,

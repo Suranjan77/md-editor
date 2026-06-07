@@ -7,7 +7,7 @@ use crate::theme;
 use crate::views::link_note_picker;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum PdfContextMenuItem {
+pub(crate) enum PdfContextMenuItem {
     Copy,
     CopyAsQuote,
     CopyWithSourceLink,
@@ -30,12 +30,12 @@ pub enum PdfContextMenuItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PdfContextMenuState {
+pub(crate) struct PdfContextMenuState {
     pub absolute_pos: iced::Point,
     pub items: Vec<PdfContextMenuItem>,
 }
 
-pub fn pdf_annotation_context_menu_items(
+pub(crate) fn pdf_annotation_context_menu_items(
     ann: &md_editor_core::domain::pdf::PdfAnnotation,
     markdown_open: bool,
 ) -> Vec<PdfContextMenuItem> {
@@ -63,14 +63,14 @@ pub fn pdf_annotation_context_menu_items(
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EditorBlockContextMenuState {
+pub(crate) struct EditorBlockContextMenuState {
     pub absolute_pos: iced::Point,
     pub line_idx: usize,
     pub items: Vec<EditorBlockContextMenuItem>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum EditorBlockContextMenuItem {
+pub(crate) enum EditorBlockContextMenuItem {
     ConvertToH1,
     ConvertToH2,
     ConvertToH3,
@@ -90,7 +90,7 @@ pub enum EditorBlockContextMenuItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EditorLinkContextMenuState {
+pub(crate) struct EditorLinkContextMenuState {
     pub absolute_pos: iced::Point,
     pub line_idx: usize,
     pub start_col: usize,
@@ -102,7 +102,7 @@ pub struct EditorLinkContextMenuState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum EditorLinkContextMenuItem {
+pub(crate) enum EditorLinkContextMenuItem {
     OpenLink,
     CopyLinkTarget,
     CreateNote { filename: String },
@@ -110,7 +110,7 @@ pub enum EditorLinkContextMenuItem {
     OpenPdfCitation,
 }
 
-pub fn get_link_context_menu_items(
+pub(crate) fn get_link_context_menu_items(
     target: &str,
     vault_root: Option<&str>,
     active_path: Option<&str>,
@@ -171,7 +171,7 @@ pub fn get_link_context_menu_items(
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ModalType {
+pub(crate) enum ModalType {
     PdfContextMenu(PdfContextMenuState),
     EditorBlockContextMenu(EditorBlockContextMenuState),
     EditorLinkContextMenu(EditorLinkContextMenuState),
@@ -600,7 +600,7 @@ pub(crate) fn view_editor_link_context_menu<'a>(
     .into()
 }
 
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     modal_type: &'a ModalType,
     input_value: &'a str,
     picker_search: &str,

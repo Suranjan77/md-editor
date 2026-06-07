@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use crate::application::pdf_service::PdfRenderer;
 use crate::database;
 use crate::domain::pdf::{
-    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus, PdfRect, 
+    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus, PdfRect,
     PdfTextRange,
 };
 use crate::file_index::FileIndex;

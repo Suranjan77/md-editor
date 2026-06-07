@@ -116,7 +116,7 @@ pub(crate) fn text_by_char_range(text: &str, start: usize, end: usize) -> String
 pub(crate) use crate::features::pdf::navigation::NavigationHistory;
 pub(crate) use crate::features::pdf::navigation::NavigationTarget;
 
-pub struct MdEditor {
+pub(crate) struct MdEditor {
     pub(crate) state: Arc<md_editor_core::state::AppState>,
     pub(crate) workspace: WorkspaceState,
     pub(crate) sidebar_visible: bool,
@@ -207,7 +207,7 @@ pub struct MdEditor {
 }
 
 impl MdEditor {
-    pub fn title(&self) -> String {
+    pub(crate) fn title(&self) -> String {
         format!(
             "{}Md-editor — {}",
             if self.buffer.dirty { "● " } else { "" },
@@ -220,7 +220,7 @@ impl MdEditor {
         )
     }
 
-    pub fn theme(&self) -> Theme {
+    pub(crate) fn theme(&self) -> Theme {
         app_theme::md_editor_theme()
     }
 
@@ -592,10 +592,10 @@ impl MdEditor {
 mod tests {
     use super::*;
     use crate::app::*;
-    use crate::messages::*;
-    use crate::features::pdf::view_model::PdfLayout;
-    use crate::editor::buffer::EditorCommand;
     use crate::app_shell::AppShellMode;
+    use crate::editor::buffer::EditorCommand;
+    use crate::features::pdf::view_model::PdfLayout;
+    use crate::messages::*;
     use md_editor_core::domain::pdf::{
         PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus,
     };

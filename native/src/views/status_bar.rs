@@ -11,7 +11,7 @@ const BOLD_FONT: iced::Font = iced::Font {
     ..iced::Font::DEFAULT
 };
 
-pub fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer> {
+pub(crate) fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer> {
     // 1. Active pane indicator
     let pane_element: Element<'a, Message, Theme, Renderer> = match status.active_pane {
         AppShellPane::Markdown => row![

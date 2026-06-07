@@ -372,7 +372,7 @@ where
     h + 80.0 // bottom padding
 }
 
-pub fn line_visual_y<R>(
+pub(crate) fn line_visual_y<R>(
     lines: &[StyledLine],
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,

@@ -5,7 +5,7 @@ use crate::theme;
 
 /// A styled text span for rendering.
 #[derive(Debug, Clone)]
-pub struct StyledSpan {
+pub(crate) struct StyledSpan {
     /// The raw markdown source text for this span.
     pub text: String,
     /// Text to display in preview/rendered mode. If `None`, uses `text`.
@@ -36,7 +36,7 @@ pub struct StyledSpan {
 }
 
 impl StyledSpan {
-    pub fn plain(text: &str) -> Self {
+    pub(crate) fn plain(text: &str) -> Self {
         Self {
             text: text.to_string(),
             display_text: None,
@@ -74,7 +74,7 @@ impl StyledSpan {
     }
 
     /// Get the text to display based on editing mode.
-    pub fn visible_text(&self, editing: bool) -> &str {
+    pub(crate) fn visible_text(&self, editing: bool) -> &str {
         if editing {
             &self.text
         } else if let Some(ref dt) = self.display_text {
@@ -87,7 +87,7 @@ impl StyledSpan {
 
 /// A line of styled spans for the editor to render.
 #[derive(Debug, Clone)]
-pub struct StyledLine {
+pub(crate) struct StyledLine {
     pub spans: Vec<StyledSpan>,
     pub is_code_block: bool,
     pub is_math_block: bool,
@@ -104,7 +104,7 @@ pub struct StyledLine {
 }
 
 impl StyledLine {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             spans: Vec::new(),
             is_code_block: false,
@@ -120,7 +120,7 @@ impl StyledLine {
 }
 
 /// Parse markdown text into styled lines for rendering.
-pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
+pub(crate) fn highlight_markdown(text: &str) -> Vec<StyledLine> {
     let mut lines = Vec::new();
 
     let mut in_code_block = false;
@@ -1231,14 +1231,14 @@ fn syntect_defaults()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutlineEntry {
+pub(crate) struct OutlineEntry {
     pub level: u8,
     pub text: String,
     pub line: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkdownLinkKind {
+pub(crate) enum MarkdownLinkKind {
     Wiki,
     Inline,
     Reference,
@@ -1247,7 +1247,7 @@ pub enum MarkdownLinkKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MarkdownLinkEntry {
+pub(crate) struct MarkdownLinkEntry {
     pub line: usize,
     pub target: String,
     pub display_text: String,
@@ -1256,13 +1256,13 @@ pub struct MarkdownLinkEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkdownAnchorKind {
+pub(crate) enum MarkdownAnchorKind {
     Heading,
     SpanId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MarkdownAnchorEntry {
+pub(crate) struct MarkdownAnchorEntry {
     pub line: usize,
     pub slug: String,
     pub source_text: String,
@@ -1270,7 +1270,7 @@ pub struct MarkdownAnchorEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MarkdownDocumentMetadata {
+pub(crate) struct MarkdownDocumentMetadata {
     pub outline: Vec<OutlineEntry>,
     pub links: Vec<MarkdownLinkEntry>,
     pub anchors: Vec<MarkdownAnchorEntry>,
@@ -1279,12 +1279,12 @@ pub struct MarkdownDocumentMetadata {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FrontmatterMetadata {
+pub(crate) struct FrontmatterMetadata {
     pub aliases: Vec<String>,
     pub tags: Vec<String>,
 }
 
-pub fn extract_outline(lines: &[StyledLine]) -> Vec<OutlineEntry> {
+pub(crate) fn extract_outline(lines: &[StyledLine]) -> Vec<OutlineEntry> {
     let mut outline = Vec::new();
     for (line_idx, line) in lines.iter().enumerate() {
         let mut heading_level = None;
@@ -1318,7 +1318,7 @@ pub fn extract_outline(lines: &[StyledLine]) -> Vec<OutlineEntry> {
     outline
 }
 
-pub fn extract_document_metadata(lines: &[StyledLine]) -> MarkdownDocumentMetadata {
+pub(crate) fn extract_document_metadata(lines: &[StyledLine]) -> MarkdownDocumentMetadata {
     MarkdownDocumentMetadata {
         outline: extract_outline(lines),
         links: extract_markdown_links(lines),
@@ -1328,7 +1328,7 @@ pub fn extract_document_metadata(lines: &[StyledLine]) -> MarkdownDocumentMetada
     }
 }
 
-pub fn extract_frontmatter_metadata(lines: &[StyledLine]) -> FrontmatterMetadata {
+pub(crate) fn extract_frontmatter_metadata(lines: &[StyledLine]) -> FrontmatterMetadata {
     let Some(first_line) = lines.first() else {
         return FrontmatterMetadata::default();
     };
@@ -1377,7 +1377,7 @@ pub fn extract_frontmatter_metadata(lines: &[StyledLine]) -> FrontmatterMetadata
     metadata
 }
 
-pub fn extract_markdown_anchors(lines: &[StyledLine]) -> Vec<MarkdownAnchorEntry> {
+pub(crate) fn extract_markdown_anchors(lines: &[StyledLine]) -> Vec<MarkdownAnchorEntry> {
     let mut anchors = Vec::new();
     for entry in extract_outline(lines) {
         anchors.push(MarkdownAnchorEntry {
@@ -1404,7 +1404,7 @@ pub fn extract_markdown_anchors(lines: &[StyledLine]) -> Vec<MarkdownAnchorEntry
     anchors
 }
 
-pub fn markdown_anchor_slug(s: &str) -> String {
+pub(crate) fn markdown_anchor_slug(s: &str) -> String {
     let mut result = String::new();
     let mut last_was_hyphen = false;
     for c in s.to_lowercase().chars() {
@@ -1454,7 +1454,7 @@ fn push_metadata_value(values: &mut Vec<String>, raw: &str) {
     }
 }
 
-pub fn collect_reference_definitions(
+pub(crate) fn collect_reference_definitions(
     lines: &[StyledLine],
 ) -> std::collections::HashMap<String, String> {
     let mut defs = std::collections::HashMap::new();
@@ -1467,7 +1467,7 @@ pub fn collect_reference_definitions(
     defs
 }
 
-pub fn get_ref_id_from_span_text(text: &str) -> Option<String> {
+pub(crate) fn get_ref_id_from_span_text(text: &str) -> Option<String> {
     if !text.starts_with('[') || !text.ends_with(']') {
         return None;
     }
@@ -1483,7 +1483,7 @@ pub fn get_ref_id_from_span_text(text: &str) -> Option<String> {
     }
 }
 
-pub fn parse_reference_definition(line: &str) -> Option<(String, String, usize, usize, usize)> {
+pub(crate) fn parse_reference_definition(line: &str) -> Option<(String, String, usize, usize, usize)> {
     let trimmed = line.trim_start();
     let leading_spaces_len = line.len() - trimmed.len();
     if leading_spaces_len > 3 {
@@ -1538,7 +1538,7 @@ pub fn parse_reference_definition(line: &str) -> Option<(String, String, usize, 
     Some((label, target.to_string(), idx, target_start, target_len))
 }
 
-pub fn extract_markdown_links(lines: &[StyledLine]) -> Vec<MarkdownLinkEntry> {
+pub(crate) fn extract_markdown_links(lines: &[StyledLine]) -> Vec<MarkdownLinkEntry> {
     let defs = collect_reference_definitions(lines);
     let mut links = Vec::new();
 

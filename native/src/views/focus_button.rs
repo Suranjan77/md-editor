@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use iced::Border;
 use iced::advanced::Clipboard;
 use iced::advanced::layout::{self, Layout};
@@ -10,13 +11,13 @@ use iced::keyboard;
 use iced::mouse;
 use iced::{Element, Length, Rectangle, Size};
 
-pub fn focus_button<'a, Message, Theme, Renderer>(
+pub(crate) fn focus_button<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> FocusButton<'a, Message, Theme, Renderer> {
     FocusButton::new(content)
 }
 
-pub struct FocusButton<'a, Message, Theme, Renderer> {
+pub(crate) struct FocusButton<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
     on_press: Option<Message>,
     id: Option<iced::advanced::widget::Id>,
@@ -29,7 +30,7 @@ pub struct FocusButton<'a, Message, Theme, Renderer> {
 }
 
 impl<'a, Message, Theme, Renderer> FocusButton<'a, Message, Theme, Renderer> {
-    pub fn new(content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
+    pub(crate) fn new(content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
         Self {
             content: content.into(),
             on_press: None,
@@ -43,49 +44,49 @@ impl<'a, Message, Theme, Renderer> FocusButton<'a, Message, Theme, Renderer> {
         }
     }
 
-    pub fn on_press(mut self, msg: Message) -> Self {
+    pub(crate) fn on_press(mut self, msg: Message) -> Self {
         self.on_press = Some(msg);
         self
     }
 
-    pub fn id(mut self, id: iced::advanced::widget::Id) -> Self {
+    pub(crate) fn id(mut self, id: iced::advanced::widget::Id) -> Self {
         self.id = Some(id);
         self
     }
 
-    pub fn padding(mut self, padding: f32) -> Self {
+    pub(crate) fn padding(mut self, padding: f32) -> Self {
         self.padding = padding;
         self
     }
 
-    pub fn border_radius(mut self, radius: f32) -> Self {
+    pub(crate) fn border_radius(mut self, radius: f32) -> Self {
         self.border_radius = radius;
         self
     }
 
-    pub fn active(mut self, active: bool) -> Self {
+    pub(crate) fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
     }
 
-    pub fn subtle(mut self, subtle: bool) -> Self {
+    pub(crate) fn subtle(mut self, subtle: bool) -> Self {
         self.subtle = subtle;
         self
     }
 
-    pub fn width(mut self, width: Length) -> Self {
+    pub(crate) fn width(mut self, width: Length) -> Self {
         self.width = width;
         self
     }
 
-    pub fn height(mut self, height: Length) -> Self {
+    pub(crate) fn height(mut self, height: Length) -> Self {
         self.height = height;
         self
     }
 }
 
 #[derive(Default)]
-pub struct State {
+pub(crate) struct State {
     is_focused: bool,
     is_pressed: bool,
 }

@@ -6,7 +6,7 @@ use crate::messages::Message;
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     input_value: &str,
     search_query: &str,
     vault_entries: &'a [md_editor_core::types::FileEntry],

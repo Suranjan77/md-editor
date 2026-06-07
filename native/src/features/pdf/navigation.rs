@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum NavigationTarget {
+pub(crate) enum NavigationTarget {
     Markdown {
         path: String,
         line: usize,
@@ -16,13 +16,13 @@ pub enum NavigationTarget {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct NavigationPoint {
+pub(crate) struct NavigationPoint {
     pub target: NavigationTarget,
     pub timestamp: u64,
 }
 
 impl NavigationPoint {
-    pub fn new(target: NavigationTarget) -> Self {
+    pub(crate) fn new(target: NavigationTarget) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -32,7 +32,7 @@ impl NavigationPoint {
 }
 
 #[derive(Debug, Clone)]
-pub struct NavigationHistory {
+pub(crate) struct NavigationHistory {
     pub entries: Vec<NavigationPoint>,
     pub current_index: usize,
     pub max_entries: usize,
@@ -49,7 +49,7 @@ impl Default for NavigationHistory {
 }
 
 impl NavigationHistory {
-    pub fn push(&mut self, target: NavigationTarget) {
+    pub(crate) fn push(&mut self, target: NavigationTarget) {
         // Truncate forward history if we are in the middle of the stack
         if !self.entries.is_empty() && self.current_index < self.entries.len() - 1 {
             self.entries.truncate(self.current_index + 1);
@@ -69,7 +69,7 @@ impl NavigationHistory {
         self.current_index = self.entries.len().saturating_sub(1);
     }
 
-    pub fn go_back(&mut self) -> Option<NavigationTarget> {
+    pub(crate) fn go_back(&mut self) -> Option<NavigationTarget> {
         if self.current_index > 0 && !self.entries.is_empty() {
             self.current_index -= 1;
             Some(self.entries[self.current_index].target.clone())
@@ -78,7 +78,7 @@ impl NavigationHistory {
         }
     }
 
-    pub fn go_forward(&mut self) -> Option<NavigationTarget> {
+    pub(crate) fn go_forward(&mut self) -> Option<NavigationTarget> {
         if self.current_index + 1 < self.entries.len() {
             self.current_index += 1;
             Some(self.entries[self.current_index].target.clone())
@@ -88,13 +88,13 @@ impl NavigationHistory {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PdfLinkTarget {
+pub(crate) struct PdfLinkTarget {
     pub path: String,
     pub page: Option<u16>,
     pub annotation_id: Option<String>,
 }
 
-pub fn build_pdf_link(path: &str, page: Option<u16>, annotation_id: Option<&str>) -> String {
+pub(crate) fn build_pdf_link(path: &str, page: Option<u16>, annotation_id: Option<&str>) -> String {
     let mut link = format!("pdf://{}", percent_encode(path));
     let mut query = Vec::new();
     if let Some(page) = page {
@@ -110,7 +110,7 @@ pub fn build_pdf_link(path: &str, page: Option<u16>, annotation_id: Option<&str>
     link
 }
 
-pub fn parse_pdf_link(link: &str) -> Option<PdfLinkTarget> {
+pub(crate) fn parse_pdf_link(link: &str) -> Option<PdfLinkTarget> {
     let rest = if link.starts_with("pdf://") {
         &link[6..]
     } else if link.contains(".pdf") {

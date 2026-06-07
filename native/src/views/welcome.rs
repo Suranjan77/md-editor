@@ -6,7 +6,7 @@ use crate::theme;
 use crate::views::icons::{self, Icon};
 
 /// Render a premium welcome screen.
-pub fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Theme, Renderer> {
+pub(crate) fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Theme, Renderer> {
     let open_btn = button(
         row![
             icons::view(Icon::FolderOpen, Color::WHITE, 18.0),

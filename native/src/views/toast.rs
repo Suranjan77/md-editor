@@ -4,7 +4,7 @@ use iced::{Element, Renderer, Theme};
 use crate::messages::Message;
 use crate::theme;
 
-pub fn view<'a>(content: &'a str) -> Element<'a, Message, Theme, Renderer> {
+pub(crate) fn view<'a>(content: &'a str) -> Element<'a, Message, Theme, Renderer> {
     container(text(content).size(14).color(theme::text_primary()))
         .padding([12, 20])
         .style(|_| container::Style {

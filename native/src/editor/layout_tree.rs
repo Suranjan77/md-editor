@@ -1,33 +1,33 @@
 #[derive(Default, Debug, Clone)]
-pub struct HeightTree {
+pub(crate) struct HeightTree {
     tree: Vec<f32>,
     heights: Vec<f32>,
 }
 
 impl HeightTree {
-    pub fn new(len: usize) -> Self {
+    pub(crate) fn new(len: usize) -> Self {
         Self {
             tree: vec![0.0; len + 1],
             heights: vec![0.0; len],
         }
     }
 
-    pub fn resize(&mut self, len: usize) {
+    pub(crate) fn resize(&mut self, len: usize) {
         self.tree.resize(len + 1, 0.0);
         self.heights.resize(len, 0.0);
         self.tree.fill(0.0);
         self.heights.fill(0.0);
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.heights.len()
     }
 
-    pub fn get_height(&self, idx: usize) -> f32 {
+    pub(crate) fn get_height(&self, idx: usize) -> f32 {
         self.heights.get(idx).copied().unwrap_or(0.0)
     }
 
-    pub fn update_height(&mut self, idx: usize, new_height: f32) {
+    pub(crate) fn update_height(&mut self, idx: usize, new_height: f32) {
         if idx >= self.heights.len() {
             return;
         }
@@ -47,7 +47,7 @@ impl HeightTree {
     }
 
     /// Prefix sum of heights from line 0 up to idx (exclusive)
-    pub fn prefix_sum(&self, idx: usize) -> f32 {
+    pub(crate) fn prefix_sum(&self, idx: usize) -> f32 {
         self.prefix_sum_with_steps(idx).0
     }
 
@@ -66,7 +66,7 @@ impl HeightTree {
 
     /// Finds the line index whose visual range [start_y, start_y + height] contains y.
     /// This uses O(log N) binary lifting on the Fenwick tree.
-    pub fn find_line_at_y(&self, y: f32) -> usize {
+    pub(crate) fn find_line_at_y(&self, y: f32) -> usize {
         self.find_line_at_y_with_steps(y).0
     }
 

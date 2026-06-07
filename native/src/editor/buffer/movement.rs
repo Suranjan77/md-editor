@@ -1,34 +1,35 @@
+#![allow(dead_code)]
 use super::command::Movement;
 use super::document::DocBuffer;
 use super::transaction::Selection;
 use unicode_segmentation::UnicodeSegmentation;
 
 impl DocBuffer {
-    pub fn move_cursor_left(&mut self) {
+    pub(crate) fn move_cursor_left(&mut self) {
         self.move_cursor(Movement::Left, false);
     }
-    pub fn move_cursor_right(&mut self) {
+    pub(crate) fn move_cursor_right(&mut self) {
         self.move_cursor(Movement::Right, false);
     }
-    pub fn move_cursor_up(&mut self) {
+    pub(crate) fn move_cursor_up(&mut self) {
         self.move_cursor(Movement::Up, false);
     }
-    pub fn move_cursor_down(&mut self) {
+    pub(crate) fn move_cursor_down(&mut self) {
         self.move_cursor(Movement::Down, false);
     }
-    pub fn move_cursor_home(&mut self) {
+    pub(crate) fn move_cursor_home(&mut self) {
         self.move_cursor(Movement::Home, false);
     }
-    pub fn move_cursor_end(&mut self) {
+    pub(crate) fn move_cursor_end(&mut self) {
         self.move_cursor(Movement::End, false);
     }
-    pub fn set_cursor(&mut self, line: usize, col: usize) {
+    pub(crate) fn set_cursor(&mut self, line: usize, col: usize) {
         self.cursor_offset = self.line_col_to_offset(line, col);
         self.selection_offsets = None;
         self.desired_col = None;
         self.sync_public_state();
     }
-    pub fn set_selection(
+    pub(crate) fn set_selection(
         &mut self,
         start_line: usize,
         start_col: usize,
@@ -42,7 +43,7 @@ impl DocBuffer {
         self.desired_col = None;
         self.sync_public_state();
     }
-    pub fn select_all(&mut self) {
+    pub(crate) fn select_all(&mut self) {
         self.cursor_offset = self.rope.len_chars();
         self.selection_offsets = Selection::new(0, self.cursor_offset);
         self.desired_col = None;

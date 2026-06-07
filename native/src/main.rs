@@ -1,7 +1,5 @@
 #![allow(
-    clippy::bool_assert_comparison,
     clippy::collapsible_if,
-    clippy::derivable_impls,
     clippy::extra_unused_type_parameters,
     clippy::if_same_then_else,
     clippy::items_after_test_module,
@@ -35,7 +33,6 @@ mod search;
 mod theme;
 mod views;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CliAction {
     Install,
@@ -43,7 +40,6 @@ enum CliAction {
     RunApp,
 }
 
-#[allow(dead_code)]
 fn parse_cli_args(args: &[String]) -> CliAction {
     if args.len() > 1 {
         let cmd = args[1].as_str();
