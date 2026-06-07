@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use iced::Rectangle;
 
 pub(super) type TextPosition = (usize, usize);

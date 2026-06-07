@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::resolve_relative_link_path;
-use crate::pdf_links::parse_pdf_link;
+use crate::features::pdf::navigation::parse_pdf_link;
 use crate::theme;
 use iced::advanced::renderer;
 use iced::{Color, Point, Rectangle, Size};

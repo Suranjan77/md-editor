@@ -1,4 +1,4 @@
-use crate::pdf_links::build_pdf_link;
+use crate::features::pdf::navigation::build_pdf_link;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

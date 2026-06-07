@@ -1,8 +1,8 @@
 use iced::widget::{Space, button, checkbox, column, container, row, stack, text, text_input};
 use iced::{Alignment, Color, Element, Length, Renderer, Theme};
 
+use crate::features::pdf::view_model::PdfLayout;
 use crate::messages::Message;
-use crate::pdf_layout::PdfLayout;
 use crate::theme;
 use crate::views::icons::{self, Icon};
 use crate::views::interactive_pdf::{
@@ -16,7 +16,7 @@ pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
 #[cfg(test)]
 mod tests {
     use super::*;
-use md_editor_core::application::pdf_service::PdfSearchMatch;
+    use md_editor_core::application::pdf_service::PdfSearchMatch;
     use md_editor_core::domain::pdf::{
         PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect,
     };

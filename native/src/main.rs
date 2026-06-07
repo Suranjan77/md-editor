@@ -29,11 +29,6 @@ mod editor;
 mod features;
 mod integrity;
 mod messages;
-mod pdf_layout;
-mod pdf_links;
-mod pdf_navigation;
-mod pdf_notes;
-mod pdf_page_cache;
 #[cfg(target_os = "linux")]
 mod platform;
 mod search;
