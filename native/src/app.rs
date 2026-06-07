@@ -1938,7 +1938,7 @@ impl MdEditor {
                                     let _state = self.state.clone();
                                     preview_task = Task::perform(
                                         async move {
-                                            let renderer = _state.pdf_renderer.as_ref()?;
+                                            let renderer = _state.pdf_renderer()?;
                                             renderer
                                                 .render_link_preview(&abs_path, dest_page, dest_y)
                                                 .ok()
@@ -2672,28 +2672,8 @@ impl MdEditor {
                             let query_lower = self.editor_search.query.to_lowercase();
                             let query_trimmed = self.editor_search.query.trim();
 
-                            let index_locked = self.state.file_index.lock().ok();
-                            let vault_root_locked = self.state.vault_root.lock().ok();
-                            let vault_root = vault_root_locked.as_ref().and_then(|r| r.as_ref());
-
-                            let is_linked = |p1: &str, p2: &str| -> bool {
-                                if let (Some(index), Some(root)) =
-                                    (index_locked.as_ref(), vault_root)
-                                {
-                                    let path1 = md_editor_core::vault::resolve_vault_path(root, p1);
-                                    let path2 = md_editor_core::vault::resolve_vault_path(root, p2);
-                                    index
-                                        .outgoing
-                                        .get(&path1)
-                                        .map_or(false, |set| set.contains(&path2))
-                                        || index
-                                            .incoming
-                                            .get(&path1)
-                                            .map_or(false, |set| set.contains(&path2))
-                                } else {
-                                    false
-                                }
-                            };
+                            let is_linked =
+                                |p1: &str, p2: &str| self.state.vault_paths_are_linked(p1, p2);
 
                             let match_index_base = self.pdf_state.search.matches.len();
                             for (match_offset, m) in matches.iter().enumerate() {
@@ -4914,14 +4894,14 @@ impl MdEditor {
             hash_task,
             Task::perform(
                 async move {
-                    let renderer = _state.pdf_renderer.as_ref()?;
+                    let renderer = _state.pdf_renderer()?;
                     renderer.page_count(&path_clone).ok()
                 },
                 move |res| Message::PdfLoaded(generation, res.unwrap_or(0)),
             ),
             Task::perform(
                 async move {
-                    let renderer = _state_sizes.pdf_renderer.as_ref()?;
+                    let renderer = _state_sizes.pdf_renderer()?;
                     renderer.page_sizes(&path_str_sizes).ok()
                 },
                 move |res| {
@@ -4934,7 +4914,7 @@ impl MdEditor {
             ),
             Task::perform(
                 async move {
-                    let renderer = _state_toc.pdf_renderer.as_ref()?;
+                    let renderer = _state_toc.pdf_renderer()?;
                     renderer.get_toc(&path_str_toc).ok()
                 },
                 move |res| Message::PdfTocLoaded(generation, res.unwrap_or_default()),
@@ -4988,7 +4968,7 @@ impl MdEditor {
 
         Task::perform(
             async move {
-                let renderer = _state.pdf_renderer.as_ref()?;
+                let renderer = _state.pdf_renderer()?;
                 let res = renderer.render_page(&path_str, page, zoom);
                 Some((page, res))
             },
@@ -5029,7 +5009,7 @@ impl MdEditor {
 
         Task::perform(
             async move {
-                let renderer = _state.pdf_renderer.as_ref()?;
+                let renderer = _state.pdf_renderer()?;
                 renderer
                     .render_page_priority(&path_str, page, zoom)
                     .map_err(|e| println!("PDF PRIORITY RENDER ERROR (Page {}): {}", page, e))
@@ -5063,7 +5043,7 @@ impl MdEditor {
 
         Task::perform(
             async move {
-                let renderer = _state.pdf_renderer.as_ref()?;
+                let renderer = _state.pdf_renderer()?;
                 renderer.get_page_links(&path_str, page).ok()
             },
             move |res| Message::PdfPageLinksLoaded(generation, page, res.unwrap_or_default()),
@@ -5088,8 +5068,7 @@ impl MdEditor {
         Task::perform(
             async move {
                 let renderer = _state
-                    .pdf_renderer
-                    .as_ref()
+                    .pdf_renderer()
                     .ok_or_else(|| "No PDF renderer".to_string())?;
                 renderer.get_page_text(&path_str, page)
             },
@@ -5116,7 +5095,7 @@ impl MdEditor {
         if let Some(path) = &self.active_pdf_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
                 let path_str = abs_path.to_string_lossy().to_string();
-                if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+                if let Some(renderer) = self.state.pdf_renderer() {
                     renderer.set_visible_range(first_visible, last_visible, &path_str);
                 }
             }
@@ -5145,7 +5124,7 @@ impl MdEditor {
         if let Some(path) = &self.active_pdf_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
                 let path_str = abs_path.to_string_lossy().to_string();
-                if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+                if let Some(renderer) = self.state.pdf_renderer() {
                     renderer.set_visible_range(first_visible, last_visible, &path_str);
                 }
             }
@@ -5674,7 +5653,7 @@ impl MdEditor {
         if let Some(path) = &self.active_pdf_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
                 let path_str = abs_path.to_string_lossy().to_string();
-                if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+                if let Some(renderer) = self.state.pdf_renderer() {
                     renderer.set_visible_range(
                         target_page.saturating_sub(1),
                         (target_page + 1).min(self.pdf_total_pages.saturating_sub(1)),
@@ -5795,7 +5774,7 @@ impl MdEditor {
         if let Some(path) = &self.active_pdf_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
                 let path_str = abs_path.to_string_lossy().to_string();
-                if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+                if let Some(renderer) = self.state.pdf_renderer() {
                     renderer.set_visible_range(target_page, target_page, &path_str);
                 }
             }
@@ -6072,33 +6051,17 @@ impl MdEditor {
             }
 
             // Search database cached PDF FTS content
-            if let Ok(db) = self.state.db.lock() {
-                let fts_query = format!("*{}*", query_trimmed.replace('\"', ""));
-                if let Ok(mut stmt) = db.prepare(
-                    "SELECT path, page_index, content
-                     FROM pdf_text_search
-                     WHERE content MATCH ?1
-                     LIMIT 20",
-                ) {
-                    if let Ok(mut rows) = stmt.query(rusqlite::params![fts_query]) {
-                        while let Ok(Some(row)) = rows.next() {
-                            if let (Ok(path), Ok(page_idx), Ok(content)) = (
-                                row.get::<_, String>(0),
-                                row.get::<_, i64>(1),
-                                row.get::<_, String>(2),
-                            ) {
-                                items.push(crate::messages::CitationItem::SearchHit {
-                                    path,
-                                    page_index: page_idx as u16,
-                                    snippet: md_editor_core::vault::search_result_preview(
-                                        &content,
-                                        query_trimmed,
-                                        None,
-                                    ),
-                                });
-                            }
-                        }
-                    }
+            if let Ok(hits) = self.state.search_cached_pdf_text(query_trimmed, 20) {
+                for hit in hits {
+                    items.push(crate::messages::CitationItem::SearchHit {
+                        path: hit.vault_path,
+                        page_index: hit.page_index,
+                        snippet: md_editor_core::vault::search_result_preview(
+                            &hit.content,
+                            query_trimmed,
+                            None,
+                        ),
+                    });
                 }
             }
         }
@@ -6309,7 +6272,7 @@ impl MdEditor {
     }
 
     fn cancel_global_pdf_search(&mut self) {
-        if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+        if let Some(renderer) = self.state.pdf_renderer() {
             let _ = renderer.cancel_search(self.pdf_active_search_id);
         }
         self.pdf_active_search_id = self.pdf_active_search_id.wrapping_add(1);
@@ -6373,7 +6336,7 @@ impl MdEditor {
         let match_case = self.pdf_state.search.match_case;
         let path_str = abs_path.to_string_lossy().to_string();
 
-        let Some(renderer) = self.state.pdf_renderer.as_ref() else {
+        let Some(renderer) = self.state.pdf_renderer() else {
             return Task::none();
         };
 
@@ -6821,15 +6784,12 @@ fn search_registered_pdf_text_results(
     query: &md_editor_core::types::UnifiedSearchQuery,
     active_pdf_path: Option<&str>,
 ) -> md_editor_core::types::UnifiedPdfTextSearchResultBatch {
-    let Some(renderer) = state.pdf_renderer.as_ref() else {
+    let Some(renderer) = state.pdf_renderer() else {
         return empty_pdf_text_batch();
     };
-    let vault_root = match state.vault_root.lock() {
-        Ok(guard) => match guard.as_ref() {
-            Some(path) => path.clone(),
-            None => return empty_pdf_text_batch(),
-        },
-        Err(_) => return empty_pdf_text_batch(),
+    let vault_root = match state.vault_root_path() {
+        Ok(Some(path)) => path,
+        _ => return empty_pdf_text_batch(),
     };
     let pdf_paths = match md_editor_core::vault::list_all_pdf_files(&vault_root) {
         Ok(files) => files
@@ -6968,15 +6928,10 @@ fn format_pdf_search_status(
 fn index_registered_pdf_text_pages(
     state: &Arc<md_editor_core::state::AppState>,
 ) -> Result<usize, String> {
-    let Some(renderer) = state.pdf_renderer.as_ref() else {
+    let Some(renderer) = state.pdf_renderer() else {
         return Ok(0);
     };
-    let vault_root = state
-        .vault_root
-        .lock()
-        .map_err(|err| err.to_string())?
-        .as_ref()
-        .cloned();
+    let vault_root = state.vault_root_path()?;
     let Some(vault_root) = vault_root else {
         return Ok(0);
     };
@@ -7110,14 +7065,8 @@ fn reindex_markdown_file_with_parser_targets(
     path: &str,
     content: &str,
 ) -> Result<(), String> {
-    let vault_root = state.vault_root.lock().map_err(|err| err.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = md_editor_core::vault::resolve_vault_path(vault_root, path);
     let targets = parser_index_targets(content);
-
-    let mut index = state.file_index.lock().map_err(|err| err.to_string())?;
-    index.update_file_targets(&abs_path, targets.iter().map(String::as_str));
-    Ok(())
+    state.update_file_index_targets(path, &targets)
 }
 
 fn reindex_vault_with_parser_targets(
@@ -7125,17 +7074,14 @@ fn reindex_vault_with_parser_targets(
     vault_root: &std::path::Path,
 ) -> Result<(), String> {
     let md_files = md_editor_core::vault::list_all_md_files(vault_root)?;
-    let mut index = state.file_index.lock().map_err(|err| err.to_string())?;
-    *index = md_editor_core::file_index::FileIndex::new(vault_root.to_path_buf());
-
+    let mut files = Vec::with_capacity(md_files.len());
     for abs_path in md_files {
         let content = std::fs::read_to_string(&abs_path)
             .map_err(|err| format!("Failed to read file {}: {err}", abs_path.display()))?;
         let targets = parser_index_targets(&content);
-        index.update_file_targets(&abs_path, targets.iter().map(String::as_str));
+        files.push((abs_path, targets));
     }
-
-    Ok(())
+    state.rebuild_file_index_with_targets(vault_root, files)
 }
 
 fn parser_index_targets(content: &str) -> Vec<String> {
@@ -9217,21 +9163,10 @@ mod tests {
             crate::pdf_notes::new_linked_pdf_note_content(note_path, pdf_path, &ann);
         std::fs::write(root.join(note_path), &initial_content).unwrap();
 
-        // Setup db mock document and annotation
-        {
-            let db = app.state.db.lock().unwrap();
-            db.execute(
-                "INSERT INTO pdf_documents (document_id, vault_relative_path, file_size, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![doc_id, pdf_path, 0, 0, 0],
-            ).unwrap();
-            db.execute(
-                "INSERT INTO pdf_annotations (id, document_id, page_index, kind, color, selected_text, ranges_json, rects_json, note, linked_note_path, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                rusqlite::params![
-                    ann_id, doc_id, 0, "Highlight", "Yellow", "Target Highlight Text", "[]", "[]", "", note_path, 0, 0
-                ]
-            ).unwrap();
-        }
+        app.state
+            .save_pdf_document(&doc_id, pdf_path, 0, None)
+            .unwrap();
+        app.state.save_pdf_annotation(&ann).unwrap();
 
         // Setup app state
         app.active_pdf_path = Some(pdf_path.to_string());
@@ -9261,18 +9196,14 @@ mod tests {
             Some("New note update from UI".to_string())
         );
 
-        // Check annotation in SQLite
-        let db_note: Option<String> = app
+        // Check persisted annotation
+        let db_note = app
             .state
-            .db
-            .lock()
+            .get_pdf_annotations(&doc_id, Some(0))
             .unwrap()
-            .query_row(
-                "SELECT note FROM pdf_annotations WHERE id = ?1",
-                rusqlite::params![ann_id],
-                |row| row.get(0),
-            )
-            .unwrap();
+            .into_iter()
+            .find(|annotation| annotation.id == ann_id)
+            .and_then(|annotation| annotation.note);
         assert_eq!(db_note, Some("New note update from UI".to_string()));
 
         // Check file on disk
