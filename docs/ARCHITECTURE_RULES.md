@@ -1,49 +1,115 @@
 # Architecture Rules
 
-## Crate Boundaries
+Rules here are enforceable contracts. Migration goals belong in
+`CODEBASE_RESTRUCTURING_PLAN.md`; decisions and rationale belong in `docs/adr/`.
 
-- `core`: vault management, indexing, SQLite storage, PDF rendering/search, and
-  domain data types. It must not depend on native UI.
-- `native/app.rs`: application orchestration, routing, task batching, and state
-  coordination.
-- `native/editor`: markdown buffer, parser/highlighter, layout cache, layout
-  tree, and custom renderer.
-- `native/views`: UI composition and message wiring only.
+Run boundary checks with:
 
-## Module Ownership
+```bash
+just architecture
+```
 
-Editor pipeline:
+## Dependency Direction
 
-1. `buffer.rs`: source text, cursor, selection, undo/redo, editor commands.
-2. `highlight.rs`: markdown source to `StyledLine`/`StyledSpan`.
-3. `layout_tree.rs` and `layout_cache.rs`: measured height state and cache keys.
-4. `renderer.rs`: iced widget layout, draw, hit testing, and visual movement.
+Dependencies point inward:
 
-PDF pipeline:
+```text
+presentation -> feature coordination -> application services -> domain
+                                                        ^
+                                                        |
+                                              infrastructure adapters
+```
 
-1. `core/src/pdf.rs`: PDFium calls, text extraction, search, annotations.
-2. `native/pdf_layout.rs`: page slot geometry and visible range math.
-3. `native/pdf_page_cache.rs`: image cache and eviction policy.
-4. `native/views/interactive_pdf.rs`: page drawing and pointer interaction.
-5. `native/app.rs`: task scheduling and pane coordination.
+- `core` must never depend on `native`.
+- `core` must not import Iced or native presentation modules.
+- `native/src/views` may compose UI and map messages. It must not import
+  `rusqlite` or `pdfium-render`.
+- Filesystem, SQLite, PDFium, and OS APIs stay behind core or platform
+  boundaries as those boundaries are extracted.
+- New direct `rusqlite` use in native is forbidden. Existing uses in
+  `native/src/app.rs` and `native/src/integrity.rs` are migration debt tracked
+  by `scripts/architecture-check.sh`.
 
-## High-Risk Boundaries
+See [ADR-0001](adr/0001-dependency-direction.md) and
+[ADR-0003](adr/0003-repository-boundaries.md).
 
-- Do not mutate markdown text directly from `app.rs`; use `EditorCommand`.
-- Do not parse markdown inside renderer.
-- Do not perform full-document measurement or drawing in renderer hot paths.
-- Do not mix absolute filesystem paths with vault-relative paths.
-- Do not mix 0-based page indexes with 1-based page labels.
-- Do not store user documents in SQLite; vault files remain normal files.
+## Application Coordination
 
-## Refactor Targets
+- Top-level application update routes messages and coordinates cross-feature
+  outcomes.
+- Feature state owns feature-specific derived state and invalidation.
+- Feature reducers may construct typed tasks or effects. They must not execute
+  filesystem, database, or PDFium work directly.
+- Shared source of truth remains singular; feature states must not maintain
+  unsynchronized copies.
+- Cross-feature actions use explicit messages or typed effects, not a global
+  event bus.
 
-When touching these areas repeatedly, prefer extracting modules:
+See [ADR-0002](adr/0002-feature-reducers-and-messages.md).
 
-- `native/src/pdf_navigation.rs`: PDF/back-forward/page target behavior.
-- `native/src/pdf_links.rs`: `pdf://` parsing and quote/link construction.
-- `native/src/editor_actions.rs`: app-level editor command helpers.
-- `native/src/media_cache.rs`: image/math cache loading and diagnostics.
+## Editor Pipeline
 
-Extraction rule: move behavior only when tests already cover it or the move adds
-tests in the same change.
+Ownership order:
+
+1. `native/src/editor/buffer.rs`: source, cursor, selection, undo/redo, commands.
+2. `native/src/editor/highlight.rs`: markdown parsing and styled projection.
+3. `native/src/editor/layout_tree.rs` and `layout_cache.rs`: measured layout.
+4. `native/src/editor/renderer.rs`: widget layout, drawing, hit testing, movement.
+
+Rules:
+
+- Markdown document mutations go through `EditorCommand`.
+- Direct `DocBuffer::set_text` is allowed only for file load, an explicit
+  whole-buffer transaction, or tests.
+- Markdown grammar and parsing stay in `native/src/editor/highlight.rs` or its
+  future submodules under `native/src/editor`.
+- Renderer consumes parser output. It must not call markdown parsers or import
+  parser implementation crates.
+- Renderer layout and drawing must remain proportional to visible content.
+- Buffer domain code must not depend on Iced.
+
+## PDF Pipeline
+
+Ownership order:
+
+1. `core/src/pdf.rs`: PDFium adapter, extraction, search, annotations.
+2. `native/src/pdf_layout.rs`: page geometry and visible ranges.
+3. `native/src/pdf_page_cache.rs`: image cache and eviction.
+4. `native/src/views/interactive_pdf.rs`: drawing and pointer interaction.
+5. Application coordination: task scheduling and pane state.
+
+Rules:
+
+- `page_index` means 0-based internal index.
+- `page_number` means 1-based UI or link label.
+- PDF annotations remain sidecar data; source PDFs are never mutated.
+- PDF rendering and scheduling remain viewport-bounded.
+
+## Paths And Persistence
+
+- `vault_path` means vault-relative path.
+- `abs_path` means absolute filesystem path.
+- Resolve vault paths through one checked boundary; reject traversal outside
+  vault root.
+- User markdown and PDF files remain normal files, never SQLite blobs.
+- Schema changes require migrations and fresh-database plus upgrade tests.
+
+See [ADR-0004](adr/0004-path-and-page-types.md).
+
+## Enforcement
+
+`scripts/architecture-check.sh` hard-fails:
+
+- reverse `core -> native` dependency;
+- UI dependencies imported by `core`;
+- SQLite or PDFium imported by views;
+- markdown parser implementation used by renderer production code;
+- direct buffer `set_text` in production code.
+
+Known migration debt is warning-only until owning phase removes it:
+
+- native direct SQLite use;
+- public infrastructure fields on `AppState`;
+- oversized source files.
+
+When a warning reaches zero, convert it to a hard failure in same change.
