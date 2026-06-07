@@ -6,8 +6,8 @@ use crate::app_shell::{
     AppShellInputs, AppShellMode, AppShellPane, AppShellPersistence, AppShellState, AppShellStatus,
     AppShellStatusInputs, WorkflowSidebarTab,
 };
-use crate::pdf_layout::PdfLayout;
-use crate::pdf_page_cache::PdfPageCache;
+use crate::features::pdf::state::PdfPageCache;
+use crate::features::pdf::view_model::PdfLayout;
 use image::GenericImageView;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,14 +15,16 @@ use std::time::{Duration, Instant};
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::parser;
 use crate::features::overlays::OverlayState;
-use crate::features::search::{PdfSearchState, SearchState};
+use crate::features::pdf::annotations::{
+    build_linked_pdf_note_content, normalize_note_path, note_filename_from_path, slug_fragment,
+};
+use crate::features::pdf::navigation::{build_pdf_link, parse_pdf_link};
+use crate::features::pdf::search::PdfSearchState;
+use crate::features::pdf::state::PdfViewState;
+use crate::features::search::SearchState;
 use crate::features::tracker::TrackerState;
 use crate::features::workspace::WorkspaceState;
 use crate::messages::{EditorBlockActionKind, Message, SearchWrapStatus, Shortcut};
-use crate::pdf_links::{build_pdf_link, parse_pdf_link};
-use crate::pdf_notes::{
-    build_linked_pdf_note_content, normalize_note_path, note_filename_from_path, slug_fragment,
-};
 use crate::search::DocumentMatch;
 use crate::theme as app_theme;
 use crate::views;
@@ -120,18 +122,9 @@ fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
     text.chars().skip(start).take(end - start).collect()
 }
 
+use crate::features::pdf::navigation::NavigationTarget;
 #[cfg(test)]
-use crate::pdf_navigation::NavigationHistory;
-use crate::pdf_navigation::NavigationTarget;
-
-#[derive(Debug, Clone)]
-pub struct PdfViewState {
-    pub zoom: f32,
-    pub page_sizes: Vec<Option<(f32, f32)>>,
-    pub page_cache: PdfPageCache,
-    pub layout: PdfLayout,
-    pub search: PdfSearchState,
-}
+use crate::features::pdf::navigation::NavigationHistory;
 
 pub struct MdEditor {
     state: Arc<md_editor_core::state::AppState>,
@@ -616,14 +609,14 @@ impl MdEditor {
                     self.set_active_panel(ActivePanel::Pdf);
 
                     if self.pdf_paths_match(self.active_pdf_path.as_deref(), &resolved_pdf_path) {
-                        if let Some(ref ann_id) = target.annotation_id {
+                        if let Some(ann_id) = &target.annotation_id {
                             if let Some((target_page, _)) = self.find_pdf_annotation(ann_id) {
-                                self.focused_annotation_id = Some(ann_id.clone());
+                                self.focused_annotation_id = Some(ann_id.to_string());
                                 return self.navigate_pdf_page(target_page);
                             }
 
-                            self.pdf_initial_target_annotation = Some(ann_id.clone());
-                            self.focused_annotation_id = Some(ann_id.clone());
+                            self.pdf_initial_target_annotation = Some(ann_id.to_string());
+                            self.focused_annotation_id = Some(ann_id.to_string());
                         }
 
                         if let Some(p) = target.page {
@@ -3199,7 +3192,7 @@ impl MdEditor {
                                 {
                                     if let Ok(existing_content) = String::from_utf8(bytes) {
                                         let updated_content =
-                                            crate::pdf_notes::sync_annotation_note_in_markdown(
+                                            crate::features::pdf::annotations::sync_annotation_note_in_markdown(
                                                 &existing_content,
                                                 path,
                                                 &ann,
@@ -3872,11 +3865,12 @@ impl MdEditor {
 
                         if let Some(f) = file {
                             let dest_path = f.path().to_path_buf();
-                            let content = crate::pdf_notes::export_annotations_to_markdown(
-                                &pdf_filename,
-                                &path_str,
-                                &annotations_list,
-                            );
+                            let content =
+                                crate::features::pdf::annotations::export_annotations_to_markdown(
+                                    &pdf_filename,
+                                    &path_str,
+                                    &annotations_list,
+                                );
                             match std::fs::write(&dest_path, content) {
                                 Ok(()) => Ok(dest_path.to_string_lossy().to_string()),
                                 Err(e) => Err(format!("Failed to write file: {}", e)),
@@ -6041,7 +6035,11 @@ impl MdEditor {
                 page_index,
                 snippet,
             } => {
-                let link = crate::pdf_links::build_pdf_link(&path, Some(page_index + 1), None);
+                let link = crate::features::pdf::navigation::build_pdf_link(
+                    &path,
+                    Some(page_index + 1),
+                    None,
+                );
                 let command = crate::editor::buffer::EditorCommand::InsertPdfQuoteLink {
                     selected_text: snippet,
                     page_number: page_index + 1,
@@ -7128,7 +7126,11 @@ fn format_citation_item_as_markdown(
     match item {
         crate::messages::CitationItem::Selection { text, page_index } => {
             let pdf_path = active_pdf_path.unwrap_or("document.pdf");
-            let link = crate::pdf_links::build_pdf_link(pdf_path, Some(page_index + 1), None);
+            let link = crate::features::pdf::navigation::build_pdf_link(
+                pdf_path,
+                Some(page_index + 1),
+                None,
+            );
             format!(
                 "> {}\n> [Selection (Page {})]({})\n\n",
                 text.trim().replace('\n', "\n> "),
@@ -7142,7 +7144,11 @@ fn format_citation_item_as_markdown(
             page_index,
         } => {
             let pdf_path = active_pdf_path.unwrap_or("document.pdf");
-            let link = crate::pdf_links::build_pdf_link(pdf_path, Some(page_index + 1), Some(id));
+            let link = crate::features::pdf::navigation::build_pdf_link(
+                pdf_path,
+                Some(page_index + 1),
+                Some(id),
+            );
             format!(
                 "> {}\n> [Highlight (Page {})]({})\n\n",
                 text.trim().replace('\n', "\n> "),
@@ -7155,7 +7161,8 @@ fn format_citation_item_as_markdown(
             page_index,
             snippet,
         } => {
-            let link = crate::pdf_links::build_pdf_link(path, Some(page_index + 1), None);
+            let link =
+                crate::features::pdf::navigation::build_pdf_link(path, Some(page_index + 1), None);
             format!(
                 "> {}\n> [PDF Text (Page {})]({})\n\n",
                 snippet.trim().replace('\n', "\n> "),
@@ -9059,8 +9066,9 @@ mod tests {
         };
 
         // Create the linked note file with initial empty content
-        let initial_content =
-            crate::pdf_notes::new_linked_pdf_note_content(note_path, pdf_path, &ann);
+        let initial_content = crate::features::pdf::annotations::new_linked_pdf_note_content(
+            note_path, pdf_path, &ann,
+        );
         std::fs::write(root.join(note_path), &initial_content).unwrap();
 
         app.state

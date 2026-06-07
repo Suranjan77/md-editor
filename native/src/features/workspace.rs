@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::pdf_navigation::NavigationHistory;
+use crate::features::pdf::navigation::NavigationHistory;
 
 #[derive(Debug, Default)]
 pub(crate) struct WorkspaceState {
@@ -71,13 +71,13 @@ mod tests {
             }],
             ..WorkspaceState::default()
         };
-        state
-            .navigation_history
-            .push(crate::pdf_navigation::NavigationTarget::Markdown {
+        state.navigation_history.push(
+            crate::features::pdf::navigation::NavigationTarget::Markdown {
                 path: "notes/current.md".to_string(),
                 line: 0,
                 column: 0,
-            });
+            },
+        );
 
         state.clear_active_markdown();
 
