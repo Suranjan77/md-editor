@@ -7412,7 +7412,18 @@ mod tests {
     }
 
     fn app_without_vault() -> MdEditor {
-        MdEditor::new().0
+        let mut app = MdEditor::new().0;
+        app.vault_root = None;
+        app.vault_entries.clear();
+        app.selected_path = None;
+        app.active_path = None;
+        app.active_pdf_path = None;
+        app.active_image_path = None;
+        app.active_image = None;
+        app.showing_pdf = false;
+        app.split_view_active = false;
+        app.navigation_history = NavigationHistory::default();
+        app
     }
 
     fn app_with_vault() -> MdEditor {
@@ -9319,7 +9330,7 @@ mod tests {
 
     #[test]
     fn test_cross_pane_navigation_history() {
-        let mut app = MdEditor::new().0;
+        let mut app = app_without_vault();
         let root = unique_temp_dir("cross_pane_nav_test");
         std::fs::create_dir_all(&root).unwrap();
         let root_str = root.to_str().unwrap().to_string();
@@ -9464,7 +9475,7 @@ mod tests {
 
     #[test]
     fn test_global_unified_search() {
-        let mut app = MdEditor::new().0;
+        let mut app = app_without_vault();
         let root = unique_temp_dir("test_global_unified_search_dir");
         std::fs::create_dir_all(&root).unwrap();
         let root_str = root.to_str().unwrap().to_string();
