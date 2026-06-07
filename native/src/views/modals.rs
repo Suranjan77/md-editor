@@ -25,7 +25,7 @@ pub enum PdfContextMenuItem {
     LinkToNote { id: String, page: u16 },
     OpenLinkedNote(String),
     DeleteHighlight(String),
-    OpenLink(md_editor_core::pdf::LinkInfo),
+    OpenLink(md_editor_core::domain::pdf::LinkInfo),
     CopyLink(String),
 }
 
@@ -36,7 +36,7 @@ pub struct PdfContextMenuState {
 }
 
 pub fn pdf_annotation_context_menu_items(
-    ann: &md_editor_core::pdf::PdfAnnotation,
+    ann: &md_editor_core::domain::pdf::PdfAnnotation,
     markdown_open: bool,
 ) -> Vec<PdfContextMenuItem> {
     let mut items = Vec::new();
@@ -770,7 +770,7 @@ mod help_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use md_editor_core::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind};
+    use md_editor_core::domain::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind};
 
     fn annotation(linked_note_path: Option<&str>) -> PdfAnnotation {
         PdfAnnotation {
@@ -786,7 +786,7 @@ mod tests {
             linked_note_path: linked_note_path.map(str::to_string),
             markdown_anchor: None,
             tags: Vec::new(),
-            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }

@@ -27,9 +27,9 @@ pub struct InteractivePdf<'a, Message> {
     page_width: f32,
     page_height: f32,
     page_index: u16,
-    page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
+    page_text: Option<&'a md_editor_core::domain::pdf::PdfPageText>,
     active_selection: Option<PdfSelection>,
-    links: &'a [md_editor_core::pdf::LinkInfo],
+    links: &'a [md_editor_core::domain::pdf::LinkInfo],
     rotation: u16,
     on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
     on_right_click: Box<dyn Fn(f32, f32, iced::Point) -> Message + 'a>,
@@ -47,13 +47,13 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         page_width: f32,
         page_height: f32,
         page_index: u16,
-        page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
-        _highlights: &'a [md_editor_core::pdf::PdfAnnotation],
-        _search_highlights: Vec<md_editor_core::pdf::PdfRect>,
-        _active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
+        page_text: Option<&'a md_editor_core::domain::pdf::PdfPageText>,
+        _highlights: &'a [md_editor_core::domain::pdf::PdfAnnotation],
+        _search_highlights: Vec<md_editor_core::domain::pdf::PdfRect>,
+        _active_search_highlights: Vec<md_editor_core::domain::pdf::PdfRect>,
         active_selection: Option<PdfSelection>,
         _focused_annotation_id: Option<&'a str>,
-        links: &'a [md_editor_core::pdf::LinkInfo],
+        links: &'a [md_editor_core::domain::pdf::LinkInfo],
         rotation: u16,
         on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a,
         on_right_click: impl Fn(f32, f32, iced::Point) -> Message + 'a,
@@ -93,32 +93,32 @@ impl<'a, Message> InteractivePdf<'a, Message> {
 }
 
 pub(crate) fn search_rect_to_view_rect(
-    rect: &md_editor_core::pdf::PdfRect,
+    rect: &md_editor_core::domain::pdf::PdfRect,
     page_width: f32,
     page_height: f32,
     zoom: f32,
     rotation: u16,
-) -> md_editor_core::pdf::PdfRect {
+) -> md_editor_core::domain::pdf::PdfRect {
     match rotation {
-        90 => md_editor_core::pdf::PdfRect {
+        90 => md_editor_core::domain::pdf::PdfRect {
             x: rect.y * zoom,
             y: rect.x * zoom,
             width: rect.height * zoom,
             height: rect.width * zoom,
         },
-        180 => md_editor_core::pdf::PdfRect {
+        180 => md_editor_core::domain::pdf::PdfRect {
             x: (page_width - rect.x - rect.width) * zoom,
             y: rect.y * zoom,
             width: rect.width * zoom,
             height: rect.height * zoom,
         },
-        270 => md_editor_core::pdf::PdfRect {
+        270 => md_editor_core::domain::pdf::PdfRect {
             x: (page_height - rect.y - rect.height) * zoom,
             y: (page_width - rect.x - rect.width) * zoom,
             width: rect.height * zoom,
             height: rect.width * zoom,
         },
-        _ => md_editor_core::pdf::PdfRect {
+        _ => md_editor_core::domain::pdf::PdfRect {
             x: rect.x * zoom,
             y: (page_height - rect.y - rect.height) * zoom,
             width: rect.width * zoom,
@@ -127,15 +127,29 @@ pub(crate) fn search_rect_to_view_rect(
     }
 }
 
-fn get_annotation_color(color: md_editor_core::pdf::PdfAnnotationColor) -> Color {
+fn get_annotation_color(color: md_editor_core::domain::pdf::PdfAnnotationColor) -> Color {
     match color {
-        md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgba(1.0, 0.92, 0.23, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Green => Color::from_rgba(0.3, 0.85, 0.3, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgba(0.12, 0.53, 0.9, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgba(0.95, 0.3, 0.6, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgba(1.0, 0.6, 0.1, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Red => Color::from_rgba(0.9, 0.1, 0.1, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Purple => Color::from_rgba(0.6, 0.2, 0.8, 0.35),
+        md_editor_core::domain::pdf::PdfAnnotationColor::Yellow => {
+            Color::from_rgba(1.0, 0.92, 0.23, 0.35)
+        }
+        md_editor_core::domain::pdf::PdfAnnotationColor::Green => {
+            Color::from_rgba(0.3, 0.85, 0.3, 0.35)
+        }
+        md_editor_core::domain::pdf::PdfAnnotationColor::Blue => {
+            Color::from_rgba(0.12, 0.53, 0.9, 0.35)
+        }
+        md_editor_core::domain::pdf::PdfAnnotationColor::Pink => {
+            Color::from_rgba(0.95, 0.3, 0.6, 0.35)
+        }
+        md_editor_core::domain::pdf::PdfAnnotationColor::Orange => {
+            Color::from_rgba(1.0, 0.6, 0.1, 0.35)
+        }
+        md_editor_core::domain::pdf::PdfAnnotationColor::Red => {
+            Color::from_rgba(0.9, 0.1, 0.1, 0.35)
+        }
+        md_editor_core::domain::pdf::PdfAnnotationColor::Purple => {
+            Color::from_rgba(0.6, 0.2, 0.8, 0.35)
+        }
     }
 }
 
@@ -165,7 +179,7 @@ pub struct HighlightRect {
 }
 
 fn pdf_rect_to_screen_rect(
-    rect: &md_editor_core::pdf::PdfRect,
+    rect: &md_editor_core::domain::pdf::PdfRect,
     page_width: f32,
     page_height: f32,
     zoom: f32,
@@ -186,10 +200,10 @@ fn build_overlay_quads(
     page_index: u16,
     page_width: f32,
     page_height: f32,
-    page_text: Option<&md_editor_core::pdf::PdfPageText>,
-    highlights: &[md_editor_core::pdf::PdfAnnotation],
-    search_highlights: &[md_editor_core::pdf::PdfRect],
-    active_search_highlights: &[md_editor_core::pdf::PdfRect],
+    page_text: Option<&md_editor_core::domain::pdf::PdfPageText>,
+    highlights: &[md_editor_core::domain::pdf::PdfAnnotation],
+    search_highlights: &[md_editor_core::domain::pdf::PdfRect],
+    active_search_highlights: &[md_editor_core::domain::pdf::PdfRect],
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&str>,
     zoom: f32,
@@ -263,14 +277,14 @@ fn build_overlay_quads(
                 .anchor_idx
                 .max(selection.focus_idx)
                 .saturating_add(1);
-            let selected_chars: Vec<md_editor_core::pdf::PdfTextChar> = page_text
+            let selected_chars: Vec<md_editor_core::domain::pdf::PdfTextChar> = page_text
                 .chars
                 .iter()
                 .filter(|c| c.text_index >= start && c.text_index < end)
                 .cloned()
                 .collect();
 
-            for rect in md_editor_core::pdf::merge_char_rects(&selected_chars) {
+            for rect in md_editor_core::domain::pdf::merge_char_rects(&selected_chars) {
                 let mut screen = pdf_rect_to_screen_rect(
                     &rect,
                     page_text.page_width,
@@ -298,10 +312,10 @@ pub fn pdf_highlight_rects(
     page_index: u16,
     page_width: f32,
     page_height: f32,
-    page_text: Option<&md_editor_core::pdf::PdfPageText>,
-    highlights: &[md_editor_core::pdf::PdfAnnotation],
-    search_highlights: &[md_editor_core::pdf::PdfRect],
-    active_search_highlights: &[md_editor_core::pdf::PdfRect],
+    page_text: Option<&md_editor_core::domain::pdf::PdfPageText>,
+    highlights: &[md_editor_core::domain::pdf::PdfAnnotation],
+    search_highlights: &[md_editor_core::domain::pdf::PdfRect],
+    active_search_highlights: &[md_editor_core::domain::pdf::PdfRect],
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&str>,
     zoom: f32,
@@ -338,7 +352,7 @@ pub fn pdf_highlight_rects(
 }
 
 fn hit_test(
-    page_text: &md_editor_core::pdf::PdfPageText,
+    page_text: &md_editor_core::domain::pdf::PdfPageText,
     point: iced::Point,
     zoom: f32,
     rotation: u16,
@@ -379,7 +393,7 @@ fn hit_test(
     let line = &page_text.lines[best_line_idx];
 
     // Filter characters that belong to this line
-    let line_chars: Vec<&md_editor_core::pdf::PdfTextChar> = page_text
+    let line_chars: Vec<&md_editor_core::domain::pdf::PdfTextChar> = page_text
         .chars
         .iter()
         .filter(|c| {
@@ -775,7 +789,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use md_editor_core::pdf::{
+    use md_editor_core::domain::pdf::{
         PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfPageText, PdfRect, PdfTextChar,
         PdfTextLine,
     };
@@ -812,7 +826,7 @@ mod tests {
             linked_note_path: None,
             markdown_anchor: None,
             tags: Vec::new(),
-            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }

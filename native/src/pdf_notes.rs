@@ -10,7 +10,11 @@ pub enum LinkedNoteTemplate {
 
 #[allow(dead_code)]
 impl LinkedNoteTemplate {
-    pub fn render(&self, pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
+    pub fn render(
+        &self,
+        pdf_path: &str,
+        ann: &md_editor_core::domain::pdf::PdfAnnotation,
+    ) -> String {
         let link = build_pdf_link(pdf_path, Some(ann.page_index + 1), Some(&ann.id));
         match self {
             LinkedNoteTemplate::Default => {
@@ -126,7 +130,7 @@ pub fn build_linked_pdf_note_content_with_template(
     existing: Option<&str>,
     note_path: &str,
     pdf_path: &str,
-    ann: &md_editor_core::pdf::PdfAnnotation,
+    ann: &md_editor_core::domain::pdf::PdfAnnotation,
     template: &LinkedNoteTemplate,
 ) -> LinkedPdfNoteUpdate {
     match existing {
@@ -212,7 +216,7 @@ pub fn build_linked_pdf_note_content(
     existing: Option<&str>,
     note_path: &str,
     pdf_path: &str,
-    ann: &md_editor_core::pdf::PdfAnnotation,
+    ann: &md_editor_core::domain::pdf::PdfAnnotation,
 ) -> LinkedPdfNoteUpdate {
     match existing {
         Some(existing) => {
@@ -239,7 +243,7 @@ pub fn build_linked_pdf_note_content(
 pub fn new_linked_pdf_note_content(
     note_path: &str,
     pdf_path: &str,
-    ann: &md_editor_core::pdf::PdfAnnotation,
+    ann: &md_editor_core::domain::pdf::PdfAnnotation,
 ) -> String {
     format!(
         "---\ntype: pdf-note\nsource_pdf: {}\n---\n\n# {}\n\n{}",
@@ -252,7 +256,7 @@ pub fn new_linked_pdf_note_content(
 pub fn append_linked_pdf_note_section(
     existing: &str,
     pdf_path: &str,
-    ann: &md_editor_core::pdf::PdfAnnotation,
+    ann: &md_editor_core::domain::pdf::PdfAnnotation,
 ) -> String {
     let link = pdf_annotation_link(pdf_path, ann);
     if existing.contains(&link) {
@@ -302,7 +306,7 @@ fn note_title_from_path(path: &str) -> String {
     }
 }
 
-fn pdf_annotation_link(pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
+fn pdf_annotation_link(pdf_path: &str, ann: &md_editor_core::domain::pdf::PdfAnnotation) -> String {
     build_pdf_link(pdf_path, Some(ann.page_index + 1), Some(&ann.id))
 }
 
@@ -325,7 +329,10 @@ fn markdown_quote(text: &str) -> String {
         .join("\n")
 }
 
-fn linked_pdf_note_section(pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
+fn linked_pdf_note_section(
+    pdf_path: &str,
+    ann: &md_editor_core::domain::pdf::PdfAnnotation,
+) -> String {
     format!(
         "## Page {}\n\n{}\n\n[Open highlight in PDF]({})\n\n### Notes\n\n",
         ann.page_index + 1,
@@ -337,7 +344,7 @@ fn linked_pdf_note_section(pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotat
 pub fn export_annotations_to_markdown(
     pdf_filename: &str,
     pdf_path: &str,
-    annotations: &[md_editor_core::pdf::PdfAnnotation],
+    annotations: &[md_editor_core::domain::pdf::PdfAnnotation],
 ) -> String {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let mut doc = format!(
@@ -356,13 +363,13 @@ pub fn export_annotations_to_markdown(
 
     for ann in sorted_anns {
         let col_text = match ann.color {
-            md_editor_core::pdf::PdfAnnotationColor::Yellow => "Yellow",
-            md_editor_core::pdf::PdfAnnotationColor::Green => "Green",
-            md_editor_core::pdf::PdfAnnotationColor::Blue => "Blue",
-            md_editor_core::pdf::PdfAnnotationColor::Pink => "Pink",
-            md_editor_core::pdf::PdfAnnotationColor::Orange => "Orange",
-            md_editor_core::pdf::PdfAnnotationColor::Red => "Red",
-            md_editor_core::pdf::PdfAnnotationColor::Purple => "Purple",
+            md_editor_core::domain::pdf::PdfAnnotationColor::Yellow => "Yellow",
+            md_editor_core::domain::pdf::PdfAnnotationColor::Green => "Green",
+            md_editor_core::domain::pdf::PdfAnnotationColor::Blue => "Blue",
+            md_editor_core::domain::pdf::PdfAnnotationColor::Pink => "Pink",
+            md_editor_core::domain::pdf::PdfAnnotationColor::Orange => "Orange",
+            md_editor_core::domain::pdf::PdfAnnotationColor::Red => "Red",
+            md_editor_core::domain::pdf::PdfAnnotationColor::Purple => "Purple",
         };
 
         doc.push_str(&format!(
@@ -403,7 +410,7 @@ pub fn export_annotations_to_markdown(
 pub fn sync_annotation_note_in_markdown(
     content: &str,
     pdf_path: &str,
-    ann: &md_editor_core::pdf::PdfAnnotation,
+    ann: &md_editor_core::domain::pdf::PdfAnnotation,
 ) -> String {
     let link = pdf_annotation_link(pdf_path, ann);
     let link_pos = match content.find(&link) {
@@ -467,13 +474,13 @@ mod tests {
         id: &str,
         page_index: u16,
         selected_text: &str,
-    ) -> md_editor_core::pdf::PdfAnnotation {
-        md_editor_core::pdf::PdfAnnotation {
+    ) -> md_editor_core::domain::pdf::PdfAnnotation {
+        md_editor_core::domain::pdf::PdfAnnotation {
             id: id.to_string(),
             document_id: "doc".to_string(),
             page_index,
-            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-            color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+            kind: md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
+            color: md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
             selected_text: selected_text.to_string(),
             ranges: vec![],
             rects: vec![],
@@ -481,7 +488,7 @@ mod tests {
             linked_note_path: None,
             markdown_anchor: None,
             tags: Vec::new(),
-            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }
@@ -506,7 +513,7 @@ mod tests {
         assert!(content.contains("### Notes"));
         assert!(!content.contains("pdf_annotation:"));
 
-        let ann2 = md_editor_core::pdf::PdfAnnotation {
+        let ann2 = md_editor_core::domain::pdf::PdfAnnotation {
             id: "fedcba654321".to_string(),
             page_index: 7,
             selected_text: "Second highlight".to_string(),
@@ -574,12 +581,12 @@ mod tests {
 
     #[test]
     fn test_export_annotations() {
-        let ann1 = md_editor_core::pdf::PdfAnnotation {
+        let ann1 = md_editor_core::domain::pdf::PdfAnnotation {
             id: "1".to_string(),
             document_id: "doc".to_string(),
             page_index: 2,
-            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-            color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+            kind: md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
+            color: md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
             selected_text: "First".to_string(),
             ranges: vec![],
             rects: vec![],
@@ -587,14 +594,14 @@ mod tests {
             linked_note_path: None,
             markdown_anchor: None,
             tags: Vec::new(),
-            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 10,
             updated_at: 10,
         };
-        let ann2 = md_editor_core::pdf::PdfAnnotation {
+        let ann2 = md_editor_core::domain::pdf::PdfAnnotation {
             id: "2".to_string(),
             page_index: 0,
-            color: md_editor_core::pdf::PdfAnnotationColor::Green,
+            color: md_editor_core::domain::pdf::PdfAnnotationColor::Green,
             selected_text: "Second".to_string(),
             note: None,
             created_at: 5,

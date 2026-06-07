@@ -452,12 +452,12 @@ mod tests {
             .unwrap();
 
         // Save annotation with linked note path pointing to note.md
-        let ann = crate::pdf::PdfAnnotation {
+        let ann = crate::domain::pdf::PdfAnnotation {
             id: "ann-123".to_string(),
             document_id: "doc-id-123".to_string(),
             page_index: 2,
-            kind: crate::pdf::PdfAnnotationKind::Highlight,
-            color: crate::pdf::PdfAnnotationColor::Yellow,
+            kind: crate::domain::pdf::PdfAnnotationKind::Highlight,
+            color: crate::domain::pdf::PdfAnnotationColor::Yellow,
             selected_text: "Important highlight".to_string(),
             ranges: vec![],
             rects: vec![],
@@ -465,7 +465,7 @@ mod tests {
             linked_note_path: Some(note_path.to_string()),
             markdown_anchor: None,
             tags: vec!["tag1".to_string()],
-            status: crate::pdf::PdfAnnotationStatus::Unresolved,
+            status: crate::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         };
