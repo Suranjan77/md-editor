@@ -74,7 +74,7 @@ pub enum Message {
         viewport_height: f32,
     },
     ScrollEditorToTarget(f32),
-    HighlightReady(u64, Vec<crate::editor::highlight::StyledLine>),
+    HighlightReady(u64, Vec<crate::editor::parser::StyledLine>),
     HighlightDebounceElapsed,
     EditorAutosaveElapsed,
 

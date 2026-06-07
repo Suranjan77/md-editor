@@ -4,10 +4,10 @@ use iced::{Alignment, Background, Border, Element, Length, Padding, Renderer, Th
 use crate::messages::Message;
 use crate::theme;
 
-pub type TocEntry = crate::editor::highlight::OutlineEntry;
+pub type TocEntry = crate::editor::parser::OutlineEntry;
 
-pub fn get_toc(lines: &[crate::editor::highlight::StyledLine]) -> Vec<TocEntry> {
-    crate::editor::highlight::extract_outline(lines)
+pub fn get_toc(lines: &[crate::editor::parser::StyledLine]) -> Vec<TocEntry> {
+    crate::editor::parser::extract_outline(lines)
 }
 
 pub fn view<'a>(

@@ -1,4 +1,4 @@
-use crate::editor::highlight;
+use crate::editor::parser;
 use crate::pdf_links::parse_pdf_link;
 use md_editor_core::state::AppState;
 use serde::{Deserialize, Serialize};
@@ -182,8 +182,8 @@ pub fn check_vault_integrity(
             Err(_) => continue,
         };
 
-        let highlighted = highlight::highlight_markdown(&content);
-        let metadata = highlight::extract_document_metadata(&highlighted);
+        let highlighted = parser::highlight_markdown(&content);
+        let metadata = parser::extract_document_metadata(&highlighted);
 
         for link in metadata.links {
             let target = link.target.trim();
