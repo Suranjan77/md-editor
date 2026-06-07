@@ -6311,7 +6311,7 @@ impl MdEditor {
     }
 
     fn run_editor_command(&mut self, command: EditorCommand) -> Task<Message> {
-        let keep_cursor_visible = editor_command_keeps_cursor_visible(&command);
+        let keep_cursor_visible = command.should_keep_cursor_visible();
         self.run_editor_command_with_scroll(command, keep_cursor_visible)
     }
 
@@ -6610,40 +6610,6 @@ impl MdEditor {
             h as f32 / 2.0,
         ))
     }
-}
-
-fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
-    matches!(
-        command,
-        EditorCommand::InsertText(_)
-            | EditorCommand::DeleteSelection
-            | EditorCommand::DeleteBackward
-            | EditorCommand::DeleteForward
-            | EditorCommand::MoveCursor { .. }
-            | EditorCommand::SetCursor { .. }
-            | EditorCommand::SetSelection { .. }
-            | EditorCommand::SelectAll
-            | EditorCommand::ToggleCheckbox { .. }
-            | EditorCommand::FormatBold
-            | EditorCommand::FormatItalic
-            | EditorCommand::FormatInlineCode
-            | EditorCommand::InsertLink
-            | EditorCommand::ToggleHeading
-            | EditorCommand::ToggleBlockquote
-            | EditorCommand::ToggleUnorderedList
-            | EditorCommand::ToggleOrderedList
-            | EditorCommand::InsertCodeBlock
-            | EditorCommand::InsertMathBlock
-            | EditorCommand::InsertTable
-            | EditorCommand::InsertPdfQuoteLink { .. }
-            | EditorCommand::InsertPdfAnnotationLink { .. }
-            | EditorCommand::DuplicateLine
-            | EditorCommand::MoveLineUp
-            | EditorCommand::MoveLineDown
-            | EditorCommand::ReplaceAll { .. }
-            | EditorCommand::Undo
-            | EditorCommand::Redo
-    )
 }
 
 fn plain_highlight_placeholders(text: &str) -> Vec<parser::StyledLine> {
@@ -8121,7 +8087,7 @@ mod tests {
 
     #[test]
     fn insert_text_keeps_cursor_visible_after_enter_at_eof() {
-        assert!(editor_command_keeps_cursor_visible(
+        assert!(EditorCommand::should_keep_cursor_visible(
             &EditorCommand::InsertText("\n".to_string())
         ));
     }
