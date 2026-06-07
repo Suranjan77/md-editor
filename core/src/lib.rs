@@ -2,6 +2,7 @@
 
 pub mod config;
 mod database;
+pub mod domain;
 pub mod file_index;
 pub mod pdf;
 pub mod state;
