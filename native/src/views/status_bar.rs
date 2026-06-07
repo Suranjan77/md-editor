@@ -49,20 +49,12 @@ pub fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer>
 
     // 2. Save status
     let save_element: Element<'a, Message, Theme, Renderer> = match status.save_status {
-        SaveStatus::Unsaved => row![
-            text("●").size(11).color(theme::danger()),
-            text("Unsaved").size(11).color(theme::text_secondary())
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .into(),
-        SaveStatus::Saved => row![
-            text("✓").size(11).color(theme::accent()),
-            text("Saved").size(11).color(theme::text_muted())
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .into(),
+        SaveStatus::Unsaved => row![text("●").size(14).color(theme::danger())]
+            .align_y(Alignment::Center)
+            .into(),
+        SaveStatus::Saved => row![text("●").size(14).color(theme::success())]
+            .align_y(Alignment::Center)
+            .into(),
         SaveStatus::NoDocument => Space::new().width(Length::Fixed(0.0)).into(),
     };
 
@@ -123,7 +115,7 @@ pub fn view<'a>(status: AppShellStatus) -> Element<'a, Message, Theme, Renderer>
 
     container(content)
         .width(Length::Fill)
-        .height(Length::Fixed(28.0))
+        .center_y(Length::Fixed(28.0))
         .padding([2, 12])
         .style(|_| container::Style {
             background: Some(Background::Color(theme::bg_secondary())),

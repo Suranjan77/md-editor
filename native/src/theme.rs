@@ -63,14 +63,14 @@ pub const LIGHT_BORDER: Color = Color::from_rgb8(184, 192, 197); // #b8c0c5
 pub const LIGHT_BORDER_SUBTLE: Color = Color::from_rgb8(216, 222, 225); // #d8dee1
 pub const LIGHT_TEXT_PRIMARY: Color = Color::from_rgb8(27, 30, 34); // #1b1e22
 pub const LIGHT_TEXT_SECONDARY: Color = Color::from_rgb8(72, 79, 86); // #484f56
-pub const LIGHT_TEXT_MUTED: Color = Color::from_rgb8(118, 128, 135); // #768087
+pub const LIGHT_TEXT_MUTED: Color = Color::from_rgb8(92, 101, 108); // #5c656c
 pub const LIGHT_ACCENT: Color = Color::from_rgb8(46, 92, 84); // #2e5c54
 pub const LIGHT_ACCENT_SECONDARY: Color = Color::from_rgb8(65, 125, 114); // #417d72
 pub const LIGHT_ACCENT_GLOW: Color = Color::from_rgba8(46, 92, 84, 0.5);
 pub const LIGHT_ACCENT_DIM: Color = Color::from_rgba8(46, 92, 84, 0.25);
 pub const LIGHT_DANGER: Color = Color::from_rgb8(192, 57, 43); // #c0392b
-pub const LIGHT_SUCCESS: Color = Color::from_rgb8(39, 174, 96); // #27ae60
-pub const LIGHT_WARNING: Color = Color::from_rgb8(230, 126, 34); // #e67e22
+pub const LIGHT_SUCCESS: Color = Color::from_rgb8(31, 122, 70); // #1f7a46
+pub const LIGHT_WARNING: Color = Color::from_rgb8(154, 79, 0); // #9a4f00
 
 // ── High Contrast Theme Colors ───────────────────────────────────────
 pub const HC_BG_PRIMARY: Color = Color::from_rgb8(0, 0, 0); // #000000
@@ -266,14 +266,6 @@ pub fn warning() -> Color {
     }
 }
 
-pub fn active_line_bg() -> Color {
-    match get_active_theme() {
-        AppTheme::Dark => Color::from_rgba8(177, 204, 198, 0.06),
-        AppTheme::Light => Color::from_rgba8(46, 92, 84, 0.06),
-        AppTheme::HighContrast => Color::from_rgba8(0, 255, 255, 0.08),
-    }
-}
-
 /// Build the custom theme dynamically based on current configuration.
 pub fn md_editor_theme() -> Theme {
     match get_active_theme() {
@@ -313,5 +305,81 @@ pub fn md_editor_theme() -> Theme {
             },
             |palette| iced::theme::palette::Extended::generate(palette),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn linear_channel(channel: f32) -> f32 {
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn luminance(color: Color) -> f32 {
+        0.2126 * linear_channel(color.r)
+            + 0.7152 * linear_channel(color.g)
+            + 0.0722 * linear_channel(color.b)
+    }
+
+    fn contrast_ratio(a: Color, b: Color) -> f32 {
+        let (lighter, darker) = if luminance(a) >= luminance(b) {
+            (luminance(a), luminance(b))
+        } else {
+            (luminance(b), luminance(a))
+        };
+        (lighter + 0.05) / (darker + 0.05)
+    }
+
+    #[test]
+    fn theme_text_and_status_colors_meet_normal_text_contrast() {
+        let palettes = [
+            (
+                DARK_BG_PRIMARY,
+                [
+                    DARK_TEXT_PRIMARY,
+                    DARK_TEXT_SECONDARY,
+                    DARK_TEXT_MUTED,
+                    DARK_DANGER,
+                    DARK_SUCCESS,
+                    DARK_WARNING,
+                ],
+            ),
+            (
+                LIGHT_BG_PRIMARY,
+                [
+                    LIGHT_TEXT_PRIMARY,
+                    LIGHT_TEXT_SECONDARY,
+                    LIGHT_TEXT_MUTED,
+                    LIGHT_DANGER,
+                    LIGHT_SUCCESS,
+                    LIGHT_WARNING,
+                ],
+            ),
+            (
+                HC_BG_PRIMARY,
+                [
+                    HC_TEXT_PRIMARY,
+                    HC_TEXT_SECONDARY,
+                    HC_TEXT_MUTED,
+                    HC_DANGER,
+                    HC_SUCCESS,
+                    HC_WARNING,
+                ],
+            ),
+        ];
+
+        for (background, colors) in palettes {
+            for color in colors {
+                assert!(
+                    contrast_ratio(color, background) >= 4.5,
+                    "{color:?} must meet 4.5:1 against {background:?}"
+                );
+            }
+        }
     }
 }

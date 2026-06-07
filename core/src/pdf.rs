@@ -1362,18 +1362,11 @@ fn bind_pdfium() -> Result<Pdfium, String> {
 
     let res = BIND_RESULT.get_or_init(|| {
         let lib_name = Pdfium::pdfium_platform_library_name();
-        let mut candidates = Vec::new();
-
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            candidates.push(dir.join("resources").join(&lib_name));
-            candidates.push(dir.join(&lib_name));
-        }
-        candidates.push(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("pdfium")
-                .join(&lib_name),
+        let exe_path = std::env::current_exe().ok();
+        let candidates = pdfium_library_candidates(
+            exe_path.as_deref(),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+            std::path::Path::new(&lib_name),
         );
 
         let mut bound = false;
@@ -1414,9 +1407,50 @@ fn bind_pdfium() -> Result<Pdfium, String> {
     }
 }
 
+fn pdfium_library_candidates(
+    exe_path: Option<&std::path::Path>,
+    manifest_dir: &std::path::Path,
+    lib_name: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(exe_dir) = exe_path.and_then(std::path::Path::parent) {
+        candidates.push(exe_dir.join("resources").join(lib_name));
+        candidates.push(exe_dir.join(lib_name));
+
+        if exe_dir.file_name().is_some_and(|name| name == "MacOS")
+            && exe_dir
+                .parent()
+                .and_then(std::path::Path::file_name)
+                .is_some_and(|name| name == "Contents")
+            && let Some(contents_dir) = exe_dir.parent()
+        {
+            candidates.push(contents_dir.join("Resources").join(lib_name));
+        }
+    }
+
+    candidates.push(manifest_dir.join("pdfium").join(lib_name));
+    candidates
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pdfium_candidates_include_standard_macos_app_resources() {
+        let candidates = pdfium_library_candidates(
+            Some(std::path::Path::new(
+                "/Applications/MD Editor.app/Contents/MacOS/md-editor",
+            )),
+            std::path::Path::new("/workspace/core"),
+            std::path::Path::new("libpdfium.dylib"),
+        );
+
+        assert!(candidates.contains(&std::path::PathBuf::from(
+            "/Applications/MD Editor.app/Contents/Resources/libpdfium.dylib"
+        )));
+    }
 
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

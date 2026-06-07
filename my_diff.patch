@@ -1,0 +1,231 @@
+Created At: 2026-06-07T16:56:59Z
+Completed At: 2026-06-07T16:57:21Z
+
+				The command completed successfully.
+				Output:
+				<truncated 1738 lines>
++            .expect("wide layout should support split resize");
++        assert!((ratio - 0.6).abs() < 0.001);
++
++        let left = split_ratio_from_pointer(0.0, 1400.0, 320.0, 300.0, 240.0, 0.25, 0.75)
++            .expect("wide layout should clamp left");
++        let right = split_ratio_from_pointer(1400.0, 1400.0, 320.0, 300.0, 240.0, 0.25, 0.75)
++            .expect("wide layout should clamp right");
++        assert!((left - (240.0 / 768.0)).abs() < 0.001);
++        assert!((right - (528.0 / 768.0)).abs() < 0.001);
++    }
++
++    #[test]
++    fn narrow_layout_rejects_split_drag_and_resize_ends_active_drag() {
++        let mut app = app_with_split_research();
++        app.window_width = 600.0;
++        app.split_ratio = 0.62;
++
++        let _ = app.update(Message::SplitViewDragStart);
++        assert!(!app.is_resizing_split);
++        assert!((app.split_ratio - 0.62).abs() < f32::EPSILON);
++
++        app.window_width = 1200.0;
++        let _ = app.update(Message::SplitViewDragStart);
++        assert!(app.is_resizing_split);
++        let _ = app.update(Message::WindowResized(600.0, 700.0));
++        assert!(!app.is_resizing_split);
++    }
++
++    #[test]
++    fn split_divider_hover_state_tracks_pointer() {
++        let mut app = app_with_split_research();
++
++        let _ = app.update(Message::SplitViewDividerHovered(true));
++        assert!(app.split_divider_hovered);
++
++        let _ = app.update(Message::SplitViewDividerHovered(false));
++        assert!(!app.split_divider_hovered);
++    }
++
++    #[test]
++    fn narrow_split_hides_workflow_panel() {
++        let mut app = app_with_split_research();
++        app.window_width = 600.0;
++        app.toc_visible = true;
++
++        let mut ui = iced_test::simulator(app.view());
++
++        assert!(ui.find("OUTLINE").is_err());
++    }
++
++    #[test]
++    fn active_split_pane_uses_accent_border() {
++        let active = split_pane_border(true);
++        let inactive = split_pane_border(false);
++
++        assert_eq!(active.color, app_theme::accent());
++        assert_eq!(active.width, 2.0);
++        assert_eq!(inactive.color, app_theme::border());
++        assert_eq!(inactive.width, 1.0);
++    }
++
+     #[test]
+     fn app_shell_persistence_round_trips_through_config() {
+         let mut app = app_with_split_research();
+@@ -8315,6 +9097,14 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn pdf_render_scale_preserves_supersampling_on_standard_dpi() {
++        assert_eq!(pdf_render_scale(1.0), MIN_PDF_RENDER_SCALE);
++        assert_eq!(pdf_render_scale(1.5), MIN_PDF_RENDER_SCALE);
++        assert_eq!(pdf_render_scale(2.0), 2.0);
++        assert_eq!(pdf_render_scale(2.5), 2.5);
++    }
++
+     #[test]
+     fn pdf_placeholder_prefers_first_page_size_over_rendered_dimensions() {
+         assert_eq!(
+@@ -8726,6 +9516,37 @@ mod tests {
+         assert!(app.pdf_annotations.values().all(Vec::is_empty));
+     }
+ 
++    #[test]
++    fn pdf_annotation_variant_shortcuts_without_selection_show_toasts() {
++        let mut app = app_with_pdf_file();
++
++        let _ = app.update(Message::KeyboardShortcut(Shortcut::PdfUnderline));
++        assert_eq!(
++            app.toast.as_deref(),
++            Some("Select PDF text before underlining")
++        );
++
++        let _ = app.update(Message::KeyboardShortcut(Shortcut::PdfStrike));
++        assert_eq!(
++            app.toast.as_deref(),
++            Some("Select PDF text before striking out")
++        );
++        assert!(app.pdf_annotations.values().all(Vec::is_empty));
++    }
++
++    #[test]
++    fn annotation_variant_commands_are_registered_without_conflicts() {
++        let registry = crate::command_registry::get_command_registry();
++
++        assert!(registry.iter().any(|command| {
++            command.id == Shortcut::PdfUnderline && command.default_shortcut == Some("Ctrl+Shift+H")
++        }));
++        assert!(registry.iter().any(|command| {
++            command.id == Shortcut::PdfStrike && command.default_shortcut == Some("Ctrl+Alt+H")
++        }));
++        assert!(crate::command_registry::detect_shortcut_conflicts().is_empty());
++    }
++
+     #[test]
+     fn pdf_create_annotation_uses_selected_pdf_text() {
+         let mut app = app_with_pdf_file();
+@@ -8780,6 +9601,45 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn opening_pdf_companion_note_preserves_reading_position() {
++        let root = unique_temp_dir("pdf_companion_open");
++        std::fs::create_dir_all(root.join("notes")).unwrap();
++        std::fs::write(root.join("notes/paper.md"), "# Companion").unwrap();
++
++        let mut app = MdEditor::new().0;
++        let root_str = root.to_string_lossy().to_string();
++        app.vault_root = Some(root_str.clone());
++        md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
++        app.active_pdf_path = Some("papers/paper.pdf".to_string());
++        app.showing_pdf = true;
++        app.pdf_current_page = 7;
++        app.pdf_scroll_y = 1420.0;
++        app.pdf_state.zoom = 1.75;
++
++        let _ = app.update(Message::PdfOpenCompanionNote("notes/paper.md".to_string()));
++
++        assert_eq!(app.active_path.as_deref(), Some("notes/paper.md"));
++        assert!(app.split_view_active);
++        assert_eq!(app.pdf_current_page, 7);
++        assert_eq!(app.pdf_scroll_y, 1420.0);
++        assert_eq!(app.pdf_state.zoom, 1.75);
++
++        let _ = std::fs::remove_dir_all(root);
++    }
++
++    #[test]
++    fn companion_note_shortcut_reports_missing_mapping() {
++        let mut app = app_with_pdf_file();
++
++        let _ = app.update(Message::KeyboardShortcut(Shortcut::PdfOpenCompanionNote));
++
++        assert_eq!(
++            app.toast.as_deref(),
++            Some("No companion note linked to this PDF")
++        );
++    }
++
+     #[test]
+     fn test_pdf_navigation_history() {
+         let mut history = NavigationHistory::default();
+@@ -9293,6 +10153,10 @@ mod tests {
+         app.vault_root = Some(root_str.clone());
+         md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
+ 
++        app.active_path = None;
++        app.active_pdf_path = None;
++        app.navigation_history.entries.clear();
++
+         // Create a markdown file and a dummy PDF file
+         let note_path = "document.md";
+         let pdf_path = "document.pdf";
+@@ -9369,15 +10233,34 @@ mod tests {
+             table_cells: vec![],
+         }];
+ 
++        app.toast = None;
+         app.buffer.cursor_line = 0;
+         app.buffer.cursor_col = 5;
+-        let _task = app.follow_citation();
++        let task = app.follow_citation();
++        assert!(app.toast.is_none());
++        drop(task);
+ 
+         app.buffer.cursor_col = 50;
+-        let _task_none = app.follow_citation();
++        let task_none = app.follow_citation();
++        assert_eq!(app.toast.as_deref(), Some("No citation under cursor"));
++        drop(task_none);
+ 
++        app.toast = None;
+         app.buffer.cursor_line = 10;
+-        let _task_oob = app.follow_citation();
++        let task_oob = app.follow_citation();
++        assert_eq!(app.toast.as_deref(), Some("No citation under cursor"));
++        drop(task_oob);
++    }
++
++    #[test]
++    fn empty_cross_pane_history_shows_feedback() {
++        let mut app = app_with_markdown_file();
++
++        let _ = app.update(Message::PdfNavBack);
++        assert_eq!(app.toast.as_deref(), Some("No earlier navigation location"));
++
++        let _ = app.update(Message::PdfNavForward);
++        assert_eq!(app.toast.as_deref(), Some("No later navigation location"));
+     }
+ 
+     #[test]
+@@ -9431,6 +10314,10 @@ mod tests {
+ 
+     #[test]
+     fn test_global_unified_search() {
++        let rt = tokio::runtime::Builder::new_current_thread()
++            .build()
++            .unwrap();
++        let _guard = rt.enter();
+         let mut app = MdEditor::new().0;
+         let root = unique_temp_dir("test_global_unified_search_dir");
+         std::fs::create_dir_all(&root).unwrap();
+
+

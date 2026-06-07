@@ -1,10 +1,10 @@
 # UI/UX Release Checklist
 
-Last updated: 2026-06-02
+Last updated: 2026-06-07
 
 Use this checklist during release smoke passes and before closing UI/UX roadmap
-milestones. Record platform-specific failures in `docs/HANDOFF.md` until a
-release signoff document exists.
+milestones. Record platform-specific results in `docs/RELEASE_SIGNOFF.md` and
+active blockers in `docs/HANDOFF.md`.
 
 ## Scope
 
@@ -98,3 +98,7 @@ Run against the primary app screens:
 - Verify window sizing, DPI scaling, portable settings, PDFium diagnostics,
   desktop integration, app icon, and recent-vault restore.
 - Record known limitations with exact platform and date.
+
+Linux release, installer, portable-mode, DPI, and headless search/recovery
+checks passed on 2026-06-07. See `docs/RELEASE_SIGNOFF.md`. Windows and macOS
+remain unverified.

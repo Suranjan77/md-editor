@@ -8,9 +8,9 @@ local release.
 Run the full verification set before packaging:
 
 ```bash
-cargo fmt --check
-cargo check
-cargo test
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 cargo build --release
 ```
 
@@ -19,6 +19,17 @@ Expected release artifacts:
 - Windows: `target/release/md-editor.exe`
 - Linux/macOS: `target/release/md-editor`
 - PDFium shared library copied next to the executable by the build script
+
+Automated release packages:
+
+- Windows x64: `md-editor-windows-x64.zip`
+- Linux x64: `md-editor-linux-x64.tar.gz` and `.zip`
+- macOS Intel: `md-editor-macos-x64.tar.gz`
+- macOS Apple Silicon: `md-editor-macos-arm64.tar.gz`
+
+macOS archives contain `MD Editor.app`, with PDFium in
+`Contents/Resources`. Packages are ad-hoc signed, not notarized. Every release
+archive includes `portable.flag`, so settings stay in extracted package.
 
 ## Smoke Test
 
@@ -66,6 +77,8 @@ verify:
 - reduced-motion limitations for programmatic scroll, progress, and status
   transitions.
 
+Record platform results in `docs/RELEASE_SIGNOFF.md`.
+
 ## PDFium Packaging
 
 PDF support requires the platform PDFium shared library:
@@ -79,12 +92,14 @@ The app searches for the library in:
 1. a `resources` directory next to the executable;
 2. the executable directory itself.
 
-For portable distribution, ship the executable, PDFium library, app icon, and
-license files together.
+For portable distribution, ship executable/app bundle, PDFium library, app
+icon, license, and `portable.flag` together. macOS marker belongs beside
+`MD Editor.app`; settings database is created beside app bundle, not inside it.
 
 ## Linux Desktop Integration
 
-Linux builds are portable by default. Optional desktop integration is explicit:
+Linux release archives are portable by default. Optional desktop integration
+is explicit:
 
 ```bash
 ./md-editor --install
@@ -107,7 +122,7 @@ The current launch candidate includes:
 - searchable note picker for linking PDF highlights;
 - markdown backlinks for notes, PDFs, and PDF highlights;
 - study tracker;
-- portable settings in `md_editor_settings.sqlite` next to the executable.
+- portable release settings plus platform config fallback for unmarked installs.
 
 Known constraints:
 

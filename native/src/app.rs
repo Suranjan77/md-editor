@@ -41,6 +41,7 @@ const PDF_TEXT_INDEX_MAX_PAGES_PER_DOCUMENT: u16 = 3;
 const LARGE_DOC_LINE_THRESHOLD: usize = 1_000;
 const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
+const EDITOR_AUTOSAVE_DELAY: Duration = Duration::from_secs(2);
 const APP_SHELL_PERSISTENCE_CONFIG_KEY: &str = "app_shell_persistence";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,6 +231,7 @@ pub struct MdEditor {
     pdf_selection: Option<views::interactive_pdf::PdfSelection>,
     pdf_annotations: std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
     focused_annotation_id: Option<String>,
+    pending_editor_save: Option<std::time::Instant>,
     pdf_initial_target_page: Option<u16>,
     pdf_initial_target_annotation: Option<String>,
     pdf_pending_text: HashSet<u16>,
@@ -381,6 +383,7 @@ impl MdEditor {
             pdf_selection: None,
             pdf_annotations: std::collections::HashMap::new(),
             focused_annotation_id: None,
+            pending_editor_save: None,
             pdf_initial_target_page: None,
             pdf_initial_target_annotation: None,
             pdf_pending_text: HashSet::new(),
@@ -651,6 +654,13 @@ impl MdEditor {
             Subscription::none()
         };
 
+        let editor_autosave_timer = if self.pending_editor_save.is_some() {
+            iced::time::every(std::time::Duration::from_millis(500))
+                .map(|_| Message::EditorAutosaveElapsed)
+        } else {
+            Subscription::none()
+        };
+
         let mouse_drag = if self.is_resizing_split {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
@@ -682,6 +692,7 @@ impl MdEditor {
             toast,
             highlight_debounce,
             mouse_drag,
+            editor_autosave_timer,
             window_events,
         ])
     }
@@ -1112,12 +1123,15 @@ impl MdEditor {
                 self.toast = Some(format!("Image load failed: {path}: {err}"));
                 Task::none()
             }
-            Message::EditorSave => {
+            Message::EditorSave(is_autosave) => {
+                self.pending_editor_save = None;
                 if let Some(path) = &self.active_path {
                     let content = self.buffer.text();
                     let _ = save_markdown_file_with_parser_targets(&self.state, path, &content);
                     self.buffer.dirty = false;
-                    self.toast = Some("File saved".to_string());
+                    if !is_autosave {
+                        self.toast = Some("File saved".to_string());
+                    }
                 }
                 Task::none()
             }
@@ -1229,6 +1243,15 @@ impl MdEditor {
                     y: target_y,
                 },
             ),
+            Message::EditorAutosaveElapsed => {
+                if let Some(requested) = self.pending_editor_save {
+                    if requested.elapsed() >= EDITOR_AUTOSAVE_DELAY {
+                        self.pending_editor_save = None;
+                        return Task::done(Message::EditorSave(true));
+                    }
+                }
+                Task::none()
+            }
             Message::HighlightDebounceElapsed => {
                 if self
                     .pending_highlight_requested_at
@@ -3518,7 +3541,7 @@ impl MdEditor {
                     }
                     Shortcut::NavBack => Task::done(Message::PdfNavBack),
                     Shortcut::NavForward => Task::done(Message::PdfNavForward),
-                    Shortcut::Save => Task::done(Message::EditorSave),
+                    Shortcut::Save => Task::done(Message::EditorSave(false)),
                     Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
                     Shortcut::NewFile => Task::done(Message::CreateFileDialog),
                     Shortcut::Search => {
@@ -3766,6 +3789,7 @@ impl MdEditor {
                     }
                     Shortcut::FollowCitation => self.follow_citation(),
                     Shortcut::ShowUsages => self.show_usages(),
+                    _ => Task::none(),
                 }
             }
             Message::SplitViewToggle => {
@@ -4054,6 +4078,7 @@ impl MdEditor {
         };
 
         AppShellPersistence {
+            reduce_motion: false,
             sidebar_width: 260.0,
             reference_width: self.pdf_split_ratio * self.window_width,
             workflow_width: 280.0,
@@ -4077,6 +4102,7 @@ impl MdEditor {
 
         AppShellState::derive(
             AppShellInputs {
+                active_pane: AppShellPane::Markdown,
                 vault_open: self.vault_root.is_some(),
                 vault_has_entries: !self.vault_entries.is_empty(),
                 markdown_open: self.active_path.is_some(),
@@ -4093,6 +4119,8 @@ impl MdEditor {
 
     fn app_shell_status(&self, shell_state: AppShellState) -> AppShellStatus {
         AppShellStatus::derive(AppShellStatusInputs {
+            background_status: None,
+            toast: self.toast.clone(),
             document_open: self.active_path.is_some()
                 || self.active_pdf_path.is_some()
                 || self.active_image_path.is_some(),
@@ -4101,7 +4129,6 @@ impl MdEditor {
             global_search_status: self.global_search_pdf_status.clone(),
             global_search_visible: self.search_visible,
             active_pane: shell_state.active_pane,
-            toast: self.toast.clone(),
             background_error: self
                 .global_search_error
                 .clone()
@@ -4169,7 +4196,7 @@ impl MdEditor {
         let shell_status = self.app_shell_status(shell_state);
 
         if matches!(shell_state.mode, AppShellMode::NoVault) {
-            return views::welcome::view();
+            return views::welcome::view(&[]);
         }
 
         let toolbar = views::toolbar::view(
@@ -4291,7 +4318,7 @@ impl MdEditor {
                     .flatten()
                     .find(|a| &a.id == ann_id)
             });
-            let pdf_toolbar = views::pdf_viewer::toolbar(
+            let pdf_toolbar = views::pdf_viewer::toolbar_with_companion_note(
                 self.pdf_current_page,
                 self.pdf_total_pages,
                 self.pdf_state.zoom,
@@ -4300,6 +4327,7 @@ impl MdEditor {
                 self.pdf_selection.is_some(),
                 focused_ann,
                 self.active_path.is_some(),
+                None,
             );
             // B5: pdf_toolbar now at TOP of the pdf pane.
             // search_bar or zero-height space appears between toolbar and content.
@@ -4346,6 +4374,7 @@ impl MdEditor {
                     self.focused_annotation_id.as_deref(),
                     self.pdf_scroll_y,
                     self.pdf_viewport_height,
+                    0,
                 ))
                 .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
                 .on_scroll(|vp| Message::PdfScrolled {
@@ -4492,6 +4521,7 @@ impl MdEditor {
             &self.backlinks,
             self.backlinks_visible,
             shell_state.persistence.workflow_width,
+            false,
         );
 
         let pdf_annotations_view: Element<Message, Theme, iced::Renderer> =
@@ -4501,8 +4531,8 @@ impl MdEditor {
                     self.pdf_annotations_filter_color,
                     self.pdf_annotations_filter_page,
                     self.pdf_annotations_filter_tag.as_deref(),
-                    self.pdf_annotations_filter_linked,
                     self.pdf_annotations_filter_unresolved,
+                    self.pdf_annotations_filter_linked,
                     self.focused_annotation_id.as_deref(),
                     self.active_path.is_some(),
                     shell_state.persistence.workflow_width,
@@ -6593,6 +6623,9 @@ impl MdEditor {
         keep_cursor_visible: bool,
     ) -> Task<Message> {
         let result = self.buffer.execute(command);
+        if result.text_changed {
+            self.pending_editor_save = Some(std::time::Instant::now());
+        }
         let content_task = if result.projection_changed {
             self.highlight_all()
         } else {

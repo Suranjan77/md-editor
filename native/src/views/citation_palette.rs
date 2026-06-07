@@ -6,13 +6,23 @@ use crate::theme;
 
 pub const CITATION_PALETTE_INPUT_ID: &str = "citation_palette_input";
 
+fn focus_visible_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let mut style = text_input::default(theme, status);
+    if matches!(status, text_input::Status::Focused { .. }) {
+        style.border.color = theme::accent();
+        style.border.width = 2.0;
+    }
+    style
+}
+
 pub fn view<'a>(query: &str, items: Vec<CitationItem>) -> Element<'a, Message, Theme, Renderer> {
     let input = text_input("Type to search annotations and PDF content...", query)
         .id(iced::advanced::widget::Id::new(CITATION_PALETTE_INPUT_ID))
         .on_input(Message::CitationPaletteQueryChanged)
         .on_submit(Message::CitationPaletteSubmitFirst)
         .padding(12)
-        .size(16);
+        .size(16)
+        .style(focus_visible_input_style);
 
     let mut list = column![].spacing(5);
 

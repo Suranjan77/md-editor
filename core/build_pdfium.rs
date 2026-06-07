@@ -7,9 +7,17 @@ use std::path::{Path, PathBuf};
 use flate2::read::GzDecoder;
 use tar::Archive;
 
+#[path = "pdfium_build_paths.rs"]
+mod pdfium_build_paths;
+use pdfium_build_paths::cargo_target_root;
+
 /// Download and set up PDFium binaries for the current platform.
 /// Returns the directory containing the PDFium shared library.
 pub fn setup_pdfium() -> PathBuf {
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH");
+    println!("cargo:rerun-if-env-changed=TARGET");
+
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| {
         if cfg!(target_os = "windows") {
             "windows".to_string()
@@ -52,17 +60,14 @@ pub fn setup_pdfium() -> PathBuf {
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = PathBuf::from(&out_dir);
-    let target_dir = out_path
-        .ancestors()
-        .find(|p| p.file_name().is_some_and(|n| n == "target"))
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| out_path.clone());
     let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let target = env::var("TARGET").unwrap_or_default();
     let profile_dir = out_path
         .ancestors()
         .find(|p| p.file_name().is_some_and(|n| n == profile.as_str()))
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| target_dir.join(&profile));
+        .unwrap_or_else(|| out_path.clone());
+    let target_dir = cargo_target_root(&profile_dir, &target);
 
     let cache_dir = target_dir.join("pdfium").join(platform_slug);
     let lib_subdir = if target_os == "windows" { "bin" } else { "lib" };

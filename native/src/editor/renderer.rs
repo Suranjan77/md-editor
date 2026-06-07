@@ -1553,23 +1553,6 @@ where
                 continue;
             }
 
-            // Active line highlight
-            if focused && i == self.buffer.cursor_line {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: bounds.x,
-                            y,
-                            width: bounds.width,
-                            height: lh,
-                        },
-                        border: iced::Border::default(),
-                        ..Default::default()
-                    },
-                    theme::active_line_bg(),
-                );
-            }
-
             // selection already calculated outside loop
 
             if let Some(((start_line, start_col), (end_line, end_col))) = selection {

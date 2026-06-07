@@ -38,6 +38,16 @@ mod theme;
 mod views;
 
 #[cfg(target_os = "linux")]
+fn desktop_exec_arg(path: &str) -> String {
+    let escaped = path
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$");
+    format!("\"{escaped}\"")
+}
+
+#[cfg(target_os = "linux")]
 fn install_linux_desktop_entry_with_home(home: &str) -> bool {
     let run = || -> Option<()> {
         let exe_path = std::env::current_exe().ok()?;
@@ -50,9 +60,9 @@ fn install_linux_desktop_entry_with_home(home: &str) -> bool {
         let hicolor_dir = icons_dir.join("hicolor");
 
         // Create directories if they do not exist
-        let _ = std::fs::create_dir_all(&app_dir);
-        let _ = std::fs::create_dir_all(&icons_dir);
-        let _ = std::fs::create_dir_all(&hicolor_dir);
+        std::fs::create_dir_all(&app_dir).ok()?;
+        std::fs::create_dir_all(&icons_dir).ok()?;
+        std::fs::create_dir_all(&hicolor_dir).ok()?;
 
         // Copy system hicolor index.theme if missing locally
         let index_theme_path = hicolor_dir.join("index.theme");
@@ -65,19 +75,19 @@ fn install_linux_desktop_entry_with_home(home: &str) -> bool {
 
         // Write primary icon (1024x1024) directly to ~/.local/share/icons/md-editor.png
         let primary_icon_path = icons_dir.join("md-editor.png");
-        let _ = std::fs::write(&primary_icon_path, icon_bytes);
+        std::fs::write(&primary_icon_path, icon_bytes).ok()?;
 
         // Write scalable icon (1024x1024) to ~/.local/share/icons/hicolor/scalable/apps/md-editor.png
         let scalable_apps_dir = hicolor_dir.join("scalable").join("apps");
-        let _ = std::fs::create_dir_all(&scalable_apps_dir);
-        let _ = std::fs::write(scalable_apps_dir.join("md-editor.png"), icon_bytes);
+        std::fs::create_dir_all(&scalable_apps_dir).ok()?;
+        std::fs::write(scalable_apps_dir.join("md-editor.png"), icon_bytes).ok()?;
 
         // Resize and write to specific sizes
         if let Ok(img) = image::load_from_memory(icon_bytes) {
             let sizes = [16, 32, 48, 64, 128, 256, 512];
             for &size in &sizes {
                 let size_dir = hicolor_dir.join(format!("{}x{}", size, size)).join("apps");
-                let _ = std::fs::create_dir_all(&size_dir);
+                std::fs::create_dir_all(&size_dir).ok()?;
                 let target_path = size_dir.join("md-editor.png");
 
                 let resized = img.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
@@ -89,9 +99,11 @@ fn install_linux_desktop_entry_with_home(home: &str) -> bool {
                     )
                     .is_ok()
                 {
-                    let _ = std::fs::write(target_path, bytes);
+                    std::fs::write(target_path, bytes).ok()?;
                 }
             }
+        } else {
+            return None;
         }
 
         // Desktop entry content using the absolute path to the primary icon
@@ -108,11 +120,12 @@ MimeType=text/markdown;application/pdf;
 Categories=Office;WordProcessor;Utility;
 StartupWMClass=md-editor
 "#,
-            exe_str, primary_icon_str
+            desktop_exec_arg(exe_str),
+            primary_icon_str
         );
 
         let desktop_file_path = app_dir.join("md-editor.desktop");
-        let _ = std::fs::write(desktop_file_path, desktop_content);
+        std::fs::write(desktop_file_path, desktop_content).ok()?;
 
         // Update desktop database and icon cache
         let _ = std::process::Command::new("update-desktop-database")
@@ -364,6 +377,12 @@ mod tests {
         assert!(app_file.exists(), "Desktop file must exist");
         assert!(primary_icon.exists(), "Primary icon must exist");
         assert!(scalable_icon.exists(), "Scalable icon must exist");
+        let desktop_content =
+            std::fs::read_to_string(&app_file).expect("desktop entry should be readable");
+        assert!(
+            desktop_content.contains("Exec=\""),
+            "desktop executable path should be quoted"
+        );
 
         // Verify specific sized icons
         let sizes = [16, 32, 48, 64, 128, 256, 512];
@@ -402,5 +421,14 @@ mod tests {
 
         // Clean up the temporary folder
         let _ = std::fs::remove_dir_all(&test_home);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn desktop_exec_arg_escapes_reserved_characters() {
+        assert_eq!(
+            super::desktop_exec_arg("/tmp/MD Editor/`build`/$app\""),
+            "\"/tmp/MD Editor/\\`build\\`/\\$app\\\"\""
+        );
     }
 }
