@@ -1,7 +1,5 @@
 use iced::widget::operation::{self, AbsoluteOffset};
-use iced::widget::{
-    Space, column, container, mouse_area, row, scrollable, stack, text, text_editor,
-};
+use iced::widget::{Space, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 
 use crate::app_shell::{
@@ -17,7 +15,9 @@ use std::time::{Duration, Instant};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
-use crate::messages::{EditorBlockActionKind, Message, SearchWrapStatus, Shortcut, TrackerTab};
+use crate::features::overlays::OverlayState;
+use crate::features::tracker::TrackerState;
+use crate::messages::{EditorBlockActionKind, Message, SearchWrapStatus, Shortcut};
 use crate::pdf_links::{build_pdf_link, parse_pdf_link};
 use crate::pdf_notes::{
     build_linked_pdf_note_content, normalize_note_path, note_filename_from_path, slug_fragment,
@@ -237,38 +237,8 @@ pub struct MdEditor {
     pdf_pending_text: HashSet<u16>,
     pdf_text_lru: std::collections::VecDeque<u16>,
 
-    // Study tracker
-    tracker_visible: bool,
-    tracker_running: bool,
-    tracker_started_at: Option<std::time::Instant>,
-    tracker_sessions: Vec<md_editor_core::tracker::StudySession>,
-    tracker_kv: std::collections::HashMap<String, String>,
-    tracker_tab: TrackerTab,
-    tracker_config_json: String,
-    tracker_config_content: text_editor::Content,
-    tracker_manual_date: String,
-    tracker_manual_hours: String,
-    tracker_manual_notes: String,
-
-    // Modal state
-    active_modal: Option<views::modals::ModalType>,
-    modal_input: String,
-    link_note_picker_search: String,
-
-    // Command palette
-    command_palette_visible: bool,
-    command_palette_query: String,
-
-    // Citation palette
-    citation_palette_visible: bool,
-    citation_palette_query: String,
-
-    // Excerpts mode
-    excerpt_mode_active: bool,
-    excerpts_queue: Vec<crate::messages::CitationItem>,
-
-    // Toast
-    toast: Option<String>,
+    tracker: TrackerState,
+    overlays: OverlayState,
 
     // Search
     search_visible: bool,
@@ -388,31 +358,17 @@ impl MdEditor {
             pdf_initial_target_annotation: None,
             pdf_pending_text: HashSet::new(),
             pdf_text_lru: std::collections::VecDeque::new(),
-            tracker_visible: false,
-            tracker_running: false,
-            tracker_started_at: None,
-            tracker_sessions,
-            tracker_kv: md_editor_core::tracker::get_kv(&state)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|item| (item.key, item.value))
-                .collect(),
-            tracker_tab: TrackerTab::Dashboard,
-            tracker_config_json,
-            tracker_config_content: text_editor::Content::with_text(""),
-            tracker_manual_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
-            tracker_manual_hours: String::new(),
-            tracker_manual_notes: String::new(),
-            active_modal: None,
-            modal_input: String::new(),
-            link_note_picker_search: String::new(),
-            command_palette_visible: false,
-            command_palette_query: String::new(),
-            citation_palette_visible: false,
-            citation_palette_query: String::new(),
-            excerpt_mode_active: false,
-            excerpts_queue: Vec::new(),
-            toast: None,
+            tracker: TrackerState::new(
+                tracker_sessions,
+                md_editor_core::tracker::get_kv(&state)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|item| (item.key, item.value))
+                    .collect(),
+                tracker_config_json,
+                chrono::Local::now().format("%Y-%m-%d").to_string(),
+            ),
+            overlays: OverlayState::default(),
             search_visible: false,
             editor_search: EditorSearchState::default(),
             global_search_id: 0,
@@ -461,7 +417,6 @@ impl MdEditor {
             editor_viewport_height: 720.0,
         };
 
-        app.tracker_config_content = text_editor::Content::with_text(&app.tracker_config_json);
         app.load_shell_persistence();
 
         let mut task = Task::none();
@@ -642,7 +597,7 @@ impl MdEditor {
             _ => None,
         });
 
-        let toast = if self.toast.is_some() {
+        let toast = if self.overlays.toast.is_some() {
             iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::ToastHide)
         } else {
             Subscription::none()
@@ -824,7 +779,7 @@ impl MdEditor {
                                         });
                                     Task::batch(vec![cmd_task, scroll_task])
                                 } else {
-                                    self.toast = Some(format!(
+                                    self.overlays.toast = Some(format!(
                                         "Heading or widget not found: #{}",
                                         anchor_part
                                     ));
@@ -857,7 +812,7 @@ impl MdEditor {
                                             });
                                         Task::batch(vec![cmd_task, scroll_task])
                                     } else {
-                                        self.toast = Some(format!(
+                                        self.overlays.toast = Some(format!(
                                             "Heading or widget not found: #{}",
                                             anchor_part
                                         ));
@@ -927,32 +882,32 @@ impl MdEditor {
                 Task::none()
             }
             Message::CreateFileDialog => {
-                self.active_modal = Some(views::modals::ModalType::CreateFile);
-                self.modal_input.clear();
-                self.link_note_picker_search.clear();
+                self.overlays.active_modal = Some(views::modals::ModalType::CreateFile);
+                self.overlays.modal_input.clear();
+                self.overlays.link_note_picker_search.clear();
                 Task::none()
             }
             Message::CreateFolderDialog => {
-                self.active_modal = Some(views::modals::ModalType::CreateFolder);
-                self.modal_input.clear();
-                self.link_note_picker_search.clear();
+                self.overlays.active_modal = Some(views::modals::ModalType::CreateFolder);
+                self.overlays.modal_input.clear();
+                self.overlays.link_note_picker_search.clear();
                 Task::none()
             }
             Message::DeleteFileDialog(path) => {
-                self.active_modal = Some(views::modals::ModalType::Delete(path));
+                self.overlays.active_modal = Some(views::modals::ModalType::Delete(path));
                 Task::none()
             }
             Message::NameModalInputChanged(input) => {
-                self.modal_input = input;
+                self.overlays.modal_input = input;
                 Task::none()
             }
             Message::PdfLinkNoteFolderSelected(folder) => {
                 if matches!(
-                    self.active_modal,
+                    self.overlays.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
                 ) {
-                    let filename = note_filename_from_path(&self.modal_input);
-                    self.modal_input = if folder.is_empty() {
+                    let filename = note_filename_from_path(&self.overlays.modal_input);
+                    self.overlays.modal_input = if folder.is_empty() {
                         filename
                     } else {
                         format!("{}/{}", folder.trim_end_matches('/'), filename)
@@ -962,42 +917,40 @@ impl MdEditor {
             }
             Message::PdfLinkNoteFileSelected(path) => {
                 if matches!(
-                    self.active_modal,
+                    self.overlays.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
                 ) {
-                    self.modal_input = normalize_note_path(&path);
+                    self.overlays.modal_input = normalize_note_path(&path);
                 }
                 Task::none()
             }
             Message::PdfLinkNotePickerSearchChanged(query) => {
                 if matches!(
-                    self.active_modal,
+                    self.overlays.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
                 ) {
-                    self.link_note_picker_search = query;
+                    self.overlays.link_note_picker_search = query;
                 }
                 Task::none()
             }
             Message::NameModalCancel => {
-                self.active_modal = None;
-                self.modal_input.clear();
-                self.link_note_picker_search.clear();
+                self.overlays.close_modal();
                 Task::none()
             }
             Message::NameModalSubmitCurrent => {
                 if let Some(views::modals::ModalType::GoToPage { total, error: _ }) =
-                    self.active_modal.clone()
+                    self.overlays.active_modal.clone()
                 {
-                    match self.modal_input.trim().parse::<u16>() {
+                    match self.overlays.modal_input.trim().parse::<u16>() {
                         Ok(page_num) if page_num >= 1 && page_num <= total => {
                             self.push_pdf_navigation_history();
-                            self.active_modal = None;
+                            self.overlays.active_modal = None;
                             let target_page = page_num.saturating_sub(1);
-                            self.modal_input.clear();
+                            self.overlays.modal_input.clear();
                             return self.navigate_pdf_page(target_page);
                         }
                         _ => {
-                            self.active_modal = Some(views::modals::ModalType::GoToPage {
+                            self.overlays.active_modal = Some(views::modals::ModalType::GoToPage {
                                 total,
                                 error: Some(format!("Page must be between 1 and {}", total)),
                             });
@@ -1006,47 +959,45 @@ impl MdEditor {
                     }
                 }
                 if matches!(
-                    self.active_modal,
+                    self.overlays.active_modal,
                     Some(views::modals::ModalType::CreateFile)
                         | Some(views::modals::ModalType::CreateFolder)
                         | Some(views::modals::ModalType::QuickNote(_))
                         | Some(views::modals::ModalType::LinkNote(_))
                 ) {
-                    Task::done(Message::NameModalSubmit(self.modal_input.clone()))
+                    Task::done(Message::NameModalSubmit(self.overlays.modal_input.clone()))
                 } else {
                     Task::none()
                 }
             }
             Message::NameModalSubmit(input) => {
-                if let Some(views::modals::ModalType::QuickNote(id)) = self.active_modal.clone() {
-                    self.active_modal = None;
-                    self.modal_input.clear();
-                    self.link_note_picker_search.clear();
+                if let Some(views::modals::ModalType::QuickNote(id)) =
+                    self.overlays.active_modal.clone()
+                {
+                    self.overlays.close_modal();
                     return Task::done(Message::PdfAddQuickNote(id, input));
                 }
-                if let Some(views::modals::ModalType::LinkNote(id)) = self.active_modal.clone() {
-                    self.active_modal = None;
-                    self.modal_input.clear();
-                    self.link_note_picker_search.clear();
+                if let Some(views::modals::ModalType::LinkNote(id)) =
+                    self.overlays.active_modal.clone()
+                {
+                    self.overlays.close_modal();
                     return Task::done(Message::PdfLinkNote(id, input));
                 }
                 if let Some(views::modals::ModalType::AnnotationTags(id)) =
-                    self.active_modal.clone()
+                    self.overlays.active_modal.clone()
                 {
-                    self.active_modal = None;
-                    self.modal_input.clear();
-                    self.link_note_picker_search.clear();
+                    self.overlays.close_modal();
                     return Task::done(Message::PdfUpdateAnnotationTags(id, input));
                 }
 
                 let name = input.trim();
                 if name.is_empty() {
-                    self.toast = Some("Name cannot be empty".to_string());
+                    self.overlays.toast = Some("Name cannot be empty".to_string());
                     return Task::none();
                 }
 
                 let target_path = self.new_entry_path(name);
-                let result = match self.active_modal.as_ref() {
+                let result = match self.overlays.active_modal.as_ref() {
                     Some(views::modals::ModalType::CreateFile) => {
                         let path =
                             if target_path.ends_with(".md") || target_path.ends_with(".markdown") {
@@ -1066,12 +1017,12 @@ impl MdEditor {
                     Ok(()) => {
                         self.vault_entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                        self.active_modal = None;
-                        self.modal_input.clear();
-                        self.link_note_picker_search.clear();
-                        self.toast = Some("Created".to_string());
+                        self.overlays.active_modal = None;
+                        self.overlays.modal_input.clear();
+                        self.overlays.link_note_picker_search.clear();
+                        self.overlays.toast = Some("Created".to_string());
                     }
-                    Err(err) => self.toast = Some(err),
+                    Err(err) => self.overlays.toast = Some(err),
                 }
                 Task::none()
             }
@@ -1092,11 +1043,11 @@ impl MdEditor {
                             self.pdf_state.page_cache.clear();
                             self.pdf_toc_entries_flat = None;
                         }
-                        self.active_modal = None;
-                        self.link_note_picker_search.clear();
-                        self.toast = Some("Deleted".to_string());
+                        self.overlays.active_modal = None;
+                        self.overlays.link_note_picker_search.clear();
+                        self.overlays.toast = Some("Deleted".to_string());
                     }
-                    Err(err) => self.toast = Some(err),
+                    Err(err) => self.overlays.toast = Some(err),
                 }
                 Task::none()
             }
@@ -1113,14 +1064,14 @@ impl MdEditor {
                     }
                     Err(err) => {
                         self.math_errors.insert(tex.clone(), err.clone());
-                        self.toast = Some(format!("Math render failed: {err}"));
+                        self.overlays.toast = Some(format!("Math render failed: {err}"));
                     }
                 }
                 Task::none()
             }
             Message::ImageLoadFailed(path, err) => {
                 self.image_errors.insert(path.clone(), err.clone());
-                self.toast = Some(format!("Image load failed: {path}: {err}"));
+                self.overlays.toast = Some(format!("Image load failed: {path}: {err}"));
                 Task::none()
             }
             Message::EditorSave(is_autosave) => {
@@ -1130,7 +1081,7 @@ impl MdEditor {
                     let _ = save_markdown_file_with_parser_targets(&self.state, path, &content);
                     self.buffer.dirty = false;
                     if !is_autosave {
-                        self.toast = Some("File saved".to_string());
+                        self.overlays.toast = Some("File saved".to_string());
                     }
                 }
                 Task::none()
@@ -1146,18 +1097,19 @@ impl MdEditor {
                     &self.highlighted_lines,
                     line_idx,
                 ) {
-                    self.active_modal = Some(views::modals::ModalType::EditorBlockContextMenu(
-                        views::modals::EditorBlockContextMenuState {
-                            absolute_pos,
-                            line_idx,
-                            items,
-                        },
-                    ));
+                    self.overlays.active_modal =
+                        Some(views::modals::ModalType::EditorBlockContextMenu(
+                            views::modals::EditorBlockContextMenuState {
+                                absolute_pos,
+                                line_idx,
+                                items,
+                            },
+                        ));
                 }
                 Task::none()
             }
             Message::EditorBlockAction { line_idx, action } => {
-                self.active_modal = None;
+                self.overlays.active_modal = None;
                 self.handle_editor_block_action(line_idx, action)
             }
             Message::EditorContextMenu {
@@ -1191,7 +1143,7 @@ impl MdEditor {
                                     .display_text
                                     .clone()
                                     .unwrap_or_else(|| span.text.clone());
-                                self.active_modal =
+                                self.overlays.active_modal =
                                     Some(views::modals::ModalType::EditorLinkContextMenu(
                                         views::modals::EditorLinkContextMenuState {
                                             absolute_pos,
@@ -1219,7 +1171,7 @@ impl MdEditor {
                 link_target,
                 action,
             } => {
-                self.active_modal = None;
+                self.overlays.active_modal = None;
                 self.handle_editor_link_action(line_idx, start_col, end_col, link_target, action)
             }
             Message::EditorCursorMove(line, col) => {
@@ -1323,7 +1275,7 @@ impl MdEditor {
                 }
 
                 if pages == 0 {
-                    self.toast = Some(
+                    self.overlays.toast = Some(
                         "PDF renderer is unavailable or the PDF could not be opened".to_string(),
                     );
                 }
@@ -1753,7 +1705,7 @@ impl MdEditor {
                     self.pdf_toc_target_page = None;
                     self.pdf_programmatic_scroll = false;
                 }
-                self.toast = Some(format!("Could not render PDF page {}", page + 1));
+                self.overlays.toast = Some(format!("Could not render PDF page {}", page + 1));
                 Task::none()
             }
             Message::PdfRenderSkipped(generation, page) => {
@@ -1895,9 +1847,9 @@ impl MdEditor {
                             let _ = std::process::Command::new("open").arg(&uri).spawn();
                             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
                             let _ = std::process::Command::new("xdg-open").arg(&uri).spawn();
-                            self.toast = Some(format!("Opening: {}", uri));
+                            self.overlays.toast = Some(format!("Opening: {}", uri));
                         } else {
-                            self.toast =
+                            self.overlays.toast =
                                 Some(format!("External link (Ctrl+click to open): {}", uri));
                         }
                         Task::none()
@@ -2004,7 +1956,7 @@ impl MdEditor {
                 }
 
                 if !items.is_empty() {
-                    self.active_modal = Some(views::modals::ModalType::PdfContextMenu(
+                    self.overlays.active_modal = Some(views::modals::ModalType::PdfContextMenu(
                         views::modals::PdfContextMenuState {
                             absolute_pos,
                             items,
@@ -2022,7 +1974,7 @@ impl MdEditor {
                             let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
                             let selected = text_by_char_range(&page_text.text, start, end);
                             if !selected.is_empty() {
-                                self.active_modal = None;
+                                self.overlays.active_modal = None;
                                 return iced::clipboard::write(selected);
                             }
                         }
@@ -2041,7 +1993,7 @@ impl MdEditor {
                                     .map(|l| format!("> {}", l))
                                     .collect::<Vec<_>>()
                                     .join("\n");
-                                self.active_modal = None;
+                                self.overlays.active_modal = None;
                                 return iced::clipboard::write(quote);
                             }
                         }
@@ -2059,7 +2011,7 @@ impl MdEditor {
                             return Task::none();
                         };
                         let markdown = format!("{selected_text}\n[label]({link})");
-                        self.active_modal = None;
+                        self.overlays.active_modal = None;
                         return iced::clipboard::write(markdown);
                     }
                     Task::none()
@@ -2084,18 +2036,18 @@ impl MdEditor {
                         }
                         _ => md_editor_core::pdf::PdfAnnotationColor::Orange,
                     };
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfCreateHighlight(color))
                 }
                 views::modals::PdfContextMenuItem::UnderlineBlue => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfCreateAnnotation(
                         md_editor_core::pdf::PdfAnnotationKind::Underline,
                         md_editor_core::pdf::PdfAnnotationColor::Blue,
                     ))
                 }
                 views::modals::PdfContextMenuItem::StrikeRed => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfCreateAnnotation(
                         md_editor_core::pdf::PdfAnnotationKind::Strike,
                         md_editor_core::pdf::PdfAnnotationColor::Red,
@@ -2110,7 +2062,7 @@ impl MdEditor {
                             if !selected.trim().is_empty() {
                                 self.pdf_state.search.query = selected.trim().to_string();
                                 self.pdf_selection = None;
-                                self.active_modal = None;
+                                self.overlays.active_modal = None;
                                 self.pdf_state.search.visible = true;
                                 self.search_visible = false;
                                 return Task::batch(vec![
@@ -2124,31 +2076,31 @@ impl MdEditor {
                     Task::none()
                 }
                 views::modals::PdfContextMenuItem::InsertQuoteLink => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfInsertQuoteLink)
                 }
                 views::modals::PdfContextMenuItem::InsertAnnotationLink { id, page: _ } => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfInsertAnnotationLink(id))
                 }
                 views::modals::PdfContextMenuItem::EditNote { id, page } => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfEditAnnotationNote(id, page))
                 }
                 views::modals::PdfContextMenuItem::LinkToNote { id, page: _ } => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfLinkNote(id, String::new()))
                 }
                 views::modals::PdfContextMenuItem::OpenLinkedNote(path) => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfOpenLinkedNote(path))
                 }
                 views::modals::PdfContextMenuItem::DeleteHighlight(id) => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     Task::done(Message::PdfDeleteHighlight(id))
                 }
                 views::modals::PdfContextMenuItem::OpenLink(link) => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     if let Some(dest_page) = link.dest_page {
                         self.push_pdf_navigation_history();
                         self.pdf_current_page =
@@ -2163,14 +2115,14 @@ impl MdEditor {
                         let _ = std::process::Command::new("open").arg(&uri).spawn();
                         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
                         let _ = std::process::Command::new("xdg-open").arg(&uri).spawn();
-                        self.toast = Some(format!("Opening: {}", uri));
+                        self.overlays.toast = Some(format!("Opening: {}", uri));
                         Task::none()
                     } else {
                         Task::none()
                     }
                 }
                 views::modals::PdfContextMenuItem::CopyLink(uri) => {
-                    self.active_modal = None;
+                    self.overlays.active_modal = None;
                     iced::clipboard::write(uri)
                 }
             },
@@ -2186,12 +2138,12 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfLinkPreviewResult(Err(e)) => {
-                self.toast = Some(format!("Preview Error: {}", e));
+                self.overlays.toast = Some(format!("Preview Error: {}", e));
                 Task::none()
             }
             Message::ClosePdfLinkPreview => {
                 self.pdf_link_preview = None;
-                self.active_modal = None;
+                self.overlays.active_modal = None;
                 Task::none()
             }
             Message::PdfTocLoaded(generation, entries) => {
@@ -2252,114 +2204,112 @@ impl MdEditor {
             }
 
             Message::TrackerToggle => {
-                self.tracker_visible = !self.tracker_visible;
+                self.tracker.toggle_visibility();
                 self.persist_shell_state();
-                if self.tracker_visible {
-                    self.tracker_kv = md_editor_core::tracker::get_kv(&self.state)
+                if self.tracker.visible {
+                    self.tracker.kv = md_editor_core::tracker::get_kv(&self.state)
                         .unwrap_or_default()
                         .into_iter()
                         .map(|item| (item.key, item.value))
                         .collect();
-                    self.tracker_config_json =
+                    let config_json =
                         md_editor_core::config::get_sys_config(&self.state, "tracker_config")
                             .ok()
                             .flatten()
                             .filter(|json| views::tracker::parse_config(json).is_ok())
                             .unwrap_or_else(views::tracker::default_config_json);
-                    self.tracker_config_content =
-                        text_editor::Content::with_text(&self.tracker_config_json);
+                    self.tracker.replace_config(config_json);
                 }
                 Task::none()
             }
             Message::CommandPaletteOpen => {
-                self.command_palette_visible = true;
-                self.command_palette_query.clear();
+                self.overlays.command_palette_visible = true;
+                self.overlays.command_palette_query.clear();
                 focus_command_palette_input()
             }
             Message::CommandPaletteQueryChanged(query) => {
-                self.command_palette_query = query;
+                self.overlays.command_palette_query = query;
                 Task::none()
             }
             Message::CommandPaletteCommandClicked(shortcut) => {
-                self.command_palette_visible = false;
-                self.command_palette_query.clear();
+                self.overlays.close_command_palette();
                 Task::done(Message::KeyboardShortcut(shortcut))
             }
             Message::CitationPaletteToggle => {
-                self.citation_palette_visible = !self.citation_palette_visible;
-                self.citation_palette_query.clear();
-                if self.citation_palette_visible {
-                    self.command_palette_visible = false;
+                self.overlays.citation_palette_visible = !self.overlays.citation_palette_visible;
+                self.overlays.citation_palette_query.clear();
+                if self.overlays.citation_palette_visible {
+                    self.overlays.command_palette_visible = false;
                     self.search_visible = false;
                     return focus_citation_palette_input();
                 }
                 Task::none()
             }
             Message::CitationPaletteQueryChanged(query) => {
-                self.citation_palette_query = query;
+                self.overlays.citation_palette_query = query;
                 Task::none()
             }
             Message::CitationPaletteSubmitFirst => self.submit_first_citation_palette_item(),
             Message::CitationPaletteChoose(item) => self.choose_citation_item(item),
             Message::ExcerptModeToggle => {
-                self.excerpt_mode_active = !self.excerpt_mode_active;
-                let status = if self.excerpt_mode_active {
+                self.overlays.excerpt_mode_active = !self.overlays.excerpt_mode_active;
+                let status = if self.overlays.excerpt_mode_active {
                     "enabled"
                 } else {
                     "disabled"
                 };
-                self.toast = Some(format!("Excerpt mode {status}"));
+                self.overlays.toast = Some(format!("Excerpt mode {status}"));
                 Task::none()
             }
             Message::ExcerptQueueAdd(item) => {
-                self.excerpts_queue.push(item);
-                self.toast = Some("Excerpt added to queue".to_string());
+                self.overlays.excerpts_queue.push(item);
+                self.overlays.toast = Some("Excerpt added to queue".to_string());
                 Task::none()
             }
             Message::ExcerptQueueRemove(idx) => {
-                if idx < self.excerpts_queue.len() {
-                    self.excerpts_queue.remove(idx);
-                    self.toast = Some("Excerpt removed from queue".to_string());
+                if idx < self.overlays.excerpts_queue.len() {
+                    self.overlays.excerpts_queue.remove(idx);
+                    self.overlays.toast = Some("Excerpt removed from queue".to_string());
                 }
                 Task::none()
             }
             Message::ExcerptQueueClear => {
-                self.excerpts_queue.clear();
-                self.toast = Some("Excerpt queue cleared".to_string());
+                self.overlays.excerpts_queue.clear();
+                self.overlays.toast = Some("Excerpt queue cleared".to_string());
                 Task::none()
             }
             Message::ExcerptQueueInsertBatch => {
                 if self.active_path.is_none() {
-                    self.toast = Some("Open a markdown file before inserting batch".to_string());
+                    self.overlays.toast =
+                        Some("Open a markdown file before inserting batch".to_string());
                     return Task::none();
                 }
-                if self.excerpts_queue.is_empty() {
-                    self.toast = Some("Excerpt queue is empty".to_string());
+                if self.overlays.excerpts_queue.is_empty() {
+                    self.overlays.toast = Some("Excerpt queue is empty".to_string());
                     return Task::none();
                 }
 
                 let mut batch_text = String::new();
-                for item in &self.excerpts_queue {
+                for item in &self.overlays.excerpts_queue {
                     batch_text.push_str(&format_citation_item_as_markdown(
                         item,
                         self.active_pdf_path.as_deref(),
                     ));
                 }
 
-                self.excerpts_queue.clear();
+                self.overlays.excerpts_queue.clear();
                 self.set_active_panel(ActivePanel::Markdown);
                 self.run_editor_command(crate::editor::buffer::EditorCommand::InsertText(
                     batch_text,
                 ))
             }
             Message::TrackerStart => {
-                self.tracker_running = true;
-                self.tracker_started_at = Some(std::time::Instant::now());
-                self.toast = Some("Study timer started".to_string());
+                self.tracker.start(std::time::Instant::now());
+                self.overlays.toast = Some("Study timer started".to_string());
                 Task::none()
             }
             Message::TrackerStop => {
-                if let Some(started_at) = self.tracker_started_at.take() {
+                if let Some(started_at) = self.tracker.stop() {
                     let elapsed = started_at.elapsed();
                     let hours = (elapsed.as_secs_f32() / 3600.0).max(0.01);
                     let session = md_editor_core::tracker::StudySession {
@@ -2371,29 +2321,29 @@ impl MdEditor {
                         notes: None,
                     };
                     if md_editor_core::tracker::save_session(&self.state, session).is_ok() {
-                        self.tracker_sessions =
+                        self.tracker.sessions =
                             md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
-                        self.toast = Some("Study session saved".to_string());
+                        self.overlays.toast = Some("Study session saved".to_string());
                     }
                 }
-                self.tracker_running = false;
                 Task::none()
             }
             Message::TrackerTabSelected(tab) => {
-                self.tracker_tab = tab;
+                self.tracker.tab = tab;
                 Task::none()
             }
             Message::TrackerProjectStatusChanged(id, status) => {
                 let key = format!("proj_{}", id);
                 if md_editor_core::tracker::set_kv(&self.state, &key, &status).is_ok() {
-                    self.tracker_kv.insert(key, status);
+                    self.tracker.kv.insert(key, status);
                 }
                 Task::none()
             }
             Message::TrackerGateToggled(gate_id, item_idx) => {
                 let key = format!("gate_{}_{}", gate_id, item_idx);
                 let next = if self
-                    .tracker_kv
+                    .tracker
+                    .kv
                     .get(&key)
                     .map(|v| v == "true")
                     .unwrap_or(false)
@@ -2403,14 +2353,15 @@ impl MdEditor {
                     "true"
                 };
                 if md_editor_core::tracker::set_kv(&self.state, &key, next).is_ok() {
-                    self.tracker_kv.insert(key, next.to_string());
+                    self.tracker.kv.insert(key, next.to_string());
                 }
                 Task::none()
             }
             Message::TrackerReadingToggled(section, item_idx) => {
                 let key = format!("read_{}_{}", section, item_idx);
                 let next = if self
-                    .tracker_kv
+                    .tracker
+                    .kv
                     .get(&key)
                     .map(|v| v == "true")
                     .unwrap_or(false)
@@ -2420,80 +2371,82 @@ impl MdEditor {
                     "true"
                 };
                 if md_editor_core::tracker::set_kv(&self.state, &key, next).is_ok() {
-                    self.tracker_kv.insert(key, next.to_string());
+                    self.tracker.kv.insert(key, next.to_string());
                 }
                 Task::none()
             }
             Message::TrackerConfigEdited(action) => {
-                self.tracker_config_content.perform(action);
-                self.tracker_config_json = self.tracker_config_content.text();
+                self.tracker.edit_config(action);
                 Task::none()
             }
             Message::TrackerConfigSave => {
-                match views::tracker::parse_config(&self.tracker_config_json) {
+                match views::tracker::parse_config(&self.tracker.config_json) {
                     Ok(_) => {
                         if md_editor_core::config::set_sys_config(
                             &self.state,
                             "tracker_config",
-                            &self.tracker_config_json,
+                            &self.tracker.config_json,
                         )
                         .is_ok()
                         {
-                            self.toast = Some("Tracker configuration saved".to_string());
+                            self.overlays.toast = Some("Tracker configuration saved".to_string());
                         }
                     }
-                    Err(err) => self.toast = Some(format!("Invalid tracker JSON: {}", err)),
+                    Err(err) => {
+                        self.overlays.toast = Some(format!("Invalid tracker JSON: {}", err))
+                    }
                 }
                 Task::none()
             }
             Message::TrackerManualDateChanged(value) => {
-                self.tracker_manual_date = value;
+                self.tracker.manual_date = value;
                 Task::none()
             }
             Message::TrackerManualHoursChanged(value) => {
-                self.tracker_manual_hours = value;
+                self.tracker.manual_hours = value;
                 Task::none()
             }
             Message::TrackerManualNotesChanged(value) => {
-                self.tracker_manual_notes = value;
+                self.tracker.manual_notes = value;
                 Task::none()
             }
             Message::TrackerManualAdd => {
-                match self.tracker_manual_hours.trim().parse::<f32>() {
+                match self.tracker.manual_hours.trim().parse::<f32>() {
                     Ok(hours) if hours > 0.0 => {
                         let session = md_editor_core::tracker::StudySession {
                             id: 0,
-                            date: self.tracker_manual_date.trim().to_string(),
+                            date: self.tracker.manual_date.trim().to_string(),
                             hours,
                             activity_type: "Manual".to_string(),
                             phase: "Manual".to_string(),
-                            notes: (!self.tracker_manual_notes.trim().is_empty())
-                                .then(|| self.tracker_manual_notes.trim().to_string()),
+                            notes: (!self.tracker.manual_notes.trim().is_empty())
+                                .then(|| self.tracker.manual_notes.trim().to_string()),
                         };
                         match md_editor_core::tracker::save_session(&self.state, session) {
                             Ok(()) => {
-                                self.tracker_sessions =
+                                self.tracker.sessions =
                                     md_editor_core::tracker::get_sessions(&self.state)
                                         .unwrap_or_default();
-                                self.tracker_manual_hours.clear();
-                                self.tracker_manual_notes.clear();
-                                self.toast = Some("Manual study session added".to_string());
+                                self.tracker.manual_hours.clear();
+                                self.tracker.manual_notes.clear();
+                                self.overlays.toast =
+                                    Some("Manual study session added".to_string());
                             }
-                            Err(err) => self.toast = Some(err),
+                            Err(err) => self.overlays.toast = Some(err),
                         }
                     }
-                    _ => self.toast = Some("Enter a positive hour value".to_string()),
+                    _ => self.overlays.toast = Some("Enter a positive hour value".to_string()),
                 }
                 Task::none()
             }
             Message::TrackerSessionDelete(id) => {
                 match md_editor_core::tracker::delete_session(&self.state, id) {
                     Ok(()) => {
-                        self.tracker_sessions =
+                        self.tracker.sessions =
                             md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
-                        self.toast = Some("Session deleted".to_string());
+                        self.overlays.toast = Some("Session deleted".to_string());
                     }
-                    Err(err) => self.toast = Some(err),
+                    Err(err) => self.overlays.toast = Some(err),
                 }
                 Task::none()
             }
@@ -2696,18 +2649,18 @@ impl MdEditor {
             }
             Message::SearchReplaceAll => match self.replace_all_in_current_document() {
                 Ok((count, task)) => {
-                    self.toast = Some(format!("Replaced {} matches", count));
+                    self.overlays.toast = Some(format!("Replaced {} matches", count));
                     task
                 }
                 Err(err) => {
-                    self.toast = Some(err);
+                    self.overlays.toast = Some(err);
                     Task::none()
                 }
             },
             Message::SearchReplace => match self.replace_current_match() {
                 Ok(task) => task,
                 Err(err) => {
-                    self.toast = Some(err);
+                    self.overlays.toast = Some(err);
                     Task::none()
                 }
             },
@@ -2974,8 +2927,8 @@ impl MdEditor {
                     || self.search_visible
                     || self.editor_search.visible
                     || self.pdf_state.search.visible
-                    || self.active_modal.is_some()
-                    || self.command_palette_visible
+                    || self.overlays.active_modal.is_some()
+                    || self.overlays.command_palette_visible
                 {
                     return Task::none();
                 }
@@ -3062,11 +3015,11 @@ impl MdEditor {
             }
             Message::PdfGoToPage => {
                 if self.active_pdf_path.is_some() && self.showing_pdf && self.pdf_total_pages > 0 {
-                    self.active_modal = Some(views::modals::ModalType::GoToPage {
+                    self.overlays.active_modal = Some(views::modals::ModalType::GoToPage {
                         total: self.pdf_total_pages,
                         error: None,
                     });
-                    self.modal_input.clear();
+                    self.overlays.modal_input.clear();
                     Task::none()
                 } else {
                     Task::none()
@@ -3179,31 +3132,32 @@ impl MdEditor {
             }
             Message::PdfInsertQuoteLink => {
                 if self.active_path.is_none() {
-                    self.toast =
+                    self.overlays.toast =
                         Some("Open a markdown file before inserting a quote link".to_string());
                     return Task::none();
                 }
-                if self.excerpt_mode_active {
+                if self.overlays.excerpt_mode_active {
                     if let Some(sel) = &self.pdf_selection {
                         if let Some(page_text) = self.pdf_page_text.get(&sel.page_index) {
                             let start = sel.anchor_idx.min(sel.focus_idx);
                             let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
                             let selected = text_by_char_range(&page_text.text, start, end);
                             if !selected.trim().is_empty() {
-                                self.excerpts_queue.push(
+                                self.overlays.excerpts_queue.push(
                                     crate::messages::CitationItem::Selection {
                                         text: selected,
                                         page_index: sel.page_index,
                                     },
                                 );
-                                self.toast = Some("Quote queued to excerpts".to_string());
+                                self.overlays.toast = Some("Quote queued to excerpts".to_string());
                             }
                         }
                     }
                     return Task::none();
                 }
                 let Some(command) = self.pdf_selection_quote_link_command() else {
-                    self.toast = Some("Select PDF text before inserting a quote link".to_string());
+                    self.overlays.toast =
+                        Some("Select PDF text before inserting a quote link".to_string());
                     return Task::none();
                 };
                 self.set_active_panel(ActivePanel::Markdown);
@@ -3211,24 +3165,26 @@ impl MdEditor {
             }
             Message::PdfInsertAnnotationLink(annotation_id) => {
                 if self.active_path.is_none() {
-                    self.toast =
+                    self.overlays.toast =
                         Some("Open a markdown file before inserting a highlight".to_string());
                     return Task::none();
                 }
-                if self.excerpt_mode_active {
+                if self.overlays.excerpt_mode_active {
                     if let Some((_, ann)) = self.find_pdf_annotation(&annotation_id) {
-                        self.excerpts_queue
-                            .push(crate::messages::CitationItem::Annotation {
+                        self.overlays.excerpts_queue.push(
+                            crate::messages::CitationItem::Annotation {
                                 id: ann.id.clone(),
                                 text: ann.selected_text.clone(),
                                 page_index: ann.page_index,
-                            });
-                        self.toast = Some("Annotation queued to excerpts".to_string());
+                            },
+                        );
+                        self.overlays.toast = Some("Annotation queued to excerpts".to_string());
                     }
                     return Task::none();
                 }
                 let Some(command) = self.pdf_annotation_link_command(&annotation_id) else {
-                    self.toast = Some("Select a PDF highlight before inserting it".to_string());
+                    self.overlays.toast =
+                        Some("Select a PDF highlight before inserting it".to_string());
                     return Task::none();
                 };
                 self.set_active_panel(ActivePanel::Markdown);
@@ -3283,7 +3239,7 @@ impl MdEditor {
                         };
 
                         if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                            self.toast = Some(format!("Failed to save annotation: {}", e));
+                            self.overlays.toast = Some(format!("Failed to save annotation: {}", e));
                         } else {
                             self.pdf_annotations
                                 .entry(sel.page_index)
@@ -3302,7 +3258,7 @@ impl MdEditor {
             }
             Message::PdfDeleteHighlight(id) => {
                 if let Err(e) = self.state.delete_pdf_annotation(&id) {
-                    self.toast = Some(format!("Failed to delete highlight: {}", e));
+                    self.overlays.toast = Some(format!("Failed to delete highlight: {}", e));
                 } else {
                     for page_anns in self.pdf_annotations.values_mut() {
                         page_anns.retain(|a| a.id != id);
@@ -3310,10 +3266,12 @@ impl MdEditor {
                     if self.focused_annotation_id.as_ref() == Some(&id) {
                         self.focused_annotation_id = None;
                     }
-                    if let Some(views::modals::ModalType::QuickNote(ref mid)) = self.active_modal {
+                    if let Some(views::modals::ModalType::QuickNote(ref mid)) =
+                        self.overlays.active_modal
+                    {
                         if mid == &id {
-                            self.active_modal = None;
-                            self.modal_input.clear();
+                            self.overlays.active_modal = None;
+                            self.overlays.modal_input.clear();
                         }
                     }
                     if let Some(ref path) = self.active_pdf_path {
@@ -3345,7 +3303,7 @@ impl MdEditor {
                 let mut task = Task::none();
                 if let Some(ann) = found_ann {
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                        self.toast = Some(format!("Failed to save note: {}", e));
+                        self.overlays.toast = Some(format!("Failed to save note: {}", e));
                     } else {
                         if let Some(ref path) = self.active_pdf_path {
                             self.backlinks =
@@ -3369,7 +3327,7 @@ impl MdEditor {
                                                 note_path,
                                                 &updated_content,
                                             ) {
-                                                self.toast = Some(format!(
+                                                self.overlays.toast = Some(format!(
                                                     "Failed to sync linked note: {}",
                                                     e
                                                 ));
@@ -3403,9 +3361,10 @@ impl MdEditor {
                 }
                 if let Some(mut ann) = annotation {
                     if note_path.is_empty() {
-                        self.modal_input = self.default_pdf_note_path(&ann);
-                        self.link_note_picker_search.clear();
-                        self.active_modal = Some(views::modals::ModalType::LinkNote(annotation_id));
+                        self.overlays.modal_input = self.default_pdf_note_path(&ann);
+                        self.overlays.link_note_picker_search.clear();
+                        self.overlays.active_modal =
+                            Some(views::modals::ModalType::LinkNote(annotation_id));
                         return Task::none();
                     }
 
@@ -3418,7 +3377,8 @@ impl MdEditor {
                             &note_path,
                             &content,
                         ) {
-                            self.toast = Some(format!("Failed to create linked note: {}", e));
+                            self.overlays.toast =
+                                Some(format!("Failed to create linked note: {}", e));
                             return Task::none();
                         }
                     } else {
@@ -3432,7 +3392,7 @@ impl MdEditor {
                         .as_secs() as i64;
 
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                        self.toast = Some(format!("Failed to link note: {}", e));
+                        self.overlays.toast = Some(format!("Failed to link note: {}", e));
                     } else {
                         for page_anns in self.pdf_annotations.values_mut() {
                             if let Some(a) = page_anns.iter_mut().find(|a| a.id == annotation_id) {
@@ -3450,7 +3410,7 @@ impl MdEditor {
                                 &note_path,
                             );
                         }
-                        self.toast = Some(format!("Linked note: {}", note_path));
+                        self.overlays.toast = Some(format!("Linked note: {}", note_path));
                         return Task::done(Message::PdfOpenLinkedNote(note_path));
                     }
                 }
@@ -3499,7 +3459,7 @@ impl MdEditor {
             }
 
             Message::ToastHide => {
-                self.toast = None;
+                self.overlays.toast = None;
                 Task::none()
             }
             Message::KeyboardShortcut(s) => {
@@ -3512,13 +3472,11 @@ impl MdEditor {
                             self.focused_annotation_id = None;
                         } else if self.pdf_link_preview.is_some() {
                             self.pdf_link_preview = None;
-                            self.active_modal = None;
-                        } else if self.active_modal.is_some() {
-                            self.active_modal = None;
-                            self.modal_input.clear();
-                            self.link_note_picker_search.clear();
-                        } else if self.tracker_visible {
-                            self.tracker_visible = false;
+                            self.overlays.active_modal = None;
+                        } else if self.overlays.active_modal.is_some() {
+                            self.overlays.close_modal();
+                        } else if self.tracker.visible {
+                            self.tracker.visible = false;
                         } else if self.editor_search.visible || self.pdf_state.search.visible {
                             self.editor_search.visible = false;
                             self.pdf_state.search.visible = false;
@@ -3526,10 +3484,10 @@ impl MdEditor {
                         } else if self.search_visible {
                             self.search_visible = false;
                             return self.restore_scroll_positions();
-                        } else if self.command_palette_visible {
-                            self.command_palette_visible = false;
-                        } else if self.citation_palette_visible {
-                            self.citation_palette_visible = false;
+                        } else if self.overlays.command_palette_visible {
+                            self.overlays.command_palette_visible = false;
+                        } else if self.overlays.citation_palette_visible {
+                            self.overlays.citation_palette_visible = false;
                         } else if self.toc_visible {
                             self.toc_visible = false;
                         }
@@ -3610,16 +3568,17 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::CommandPalette => {
-                        self.command_palette_visible = true;
-                        self.command_palette_query.clear();
-                        self.citation_palette_visible = false;
+                        self.overlays.command_palette_visible = true;
+                        self.overlays.command_palette_query.clear();
+                        self.overlays.citation_palette_visible = false;
                         focus_command_palette_input()
                     }
                     Shortcut::CitationPalette => {
-                        self.citation_palette_visible = !self.citation_palette_visible;
-                        self.citation_palette_query.clear();
-                        if self.citation_palette_visible {
-                            self.command_palette_visible = false;
+                        self.overlays.citation_palette_visible =
+                            !self.overlays.citation_palette_visible;
+                        self.overlays.citation_palette_query.clear();
+                        if self.overlays.citation_palette_visible {
+                            self.overlays.command_palette_visible = false;
                             self.search_visible = false;
                             return focus_citation_palette_input();
                         }
@@ -3628,7 +3587,7 @@ impl MdEditor {
                     Shortcut::ExcerptModeToggle => Task::done(Message::ExcerptModeToggle),
                     Shortcut::ExcerptInsertBatch => Task::done(Message::ExcerptQueueInsertBatch),
                     Shortcut::Submit => {
-                        if self.citation_palette_visible {
+                        if self.overlays.citation_palette_visible {
                             Task::done(Message::CitationPaletteSubmitFirst)
                         } else {
                             Task::done(Message::NameModalSubmitCurrent)
@@ -3647,7 +3606,7 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::StudyTracker => {
-                        self.tracker_visible = !self.tracker_visible;
+                        self.tracker.toggle_visibility();
                         self.persist_shell_state();
                         Task::none()
                     }
@@ -3667,19 +3626,19 @@ impl MdEditor {
                     }
                     Shortcut::ThemeDark => {
                         app_theme::set_active_theme(app_theme::AppTheme::Dark);
-                        self.command_palette_visible = false;
+                        self.overlays.command_palette_visible = false;
                         self.persist_shell_state();
                         Task::none()
                     }
                     Shortcut::ThemeLight => {
                         app_theme::set_active_theme(app_theme::AppTheme::Light);
-                        self.command_palette_visible = false;
+                        self.overlays.command_palette_visible = false;
                         self.persist_shell_state();
                         Task::none()
                     }
                     Shortcut::ThemeHighContrast => {
                         app_theme::set_active_theme(app_theme::AppTheme::HighContrast);
-                        self.command_palette_visible = false;
+                        self.overlays.command_palette_visible = false;
                         self.persist_shell_state();
                         Task::none()
                     }
@@ -3687,7 +3646,7 @@ impl MdEditor {
                         self.sidebar_visible = false;
                         self.backlinks_visible = false;
                         self.toc_visible = false;
-                        self.tracker_visible = false;
+                        self.tracker.visible = false;
                         self.pdf_annotations_visible = false;
                         self.persist_shell_state();
                         Task::none()
@@ -3720,11 +3679,11 @@ impl MdEditor {
                             && self.showing_pdf
                             && self.pdf_total_pages > 0
                         {
-                            self.active_modal = Some(views::modals::ModalType::GoToPage {
+                            self.overlays.active_modal = Some(views::modals::ModalType::GoToPage {
                                 total: self.pdf_total_pages,
                                 error: None,
                             });
-                            self.modal_input.clear();
+                            self.overlays.modal_input.clear();
                             Task::none()
                         } else {
                             Task::none()
@@ -3743,7 +3702,7 @@ impl MdEditor {
                                 let color = md_editor_core::pdf::PdfAnnotationColor::Yellow;
                                 Task::done(Message::PdfCreateHighlight(color))
                             } else {
-                                self.toast =
+                                self.overlays.toast =
                                     Some("Select PDF text before highlighting".to_string());
                                 Task::none()
                             }
@@ -3756,7 +3715,7 @@ impl MdEditor {
                         if let Some(annotation_id) = self.focused_annotation_id.clone() {
                             Task::done(Message::PdfInsertAnnotationLink(annotation_id))
                         } else {
-                            self.toast =
+                            self.overlays.toast =
                                 Some("Select a PDF highlight before inserting it".to_string());
                             Task::none()
                         }
@@ -3777,11 +3736,11 @@ impl MdEditor {
                     }
                     Shortcut::PdfZoomInput => {
                         if self.showing_pdf {
-                            self.active_modal = Some(views::modals::ModalType::GoToPage {
+                            self.overlays.active_modal = Some(views::modals::ModalType::GoToPage {
                                 total: self.pdf_total_pages,
                                 error: None,
                             });
-                            self.modal_input.clear();
+                            self.overlays.modal_input.clear();
                             Task::none()
                         } else {
                             Task::none()
@@ -3809,9 +3768,9 @@ impl MdEditor {
                         self.persist_shell_state();
                         return self.open_pdf(&last_pdf);
                     }
-                    self.toast = Some("Open a PDF once to use split view".to_string());
+                    self.overlays.toast = Some("Open a PDF once to use split view".to_string());
                 } else {
-                    self.toast =
+                    self.overlays.toast =
                         Some("Open a markdown file and a PDF to use split view".to_string());
                 }
                 Task::none()
@@ -3821,7 +3780,7 @@ impl MdEditor {
                 // Also start PDF split resize if showing PDF
                 if self.showing_pdf && self.active_pdf_path.is_some() {
                     let has_split =
-                        !self.sidebar_visible && !self.tracker_visible && !self.toc_visible;
+                        !self.sidebar_visible && !self.tracker.visible && !self.toc_visible;
                     if has_split || self.split_view_active {
                         self.pdf_split_ratio = 0.3;
                     }
@@ -3844,7 +3803,7 @@ impl MdEditor {
                     return Task::none();
                 }
                 let side_width = if self.sidebar_visible { 250.0 } else { 0.0 }
-                    + if self.tracker_visible { 300.0 } else { 0.0 }
+                    + if self.tracker.visible { 300.0 } else { 0.0 }
                     + if self.toc_visible { 250.0 } else { 0.0 };
                 let content_width = (self.window_width - side_width).max(480.0);
                 let x_min = side_width + 240.0;
@@ -3933,7 +3892,8 @@ impl MdEditor {
                 }
                 if let Some(ann) = found_ann {
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                        self.toast = Some(format!("Failed to toggle annotation status: {}", e));
+                        self.overlays.toast =
+                            Some(format!("Failed to toggle annotation status: {}", e));
                     }
                 }
                 Task::none()
@@ -3947,8 +3907,8 @@ impl MdEditor {
                         break;
                     }
                 }
-                self.active_modal = Some(views::modals::ModalType::AnnotationTags(id));
-                self.modal_input = tags_str;
+                self.overlays.active_modal = Some(views::modals::ModalType::AnnotationTags(id));
+                self.overlays.modal_input = tags_str;
                 Task::none()
             }
             Message::PdfUpdateAnnotationTags(id, input) => {
@@ -3971,7 +3931,8 @@ impl MdEditor {
                 }
                 if let Some(ann) = found_ann {
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                        self.toast = Some(format!("Failed to save annotation tags: {}", e));
+                        self.overlays.toast =
+                            Some(format!("Failed to save annotation tags: {}", e));
                     }
                 }
                 Task::none()
@@ -3989,8 +3950,8 @@ impl MdEditor {
                         break;
                     }
                 }
-                self.active_modal = Some(views::modals::ModalType::QuickNote(id));
-                self.modal_input = note;
+                self.overlays.active_modal = Some(views::modals::ModalType::QuickNote(id));
+                self.overlays.modal_input = note;
                 Task::none()
             }
             Message::PdfExportAnnotations => {
@@ -4046,11 +4007,11 @@ impl MdEditor {
             Message::PdfAnnotationsExported(res) => {
                 match res {
                     Ok(path) => {
-                        self.toast = Some(format!("Exported to {}", path));
+                        self.overlays.toast = Some(format!("Exported to {}", path));
                     }
                     Err(err) => {
                         if err != "Export cancelled" {
-                            self.toast = Some(err);
+                            self.overlays.toast = Some(err);
                         }
                     }
                 }
@@ -4061,7 +4022,7 @@ impl MdEditor {
     }
 
     fn current_shell_persistence(&self) -> AppShellPersistence {
-        let active_workflow_tab = if self.tracker_visible {
+        let active_workflow_tab = if self.tracker.visible {
             WorkflowSidebarTab::Tracker
         } else if self.toc_visible {
             WorkflowSidebarTab::Outline
@@ -4087,7 +4048,7 @@ impl MdEditor {
             reference_collapsed: !self.split_view_active,
             workflow_collapsed: !self.backlinks_visible
                 && !self.toc_visible
-                && !self.tracker_visible
+                && !self.tracker.visible
                 && !self.pdf_annotations_visible,
             active_workflow_tab,
             last_focused_pane,
@@ -4110,8 +4071,8 @@ impl MdEditor {
                 image_open: self.active_image_path.is_some(),
                 split_requested: self.split_view_active,
                 search_visible: self.search_visible,
-                command_palette_visible: self.command_palette_visible,
-                citation_palette_visible: self.citation_palette_visible,
+                command_palette_visible: self.overlays.command_palette_visible,
+                citation_palette_visible: self.overlays.citation_palette_visible,
             },
             persistence,
         )
@@ -4120,7 +4081,7 @@ impl MdEditor {
     fn app_shell_status(&self, shell_state: AppShellState) -> AppShellStatus {
         AppShellStatus::derive(AppShellStatusInputs {
             background_status: None,
-            toast: self.toast.clone(),
+            toast: self.overlays.toast.clone(),
             document_open: self.active_path.is_some()
                 || self.active_pdf_path.is_some()
                 || self.active_image_path.is_some(),
@@ -4152,7 +4113,7 @@ impl MdEditor {
             && !saved.workflow_collapsed;
         self.toc_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Outline)
             && !saved.workflow_collapsed;
-        self.tracker_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Tracker)
+        self.tracker.visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Tracker)
             && !saved.workflow_collapsed;
         self.pdf_annotations_visible =
             matches!(saved.active_workflow_tab, WorkflowSidebarTab::Annotations)
@@ -4205,7 +4166,7 @@ impl MdEditor {
                 .as_deref()
                 .or(self.active_image_path.as_deref()),
             self.sidebar_visible,
-            self.tracker_visible,
+            self.tracker.visible,
             self.toc_visible,
             self.active_path.is_some() || self.active_pdf_path.is_some(),
             self.split_view_active,
@@ -4596,10 +4557,10 @@ impl MdEditor {
             );
         }
 
-        if self.command_palette_visible {
+        if self.overlays.command_palette_visible {
             layers.push(
                 container(views::command_palette::view(
-                    &self.command_palette_query,
+                    &self.overlays.command_palette_query,
                     self.command_palette_commands(),
                     self.window_width,
                 ))
@@ -4617,10 +4578,10 @@ impl MdEditor {
             );
         }
 
-        if self.citation_palette_visible {
+        if self.overlays.citation_palette_visible {
             layers.push(
                 container(views::citation_palette::view(
-                    &self.citation_palette_query,
+                    &self.overlays.citation_palette_query,
                     self.citation_palette_items(),
                 ))
                 .width(Length::Fill)
@@ -4637,27 +4598,27 @@ impl MdEditor {
             );
         }
 
-        if let Some(modal_type) = &self.active_modal {
+        if let Some(modal_type) = &self.overlays.active_modal {
             layers.push(views::modals::view(
                 modal_type,
-                &self.modal_input,
-                &self.link_note_picker_search,
+                &self.overlays.modal_input,
+                &self.overlays.link_note_picker_search,
                 &self.vault_entries,
             ));
         }
 
-        if self.tracker_visible {
+        if self.tracker.visible {
             layers.push(
                 container(views::tracker::view(
                     true,
-                    self.tracker_running,
-                    &self.tracker_sessions,
-                    &self.tracker_kv,
-                    self.tracker_tab,
-                    &self.tracker_config_content,
-                    &self.tracker_manual_date,
-                    &self.tracker_manual_hours,
-                    &self.tracker_manual_notes,
+                    self.tracker.running,
+                    &self.tracker.sessions,
+                    &self.tracker.kv,
+                    self.tracker.tab,
+                    &self.tracker.config_content,
+                    &self.tracker.manual_date,
+                    &self.tracker.manual_hours,
+                    &self.tracker.manual_notes,
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -4721,7 +4682,7 @@ impl MdEditor {
             layers.push(modal.into());
         }
 
-        if let Some(msg) = &self.toast {
+        if let Some(msg) = &self.overlays.toast {
             layers.push(
                 container(views::toast::view(msg))
                     .width(Length::Fill)
@@ -4881,7 +4842,7 @@ impl MdEditor {
             }
         }
         let Some(abs_path) = self.resolve_active_path(path) else {
-            self.toast = Some("Open a vault before opening a PDF".to_string());
+            self.overlays.toast = Some("Open a vault before opening a PDF".to_string());
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
@@ -4983,7 +4944,7 @@ impl MdEditor {
 
     fn open_image(&mut self, path: &str) -> Task<Message> {
         let Some(abs_path) = self.resolve_active_path(path) else {
-            self.toast = Some("Open a vault before opening an image".to_string());
+            self.overlays.toast = Some("Open a vault before opening an image".to_string());
             return Task::none();
         };
 
@@ -5007,7 +4968,7 @@ impl MdEditor {
                 self.backlinks.clear();
             }
             Err(err) => {
-                self.toast = Some(format!("Could not open image: {err}"));
+                self.overlays.toast = Some(format!("Could not open image: {err}"));
             }
         }
         Task::none()
@@ -6075,7 +6036,7 @@ impl MdEditor {
         }
 
         // If query is empty, show selection + active PDF annotations.
-        let query_trimmed = self.citation_palette_query.trim();
+        let query_trimmed = self.overlays.citation_palette_query.trim();
         if query_trimmed.is_empty() {
             // Add all annotations from current PDF
             for page_anns in self.pdf_annotations.values() {
@@ -6146,11 +6107,11 @@ impl MdEditor {
     }
 
     fn submit_first_citation_palette_item(&mut self) -> Task<Message> {
-        if !self.citation_palette_visible {
+        if !self.overlays.citation_palette_visible {
             return Task::none();
         }
         let Some(item) = self.citation_palette_items().into_iter().next() else {
-            self.toast = Some("No citation matches".to_string());
+            self.overlays.toast = Some("No citation matches".to_string());
             return Task::none();
         };
         self.choose_citation_item(item)
@@ -6158,14 +6119,14 @@ impl MdEditor {
 
     fn choose_citation_item(&mut self, item: crate::messages::CitationItem) -> Task<Message> {
         if self.active_path.is_none() {
-            self.toast = Some("Open a markdown file before inserting a citation".to_string());
+            self.overlays.toast =
+                Some("Open a markdown file before inserting a citation".to_string());
             return Task::none();
         }
-        self.citation_palette_visible = false;
-        self.citation_palette_query.clear();
-        if self.excerpt_mode_active {
-            self.excerpts_queue.push(item);
-            self.toast = Some("Citation queued to excerpts".to_string());
+        self.overlays.close_citation_palette();
+        if self.overlays.excerpt_mode_active {
+            self.overlays.excerpts_queue.push(item);
+            self.overlays.toast = Some("Citation queued to excerpts".to_string());
             return Task::none();
         }
         match item {
@@ -6557,7 +6518,7 @@ impl MdEditor {
         match action {
             EditorLinkActionKind::OpenLink => Task::done(Message::SidebarFileClicked(link_target)),
             EditorLinkActionKind::CopyLinkTarget => {
-                self.toast = Some("Copied".to_string());
+                self.overlays.toast = Some("Copied".to_string());
                 iced::clipboard::write::<Message>(link_target)
             }
             EditorLinkActionKind::CreateNote => {
@@ -6592,11 +6553,11 @@ impl MdEditor {
                     Ok(()) => {
                         self.vault_entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                        self.toast = Some(format!("Created {}", new_path));
+                        self.overlays.toast = Some(format!("Created {}", new_path));
                         Task::done(Message::SidebarFileClicked(new_path))
                     }
                     Err(e) => {
-                        self.toast = Some(e);
+                        self.overlays.toast = Some(e);
                         Task::none()
                     }
                 }
@@ -6611,7 +6572,7 @@ impl MdEditor {
                     end_col,
                     replacement,
                 });
-                self.toast = Some(format!("Link repaired → {}", suggested_path));
+                self.overlays.toast = Some(format!("Link repaired → {}", suggested_path));
                 task
             }
         }
@@ -7431,7 +7392,7 @@ mod tests {
         app.sidebar_visible = true;
         app.backlinks_visible = false;
         app.toc_visible = false;
-        app.tracker_visible = false;
+        app.tracker.visible = false;
         app.pdf_annotations_visible = false;
         app.split_view_active = false;
         app.split_ratio = 0.5;
@@ -7546,15 +7507,15 @@ mod tests {
 
     fn app_with_command_palette() -> MdEditor {
         let mut app = app_with_markdown_file();
-        app.command_palette_visible = true;
-        app.command_palette_query = "navigate".to_string();
+        app.overlays.command_palette_visible = true;
+        app.overlays.command_palette_query = "navigate".to_string();
         app
     }
 
     fn app_with_active_modal() -> MdEditor {
         let mut app = app_with_markdown_file();
-        app.active_modal = Some(ModalType::CreateFile);
-        app.modal_input = "new-note.md".to_string();
+        app.overlays.active_modal = Some(ModalType::CreateFile);
+        app.overlays.modal_input = "new-note.md".to_string();
         app
     }
 
@@ -7761,16 +7722,16 @@ mod tests {
         let mut app = app_with_markdown_file();
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::CommandPalette));
-        assert!(app.command_palette_visible);
-        assert!(!app.citation_palette_visible);
+        assert!(app.overlays.command_palette_visible);
+        assert!(!app.overlays.citation_palette_visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::CitationPalette));
-        assert!(app.citation_palette_visible);
-        assert!(!app.command_palette_visible);
+        assert!(app.overlays.citation_palette_visible);
+        assert!(!app.overlays.command_palette_visible);
         assert!(!app.search_visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
-        assert!(!app.citation_palette_visible);
+        assert!(!app.overlays.citation_palette_visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
         assert!(app.editor_search.visible);
@@ -7784,7 +7745,7 @@ mod tests {
         assert!(!app.sidebar_visible);
         assert!(!app.backlinks_visible);
         assert!(!app.toc_visible);
-        assert!(!app.tracker_visible);
+        assert!(!app.tracker.visible);
     }
 
     #[test]
@@ -7881,16 +7842,16 @@ mod tests {
     fn ui_audit_escape_closes_modal_before_background_overlays() {
         let mut app = app_with_active_modal();
         app.search_visible = true;
-        app.command_palette_visible = true;
+        app.overlays.command_palette_visible = true;
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
-        assert!(app.active_modal.is_none());
+        assert!(app.overlays.active_modal.is_none());
         assert!(app.search_visible);
-        assert!(app.command_palette_visible);
+        assert!(app.overlays.command_palette_visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
         assert!(!app.search_visible);
-        assert!(app.command_palette_visible);
+        assert!(app.overlays.command_palette_visible);
     }
 
     #[test]
@@ -7966,7 +7927,7 @@ mod tests {
     #[test]
     fn app_shell_status_surfaces_toast_before_background_error() {
         let mut app = app_with_pdf_file();
-        app.toast = Some("Linked note created".to_string());
+        app.overlays.toast = Some("Linked note created".to_string());
         app.pdf_search_error = Some("PDF search failed".to_string());
 
         let status = app.app_shell_status(app.app_shell_state());
@@ -8017,7 +7978,7 @@ mod tests {
         app.sidebar_visible = false;
         app.backlinks_visible = false;
         app.toc_visible = true;
-        app.tracker_visible = false;
+        app.tracker.visible = false;
         app.pdf_annotations_visible = false;
         app.split_ratio = 0.62;
         app.pdf_split_ratio = 0.4;
@@ -8487,7 +8448,7 @@ mod tests {
             1,
             vec![255, 255, 255, 255],
         ));
-        app.active_modal = Some(views::modals::ModalType::PdfContextMenu(
+        app.overlays.active_modal = Some(views::modals::ModalType::PdfContextMenu(
             views::modals::PdfContextMenuState {
                 absolute_pos: iced::Point::ORIGIN,
                 items: Vec::new(),
@@ -8497,7 +8458,7 @@ mod tests {
         let _ = app.update(Message::ClosePdfLinkPreview);
 
         assert!(app.pdf_link_preview.is_none());
-        assert!(app.active_modal.is_none());
+        assert!(app.overlays.active_modal.is_none());
     }
 
     #[test]
@@ -8508,7 +8469,7 @@ mod tests {
             1,
             vec![255, 255, 255, 255],
         ));
-        app.active_modal = Some(views::modals::ModalType::PdfContextMenu(
+        app.overlays.active_modal = Some(views::modals::ModalType::PdfContextMenu(
             views::modals::PdfContextMenuState {
                 absolute_pos: iced::Point::ORIGIN,
                 items: Vec::new(),
@@ -8518,7 +8479,7 @@ mod tests {
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
 
         assert!(app.pdf_link_preview.is_none());
-        assert!(app.active_modal.is_none());
+        assert!(app.overlays.active_modal.is_none());
     }
 
     #[test]
@@ -8751,7 +8712,7 @@ mod tests {
         let _ = app.update(Message::PdfInsertQuoteLink);
 
         assert_eq!(
-            app.toast.as_deref(),
+            app.overlays.toast.as_deref(),
             Some("Open a markdown file before inserting a quote link")
         );
         assert_eq!(app.buffer.text(), "");
@@ -8764,7 +8725,7 @@ mod tests {
         let _ = app.update(Message::KeyboardShortcut(Shortcut::PdfHighlight));
 
         assert_eq!(
-            app.toast.as_deref(),
+            app.overlays.toast.as_deref(),
             Some("Select PDF text before highlighting")
         );
         assert!(app.pdf_annotations.values().all(Vec::is_empty));
@@ -9818,7 +9779,7 @@ mod tests {
 
         // Toggle excerpt mode
         let _ = app.update(Message::ExcerptModeToggle);
-        assert!(app.excerpt_mode_active);
+        assert!(app.overlays.excerpt_mode_active);
 
         // Queue items using CitationPaletteChoose
         let item1 = crate::messages::CitationItem::Selection {
@@ -9834,13 +9795,13 @@ mod tests {
         let _ = app.update(Message::CitationPaletteChoose(item1));
         let _ = app.update(Message::CitationPaletteChoose(item2));
 
-        assert_eq!(app.excerpts_queue.len(), 2);
+        assert_eq!(app.overlays.excerpts_queue.len(), 2);
 
         // Insert batch
         let _ = app.update(Message::ExcerptQueueInsertBatch);
 
         // Queue should be cleared
-        assert!(app.excerpts_queue.is_empty());
+        assert!(app.overlays.excerpts_queue.is_empty());
 
         // Document buffer should contain the citations
         let content = app.buffer.text();
@@ -9856,8 +9817,8 @@ mod tests {
     fn citation_palette_submit_first_queues_first_item_in_excerpt_mode() {
         let mut app = MdEditor::new().0;
         app.active_path = Some("test_note.md".to_string());
-        app.citation_palette_visible = true;
-        app.excerpt_mode_active = true;
+        app.overlays.citation_palette_visible = true;
+        app.overlays.excerpt_mode_active = true;
         app.pdf_annotations.insert(
             0,
             vec![md_editor_core::pdf::PdfAnnotation {
@@ -9881,10 +9842,10 @@ mod tests {
 
         let _ = app.update(Message::CitationPaletteSubmitFirst);
 
-        assert!(!app.citation_palette_visible);
-        assert_eq!(app.excerpts_queue.len(), 1);
+        assert!(!app.overlays.citation_palette_visible);
+        assert_eq!(app.overlays.excerpts_queue.len(), 1);
         assert!(matches!(
-            app.excerpts_queue.as_slice(),
+            app.overlays.excerpts_queue.as_slice(),
             [crate::messages::CitationItem::Annotation { id, .. }] if id == "ann-keyboard"
         ));
     }

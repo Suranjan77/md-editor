@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
+use crate::editor::geometry::{clip_viewport, normalized_selection};
 use crate::editor::highlight::StyledLine;
 use crate::editor::layout_cache::{LineHeightCache, line_hash, resource_hash};
 use crate::{search, theme};
@@ -822,19 +823,6 @@ fn draw_nowrap_text<R>(
     );
 }
 
-fn clip_viewport(viewport: Rectangle, clip: Rectangle) -> Rectangle {
-    let x1 = viewport.x.max(clip.x);
-    let y1 = viewport.y.max(clip.y);
-    let x2 = (viewport.x + viewport.width).min(clip.x + clip.width);
-    let y2 = (viewport.y + viewport.height).min(clip.y + clip.height);
-    Rectangle {
-        x: x1,
-        y: y1,
-        width: (x2 - x1).max(0.0),
-        height: (y2 - y1).max(0.0),
-    }
-}
-
 fn draw_horizontal_scrollbar<R>(
     renderer: &mut R,
     block_id: usize,
@@ -892,22 +880,6 @@ fn draw_horizontal_scrollbar<R>(
         },
         theme::accent_dim(),
     );
-}
-
-fn normalized_selection(
-    anchor: Option<(usize, usize)>,
-    focus: Option<(usize, usize)>,
-) -> Option<((usize, usize), (usize, usize))> {
-    let (a_line, a_col) = anchor?;
-    let (f_line, f_col) = focus?;
-    if (a_line, a_col) == (f_line, f_col) {
-        return None;
-    }
-    if (a_line, a_col) <= (f_line, f_col) {
-        Some(((a_line, a_col), (f_line, f_col)))
-    } else {
-        Some(((f_line, f_col), (a_line, a_col)))
-    }
 }
 
 /// Total document height in pixels.
@@ -4091,43 +4063,6 @@ mod tests {
     }
 
     #[test]
-    fn test_normalized_selection_combinatorics() {
-        // Run thousands of combinations of boundary cases for selections
-        for anchor_line in 0..15 {
-            for anchor_col in 0..10 {
-                for focus_line in 0..15 {
-                    for focus_col in 0..10 {
-                        let norm = normalized_selection(
-                            Some((anchor_line, anchor_col)),
-                            Some((focus_line, focus_col)),
-                        );
-                        if (anchor_line, anchor_col) == (focus_line, focus_col) {
-                            assert!(norm.is_none());
-                        } else {
-                            let (start, end) = norm.unwrap();
-                            assert!(start <= end);
-                            if anchor_line < focus_line {
-                                assert_eq!(start, (anchor_line, anchor_col));
-                                assert_eq!(end, (focus_line, focus_col));
-                            } else if anchor_line > focus_line {
-                                assert_eq!(start, (focus_line, focus_col));
-                                assert_eq!(end, (anchor_line, anchor_col));
-                            } else {
-                                assert_eq!(start, (anchor_line, anchor_col.min(focus_col)));
-                                assert_eq!(end, (anchor_line, anchor_col.max(focus_col)));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        assert!(normalized_selection(None, None).is_none());
-        assert!(normalized_selection(Some((1, 1)), None).is_none());
-        assert!(normalized_selection(None, Some((2, 2))).is_none());
-    }
-
-    #[test]
     fn test_editor_selected_text_extraction() {
         let buffer = DocBuffer::from_text("line one\nline two\nline three\nline four");
         let lines: Vec<StyledLine> = vec![
@@ -4633,52 +4568,6 @@ mod tests {
             );
             assert!(h >= 0.0);
         }
-    }
-
-    #[test]
-    fn test_clip_viewport() {
-        let viewport = Rectangle {
-            x: 10.0,
-            y: 20.0,
-            width: 100.0,
-            height: 200.0,
-        };
-        // Fully inside
-        let clip_inside = Rectangle {
-            x: 20.0,
-            y: 30.0,
-            width: 50.0,
-            height: 50.0,
-        };
-        let res = clip_viewport(viewport, clip_inside);
-        assert_eq!(res.x, 20.0);
-        assert_eq!(res.y, 30.0);
-        assert_eq!(res.width, 50.0);
-        assert_eq!(res.height, 50.0);
-
-        // No overlap
-        let clip_no_overlap = Rectangle {
-            x: 200.0,
-            y: 300.0,
-            width: 50.0,
-            height: 50.0,
-        };
-        let res_none = clip_viewport(viewport, clip_no_overlap);
-        assert_eq!(res_none.width, 0.0);
-        assert_eq!(res_none.height, 0.0);
-
-        // Partial overlap
-        let clip_partial = Rectangle {
-            x: 50.0,
-            y: 100.0,
-            width: 100.0,
-            height: 200.0,
-        };
-        let res_partial = clip_viewport(viewport, clip_partial);
-        assert_eq!(res_partial.x, 50.0);
-        assert_eq!(res_partial.y, 100.0);
-        assert_eq!(res_partial.width, 60.0);
-        assert_eq!(res_partial.height, 120.0);
     }
 
     #[test]
