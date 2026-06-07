@@ -109,21 +109,12 @@ pub fn check_vault_integrity(
     // 1. Gather all existing vault files
     let (existing_mds, existing_pdfs) = list_all_files(vault_root)?;
 
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-
     // 2. Build doc ID map
-    let mut stmt = db
-        .prepare("SELECT document_id, vault_relative_path FROM pdf_documents")
-        .map_err(|e| e.to_string())?;
-    let docs = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    let doc_id_to_path: std::collections::HashMap<String, String> = docs.into_iter().collect();
+    let doc_id_to_path: std::collections::HashMap<String, String> = state
+        .pdf_document_references()?
+        .into_iter()
+        .map(|doc| (doc.document_id, doc.vault_path))
+        .collect();
 
     // 3. Check for missing PDFs in database
     for (doc_id, pdf_path) in &doc_id_to_path {
@@ -149,52 +140,39 @@ pub fn check_vault_integrity(
     }
 
     // 4. Check for missing notes linked from annotations
-    let mut stmt = db.prepare("SELECT id, document_id, page_index, linked_note_path FROM pdf_annotations WHERE linked_note_path IS NOT NULL AND linked_note_path != ''").map_err(|e| e.to_string())?;
-    let anns = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, u16>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    for (ann_id, doc_id, page_index, linked_note) in anns {
+    for ann in state.linked_pdf_annotation_references()? {
         let pdf_path = doc_id_to_path
-            .get(&doc_id)
+            .get(&ann.document_id)
             .cloned()
             .unwrap_or_else(|| "unknown.pdf".to_string());
-        if !existing_mds.contains(&linked_note) {
+        if !existing_mds.contains(&ann.linked_note_path) {
             if let Some(suggested) =
-                find_suggested_path(&linked_note, &existing_mds, &existing_pdfs)
+                find_suggested_path(&ann.linked_note_path, &existing_mds, &existing_pdfs)
             {
                 broken.push(BrokenReference {
                     kind: BrokenReferenceKind::MovedVaultPath {
                         suggested_path: suggested,
                     },
                     source_file: pdf_path,
-                    target: linked_note,
-                    detail: format!("Annotation {} on page {}", ann_id, page_index),
+                    target: ann.linked_note_path,
+                    detail: format!(
+                        "Annotation {} on page {}",
+                        ann.annotation_id, ann.page_index
+                    ),
                 });
             } else {
                 broken.push(BrokenReference {
                     kind: BrokenReferenceKind::MissingNote,
                     source_file: pdf_path,
-                    target: linked_note,
-                    detail: format!("Annotation {} on page {}", ann_id, page_index),
+                    target: ann.linked_note_path,
+                    detail: format!(
+                        "Annotation {} on page {}",
+                        ann.annotation_id, ann.page_index
+                    ),
                 });
             }
         }
     }
-
-    // Helper closure to check if annotation exists
-    let mut check_ann_stmt = db
-        .prepare("SELECT 1 FROM pdf_annotations WHERE id = ?1")
-        .map_err(|e| e.to_string())?;
 
     // 5. Check links in markdown files
     for md_file in &existing_mds {
@@ -236,10 +214,7 @@ pub fn check_vault_integrity(
                         });
                     }
                 } else if let Some(ann_id) = &pdf_target.annotation_id {
-                    let ann_exists = check_ann_stmt
-                        .exists(rusqlite::params![ann_id])
-                        .map_err(|e| e.to_string())?;
-                    if !ann_exists {
+                    if !state.pdf_annotation_exists(ann_id)? {
                         broken.push(BrokenReference {
                             kind: BrokenReferenceKind::DeletedAnnotation,
                             source_file: md_file.clone(),
@@ -316,23 +291,28 @@ mod tests {
         // 2. Create valid.pdf file
         std::fs::write(root.join("valid.pdf"), "%PDF-1.4 ...").unwrap();
 
-        // Populate db with doc mapping for doc id and annotations
-        {
-            let db = state.db.lock().unwrap();
-            db.execute(
-                "INSERT INTO pdf_documents (document_id, vault_relative_path, file_size, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params!["doc-1", "valid.pdf", 0, 0, 0],
-            ).unwrap();
-
-            // Link an annotation to a missing note path
-            db.execute(
-                "INSERT INTO pdf_annotations (id, document_id, page_index, kind, color, selected_text, ranges_json, rects_json, note, linked_note_path, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                rusqlite::params![
-                    "ann-1", "doc-1", 1, "Note", "Yellow", "Text", "[]", "[]", "Some note", "missing-note-2.md", 0, 0
-                ]
-            ).unwrap();
-        }
+        state
+            .save_pdf_document("doc-1", "valid.pdf", 0, None)
+            .unwrap();
+        state
+            .save_pdf_annotation(&md_editor_core::pdf::PdfAnnotation {
+                id: "ann-1".to_string(),
+                document_id: "doc-1".to_string(),
+                page_index: 1,
+                kind: md_editor_core::pdf::PdfAnnotationKind::Note,
+                color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                selected_text: "Text".to_string(),
+                ranges: vec![],
+                rects: vec![],
+                note: Some("Some note".to_string()),
+                linked_note_path: Some("missing-note-2.md".to_string()),
+                markdown_anchor: None,
+                tags: vec![],
+                status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+                created_at: 0,
+                updated_at: 0,
+            })
+            .unwrap();
 
         // Run integrity check
         let broken = check_vault_integrity(&state, &root).unwrap();
