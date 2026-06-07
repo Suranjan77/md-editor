@@ -13,8 +13,8 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
 use crate::editor::geometry::{clip_viewport, normalized_selection};
-use crate::editor::highlight::StyledLine;
 use crate::editor::layout_cache::{LineHeightCache, line_hash, resource_hash};
+use crate::editor::parser::StyledLine;
 use crate::{search, theme};
 
 const MARGIN_LEFT: f32 = 64.0;
@@ -252,7 +252,7 @@ where
 }
 
 fn block_number_from_start(
-    lines: &[crate::editor::highlight::StyledLine],
+    lines: &[crate::editor::parser::StyledLine],
     start: usize,
     prefix: &str,
 ) -> Option<usize> {
@@ -293,7 +293,7 @@ fn bounded_block_scan_range(
 }
 
 fn get_equation_number(
-    lines: &[crate::editor::highlight::StyledLine],
+    lines: &[crate::editor::parser::StyledLine],
     block_id: usize,
 ) -> Option<usize> {
     if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id) {
@@ -310,7 +310,7 @@ fn get_equation_number(
     None
 }
 
-fn get_image_number(span: &crate::editor::highlight::StyledSpan) -> Option<usize> {
+fn get_image_number(span: &crate::editor::parser::StyledSpan) -> Option<usize> {
     if let Some(ref id) = span.id {
         if let Some(num_str) = id.strip_prefix("figure-") {
             if let Ok(num) = num_str.parse::<usize>() {
@@ -322,7 +322,7 @@ fn get_image_number(span: &crate::editor::highlight::StyledSpan) -> Option<usize
 }
 
 /// Pick the iced font for a span.
-fn span_font(span: &crate::editor::highlight::StyledSpan, line: &StyledLine) -> iced::Font {
+fn span_font(span: &crate::editor::parser::StyledSpan, line: &StyledLine) -> iced::Font {
     if span.is_code || line.is_code_block || line.is_math_block {
         iced::Font::MONOSPACE
     } else if span.bold {
@@ -494,24 +494,24 @@ where
     (y + row_step).max(BASE_LINE_HEIGHT)
 }
 
-fn is_heading_line(line: &crate::editor::highlight::StyledLine) -> bool {
+fn is_heading_line(line: &crate::editor::parser::StyledLine) -> bool {
     line.spans
         .iter()
         .any(|span| span.is_syntax && span.visible_text(true).starts_with('#'))
 }
 
-fn is_checkbox_line(line: &crate::editor::highlight::StyledLine) -> bool {
+fn is_checkbox_line(line: &crate::editor::parser::StyledLine) -> bool {
     line.spans.iter().any(|span| span.is_checkbox)
 }
 
-fn is_pdf_citation_line(line: &crate::editor::highlight::StyledLine) -> bool {
+fn is_pdf_citation_line(line: &crate::editor::parser::StyledLine) -> bool {
     line.spans
         .iter()
         .any(|span| span.is_link && span.visible_text(true).starts_with("pdf://"))
 }
 
 pub fn get_block_context_menu_items(
-    lines: &[crate::editor::highlight::StyledLine],
+    lines: &[crate::editor::parser::StyledLine],
     line_idx: usize,
 ) -> Option<Vec<crate::views::modals::EditorBlockContextMenuItem>> {
     use crate::views::modals::EditorBlockContextMenuItem;
@@ -555,7 +555,7 @@ fn visual_line_step(font_size: f32) -> f32 {
     (font_size * 1.45).max(BASE_LINE_HEIGHT)
 }
 
-fn source_col_after_span(span: &crate::editor::highlight::StyledSpan, start_col: usize) -> usize {
+fn source_col_after_span(span: &crate::editor::parser::StyledSpan, start_col: usize) -> usize {
     start_col + span.text.chars().count()
 }
 
@@ -4020,7 +4020,7 @@ where
 mod tests {
     use super::*;
     use crate::editor::buffer::{DocBuffer, EditorCommand};
-    use crate::editor::highlight::{StyledLine, StyledSpan, highlight_markdown};
+    use crate::editor::parser::{StyledLine, StyledSpan, highlight_markdown};
     use std::collections::HashMap;
 
     fn make_line(block_id: usize, spans: Vec<StyledSpan>) -> StyledLine {
@@ -4612,7 +4612,7 @@ mod tests {
 
     #[test]
     fn test_code_block_badge_logic() {
-        use crate::editor::highlight::highlight_markdown;
+        use crate::editor::parser::highlight_markdown;
         let md = "```rust\nfn main() {}\n```";
         let lines = highlight_markdown(md);
 
