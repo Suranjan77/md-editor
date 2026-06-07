@@ -12,4 +12,10 @@ lint:
 test:
     cargo test --workspace
 
-check: fmt-check lint test
+architecture:
+    ./scripts/architecture-check.sh
+
+metrics:
+    ./scripts/architecture-metrics.sh
+
+check: architecture fmt-check lint test

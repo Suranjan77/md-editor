@@ -7,6 +7,27 @@ on:
       - main
 
 jobs:
+  architecture:
+    name: Architecture boundaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Check architecture boundaries
+        run: ./scripts/architecture-check.sh
+
+      - name: Report architecture metrics
+        run: ./scripts/architecture-metrics.sh
+
   rust:
     name: Format, lint, test
     runs-on: ubuntu-latest
