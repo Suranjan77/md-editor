@@ -75,6 +75,15 @@ fn command_button_style() -> impl Fn(&Theme, button::Status) -> button::Style {
     }
 }
 
+fn focus_visible_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let mut style = text_input::default(theme, status);
+    if matches!(status, text_input::Status::Focused { .. }) {
+        style.border.color = theme::accent();
+        style.border.width = 2.0;
+    }
+    style
+}
+
 fn group_rank(group_name: &str) -> usize {
     match group_name {
         "File" => 0,
@@ -135,7 +144,8 @@ pub fn view<'a>(
         .id(iced::advanced::widget::Id::new(COMMAND_PALETTE_INPUT_ID))
         .on_input(Message::CommandPaletteQueryChanged)
         .padding(12)
-        .size(16);
+        .size(16)
+        .style(focus_visible_input_style);
 
     let mut list = column![].spacing(5);
 
@@ -327,6 +337,8 @@ fn shortcut_to_icon(shortcut: Shortcut) -> Icon {
         Shortcut::ThemeDark => Icon::Command,
         Shortcut::ThemeLight => Icon::Command,
         Shortcut::ThemeHighContrast => Icon::Command,
+        Shortcut::ToggleReducedMotion => Icon::Command,
+        Shortcut::HelpAndShortcuts => Icon::Command,
         Shortcut::SwitchPane => Icon::Split,
         _ => Icon::Command,
     }
@@ -354,6 +366,9 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::GoToPage => "Ctrl G",
         Shortcut::PdfSearch => "Ctrl R",
         Shortcut::PdfHighlight => "Ctrl H",
+        Shortcut::PdfUnderline => "Ctrl Shift H",
+        Shortcut::PdfStrike => "Ctrl Alt H",
+        Shortcut::PdfOpenCompanionNote => "Alt N",
         Shortcut::InsertPdfQuote => "Quote",
         Shortcut::InsertPdfHighlight => "Cite",
         Shortcut::PdfFirstPage => "Home",
@@ -368,7 +383,10 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::ThemeDark => "Dark Theme",
         Shortcut::ThemeLight => "Light Theme",
         Shortcut::ThemeHighContrast => "High Contrast",
+        Shortcut::ToggleReducedMotion => "Reduced Motion",
+        Shortcut::HelpAndShortcuts => "Help",
         Shortcut::SwitchPane => "Alt P",
+        Shortcut::ToggleDiagnostics => "Ctrl Shift D",
     }
 }
 
@@ -399,6 +417,18 @@ mod tests {
 
         ui.find(iced_test::selector::id(COMMAND_PALETTE_INPUT_ID))
             .expect("command palette input should expose deterministic focus id");
+    }
+
+    #[test]
+    fn command_palette_input_focus_uses_visible_accent_ring() {
+        let theme = Theme::Dark;
+        let active = focus_visible_input_style(&theme, text_input::Status::Active);
+        let focused =
+            focus_visible_input_style(&theme, text_input::Status::Focused { is_hovered: false });
+
+        assert_eq!(focused.border.color, theme::accent());
+        assert_eq!(focused.border.width, 2.0);
+        assert_ne!(focused.border, active.border);
     }
 
     #[test]

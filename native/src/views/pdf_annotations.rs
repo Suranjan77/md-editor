@@ -86,7 +86,7 @@ fn custom_cite_button<'a, Message: Clone + 'a>(
     .into()
 }
 
-fn pill_button<'a, Message: Clone + 'a>(
+fn filter_button<'a, Message: Clone + 'a>(
     label: impl Into<String>,
     is_active: bool,
     on_press: Message,
@@ -102,7 +102,7 @@ fn pill_button<'a, Message: Clone + 'a>(
                     border: iced::Border {
                         color: theme::accent(),
                         width: 1.0,
-                        radius: 12.0.into(),
+                        radius: 4.0.into(),
                     },
                     ..Default::default()
                 }
@@ -113,7 +113,7 @@ fn pill_button<'a, Message: Clone + 'a>(
                     border: iced::Border {
                         color: theme::border(),
                         width: 1.0,
-                        radius: 12.0.into(),
+                        radius: 4.0.into(),
                     },
                     ..Default::default()
                 }
@@ -124,7 +124,7 @@ fn pill_button<'a, Message: Clone + 'a>(
                     border: iced::Border {
                         color: theme::border(),
                         width: 1.0,
-                        radius: 12.0.into(),
+                        radius: 4.0.into(),
                     },
                     ..Default::default()
                 }
@@ -133,7 +133,7 @@ fn pill_button<'a, Message: Clone + 'a>(
         .into()
 }
 
-fn color_dot_pill<'a>(
+fn color_dot_button<'a>(
     color_opt: Option<md_editor_core::pdf::PdfAnnotationColor>,
     active_color: Option<md_editor_core::pdf::PdfAnnotationColor>,
 ) -> Element<'a, Message, Theme, Renderer> {
@@ -203,7 +203,7 @@ fn color_dot_pill<'a>(
                     border: iced::Border {
                         color: theme::accent(),
                         width: 1.0,
-                        radius: 12.0.into(),
+                        radius: 4.0.into(),
                     },
                     ..Default::default()
                 }
@@ -213,7 +213,7 @@ fn color_dot_pill<'a>(
                     border: iced::Border {
                         color: theme::border(),
                         width: 1.0,
-                        radius: 12.0.into(),
+                        radius: 4.0.into(),
                     },
                     ..Default::default()
                 }
@@ -223,7 +223,7 @@ fn color_dot_pill<'a>(
                     border: iced::Border {
                         color: theme::border(),
                         width: 1.0,
-                        radius: 12.0.into(),
+                        radius: 4.0.into(),
                     },
                     ..Default::default()
                 }
@@ -318,7 +318,7 @@ pub fn view<'a>(
         .font(iced::Font::default());
 
     // 1. Color filter row
-    let mut colors_filter = row![color_dot_pill(None, filter_color)].spacing(4);
+    let mut colors_filter = row![color_dot_button(None, filter_color)].spacing(4);
 
     let all_colors = [
         (md_editor_core::pdf::PdfAnnotationColor::Yellow, "Yellow"),
@@ -329,12 +329,10 @@ pub fn view<'a>(
     ];
 
     for &(col_enum, _) in &all_colors {
-        colors_filter = colors_filter.push(color_dot_pill(Some(col_enum), filter_color));
+        colors_filter = colors_filter.push(color_dot_button(Some(col_enum), filter_color));
     }
 
-    let colors_scroll = scrollable(colors_filter).direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::default(),
-    ));
+    let colors_wrap = colors_filter.wrap();
 
     // 2. Page filter (pages with annotations)
     let mut pages_with_anns = std::collections::BTreeSet::new();
@@ -344,7 +342,7 @@ pub fn view<'a>(
         }
     }
 
-    let mut pages_filter = row![pill_button(
+    let mut pages_filter = row![filter_button(
         "All Pages",
         filter_page.is_none(),
         Message::PdfFilterAnnotationsByPage(None)
@@ -353,16 +351,14 @@ pub fn view<'a>(
 
     for &page_idx in &pages_with_anns {
         let is_selected = filter_page == Some(page_idx);
-        pages_filter = pages_filter.push(pill_button(
+        pages_filter = pages_filter.push(filter_button(
             format!("p. {}", page_idx + 1),
             is_selected,
             Message::PdfFilterAnnotationsByPage(Some(page_idx)),
         ));
     }
 
-    let pages_scroll = scrollable(pages_filter).direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::default(),
-    ));
+    let pages_wrap = pages_filter.wrap();
 
     // 3. Tag filter (unique tags)
     let mut tags_set = std::collections::BTreeSet::new();
@@ -374,7 +370,7 @@ pub fn view<'a>(
         }
     }
 
-    let mut tags_filter = row![pill_button(
+    let mut tags_filter = row![filter_button(
         "All Tags",
         filter_tag.is_none(),
         Message::PdfFilterAnnotationsByTag(None)
@@ -383,70 +379,71 @@ pub fn view<'a>(
 
     for tag in &tags_set {
         let is_selected = filter_tag == Some(*tag);
-        tags_filter = tags_filter.push(pill_button(
+        tags_filter = tags_filter.push(filter_button(
             format!("#{}", tag),
             is_selected,
             Message::PdfFilterAnnotationsByTag(Some(tag.to_string())),
         ));
     }
 
-    let tags_scroll = scrollable(tags_filter).direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::default(),
-    ));
+    let tags_wrap = tags_filter.wrap();
 
     // 4. Linked and Unresolved filters
     let linked_filter = row![
-        pill_button(
+        filter_button(
             "All Notes",
             filter_linked.is_none(),
             Message::PdfFilterAnnotationsByLinked(None)
         ),
-        pill_button(
+        filter_button(
             "Linked",
             filter_linked == Some(true),
             Message::PdfFilterAnnotationsByLinked(Some(true))
         ),
-        pill_button(
+        filter_button(
             "Unlinked",
             filter_linked == Some(false),
             Message::PdfFilterAnnotationsByLinked(Some(false))
         ),
     ]
-    .spacing(4);
+    .spacing(4)
+    .wrap();
 
     let unresolved_filter = row![
-        pill_button(
+        filter_button(
             "All Status",
             filter_unresolved.is_none(),
             Message::PdfFilterAnnotationsByUnresolved(None)
         ),
-        pill_button(
+        filter_button(
             "Open",
             filter_unresolved == Some(true),
             Message::PdfFilterAnnotationsByUnresolved(Some(true))
         ),
-        pill_button(
+        filter_button(
             "Resolved",
             filter_unresolved == Some(false),
             Message::PdfFilterAnnotationsByUnresolved(Some(false))
         ),
     ]
-    .spacing(4);
+    .spacing(4)
+    .wrap();
 
     let meta_filters = row![
         linked_filter,
         Space::new().width(Length::Fill),
         unresolved_filter
     ]
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    .wrap();
 
-    let mut filters_col = column![colors_scroll].spacing(6);
+    let mut filters_col = column![colors_wrap].spacing(6);
 
     if !pages_with_anns.is_empty() {
-        filters_col = filters_col.push(pages_scroll);
+        filters_col = filters_col.push(pages_wrap);
     }
     if !tags_set.is_empty() {
-        filters_col = filters_col.push(tags_scroll);
+        filters_col = filters_col.push(tags_wrap);
     }
     filters_col = filters_col.push(meta_filters);
 

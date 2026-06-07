@@ -1,6 +1,6 @@
 # Live Handoff
 
-Last updated: 2026-06-05
+Last updated: 2026-06-07
 
 ## Purpose
 
@@ -11,9 +11,9 @@ next step.
 
 ## Current Objective
 
-Continue with **Milestone 5** (PDF Annotation UX) from
-`docs/UI_UX_IMPROVEMENT_ROADMAP.md`. Phase B, Phase A, and Milestone 4 have
-been successfully completed.
+Continue with **Milestone 12** (Release UX Hardening) from
+`docs/UI_UX_IMPROVEMENT_ROADMAP.md`. Phase B, Phase A, and Milestones 4-11 have
+been completed.
 
 ## Why Phase B And Phase A Exist
 
@@ -55,14 +55,14 @@ actual app behavior. This handoff corrects the record.
 | 2 Visual Design System | DONE | Phase A applied hover/header/container conventions across main panels |
 | 3 Keyboard / Command | DONE | Registry, palette, shortcuts, conflict detection |
 | 4 Editor UX Polish | DONE | Renderer colors done; active line alpha 0.06; selection/search/link hover added; internal link resolution fixed |
-| 5 PDF Annotation UX | IN PROGRESS | PDF toolbar reading-state groups, selection Cite, and core annotation tests done |
-| 6 Split Research UX | NOT STARTED | |
-| 7 Search / Outline | PARTIAL | Backend done; result row styling not done |
-| 8 Onboarding / Recovery | PARTIAL | Citation palette done; welcome/recovery not done |
-| 9 Accessibility | NOT STARTED | Tooltips required by Phase A A1 |
-| 10 Performance | PARTIAL | Empty states done; progress/spinner not done |
-| 11 Documentation | NOT STARTED | |
-| 12 Release Hardening | NOT STARTED | |
+| 5 PDF Annotation UX | DONE | Keyboard highlight/underline/strike variants and stronger selection overlay complete |
+| 6 Split Research UX | DONE | Active pane, narrow fallback, companion notes, feedback, and resizer polish complete |
+| 7 Search / Outline | DONE | Backend, row styling, grouping, and bounded match-context highlighting complete |
+| 8 Onboarding / Recovery | DONE | Vault recovery, create/open/recent flows, and indexing lifecycle status complete |
+| 9 Accessibility | DONE | Focus rings, Tab traversal, contrast checks, and persisted reduced-motion mode complete |
+| 10 Performance | DONE | Index status, PDF spinner, annotation debounce, and diagnostics panel complete |
+| 11 Documentation | DONE | Guides, shortcut reference, screenshot examples, in-app Help, and terminology pass complete |
+| 12 Release Hardening | IN PROGRESS | Linux release, installer, portable, DPI, and capture passes complete; Windows/macOS remain |
 
 ---
 
@@ -130,10 +130,79 @@ panel rows, toolbar tooltips, 28px status bar, sidebar empty-vault state.
   exposes `Cite`, `Ctrl+H` missing-selection path shows a toast, and tests cover
   selection citation plus annotation creation from selected text.
 
-## Milestone 5 Next Steps
+## Latest Session Notes — 2026-06-07
 
-- Add keyboard-first annotation variants beyond default yellow highlight.
-- Strengthen visual selection feedback in the PDF page overlay.
+- Added keyboard-first PDF annotation variants:
+  `Ctrl+H` highlight, `Ctrl+Shift+H` underline, `Ctrl+Alt+H` strikeout.
+- Added command-palette entries and conflict coverage for annotation variants.
+- Strengthened PDF selection overlay with accent border, rounded corners, and
+  minimum low-zoom selection size while preserving bounded quad drawing.
+- Narrow split windows below 720px now render only the active pane; `Alt+P`
+  switches the visible pane without rendering the hidden pane or divider.
+- Split panes now show a local accent border on the active pane.
+- Starting a split drag no longer resets persisted PDF split ratio to `0.3`.
+- Cross-pane back/forward and follow-citation failures now show explicit toasts.
+- PDF toolbar surfaces mapped companion notes; `Alt+N` opens them in split
+  while preserving PDF page, scroll, and zoom.
+- Split divider has a 12px hit target, hover/drag accent feedback, shell-width
+  pointer geometry, minimum pane widths, and narrow workflow suppression.
+- Vault-open failures preserve current vault and surface an error.
+- Welcome screen now has dedicated Create New Vault flow and package-derived
+  version text.
+- Global search highlights literal/regex matches in titles and previews with a
+  32-match per-field bound.
+- Welcome screen persists up to five recent vaults and opens them directly.
+- Vault PDF indexing reports running, success, and failure status persistently.
+- Light-theme muted/success/warning colors now pass 4.5:1 text contrast;
+  regression test covers normal text/status colors in all themes.
+- Added focus-visible text inputs and focusable TOC/backlink rows with
+  Enter/Space activation.
+- Added explicit Tab/Shift+Tab traversal through Iced focus operations.
+- Added persisted reduced-motion command; PDF spinner stays static when enabled.
+- Documented immediate Iced programmatic scrolling as motion-safe.
+- Added markdown/PDF indexing status, animated PDF loading indicator,
+  debounced annotation draft persistence, and diagnostics panel.
+- Fixed Iced 0.14 API regressions in scale events, canvas arcs, and spacing.
+- Native tests now use in-memory app state so real user config/vault data cannot
+  leak into tests after settings moved to platform config directories.
+
+## Milestone 11 Progress
+
+- Added complete `docs/SHORTCUTS.md`, including context rules and
+  command-palette-only actions.
+- Added `docs/USER_GUIDE.md` covering vault setup, search, split research,
+  citations, recovery, diagnostics, settings, and reduced motion.
+- Linked user docs from README and feature document.
+- Corrected stale claims that settings always live beside executable.
+- Standardized `Ctrl+F` command wording as "Search Active Context"; toolbar
+  remains "Global Search" because it always opens vault-wide overlay.
+- Linked existing editor, split, and tracker screenshots.
+- Added command-palette **Help & Shortcuts** modal with core keys and full guide
+  paths.
+
+## Milestone 12 Next Steps
+
+- Run `.github/workflows/windows-build.yml` and verify Windows x64, macOS Intel,
+  and macOS Apple Silicon package jobs.
+- Smoke Windows artifact on native host: startup, icon, DPI, PDFium, portable
+  settings, and external links.
+- Smoke both macOS `.app` artifacts on native hosts: launch, icon, DPI, PDFium,
+  portable settings, and Gatekeeper behavior.
+- Record results in `docs/RELEASE_SIGNOFF.md`.
+
+Linux pass completed 2026-06-07:
+- Release build and isolated five-second GUI startup passed.
+- Desktop install/uninstall passed under isolated home.
+- Portable mode kept settings beside executable.
+- Search and recovery screenshots captured and visually checked.
+- Recovery toast duplication fixed.
+
+Cross-platform static pass completed 2026-06-07:
+- Removed Windows `cmd.exe` URL launching.
+- Fixed PDFium custom/cross-target output path derivation.
+- Added standard macOS app resource lookup.
+- Added Windows x64 and macOS Intel/Apple Silicon package automation.
+- macOS automation creates an ad-hoc-signed `.app` bundle with icon and PDFium.
 
 ---
 
@@ -241,12 +310,13 @@ All items from Milestone 4 have been successfully completed:
 
 ## Tests And Checks
 
-Last full verification:
+Full verification passed 2026-06-07:
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo build --release
 ```
 
 Full list of focused tests from prior sessions: see prior HANDOFF version or
@@ -255,9 +325,10 @@ and `native/src/views/*.rs`.
 
 ## Known Worktree State
 
-- `core/pdfium/libpdfium.so` was already modified before this work. Do not
-  revert it unless user explicitly asks.
-- UI/UX roadmap, handoff, and duplicate analysis docs updated 2026-06-05.
+- Worktree contains active Milestones 5-12 implementation and documentation
+  changes; it is not a clean release branch.
+- `.agents/`, `ORIGINAL_REQUEST.md`, and `PROJECT.md` are existing untracked
+  workspace context. Do not remove them without explicit instruction.
 
 ## Standards Reminder
 

@@ -1,7 +1,11 @@
+#![allow(dead_code)]
+
 #[derive(Debug, Clone)]
 pub enum Message {
     // ── Vault ────────────────────────────────────────────────────
     OpenVaultDialog,
+    CreateVaultDialog,
+    OpenRecentVault(String),
     VaultOpened(Option<String>),
     CreateFileDialog,
     CreateFolderDialog,
@@ -41,7 +45,7 @@ pub enum Message {
     // ── Editor ───────────────────────────────────────────────────
     EditorCommand(crate::editor::buffer::EditorCommand),
     EditorCommandNoScroll(crate::editor::buffer::EditorCommand),
-    EditorSave,
+    EditorSave(bool),
     EditorCheckboxToggle(usize),
     EditorBlockContextMenu {
         line_idx: usize,
@@ -72,6 +76,7 @@ pub enum Message {
     ScrollEditorToTarget(f32),
     HighlightReady(u64, Vec<crate::editor::highlight::StyledLine>),
     HighlightDebounceElapsed,
+    EditorAutosaveElapsed,
 
     // ── PDF ──────────────────────────────────────────────────────
     PdfZoomChanged(f32),
@@ -128,6 +133,7 @@ pub enum Message {
     PdfAddQuickNote(String, String),
     PdfLinkNote(String, String),
     PdfOpenLinkedNote(String),
+    PdfOpenCompanionNote(String),
     PdfAnnotationFocused {
         document_path: String,
         annotation_id: String,
@@ -203,8 +209,15 @@ pub enum Message {
     SplitViewDragStart,
     SplitViewDragging(f32),
     SplitViewDragEnd,
+    SplitViewDividerHovered(bool),
     WindowResized(f32, f32),
     KeyboardModifiersChanged(iced::keyboard::Modifiers),
+    FocusNext,
+    FocusPrevious,
+    ScaleFactorChanged(f32),
+    SpinnerTick,
+    MarkdownIndexFinished(Result<(), String>),
+    AnnotationDebounceElapsed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,6 +252,9 @@ pub enum Shortcut {
     GoToPage,
     PdfSearch,
     PdfHighlight,
+    PdfUnderline,
+    PdfStrike,
+    PdfOpenCompanionNote,
     InsertPdfQuote,
     InsertPdfHighlight,
     PdfFirstPage,
@@ -253,7 +269,10 @@ pub enum Shortcut {
     ThemeDark,
     ThemeLight,
     ThemeHighContrast,
+    ToggleReducedMotion,
+    HelpAndShortcuts,
     SwitchPane,
+    ToggleDiagnostics,
 }
 
 #[derive(Debug, Clone, PartialEq)]

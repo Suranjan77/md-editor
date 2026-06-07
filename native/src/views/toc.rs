@@ -1,5 +1,5 @@
-use iced::widget::{Space, button, column, container, row, scrollable, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Renderer, Theme};
+use iced::widget::{Space, column, container, row, scrollable, text};
+use iced::{Alignment, Background, Border, Element, Length, Padding, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
@@ -8,20 +8,6 @@ pub type TocEntry = crate::editor::highlight::OutlineEntry;
 
 pub fn get_toc(lines: &[crate::editor::highlight::StyledLine]) -> Vec<TocEntry> {
     crate::editor::highlight::extract_outline(lines)
-}
-
-fn toc_entry_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| {
-        let mut style = button::text(theme, status);
-        style.border.radius = 4.0.into();
-
-        if active {
-            style.background = Some(Background::Color(theme::bg_tertiary()));
-        } else if status == button::Status::Hovered || status == button::Status::Pressed {
-            style.background = Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)));
-        }
-        style
-    }
 }
 
 pub fn view<'a>(
@@ -68,10 +54,11 @@ pub fn view<'a>(
             };
 
             container(
-                button(text(&entry.text).size(13).color(color))
+                crate::views::focus_button::focus_button(text(&entry.text).size(13).color(color))
                     .on_press(Message::TocClicked(entry.line))
-                    .padding([4, 8])
-                    .style(toc_entry_style(active))
+                    .padding(8.0)
+                    .subtle(!active)
+                    .active(active)
                     .width(Length::Fill),
             )
             .padding(Padding {
@@ -110,10 +97,11 @@ pub fn view<'a>(
             };
 
             container(
-                button(text(&entry.text).size(13).color(color))
+                crate::views::focus_button::focus_button(text(&entry.text).size(13).color(color))
                     .on_press(Message::PdfTocClicked(entry.line))
-                    .padding([4, 8])
-                    .style(toc_entry_style(active))
+                    .padding(8.0)
+                    .subtle(!active)
+                    .active(active)
                     .width(Length::Fill),
             )
             .padding(Padding {

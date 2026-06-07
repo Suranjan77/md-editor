@@ -93,8 +93,17 @@ mod tests {
     #[test]
     fn focused_annotation_toolbar_cite_click_emits_insert_message() {
         let ann = annotation();
-        let mut ui =
-            iced_test::simulator(toolbar(4, 10, 1.0, true, false, false, Some(&ann), true));
+        let mut ui = iced_test::simulator(toolbar_with_companion_note(
+            4,
+            10,
+            1.0,
+            true,
+            false,
+            false,
+            Some(&ann),
+            true,
+            None,
+        ));
 
         ui.click(" Cite").expect("Cite button should exist");
 
@@ -107,7 +116,9 @@ mod tests {
 
     #[test]
     fn selection_toolbar_cite_click_emits_quote_insert_message() {
-        let mut ui = iced_test::simulator(toolbar(4, 10, 1.0, true, false, true, None, true));
+        let mut ui = iced_test::simulator(toolbar_with_companion_note(
+            4, 10, 1.0, true, false, true, None, true, None,
+        ));
 
         ui.click(" Cite")
             .expect("selection Cite button should exist");
@@ -119,8 +130,17 @@ mod tests {
     #[test]
     fn focused_annotation_toolbar_cite_is_inert_without_markdown_file() {
         let ann = annotation();
-        let mut ui =
-            iced_test::simulator(toolbar(4, 10, 1.0, true, false, false, Some(&ann), false));
+        let mut ui = iced_test::simulator(toolbar_with_companion_note(
+            4,
+            10,
+            1.0,
+            true,
+            false,
+            false,
+            Some(&ann),
+            false,
+            None,
+        ));
 
         ui.click(" Cite")
             .expect("disabled-looking Cite control should still render");
@@ -134,7 +154,9 @@ mod tests {
 
     #[test]
     fn pdf_toolbar_exposes_reading_state_groups() {
-        let mut ui = iced_test::simulator(toolbar(0, 3, 1.25, true, false, false, None, false));
+        let mut ui = iced_test::simulator(toolbar_with_companion_note(
+            0, 3, 1.25, true, false, false, None, false, None,
+        ));
 
         ui.find("PAGE")
             .expect("PDF toolbar should label page navigation group");
@@ -144,6 +166,42 @@ mod tests {
             .expect("PDF toolbar should label zoom group");
         ui.find("125%")
             .expect("PDF toolbar should show current zoom");
+    }
+
+    #[test]
+    fn pdf_toolbar_exposes_mapped_companion_note() {
+        let mut ui = iced_test::simulator(toolbar_with_companion_note(
+            0,
+            3,
+            1.0,
+            true,
+            false,
+            false,
+            None,
+            false,
+            Some("notes/paper.md"),
+        ));
+
+        ui.click(" Companion Note")
+            .expect("mapped companion note action should exist");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::PdfOpenCompanionNote(vault_path)] if vault_path == "notes/paper.md"
+        ));
+    }
+
+    #[test]
+    fn pdf_toolbar_hides_missing_companion_note() {
+        let mut ui = iced_test::simulator(toolbar_with_companion_note(
+            0, 3, 1.0, true, false, false, None, false, None,
+        ));
+
+        assert!(
+            ui.find(" Companion Note").is_err(),
+            "companion note action must stay contextual"
+        );
     }
 }
 
@@ -296,7 +354,8 @@ pub fn search_bar<'a>(
     .into()
 }
 
-pub fn toolbar<'a>(
+#[allow(clippy::too_many_arguments)]
+pub fn toolbar_with_companion_note<'a>(
     current_page: u16,
     total_pages: u16,
     zoom: f32,
@@ -305,6 +364,7 @@ pub fn toolbar<'a>(
     selection_active: bool,
     focused_annotation: Option<&'a md_editor_core::pdf::PdfAnnotation>,
     can_insert_annotation_link: bool,
+    companion_note_vault_path: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let page_label = if total_pages == 0 {
         "No PDF".to_string()
@@ -556,12 +616,31 @@ pub fn toolbar<'a>(
         .align_y(Alignment::Center),
     );
 
+    let companion_note_control = companion_note_vault_path
+        .filter(|vault_path| !vault_path.is_empty())
+        .map(|vault_path| {
+            button(
+                row![
+                    icons::view(Icon::FolderOpen, theme::accent(), 14.0),
+                    text(" Companion Note").size(12).color(theme::accent())
+                ]
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::PdfOpenCompanionNote(vault_path.to_string()))
+            .padding([4, 8])
+            .style(toolbar_button_style(true))
+        });
+    let companion_note_group = companion_note_control
+        .map(|control| toolbar_group(row![control].align_y(Alignment::Center)))
+        .unwrap_or_else(|| Space::new().width(Length::Shrink).into());
+
     container(
         row![
             page_group,
             toolbar_divider(),
             zoom_group,
             Space::new().width(Length::Fill),
+            companion_note_group,
             study_controls,
             annotation_controls,
         ]
@@ -582,6 +661,46 @@ pub fn toolbar<'a>(
     .into()
 }
 
+struct SpinnerProgram {
+    frame: u32,
+}
+
+impl<Message> iced::widget::canvas::Program<Message> for SpinnerProgram {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &iced::Theme,
+        bounds: iced::Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<iced::widget::canvas::Geometry> {
+        let mut frame = iced::widget::canvas::Frame::new(renderer, bounds.size());
+        let center = bounds.center();
+        let radius = 16.0;
+        let stroke = iced::widget::canvas::Stroke::default()
+            .with_color(crate::theme::accent())
+            .with_width(3.0)
+            .with_line_cap(iced::widget::canvas::LineCap::Round);
+
+        let start_angle = (self.frame as f32 * 30.0).to_radians();
+        let end_angle = start_angle + 270.0f32.to_radians();
+
+        let path = iced::widget::canvas::Path::new(|path| {
+            path.arc(iced::widget::canvas::path::Arc {
+                center,
+                radius,
+                start_angle: iced::Radians(start_angle),
+                end_angle: iced::Radians(end_angle),
+            });
+        });
+
+        frame.stroke(&path, stroke);
+        vec![frame.into_geometry()]
+    }
+}
+
 pub fn view_continuous<'a>(
     pages: &'a [Option<iced::widget::image::Handle>],
     zoom: f32,
@@ -599,9 +718,22 @@ pub fn view_continuous<'a>(
     focused_annotation_id: Option<&'a str>,
     scroll_y: f32,
     viewport_height: f32,
+    spinner_frame: u32,
 ) -> Element<'a, Message, Theme, Renderer> {
     if pages.is_empty() {
-        return container(text("Loading PDF...").color(theme::text_muted()).size(14))
+        let spinner = iced::widget::canvas(SpinnerProgram {
+            frame: spinner_frame,
+        })
+        .width(Length::Fixed(40.0))
+        .height(Length::Fixed(40.0));
+        let content = column![
+            spinner,
+            Space::new().height(10.0),
+            text("Loading PDF...").color(theme::text_muted()).size(14)
+        ]
+        .align_x(Alignment::Center);
+
+        return container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)

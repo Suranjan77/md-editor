@@ -83,6 +83,7 @@ pub struct AppShellPersistence {
     pub active_workflow_tab: WorkflowSidebarTab,
     pub last_focused_pane: AppShellPane,
     pub theme: crate::theme::AppTheme,
+    pub reduce_motion: bool,
 }
 
 impl Default for AppShellPersistence {
@@ -98,6 +99,7 @@ impl Default for AppShellPersistence {
             active_workflow_tab: WorkflowSidebarTab::None,
             last_focused_pane: AppShellPane::None,
             theme: crate::theme::AppTheme::Dark,
+            reduce_motion: false,
         }
     }
 }
@@ -105,7 +107,7 @@ impl Default for AppShellPersistence {
 impl AppShellPersistence {
     pub fn serialize(self) -> String {
         format!(
-            "sidebar_width={};reference_width={};workflow_width={};split_ratio={};sidebar_collapsed={};reference_collapsed={};workflow_collapsed={};active_workflow_tab={};last_focused_pane={};theme={}",
+            "sidebar_width={};reference_width={};workflow_width={};split_ratio={};sidebar_collapsed={};reference_collapsed={};workflow_collapsed={};active_workflow_tab={};last_focused_pane={};theme={};reduce_motion={}",
             self.sidebar_width,
             self.reference_width,
             self.workflow_width,
@@ -115,7 +117,8 @@ impl AppShellPersistence {
             self.workflow_collapsed,
             self.active_workflow_tab.as_str(),
             self.last_focused_pane.as_str(),
-            self.theme.as_str()
+            self.theme.as_str(),
+            self.reduce_motion
         )
     }
 
@@ -148,6 +151,9 @@ impl AppShellPersistence {
                 }
                 "theme" => {
                     persistence.theme = crate::theme::AppTheme::from_str(raw_value)?;
+                }
+                "reduce_motion" => {
+                    persistence.reduce_motion = parse_bool(raw_value)?;
                 }
                 _ => {}
             }
@@ -191,6 +197,7 @@ pub struct AppShellInputs {
     pub search_visible: bool,
     pub command_palette_visible: bool,
     pub citation_palette_visible: bool,
+    pub active_pane: AppShellPane,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -217,6 +224,7 @@ pub struct AppShellStatusInputs {
     pub active_pane: AppShellPane,
     pub toast: Option<String>,
     pub background_error: Option<String>,
+    pub background_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -256,7 +264,10 @@ impl AppShellStatus {
             save_status,
             search_status,
             active_pane: inputs.active_pane,
-            message: inputs.toast.or(inputs.background_error),
+            message: inputs
+                .toast
+                .or(inputs.background_error)
+                .or(inputs.background_status),
         }
     }
 }
@@ -274,9 +285,13 @@ impl AppShellState {
             AppShellMode::SearchHeavy
         } else if inputs.split_requested && inputs.markdown_open && inputs.pdf_open {
             AppShellMode::SplitResearch
-        } else if inputs.pdf_open {
+        } else if inputs.pdf_open
+            && (!inputs.markdown_open || inputs.active_pane == AppShellPane::Pdf)
+        {
             AppShellMode::PdfOnly
-        } else if inputs.image_open {
+        } else if inputs.image_open
+            && (!inputs.markdown_open || inputs.active_pane == AppShellPane::Image)
+        {
             AppShellMode::ImageOnly
         } else {
             AppShellMode::EditorOnly
@@ -383,6 +398,7 @@ mod tests {
             search_visible: false,
             command_palette_visible: false,
             citation_palette_visible: false,
+            active_pane: AppShellPane::Markdown,
         }
     }
 
@@ -531,6 +547,7 @@ mod tests {
             active_workflow_tab: WorkflowSidebarTab::Outline,
             last_focused_pane: AppShellPane::Pdf,
             theme: crate::theme::AppTheme::Dark,
+            reduce_motion: true,
         };
 
         let serialized = persistence.serialize();
@@ -607,6 +624,7 @@ mod tests {
             active_pane: AppShellPane::Pdf,
             toast: None,
             background_error: Some("Index failed".to_string()),
+            background_status: Some("Indexing...".to_string()),
         });
 
         assert_eq!(status.save_status, SaveStatus::Unsaved);
@@ -626,6 +644,7 @@ mod tests {
             active_pane: AppShellPane::None,
             toast: Some("Saved".to_string()),
             background_error: Some("Hidden".to_string()),
+            background_status: Some("Also hidden".to_string()),
         });
 
         assert_eq!(status.save_status, SaveStatus::NoDocument);
@@ -644,6 +663,7 @@ mod tests {
             active_pane: AppShellPane::Markdown,
             toast: None,
             background_error: None,
+            background_status: None,
         });
 
         // When overlay is open, status bar should NOT duplicate the status text.

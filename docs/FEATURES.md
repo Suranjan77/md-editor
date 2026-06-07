@@ -82,9 +82,11 @@ Version 1.0 targets:
 - Linux x64 and Linux ARM64.
 - macOS Intel and Apple Silicon.
 
-Md-editor is 100% portable. All application settings, session state, and the SQLite database are stored in a file named `md_editor_settings.sqlite` located in the same directory as the executable.
-
-The app does not write to system-wide configuration directories like `%APPDATA%` or `~/Library/Application Support` automatically.
+Release archives include `portable.flag` and store settings, session state, and
+tracker data beside the application package. Unmarked builds use platform user
+configuration directory. For custom portable builds, place `portable.flag`
+beside executable or beside `MD Editor.app`. Existing local database also
+preserves portable mode.
 
 On Linux, optional desktop launcher integration (desktop entry shortcuts and multi-size application icons) can be explicitly installed or uninstalled using command-line arguments:
 - `--install` or `--install-desktop`: Installs the desktop entry and system icons.
@@ -131,3 +133,5 @@ See [LAUNCH.md](LAUNCH.md) for the release checklist, smoke-test flow, PDFium
 packaging notes, Linux desktop integration commands, and current known
 constraints. See [UI_UX_RELEASE_CHECKLIST.md](UI_UX_RELEASE_CHECKLIST.md) for
 layout, keyboard, label, contrast, loading, and reduced-motion release checks.
+See [USER_GUIDE.md](USER_GUIDE.md) for workflows and
+[SHORTCUTS.md](SHORTCUTS.md) for keyboard reference.

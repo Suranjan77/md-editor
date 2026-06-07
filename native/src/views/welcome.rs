@@ -6,7 +6,7 @@ use crate::theme;
 use crate::views::icons::{self, Icon};
 
 /// Render a premium welcome screen.
-pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
+pub fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Theme, Renderer> {
     let open_btn = button(
         row![
             icons::view(Icon::FolderOpen, Color::WHITE, 18.0),
@@ -29,15 +29,15 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
 
     let secondary_btn = button(
         row![
-            icons::view(Icon::Command, theme::text_primary(), 18.0),
-            text("Command Palette")
+            icons::view(Icon::FolderOpen, theme::text_primary(), 18.0),
+            text("Create New Vault")
                 .size(16)
                 .color(theme::text_primary())
         ]
         .spacing(8)
         .align_y(Alignment::Center),
     )
-    .on_press(Message::CommandPaletteOpen)
+    .on_press(Message::CreateVaultDialog)
     .padding([12, 24])
     .style(|theme: &Theme, status: button::Status| {
         let mut style = button::text(theme, status);
@@ -78,10 +78,23 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
     .spacing(6)
     .align_y(Alignment::Center);
 
+    let mut recent_list = column![].spacing(6).align_x(Alignment::Center);
+    if !recent_vaults.is_empty() {
+        recent_list = recent_list.push(text("Recent Vaults").size(12).color(theme::text_muted()));
+        for vault_path in recent_vaults {
+            recent_list = recent_list.push(
+                button(text(vault_path).size(13).color(theme::text_primary()))
+                    .on_press(Message::OpenRecentVault(vault_path.clone()))
+                    .padding([6, 10])
+                    .style(button::text),
+            );
+        }
+    }
+
     let content = column![
         logo,
         text("Md-editor").size(42).color(theme::text_primary()),
-        text("The ultimate markdown workspace")
+        text("Write notes, read PDFs, and keep citations connected")
             .size(16)
             .color(theme::text_muted()),
         Space::new().height(Length::Fixed(40.0)),
@@ -90,8 +103,11 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
             .align_y(Alignment::Center),
         Space::new().height(Length::Fixed(20.0)),
         kbd_hint,
+        recent_list,
         Space::new().height(Length::Fixed(40.0)),
-        text("v1.0.0").size(11).color(theme::text_muted())
+        text(format!("v{}", env!("CARGO_PKG_VERSION")))
+            .size(11)
+            .color(theme::text_muted())
     ]
     .spacing(16)
     .align_x(Alignment::Center);
@@ -106,4 +122,38 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
             ..Default::default()
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn welcome_exposes_open_create_and_package_version() {
+        let mut ui = iced_test::simulator(view(&[]));
+
+        ui.find("Open Vault").expect("open action should render");
+        ui.click("Create New Vault")
+            .expect("create action should render");
+        ui.find(format!("v{}", env!("CARGO_PKG_VERSION")))
+            .expect("package version should render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(messages.as_slice(), [Message::CreateVaultDialog]));
+    }
+
+    #[test]
+    fn welcome_recent_vault_emits_direct_open() {
+        let recent = vec!["/vaults/research".to_string()];
+        let mut ui = iced_test::simulator(view(&recent));
+
+        ui.click("/vaults/research")
+            .expect("recent vault row should render");
+
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::OpenRecentVault(path)] if path == "/vaults/research"
+        ));
+    }
 }
