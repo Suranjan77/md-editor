@@ -1,6 +1,7 @@
 #![allow(clippy::needless_range_loop, clippy::useless_vec)]
 
 pub mod config;
+mod database;
 pub mod file_index;
 pub mod pdf;
 pub mod state;

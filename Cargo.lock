@@ -2316,7 +2316,6 @@ dependencies = [
  "regex",
  "rfd",
  "ropey",
- "rusqlite",
  "serde",
  "serde_json",
  "syntect",

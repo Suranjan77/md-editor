@@ -59,17 +59,15 @@ while IFS= read -r source_file; do
     rm -f "$production_source"
 done < <(rg --files native/src -g '*.rs')
 
-printf 'Reporting migration debt (warning-only)...\n'
-native_sql_files="$(rg -l '\brusqlite::' native/src -g '*.rs' || true)"
-if [[ -n "$native_sql_files" ]]; then
-    printf 'warning: native direct SQLite remains in:\n%s\n' "$native_sql_files" >&2
-fi
+check_no_matches \
+    'native must use core persistence APIs instead of rusqlite' \
+    '\brusqlite::|extern crate rusqlite' \
+    native/src native/Cargo.toml
 
-public_infrastructure="$(rg -n 'pub (db|vault_root|file_index|pdf_state|pdf_renderer):' core/src/state.rs || true)"
-if [[ -n "$public_infrastructure" ]]; then
-    printf 'warning: AppState still exposes infrastructure fields:\n%s\n' \
-        "$public_infrastructure" >&2
-fi
+check_no_matches \
+    'AppState infrastructure fields must not be public' \
+    'pub (db|vault_root|file_index|pdf_state|pdf_renderer):' \
+    core/src/state.rs
 
 if (( failures > 0 )); then
     printf 'Architecture checks failed: %d\n' "$failures" >&2

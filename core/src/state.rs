@@ -3,292 +3,128 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 
+use crate::database;
 use crate::file_index::FileIndex;
 use crate::pdf::{
     PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus, PdfRect,
-    PdfRenderer, PdfState, PdfTextRange,
+    PdfRenderer, PdfTextRange,
 };
 
 /// Application-wide shared state.
 /// Wrap in `Arc<AppState>` when sharing across threads.
 pub struct AppState {
-    pub vault_root: Mutex<Option<PathBuf>>,
-    pub file_index: Mutex<FileIndex>,
-    pub db: Mutex<Connection>,
-    pub pdf_state: Mutex<PdfState>,
-    pub pdf_renderer: Option<PdfRenderer>,
+    pub(crate) vault_root: Mutex<Option<PathBuf>>,
+    pub(crate) file_index: Mutex<FileIndex>,
+    pub(crate) db: Mutex<Connection>,
+    pdf_renderer: Option<PdfRenderer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedPdfTextHit {
+    pub vault_path: String,
+    pub page_index: u16,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdfDocumentReference {
+    pub document_id: String,
+    pub vault_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedPdfAnnotationReference {
+    pub annotation_id: String,
+    pub document_id: String,
+    pub page_index: u16,
+    pub linked_note_path: String,
 }
 
 impl AppState {
+    pub fn pdf_renderer(&self) -> Option<&PdfRenderer> {
+        self.pdf_renderer.as_ref()
+    }
+
+    pub fn vault_root_path(&self) -> Result<Option<PathBuf>, String> {
+        self.vault_root
+            .lock()
+            .map(|vault_root| vault_root.clone())
+            .map_err(|err| err.to_string())
+    }
+
+    pub fn vault_paths_are_linked(&self, first: &str, second: &str) -> bool {
+        let Ok(index) = self.file_index.lock() else {
+            return false;
+        };
+        let Ok(vault_root) = self.vault_root.lock() else {
+            return false;
+        };
+        let Some(vault_root) = vault_root.as_ref() else {
+            return false;
+        };
+
+        let first = crate::vault::resolve_vault_path(vault_root, first);
+        let second = crate::vault::resolve_vault_path(vault_root, second);
+        index
+            .outgoing
+            .get(&first)
+            .is_some_and(|paths| paths.contains(&second))
+            || index
+                .incoming
+                .get(&first)
+                .is_some_and(|paths| paths.contains(&second))
+    }
+
+    pub fn update_file_index_targets(
+        &self,
+        vault_path: &str,
+        targets: &[String],
+    ) -> Result<(), String> {
+        let vault_root = self
+            .vault_root_path()?
+            .ok_or_else(|| "No vault root set".to_string())?;
+        let abs_path = crate::vault::resolve_vault_path(&vault_root, vault_path);
+        let mut index = self.file_index.lock().map_err(|err| err.to_string())?;
+        index.update_file_targets(&abs_path, targets.iter().map(String::as_str));
+        Ok(())
+    }
+
+    pub fn rebuild_file_index_with_targets(
+        &self,
+        vault_root: &std::path::Path,
+        files: Vec<(PathBuf, Vec<String>)>,
+    ) -> Result<(), String> {
+        let mut index = self.file_index.lock().map_err(|err| err.to_string())?;
+        *index = FileIndex::new(vault_root.to_path_buf());
+        for (abs_path, targets) in files {
+            index.update_file_targets(&abs_path, targets.iter().map(String::as_str));
+        }
+        Ok(())
+    }
+
     pub fn new() -> Self {
         let db_path = settings_db_path();
         let db = Connection::open(&db_path).expect("Failed to open local sqlite database");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to initialize settings table");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                hours REAL NOT NULL,
-                activity_type TEXT NOT NULL,
-                phase TEXT NOT NULL,
-                notes TEXT
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_sessions");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                text TEXT NOT NULL,
-                time TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_activity");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_kv (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_kv");
-
-        db.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS file_search USING fts5(
-                path,
-                content
-            )",
-            [],
-        )
-        .expect("Failed to create file_search fts table");
-        db.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS pdf_text_search USING fts5(
-                path,
-                page_index UNINDEXED,
-                content
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_text_search fts table");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_documents (
-                document_id TEXT PRIMARY KEY,
-                vault_relative_path TEXT NOT NULL,
-                file_size INTEGER NOT NULL,
-                modified_at INTEGER,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_documents table");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_documents_vault_relative_path
-             ON pdf_documents(vault_relative_path)",
-            [],
-        )
-        .expect("Failed to create pdf document path index");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_annotations (
-                id TEXT PRIMARY KEY,
-                document_id TEXT NOT NULL,
-                page_index INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                color TEXT NOT NULL,
-                selected_text TEXT NOT NULL,
-                ranges_json TEXT NOT NULL,
-                rects_json TEXT NOT NULL,
-                note TEXT,
-                linked_note_path TEXT,
-                markdown_anchor TEXT,
-                tags_json TEXT NOT NULL DEFAULT '[]',
-                status TEXT NOT NULL DEFAULT 'Unresolved',
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_annotations table");
-
-        migrate_db(&db).expect("Failed to run migrations on settings DB");
-
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_page
-             ON pdf_annotations(document_id, page_index)",
-            [],
-        )
-        .expect("Failed to create pdf_annotations index");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_linked_note
-             ON pdf_annotations(document_id, linked_note_path)
-             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
-            [],
-        )
-        .expect("Failed to create pdf annotation linked-note index");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_linked_note
-             ON pdf_annotations(linked_note_path)
-             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
-            [],
-        )
-        .expect("Failed to create pdf annotation note backlink index");
+        // Public constructor predates fallible startup API; preserve its panic contract.
+        database::initialize(&db).expect("Failed to initialize local sqlite database");
 
         AppState {
             vault_root: Mutex::new(None),
             file_index: Mutex::new(FileIndex::new(PathBuf::new())),
             db: Mutex::new(db),
-            pdf_state: Mutex::new(PdfState::new()),
             pdf_renderer: PdfRenderer::new().ok(),
         }
     }
 
     pub fn new_in_memory() -> Self {
         let db = Connection::open_in_memory().expect("Failed to open memory sqlite database");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to initialize settings table");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                hours REAL NOT NULL,
-                activity_type TEXT NOT NULL,
-                phase TEXT NOT NULL,
-                notes TEXT
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_sessions");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                text TEXT NOT NULL,
-                time TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_activity");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_kv (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_kv");
-
-        db.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS file_search USING fts5(
-                path,
-                content
-            )",
-            [],
-        )
-        .expect("Failed to create file_search fts table");
-        db.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS pdf_text_search USING fts5(
-                path,
-                page_index UNINDEXED,
-                content
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_text_search fts table");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_documents (
-                document_id TEXT PRIMARY KEY,
-                vault_relative_path TEXT NOT NULL,
-                file_size INTEGER NOT NULL,
-                modified_at INTEGER,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_documents table");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_documents_vault_relative_path
-             ON pdf_documents(vault_relative_path)",
-            [],
-        )
-        .expect("Failed to create pdf document path index");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_annotations (
-                id TEXT PRIMARY KEY,
-                document_id TEXT NOT NULL,
-                page_index INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                color TEXT NOT NULL,
-                selected_text TEXT NOT NULL,
-                ranges_json TEXT NOT NULL,
-                rects_json TEXT NOT NULL,
-                note TEXT,
-                linked_note_path TEXT,
-                markdown_anchor TEXT,
-                tags_json TEXT NOT NULL DEFAULT '[]',
-                status TEXT NOT NULL DEFAULT 'Unresolved',
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_annotations table");
-
-        migrate_db(&db).expect("Failed to run migrations on memory DB");
-
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_page
-             ON pdf_annotations(document_id, page_index)",
-            [],
-        )
-        .expect("Failed to create pdf_annotations index");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_linked_note
-             ON pdf_annotations(document_id, linked_note_path)
-             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
-            [],
-        )
-        .expect("Failed to create pdf annotation linked-note index");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_linked_note
-             ON pdf_annotations(linked_note_path)
-             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
-            [],
-        )
-        .expect("Failed to create pdf annotation note backlink index");
+        // Public constructor predates fallible startup API; preserve its panic contract.
+        database::initialize(&db).expect("Failed to initialize memory sqlite database");
 
         AppState {
             vault_root: Mutex::new(None),
             file_index: Mutex::new(FileIndex::new(PathBuf::new())),
             db: Mutex::new(db),
-            pdf_state: Mutex::new(PdfState::new()),
             pdf_renderer: None,
         }
     }
@@ -484,6 +320,87 @@ impl AppState {
         )
         .map_err(|e| format!("Failed to cache PDF text: {e}"))?;
         Ok(())
+    }
+
+    pub fn search_cached_pdf_text(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<CachedPdfTextHit>, String> {
+        let db = self.db.lock().map_err(|e| e.to_string())?;
+        let fts_query = format!("*{}*", query.replace('"', ""));
+        let mut stmt = db
+            .prepare(
+                "SELECT path, page_index, content
+                 FROM pdf_text_search
+                 WHERE content MATCH ?1
+                 LIMIT ?2",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![fts_query, limit as i64], |row| {
+                Ok(CachedPdfTextHit {
+                    vault_path: row.get(0)?,
+                    page_index: row.get(1)?,
+                    content: row.get(2)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn pdf_document_references(&self) -> Result<Vec<PdfDocumentReference>, String> {
+        let db = self.db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = db
+            .prepare("SELECT document_id, vault_relative_path FROM pdf_documents")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(PdfDocumentReference {
+                    document_id: row.get(0)?,
+                    vault_path: row.get(1)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn linked_pdf_annotation_references(
+        &self,
+    ) -> Result<Vec<LinkedPdfAnnotationReference>, String> {
+        let db = self.db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = db
+            .prepare(
+                "SELECT id, document_id, page_index, linked_note_path
+                 FROM pdf_annotations
+                 WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(LinkedPdfAnnotationReference {
+                    annotation_id: row.get(0)?,
+                    document_id: row.get(1)?,
+                    page_index: row.get(2)?,
+                    linked_note_path: row.get(3)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn pdf_annotation_exists(&self, annotation_id: &str) -> Result<bool, String> {
+        let db = self.db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = db
+            .prepare("SELECT 1 FROM pdf_annotations WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        stmt.exists([annotation_id]).map_err(|e| e.to_string())
     }
 
     pub fn save_pdf_annotation(&self, ann: &PdfAnnotation) -> Result<(), String> {
@@ -690,44 +607,6 @@ fn portable_config_dirs(exe_path: &std::path::Path) -> Vec<PathBuf> {
     }
 
     dirs
-}
-
-fn migrate_db(db: &Connection) -> Result<(), String> {
-    let mut has_tags_json = false;
-    let mut has_status = false;
-
-    let mut stmt = db
-        .prepare("PRAGMA table_info(pdf_annotations)")
-        .map_err(|e| format!("Failed to prepare pragma table_info: {e}"))?;
-    let mut rows = stmt
-        .query([])
-        .map_err(|e| format!("Failed to query pragma table_info: {e}"))?;
-    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let name: String = row.get(1).map_err(|e| e.to_string())?;
-        if name == "tags_json" {
-            has_tags_json = true;
-        } else if name == "status" {
-            has_status = true;
-        }
-    }
-
-    if !has_tags_json {
-        db.execute(
-            "ALTER TABLE pdf_annotations ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
-            [],
-        )
-        .map_err(|e| format!("Failed to add tags_json column: {e}"))?;
-    }
-
-    if !has_status {
-        db.execute(
-            "ALTER TABLE pdf_annotations ADD COLUMN status TEXT NOT NULL DEFAULT 'Unresolved'",
-            [],
-        )
-        .map_err(|e| format!("Failed to add status column: {e}"))?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

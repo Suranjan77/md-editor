@@ -26,9 +26,8 @@ presentation -> feature coordination -> application services -> domain
   `rusqlite` or `pdfium-render`.
 - Filesystem, SQLite, PDFium, and OS APIs stay behind core or platform
   boundaries as those boundaries are extracted.
-- New direct `rusqlite` use in native is forbidden. Existing uses in
-  `native/src/app.rs` and `native/src/integrity.rs` are migration debt tracked
-  by `scripts/architecture-check.sh`.
+- Direct `rusqlite` use in native is forbidden. Native uses core repository and
+  service APIs.
 
 See [ADR-0001](adr/0001-dependency-direction.md) and
 [ADR-0003](adr/0003-repository-boundaries.md).
@@ -106,10 +105,5 @@ See [ADR-0004](adr/0004-path-and-page-types.md).
 - markdown parser implementation used by renderer production code;
 - direct buffer `set_text` in production code.
 
-Known migration debt is warning-only until owning phase removes it:
-
-- native direct SQLite use;
-- public infrastructure fields on `AppState`;
-- oversized source files.
-
-When a warning reaches zero, convert it to a hard failure in same change.
+Oversized source files remain warning-only migration metrics. Native direct SQL
+and public `AppState` infrastructure fields are hard failures.
