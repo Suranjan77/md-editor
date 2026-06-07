@@ -278,7 +278,7 @@ After B1-B8:
 
 **Required changes**:
 1. Add `tooltip` wrapper to every icon-only button: "Toggle Sidebar",
-   "Global Search (Ctrl+F)", "Command Palette (Ctrl+P)", "Outline / TOC",
+   "Global Search", "Command Palette (Ctrl+P)", "Outline / TOC",
    "Split View", "Annotations" (new, from B4), "Study Tracker".
    Use `iced::widget::tooltip::Position::Bottom`.
 2. Replace `button::text` with a local style closure:
@@ -481,8 +481,14 @@ Progress 2026-06-05:
   feedback, and annotation creation from selected PDF text.
 
 Remaining:
-- Keyboard-first annotation flow beyond default yellow highlight.
-- Stronger text selection feedback in the page overlay.
+- None. Milestone 5 completed 2026-06-07.
+
+Completed 2026-06-07:
+- `Ctrl+Shift+H` creates a blue underline from the active PDF selection.
+- `Ctrl+Alt+H` creates a red strikeout from the active PDF selection.
+- Command palette exposes both variants with conflict-free shortcuts.
+- Selection overlay now uses a high-contrast accent outline, rounded corners,
+  and a minimum low-zoom size for single-character selections.
 
 ## Milestone 6: Split Research Workflow UX
 
@@ -491,16 +497,44 @@ Remaining:
 - Drag/resizer polish, narrow-window fallback.
 - Cross-pane toasts.
 
+Progress 2026-06-07:
+- Active split pane has a local accent border.
+- Below 720px, split mode renders only the active pane; `Alt+P` switches it.
+- Split drag start preserves existing split ratios instead of resetting PDF
+  ratio state.
+
+Remaining:
+- None. Milestone 6 completed 2026-06-07.
+
+Completed 2026-06-07:
+- Back/forward and follow-citation failures show explicit status feedback.
+- Mapped companion notes appear in PDF toolbar and open through `Alt+N`.
+- Companion-note opening preserves PDF page, scroll, and zoom.
+- Divider uses a wider hit target, hover/drag accent feedback, direct shell
+  geometry, minimum pane widths, and ignores collapsed narrow layouts.
+- Narrow mode suppresses workflow panels as well as hidden split pane.
+
 ## Milestone 7: Search, Outline, Navigation UX (Backend Complete)
 
 Backend: unified search, streaming, bounded PDF, stale suppression. DONE
-Not done: search result hover styles, group separators, match-context highlighting.
+Hover styles and group separators: DONE
+Match-context highlighting: DONE (bounded to 32 matches per field).
 
 ## Milestone 8: Onboarding, Empty States, Recovery (Partially Done)
 
 Done: citation palette, excerpt queue, templates, reading session notes.
-Not done: first-run vault flow with recent vaults, recoverable error UX,
-indexing notifications, welcome screen improvements (Phase A A3).
+Progress 2026-06-07:
+- Vault-open failures preserve current vault and surface a recoverable error.
+- Welcome screen exposes dedicated Open Vault and Create New Vault actions.
+- Version text comes from package metadata.
+
+Completed 2026-06-07:
+- Recent vaults persist as structured JSON, deduplicate, cap at five, and open
+  directly from welcome.
+- PDF text indexing reports running, completion page count, and persistent
+  failure status.
+
+Remaining: none.
 
 ## Milestone 9: Accessibility And Inclusive UX
 
@@ -508,21 +542,86 @@ indexing notifications, welcome screen improvements (Phase A A3).
 - Contrast validation for all theme pairs.
 - Focus-ring visibility, reduced-motion behavior, keyboard traversal.
 
+Progress 2026-06-07:
+- Toolbar tooltips complete.
+- Normal text and status colors have automated 4.5:1 contrast checks across
+  dark, light, and high-contrast themes.
+- Light muted, success, and warning tokens adjusted to pass contrast gate.
+
+Completed 2026-06-07:
+- Search and palette inputs use visible 2px accent focus borders.
+- TOC and backlink rows use focus-visible controls with Enter/Space activation.
+- Tab and Shift+Tab explicitly dispatch Iced next/previous focus operations.
+- Reduced motion is persisted and available from command palette; it disables
+  PDF spinner frame updates.
+- Programmatic scrolling uses Iced 0.14's immediate `scroll_to`, so no animated
+  fallback is required.
+
+Remaining: none.
+
 ## Milestone 10: Performance And Perceived Speed (Initial Slice Done)
 
-Done: command palette navigation, empty states, citation keyboard submit.
-Not done: indexing progress placeholders, PDF spinner, annotation debounce,
-debug diagnostics panel.
+Completed 2026-06-07:
+- Command palette navigation, empty states, and citation keyboard submit.
+- Markdown and PDF indexing lifecycle status in persistent shell status.
+- Canvas PDF loading spinner with reduced-motion static fallback.
+- Annotation quick-note/tag draft persistence debounced to 500ms.
+- Bounded diagnostics panel for PDF cache, text pages, link counts, FTS
+  documents, and active editor size.
+
+Remaining: none.
 
 ## Milestone 11: Documentation And Learnability
 
 User guides, screenshot examples, shortcut reference, in-app help, terminology
 consistency.
 
+Progress 2026-06-07:
+- Added `docs/SHORTCUTS.md` from current keyboard dispatcher and command
+  registry, separating true key bindings from contextual toolbar actions.
+- Added `docs/USER_GUIDE.md` for vault setup, search, split research,
+  citations, recovery, diagnostics, settings, and reduced motion.
+- README and feature docs link both guides.
+- Corrected platform-config versus portable-settings documentation.
+- Renamed ambiguous command terminology to "Search Active Context" where
+  `Ctrl+F` follows active pane; toolbar retains "Global Search" for vault-wide
+  overlay.
+- Existing editor, split, and tracker screenshots are linked from guide.
+- Added command-palette **Help & Shortcuts** modal with core keys and full guide
+  paths.
+
+Remaining: none. Additional search/recovery screenshots belong to Milestone 12
+release capture pass.
+
 ## Milestone 12: Release UX Hardening
 
 Cross-platform smoke pass, portable settings, DPI scaling, release checklist,
 visual-authenticity checklist, freeze and bug bash.
+
+Progress 2026-06-07:
+- Settings use platform config directories by default while preserving
+  executable-local databases and `portable.flag` behavior.
+- PDF render scale reacts to Iced `Rescaled` events and preserves at least 2x
+  supersampling.
+- Native tests use in-memory state and cannot read production settings.
+- Linux release build and isolated GUI startup passed.
+- Linux desktop install/uninstall passed with escaped executable paths and
+  propagated filesystem errors.
+- Portable bundle created its settings database beside the executable without
+  writing a platform-config database.
+- Search and recovery release screenshots were captured and visually checked.
+- Recovery toast duplication found during capture was fixed.
+- Linux evidence is recorded in `docs/RELEASE_SIGNOFF.md`.
+- Windows link opening no longer routes document-controlled URLs through a
+  command shell.
+- PDFium packaging supports custom Cargo target roots and standard macOS
+  `Contents/Resources` lookup.
+- Release automation now builds Windows x64 plus macOS Intel/Apple Silicon
+  packages; macOS output is an ad-hoc-signed `.app` bundle.
+
+Remaining:
+- Run new cross-platform package jobs and record artifact results.
+- Smoke Windows and macOS artifacts on native hosts, including DPI and PDFium.
 
 ---
 

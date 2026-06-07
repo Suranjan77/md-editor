@@ -1,26 +1,15 @@
-use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
+use iced::widget::{Column, Space, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
 use crate::theme;
-
-fn backlink_button_style() -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| {
-        let mut style = button::text(theme, status);
-        style.border.radius = theme::RADIUS_SMALL.into();
-
-        if status == button::Status::Hovered || status == button::Status::Pressed {
-            style.background = Some(Background::Color(theme::bg_tertiary()));
-        }
-        style
-    }
-}
 
 /// Render the backlinks panel.
 pub fn view<'a>(
     backlinks: &'a [md_editor_core::types::BacklinkItem],
     visible: bool,
     width: f32,
+    is_indexing: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
     if !visible {
         return container(text("")).width(Length::Fixed(0.0)).into();
@@ -55,7 +44,16 @@ pub fn view<'a>(
 
     let mut list = Column::new().spacing(6);
 
-    if backlinks.is_empty() {
+    if is_indexing {
+        list = list.push(
+            container(
+                text("Indexing backlinks...")
+                    .size(12)
+                    .color(theme::text_muted()),
+            )
+            .padding([12, 0]),
+        );
+    } else if backlinks.is_empty() {
         list = list.push(
             container(
                 text("No backlinks found")
@@ -113,11 +111,11 @@ pub fn view<'a>(
 
             row_content = row_content.push(btn_content);
 
-            let btn: iced::widget::Button<'_, Message, Theme, Renderer> = button(row_content)
+            let btn = crate::views::focus_button::focus_button(row_content)
                 .on_press(msg)
-                .padding([6, 10])
-                .width(Length::Fill)
-                .style(backlink_button_style());
+                .padding(8.0)
+                .subtle(true)
+                .width(Length::Fill);
 
             list = list.push(btn);
         }
@@ -149,7 +147,7 @@ mod tests {
 
     #[test]
     fn empty_visible_backlinks_panel_renders_empty_state() {
-        let mut ui = iced_test::simulator(view(&[], true, 220.0));
+        let mut ui = iced_test::simulator(view(&[], true, 220.0, false));
 
         ui.find("No backlinks found")
             .expect("visible backlinks panel should explain empty backlink state");

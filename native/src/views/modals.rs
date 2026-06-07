@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
@@ -181,6 +182,7 @@ pub enum ModalType {
     LinkNote(String),       // annotation ID
     AnnotationTags(String), // annotation ID
     GoToPage { total: u16, error: Option<String> },
+    HelpAndShortcuts,
 }
 
 /// Go-to-page dialog — separate inline render so the
@@ -630,6 +632,7 @@ pub fn view<'a>(
         ModalType::QuickNote(_) => "Short Note",
         ModalType::LinkNote(_) => "Link Markdown Note",
         ModalType::AnnotationTags(_) => "Edit Annotation Tags",
+        ModalType::HelpAndShortcuts => "Help & Shortcuts",
     };
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
@@ -665,12 +668,32 @@ pub fn view<'a>(
             .into()
         }
         ModalType::LinkNote(_) => link_note_picker::view(input_value, picker_search, vault_entries),
+        ModalType::HelpAndShortcuts => column![
+            text(title).size(18).color(theme::text_primary()),
+            text("Core shortcuts").size(12).color(theme::text_muted()),
+            text("Ctrl+P  Command Palette\nCtrl+F  Search Active Context\nCtrl+S  Save Markdown\nAlt+P   Switch Split Pane\nAlt+C   Citation Palette\nEsc     Close Active Surface")
+                .size(13)
+                .color(theme::text_primary()),
+            text("Full guides")
+                .size(12)
+                .color(theme::text_muted()),
+            text("docs/USER_GUIDE.md\ndocs/SHORTCUTS.md")
+                .size(13)
+                .color(theme::accent()),
+            button(text("Close").size(14))
+                .on_press(Message::NameModalCancel)
+                .padding([8, 20])
+                .style(button::text),
+        ]
+        .spacing(14)
+        .into(),
         _ => {
             let (placeholder, confirm_label) = match modal_type {
                 ModalType::QuickNote(_) => ("Write a short note...", "Save Note"),
                 ModalType::AnnotationTags(_) => ("tag1, tag2, ...", "Save Tags"),
                 ModalType::CreateFile => ("File name...", "Create File"),
                 ModalType::CreateFolder => ("Folder name...", "Create Folder"),
+                ModalType::HelpAndShortcuts => ("", ""),
                 _ => ("Enter name...", "Confirm"),
             };
             column![
@@ -700,6 +723,7 @@ pub fn view<'a>(
         container(content)
             .width(Length::Fixed(match modal_type {
                 ModalType::LinkNote(_) => 560.0,
+                ModalType::HelpAndShortcuts => 460.0,
                 _ => 400.0,
             }))
             .padding(30)
@@ -724,6 +748,23 @@ pub fn view<'a>(
         ..Default::default()
     })
     .into()
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::*;
+
+    #[test]
+    fn help_modal_exposes_core_shortcuts_and_docs() {
+        let mut ui = iced_test::simulator(view(&ModalType::HelpAndShortcuts, "", "", &[]));
+
+        ui.find("Help & Shortcuts")
+            .expect("help title should render");
+        ui.find("Ctrl+P  Command Palette\nCtrl+F  Search Active Context\nCtrl+S  Save Markdown\nAlt+P   Switch Split Pane\nAlt+C   Citation Palette\nEsc     Close Active Surface")
+            .expect("core shortcuts should render");
+        ui.find("docs/USER_GUIDE.md\ndocs/SHORTCUTS.md")
+            .expect("full shortcut guide path should render");
+    }
 }
 
 #[cfg(test)]

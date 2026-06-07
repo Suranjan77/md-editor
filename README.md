@@ -81,6 +81,7 @@ MD Editor has separate search modes for different kinds of work:
 - Global search scans the vault and indexed PDF text.
 - `Ctrl+F` in the PDF pane searches the active PDF.
 - Split view keeps Markdown and PDF search behavior tied to the active pane.
+- `Ctrl+P` opens command palette.
 
 ### 5. Track Study Progress
 
@@ -102,6 +103,14 @@ but part of a steady study or research routine.
 
 ![Study tracker](images/study_tracker.png)
 
+### Global Search
+
+![Global search](images/search_window.png)
+
+### Recoverable Vault Error
+
+![Recoverable vault error](images/recovery_window.png)
+
 ## A Local-First Promise
 
 MD Editor does not try to hide your work inside a proprietary database.
@@ -109,16 +118,18 @@ MD Editor does not try to hide your work inside a proprietary database.
 - Your vault is a normal folder.
 - Notes are normal Markdown files.
 - PDFs and images stay where you put them.
-- Settings and app state are stored beside the executable by default.
-- No system-wide configuration directories are used automatically.
+- Release archives are portable by default.
+- Development and unmarked installs use platform user configuration directory.
 
-The app creates a local SQLite file named:
+The app stores settings in SQLite file named:
 
 ```text
 md_editor_settings.sqlite
 ```
 
-This keeps the application portable and easy to reason about.
+Release archives include `portable.flag`. For custom builds, place it beside
+executable. On macOS, place it beside `MD Editor.app`. Existing local
+`md_editor_settings.sqlite` also keeps portable mode.
 
 ## Supported Files
 
@@ -189,7 +200,7 @@ Expected library names:
 
 ## Optional Linux Desktop Integration
 
-Linux builds are portable by default. Desktop integration is opt-in.
+Linux release archives are portable by default. Desktop integration is opt-in.
 
 Install launcher and icons:
 
@@ -225,9 +236,9 @@ md-editor/
 Useful development commands:
 
 ```bash
-cargo fmt --check
-cargo check
-cargo test
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 cargo test -p md-editor-native
 ```
 
@@ -235,8 +246,13 @@ cargo test -p md-editor-native
 
 - [Feature document](docs/FEATURES.md) covers the version 1 feature set,
   platform notes, and architecture summary.
+- [User guide](docs/USER_GUIDE.md) covers vault setup, split research,
+  citations, recovery, and diagnostics.
+- [Keyboard shortcuts](docs/SHORTCUTS.md) lists context rules and key bindings.
 - [Launch checklist](docs/LAUNCH.md) covers release checks, smoke testing,
   PDFium packaging, and known constraints.
+- [Release signoff](docs/RELEASE_SIGNOFF.md) records platform validation and
+  remaining release blockers.
 
 ## License
 

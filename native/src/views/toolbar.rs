@@ -176,7 +176,7 @@ pub fn view<'a>(
             .on_press(Message::GlobalSearchOpen)
             .padding(8)
             .style(action_button_style(false)),
-        "Global Search (Ctrl+F)",
+        "Global Search",
         Position::Bottom,
     );
 

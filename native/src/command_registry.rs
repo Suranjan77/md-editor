@@ -38,6 +38,9 @@ impl CommandMetadata {
         if id == Shortcut::ToggleSidebar && !ctx.has_vault {
             return Err("Open a vault first");
         }
+        if id == Shortcut::ToggleDiagnostics && !ctx.has_vault {
+            return Err("Open a vault first");
+        }
         if id == Shortcut::ToggleBacklinks && !ctx.markdown_open {
             return Err("Open a markdown file first");
         }
@@ -55,6 +58,9 @@ impl CommandMetadata {
                 | Shortcut::GoToPage
                 | Shortcut::PdfSearch
                 | Shortcut::PdfHighlight
+                | Shortcut::PdfUnderline
+                | Shortcut::PdfStrike
+                | Shortcut::PdfOpenCompanionNote
                 | Shortcut::PdfZoomInput
                 | Shortcut::PdfFirstPage
                 | Shortcut::PdfLastPage
@@ -124,7 +130,7 @@ pub fn get_command_registry() -> Vec<CommandMetadata> {
         },
         CommandMetadata {
             id: Shortcut::Search,
-            name: "Search Vault",
+            name: "Search Active Context",
             icon: "/",
             group: CommandGroup::Search,
             default_shortcut: Some("Ctrl+F"),
@@ -263,6 +269,27 @@ pub fn get_command_registry() -> Vec<CommandMetadata> {
             default_shortcut: Some("Ctrl+H"),
         },
         CommandMetadata {
+            id: Shortcut::PdfUnderline,
+            name: "PDF Underline",
+            icon: "U",
+            group: CommandGroup::Annotation,
+            default_shortcut: Some("Ctrl+Shift+H"),
+        },
+        CommandMetadata {
+            id: Shortcut::PdfStrike,
+            name: "PDF Strikeout",
+            icon: "S",
+            group: CommandGroup::Annotation,
+            default_shortcut: Some("Ctrl+Alt+H"),
+        },
+        CommandMetadata {
+            id: Shortcut::PdfOpenCompanionNote,
+            name: "Open PDF Companion Note",
+            icon: "N",
+            group: CommandGroup::Research,
+            default_shortcut: Some("Alt+N"),
+        },
+        CommandMetadata {
             id: Shortcut::InsertPdfQuote,
             name: "Insert PDF Quote",
             icon: "Q",
@@ -312,11 +339,32 @@ pub fn get_command_registry() -> Vec<CommandMetadata> {
             default_shortcut: None,
         },
         CommandMetadata {
+            id: Shortcut::ToggleReducedMotion,
+            name: "Toggle Reduced Motion",
+            icon: "M",
+            group: CommandGroup::View,
+            default_shortcut: None,
+        },
+        CommandMetadata {
+            id: Shortcut::HelpAndShortcuts,
+            name: "Help & Shortcuts",
+            icon: "?",
+            group: CommandGroup::View,
+            default_shortcut: None,
+        },
+        CommandMetadata {
             id: Shortcut::SwitchPane,
             name: "Switch Active Pane Focus",
             icon: "P",
             group: CommandGroup::View,
             default_shortcut: Some("Alt+P"),
+        },
+        CommandMetadata {
+            id: Shortcut::ToggleDiagnostics,
+            name: "Toggle Diagnostics Panel",
+            icon: "D",
+            group: CommandGroup::View,
+            default_shortcut: Some("Ctrl+Shift+D"),
         },
     ]
 }
@@ -348,5 +396,102 @@ mod tests {
             "Shortcut conflicts detected: {:?}",
             conflicts
         );
+    }
+
+    #[test]
+    fn companion_note_command_is_registered_and_requires_pdf() {
+        let command = get_command_registry()
+            .into_iter()
+            .find(|command| command.id == Shortcut::PdfOpenCompanionNote)
+            .expect("companion note command should be registered");
+        let context = CommandContext {
+            markdown_open: false,
+            pdf_open: false,
+            image_open: false,
+            active_pane: AppShellPane::None,
+            has_vault: true,
+            pdf_has_selection: false,
+            has_focused_annotation: false,
+        };
+
+        assert_eq!(
+            command.is_enabled(context),
+            Err("Requires an open PDF document")
+        );
+        assert!(
+            command
+                .is_enabled(CommandContext {
+                    pdf_open: true,
+                    ..context
+                })
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn toggle_diagnostics_command_is_registered_and_requires_vault() {
+        let command = get_command_registry()
+            .into_iter()
+            .find(|command| command.id == Shortcut::ToggleDiagnostics)
+            .expect("toggle diagnostics command should be registered");
+        let context = CommandContext {
+            markdown_open: false,
+            pdf_open: false,
+            image_open: false,
+            active_pane: AppShellPane::None,
+            has_vault: false,
+            pdf_has_selection: false,
+            has_focused_annotation: false,
+        };
+
+        assert_eq!(command.is_enabled(context), Err("Open a vault first"));
+        assert!(
+            command
+                .is_enabled(CommandContext {
+                    has_vault: true,
+                    ..context
+                })
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn reduced_motion_command_is_registered_without_shortcut() {
+        let command = get_command_registry()
+            .into_iter()
+            .find(|command| command.id == Shortcut::ToggleReducedMotion)
+            .expect("reduced motion command should be registered");
+
+        assert_eq!(command.default_shortcut, None);
+    }
+
+    #[test]
+    fn search_command_uses_active_context_terminology() {
+        let command = get_command_registry()
+            .into_iter()
+            .find(|command| command.id == Shortcut::Search)
+            .expect("search command should be registered");
+
+        assert_eq!(command.name, "Search Active Context");
+        assert_eq!(command.default_shortcut, Some("Ctrl+F"));
+    }
+
+    #[test]
+    fn help_command_is_available_without_context() {
+        let command = get_command_registry()
+            .into_iter()
+            .find(|command| command.id == Shortcut::HelpAndShortcuts)
+            .expect("help command should be registered");
+        let context = CommandContext {
+            markdown_open: false,
+            pdf_open: false,
+            image_open: false,
+            active_pane: AppShellPane::None,
+            has_vault: false,
+            pdf_has_selection: false,
+            has_focused_annotation: false,
+        };
+
+        assert!(command.is_enabled(context).is_ok());
     }
 }

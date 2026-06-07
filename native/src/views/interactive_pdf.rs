@@ -139,6 +139,17 @@ fn get_annotation_color(color: md_editor_core::pdf::PdfAnnotationColor) -> Color
     }
 }
 
+fn selection_overlay_style() -> (Color, iced::Border) {
+    (
+        Color::from_rgba(0.08, 0.45, 0.82, 0.38),
+        iced::Border {
+            color: Color::from_rgba(0.03, 0.32, 0.68, 0.95),
+            width: 1.5,
+            radius: 2.0.into(),
+        },
+    )
+}
+
 #[derive(Clone, Copy, Debug)]
 struct OverlayQuad {
     bounds: Rectangle,
@@ -260,17 +271,21 @@ fn build_overlay_quads(
                 .collect();
 
             for rect in md_editor_core::pdf::merge_char_rects(&selected_chars) {
+                let mut screen = pdf_rect_to_screen_rect(
+                    &rect,
+                    page_text.page_width,
+                    page_text.page_height,
+                    zoom,
+                    rotation,
+                    bounds,
+                );
+                screen.width = screen.width.max(3.0);
+                screen.height = screen.height.max(8.0);
+                let (color, border) = selection_overlay_style();
                 quads.push(OverlayQuad {
-                    bounds: pdf_rect_to_screen_rect(
-                        &rect,
-                        page_text.page_width,
-                        page_text.page_height,
-                        zoom,
-                        rotation,
-                        bounds,
-                    ),
-                    color: Color::from_rgba(0.12, 0.53, 0.9, 0.45),
-                    border: iced::Border::default(),
+                    bounds: screen,
+                    color,
+                    border,
                 });
             }
         }
@@ -869,6 +884,12 @@ mod tests {
         assert_eq!(quads[2].bounds, screen_rect(130.0, 200.0, 5.0, 10.0));
         assert_eq!(quads[3].bounds, screen_rect(110.0, 220.0, 10.0, 10.0));
         assert_eq!(quads[0].border.width, 1.5);
+        assert_eq!(quads[3].border.width, 1.5);
+        assert_eq!(
+            quads[3].border.color,
+            Color::from_rgba(0.03, 0.32, 0.68, 0.95)
+        );
+        assert_eq!(quads[3].color, Color::from_rgba(0.08, 0.45, 0.82, 0.38));
     }
 
     #[test]
@@ -894,5 +915,33 @@ mod tests {
         );
 
         assert!(quads.is_empty());
+    }
+
+    #[test]
+    fn selection_overlay_keeps_single_char_visible_at_low_zoom() {
+        let text = page_text();
+        let quads = build_overlay_quads(
+            screen_rect(0.0, 0.0, 100.0, 200.0),
+            0,
+            100.0,
+            200.0,
+            Some(&text),
+            &[],
+            &[],
+            &[],
+            Some(PdfSelection {
+                page_index: 0,
+                anchor_idx: 1,
+                focus_idx: 1,
+            }),
+            None,
+            0.5,
+            0,
+        );
+
+        assert_eq!(quads.len(), 1);
+        assert_eq!(quads[0].bounds, screen_rect(7.5, 85.0, 3.0, 8.0));
+        assert_eq!(quads[0].border.width, 1.5);
+        assert_eq!(quads[0].border.radius, 2.0.into());
     }
 }

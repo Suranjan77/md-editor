@@ -11,4 +11,8 @@ pub mod vault;
 pub use state::AppState;
 
 #[cfg(test)]
+#[path = "../pdfium_build_paths.rs"]
+mod pdfium_build_paths;
+
+#[cfg(test)]
 mod massive_tests;

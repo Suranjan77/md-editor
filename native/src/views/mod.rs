@@ -1,6 +1,8 @@
 pub mod backlinks;
 pub mod citation_palette;
 pub mod command_palette;
+pub mod diagnostics;
+pub mod focus_button;
 pub mod icons;
 pub mod interactive_pdf;
 pub mod link_note_picker;
