@@ -30,7 +30,7 @@ pub(crate) struct PdfSearchState {
     pub(crate) query: String,
     pub(crate) regex: bool,
     pub(crate) match_case: bool,
-    pub(crate) matches: Vec<md_editor_core::pdf::PdfSearchMatch>,
+    pub(crate) matches: Vec<md_editor_core::application::pdf_service::PdfSearchMatch>,
     pub(crate) active_index: Option<usize>,
     pub(crate) page_index: HashMap<u16, Vec<usize>>,
     pub(crate) searching: bool,

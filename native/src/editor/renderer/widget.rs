@@ -1,7 +1,7 @@
 use super::*;
 use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
-use crate::editor::parser::{StyledLine, StyledSpan};
 use crate::editor::layout_cache::{LineHeightCache, line_hash, resource_hash};
+use crate::editor::parser::StyledLine;
 use crate::editor::renderer::geometry::{clip_viewport, normalized_selection};
 use crate::{search, theme};
 use iced::advanced::graphics::core::event::Event;
@@ -13,7 +13,6 @@ use iced::keyboard;
 use iced::mouse;
 use iced::{Color, Element, Length, Point, Rectangle, Size};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
 
 #[allow(clippy::type_complexity)]
 pub struct Editor<'a, Message> {

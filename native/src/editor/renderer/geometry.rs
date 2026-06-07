@@ -1,4 +1,4 @@
-use iced::{Point, Rectangle};
+use iced::Rectangle;
 
 pub fn clip_viewport(viewport: Rectangle, clip: Rectangle) -> Rectangle {
     let x = viewport.x.max(clip.x);

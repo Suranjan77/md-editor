@@ -159,7 +159,7 @@ pub struct MdEditor {
     active_image: Option<(iced::widget::image::Handle, f32, f32)>,
     pdf_scroll_y: f32,
     pdf_viewport_height: f32,
-    pdf_page_links: std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
+    pdf_page_links: std::collections::HashMap<u16, Vec<md_editor_core::domain::pdf::LinkInfo>>,
     pdf_link_preview: Option<iced::widget::image::Handle>,
     showing_pdf: bool,
     pdf_fit_to_width: bool,
@@ -167,9 +167,10 @@ pub struct MdEditor {
 
     // PDF study fields
     pdf_document_id: Option<String>,
-    pdf_page_text: std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
+    pdf_page_text: std::collections::HashMap<u16, md_editor_core::domain::pdf::PdfPageText>,
     pdf_selection: Option<views::interactive_pdf::PdfSelection>,
-    pdf_annotations: std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
+    pdf_annotations:
+        std::collections::HashMap<u16, Vec<md_editor_core::domain::pdf::PdfAnnotation>>,
     focused_annotation_id: Option<String>,
     pending_editor_save: Option<std::time::Instant>,
     pdf_initial_target_page: Option<u16>,
@@ -185,7 +186,7 @@ pub struct MdEditor {
     // TOC
     toc_visible: bool,
     pdf_annotations_visible: bool,
-    pdf_annotations_filter_color: Option<md_editor_core::pdf::PdfAnnotationColor>,
+    pdf_annotations_filter_color: Option<md_editor_core::domain::pdf::PdfAnnotationColor>,
     pdf_annotations_filter_page: Option<u16>,
     pdf_annotations_filter_tag: Option<String>,
     pdf_annotations_filter_linked: Option<bool>,
@@ -1924,18 +1925,18 @@ impl MdEditor {
                 | views::modals::PdfContextMenuItem::HighlightOrange => {
                     let color = match action {
                         views::modals::PdfContextMenuItem::HighlightYellow => {
-                            md_editor_core::pdf::PdfAnnotationColor::Yellow
+                            md_editor_core::domain::pdf::PdfAnnotationColor::Yellow
                         }
                         views::modals::PdfContextMenuItem::HighlightGreen => {
-                            md_editor_core::pdf::PdfAnnotationColor::Green
+                            md_editor_core::domain::pdf::PdfAnnotationColor::Green
                         }
                         views::modals::PdfContextMenuItem::HighlightBlue => {
-                            md_editor_core::pdf::PdfAnnotationColor::Blue
+                            md_editor_core::domain::pdf::PdfAnnotationColor::Blue
                         }
                         views::modals::PdfContextMenuItem::HighlightPink => {
-                            md_editor_core::pdf::PdfAnnotationColor::Pink
+                            md_editor_core::domain::pdf::PdfAnnotationColor::Pink
                         }
-                        _ => md_editor_core::pdf::PdfAnnotationColor::Orange,
+                        _ => md_editor_core::domain::pdf::PdfAnnotationColor::Orange,
                     };
                     self.overlays.active_modal = None;
                     Task::done(Message::PdfCreateHighlight(color))
@@ -1943,15 +1944,15 @@ impl MdEditor {
                 views::modals::PdfContextMenuItem::UnderlineBlue => {
                     self.overlays.active_modal = None;
                     Task::done(Message::PdfCreateAnnotation(
-                        md_editor_core::pdf::PdfAnnotationKind::Underline,
-                        md_editor_core::pdf::PdfAnnotationColor::Blue,
+                        md_editor_core::domain::pdf::PdfAnnotationKind::Underline,
+                        md_editor_core::domain::pdf::PdfAnnotationColor::Blue,
                     ))
                 }
                 views::modals::PdfContextMenuItem::StrikeRed => {
                     self.overlays.active_modal = None;
                     Task::done(Message::PdfCreateAnnotation(
-                        md_editor_core::pdf::PdfAnnotationKind::Strike,
-                        md_editor_core::pdf::PdfAnnotationColor::Red,
+                        md_editor_core::domain::pdf::PdfAnnotationKind::Strike,
+                        md_editor_core::domain::pdf::PdfAnnotationColor::Red,
                     ))
                 }
                 views::modals::PdfContextMenuItem::SearchSelectedText => {
@@ -2052,7 +2053,7 @@ impl MdEditor {
                     return Task::none();
                 }
                 fn flatten_pdf_toc(
-                    entries: &[md_editor_core::pdf::TocEntry],
+                    entries: &[md_editor_core::application::pdf_service::TocEntry],
                     level: u8,
                     out: &mut Vec<views::toc::TocEntry>,
                 ) {
@@ -3073,7 +3074,7 @@ impl MdEditor {
                 self.run_editor_command(command)
             }
             Message::PdfCreateHighlight(color) => Task::done(Message::PdfCreateAnnotation(
-                md_editor_core::pdf::PdfAnnotationKind::Highlight,
+                md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
                 color,
             )),
             Message::PdfCreateAnnotation(kind, color) => {
@@ -3091,7 +3092,7 @@ impl MdEditor {
 
                         let selected_text = text_by_char_range(&page_text.text, start, end);
 
-                        let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
+                        let rects = md_editor_core::domain::pdf::merge_char_rects(&selected_chars);
 
                         let id = uuid::Uuid::new_v4().to_string();
                         let now = std::time::SystemTime::now()
@@ -3099,14 +3100,14 @@ impl MdEditor {
                             .unwrap_or_default()
                             .as_secs() as i64;
 
-                        let ann = md_editor_core::pdf::PdfAnnotation {
+                        let ann = md_editor_core::domain::pdf::PdfAnnotation {
                             id: id.clone(),
                             document_id: doc_id.clone(),
                             page_index: sel.page_index,
                             kind,
                             color,
                             selected_text,
-                            ranges: vec![md_editor_core::pdf::PdfTextRange {
+                            ranges: vec![md_editor_core::domain::pdf::PdfTextRange {
                                 start_text_index: start,
                                 end_text_index: end,
                             }],
@@ -3115,7 +3116,7 @@ impl MdEditor {
                             linked_note_path: None,
                             markdown_anchor: None,
                             tags: Vec::new(),
-                            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+                            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
                             created_at: now,
                             updated_at: now,
                         };
@@ -3192,7 +3193,7 @@ impl MdEditor {
                                 md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                     .unwrap_or_default();
 
-                            if let Some(ref note_path) = ann.linked_note_path {
+                            if let Some(note_path) = ann.linked_note_path.as_deref() {
                                 if let Ok(bytes) =
                                     md_editor_core::vault::open_file(&self.state, note_path)
                                 {
@@ -3582,7 +3583,7 @@ impl MdEditor {
                     Shortcut::PdfHighlight => {
                         if self.showing_pdf {
                             if self.pdf_selection.is_some() {
-                                let color = md_editor_core::pdf::PdfAnnotationColor::Yellow;
+                                let color = md_editor_core::domain::pdf::PdfAnnotationColor::Yellow;
                                 Task::done(Message::PdfCreateHighlight(color))
                             } else {
                                 self.overlays.toast =
@@ -3758,11 +3759,11 @@ impl MdEditor {
                 for page_anns in self.pdf_annotations.values_mut() {
                     if let Some(ann) = page_anns.iter_mut().find(|a| a.id == id) {
                         ann.status = match ann.status {
-                            md_editor_core::pdf::PdfAnnotationStatus::Unresolved => {
-                                md_editor_core::pdf::PdfAnnotationStatus::Resolved
+                            md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved => {
+                                md_editor_core::domain::pdf::PdfAnnotationStatus::Resolved
                             }
-                            md_editor_core::pdf::PdfAnnotationStatus::Resolved => {
-                                md_editor_core::pdf::PdfAnnotationStatus::Unresolved
+                            md_editor_core::domain::pdf::PdfAnnotationStatus::Resolved => {
+                                md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved
                             }
                         };
                         ann.updated_at = std::time::SystemTime::now()
@@ -4784,7 +4785,9 @@ impl MdEditor {
         let abs_path_for_hash = abs_path.clone();
         let hash_task = Task::perform(
             async move {
-                match md_editor_core::pdf::compute_provisional_id(&abs_path_for_hash) {
+                match md_editor_core::infrastructure::pdfium::document::compute_provisional_id(
+                    &abs_path_for_hash,
+                ) {
                     Ok((hash, len, mtime)) => Some((path_for_hash, hash, len, mtime)),
                     Err(_) => None,
                 }
@@ -5234,7 +5237,10 @@ impl MdEditor {
         self.pdf_state.layout.page_at_scroll(scroll_y)
     }
 
-    fn pdf_search_match_scroll_y(&self, result: &md_editor_core::pdf::PdfSearchMatch) -> f32 {
+    fn pdf_search_match_scroll_y(
+        &self,
+        result: &md_editor_core::application::pdf_service::PdfSearchMatch,
+    ) -> f32 {
         let rect = result.rects.first();
         let page_height = self
             .pdf_state
@@ -5255,7 +5261,12 @@ impl MdEditor {
         )
     }
 
-    fn pdf_link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<md_editor_core::pdf::LinkInfo> {
+    fn pdf_link_at(
+        &self,
+        page_idx: u16,
+        x: f32,
+        y: f32,
+    ) -> Option<md_editor_core::domain::pdf::LinkInfo> {
         let links = self.pdf_page_links.get(&page_idx)?;
         let dim = self
             .pdf_dimensions
@@ -5276,7 +5287,10 @@ impl MdEditor {
             .cloned()
     }
 
-    fn find_pdf_annotation(&self, id: &str) -> Option<(u16, md_editor_core::pdf::PdfAnnotation)> {
+    fn find_pdf_annotation(
+        &self,
+        id: &str,
+    ) -> Option<(u16, md_editor_core::domain::pdf::PdfAnnotation)> {
         self.pdf_annotations
             .iter()
             .find_map(|(page_idx, page_anns)| {
@@ -5331,7 +5345,7 @@ impl MdEditor {
         let px = x * page_text.page_width;
         let py = y * page_text.page_height;
 
-        md_editor_core::pdf::merge_char_rects(&selected_chars)
+        md_editor_core::domain::pdf::merge_char_rects(&selected_chars)
             .iter()
             .any(|rect| {
                 let view_y = page_text.page_height - rect.y - rect.height;
@@ -5348,7 +5362,7 @@ impl MdEditor {
         page_idx: u16,
         x: f32,
         y: f32,
-    ) -> Option<md_editor_core::pdf::PdfAnnotation> {
+    ) -> Option<md_editor_core::domain::pdf::PdfAnnotation> {
         let page_text = self.pdf_page_text.get(&page_idx)?;
         let px = x * page_text.page_width;
         let py = y * page_text.page_height;
@@ -5377,7 +5391,7 @@ impl MdEditor {
         ))
     }
 
-    fn default_pdf_note_path(&self, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
+    fn default_pdf_note_path(&self, ann: &md_editor_core::domain::pdf::PdfAnnotation) -> String {
         let pdf_filename = self
             .active_pdf_path
             .as_deref()
@@ -5397,7 +5411,7 @@ impl MdEditor {
         &self,
         note_path: &str,
         pdf_path: &str,
-        ann: &md_editor_core::pdf::PdfAnnotation,
+        ann: &md_editor_core::domain::pdf::PdfAnnotation,
     ) -> String {
         match md_editor_core::vault::open_file(&self.state, note_path)
             .ok()
@@ -6844,7 +6858,9 @@ fn index_registered_pdf_text_pages(
         let abs_path = abs_path.to_string_lossy().to_string();
 
         if let Ok((hash, len, mtime)) =
-            md_editor_core::pdf::compute_provisional_id(std::path::Path::new(&abs_path))
+            md_editor_core::infrastructure::pdfium::document::compute_provisional_id(
+                std::path::Path::new(&abs_path),
+            )
         {
             let _ = state.save_pdf_document(&hash, &vault_path, len, mtime);
         }
@@ -7153,7 +7169,7 @@ fn format_citation_item_as_markdown(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use md_editor_core::pdf::{
+    use md_editor_core::domain::pdf::{
         PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus,
     };
     use md_editor_core::types::FileEntry;
@@ -8169,7 +8185,7 @@ mod tests {
         app.pdf_render_generation = 7;
 
         for page in 0..60 {
-            let page_text = md_editor_core::pdf::PdfPageText {
+            let page_text = md_editor_core::domain::pdf::PdfPageText {
                 page_index: page,
                 page_width: 612.0,
                 page_height: 792.0,
@@ -8364,12 +8380,12 @@ mod tests {
 
     #[test]
     fn default_pdf_note_path_uses_pdf_name_page_and_annotation_prefix() {
-        let ann = md_editor_core::pdf::PdfAnnotation {
+        let ann = md_editor_core::domain::pdf::PdfAnnotation {
             id: "abcdef123456".to_string(),
             document_id: "doc".to_string(),
             page_index: 4,
-            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-            color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+            kind: md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
+            color: md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
             selected_text: "Important field result".to_string(),
             ranges: vec![],
             rects: vec![],
@@ -8377,7 +8393,7 @@ mod tests {
             linked_note_path: None,
             markdown_anchor: None,
             tags: Vec::new(),
-            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         };
@@ -8401,7 +8417,7 @@ mod tests {
         });
         app.pdf_page_text.insert(
             2,
-            md_editor_core::pdf::PdfPageText {
+            md_editor_core::domain::pdf::PdfPageText {
                 page_index: 2,
                 page_width: 612.0,
                 page_height: 792.0,
@@ -8431,12 +8447,12 @@ mod tests {
         app.active_pdf_path = Some("papers/My PDF.pdf".to_string());
         app.pdf_annotations.insert(
             4,
-            vec![md_editor_core::pdf::PdfAnnotation {
+            vec![md_editor_core::domain::pdf::PdfAnnotation {
                 id: "ann#1".to_string(),
                 document_id: "doc".to_string(),
                 page_index: 4,
-                kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-                color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                kind: md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
+                color: md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
                 selected_text: "Important highlighted text".to_string(),
                 ranges: vec![],
                 rects: vec![],
@@ -8444,7 +8460,7 @@ mod tests {
                 linked_note_path: None,
                 markdown_anchor: None,
                 tags: Vec::new(),
-                status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+                status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
                 created_at: 0,
                 updated_at: 0,
             }],
@@ -8477,7 +8493,7 @@ mod tests {
         });
         app.pdf_page_text.insert(
             2,
-            md_editor_core::pdf::PdfPageText {
+            md_editor_core::domain::pdf::PdfPageText {
                 page_index: 2,
                 page_width: 612.0,
                 page_height: 792.0,
@@ -8489,12 +8505,12 @@ mod tests {
         app.focused_annotation_id = Some("ann#1".to_string());
         app.pdf_annotations.insert(
             4,
-            vec![md_editor_core::pdf::PdfAnnotation {
+            vec![md_editor_core::domain::pdf::PdfAnnotation {
                 id: "ann#1".to_string(),
                 document_id: "doc".to_string(),
                 page_index: 4,
-                kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-                color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                kind: md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
+                color: md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
                 selected_text: "Important highlighted text".to_string(),
                 ranges: vec![],
                 rects: vec![],
@@ -8502,7 +8518,7 @@ mod tests {
                 linked_note_path: None,
                 markdown_anchor: None,
                 tags: Vec::new(),
-                status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+                status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
                 created_at: 0,
                 updated_at: 0,
             }],
@@ -8529,7 +8545,7 @@ mod tests {
         });
         app.pdf_page_text.insert(
             2,
-            md_editor_core::pdf::PdfPageText {
+            md_editor_core::domain::pdf::PdfPageText {
                 page_index: 2,
                 page_width: 612.0,
                 page_height: 792.0,
@@ -8575,7 +8591,7 @@ mod tests {
         });
         app.pdf_page_text.insert(
             0,
-            md_editor_core::pdf::PdfPageText {
+            md_editor_core::domain::pdf::PdfPageText {
                 page_index: 0,
                 page_width: 612.0,
                 page_height: 792.0,
@@ -8586,8 +8602,8 @@ mod tests {
         );
 
         let _ = app.update(Message::PdfCreateAnnotation(
-            md_editor_core::pdf::PdfAnnotationKind::Highlight,
-            md_editor_core::pdf::PdfAnnotationColor::Yellow,
+            md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
+            md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
         ));
 
         let page_annotations = app
@@ -8598,11 +8614,11 @@ mod tests {
         assert_eq!(page_annotations[0].selected_text, "Keyboard ");
         assert_eq!(
             page_annotations[0].kind,
-            md_editor_core::pdf::PdfAnnotationKind::Highlight
+            md_editor_core::domain::pdf::PdfAnnotationKind::Highlight
         );
         assert_eq!(
             page_annotations[0].color,
-            md_editor_core::pdf::PdfAnnotationColor::Yellow
+            md_editor_core::domain::pdf::PdfAnnotationColor::Yellow
         );
         assert!(app.pdf_selection.is_none());
     }
@@ -8978,7 +8994,7 @@ mod tests {
         // 1. Populate the page text cache with some dummy entries
         app.pdf_page_text.insert(
             0,
-            md_editor_core::pdf::PdfPageText {
+            md_editor_core::domain::pdf::PdfPageText {
                 page_index: 0,
                 page_width: 500.0,
                 page_height: 700.0,
@@ -9024,12 +9040,12 @@ mod tests {
         let ann_id = format!("ann-{}", uuid::Uuid::new_v4());
         let pdf_path = "paper.pdf";
 
-        let ann = md_editor_core::pdf::PdfAnnotation {
+        let ann = md_editor_core::domain::pdf::PdfAnnotation {
             id: ann_id.clone(),
             document_id: doc_id.clone(),
             page_index: 0,
-            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-            color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+            kind: md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
+            color: md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
             selected_text: "Target Highlight Text".to_string(),
             ranges: vec![],
             rects: vec![],
@@ -9037,7 +9053,7 @@ mod tests {
             linked_note_path: Some(note_path.to_string()),
             markdown_anchor: None,
             tags: Vec::new(),
-            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         };
@@ -9399,7 +9415,7 @@ mod tests {
 
         let _ = app.update(Message::PdfSearchMatchesFound(
             7,
-            vec![md_editor_core::pdf::PdfSearchMatch {
+            vec![md_editor_core::application::pdf_service::PdfSearchMatch {
                 page_index: 0,
                 context: "needle context".to_string(),
                 rects: Vec::new(),
@@ -9428,16 +9444,17 @@ mod tests {
         app.active_pdf_path = Some("paper.pdf".to_string());
         app.showing_pdf = true;
         app.pdf_total_pages = 3;
-        app.pdf_state.search.matches = vec![md_editor_core::pdf::PdfSearchMatch {
-            page_index: 1,
-            context: "needle context".to_string(),
-            rects: vec![md_editor_core::pdf::PdfRect {
-                x: 10.0,
-                y: 20.0,
-                width: 30.0,
-                height: 10.0,
-            }],
-        }];
+        app.pdf_state.search.matches =
+            vec![md_editor_core::application::pdf_service::PdfSearchMatch {
+                page_index: 1,
+                context: "needle context".to_string(),
+                rects: vec![md_editor_core::domain::pdf::PdfRect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 30.0,
+                    height: 10.0,
+                }],
+            }];
         app.rebuild_pdf_search_page_index();
 
         let _ = app.update(Message::UnifiedSearchResultClicked(
@@ -9637,12 +9654,12 @@ mod tests {
         app.overlays.excerpt_mode_active = true;
         app.pdf_annotations.insert(
             0,
-            vec![md_editor_core::pdf::PdfAnnotation {
+            vec![md_editor_core::domain::pdf::PdfAnnotation {
                 id: "ann-keyboard".to_string(),
                 document_id: "doc".to_string(),
                 page_index: 0,
-                kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-                color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                kind: md_editor_core::domain::pdf::PdfAnnotationKind::Highlight,
+                color: md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
                 selected_text: "keyboard citation".to_string(),
                 ranges: vec![],
                 rects: vec![],
@@ -9650,7 +9667,7 @@ mod tests {
                 linked_note_path: None,
                 markdown_anchor: None,
                 tags: vec![],
-                status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+                status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
                 created_at: 0,
                 updated_at: 0,
             }],

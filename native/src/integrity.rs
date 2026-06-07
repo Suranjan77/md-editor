@@ -295,12 +295,12 @@ mod tests {
             .save_pdf_document("doc-1", "valid.pdf", 0, None)
             .unwrap();
         state
-            .save_pdf_annotation(&md_editor_core::pdf::PdfAnnotation {
+            .save_pdf_annotation(&md_editor_core::domain::pdf::PdfAnnotation {
                 id: "ann-1".to_string(),
                 document_id: "doc-1".to_string(),
                 page_index: 1,
-                kind: md_editor_core::pdf::PdfAnnotationKind::Note,
-                color: md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                kind: md_editor_core::domain::pdf::PdfAnnotationKind::Note,
+                color: md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
                 selected_text: "Text".to_string(),
                 ranges: vec![],
                 rects: vec![],
@@ -308,7 +308,7 @@ mod tests {
                 linked_note_path: Some("missing-note-2.md".to_string()),
                 markdown_anchor: None,
                 tags: vec![],
-                status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+                status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
                 created_at: 0,
                 updated_at: 0,
             })

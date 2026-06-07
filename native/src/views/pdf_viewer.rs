@@ -16,8 +16,9 @@ pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use md_editor_core::pdf::{
-        PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect, PdfSearchMatch,
+use md_editor_core::application::pdf_service::PdfSearchMatch;
+    use md_editor_core::domain::pdf::{
+        PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect,
     };
     use std::collections::HashMap;
 
@@ -35,7 +36,7 @@ mod tests {
             linked_note_path: None,
             markdown_anchor: None,
             tags: Vec::new(),
-            status: md_editor_core::pdf::PdfAnnotationStatus::Unresolved,
+            status: md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved,
             created_at: 0,
             updated_at: 0,
         }
@@ -206,13 +207,13 @@ mod tests {
 }
 
 fn search_highlights_for_page(
-    search_matches: &[md_editor_core::pdf::PdfSearchMatch],
+    search_matches: &[md_editor_core::application::pdf_service::PdfSearchMatch],
     search_match_indices_by_page: &std::collections::HashMap<u16, Vec<usize>>,
     active_search_index: Option<usize>,
     page_index: u16,
 ) -> (
-    Vec<md_editor_core::pdf::PdfRect>,
-    Vec<md_editor_core::pdf::PdfRect>,
+    Vec<md_editor_core::domain::pdf::PdfRect>,
+    Vec<md_editor_core::domain::pdf::PdfRect>,
 ) {
     let active_search_highlights = active_search_index
         .and_then(|idx| search_matches.get(idx))
@@ -362,7 +363,7 @@ pub fn toolbar_with_companion_note<'a>(
     fit_to_width: bool,
     fit_to_page: bool,
     selection_active: bool,
-    focused_annotation: Option<&'a md_editor_core::pdf::PdfAnnotation>,
+    focused_annotation: Option<&'a md_editor_core::domain::pdf::PdfAnnotation>,
     can_insert_annotation_link: bool,
     companion_note_vault_path: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
@@ -375,23 +376,23 @@ pub fn toolbar_with_companion_note<'a>(
     let study_controls = if selection_active {
         let colors = [
             (
-                md_editor_core::pdf::PdfAnnotationColor::Yellow,
+                md_editor_core::domain::pdf::PdfAnnotationColor::Yellow,
                 Color::from_rgb8(250, 219, 92),
             ),
             (
-                md_editor_core::pdf::PdfAnnotationColor::Green,
+                md_editor_core::domain::pdf::PdfAnnotationColor::Green,
                 Color::from_rgb8(105, 219, 124),
             ),
             (
-                md_editor_core::pdf::PdfAnnotationColor::Blue,
+                md_editor_core::domain::pdf::PdfAnnotationColor::Blue,
                 Color::from_rgb8(92, 182, 250),
             ),
             (
-                md_editor_core::pdf::PdfAnnotationColor::Pink,
+                md_editor_core::domain::pdf::PdfAnnotationColor::Pink,
                 Color::from_rgb8(250, 140, 190),
             ),
             (
-                md_editor_core::pdf::PdfAnnotationColor::Orange,
+                md_editor_core::domain::pdf::PdfAnnotationColor::Orange,
                 Color::from_rgb8(250, 160, 90),
             ),
         ];
@@ -708,12 +709,15 @@ pub fn view_continuous<'a>(
     dimensions: &'a [Option<(u32, u32)>],
     page_sizes: &'a [Option<(f32, f32)>],
     placeholder_page_size: Option<(f32, f32)>,
-    search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
+    search_matches: &'a [md_editor_core::application::pdf_service::PdfSearchMatch],
     search_match_indices_by_page: &'a std::collections::HashMap<u16, Vec<usize>>,
     active_search_index: Option<usize>,
-    page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
-    annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
-    links_by_page: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
+    page_texts: &'a std::collections::HashMap<u16, md_editor_core::domain::pdf::PdfPageText>,
+    annotations: &'a std::collections::HashMap<
+        u16,
+        Vec<md_editor_core::domain::pdf::PdfAnnotation>,
+    >,
+    links_by_page: &'a std::collections::HashMap<u16, Vec<md_editor_core::domain::pdf::LinkInfo>>,
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&'a str>,
     scroll_y: f32,
