@@ -1,14 +1,12 @@
-use iced::widget::operation::{self, AbsoluteOffset};
 use iced::Task;
+use iced::widget::operation::{self, AbsoluteOffset};
 
 use crate::features::pdf::state::PdfPageCache;
 use crate::features::pdf::view_model::PdfLayout;
 use image::GenericImageView;
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
-use crate::features::pdf::annotations::{
-    normalize_note_path, note_filename_from_path,
-};
+use crate::features::pdf::annotations::{normalize_note_path, note_filename_from_path};
 use crate::features::pdf::navigation::{build_pdf_link, parse_pdf_link};
 use crate::messages::{EditorBlockActionKind, Message, SearchWrapStatus, Shortcut};
 use crate::theme as app_theme;
@@ -20,7 +18,7 @@ use super::model::*;
 use crate::app::*;
 
 impl MdEditor {
-    pub fn update(&mut self, message: Message) -> Task<Message> {
+    pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenVaultDialog => Task::perform(
                 async {

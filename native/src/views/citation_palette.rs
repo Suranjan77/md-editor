@@ -4,7 +4,7 @@ use iced::{Alignment, Element, Length, Renderer, Theme};
 use crate::messages::{CitationItem, Message};
 use crate::theme;
 
-pub const CITATION_PALETTE_INPUT_ID: &str = "citation_palette_input";
+pub(crate) const CITATION_PALETTE_INPUT_ID: &str = "citation_palette_input";
 
 fn focus_visible_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let mut style = text_input::default(theme, status);
@@ -15,7 +15,10 @@ fn focus_visible_input_style(theme: &Theme, status: text_input::Status) -> text_
     style
 }
 
-pub fn view<'a>(query: &str, items: Vec<CitationItem>) -> Element<'a, Message, Theme, Renderer> {
+pub(crate) fn view<'a>(
+    query: &str,
+    items: Vec<CitationItem>,
+) -> Element<'a, Message, Theme, Renderer> {
     let input = text_input("Type to search annotations and PDF content...", query)
         .id(iced::advanced::widget::Id::new(CITATION_PALETTE_INPUT_ID))
         .on_input(Message::CitationPaletteQueryChanged)

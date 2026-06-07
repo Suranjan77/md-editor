@@ -2,7 +2,7 @@ use crate::features::pdf::navigation::build_pdf_link;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkedNoteTemplate {
+pub(crate) enum LinkedNoteTemplate {
     Default,
     Detailed,
     Minimal,
@@ -10,7 +10,7 @@ pub enum LinkedNoteTemplate {
 
 #[allow(dead_code)]
 impl LinkedNoteTemplate {
-    pub fn render(
+    pub(crate) fn render(
         &self,
         pdf_path: &str,
         ann: &md_editor_core::domain::pdf::PdfAnnotation,
@@ -60,7 +60,7 @@ impl LinkedNoteTemplate {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReadingSession {
+pub(crate) struct ReadingSession {
     pub pdf_path: String,
     pub start_page: u16,
     pub end_page: u16,
@@ -69,7 +69,10 @@ pub struct ReadingSession {
 }
 
 #[allow(dead_code)]
-pub fn build_reading_session_content(existing: Option<&str>, session: &ReadingSession) -> String {
+pub(crate) fn build_reading_session_content(
+    existing: Option<&str>,
+    session: &ReadingSession,
+) -> String {
     let session_header = format!(
         "## Reading Session: Pages {}-{}",
         session.start_page, session.end_page
@@ -126,7 +129,7 @@ pub fn build_reading_session_content(existing: Option<&str>, session: &ReadingSe
 }
 
 #[allow(dead_code)]
-pub fn build_linked_pdf_note_content_with_template(
+pub(crate) fn build_linked_pdf_note_content_with_template(
     existing: Option<&str>,
     note_path: &str,
     pdf_path: &str,
@@ -169,7 +172,7 @@ pub fn build_linked_pdf_note_content_with_template(
     }
 }
 
-pub fn slug_fragment(s: &str) -> String {
+pub(crate) fn slug_fragment(s: &str) -> String {
     let slug = slugify(s);
     if slug.is_empty() {
         "document".to_string()
@@ -178,7 +181,7 @@ pub fn slug_fragment(s: &str) -> String {
     }
 }
 
-pub fn normalize_note_path(path: &str) -> String {
+pub(crate) fn normalize_note_path(path: &str) -> String {
     let mut note_path = path.trim().replace('\\', "/");
     if note_path.is_empty() {
         note_path = "pdf-notes/note.md".to_string();
@@ -189,7 +192,7 @@ pub fn normalize_note_path(path: &str) -> String {
     note_path
 }
 
-pub fn note_filename_from_path(path: &str) -> String {
+pub(crate) fn note_filename_from_path(path: &str) -> String {
     let normalized = normalize_note_path(path);
     std::path::Path::new(&normalized)
         .file_name()
@@ -200,19 +203,19 @@ pub fn note_filename_from_path(path: &str) -> String {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkedPdfNoteAction {
+pub(crate) enum LinkedPdfNoteAction {
     Created,
     Appended,
     Unchanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LinkedPdfNoteUpdate {
+pub(crate) struct LinkedPdfNoteUpdate {
     pub content: String,
     pub action: LinkedPdfNoteAction,
 }
 
-pub fn build_linked_pdf_note_content(
+pub(crate) fn build_linked_pdf_note_content(
     existing: Option<&str>,
     note_path: &str,
     pdf_path: &str,
@@ -240,7 +243,7 @@ pub fn build_linked_pdf_note_content(
     }
 }
 
-pub fn new_linked_pdf_note_content(
+pub(crate) fn new_linked_pdf_note_content(
     note_path: &str,
     pdf_path: &str,
     ann: &md_editor_core::domain::pdf::PdfAnnotation,
@@ -253,7 +256,7 @@ pub fn new_linked_pdf_note_content(
     )
 }
 
-pub fn append_linked_pdf_note_section(
+pub(crate) fn append_linked_pdf_note_section(
     existing: &str,
     pdf_path: &str,
     ann: &md_editor_core::domain::pdf::PdfAnnotation,
@@ -341,7 +344,7 @@ fn linked_pdf_note_section(
     )
 }
 
-pub fn export_annotations_to_markdown(
+pub(crate) fn export_annotations_to_markdown(
     pdf_filename: &str,
     pdf_path: &str,
     annotations: &[md_editor_core::domain::pdf::PdfAnnotation],
@@ -407,7 +410,7 @@ pub fn export_annotations_to_markdown(
     doc
 }
 
-pub fn sync_annotation_note_in_markdown(
+pub(crate) fn sync_annotation_note_in_markdown(
     content: &str,
     pdf_path: &str,
     ann: &md_editor_core::domain::pdf::PdfAnnotation,

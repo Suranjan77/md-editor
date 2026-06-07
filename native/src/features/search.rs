@@ -1,4 +1,3 @@
-
 use crate::messages::SearchWrapStatus;
 
 pub(crate) type EditorMatch = md_editor_core::types::SearchResult;
@@ -84,8 +83,8 @@ pub(crate) struct SearchState {
 
 #[cfg(test)]
 mod tests {
-    use crate::features::pdf::search::PdfSearchState;
     use super::*;
+    use crate::features::pdf::search::PdfSearchState;
 
     #[test]
     fn default_enables_all_global_sources() {

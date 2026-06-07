@@ -5,7 +5,7 @@ use crate::messages::Message;
 use crate::theme;
 
 /// Render the backlinks panel.
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     backlinks: &'a [md_editor_core::types::BacklinkItem],
     visible: bool,
     width: f32,

@@ -2,7 +2,7 @@ use iced::widget::{canvas, container};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse};
 
 #[derive(Debug, Clone, Copy)]
-pub enum Icon {
+pub(crate) enum Icon {
     Clock,
     Command,
     File,
@@ -22,7 +22,7 @@ pub enum Icon {
     X,
 }
 
-pub fn view<'a, Message: 'a>(
+pub(crate) fn view<'a, Message: 'a>(
     icon: Icon,
     color: Color,
     size: f32,

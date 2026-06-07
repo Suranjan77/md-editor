@@ -21,7 +21,7 @@ use std::ops::Range;
 use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
 #[derive(Debug, Clone)]
-pub struct PdfLayout {
+pub(crate) struct PdfLayout {
     /// Display-space height for each page (already scaled by zoom).
     page_heights: Vec<f32>,
     /// Cumulative offset to the *top* of each page in display-space.
@@ -56,7 +56,7 @@ impl PdfLayout {
     /// `zoom`: current display zoom factor.
     /// `spacing`: vertical pixels between consecutive pages.
     /// `padding`: top/bottom padding on the page list.
-    pub fn rebuild(
+    pub(crate) fn rebuild(
         page_sizes: &[Option<(f32, f32)>],
         zoom: f32,
         fallback_size: (f32, f32),
@@ -101,39 +101,39 @@ impl PdfLayout {
         }
     }
 
-    pub fn page_count(&self) -> usize {
+    pub(crate) fn page_count(&self) -> usize {
         self.page_heights.len()
     }
 
-    pub fn spacing(&self) -> f32 {
+    pub(crate) fn spacing(&self) -> f32 {
         self.spacing
     }
 
-    pub fn padding(&self) -> f32 {
+    pub(crate) fn padding(&self) -> f32 {
         self.padding
     }
 
     /// Display-space offset to the top of `page`.
     /// If `page` is past the last page, returns the total height (cursor at end).
-    pub fn page_offset(&self, page: u16) -> f32 {
+    pub(crate) fn page_offset(&self, page: u16) -> f32 {
         let idx = (page as usize).min(self.page_heights.len());
         self.page_offsets[idx]
     }
 
     /// Display-space height of the given page (excluding spacing).
     /// Returns 0.0 for an out-of-range page.
-    pub fn page_height(&self, page: u16) -> f32 {
+    pub(crate) fn page_height(&self, page: u16) -> f32 {
         self.page_heights.get(page as usize).copied().unwrap_or(0.0)
     }
 
-    pub fn total_height(&self) -> f32 {
+    pub(crate) fn total_height(&self) -> f32 {
         self.total_height
     }
 
     /// Find the page that contains the given absolute scroll Y.
     /// Returns `0` for empty layouts and the last page for scroll positions
     /// past the end.
-    pub fn page_at_scroll(&self, scroll_y: f32) -> u16 {
+    pub(crate) fn page_at_scroll(&self, scroll_y: f32) -> u16 {
         self.page_at_scroll_with_probes(scroll_y).0
     }
 
@@ -168,7 +168,7 @@ impl PdfLayout {
     /// Compute a half-open page range that overlaps the viewport, expanded by
     /// `buffer_pages` on each side. The returned range is clamped to
     /// `0..page_count`.
-    pub fn visible_range(
+    pub(crate) fn visible_range(
         &self,
         scroll_y: f32,
         viewport_height: f32,

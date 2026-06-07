@@ -1,13 +1,13 @@
-pub mod block;
-pub mod inline;
-pub mod metadata;
-pub mod model;
-pub mod reference;
-pub mod syntax;
+pub(crate) mod block;
+pub(crate) mod inline;
+pub(crate) mod metadata;
+pub(crate) mod model;
+pub(crate) mod reference;
+pub(crate) mod syntax;
 
-pub use block::*;
-pub use metadata::*;
-pub use model::*;
+pub(crate) use block::*;
+pub(crate) use metadata::*;
+pub(crate) use model::*;
 
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppShellPane {
+pub(crate) enum AppShellPane {
     None,
     Markdown,
     Pdf,
@@ -7,7 +7,7 @@ pub enum AppShellPane {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppShellMode {
+pub(crate) enum AppShellMode {
     NoVault,
     EmptyVault,
     EditorOnly,
@@ -18,8 +18,7 @@ pub enum AppShellMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum WorkflowSidebarTab {
+pub(crate) enum WorkflowSidebarTab {
     None,
     Backlinks,
     Annotations,
@@ -72,7 +71,7 @@ impl AppShellPane {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AppShellPersistence {
+pub(crate) struct AppShellPersistence {
     pub sidebar_width: f32,
     pub reference_width: f32,
     pub workflow_width: f32,
@@ -105,7 +104,7 @@ impl Default for AppShellPersistence {
 }
 
 impl AppShellPersistence {
-    pub fn serialize(self) -> String {
+    pub(crate) fn serialize(self) -> String {
         format!(
             "sidebar_width={};reference_width={};workflow_width={};split_ratio={};sidebar_collapsed={};reference_collapsed={};workflow_collapsed={};active_workflow_tab={};last_focused_pane={};theme={};reduce_motion={}",
             self.sidebar_width,
@@ -122,7 +121,7 @@ impl AppShellPersistence {
         )
     }
 
-    pub fn deserialize(value: &str) -> Option<Self> {
+    pub(crate) fn deserialize(value: &str) -> Option<Self> {
         let mut persistence = Self::default();
         let mut found_any = false;
 
@@ -162,7 +161,7 @@ impl AppShellPersistence {
         found_any.then_some(persistence)
     }
 
-    pub fn clamp_for_window(mut self, window_width: f32) -> Self {
+    pub(crate) fn clamp_for_window(mut self, window_width: f32) -> Self {
         let narrow = window_width < 720.0;
         self.sidebar_width = self.sidebar_width.clamp(180.0, 360.0);
         self.reference_width = self.reference_width.clamp(260.0, 640.0);
@@ -187,7 +186,7 @@ fn parse_bool(value: &str) -> Option<bool> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AppShellInputs {
+pub(crate) struct AppShellInputs {
     pub vault_open: bool,
     pub vault_has_entries: bool,
     pub markdown_open: bool,
@@ -201,21 +200,21 @@ pub struct AppShellInputs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AppShellState {
+pub(crate) struct AppShellState {
     pub mode: AppShellMode,
     pub active_pane: AppShellPane,
     pub persistence: AppShellPersistence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SaveStatus {
+pub(crate) enum SaveStatus {
     NoDocument,
     Saved,
     Unsaved,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AppShellStatusInputs {
+pub(crate) struct AppShellStatusInputs {
     pub document_open: bool,
     pub document_dirty: bool,
     pub global_search_searching: bool,
@@ -228,7 +227,7 @@ pub struct AppShellStatusInputs {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AppShellStatus {
+pub(crate) struct AppShellStatus {
     pub save_status: SaveStatus,
     pub search_status: Option<String>,
     pub active_pane: AppShellPane,
@@ -236,7 +235,7 @@ pub struct AppShellStatus {
 }
 
 impl AppShellStatus {
-    pub fn derive(inputs: AppShellStatusInputs) -> Self {
+    pub(crate) fn derive(inputs: AppShellStatusInputs) -> Self {
         let save_status = if !inputs.document_open {
             SaveStatus::NoDocument
         } else if inputs.document_dirty {
@@ -273,7 +272,7 @@ impl AppShellStatus {
 }
 
 impl AppShellState {
-    pub fn derive(inputs: AppShellInputs, persistence: AppShellPersistence) -> Self {
+    pub(crate) fn derive(inputs: AppShellInputs, persistence: AppShellPersistence) -> Self {
         let mode = if !inputs.vault_open {
             AppShellMode::NoVault
         } else if !inputs.vault_has_entries {
@@ -319,7 +318,7 @@ impl AppShellState {
         }
     }
 
-    pub fn command_groups(self) -> &'static [CommandGroup] {
+    pub(crate) fn command_groups(self) -> &'static [CommandGroup] {
         match self.mode {
             AppShellMode::NoVault | AppShellMode::EmptyVault => {
                 &[CommandGroup::File, CommandGroup::View]
@@ -356,24 +355,24 @@ impl AppShellState {
         }
     }
 
-    pub fn uses_split_research_layout(self) -> bool {
+    pub(crate) fn uses_split_research_layout(self) -> bool {
         matches!(self.mode, AppShellMode::SplitResearch)
     }
 
-    pub fn shows_pdf_document(self) -> bool {
+    pub(crate) fn shows_pdf_document(self) -> bool {
         matches!(
             self.mode,
             AppShellMode::PdfOnly | AppShellMode::SplitResearch | AppShellMode::SearchHeavy
         )
     }
 
-    pub fn shows_image_document(self) -> bool {
+    pub(crate) fn shows_image_document(self) -> bool {
         matches!(self.mode, AppShellMode::ImageOnly)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommandGroup {
+pub(crate) enum CommandGroup {
     File,
     Edit,
     Navigation,

@@ -316,7 +316,7 @@ fn filtered_annotations<'a>(
     }
 }
 
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     annotations: &'a std::collections::HashMap<
         u16,
         Vec<md_editor_core::domain::pdf::PdfAnnotation>,

@@ -1,13 +1,11 @@
 use iced::Subscription;
 
-use image::GenericImageView;
-
 use crate::messages::{Message, Shortcut};
 
 use super::model::*;
 
 impl MdEditor {
-    pub fn subscription(&self) -> Subscription<Message> {
+    pub(crate) fn subscription(&self) -> Subscription<Message> {
         let keyboard = iced::keyboard::listen().map(|event| {
             match event {
                 iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {

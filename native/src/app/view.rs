@@ -2,11 +2,8 @@ use iced::widget::{Space, column, container, mouse_area, row, scrollable, stack,
 use iced::{Alignment, Element, Length, Task, Theme};
 
 use crate::app_shell::AppShellMode;
-use image::GenericImageView;
 
-use crate::features::pdf::annotations::{
-    build_linked_pdf_note_content, slug_fragment,
-};
+use crate::features::pdf::annotations::{build_linked_pdf_note_content, slug_fragment};
 use crate::messages::Message;
 use crate::theme as app_theme;
 use crate::views;
@@ -16,7 +13,7 @@ use super::model::*;
 use crate::app::*;
 
 impl MdEditor {
-    pub fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
+    pub(crate) fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
         let shell_state = self.app_shell_state();
         let _command_groups = shell_state.command_groups();
         let shell_status = self.app_shell_status(shell_state);

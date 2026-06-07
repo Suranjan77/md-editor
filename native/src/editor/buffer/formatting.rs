@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::command::CommandResult;
 use super::document::DocBuffer;
 use super::transaction::EditOp;
@@ -10,13 +11,13 @@ pub(crate) struct ListItem {
     is_empty: bool,
 }
 impl DocBuffer {
-    pub fn insert_at_cursor(&mut self, text: &str) {
+    pub(crate) fn insert_at_cursor(&mut self, text: &str) {
         self.insert_text(text);
     }
-    pub fn backspace(&mut self) {
+    pub(crate) fn backspace(&mut self) {
         self.delete_backward();
     }
-    pub fn delete(&mut self) {
+    pub(crate) fn delete(&mut self) {
         self.delete_forward();
     }
     pub(crate) fn insert_text(&mut self, text: &str) -> CommandResult {
