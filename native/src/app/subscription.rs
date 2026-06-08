@@ -1,6 +1,6 @@
 use iced::Subscription;
 
-use crate::messages::{Message, Shortcut};
+use crate::messages::{EditorMessage, Message, Shortcut};
 
 use super::model::*;
 
@@ -153,20 +153,21 @@ impl MdEditor {
             Subscription::none()
         };
 
-        let highlight_debounce = if self.pending_highlight_generation.is_some() {
-            iced::time::every(HIGHLIGHT_DEBOUNCE).map(|_| Message::HighlightDebounceElapsed)
+        let highlight_debounce = if self.editor.pending_highlight_generation.is_some() {
+            iced::time::every(HIGHLIGHT_DEBOUNCE)
+                .map(|_| Message::Editor(EditorMessage::HighlightDebounceElapsed))
         } else {
             Subscription::none()
         };
 
-        let editor_autosave_timer = if self.pending_editor_save.is_some() {
+        let editor_autosave_timer = if self.editor.pending_save.is_some() {
             iced::time::every(std::time::Duration::from_millis(500))
-                .map(|_| Message::EditorAutosaveElapsed)
+                .map(|_| Message::Editor(EditorMessage::AutosaveElapsed))
         } else {
             Subscription::none()
         };
 
-        let mouse_drag = if self.is_resizing_split {
+        let mouse_drag = if self.shell.is_resizing_split {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::SplitViewDragging(position.x))

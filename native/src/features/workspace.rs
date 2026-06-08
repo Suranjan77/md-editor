@@ -2,6 +2,20 @@ use std::collections::BTreeSet;
 
 use crate::features::pdf::navigation::NavigationHistory;
 
+#[derive(Debug, Clone)]
+pub(crate) enum WorkspaceMessage {
+    OpenVaultDialog,
+    CreateVaultDialog,
+    OpenRecentVault(String),
+    VaultOpened(Option<String>),
+    FileClicked(String),
+    FolderToggled(String),
+    CreateFileDialog,
+    CreateFolderDialog,
+    DeleteFile(String),
+    DeleteFileDialog(String),
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct WorkspaceState {
     pub(crate) vault_root: Option<String>,
@@ -15,6 +29,16 @@ pub(crate) struct WorkspaceState {
 }
 
 impl WorkspaceState {
+    pub(crate) fn update_local(&mut self, message: &WorkspaceMessage) -> bool {
+        match message {
+            WorkspaceMessage::FolderToggled(vault_path) => {
+                self.toggle_folder(vault_path.clone());
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn toggle_folder(&mut self, vault_path: String) {
         if !self.expanded_folders.remove(&vault_path) {
             self.expanded_folders.insert(vault_path);
@@ -49,10 +73,10 @@ mod tests {
     fn toggling_folder_expands_then_collapses_same_path() {
         let mut state = WorkspaceState::default();
 
-        state.toggle_folder("notes".to_string());
+        assert!(state.update_local(&WorkspaceMessage::FolderToggled("notes".to_string())));
         assert!(state.expanded_folders.contains("notes"));
 
-        state.toggle_folder("notes".to_string());
+        assert!(state.update_local(&WorkspaceMessage::FolderToggled("notes".to_string())));
         assert!(!state.expanded_folders.contains("notes"));
     }
 

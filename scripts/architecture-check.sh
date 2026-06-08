@@ -43,7 +43,9 @@ check_no_matches \
 
 renderer_production="$(mktemp)"
 trap 'rm -f "$renderer_production"' EXIT
-awk '/^#\[cfg\(test\)\]/{exit} {print}' native/src/editor/renderer.rs >"$renderer_production"
+while IFS= read -r source_file; do
+    awk '/^#\[cfg\(test\)\]/{exit} {print}' "$source_file" >>"$renderer_production"
+done < <(rg --files native/src/editor/renderer -g '*.rs')
 check_no_matches \
     'renderer production code must consume parser output, not invoke parser implementations' \
     '\b(highlight_markdown|parse_markdown)\b|(pulldown_cmark|comrak|markdown|syntect|ratex_parser)::' \
@@ -67,6 +69,11 @@ check_no_matches \
 check_no_matches \
     'AppState infrastructure fields must not be public' \
     'pub (db|vault_root|file_index|pdf_state|pdf_renderer):' \
+    core/src/state.rs
+
+check_no_matches \
+    'AppState must delegate persistence to database repositories' \
+    '\brusqlite::|\b(SELECT|INSERT INTO|UPDATE|DELETE FROM)\b' \
     core/src/state.rs
 
 if (( failures > 0 )); then

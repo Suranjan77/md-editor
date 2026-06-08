@@ -1,5 +1,6 @@
 //! Validated domain units used at core boundaries.
 
+pub mod id;
 pub mod path;
 pub mod pdf;
 pub mod pdf_page;

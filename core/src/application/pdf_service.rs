@@ -1,3 +1,4 @@
+use crate::domain::PageIndex;
 use crate::domain::pdf::{LinkInfo, PdfPageText, PdfRect};
 use crate::infrastructure::pdfium::binding::bind_pdfium;
 use crate::infrastructure::pdfium::worker::{
@@ -39,6 +40,11 @@ pub struct PdfRenderer {
 }
 
 impl PdfRenderer {
+    fn worker_page_index(page_index: PageIndex) -> Result<u16, String> {
+        u16::try_from(page_index.get())
+            .map_err(|_| format!("PDF page index {} exceeds worker range", page_index.get()))
+    }
+
     pub fn new() -> Result<Self, String> {
         bind_pdfium().map_err(|e| format!("Failed to initialize PDF engine: {e}"))?;
 
@@ -58,7 +64,11 @@ impl PdfRenderer {
         })
     }
 
-    pub fn set_visible_range(&self, start: u16, end: u16, path: &str) {
+    pub fn set_visible_range(&self, start: PageIndex, end: PageIndex, path: &str) {
+        let (Ok(start), Ok(end)) = (Self::worker_page_index(start), Self::worker_page_index(end))
+        else {
+            return;
+        };
         if let Ok(mut range_lock) = self.visible_range.lock() {
             *range_lock = Some((start, end, path.to_string()));
         }
@@ -67,9 +77,10 @@ impl PdfRenderer {
     pub fn render_page(
         &self,
         path: &str,
-        page_index: u16,
+        page_index: PageIndex,
         scale: f32,
     ) -> Result<DynamicImage, String> {
+        let page_index = Self::worker_page_index(page_index)?;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.render_sender
             .send(RenderCommand::RenderPage(
@@ -85,9 +96,10 @@ impl PdfRenderer {
     pub fn render_page_priority(
         &self,
         path: &str,
-        page_index: u16,
+        page_index: PageIndex,
         scale: f32,
     ) -> Result<DynamicImage, String> {
+        let page_index = Self::worker_page_index(page_index)?;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.priority_sender
             .send(PriorityRender {
@@ -127,7 +139,12 @@ impl PdfRenderer {
         rx.recv().map_err(|e| e.to_string())?
     }
 
-    pub fn get_page_links(&self, path: &str, page_index: u16) -> Result<Vec<LinkInfo>, String> {
+    pub fn get_page_links(
+        &self,
+        path: &str,
+        page_index: PageIndex,
+    ) -> Result<Vec<LinkInfo>, String> {
+        let page_index = Self::worker_page_index(page_index)?;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.render_sender
             .send(RenderCommand::GetLinks(path.to_string(), page_index, tx))
@@ -190,14 +207,14 @@ impl PdfRenderer {
     pub fn render_link_preview(
         &self,
         path: &str,
-        page_index: u32,
+        page_index: PageIndex,
         dest_y: Option<f32>,
     ) -> Result<LinkPreviewResult, String> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.render_sender
             .send(RenderCommand::RenderLinkPreview(
                 path.to_string(),
-                page_index,
+                page_index.get(),
                 dest_y,
                 tx,
             ))
@@ -205,7 +222,8 @@ impl PdfRenderer {
         rx.recv().map_err(|e| e.to_string())?
     }
 
-    pub fn get_page_text(&self, path: &str, page_index: u16) -> Result<PdfPageText, String> {
+    pub fn get_page_text(&self, path: &str, page_index: PageIndex) -> Result<PdfPageText, String> {
+        let page_index = Self::worker_page_index(page_index)?;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.query_sender
             .send(QueryCommand::GetPageText(path.to_string(), page_index, tx))

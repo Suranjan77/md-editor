@@ -63,6 +63,17 @@ Performance-sensitive extraction requires before/after release-build smoke
 measurement with representative 1,000-line and 10,000-line markdown files and
 100-page PDF.
 
+Run repeatable release-mode structural timings with:
+
+```bash
+just benchmark
+```
+
+Runner reports wall time, CPU time, and peak RSS for release build, 10,000-line
+markdown parsing, logarithmic editor/PDF layout lookups, viewport-bounded PDF
+scheduling, and unified vault search. Record host and commit when comparing
+results.
+
 ## Change Control
 
 - Phase commits contain only restructuring work and supporting tests/docs.

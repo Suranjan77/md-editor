@@ -7,11 +7,20 @@ cd "$repo_root"
 printf '%-42s %10s %10s\n' 'File' 'Lines' 'Budget'
 printf '%-42s %10s %10s\n' '----' '-----' '------'
 
-report_file() {
+report_path() {
     local file="$1"
     local budget="$2"
     local lines
-    lines="$(wc -l <"$file")"
+    if [[ -d "$file" ]]; then
+        lines="$(
+            find "$file" -type f -name '*.rs' -print0 \
+                | sort -z \
+                | xargs -0 cat \
+                | wc -l
+        )"
+    else
+        lines="$(wc -l <"$file")"
+    fi
     printf '%-42s %10d %10d' "$file" "$lines" "$budget"
     if (( lines > budget )); then
         printf '  warning'
@@ -20,15 +29,17 @@ report_file() {
 }
 
 # Budgets are directional warning thresholds, not pass/fail gates.
-report_file native/src/app.rs 10000
-report_file native/src/editor/renderer.rs 4800
-report_file native/src/editor/highlight.rs 2300
-report_file native/src/editor/buffer.rs 2200
-report_file core/src/pdf.rs 1750
-report_file core/src/vault.rs 1600
-report_file core/src/state.rs 800
-report_file native/src/messages.rs 350
-report_file native/src/main.rs 450
+report_path native/src/app 10000
+report_path native/src/editor/renderer 4800
+report_path native/src/editor/parser 2300
+report_path native/src/editor/buffer 2200
+report_path core/src/domain/pdf 800
+report_path core/src/infrastructure/pdfium 1750
+report_path core/src/vault 1200
+report_path core/src/vault.rs 800
+report_path core/src/state.rs 800
+report_path native/src/messages.rs 350
+report_path native/src/main.rs 250
 
 printf '\nMigration counters\n'
 native_sql_matches="$(rg -l '\brusqlite::' native/src -g '*.rs' || true)"

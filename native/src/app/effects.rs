@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::editor::parser;
 use crate::features::pdf::navigation::parse_pdf_link;
-use crate::messages::Message;
+use crate::messages::{EditorMessage, Message, SearchMessage};
 use crate::views;
 
 use super::model::*;
@@ -132,7 +132,10 @@ pub(crate) fn search_registered_pdf_text_results(
             continue;
         }
         searched_documents += 1;
-        let abs_path = md_editor_core::vault::resolve_vault_path(&vault_root, &vault_path);
+        let Ok(abs_path) = md_editor_core::vault::resolve_vault_path(&vault_root, &vault_path)
+        else {
+            continue;
+        };
         let abs_path = abs_path.to_string_lossy().to_string();
         let Ok(matches) = renderer.search_text(&abs_path, &query.text, false, false) else {
             continue;
@@ -240,7 +243,10 @@ pub(crate) fn index_registered_pdf_text_pages(
             continue;
         }
 
-        let abs_path = md_editor_core::vault::resolve_vault_path(&vault_root, &vault_path);
+        let Ok(abs_path) = md_editor_core::vault::resolve_vault_path(&vault_root, &vault_path)
+        else {
+            continue;
+        };
         let abs_path = abs_path.to_string_lossy().to_string();
 
         if let Ok((hash, len, mtime)) =
@@ -254,7 +260,10 @@ pub(crate) fn index_registered_pdf_text_pages(
         let page_count = renderer.page_count(&abs_path).unwrap_or(0);
         let pages_to_index = page_count.min(PDF_TEXT_INDEX_MAX_PAGES_PER_DOCUMENT);
         for page_index in 0..pages_to_index {
-            if let Ok(page_text) = renderer.get_page_text(&abs_path, page_index) {
+            if let Ok(page_text) = renderer.get_page_text(
+                &abs_path,
+                md_editor_core::domain::PageIndex::from(page_index),
+            ) {
                 state.save_pdf_page_text(&vault_path, page_index, &page_text.text)?;
                 indexed_pages += 1;
             }
@@ -566,42 +575,44 @@ pub(crate) fn format_citation_item_as_markdown(
 
 impl MdEditor {
     pub(crate) fn load_pdf_page_links(&mut self, page: u16) -> Task<Message> {
-        if self.pdf_page_links.contains_key(&page) || self.pdf_pending_links.contains(&page) {
+        if self.pdf.page_links.contains_key(&page) || self.pdf.pending_links.contains(&page) {
             return Task::none();
         }
-        let Some(path) = &self.active_pdf_path else {
+        let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
         let Some(abs_path) = self.resolve_active_path(path) else {
             return Task::none();
         };
-        self.pdf_pending_links.insert(page);
+        self.pdf.pending_links.insert(page);
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf_render_generation;
+        let generation = self.pdf.render_generation;
         let _state = self.state.clone();
 
         Task::perform(
             async move {
                 let renderer = _state.pdf_renderer()?;
-                renderer.get_page_links(&path_str, page).ok()
+                renderer
+                    .get_page_links(&path_str, md_editor_core::domain::PageIndex::from(page))
+                    .ok()
             },
             move |res| Message::PdfPageLinksLoaded(generation, page, res.unwrap_or_default()),
         )
     }
 
     pub(crate) fn load_pdf_page_text(&mut self, page: u16) -> Task<Message> {
-        if self.pdf_page_text.contains_key(&page) || self.pdf_pending_text.contains(&page) {
+        if self.pdf.page_text.contains_key(&page) || self.pdf.pending_text.contains(&page) {
             return Task::none();
         }
-        let Some(path) = &self.active_pdf_path else {
+        let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
         let Some(abs_path) = self.resolve_active_path(path) else {
             return Task::none();
         };
-        self.pdf_pending_text.insert(page);
+        self.pdf.pending_text.insert(page);
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf_render_generation;
+        let generation = self.pdf.render_generation;
         let _state = self.state.clone();
 
         Task::perform(
@@ -609,39 +620,39 @@ impl MdEditor {
                 let renderer = _state
                     .pdf_renderer()
                     .ok_or_else(|| "No PDF renderer".to_string())?;
-                renderer.get_page_text(&path_str, page)
+                renderer.get_page_text(&path_str, md_editor_core::domain::PageIndex::from(page))
             },
             move |res| Message::PdfPageTextLoaded(generation, page, res),
         )
     }
 
     pub(crate) fn update_pdf_page_cache(&mut self) {
-        let first = self.pdf_page_at_scroll(self.pdf_scroll_y);
-        let viewport_height = if self.pdf_viewport_height > 0.0 {
-            self.pdf_viewport_height
+        let first = self.pdf_page_at_scroll(self.pdf.scroll_y);
+        let viewport_height = if self.pdf.viewport_height > 0.0 {
+            self.pdf.viewport_height
         } else {
             self.estimated_editor_viewport_height()
         };
-        let last = self.pdf_page_at_scroll(self.pdf_scroll_y + viewport_height);
+        let last = self.pdf_page_at_scroll(self.pdf.scroll_y + viewport_height);
 
         // Clamp to document range
-        let first = first.min(self.pdf_total_pages.saturating_sub(1));
-        let last = last.min(self.pdf_total_pages.saturating_sub(1));
+        let first = first.min(self.pdf.total_pages.saturating_sub(1));
+        let last = last.min(self.pdf.total_pages.saturating_sub(1));
 
-        let range = if self.pdf_total_pages > 0 {
+        let range = if self.pdf.total_pages > 0 {
             Some((first, last.max(first)))
         } else {
             None
         };
-        self.pdf_state.page_cache.set_visible_range(range);
-        self.pdf_state.page_cache.touch_visible();
+        self.pdf.view.page_cache.set_visible_range(range);
+        self.pdf.view.page_cache.touch_visible();
     }
 
     pub(crate) fn sync_pdf_pages_to_cache(&mut self) {
-        for (idx, page) in self.pdf_pages.iter_mut().enumerate() {
-            if page.is_some() && !self.pdf_state.page_cache.contains(idx as u16) {
+        for (idx, page) in self.pdf.pages.iter_mut().enumerate() {
+            if page.is_some() && !self.pdf.view.page_cache.contains(idx as u16) {
                 *page = None;
-                self.pdf_stale_pages.remove(&(idx as u16));
+                self.pdf.stale_pages.remove(&(idx as u16));
             }
         }
     }
@@ -654,36 +665,36 @@ impl MdEditor {
         &mut self,
         opened_file: bool,
     ) -> Task<Message> {
-        let text = self.buffer.text();
-        let line_count = self.buffer.line_count();
-        self.highlight_generation = self.highlight_generation.wrapping_add(1);
-        let generation = self.highlight_generation;
-        self.pending_highlight_generation = None;
-        self.pending_highlight_requested_at = None;
-        self.pending_highlight_text = None;
+        let text = self.editor.buffer.text();
+        let line_count = self.editor.buffer.line_count();
+        self.editor.highlight_generation = self.editor.highlight_generation.wrapping_add(1);
+        let generation = self.editor.highlight_generation;
+        self.editor.pending_highlight_generation = None;
+        self.editor.pending_highlight_requested_at = None;
+        self.editor.pending_highlight_text = None;
 
         if opened_file && line_count > HUGE_DOC_LINE_THRESHOLD {
-            self.highlighted_lines = plain_highlight_placeholders(&text);
-            self.md_toc_entries = views::toc::get_toc(&self.highlighted_lines);
+            self.editor.highlighted_lines = plain_highlight_placeholders(&text);
+            self.editor.toc_entries = views::toc::get_toc(&self.editor.highlighted_lines);
             return Self::highlight_task(generation, text);
         }
 
         if !opened_file && line_count > LARGE_DOC_LINE_THRESHOLD {
-            self.pending_highlight_generation = Some(generation);
-            self.pending_highlight_requested_at = Some(Instant::now());
-            self.pending_highlight_text = Some(text);
+            self.editor.pending_highlight_generation = Some(generation);
+            self.editor.pending_highlight_requested_at = Some(Instant::now());
+            self.editor.pending_highlight_text = Some(text);
             return Task::none();
         }
 
-        self.highlighted_lines = parser::highlight_markdown(&text);
-        self.md_toc_entries = views::toc::get_toc(&self.highlighted_lines);
+        self.editor.highlighted_lines = parser::highlight_markdown(&text);
+        self.editor.toc_entries = views::toc::get_toc(&self.editor.highlighted_lines);
         Task::batch(vec![self.load_images(), self.load_math()])
     }
 
     pub(crate) fn highlight_task(generation: u64, text: String) -> Task<Message> {
         Task::perform(
             async move { parser::highlight_markdown(&text) },
-            move |lines| Message::HighlightReady(generation, lines),
+            move |lines| Message::Editor(EditorMessage::HighlightReady(generation, lines)),
         )
     }
 
@@ -693,7 +704,7 @@ impl MdEditor {
         query: md_editor_core::types::UnifiedSearchQuery,
     ) -> Task<Message> {
         let state = self.state.clone();
-        let active_pdf_path = self.active_pdf_path.clone();
+        let active_pdf_path = self.pdf.active_path.clone();
 
         Task::perform(
             async move {
@@ -704,7 +715,7 @@ impl MdEditor {
                 .unwrap_or_default();
                 (search_id, results)
             },
-            |(id, results)| Message::UnifiedPdfTextSearchMatchesFound(id, results),
+            |(id, results)| Message::Search(SearchMessage::UnifiedPdfMatchesFound(id, results)),
         )
     }
 
@@ -716,26 +727,26 @@ impl MdEditor {
                     .await
                     .unwrap_or_else(|err| Err(err.to_string()))
             },
-            Message::PdfTextIndexFinished,
+            |result| Message::Search(SearchMessage::PdfTextIndexFinished(result)),
         )
     }
 
     pub(crate) fn search_pdf(&mut self) -> Task<Message> {
-        let Some(path) = &self.active_pdf_path else {
+        let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
         let Some(abs_path) = self.resolve_active_path(path) else {
             return Task::none();
         };
-        let query = self.pdf_state.search.query.clone();
+        let query = self.pdf.view.search.query.clone();
         if query.trim().is_empty() {
-            self.pdf_state.search.matches.clear();
-            self.pdf_state.search.page_index.clear();
-            self.pdf_state.search.searching = false;
+            self.pdf.view.search.matches.clear();
+            self.pdf.view.search.page_index.clear();
+            self.pdf.view.search.searching = false;
             return Task::none();
         }
-        let regex = self.pdf_state.search.regex;
-        let match_case = self.pdf_state.search.match_case;
+        let regex = self.pdf.view.search.regex;
+        let match_case = self.pdf.view.search.match_case;
         let path_str = abs_path.to_string_lossy().to_string();
 
         let Some(renderer) = self.state.pdf_renderer() else {
@@ -743,15 +754,15 @@ impl MdEditor {
         };
 
         // Increment active search id and set searching = true
-        self.pdf_state.search.searching = true;
+        self.pdf.view.search.searching = true;
         self.search.pdf_active_id = self.search.pdf_active_id.wrapping_add(1);
         let search_id = self.search.pdf_active_id;
 
         // Cancel previous search
         let _ = renderer.cancel_search(search_id.wrapping_sub(1));
 
-        self.pdf_state.search.matches.clear();
-        self.pdf_state.search.page_index.clear();
+        self.pdf.view.search.matches.clear();
+        self.pdf.view.search.page_index.clear();
 
         match renderer.search_text_stream(path_str, query, regex, match_case, search_id) {
             Ok((res_rx, done_rx)) => {
@@ -782,7 +793,7 @@ impl MdEditor {
             }
             Err(err) => {
                 self.search.pdf_error = Some(err);
-                self.pdf_state.search.searching = false;
+                self.pdf.view.search.searching = false;
                 Task::none()
             }
         }
@@ -804,31 +815,30 @@ impl MdEditor {
             return Task::none();
         };
 
-        for line in &self.highlighted_lines {
+        for line in &self.editor.highlighted_lines {
             for span in &line.spans {
                 if span.is_image {
                     if let Some(path) = &span.image_path {
-                        if !self.image_cache.contains_key(path)
-                            && !self.image_errors.contains_key(path)
+                        if !self.editor.image_cache.contains_key(path)
+                            && !self.editor.image_errors.contains_key(path)
                         {
                             let img_path = base_path.join(path);
                             match image::open(&img_path) {
                                 Ok(img) => {
-                                    self.image_errors.remove(path);
+                                    self.editor.image_errors.remove(path);
                                     let (width, height) = img.dimensions();
                                     let handle = iced::widget::image::Handle::from_rgba(
                                         width,
                                         height,
                                         img.into_rgba8().into_raw(),
                                     );
-                                    self.image_cache.insert(
+                                    self.editor.image_cache.insert(
                                         path.clone(),
                                         (handle, width as f32, height as f32),
                                     );
                                 }
-                                Err(err) => failures.push(Task::done(Message::ImageLoadFailed(
-                                    path.clone(),
-                                    err.to_string(),
+                                Err(err) => failures.push(Task::done(Message::Editor(
+                                    EditorMessage::ImageLoadFailed(path.clone(), err.to_string()),
                                 ))),
                             }
                         }
@@ -841,7 +851,7 @@ impl MdEditor {
 
     pub(crate) fn load_math(&self) -> Task<Message> {
         let mut tasks = Vec::new();
-        for line in &self.highlighted_lines {
+        for line in &self.editor.highlighted_lines {
             for span in &line.spans {
                 if span.is_math {
                     let tex = span
@@ -850,13 +860,13 @@ impl MdEditor {
                         .trim()
                         .to_string();
                     if !tex.is_empty()
-                        && !self.math_cache.contains_key(&tex)
-                        && !self.math_errors.contains_key(&tex)
+                        && !self.editor.math_cache.contains_key(&tex)
+                        && !self.editor.math_errors.contains_key(&tex)
                     {
                         let tex_clone = tex.clone();
                         tasks.push(Task::perform(
                             async move { (tex_clone.clone(), Self::render_latex_task(&tex_clone)) },
-                            |(t, r)| Message::MathRendered(t, r),
+                            |(t, r)| Message::Editor(EditorMessage::MathRendered(t, r)),
                         ));
                     }
                 }

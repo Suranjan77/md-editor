@@ -365,6 +365,7 @@ mod tests {
 
 use crate::features::pdf::search::PdfSearchState;
 use crate::features::pdf::view_model::PdfLayout;
+use crate::views;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PdfViewState {
@@ -373,4 +374,178 @@ pub(crate) struct PdfViewState {
     pub page_cache: PdfPageCache,
     pub layout: PdfLayout,
     pub search: PdfSearchState,
+}
+
+#[derive(Debug)]
+pub(crate) struct PdfFeatureState {
+    pub(crate) current_page: u16,
+    pub(crate) total_pages: u16,
+    pub(crate) view: PdfViewState,
+    pub(crate) rotation: u16,
+    pub(crate) pages: Vec<Option<Handle>>,
+    pub(crate) dimensions: Vec<Option<(u32, u32)>>,
+    pub(crate) placeholder_page_size: Option<(f32, f32)>,
+    pub(crate) active_path: Option<String>,
+    pub(crate) scroll_y: f32,
+    pub(crate) viewport_height: f32,
+    pub(crate) page_links: HashMap<u16, Vec<md_editor_core::domain::pdf::LinkInfo>>,
+    pub(crate) link_preview: Option<Handle>,
+    pub(crate) showing_pdf: bool,
+    pub(crate) fit_to_width: bool,
+    pub(crate) fit_to_page: bool,
+    pub(crate) document_id: Option<String>,
+    pub(crate) page_text: HashMap<u16, md_editor_core::domain::pdf::PdfPageText>,
+    pub(crate) selection: Option<views::interactive_pdf::PdfSelection>,
+    pub(crate) annotations: HashMap<u16, Vec<md_editor_core::domain::pdf::PdfAnnotation>>,
+    pub(crate) focused_annotation_id: Option<String>,
+    pub(crate) initial_target_page: Option<u16>,
+    pub(crate) initial_target_annotation: Option<String>,
+    pub(crate) pending_text: std::collections::HashSet<u16>,
+    pub(crate) text_lru: VecDeque<u16>,
+    pub(crate) annotations_filter_color: Option<md_editor_core::domain::pdf::PdfAnnotationColor>,
+    pub(crate) annotations_filter_page: Option<u16>,
+    pub(crate) annotations_filter_tag: Option<String>,
+    pub(crate) annotations_filter_linked: Option<bool>,
+    pub(crate) annotations_filter_unresolved: Option<bool>,
+    pub(crate) pending_pages: std::collections::HashSet<u16>,
+    pub(crate) stale_pages: std::collections::HashSet<u16>,
+    pub(crate) pending_links: std::collections::HashSet<u16>,
+    pub(crate) render_generation: u64,
+    pub(crate) programmatic_scroll: bool,
+    pub(crate) toc_target_page: Option<u16>,
+    pub(crate) toc_entries_flat: Option<Vec<views::toc::TocEntry>>,
+}
+
+impl Default for PdfFeatureState {
+    fn default() -> Self {
+        Self {
+            current_page: 0,
+            total_pages: 0,
+            view: PdfViewState {
+                zoom: 1.5,
+                page_sizes: Vec::new(),
+                page_cache: PdfPageCache::default(),
+                layout: PdfLayout::default(),
+                search: PdfSearchState::default(),
+            },
+            rotation: 0,
+            pages: Vec::new(),
+            dimensions: Vec::new(),
+            placeholder_page_size: None,
+            active_path: None,
+            scroll_y: 0.0,
+            viewport_height: 0.0,
+            page_links: HashMap::new(),
+            link_preview: None,
+            showing_pdf: false,
+            fit_to_width: true,
+            fit_to_page: false,
+            document_id: None,
+            page_text: HashMap::new(),
+            selection: None,
+            annotations: HashMap::new(),
+            focused_annotation_id: None,
+            initial_target_page: None,
+            initial_target_annotation: None,
+            pending_text: std::collections::HashSet::new(),
+            text_lru: VecDeque::new(),
+            annotations_filter_color: None,
+            annotations_filter_page: None,
+            annotations_filter_tag: None,
+            annotations_filter_linked: None,
+            annotations_filter_unresolved: None,
+            pending_pages: std::collections::HashSet::new(),
+            stale_pages: std::collections::HashSet::new(),
+            pending_links: std::collections::HashSet::new(),
+            render_generation: 0,
+            programmatic_scroll: false,
+            toc_target_page: None,
+            toc_entries_flat: None,
+        }
+    }
+}
+
+impl PdfFeatureState {
+    pub(crate) fn begin_document_load(&mut self, vault_path: String) -> u64 {
+        self.active_path = Some(vault_path);
+        self.showing_pdf = true;
+        self.current_page = 0;
+        self.total_pages = 0;
+        self.rotation = 0;
+        self.fit_to_width = true;
+        self.fit_to_page = false;
+        self.pages.clear();
+        self.dimensions.clear();
+        self.view.page_sizes.clear();
+        self.placeholder_page_size = None;
+        self.view.page_cache.clear();
+        self.view.layout = PdfLayout::default();
+        self.pending_pages.clear();
+        self.stale_pages.clear();
+        self.pending_links.clear();
+        self.page_links.clear();
+        self.view.search.matches.clear();
+        self.view.search.page_index.clear();
+        self.view.search.searching = false;
+        self.programmatic_scroll = false;
+        self.toc_target_page = None;
+        self.toc_entries_flat = None;
+        self.document_id = None;
+        self.page_text.clear();
+        self.selection = None;
+        self.annotations.clear();
+        self.focused_annotation_id = None;
+        self.pending_text.clear();
+        self.text_lru.clear();
+        self.link_preview = None;
+        self.scroll_y = 0.0;
+        self.begin_render_generation()
+    }
+
+    pub(crate) fn begin_render_generation(&mut self) -> u64 {
+        self.render_generation = self.render_generation.wrapping_add(1);
+        self.render_generation
+    }
+}
+
+#[cfg(test)]
+mod feature_state_tests {
+    use super::*;
+
+    #[test]
+    fn begin_document_load_resets_document_owned_state() {
+        let mut state = PdfFeatureState {
+            total_pages: 12,
+            ..PdfFeatureState::default()
+        };
+        state.pending_pages.insert(3);
+        state.pending_links.insert(4);
+        state.document_id = Some("old-document".to_string());
+        state.focused_annotation_id = Some("old-annotation".to_string());
+        state.view.search.searching = true;
+
+        let generation = state.begin_document_load("papers/new.pdf".to_string());
+
+        assert_eq!(generation, 1);
+        assert_eq!(state.active_path.as_deref(), Some("papers/new.pdf"));
+        assert!(state.showing_pdf);
+        assert_eq!(state.total_pages, 0);
+        assert!(state.pending_pages.is_empty());
+        assert!(state.pending_links.is_empty());
+        assert!(state.document_id.is_none());
+        assert!(state.focused_annotation_id.is_none());
+        assert!(!state.view.search.searching);
+    }
+
+    #[test]
+    fn render_generation_wraps_without_touching_document_identity() {
+        let mut state = PdfFeatureState {
+            active_path: Some("papers/current.pdf".to_string()),
+            render_generation: u64::MAX,
+            ..PdfFeatureState::default()
+        };
+
+        assert_eq!(state.begin_render_generation(), 0);
+        assert_eq!(state.active_path.as_deref(), Some("papers/current.pdf"));
+    }
 }

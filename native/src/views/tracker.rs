@@ -4,7 +4,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Background, Element, Length, Renderer, Theme};
 
-use crate::messages::{Message, TrackerTab};
+use crate::messages::{Message, TrackerMessage, TrackerTab};
 use crate::theme;
 use md_editor_core::tracker::StudySession;
 use serde::{Deserialize, Serialize};
@@ -546,7 +546,7 @@ pub(crate) fn view<'a>(
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
         )
-        .on_press(Message::TrackerStop)
+        .on_press(Message::Tracker(TrackerMessage::Stop))
         .padding(10)
         .width(Length::Fill)
         .style(button::secondary)
@@ -556,7 +556,7 @@ pub(crate) fn view<'a>(
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
         )
-        .on_press(Message::TrackerStart)
+        .on_press(Message::Tracker(TrackerMessage::Start))
         .padding(10)
         .width(Length::Fill)
         .style(button::primary)
@@ -631,7 +631,7 @@ pub(crate) fn view<'a>(
             title,
             Space::new().width(Length::Fill),
             button(text("✕").size(16).font(BOLD))
-                .on_press(Message::TrackerToggle)
+                .on_press(Message::Tracker(TrackerMessage::Toggle))
                 .style(button::text),
         ]
         .align_y(Alignment::Center),
@@ -664,7 +664,7 @@ fn tab_button<'a>(
             })
             .font(BOLD),
     )
-    .on_press(Message::TrackerTabSelected(tab))
+    .on_press(Message::Tracker(TrackerMessage::TabSelected(tab)))
     .padding([8, 12])
     .style(button::text)
     .into()
@@ -714,19 +714,19 @@ fn log_body<'a>(
                 .font(BOLD),
             row![
                 text_input("YYYY-MM-DD", manual_date)
-                    .on_input(Message::TrackerManualDateChanged)
+                    .on_input(|value| Message::Tracker(TrackerMessage::ManualDateChanged(value)))
                     .padding(8)
                     .width(Length::FillPortion(2)),
                 text_input("Hours", manual_hours)
-                    .on_input(Message::TrackerManualHoursChanged)
+                    .on_input(|value| Message::Tracker(TrackerMessage::ManualHoursChanged(value)))
                     .padding(8)
                     .width(Length::FillPortion(1)),
                 text_input("Notes", manual_notes)
-                    .on_input(Message::TrackerManualNotesChanged)
+                    .on_input(|value| Message::Tracker(TrackerMessage::ManualNotesChanged(value)))
                     .padding(8)
                     .width(Length::FillPortion(3)),
                 button(text("Add").size(12).font(BOLD))
-                    .on_press(Message::TrackerManualAdd)
+                    .on_press(Message::Tracker(TrackerMessage::ManualAdd))
                     .padding([8, 12])
                     .style(button::primary),
             ]
@@ -777,7 +777,7 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme
                         .color(theme::accent())
                         .font(BOLD),
                     button(text("Delete").size(11).color(theme::text_muted()))
-                        .on_press(Message::TrackerSessionDelete(session.id))
+                        .on_press(Message::Tracker(TrackerMessage::SessionDelete(session.id)))
                         .padding([5, 8])
                         .style(button::text),
                 ]
@@ -883,7 +883,10 @@ fn status_button<'a>(
     } else {
         theme::text_muted()
     }))
-    .on_press(Message::TrackerProjectStatusChanged(id, value.to_string()))
+    .on_press(Message::Tracker(TrackerMessage::ProjectStatusChanged(
+        id,
+        value.to_string(),
+    )))
     .padding([6, 10])
     .style(if active {
         button::primary
@@ -957,7 +960,9 @@ fn gates_body<'a>(
             item_col = item_col.push(
                 checkbox(checked)
                     .label(item)
-                    .on_toggle(move |_| Message::TrackerGateToggled(gate_id.clone(), idx))
+                    .on_toggle(move |_| {
+                        Message::Tracker(TrackerMessage::GateToggled(gate_id.clone(), idx))
+                    })
                     .size(15),
             );
         }
@@ -1029,7 +1034,9 @@ fn reading_body<'a>(
             item_col = item_col.push(
                 checkbox(checked)
                     .label(label)
-                    .on_toggle(move |_| Message::TrackerReadingToggled(section_clone.clone(), idx))
+                    .on_toggle(move |_| {
+                        Message::Tracker(TrackerMessage::ReadingToggled(section_clone.clone(), idx))
+                    })
                     .size(15),
             );
         }
@@ -1044,14 +1051,14 @@ fn config_body<'a>(config_json: &'a text_editor::Content) -> Element<'a, Message
         text("Projects, gates, reading lists, and phases are read from this JSON. Save to apply it to every tracker tab.").size(12).color(theme::text_muted()),
         text_editor(config_json)
             .placeholder("Tracker JSON")
-            .on_action(Message::TrackerConfigEdited)
+            .on_action(|action| Message::Tracker(TrackerMessage::ConfigEdited(action)))
             .padding(10)
             .size(12)
             .height(Length::Fixed(260.0))
             .wrapping(Wrapping::WordOrGlyph)
             .font(iced::Font::MONOSPACE),
         button(text("Save Configuration").size(12).font(BOLD))
-            .on_press(Message::TrackerConfigSave)
+            .on_press(Message::Tracker(TrackerMessage::ConfigSave))
             .padding([8, 12])
             .style(button::primary),
     ].spacing(12))

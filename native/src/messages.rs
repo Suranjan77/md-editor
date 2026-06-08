@@ -1,242 +1,248 @@
 #![allow(dead_code)]
 
+pub(crate) use crate::features::citations::CitationMessage;
+pub(crate) use crate::features::editor::EditorMessage;
+pub(crate) use crate::features::overlays::OverlayMessage;
+pub(crate) use crate::features::pdf::message::PdfMessage;
+pub(crate) use crate::features::search::SearchMessage;
+pub(crate) use crate::features::shell::ShellMessage;
+pub(crate) use crate::features::system::SystemMessage;
+pub(crate) use crate::features::tracker::{TrackerMessage, TrackerTab};
+pub(crate) use crate::features::workspace::WorkspaceMessage;
+
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
-    // ── Vault ────────────────────────────────────────────────────
-    OpenVaultDialog,
-    CreateVaultDialog,
-    OpenRecentVault(String),
-    VaultOpened(Option<String>),
-    CreateFileDialog,
-    CreateFolderDialog,
-
-    // ── Sidebar ──────────────────────────────────────────────────
-    SidebarToggle,
-    SidebarFileClicked(String),
-    SidebarFolderToggled(String),
-
-    // ── Navigation ───────────────────────────────────────────────
-    GlobalSearchOpen,
-    SearchClose,
-    SearchQueryChanged(String),
-    SearchReplaceChanged(String),
-    SearchRegexToggled(bool),
-    SearchMatchCaseToggled(bool),
-    UnifiedSearchSourceToggled(md_editor_core::types::UnifiedSearchSource, bool),
-    SearchPrevious,
-    SearchNext,
-    SearchReplaceAll,
-    SearchReplace,
-    #[allow(dead_code)]
-    SearchResultClicked(String),
-    CommandPaletteOpen,
-    CommandPaletteQueryChanged(String),
-    CommandPaletteCommandClicked(Shortcut),
-    NameModalInputChanged(String),
-    NameModalSubmit(String),
-    NameModalSubmitCurrent,
-    NameModalCancel,
-    PdfLinkNoteFolderSelected(String),
-    PdfLinkNoteFileSelected(String),
-    PdfLinkNotePickerSearchChanged(String),
-    DeleteFile(String),
-    DeleteFileDialog(String),
-
-    // ── Editor ───────────────────────────────────────────────────
-    EditorCommand(crate::editor::buffer::EditorCommand),
-    EditorCommandNoScroll(crate::editor::buffer::EditorCommand),
-    EditorSave(bool),
-    EditorCheckboxToggle(usize),
-    EditorBlockContextMenu {
-        line_idx: usize,
-        absolute_pos: iced::Point,
-    },
-    EditorBlockAction {
-        line_idx: usize,
-        action: EditorBlockActionKind,
-    },
-    EditorContextMenu {
-        line_idx: usize,
-        col: usize,
-        absolute_pos: iced::Point,
-    },
-    EditorLinkAction {
-        line_idx: usize,
-        start_col: usize,
-        end_col: usize,
-        link_target: String,
-        action: EditorLinkActionKind,
-    },
-    EditorCursorMove(usize, usize),
-    EditorScrolled {
-        y: f32,
-        viewport_width: f32,
-        viewport_height: f32,
-    },
-    ScrollEditorToTarget(f32),
-    HighlightReady(u64, Vec<crate::editor::parser::StyledLine>),
-    HighlightDebounceElapsed,
-    EditorAutosaveElapsed,
-
-    // ── PDF ──────────────────────────────────────────────────────
-    PdfZoomChanged(f32),
-    PdfWheelScrolledForZoom(f32),
-    PdfFitToWidth,
-    PdfFitToPage,
-    PdfRotateClockwise,
-    PdfLoaded(u64, u16), // render generation, total pages
-    PdfPageSizesLoaded(u64, String, Vec<(f32, f32)>),
-    PdfRendered(u64, u16, image::DynamicImage),
-    PdfRenderFailed(u64, u16),
-    PdfRenderSkipped(u64, u16),
-    PdfScrolled {
-        y: f32,
-        viewport_height: f32,
-    },
-    PdfLeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
-    PdfRightClicked {
-        page_index: u16,
-        x: f32,
-        y: f32,
-        absolute_pos: iced::Point,
-    },
-    PdfTocLoaded(u64, Vec<md_editor_core::application::pdf_service::TocEntry>),
-    PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::domain::pdf::LinkInfo>),
-    PdfSearchMatchesFound(
-        u64,
-        Vec<md_editor_core::application::pdf_service::PdfSearchMatch>,
-    ),
-    PdfSearchFinished(u64, Result<(), String>),
-    #[allow(dead_code)]
-    PdfSearchResultClicked(u16),
-    PdfScrollBy(f32),
-    PdfFirstPage,
-    PdfLastPage,
-    PdfSearchToggle,
-    PdfGoToPage,
-    PdfLinkPreviewResult(
-        Result<md_editor_core::application::pdf_service::LinkPreviewResult, String>,
-    ),
-    PdfNavBack,
-    PdfNavForward,
-    ClosePdfLinkPreview,
-    // ── PDF Study Updates ──────────────────────────────────────────
-    PdfDocumentIdComputed(Option<(String, String, u64, Option<i64>)>),
-    PdfPageTextLoaded(
-        u64,
-        u16,
-        Result<md_editor_core::domain::pdf::PdfPageText, String>,
-    ),
-    PdfSelectionChanged(u16, usize, usize),
-    PdfSelectionCleared,
-    PdfSelectionFinished(u16, usize, usize),
-    PdfCopySelection,
-    PdfInsertQuoteLink,
-    PdfInsertAnnotationLink(String),
-    PdfCreateHighlight(md_editor_core::domain::pdf::PdfAnnotationColor),
-    PdfCreateAnnotation(
-        md_editor_core::domain::pdf::PdfAnnotationKind,
-        md_editor_core::domain::pdf::PdfAnnotationColor,
-    ),
-    PdfDeleteHighlight(String),
-    PdfAddQuickNote(String, String),
-    PdfLinkNote(String, String),
-    PdfOpenLinkedNote(String),
-    PdfOpenCompanionNote(String),
-    PdfAnnotationFocused {
-        document_path: String,
-        annotation_id: String,
-        page: u16,
-    },
-
-    PdfToggleAnnotationsSidebar,
-    PdfFilterAnnotationsByColor(Option<md_editor_core::domain::pdf::PdfAnnotationColor>),
-    PdfFilterAnnotationsByPage(Option<u16>),
-    PdfFilterAnnotationsByTag(Option<String>),
-    PdfFilterAnnotationsByLinked(Option<bool>),
-    PdfFilterAnnotationsByUnresolved(Option<bool>),
-    PdfNavigateToAnnotation {
-        id: String,
-        page: u16,
-    },
-    PdfEditAnnotationNote(String, u16),
-    PdfToggleAnnotationStatus(String),
-    PdfEditAnnotationTags(String),
-    PdfUpdateAnnotationTags(String, String),
-    PdfExportAnnotations,
-    PdfAnnotationsExported(Result<String, String>),
-    PdfContextMenuAction(crate::views::modals::PdfContextMenuItem),
-    #[allow(dead_code)]
-    CitationPaletteToggle,
-    CitationPaletteQueryChanged(String),
-    CitationPaletteSubmitFirst,
-    CitationPaletteChoose(CitationItem),
-    ExcerptModeToggle,
-    #[allow(dead_code)]
-    ExcerptQueueAdd(CitationItem),
-    #[allow(dead_code)]
-    ExcerptQueueRemove(usize),
-    #[allow(dead_code)]
-    ExcerptQueueClear,
-    ExcerptQueueInsertBatch,
-    // ── Tracker ──────────────────────────────────────────────────
-    TrackerToggle,
-    TrackerStart,
-    TrackerStop,
-    TrackerTabSelected(TrackerTab),
-    TrackerProjectStatusChanged(String, String),
-    TrackerGateToggled(String, usize),
-    TrackerReadingToggled(String, usize),
-    TrackerConfigEdited(iced::widget::text_editor::Action),
-    TrackerConfigSave,
-    TrackerManualDateChanged(String),
-    TrackerManualHoursChanged(String),
-    TrackerManualNotesChanged(String),
-    TrackerManualAdd,
-    TrackerSessionDelete(i64),
-
-    // ── Toast ───────────────────────────────────────────────────
-    ToastHide,
-    MathRendered(
-        String,
-        Result<(iced::widget::image::Handle, f32, f32), String>,
-    ),
-    ImageLoadFailed(String, String),
-
-    // ── System ───────────────────────────────────────────────────
-    Tick,
-    KeyboardShortcut(Shortcut),
-    ToggleTOC,
-    TocClicked(usize),
-    PdfTocClicked(usize),
-    UnifiedSearchMatchesFound(u64, Vec<md_editor_core::types::UnifiedSearchResult>),
-    UnifiedPdfTextSearchMatchesFound(u64, md_editor_core::types::UnifiedPdfTextSearchResultBatch),
-    UnifiedSearchFinished(u64, Result<(), String>),
-    UnifiedSearchResultClicked(md_editor_core::types::UnifiedSearchResult),
-    PdfTextIndexFinished(Result<usize, String>),
-    SplitViewToggle,
-    SplitViewDragStart,
-    SplitViewDragging(f32),
-    SplitViewDragEnd,
-    SplitViewDividerHovered(bool),
-    WindowResized(f32, f32),
-    KeyboardModifiersChanged(iced::keyboard::Modifiers),
-    FocusNext,
-    FocusPrevious,
-    ScaleFactorChanged(f32),
-    SpinnerTick,
-    MarkdownIndexFinished(Result<(), String>),
-    AnnotationDebounceElapsed,
+    Shell(ShellMessage),
+    Workspace(WorkspaceMessage),
+    Editor(EditorMessage),
+    Pdf(PdfMessage),
+    Search(SearchMessage),
+    Citation(CitationMessage),
+    Tracker(TrackerMessage),
+    Overlay(OverlayMessage),
+    System(SystemMessage),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TrackerTab {
-    Dashboard,
-    Log,
-    Projects,
-    Gates,
-    Reading,
-    Config,
+#[allow(non_snake_case, non_upper_case_globals)]
+impl Message {
+    pub(crate) const PdfFitToWidth: Self = Self::Pdf(PdfMessage::FitToWidth);
+    pub(crate) const PdfFitToPage: Self = Self::Pdf(PdfMessage::FitToPage);
+    pub(crate) const PdfRotateClockwise: Self = Self::Pdf(PdfMessage::RotateClockwise);
+    pub(crate) const PdfFirstPage: Self = Self::Pdf(PdfMessage::FirstPage);
+    pub(crate) const PdfLastPage: Self = Self::Pdf(PdfMessage::LastPage);
+    pub(crate) const PdfSearchToggle: Self = Self::Pdf(PdfMessage::SearchToggle);
+    pub(crate) const PdfGoToPage: Self = Self::Pdf(PdfMessage::GoToPage);
+    pub(crate) const PdfNavBack: Self = Self::Pdf(PdfMessage::NavBack);
+    pub(crate) const PdfNavForward: Self = Self::Pdf(PdfMessage::NavForward);
+    pub(crate) const ClosePdfLinkPreview: Self = Self::Pdf(PdfMessage::CloseLinkPreview);
+    pub(crate) const PdfSelectionCleared: Self = Self::Pdf(PdfMessage::SelectionCleared);
+    pub(crate) const PdfCopySelection: Self = Self::Pdf(PdfMessage::CopySelection);
+    pub(crate) const PdfInsertQuoteLink: Self = Self::Pdf(PdfMessage::InsertQuoteLink);
+    pub(crate) const PdfToggleAnnotationsSidebar: Self =
+        Self::Pdf(PdfMessage::ToggleAnnotationsSidebar);
+    pub(crate) const PdfExportAnnotations: Self = Self::Pdf(PdfMessage::ExportAnnotations);
+
+    pub(crate) fn PdfZoomChanged(value: f32) -> Self {
+        Self::Pdf(PdfMessage::ZoomChanged(value))
+    }
+
+    pub(crate) fn PdfWheelScrolledForZoom(value: f32) -> Self {
+        Self::Pdf(PdfMessage::WheelScrolledForZoom(value))
+    }
+
+    pub(crate) fn PdfLoaded(generation: u64, pages: u16) -> Self {
+        Self::Pdf(PdfMessage::Loaded(generation, pages))
+    }
+
+    pub(crate) fn PdfPageSizesLoaded(
+        generation: u64,
+        path: String,
+        sizes: Vec<(f32, f32)>,
+    ) -> Self {
+        Self::Pdf(PdfMessage::PageSizesLoaded(generation, path, sizes))
+    }
+
+    pub(crate) fn PdfRendered(generation: u64, page: u16, image: image::DynamicImage) -> Self {
+        Self::Pdf(PdfMessage::Rendered(generation, page, image))
+    }
+
+    pub(crate) fn PdfRenderFailed(generation: u64, page: u16) -> Self {
+        Self::Pdf(PdfMessage::RenderFailed(generation, page))
+    }
+
+    pub(crate) fn PdfRenderSkipped(generation: u64, page: u16) -> Self {
+        Self::Pdf(PdfMessage::RenderSkipped(generation, page))
+    }
+
+    pub(crate) fn PdfLeftClicked(
+        page: u16,
+        x: f32,
+        y: f32,
+        modifiers: iced::keyboard::Modifiers,
+    ) -> Self {
+        Self::Pdf(PdfMessage::LeftClicked(page, x, y, modifiers))
+    }
+
+    pub(crate) fn PdfTocLoaded(
+        generation: u64,
+        entries: Vec<md_editor_core::application::pdf_service::TocEntry>,
+    ) -> Self {
+        Self::Pdf(PdfMessage::TocLoaded(generation, entries))
+    }
+
+    pub(crate) fn PdfPageLinksLoaded(
+        generation: u64,
+        page: u16,
+        links: Vec<md_editor_core::domain::pdf::LinkInfo>,
+    ) -> Self {
+        Self::Pdf(PdfMessage::PageLinksLoaded(generation, page, links))
+    }
+
+    pub(crate) fn PdfSearchMatchesFound(
+        generation: u64,
+        matches: Vec<md_editor_core::application::pdf_service::PdfSearchMatch>,
+    ) -> Self {
+        Self::Pdf(PdfMessage::SearchMatchesFound(generation, matches))
+    }
+
+    pub(crate) fn PdfSearchFinished(generation: u64, result: Result<(), String>) -> Self {
+        Self::Pdf(PdfMessage::SearchFinished(generation, result))
+    }
+
+    pub(crate) fn PdfSearchResultClicked(page: u16) -> Self {
+        Self::Pdf(PdfMessage::SearchResultClicked(page))
+    }
+
+    pub(crate) fn PdfScrollBy(delta: f32) -> Self {
+        Self::Pdf(PdfMessage::ScrollBy(delta))
+    }
+
+    pub(crate) fn PdfLinkPreviewResult(
+        result: Result<md_editor_core::application::pdf_service::LinkPreviewResult, String>,
+    ) -> Self {
+        Self::Pdf(PdfMessage::LinkPreviewResult(result))
+    }
+
+    pub(crate) fn PdfDocumentIdComputed(
+        document: Option<(String, String, u64, Option<i64>)>,
+    ) -> Self {
+        Self::Pdf(PdfMessage::DocumentIdComputed(document))
+    }
+
+    pub(crate) fn PdfPageTextLoaded(
+        generation: u64,
+        page: u16,
+        result: Result<md_editor_core::domain::pdf::PdfPageText, String>,
+    ) -> Self {
+        Self::Pdf(PdfMessage::PageTextLoaded(generation, page, result))
+    }
+
+    pub(crate) fn PdfSelectionChanged(page: u16, anchor: usize, focus: usize) -> Self {
+        Self::Pdf(PdfMessage::SelectionChanged(page, anchor, focus))
+    }
+
+    pub(crate) fn PdfSelectionFinished(page: u16, anchor: usize, focus: usize) -> Self {
+        Self::Pdf(PdfMessage::SelectionFinished(page, anchor, focus))
+    }
+
+    pub(crate) fn PdfInsertAnnotationLink(id: String) -> Self {
+        Self::Pdf(PdfMessage::InsertAnnotationLink(id))
+    }
+
+    pub(crate) fn PdfCreateHighlight(
+        color: md_editor_core::domain::pdf::PdfAnnotationColor,
+    ) -> Self {
+        Self::Pdf(PdfMessage::CreateHighlight(color))
+    }
+
+    pub(crate) fn PdfCreateAnnotation(
+        kind: md_editor_core::domain::pdf::PdfAnnotationKind,
+        color: md_editor_core::domain::pdf::PdfAnnotationColor,
+    ) -> Self {
+        Self::Pdf(PdfMessage::CreateAnnotation(kind, color))
+    }
+
+    pub(crate) fn PdfDeleteHighlight(id: String) -> Self {
+        Self::Pdf(PdfMessage::DeleteHighlight(id))
+    }
+
+    pub(crate) fn PdfAddQuickNote(id: String, note: String) -> Self {
+        Self::Pdf(PdfMessage::AddQuickNote(id, note))
+    }
+
+    pub(crate) fn PdfLinkNote(id: String, path: String) -> Self {
+        Self::Pdf(PdfMessage::LinkNote(id, path))
+    }
+
+    pub(crate) fn PdfOpenLinkedNote(path: String) -> Self {
+        Self::Pdf(PdfMessage::OpenLinkedNote(path))
+    }
+
+    pub(crate) fn PdfOpenCompanionNote(path: String) -> Self {
+        Self::Pdf(PdfMessage::OpenCompanionNote(path))
+    }
+
+    pub(crate) fn PdfFilterAnnotationsByColor(
+        color: Option<md_editor_core::domain::pdf::PdfAnnotationColor>,
+    ) -> Self {
+        Self::Pdf(PdfMessage::FilterAnnotationsByColor(color))
+    }
+
+    pub(crate) fn PdfFilterAnnotationsByPage(page: Option<u16>) -> Self {
+        Self::Pdf(PdfMessage::FilterAnnotationsByPage(page))
+    }
+
+    pub(crate) fn PdfFilterAnnotationsByTag(tag: Option<String>) -> Self {
+        Self::Pdf(PdfMessage::FilterAnnotationsByTag(tag))
+    }
+
+    pub(crate) fn PdfFilterAnnotationsByLinked(value: Option<bool>) -> Self {
+        Self::Pdf(PdfMessage::FilterAnnotationsByLinked(value))
+    }
+
+    pub(crate) fn PdfFilterAnnotationsByUnresolved(value: Option<bool>) -> Self {
+        Self::Pdf(PdfMessage::FilterAnnotationsByUnresolved(value))
+    }
+
+    pub(crate) fn PdfEditAnnotationNote(id: String, page: u16) -> Self {
+        Self::Pdf(PdfMessage::EditAnnotationNote(id, page))
+    }
+
+    pub(crate) fn PdfToggleAnnotationStatus(id: String) -> Self {
+        Self::Pdf(PdfMessage::ToggleAnnotationStatus(id))
+    }
+
+    pub(crate) fn PdfEditAnnotationTags(id: String) -> Self {
+        Self::Pdf(PdfMessage::EditAnnotationTags(id))
+    }
+
+    pub(crate) fn PdfUpdateAnnotationTags(id: String, tags: String) -> Self {
+        Self::Pdf(PdfMessage::UpdateAnnotationTags(id, tags))
+    }
+
+    pub(crate) fn PdfAnnotationsExported(result: Result<String, String>) -> Self {
+        Self::Pdf(PdfMessage::AnnotationsExported(result))
+    }
+
+    pub(crate) fn PdfContextMenuAction(action: crate::views::modals::PdfContextMenuItem) -> Self {
+        Self::Pdf(PdfMessage::ContextMenuAction(action))
+    }
+
+    pub(crate) fn PdfTocClicked(index: usize) -> Self {
+        Self::Pdf(PdfMessage::TocClicked(index))
+    }
+
+    pub(crate) fn PdfLinkNoteFolderSelected(folder: String) -> Self {
+        Self::Pdf(PdfMessage::LinkNoteFolderSelected(folder))
+    }
+
+    pub(crate) fn PdfLinkNoteFileSelected(path: String) -> Self {
+        Self::Pdf(PdfMessage::LinkNoteFileSelected(path))
+    }
+
+    pub(crate) fn PdfLinkNotePickerSearchChanged(query: String) -> Self {
+        Self::Pdf(PdfMessage::LinkNotePickerSearchChanged(query))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

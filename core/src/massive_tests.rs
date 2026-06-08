@@ -242,7 +242,8 @@ fn test_file_index_dynamic_fuzzing_updates() {
 
 #[test]
 fn test_sys_config_massive_upserts() {
-    let state = AppState::new_in_memory();
+    let state =
+        AppState::try_new_in_memory().expect("in-memory application state should initialize");
 
     // 1. Write 500 unique configuration keys and values
     for i in 0..500 {
@@ -285,7 +286,8 @@ fn test_sys_config_massive_upserts() {
 
 #[test]
 fn test_study_tracker_massive_sessions() {
-    let state = AppState::new_in_memory();
+    let state =
+        AppState::try_new_in_memory().expect("in-memory application state should initialize");
 
     // 1. Bulk insert 500 StudySessions with various dates, activities, and notes
     let mut expected_sessions = Vec::new();
@@ -374,7 +376,8 @@ fn test_study_tracker_massive_sessions() {
 
 #[test]
 fn test_vault_recursive_listings_and_operations() {
-    let state = AppState::new_in_memory();
+    let state =
+        AppState::try_new_in_memory().expect("in-memory application state should initialize");
     let temp_dir = std::env::current_dir()
         .unwrap()
         .join("target")
@@ -467,7 +470,8 @@ fn test_vault_recursive_listings_and_operations() {
 
 #[test]
 fn test_vault_fts5_indexing_and_search() {
-    let state = AppState::new_in_memory();
+    let state =
+        AppState::try_new_in_memory().expect("in-memory application state should initialize");
     let temp_dir = std::env::current_dir()
         .unwrap()
         .join("target")
@@ -540,7 +544,8 @@ fn test_vault_fts5_indexing_and_search() {
 
 #[test]
 fn test_vault_file_lifecycle_renames_deletes() {
-    let state = AppState::new_in_memory();
+    let state =
+        AppState::try_new_in_memory().expect("in-memory application state should initialize");
     let temp_dir = std::env::current_dir()
         .unwrap()
         .join("target")
