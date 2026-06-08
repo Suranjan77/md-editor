@@ -2,7 +2,7 @@
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::{EditorBlockActionKind, Message};
+use crate::messages::{EditorBlockActionKind, EditorMessage, Message, WorkspaceMessage};
 use crate::theme;
 use crate::views::link_note_picker;
 
@@ -371,70 +371,98 @@ pub(crate) fn view_editor_block_context_menu<'a>(
         };
 
         let action_msg = match item {
-            EditorBlockContextMenuItem::ConvertToH1 => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::ConvertToH1,
-            },
-            EditorBlockContextMenuItem::ConvertToH2 => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::ConvertToH2,
-            },
-            EditorBlockContextMenuItem::ConvertToH3 => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::ConvertToH3,
-            },
-            EditorBlockContextMenuItem::ConvertToParagraph => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::ConvertToParagraph,
-            },
-            EditorBlockContextMenuItem::ToggleCheckbox => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::ToggleCheckbox,
-            },
-            EditorBlockContextMenuItem::RemoveCheckbox => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::RemoveCheckbox,
-            },
-            EditorBlockContextMenuItem::InsertRowAbove => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::InsertRowAbove,
-            },
-            EditorBlockContextMenuItem::InsertRowBelow => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::InsertRowBelow,
-            },
-            EditorBlockContextMenuItem::DeleteRow => Message::EditorBlockAction {
+            EditorBlockContextMenuItem::ConvertToH1 => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::ConvertToH1,
+                })
+            }
+            EditorBlockContextMenuItem::ConvertToH2 => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::ConvertToH2,
+                })
+            }
+            EditorBlockContextMenuItem::ConvertToH3 => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::ConvertToH3,
+                })
+            }
+            EditorBlockContextMenuItem::ConvertToParagraph => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::ConvertToParagraph,
+                })
+            }
+            EditorBlockContextMenuItem::ToggleCheckbox => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::ToggleCheckbox,
+                })
+            }
+            EditorBlockContextMenuItem::RemoveCheckbox => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::RemoveCheckbox,
+                })
+            }
+            EditorBlockContextMenuItem::InsertRowAbove => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::InsertRowAbove,
+                })
+            }
+            EditorBlockContextMenuItem::InsertRowBelow => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::InsertRowBelow,
+                })
+            }
+            EditorBlockContextMenuItem::DeleteRow => Message::Editor(EditorMessage::BlockAction {
                 line_idx: state.line_idx,
                 action: EditorBlockActionKind::DeleteRow,
-            },
-            EditorBlockContextMenuItem::InsertColumnLeft => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::InsertColumnLeft,
-            },
-            EditorBlockContextMenuItem::InsertColumnRight => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::InsertColumnRight,
-            },
-            EditorBlockContextMenuItem::DeleteColumn => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::DeleteColumn,
-            },
-            EditorBlockContextMenuItem::CopyCode => Message::EditorBlockAction {
+            }),
+            EditorBlockContextMenuItem::InsertColumnLeft => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::InsertColumnLeft,
+                })
+            }
+            EditorBlockContextMenuItem::InsertColumnRight => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::InsertColumnRight,
+                })
+            }
+            EditorBlockContextMenuItem::DeleteColumn => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::DeleteColumn,
+                })
+            }
+            EditorBlockContextMenuItem::CopyCode => Message::Editor(EditorMessage::BlockAction {
                 line_idx: state.line_idx,
                 action: EditorBlockActionKind::CopyCode,
-            },
-            EditorBlockContextMenuItem::SetCodeLanguage => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::SetCodeLanguage("rust".to_string()),
-            },
-            EditorBlockContextMenuItem::ConvertQuoteToParagraph => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::ConvertQuoteToParagraph,
-            },
-            EditorBlockContextMenuItem::OpenPdfCitation => Message::EditorBlockAction {
-                line_idx: state.line_idx,
-                action: EditorBlockActionKind::OpenPdfCitation,
-            },
+            }),
+            EditorBlockContextMenuItem::SetCodeLanguage => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::SetCodeLanguage("rust".to_string()),
+                })
+            }
+            EditorBlockContextMenuItem::ConvertQuoteToParagraph => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::ConvertQuoteToParagraph,
+                })
+            }
+            EditorBlockContextMenuItem::OpenPdfCitation => {
+                Message::Editor(EditorMessage::BlockAction {
+                    line_idx: state.line_idx,
+                    action: EditorBlockActionKind::OpenPdfCitation,
+                })
+            }
         };
 
         menu_col = menu_col.push(
@@ -516,41 +544,51 @@ pub(crate) fn view_editor_link_context_menu<'a>(
         };
 
         let action_msg = match item {
-            EditorLinkContextMenuItem::OpenLink => Message::EditorLinkAction {
+            EditorLinkContextMenuItem::OpenLink => Message::Editor(EditorMessage::LinkAction {
                 line_idx: state.line_idx,
                 start_col: state.start_col,
                 end_col: state.end_col,
                 link_target: state.link_target.clone(),
                 action: crate::messages::EditorLinkActionKind::OpenLink,
-            },
-            EditorLinkContextMenuItem::CopyLinkTarget => Message::EditorLinkAction {
-                line_idx: state.line_idx,
-                start_col: state.start_col,
-                end_col: state.end_col,
-                link_target: state.link_target.clone(),
-                action: crate::messages::EditorLinkActionKind::CopyLinkTarget,
-            },
-            EditorLinkContextMenuItem::CreateNote { .. } => Message::EditorLinkAction {
-                line_idx: state.line_idx,
-                start_col: state.start_col,
-                end_col: state.end_col,
-                link_target: state.link_target.clone(),
-                action: crate::messages::EditorLinkActionKind::CreateNote,
-            },
-            EditorLinkContextMenuItem::RepairLink { suggested_path } => Message::EditorLinkAction {
-                line_idx: state.line_idx,
-                start_col: state.start_col,
-                end_col: state.end_col,
-                link_target: state.link_target.clone(),
-                action: crate::messages::EditorLinkActionKind::RepairLink(suggested_path.clone()),
-            },
-            EditorLinkContextMenuItem::OpenPdfCitation => Message::EditorLinkAction {
-                line_idx: state.line_idx,
-                start_col: state.start_col,
-                end_col: state.end_col,
-                link_target: state.link_target.clone(),
-                action: crate::messages::EditorLinkActionKind::OpenLink,
-            },
+            }),
+            EditorLinkContextMenuItem::CopyLinkTarget => {
+                Message::Editor(EditorMessage::LinkAction {
+                    line_idx: state.line_idx,
+                    start_col: state.start_col,
+                    end_col: state.end_col,
+                    link_target: state.link_target.clone(),
+                    action: crate::messages::EditorLinkActionKind::CopyLinkTarget,
+                })
+            }
+            EditorLinkContextMenuItem::CreateNote { .. } => {
+                Message::Editor(EditorMessage::LinkAction {
+                    line_idx: state.line_idx,
+                    start_col: state.start_col,
+                    end_col: state.end_col,
+                    link_target: state.link_target.clone(),
+                    action: crate::messages::EditorLinkActionKind::CreateNote,
+                })
+            }
+            EditorLinkContextMenuItem::RepairLink { suggested_path } => {
+                Message::Editor(EditorMessage::LinkAction {
+                    line_idx: state.line_idx,
+                    start_col: state.start_col,
+                    end_col: state.end_col,
+                    link_target: state.link_target.clone(),
+                    action: crate::messages::EditorLinkActionKind::RepairLink(
+                        suggested_path.clone(),
+                    ),
+                })
+            }
+            EditorLinkContextMenuItem::OpenPdfCitation => {
+                Message::Editor(EditorMessage::LinkAction {
+                    line_idx: state.line_idx,
+                    start_col: state.start_col,
+                    end_col: state.end_col,
+                    link_target: state.link_target.clone(),
+                    action: crate::messages::EditorLinkActionKind::OpenLink,
+                })
+            }
         };
 
         menu_col = menu_col.push(
@@ -657,7 +695,7 @@ pub(crate) fn view<'a>(
                         .padding([8, 20])
                         .style(button::text),
                     button(text("Delete").size(14))
-                        .on_press(Message::DeleteFile(path.clone()))
+                        .on_press(Message::Workspace(WorkspaceMessage::DeleteFile(path.clone())))
                         .padding([8, 20])
                         .style(button::secondary),
                 ]
@@ -838,7 +876,9 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::PdfContextMenuAction(PdfContextMenuItem::InsertAnnotationLink { id, page })]
+            [Message::Pdf(crate::messages::PdfMessage::ContextMenuAction(
+                PdfContextMenuItem::InsertAnnotationLink { id, page }
+            ))]
                 if id == "ann-1" && *page == 4
         ));
     }

@@ -40,39 +40,49 @@ enum CliAction {
     RunApp,
 }
 
-fn parse_cli_args(args: &[String]) -> CliAction {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StartupOptions {
+    action: CliAction,
+}
+
+fn parse_cli_args(args: &[String]) -> StartupOptions {
     if args.len() > 1 {
         let cmd = args[1].as_str();
         if cmd == "--install" || cmd == "--install-desktop" {
-            return CliAction::Install;
+            return StartupOptions {
+                action: CliAction::Install,
+            };
         } else if cmd == "--uninstall" || cmd == "--uninstall-desktop" {
-            return CliAction::Uninstall;
+            return StartupOptions {
+                action: CliAction::Uninstall,
+            };
         }
     }
-    CliAction::RunApp
+    StartupOptions {
+        action: CliAction::RunApp,
+    }
 }
 
 fn main() -> iced::Result {
     #[cfg(target_os = "linux")]
     {
         let args: Vec<String> = std::env::args().collect();
-        match parse_cli_args(&args) {
+        let options = parse_cli_args(&args);
+        match options.action {
             CliAction::Install => {
-                if platform::desktop_integration::install_linux_desktop_entry() {
-                    println!("MD Editor desktop entry and icons installed successfully.");
-                } else {
-                    eprintln!("Failed to install MD Editor desktop entry and icons.");
+                if let Err(error) = platform::desktop_integration::install_linux_desktop_entry() {
+                    eprintln!("Failed to install MD Editor desktop entry and icons: {error}");
                     std::process::exit(1);
                 }
+                println!("MD Editor desktop entry and icons installed successfully.");
                 std::process::exit(0);
             }
             CliAction::Uninstall => {
-                if platform::desktop_integration::uninstall_linux_desktop_entry() {
-                    println!("MD Editor desktop entry and icons uninstalled successfully.");
-                } else {
-                    eprintln!("Failed to uninstall MD Editor desktop entry and icons.");
+                if let Err(error) = platform::desktop_integration::uninstall_linux_desktop_entry() {
+                    eprintln!("Failed to uninstall MD Editor desktop entry and icons: {error}");
                     std::process::exit(1);
                 }
+                println!("MD Editor desktop entry and icons uninstalled successfully.");
                 std::process::exit(0);
             }
             CliAction::RunApp => {}
@@ -124,42 +134,56 @@ mod tests {
 
     #[test]
     fn test_parse_cli_args() {
-        use super::{CliAction, parse_cli_args};
+        use super::{CliAction, StartupOptions, parse_cli_args};
 
         // Empty args list (just binary path) -> RunApp
         assert_eq!(
             parse_cli_args(&["md-editor".to_string()]),
-            CliAction::RunApp
+            StartupOptions {
+                action: CliAction::RunApp
+            }
         );
 
         // Standard flags for installation
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "--install".to_string()]),
-            CliAction::Install
+            StartupOptions {
+                action: CliAction::Install
+            }
         );
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "--install-desktop".to_string()]),
-            CliAction::Install
+            StartupOptions {
+                action: CliAction::Install
+            }
         );
 
         // Standard flags for uninstallation
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "--uninstall".to_string()]),
-            CliAction::Uninstall
+            StartupOptions {
+                action: CliAction::Uninstall
+            }
         );
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "--uninstall-desktop".to_string()]),
-            CliAction::Uninstall
+            StartupOptions {
+                action: CliAction::Uninstall
+            }
         );
 
         // Arbitrary args (like opening a file or directory path) -> RunApp
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "notes.md".to_string()]),
-            CliAction::RunApp
+            StartupOptions {
+                action: CliAction::RunApp
+            }
         );
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "/home/user/vault".to_string()]),
-            CliAction::RunApp
+            StartupOptions {
+                action: CliAction::RunApp
+            }
         );
     }
 }

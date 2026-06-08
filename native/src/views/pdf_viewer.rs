@@ -2,7 +2,7 @@ use iced::widget::{Space, button, checkbox, column, container, row, stack, text,
 use iced::{Alignment, Color, Element, Length, Renderer, Theme};
 
 use crate::features::pdf::view_model::PdfLayout;
-use crate::messages::Message;
+use crate::messages::{Message, PdfMessage, SearchMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 use crate::views::interactive_pdf::{
@@ -111,7 +111,7 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::PdfInsertAnnotationLink(id)] if id == "ann-1"
+            [Message::Pdf(PdfMessage::InsertAnnotationLink(id))] if id == "ann-1"
         ));
     }
 
@@ -125,7 +125,10 @@ mod tests {
             .expect("selection Cite button should exist");
 
         let messages = ui.into_messages().collect::<Vec<_>>();
-        assert!(matches!(messages.as_slice(), [Message::PdfInsertQuoteLink]));
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::Pdf(PdfMessage::InsertQuoteLink)]
+        ));
     }
 
     #[test]
@@ -189,7 +192,8 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::PdfOpenCompanionNote(vault_path)] if vault_path == "notes/paper.md"
+            [Message::Pdf(PdfMessage::OpenCompanionNote(vault_path))]
+                if vault_path == "notes/paper.md"
         ));
     }
 
@@ -291,8 +295,8 @@ pub(crate) fn search_bar<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     let search_input = text_input("Find in PDF", query)
         .id(iced::advanced::widget::Id::new(PDF_SEARCH_INPUT_ID))
-        .on_input(Message::SearchQueryChanged)
-        .on_submit(Message::SearchNext)
+        .on_input(|query| Message::Search(SearchMessage::QueryChanged(query)))
+        .on_submit(Message::Search(SearchMessage::Next))
         .padding([8, 12])
         .size(14)
         .width(Length::Fill);
@@ -303,18 +307,18 @@ pub(crate) fn search_bar<'a>(
             search_input,
             checkbox(regex)
                 .label("Regex")
-                .on_toggle(Message::SearchRegexToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::RegexToggled(value)))
                 .size(14),
             checkbox(match_case)
                 .label("Case")
-                .on_toggle(Message::SearchMatchCaseToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::MatchCaseToggled(value)))
                 .size(14),
             button(icons::view(Icon::ChevronUp, theme::text_muted(), 16.0))
-                .on_press(Message::SearchPrevious)
+                .on_press(Message::Search(SearchMessage::Previous))
                 .padding(8)
                 .style(button::text),
             button(icons::view(Icon::ChevronDown, theme::text_muted(), 16.0))
-                .on_press(Message::SearchNext)
+                .on_press(Message::Search(SearchMessage::Next))
                 .padding(8)
                 .style(button::text),
             text(match active_match_index {
@@ -334,7 +338,7 @@ pub(crate) fn search_bar<'a>(
             .size(12)
             .color(theme::text_muted()),
             button(icons::view(Icon::X, theme::text_muted(), 16.0))
-                .on_press(Message::SearchClose)
+                .on_press(Message::Search(SearchMessage::Close))
                 .padding(8)
                 .style(button::text),
         ]
@@ -865,11 +869,13 @@ pub(crate) fn view_continuous<'a>(
                 page_links,
                 rotation,
                 move |x, y, modifiers| Message::PdfLeftClicked(page_index, x, y, modifiers),
-                move |x, y, absolute_pos| Message::PdfRightClicked {
-                    page_index,
-                    x,
-                    y,
-                    absolute_pos,
+                move |x, y, absolute_pos| {
+                    Message::Pdf(PdfMessage::RightClicked {
+                        page_index,
+                        x,
+                        y,
+                        absolute_pos,
+                    })
                 },
                 move |page, anchor, focus| Message::PdfSelectionChanged(page, anchor, focus),
                 move |page, anchor, focus| Message::PdfSelectionFinished(page, anchor, focus),

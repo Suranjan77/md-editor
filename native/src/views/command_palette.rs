@@ -405,8 +405,10 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::CommandPaletteCommandClicked(
-                Shortcut::InsertPdfQuote
+            [Message::Overlay(
+                crate::messages::OverlayMessage::CommandPaletteCommandClicked(
+                    Shortcut::InsertPdfQuote
+                )
             )]
         ));
     }
@@ -442,8 +444,10 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::CommandPaletteCommandClicked(
-                Shortcut::InsertPdfHighlight
+            [Message::Overlay(
+                crate::messages::OverlayMessage::CommandPaletteCommandClicked(
+                    Shortcut::InsertPdfHighlight
+                )
             )]
         ));
     }
@@ -459,7 +463,9 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::CommandPaletteCommandClicked(Shortcut::NavBack)]
+            [Message::Overlay(
+                crate::messages::OverlayMessage::CommandPaletteCommandClicked(Shortcut::NavBack)
+            )]
         ));
 
         let commands = get_commands();
@@ -470,7 +476,9 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::CommandPaletteCommandClicked(Shortcut::NavForward)]
+            [Message::Overlay(
+                crate::messages::OverlayMessage::CommandPaletteCommandClicked(Shortcut::NavForward)
+            )]
         ));
     }
 

@@ -21,6 +21,12 @@ impl From<u32> for PageIndex {
     }
 }
 
+impl From<u16> for PageIndex {
+    fn from(page_index: u16) -> Self {
+        Self::new(u32::from(page_index))
+    }
+}
+
 impl From<PageIndex> for u32 {
     fn from(page_index: PageIndex) -> Self {
         page_index.get()

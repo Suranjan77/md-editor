@@ -1,5 +1,42 @@
-use crate::messages::CitationItem;
+use crate::messages::{CitationItem, Message, Shortcut};
 use crate::views::modals::ModalType;
+
+#[derive(Debug, Clone)]
+pub(crate) enum OverlayMessage {
+    CommandPaletteOpen,
+    CommandPaletteQueryChanged(String),
+    CommandPaletteCommandClicked(Shortcut),
+    NameModalInputChanged(String),
+    NameModalSubmit(String),
+    NameModalSubmitCurrent,
+    NameModalCancel,
+    ToastHide,
+}
+
+#[allow(non_snake_case, non_upper_case_globals)]
+impl Message {
+    pub(crate) const CommandPaletteOpen: Self = Self::Overlay(OverlayMessage::CommandPaletteOpen);
+    pub(crate) const NameModalSubmitCurrent: Self =
+        Self::Overlay(OverlayMessage::NameModalSubmitCurrent);
+    pub(crate) const NameModalCancel: Self = Self::Overlay(OverlayMessage::NameModalCancel);
+    pub(crate) const ToastHide: Self = Self::Overlay(OverlayMessage::ToastHide);
+
+    pub(crate) fn CommandPaletteQueryChanged(query: String) -> Self {
+        Self::Overlay(OverlayMessage::CommandPaletteQueryChanged(query))
+    }
+
+    pub(crate) fn CommandPaletteCommandClicked(shortcut: Shortcut) -> Self {
+        Self::Overlay(OverlayMessage::CommandPaletteCommandClicked(shortcut))
+    }
+
+    pub(crate) fn NameModalInputChanged(input: String) -> Self {
+        Self::Overlay(OverlayMessage::NameModalInputChanged(input))
+    }
+
+    pub(crate) fn NameModalSubmit(input: String) -> Self {
+        Self::Overlay(OverlayMessage::NameModalSubmit(input))
+    }
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct OverlayState {

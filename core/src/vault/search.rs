@@ -63,8 +63,12 @@ pub fn search_vault_unified_query(
 
     let is_linked = |path: &str, active_path: &str| -> bool {
         if let (Some(index), Some(root)) = (index_locked.as_ref(), vault_root) {
-            let path = resolve_vault_path(root, path);
-            let active_path = resolve_vault_path(root, active_path);
+            let (Ok(path), Ok(active_path)) = (
+                resolve_vault_path(root, path),
+                resolve_vault_path(root, active_path),
+            ) else {
+                return false;
+            };
             index
                 .outgoing
                 .get(&path)
@@ -505,7 +509,8 @@ mod tests {
         let root = unique_temp_dir("search_unified_test");
         fs::create_dir_all(&root).unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         let note_content = "# Welcome to the Vault\nThis is a test note about Rust programming.\n";
@@ -562,7 +567,8 @@ mod tests {
         let root = unique_temp_dir("search_query_model_test");
         fs::create_dir_all(&root).unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         let note_content = "# QueryModel\nNeedle appears in markdown.\n";
@@ -646,7 +652,8 @@ mod tests {
         let root = unique_temp_dir("search_preview_test");
         fs::create_dir_all(&root).unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         let note_content = format!(
@@ -672,7 +679,8 @@ mod tests {
 
     #[test]
     fn cached_pdf_text_search_returns_page_results() {
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         state
             .save_pdf_page_text("paper.pdf", 2, "cached needle content")
             .unwrap();
@@ -692,7 +700,8 @@ mod tests {
         let root = unique_temp_dir("pdf_cache_freshness");
         fs::create_dir_all(&root).unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         let pdf_path = "sample.pdf";

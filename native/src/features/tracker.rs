@@ -1,9 +1,55 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use iced::widget::text_editor;
 
-use crate::messages::TrackerTab;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrackerTab {
+    Dashboard,
+    Log,
+    Projects,
+    Gates,
+    Reading,
+    Config,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum TrackerMessage {
+    Toggle,
+    Start,
+    Stop,
+    TabSelected(TrackerTab),
+    ProjectStatusChanged(String, String),
+    GateToggled(String, usize),
+    ReadingToggled(String, usize),
+    ConfigEdited(iced::widget::text_editor::Action),
+    ConfigSave,
+    ManualDateChanged(String),
+    ManualHoursChanged(String),
+    ManualNotesChanged(String),
+    ManualAdd,
+    SessionDelete(i64),
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum TrackerEffect {
+    None,
+    PersistShellAndReload,
+    ShowToast(&'static str),
+    SaveElapsed(Duration),
+    PersistKv {
+        key: String,
+        value: String,
+    },
+    SaveConfig,
+    AddManualSession {
+        date: String,
+        hours: f32,
+        notes: Option<String>,
+    },
+    InvalidManualHours,
+    DeleteSession(i64),
+}
 
 #[derive(Debug)]
 pub(crate) struct TrackerState {
@@ -66,6 +112,83 @@ impl TrackerState {
     pub(crate) fn edit_config(&mut self, action: text_editor::Action) {
         self.config_content.perform(action);
         self.config_json = self.config_content.text();
+    }
+
+    pub(crate) fn update(&mut self, message: TrackerMessage, now: Instant) -> TrackerEffect {
+        match message {
+            TrackerMessage::Toggle => {
+                self.toggle_visibility();
+                TrackerEffect::PersistShellAndReload
+            }
+            TrackerMessage::Start => {
+                self.start(now);
+                TrackerEffect::ShowToast("Study timer started")
+            }
+            TrackerMessage::Stop => self
+                .stop()
+                .map(|started_at| {
+                    TrackerEffect::SaveElapsed(now.saturating_duration_since(started_at))
+                })
+                .unwrap_or(TrackerEffect::None),
+            TrackerMessage::TabSelected(tab) => {
+                self.tab = tab;
+                TrackerEffect::None
+            }
+            TrackerMessage::ProjectStatusChanged(id, status) => TrackerEffect::PersistKv {
+                key: format!("proj_{id}"),
+                value: status,
+            },
+            TrackerMessage::GateToggled(gate_id, item_idx) => {
+                self.toggle_kv_effect(format!("gate_{gate_id}_{item_idx}"))
+            }
+            TrackerMessage::ReadingToggled(section, item_idx) => {
+                self.toggle_kv_effect(format!("read_{section}_{item_idx}"))
+            }
+            TrackerMessage::ConfigEdited(action) => {
+                self.edit_config(action);
+                TrackerEffect::None
+            }
+            TrackerMessage::ConfigSave => TrackerEffect::SaveConfig,
+            TrackerMessage::ManualDateChanged(value) => {
+                self.manual_date = value;
+                TrackerEffect::None
+            }
+            TrackerMessage::ManualHoursChanged(value) => {
+                self.manual_hours = value;
+                TrackerEffect::None
+            }
+            TrackerMessage::ManualNotesChanged(value) => {
+                self.manual_notes = value;
+                TrackerEffect::None
+            }
+            TrackerMessage::ManualAdd => {
+                let Ok(hours) = self.manual_hours.trim().parse::<f32>() else {
+                    return TrackerEffect::InvalidManualHours;
+                };
+                if hours <= 0.0 {
+                    return TrackerEffect::InvalidManualHours;
+                }
+                TrackerEffect::AddManualSession {
+                    date: self.manual_date.trim().to_string(),
+                    hours,
+                    notes: (!self.manual_notes.trim().is_empty())
+                        .then(|| self.manual_notes.trim().to_string()),
+                }
+            }
+            TrackerMessage::SessionDelete(id) => TrackerEffect::DeleteSession(id),
+        }
+    }
+
+    fn toggle_kv_effect(&self, key: String) -> TrackerEffect {
+        let value = if self.kv.get(&key).is_some_and(|value| value == "true") {
+            "false"
+        } else {
+            "true"
+        };
+        TrackerEffect::PersistKv {
+            key,
+            value: value.to_string(),
+        }
     }
 }
 
@@ -149,5 +272,51 @@ mod tests {
 
         assert!(!state.visible);
         assert_eq!(state.manual_hours, "2");
+    }
+
+    #[test]
+    fn reducer_emits_persistence_effect_for_kv_toggle() {
+        let mut state = state();
+        state
+            .kv
+            .insert("gate_review_2".to_string(), "true".to_string());
+
+        let effect = state.update(
+            TrackerMessage::GateToggled("review".to_string(), 2),
+            Instant::now(),
+        );
+
+        assert_eq!(
+            effect,
+            TrackerEffect::PersistKv {
+                key: "gate_review_2".to_string(),
+                value: "false".to_string(),
+            }
+        );
+        assert_eq!(
+            state.kv.get("gate_review_2").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn reducer_validates_manual_hours_before_emitting_effect() {
+        let mut state = state();
+        state.manual_hours = "0".to_string();
+        assert_eq!(
+            state.update(TrackerMessage::ManualAdd, Instant::now()),
+            TrackerEffect::InvalidManualHours
+        );
+
+        state.manual_hours = "1.25".to_string();
+        state.manual_notes = "Review".to_string();
+        assert_eq!(
+            state.update(TrackerMessage::ManualAdd, Instant::now()),
+            TrackerEffect::AddManualSession {
+                date: "2026-06-07".to_string(),
+                hours: 1.25,
+                notes: Some("Review".to_string()),
+            }
+        );
     }
 }

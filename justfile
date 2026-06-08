@@ -18,4 +18,7 @@ architecture:
 metrics:
     ./scripts/architecture-metrics.sh
 
+benchmark:
+    ./scripts/refactor-benchmark.sh
+
 check: architecture fmt-check lint test

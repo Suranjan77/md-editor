@@ -2,7 +2,7 @@ use iced::widget::tooltip::Position;
 use iced::widget::{Space, button, container, row, text, tooltip};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, SearchMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -173,7 +173,7 @@ pub(crate) fn view<'a>(
 
     let search_button = tooltip(
         button(icons::view(Icon::Search, theme::text_muted(), 18.0))
-            .on_press(Message::GlobalSearchOpen)
+            .on_press(Message::Search(SearchMessage::Open))
             .padding(8)
             .style(action_button_style(false)),
         "Global Search",
@@ -199,7 +199,9 @@ pub(crate) fn view<'a>(
             },
             18.0,
         ))
-        .on_press(Message::TrackerToggle)
+        .on_press(Message::Tracker(
+            crate::features::tracker::TrackerMessage::Toggle,
+        ))
         .padding(8)
         .style(action_button_style(tracker_visible)),
         "Study Tracker",

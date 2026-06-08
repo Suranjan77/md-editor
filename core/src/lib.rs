@@ -8,6 +8,7 @@ pub mod tracker;
 pub mod types;
 pub mod vault;
 
+pub use database::DatabaseError;
 pub use state::AppState;
 
 #[cfg(test)]

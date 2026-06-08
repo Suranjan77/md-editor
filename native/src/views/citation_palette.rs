@@ -137,8 +137,8 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::CitationPaletteChoose(
-                CitationItem::Selection { .. }
+            [Message::Citation(
+                crate::messages::CitationMessage::PaletteChoose(CitationItem::Selection { .. })
             )]
         ));
     }
@@ -159,8 +159,8 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::CitationPaletteChoose(
-                CitationItem::Annotation { .. }
+            [Message::Citation(
+                crate::messages::CitationMessage::PaletteChoose(CitationItem::Annotation { .. })
             )]
         ));
     }
@@ -181,8 +181,8 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::CitationPaletteChoose(
-                CitationItem::SearchHit { .. }
+            [Message::Citation(
+                crate::messages::CitationMessage::PaletteChoose(CitationItem::SearchHit { .. })
             )]
         ));
     }
