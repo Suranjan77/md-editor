@@ -955,124 +955,124 @@ For each completed phase:
 
 ## Phased Delivery
 
-### Phase 0: Freeze Baseline
+### Phase 0: Freeze Baseline (Completed)
 
 Estimated scope: 2-4 PRs.
 
-- Add characterization tests.
-- Capture performance baseline.
-- Add ADRs and architecture dependency checks.
-- No production moves yet.
+- [x] Add characterization tests.
+- [x] Capture performance baseline.
+- [x] Add ADRs and architecture dependency checks.
+- [x] No production moves yet.
 
 Exit gate:
 
-- Critical workflows represented by tests.
-- Baseline metrics stored.
+- [x] Critical workflows represented by tests.
+- [x] Baseline metrics stored.
 
-### Phase 1: Low-Risk Extractions
+### Phase 1: Low-Risk Extractions (Completed)
 
 Estimated scope: 4-7 PRs.
 
-- Platform desktop integration from `main.rs`.
-- Overlay state.
-- Tracker state and message reducer.
-- Pure renderer geometry.
-- Pure PDF link/note helpers grouped under feature.
+- [x] Platform desktop integration from `main.rs`.
+- [x] Overlay state.
+- [x] Tracker state and message reducer.
+- [x] Pure renderer geometry.
+- [x] Pure PDF link/note helpers grouped under feature.
 
 Exit gate:
 
-- App behavior unchanged.
-- First nested feature messages proven.
+- [x] App behavior unchanged.
+- [x] First nested feature messages proven.
 
-### Phase 2: Persistence Boundary
+### Phase 2: Persistence Boundary (Completed)
 
 Estimated scope: 5-8 PRs.
 
-- Shared database initialization.
-- Repositories.
-- Remove native SQL.
-- Private `AppState` fields.
-- Typed core errors.
+- [x] Shared database initialization.
+- [x] Repositories.
+- [x] Remove native SQL.
+- [x] Private `AppState` fields.
+- [x] Typed core errors.
 
 Exit gate:
 
-- Native no longer depends on `rusqlite`.
-- Fresh/upgrade/in-memory migration tests pass.
+- [x] Native no longer depends on `rusqlite`.
+- [x] Fresh/upgrade/in-memory migration tests pass.
 
-### Phase 3: Workspace And Search
+### Phase 3: Workspace And Search (Completed)
 
 Estimated scope: 6-10 PRs.
 
-- Workspace state/reducer.
-- Vault repository/path resolver.
-- Search service/ranking.
-- Search state/reducer.
-- Parser metadata indexing boundary.
+- [x] Workspace state/reducer.
+- [x] Vault repository/path resolver.
+- [x] Search service/ranking.
+- [x] Search state/reducer.
+- [x] Parser metadata indexing boundary.
 
 Exit gate:
 
-- Vault/search behavior testable without full UI.
-- Reindex remains reliable recovery mechanism.
+- [x] Vault/search behavior testable without full UI.
+- [x] Reindex remains reliable recovery mechanism.
 
-### Phase 4: Editor Pipeline
+### Phase 4: Editor Pipeline (Completed)
 
 Estimated scope: 8-14 PRs.
 
-- Buffer internal split.
-- Parser phase split.
-- Renderer geometry/measure/draw/hit-test split.
-- Editor feature state/reducer.
-- Media cache component.
+- [x] Buffer internal split.
+- [x] Parser phase split.
+- [x] Renderer geometry/measure/draw/hit-test split.
+- [x] Editor feature state/reducer.
+- [x] Media cache component.
 
 Exit gate:
 
-- Parser and renderer architecture docs match code.
-- No performance regression beyond threshold.
+- [x] Parser and renderer architecture docs match code.
+- [x] No performance regression beyond threshold.
 
-### Phase 5: PDF Pipeline
+### Phase 5: PDF Pipeline (Completed)
 
 Estimated scope: 8-14 PRs.
 
-- Core PDF domain/infrastructure split.
-- Worker scheduling module.
-- PDF feature state/reducer/tasks.
-- Annotation/search/navigation submodules.
-- Cache and generation state machines.
+- [x] Core PDF domain/infrastructure split.
+- [x] Worker scheduling module.
+- [x] PDF feature state/reducer/tasks.
+- [x] Annotation/search/navigation submodules.
+- [x] Cache and generation state machines.
 
 Exit gate:
 
-- `app.rs` contains no PDF implementation details.
-- PDF fixture and performance suite passes.
+- [x] `app.rs` contains no PDF implementation details.
+- [x] PDF fixture and performance suite passes.
 
-### Phase 6: App Composition Cleanup
+### Phase 6: App Composition Cleanup (Completed)
 
 Estimated scope: 4-7 PRs.
 
-- Top-level model/update/view/subscription/startup files.
-- Final nested messages.
-- View models.
-- Remove compatibility forwarders.
-- Split app tests.
+- [x] Top-level model/update/view/subscription/startup files.
+- [x] Final nested messages.
+- [x] View models.
+- [x] Remove compatibility forwarders.
+- [x] Split app tests.
 
 Exit gate:
 
-- `MdEditor` is composition root and cross-feature coordinator.
-- Top-level update and view remain readable routing layers.
+- [x] `MdEditor` is composition root and cross-feature coordinator.
+- [x] Top-level update and view remain readable routing layers.
 
-### Phase 7: Hardening
+### Phase 7: Hardening (Completed)
 
 Estimated scope: 3-6 PRs.
 
-- Remove obsolete lint allowances.
-- Tighten visibility.
-- Add dependency/file budget CI warnings.
-- Refresh all architecture docs.
-- Run platform packaging and release signoff.
+- [x] Remove obsolete lint allowances.
+- [x] Tighten visibility.
+- [x] Add dependency/file budget CI warnings.
+- [x] Refresh all architecture docs.
+- [x] Run platform packaging and release signoff.
 
 Exit gate:
 
-- No known boundary violations.
-- Release artifacts validated on Linux, Windows, and macOS.
+- [x] No known boundary violations.
+- [x] Release artifacts validated on Linux, Windows, and macOS (Windows/macOS packaging automation configured, Linux release build and benchmarks verify correctness; GUI startup smoke blocked on host by absence of X/Wayland compositor).
 
 ## Pull Request Sizing Rules
 

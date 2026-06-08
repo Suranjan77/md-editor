@@ -1,7 +1,83 @@
 use rusqlite::Connection;
+use std::fmt;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
 
+pub(crate) mod pdf_repository;
+pub(crate) mod search_repository;
 pub(crate) mod settings_repository;
 pub(crate) mod tracker_repository;
+
+#[derive(Debug)]
+pub struct DatabaseError {
+    operation: &'static str,
+    path: Option<PathBuf>,
+    detail: String,
+}
+
+impl DatabaseError {
+    fn open(path: Option<&Path>, error: rusqlite::Error) -> Self {
+        Self {
+            operation: "open database",
+            path: path.map(Path::to_path_buf),
+            detail: error.to_string(),
+        }
+    }
+
+    fn initialize(path: Option<&Path>, detail: String) -> Self {
+        Self {
+            operation: "initialize database",
+            path: path.map(Path::to_path_buf),
+            detail,
+        }
+    }
+}
+
+impl fmt::Display for DatabaseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(path) = &self.path {
+            write!(
+                formatter,
+                "{} at {}: {}",
+                self.operation,
+                path.display(),
+                self.detail
+            )
+        } else {
+            write!(formatter, "{}: {}", self.operation, self.detail)
+        }
+    }
+}
+
+impl std::error::Error for DatabaseError {}
+
+pub(crate) struct Database {
+    connection: Connection,
+}
+
+impl Database {
+    pub(crate) fn open(path: &Path) -> Result<Self, DatabaseError> {
+        let connection =
+            Connection::open(path).map_err(|error| DatabaseError::open(Some(path), error))?;
+        initialize(&connection).map_err(|detail| DatabaseError::initialize(Some(path), detail))?;
+        Ok(Self { connection })
+    }
+
+    pub(crate) fn open_in_memory() -> Result<Self, DatabaseError> {
+        let connection =
+            Connection::open_in_memory().map_err(|error| DatabaseError::open(None, error))?;
+        initialize(&connection).map_err(|detail| DatabaseError::initialize(None, detail))?;
+        Ok(Self { connection })
+    }
+}
+
+impl Deref for Database {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.connection
+    }
+}
 
 const CREATE_SETTINGS: &str = "CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,

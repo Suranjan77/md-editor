@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::database::search_repository::SearchRepository;
 use crate::file_index::FileIndex;
 use crate::state::AppState;
 use crate::types::{BacklinkItem, BacklinkTarget, FileEntry};
@@ -40,7 +41,7 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
         let md_files = list_all_md_files(&root)?;
 
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.execute("DELETE FROM file_search", []).ok();
+        SearchRepository::new(&db).clear_markdown().ok();
 
         for file_path in md_files {
             if let Ok(content) = read_file(&file_path) {
@@ -50,11 +51,9 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
                     .unwrap_or(&file_path)
                     .to_string_lossy()
                     .to_string();
-                db.execute(
-                    "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
-                    rusqlite::params![&rel_path, &content],
-                )
-                .ok();
+                SearchRepository::new(&db)
+                    .upsert_markdown(&rel_path, &content)
+                    .ok();
             }
         }
     }
@@ -66,7 +65,7 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
 pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path(vault_root, path)?;
 
     if abs_path
         .extension()
@@ -85,23 +84,16 @@ pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
 pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path(vault_root, path)?;
     write_file(&abs_path, content)?;
 
     let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
     index.update_file(&abs_path, content);
 
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.execute(
-        "DELETE FROM file_search WHERE path = ?1",
-        rusqlite::params![path],
-    )
-    .ok();
-    db.execute(
-        "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
-        rusqlite::params![path, content],
-    )
-    .ok();
+    SearchRepository::new(&db)
+        .upsert_markdown(path, content)
+        .ok();
 
     Ok(())
 }
@@ -115,23 +107,16 @@ pub fn save_file_with_markdown_link_targets(
 ) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path(vault_root, path)?;
     write_file(&abs_path, content)?;
 
     let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
     index.update_file_targets(&abs_path, markdown_link_targets.iter().map(String::as_str));
 
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.execute(
-        "DELETE FROM file_search WHERE path = ?1",
-        rusqlite::params![path],
-    )
-    .ok();
-    db.execute(
-        "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
-        rusqlite::params![path, content],
-    )
-    .ok();
+    SearchRepository::new(&db)
+        .upsert_markdown(path, content)
+        .ok();
 
     Ok(())
 }
@@ -140,7 +125,7 @@ pub fn save_file_with_markdown_link_targets(
 pub fn create_file(state: &AppState, path: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path(vault_root, path)?;
     if abs_path.exists() {
         return Err(format!("File already exists: {}", abs_path.display()));
     }
@@ -151,7 +136,7 @@ pub fn create_file(state: &AppState, path: &str) -> Result<(), String> {
 pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path(vault_root, path)?;
     if abs_path.exists() {
         return Err(format!("Directory already exists: {}", abs_path.display()));
     }
@@ -165,18 +150,14 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
         let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
         vault_root.as_ref().ok_or("No vault root set")?.clone()
     };
-    let abs_old = resolve_vault_path(&vault_root_path, old_path);
-    let abs_new = resolve_vault_path(&vault_root_path, new_path);
+    let abs_old = resolve_vault_path(&vault_root_path, old_path)?;
+    let abs_new = resolve_vault_path(&vault_root_path, new_path)?;
 
     if abs_old.is_file() && is_markdown_path(&abs_old) {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         index.remove_file(&abs_old);
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.execute(
-            "DELETE FROM file_search WHERE path = ?1",
-            rusqlite::params![old_path],
-        )
-        .ok();
+        SearchRepository::new(&db).delete_markdown(old_path).ok();
     }
 
     if abs_new.exists() {
@@ -193,16 +174,9 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
         index.update_file(&abs_new, &content);
 
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.execute(
-            "DELETE FROM file_search WHERE path = ?1",
-            rusqlite::params![new_path],
-        )
-        .ok();
-        db.execute(
-            "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
-            rusqlite::params![new_path, &content],
-        )
-        .ok();
+        SearchRepository::new(&db)
+            .upsert_markdown(new_path, &content)
+            .ok();
     }
 
     repair_rename_references(state, &vault_root_path, old_path, new_path)?;
@@ -214,17 +188,13 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
 pub fn delete_entry(state: &AppState, path: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path(vault_root, path)?;
 
     if abs_path.is_file() {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         index.remove_file(&abs_path);
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.execute(
-            "DELETE FROM file_search WHERE path = ?1",
-            rusqlite::params![path],
-        )
-        .ok();
+        SearchRepository::new(&db).delete_markdown(path).ok();
     }
 
     if abs_path.is_dir() {
@@ -247,7 +217,7 @@ pub fn list_vault(state: &AppState) -> Result<Vec<FileEntry>, String> {
 pub fn get_backlinks(state: &AppState, path: &str) -> Result<Vec<String>, String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path(vault_root, path)?;
 
     let index = state.file_index.lock().map_err(|e| e.to_string())?;
     let backlinks = index.get_backlinks(&abs_path);
@@ -269,7 +239,7 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
     if lower_path.ends_with(".pdf") {
         // PDF Case:
         // 1. Get incoming backlinks from FileIndex (markdown files linking to this PDF)
-        let abs_path = resolve_vault_path(vault_root, path);
+        let abs_path = resolve_vault_path(vault_root, path)?;
         let index = state.file_index.lock().map_err(|e| e.to_string())?;
         let backlinks = index.get_backlinks(&abs_path);
         for bl in backlinks {
@@ -320,7 +290,7 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
     } else {
         // Markdown Case:
         // 1. Standard incoming backlinks from FileIndex
-        let abs_path = resolve_vault_path(vault_root, path);
+        let abs_path = resolve_vault_path(vault_root, path)?;
         let index = state.file_index.lock().map_err(|e| e.to_string())?;
         let backlinks = index.get_backlinks(&abs_path);
         for bl in backlinks {
@@ -372,7 +342,7 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
 pub fn read_vault_image(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path(vault_root, path)?;
     read_image(&abs_path)
 }
 
@@ -389,13 +359,34 @@ mod tests {
     }
 
     #[test]
+    fn file_operations_reject_vault_traversal() {
+        let root = unique_temp_dir("reject_traversal");
+        fs::create_dir_all(&root).expect("vault directory should exist");
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
+        set_vault_root(
+            &state,
+            root.to_str().expect("temporary path should be valid UTF-8"),
+        )
+        .expect("vault should open");
+
+        assert!(create_file(&state, "../outside.md").is_err());
+        assert!(save_file(&state, "notes/../../outside.md", "blocked").is_err());
+        assert!(open_file(&state, "../outside.md").is_err());
+        assert!(delete_entry(&state, "../outside.md").is_err());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn rename_markdown_reindexes_links_and_search_under_new_path() {
         let root = unique_temp_dir("rename_reindex");
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("source.md"), "Link to [[target]]. UniqueNeedle").unwrap();
         fs::write(root.join("target.md"), "Target").unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         rename_entry(&state, "source.md", "renamed.md").unwrap();
@@ -438,7 +429,8 @@ mod tests {
         let note_content = "Check [pdf annotation](pdf://subfolder/document.pdf?page=2&annotation=ann-123) and raw link pdf://subfolder/document.pdf.";
         fs::write(root.join(note_path), note_content).unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         // Save doc metadata in db
@@ -514,7 +506,8 @@ mod tests {
         let root = unique_temp_dir("save_parser_targets");
         fs::create_dir_all(&root).unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         save_file_with_markdown_link_targets(

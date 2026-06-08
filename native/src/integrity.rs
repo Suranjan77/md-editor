@@ -176,7 +176,9 @@ pub(crate) fn check_vault_integrity(
 
     // 5. Check links in markdown files
     for md_file in &existing_mds {
-        let abs_md_path = md_editor_core::vault::resolve_vault_path(vault_root, md_file);
+        let Ok(abs_md_path) = md_editor_core::vault::resolve_vault_path(vault_root, md_file) else {
+            continue;
+        };
         let content = match std::fs::read_to_string(&abs_md_path) {
             Ok(c) => c,
             Err(_) => continue,
@@ -278,7 +280,8 @@ mod tests {
         let root = unique_temp_dir("integrity_test");
         std::fs::create_dir_all(&root).unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         // 1. Create a markdown note with:
@@ -361,7 +364,8 @@ mod tests {
         let root = unique_temp_dir("integrity_moved_test");
         std::fs::create_dir_all(&root).unwrap();
 
-        let state = AppState::new_in_memory();
+        let state =
+            AppState::try_new_in_memory().expect("in-memory application state should initialize");
         md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         // Create source.md linking to "missing.pdf" and "missing-note.md"

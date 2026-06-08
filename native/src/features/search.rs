@@ -2,6 +2,26 @@ use crate::messages::SearchWrapStatus;
 
 pub(crate) type EditorMatch = md_editor_core::types::SearchResult;
 
+#[derive(Debug, Clone)]
+pub(crate) enum SearchMessage {
+    Open,
+    Close,
+    QueryChanged(String),
+    ReplaceChanged(String),
+    RegexToggled(bool),
+    MatchCaseToggled(bool),
+    SourceToggled(md_editor_core::types::UnifiedSearchSource, bool),
+    Previous,
+    Next,
+    ReplaceAll,
+    Replace,
+    UnifiedMatchesFound(u64, Vec<md_editor_core::types::UnifiedSearchResult>),
+    UnifiedPdfMatchesFound(u64, md_editor_core::types::UnifiedPdfTextSearchResultBatch),
+    UnifiedFinished(u64, Result<(), String>),
+    UnifiedResultClicked(md_editor_core::types::UnifiedSearchResult),
+    PdfTextIndexFinished(Result<usize, String>),
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct EditorSearchState {
     pub(crate) query: String,
@@ -79,6 +99,38 @@ pub(crate) struct SearchState {
     pub(crate) global: GlobalSearchState,
     pub(crate) pdf_error: Option<String>,
     pub(crate) pdf_active_id: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchLocalEffect {
+    None,
+    RestartVisibleSearch,
+}
+
+impl SearchState {
+    pub(crate) fn update_local(&mut self, message: &SearchMessage) -> SearchLocalEffect {
+        match message {
+            SearchMessage::ReplaceChanged(replace) => {
+                self.editor.replace = replace.clone();
+                SearchLocalEffect::None
+            }
+            SearchMessage::SourceToggled(source, enabled) => {
+                if *enabled {
+                    if !self.global.sources.contains(source) {
+                        self.global.sources.push(*source);
+                    }
+                } else {
+                    self.global.sources.retain(|item| item != source);
+                }
+                if self.visible {
+                    SearchLocalEffect::RestartVisibleSearch
+                } else {
+                    SearchLocalEffect::None
+                }
+            }
+            _ => SearchLocalEffect::None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -188,5 +240,20 @@ mod tests {
         assert!(state.page_index.is_empty());
         assert!(state.active_index.is_none());
         assert!(!state.searching);
+    }
+
+    #[test]
+    fn local_reducer_updates_sources_and_requests_visible_restart() {
+        let mut state = SearchState {
+            visible: true,
+            ..SearchState::default()
+        };
+        let source = md_editor_core::types::UnifiedSearchSource::PdfContent;
+
+        assert_eq!(
+            state.update_local(&SearchMessage::SourceToggled(source, false)),
+            SearchLocalEffect::RestartVisibleSearch
+        );
+        assert!(!state.global.sources.contains(&source));
     }
 }

@@ -1,7 +1,7 @@
 use iced::widget::{Space, button, column, container, image, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, WorkspaceMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -15,7 +15,7 @@ pub(crate) fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Them
         .spacing(8)
         .align_y(Alignment::Center),
     )
-    .on_press(Message::OpenVaultDialog)
+    .on_press(Message::Workspace(WorkspaceMessage::OpenVaultDialog))
     .padding([12, 24])
     .style(|theme: &Theme, status: button::Status| {
         let mut style = button::primary(theme, status);
@@ -37,7 +37,7 @@ pub(crate) fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Them
         .spacing(8)
         .align_y(Alignment::Center),
     )
-    .on_press(Message::CreateVaultDialog)
+    .on_press(Message::Workspace(WorkspaceMessage::CreateVaultDialog))
     .padding([12, 24])
     .style(|theme: &Theme, status: button::Status| {
         let mut style = button::text(theme, status);
@@ -84,7 +84,9 @@ pub(crate) fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Them
         for vault_path in recent_vaults {
             recent_list = recent_list.push(
                 button(text(vault_path).size(13).color(theme::text_primary()))
-                    .on_press(Message::OpenRecentVault(vault_path.clone()))
+                    .on_press(Message::Workspace(WorkspaceMessage::OpenRecentVault(
+                        vault_path.clone(),
+                    )))
                     .padding([6, 10])
                     .style(button::text),
             );
@@ -139,7 +141,10 @@ mod tests {
             .expect("package version should render");
 
         let messages = ui.into_messages().collect::<Vec<_>>();
-        assert!(matches!(messages.as_slice(), [Message::CreateVaultDialog]));
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::Workspace(WorkspaceMessage::CreateVaultDialog)]
+        ));
     }
 
     #[test]
@@ -153,7 +158,7 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::OpenRecentVault(path)] if path == "/vaults/research"
+            [Message::Workspace(WorkspaceMessage::OpenRecentVault(path))] if path == "/vaults/research"
         ));
     }
 }

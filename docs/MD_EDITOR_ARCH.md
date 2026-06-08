@@ -6,10 +6,12 @@ This document describes the markdown editor pipeline in `md-editor-native`: text
 
 The editor is split into four native modules:
 
-1. `buffer.rs`: owns mutable document text, cursor state, selection state, undo/redo transactions, and editor commands.
+1. `native/src/editor/buffer/`: owns mutable document text, cursor state,
+   selection state, undo/redo transactions, and editor commands.
 2. `native/src/editor/parser`: parses markdown text into `StyledLine` and `StyledSpan` values.
 3. `layout_tree.rs` and `layout_cache.rs`: track measured line heights and cache expensive layout measurements.
-4. `renderer.rs`: implements the custom iced editor widget, including layout, drawing, hit testing, selection painting, and block-level horizontal scrolling.
+4. `native/src/editor/renderer/`: implements custom Iced widget plumbing,
+   measurement, draw, hit testing, state, geometry, and block scrollbars.
 
 ```mermaid
 graph TD
@@ -20,7 +22,10 @@ graph TD
     C -->|visible range| F[Draw pass]
 ```
 
-`app.rs` coordinates the pipeline. It owns `highlighted_lines`, image and math render caches, scroll state, and background tasks.
+`EditorFeatureState` in `native/src/features/editor.rs` owns highlighted
+projection, image/math caches, scroll state, and local reducer transitions.
+`native/src/app/effects.rs` builds background tasks; `app/update.rs` coordinates
+cross-feature effects.
 
 ## Text Buffer
 
@@ -62,7 +67,8 @@ Small documents are highlighted synchronously after text changes. Large document
 - Very large files opened from disk first receive plain placeholder lines, then a background highlight task replaces them when ready.
 - Highlight tasks carry a generation id. Stale task results are ignored if the document changed before the task completed.
 
-After highlighting completes, `app.rs` refreshes image discovery and LaTeX render tasks.
+After highlighting completes, editor reducer requests media loading and app
+effects refresh image discovery and LaTeX tasks.
 
 ## Layout Model
 
@@ -108,7 +114,7 @@ Horizontal placement still walks visible spans because column mapping depends on
 
 Renderer text measurement is expensive in debug builds. The renderer caches single-character width measurements by character, font, and size for fallback wrapping and hit testing.
 
-Media caches live in `app.rs`:
+Media caches live in `EditorFeatureState`:
 
 - `image_cache`: local image handle plus dimensions.
 - `math_cache`: rendered LaTeX image handle plus dimensions.

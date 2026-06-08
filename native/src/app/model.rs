@@ -5,13 +5,14 @@ use crate::app_shell::{
     AppShellStatusInputs, WorkflowSidebarTab,
 };
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::editor::buffer::DocBuffer;
-use crate::editor::parser;
+use crate::features::editor::EditorFeatureState;
 use crate::features::overlays::OverlayState;
-use crate::features::pdf::state::PdfViewState;
+use crate::features::pdf::state::PdfFeatureState;
 use crate::features::search::SearchState;
+pub(crate) use crate::features::shell::ActivePanel;
+use crate::features::shell::ShellState;
 use crate::features::tracker::TrackerState;
 use crate::features::workspace::WorkspaceState;
 use crate::messages::Shortcut;
@@ -19,7 +20,9 @@ use crate::search::DocumentMatch;
 use crate::theme as app_theme;
 use crate::views;
 use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
-use std::collections::HashSet;
+
+#[cfg(test)]
+use crate::editor::{buffer::DocBuffer, parser};
 
 pub(crate) const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 pub(crate) const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
@@ -36,12 +39,6 @@ pub(crate) const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
 pub(crate) const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
 pub(crate) const EDITOR_AUTOSAVE_DELAY: Duration = Duration::from_secs(2);
 pub(crate) const APP_SHELL_PERSISTENCE_CONFIG_KEY: &str = "app_shell_persistence";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ActivePanel {
-    Markdown,
-    Pdf,
-}
 
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
     path.ends_with(".png")
@@ -118,104 +115,25 @@ pub(crate) use crate::features::pdf::navigation::NavigationTarget;
 
 pub(crate) struct MdEditor {
     pub(crate) state: Arc<md_editor_core::state::AppState>,
+    pub(crate) shell: ShellState,
     pub(crate) workspace: WorkspaceState,
-    pub(crate) sidebar_visible: bool,
-
-    // Editor state
-    pub(crate) buffer: DocBuffer,
-    pub(crate) highlighted_lines: Vec<parser::StyledLine>,
-    pub(crate) highlight_generation: u64,
-    pub(crate) pending_highlight_generation: Option<u64>,
-    pub(crate) pending_highlight_requested_at: Option<Instant>,
-    pub(crate) pending_highlight_text: Option<String>,
-
-    // PDF state
-    pub(crate) pdf_current_page: u16,
-    pub(crate) pdf_total_pages: u16,
-    pub(crate) pdf_state: PdfViewState,
-    pub(crate) pdf_rotation: u16,
-    pub(crate) pdf_pages: Vec<Option<iced::widget::image::Handle>>,
-    pub(crate) pdf_dimensions: Vec<Option<(u32, u32)>>,
-    pub(crate) pdf_placeholder_page_size: Option<(f32, f32)>,
-    pub(crate) active_pdf_path: Option<String>,
-    pub(crate) active_image_path: Option<String>,
-    pub(crate) active_image: Option<(iced::widget::image::Handle, f32, f32)>,
-    pub(crate) pdf_scroll_y: f32,
-    pub(crate) pdf_viewport_height: f32,
-    pub(crate) pdf_page_links:
-        std::collections::HashMap<u16, Vec<md_editor_core::domain::pdf::LinkInfo>>,
-    pub(crate) pdf_link_preview: Option<iced::widget::image::Handle>,
-    pub(crate) showing_pdf: bool,
-    pub(crate) pdf_fit_to_width: bool,
-    pub(crate) pdf_fit_to_page: bool,
-
-    // PDF study fields
-    pub(crate) pdf_document_id: Option<String>,
-    pub(crate) pdf_page_text:
-        std::collections::HashMap<u16, md_editor_core::domain::pdf::PdfPageText>,
-    pub(crate) pdf_selection: Option<views::interactive_pdf::PdfSelection>,
-    pub(crate) pdf_annotations:
-        std::collections::HashMap<u16, Vec<md_editor_core::domain::pdf::PdfAnnotation>>,
-    pub(crate) focused_annotation_id: Option<String>,
-    pub(crate) pending_editor_save: Option<std::time::Instant>,
-    pub(crate) pdf_initial_target_page: Option<u16>,
-    pub(crate) pdf_initial_target_annotation: Option<String>,
-    pub(crate) pdf_pending_text: HashSet<u16>,
-    pub(crate) pdf_text_lru: std::collections::VecDeque<u16>,
-
+    pub(crate) editor: EditorFeatureState,
+    pub(crate) pdf: PdfFeatureState,
     pub(crate) tracker: TrackerState,
     pub(crate) overlays: OverlayState,
-
     pub(crate) search: SearchState,
-
-    // TOC
-    pub(crate) toc_visible: bool,
-    pub(crate) pdf_annotations_visible: bool,
-    pub(crate) pdf_annotations_filter_color:
-        Option<md_editor_core::domain::pdf::PdfAnnotationColor>,
-    pub(crate) pdf_annotations_filter_page: Option<u16>,
-    pub(crate) pdf_annotations_filter_tag: Option<String>,
-    pub(crate) pdf_annotations_filter_linked: Option<bool>,
-    pub(crate) pdf_annotations_filter_unresolved: Option<bool>,
-    pub(crate) image_cache:
-        std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    pub(crate) math_cache:
-        std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    pub(crate) image_errors: std::collections::HashMap<String, String>,
-    pub(crate) math_errors: std::collections::HashMap<String, String>,
-    pub(crate) pdf_pending_pages: HashSet<u16>,
-    pub(crate) pdf_stale_pages: HashSet<u16>,
-    pub(crate) pdf_pending_links: HashSet<u16>,
-    pub(crate) pdf_render_generation: u64,
-    pub(crate) pdf_programmatic_scroll: bool,
-    pub(crate) pdf_toc_target_page: Option<u16>,
-    /// TOC entries parsed from the active markdown buffer (headings).
-    pub(crate) md_toc_entries: Vec<views::toc::TocEntry>,
-    /// Flattened PDF TOC entries (bookmarks or page entries).
-    pub(crate) pdf_toc_entries_flat: Option<Vec<views::toc::TocEntry>>,
-    pub(crate) split_view_active: bool,
-    pub(crate) split_ratio: f32,
-    pub(crate) is_resizing_split: bool,
-    pub(crate) pdf_split_ratio: f32,
-    pub(crate) active_panel: ActivePanel,
-    pub(crate) keyboard_modifiers: iced::keyboard::Modifiers,
-    pub(crate) window_width: f32,
-    pub(crate) window_height: f32,
-    pub(crate) editor_scroll_y: f32,
-    pub(crate) editor_viewport_width: f32,
-    pub(crate) editor_viewport_height: f32,
 }
 
 impl MdEditor {
     pub(crate) fn title(&self) -> String {
         format!(
             "{}Md-editor — {}",
-            if self.buffer.dirty { "● " } else { "" },
+            if self.editor.buffer.dirty { "● " } else { "" },
             self.workspace
                 .active_path
                 .as_deref()
-                .or(self.active_pdf_path.as_deref())
-                .or(self.active_image_path.as_deref())
+                .or(self.pdf.active_path.as_deref())
+                .or(self.editor.active_image_path.as_deref())
                 .unwrap_or("New File")
         )
     }
@@ -227,16 +145,16 @@ impl MdEditor {
     pub(crate) fn current_shell_persistence(&self) -> AppShellPersistence {
         let active_workflow_tab = if self.tracker.visible {
             WorkflowSidebarTab::Tracker
-        } else if self.toc_visible {
+        } else if self.shell.toc_visible {
             WorkflowSidebarTab::Outline
-        } else if self.pdf_annotations_visible {
+        } else if self.shell.pdf_annotations_visible {
             WorkflowSidebarTab::Annotations
         } else if self.workspace.backlinks_visible {
             WorkflowSidebarTab::Backlinks
         } else {
             WorkflowSidebarTab::None
         };
-        let last_focused_pane = match self.active_panel {
+        let last_focused_pane = match self.shell.active_panel {
             ActivePanel::Markdown => AppShellPane::Markdown,
             ActivePanel::Pdf => AppShellPane::Pdf,
         };
@@ -244,15 +162,15 @@ impl MdEditor {
         AppShellPersistence {
             reduce_motion: false,
             sidebar_width: 260.0,
-            reference_width: self.pdf_split_ratio * self.window_width,
+            reference_width: self.shell.pdf_split_ratio * self.shell.window_width,
             workflow_width: 280.0,
-            split_ratio: self.split_ratio,
-            sidebar_collapsed: !self.sidebar_visible,
-            reference_collapsed: !self.split_view_active,
+            split_ratio: self.shell.split_ratio,
+            sidebar_collapsed: !self.shell.sidebar_visible,
+            reference_collapsed: !self.shell.split_view_active,
             workflow_collapsed: !self.workspace.backlinks_visible
-                && !self.toc_visible
+                && !self.shell.toc_visible
                 && !self.tracker.visible
-                && !self.pdf_annotations_visible,
+                && !self.shell.pdf_annotations_visible,
             active_workflow_tab,
             last_focused_pane,
             theme: app_theme::get_active_theme(),
@@ -262,7 +180,7 @@ impl MdEditor {
     pub(crate) fn app_shell_state(&self) -> AppShellState {
         let persistence = self
             .current_shell_persistence()
-            .clamp_for_window(self.window_width);
+            .clamp_for_window(self.shell.window_width);
 
         AppShellState::derive(
             AppShellInputs {
@@ -270,9 +188,9 @@ impl MdEditor {
                 vault_open: self.workspace.vault_root.is_some(),
                 vault_has_entries: !self.workspace.vault_entries.is_empty(),
                 markdown_open: self.workspace.active_path.is_some(),
-                pdf_open: self.active_pdf_path.is_some(),
-                image_open: self.active_image_path.is_some(),
-                split_requested: self.split_view_active,
+                pdf_open: self.pdf.active_path.is_some(),
+                image_open: self.editor.active_image_path.is_some(),
+                split_requested: self.shell.split_view_active,
                 search_visible: self.search.visible,
                 command_palette_visible: self.overlays.command_palette_visible,
                 citation_palette_visible: self.overlays.citation_palette_visible,
@@ -286,9 +204,9 @@ impl MdEditor {
             background_status: None,
             toast: self.overlays.toast.clone(),
             document_open: self.workspace.active_path.is_some()
-                || self.active_pdf_path.is_some()
-                || self.active_image_path.is_some(),
-            document_dirty: self.workspace.active_path.is_some() && self.buffer.dirty,
+                || self.pdf.active_path.is_some()
+                || self.editor.active_image_path.is_some(),
+            document_dirty: self.workspace.active_path.is_some() && self.editor.buffer.dirty,
             global_search_searching: self.search.global.searching,
             global_search_status: self.search.global.pdf_status.clone(),
             global_search_visible: self.search.visible,
@@ -311,23 +229,23 @@ impl MdEditor {
         let Some(saved) = AppShellPersistence::deserialize(&value) else {
             return;
         };
-        let saved = saved.clamp_for_window(self.window_width);
+        let saved = saved.clamp_for_window(self.shell.window_width);
 
-        self.sidebar_visible = !saved.sidebar_collapsed;
+        self.shell.sidebar_visible = !saved.sidebar_collapsed;
         self.workspace.backlinks_visible =
             matches!(saved.active_workflow_tab, WorkflowSidebarTab::Backlinks)
                 && !saved.workflow_collapsed;
-        self.toc_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Outline)
+        self.shell.toc_visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Outline)
             && !saved.workflow_collapsed;
         self.tracker.visible = matches!(saved.active_workflow_tab, WorkflowSidebarTab::Tracker)
             && !saved.workflow_collapsed;
-        self.pdf_annotations_visible =
+        self.shell.pdf_annotations_visible =
             matches!(saved.active_workflow_tab, WorkflowSidebarTab::Annotations)
                 && !saved.workflow_collapsed;
-        self.split_ratio = saved.split_ratio;
-        self.pdf_split_ratio =
-            (saved.reference_width / self.window_width.max(1.0)).clamp(0.15, 0.75);
-        self.active_panel = if matches!(saved.last_focused_pane, AppShellPane::Pdf) {
+        self.shell.split_ratio = saved.split_ratio;
+        self.shell.pdf_split_ratio =
+            (saved.reference_width / self.shell.window_width.max(1.0)).clamp(0.15, 0.75);
+        self.shell.active_panel = if matches!(saved.last_focused_pane, AppShellPane::Pdf) {
             ActivePanel::Pdf
         } else {
             ActivePanel::Markdown
@@ -344,16 +262,16 @@ impl MdEditor {
     }
 
     pub(crate) fn toggle_sidebar_visible(&mut self) {
-        self.sidebar_visible = !self.sidebar_visible;
+        self.shell.sidebar_visible = !self.shell.sidebar_visible;
         self.persist_shell_state();
     }
 
     pub(crate) fn set_active_panel(&mut self, active_panel: ActivePanel) {
-        if self.active_panel != active_panel {
-            self.active_panel = active_panel;
+        if self.shell.active_panel != active_panel {
+            self.shell.active_panel = active_panel;
             self.persist_shell_state();
         } else {
-            self.active_panel = active_panel;
+            self.shell.active_panel = active_panel;
         }
     }
 
@@ -400,9 +318,9 @@ impl MdEditor {
             return Vec::new();
         }
 
-        (0..self.buffer.line_count())
+        (0..self.editor.buffer.line_count())
             .flat_map(|line| {
-                let text = self.buffer.line_text(line);
+                let text = self.editor.buffer.line_text(line);
                 crate::search::line_matches(
                     &text,
                     &self.search.editor.query,
@@ -420,35 +338,35 @@ impl MdEditor {
     }
 
     pub(crate) fn pdf_search_is_active(&self) -> bool {
-        self.pdf_state.search.visible
-            && self.active_pdf_path.is_some()
-            && (self.showing_pdf
-                || (self.split_view_active
+        self.pdf.view.search.visible
+            && self.pdf.active_path.is_some()
+            && (self.pdf.showing_pdf
+                || (self.shell.split_view_active
                     && self.workspace.active_path.is_some()
-                    && self.active_panel == ActivePanel::Pdf))
+                    && self.shell.active_panel == ActivePanel::Pdf))
     }
 
     pub(crate) fn editor_search_is_active(&self) -> bool {
         self.search.editor.visible
             && self.workspace.active_path.is_some()
-            && (!self.split_view_active || self.active_panel == ActivePanel::Markdown)
+            && (!self.shell.split_view_active || self.shell.active_panel == ActivePanel::Markdown)
     }
 
     pub(crate) fn pdf_copy_shortcut_is_active(&self) -> bool {
-        self.pdf_selection.is_some()
-            && self.active_pdf_path.is_some()
-            && (self.showing_pdf
-                || (self.split_view_active
+        self.pdf.selection.is_some()
+            && self.pdf.active_path.is_some()
+            && (self.pdf.showing_pdf
+                || (self.shell.split_view_active
                     && self.workspace.active_path.is_some()
-                    && self.active_panel == ActivePanel::Pdf))
+                    && self.shell.active_panel == ActivePanel::Pdf))
     }
 
     pub(crate) fn command_palette_commands(&self) -> Vec<views::command_palette::Command> {
         let ctx = crate::command_registry::CommandContext {
             markdown_open: self.workspace.active_path.is_some(),
-            pdf_open: self.active_pdf_path.is_some(),
-            image_open: self.active_image_path.is_some(),
-            active_pane: match self.active_panel {
+            pdf_open: self.pdf.active_path.is_some(),
+            image_open: self.editor.active_image_path.is_some(),
+            active_pane: match self.shell.active_panel {
                 ActivePanel::Markdown => crate::app_shell::AppShellPane::Markdown,
                 ActivePanel::Pdf => crate::app_shell::AppShellPane::Pdf,
             },
@@ -457,6 +375,7 @@ impl MdEditor {
                 && self.pdf_selection_quote_link_command().is_some(),
             has_focused_annotation: self.workspace.active_path.is_some()
                 && self
+                    .pdf
                     .focused_annotation_id
                     .as_deref()
                     .and_then(|id| self.pdf_annotation_link_command(id))
@@ -501,8 +420,8 @@ impl MdEditor {
         let mut items = Vec::new();
 
         // 1. Current selection
-        if let (Some(sel), Some(_path)) = (&self.pdf_selection, &self.active_pdf_path) {
-            if let Some(page_text) = self.pdf_page_text.get(&sel.page_index) {
+        if let (Some(sel), Some(_path)) = (&self.pdf.selection, &self.pdf.active_path) {
+            if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
                 let start = sel.anchor_idx.min(sel.focus_idx);
                 let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
                 let selected_text = text_by_char_range(&page_text.text, start, end);
@@ -519,7 +438,7 @@ impl MdEditor {
         let query_trimmed = self.overlays.citation_palette_query.trim();
         if query_trimmed.is_empty() {
             // Add all annotations from current PDF
-            for page_anns in self.pdf_annotations.values() {
+            for page_anns in self.pdf.annotations.values() {
                 for ann in page_anns {
                     items.push(crate::messages::CitationItem::Annotation {
                         id: ann.id.clone(),
@@ -530,7 +449,7 @@ impl MdEditor {
             }
         } else {
             // Search active PDF annotations
-            for page_anns in self.pdf_annotations.values() {
+            for page_anns in self.pdf.annotations.values() {
                 for ann in page_anns {
                     let matches_text = ann
                         .selected_text
@@ -577,7 +496,7 @@ impl MdEditor {
         let mut query = md_editor_core::types::UnifiedSearchQuery::all_sources(text)
             .with_active_paths(
                 self.workspace.active_path.as_deref(),
-                self.active_pdf_path.as_deref(),
+                self.pdf.active_path.as_deref(),
             );
         query.sources = self.search.global.sources.clone();
         query
@@ -653,30 +572,34 @@ mod tests {
 
     fn app_without_vault() -> MdEditor {
         let mut app = MdEditor::new().0;
+        app.state = Arc::new(
+            md_editor_core::state::AppState::try_new_in_memory()
+                .expect("in-memory application state should initialize"),
+        );
         app.workspace.vault_root = None;
         app.workspace.vault_entries.clear();
         app.workspace.selected_path = None;
         app.workspace.active_path = None;
-        app.active_pdf_path = None;
-        app.active_image_path = None;
-        app.active_image = None;
-        app.showing_pdf = false;
-        app.split_view_active = false;
+        app.pdf.active_path = None;
+        app.editor.active_image_path = None;
+        app.editor.active_image = None;
+        app.pdf.showing_pdf = false;
+        app.shell.split_view_active = false;
         app.workspace.navigation_history = NavigationHistory::default();
         app
     }
 
     fn app_with_vault() -> MdEditor {
         let mut app = app_without_vault();
-        app.sidebar_visible = true;
+        app.shell.sidebar_visible = true;
         app.workspace.backlinks_visible = false;
-        app.toc_visible = false;
+        app.shell.toc_visible = false;
         app.tracker.visible = false;
-        app.pdf_annotations_visible = false;
-        app.split_view_active = false;
-        app.split_ratio = 0.5;
-        app.pdf_split_ratio = 0.3;
-        app.active_panel = ActivePanel::Markdown;
+        app.shell.pdf_annotations_visible = false;
+        app.shell.split_view_active = false;
+        app.shell.split_ratio = 0.5;
+        app.shell.pdf_split_ratio = 0.3;
+        app.shell.active_panel = ActivePanel::Markdown;
         app.workspace.vault_root = Some("/tmp/md-editor-ui-audit".to_string());
         app.workspace.vault_entries = vec![
             FileEntry {
@@ -702,9 +625,9 @@ mod tests {
         let mut app = app_with_vault();
         app.workspace.active_path = Some("notes/research.md".to_string());
         app.workspace.selected_path = app.workspace.active_path.clone();
-        app.buffer = DocBuffer::from_text("# Research\n\nSee [[related]].\n");
-        app.highlighted_lines = parser::highlight_markdown(&app.buffer.text());
-        app.md_toc_entries = vec![views::toc::TocEntry {
+        app.editor.buffer = DocBuffer::from_text("# Research\n\nSee [[related]].\n");
+        app.editor.highlighted_lines = parser::highlight_markdown(&app.editor.buffer.text());
+        app.editor.toc_entries = vec![views::toc::TocEntry {
             level: 1,
             text: "Research".to_string(),
             line: 0,
@@ -720,42 +643,43 @@ mod tests {
         }
         app.workspace.active_path = Some("notes/large.md".to_string());
         app.workspace.selected_path = app.workspace.active_path.clone();
-        app.buffer = DocBuffer::from_text(&text);
-        app.highlighted_lines = parser::highlight_markdown(&app.buffer.text());
-        app.md_toc_entries = views::toc::get_toc(&app.highlighted_lines);
+        app.editor.buffer = DocBuffer::from_text(&text);
+        app.editor.highlighted_lines = parser::highlight_markdown(&app.editor.buffer.text());
+        app.editor.toc_entries = views::toc::get_toc(&app.editor.highlighted_lines);
         app
     }
 
     fn app_with_pdf_file() -> MdEditor {
         let mut app = app_with_vault();
-        app.active_pdf_path = Some("papers/paper.pdf".to_string());
-        app.workspace.selected_path = app.active_pdf_path.clone();
-        app.showing_pdf = true;
-        app.pdf_total_pages = 3;
-        app.pdf_current_page = 0;
-        app.pdf_pages = vec![None, None, None];
-        app.pdf_dimensions = vec![None, None, None];
-        app.pdf_state.page_sizes = vec![Some((612.0, 792.0)); 3];
-        app.pdf_placeholder_page_size = Some((612.0, 792.0));
-        app.pdf_state.layout = PdfLayout::rebuild(
-            &app.pdf_state.page_sizes,
-            app.pdf_state.zoom,
-            app.pdf_placeholder_page_size.unwrap_or((612.0, 792.0)),
+        app.pdf.active_path = Some("papers/paper.pdf".to_string());
+        app.workspace.selected_path = app.pdf.active_path.clone();
+        app.pdf.showing_pdf = true;
+        app.pdf.total_pages = 3;
+        app.pdf.current_page = 0;
+        app.pdf.pages = vec![None, None, None];
+        app.pdf.dimensions = vec![None, None, None];
+        app.pdf.view.page_sizes = vec![Some((612.0, 792.0)); 3];
+        app.pdf.placeholder_page_size = Some((612.0, 792.0));
+        app.pdf.view.layout = PdfLayout::rebuild(
+            &app.pdf.view.page_sizes,
+            app.pdf.view.zoom,
+            app.pdf.placeholder_page_size.unwrap_or((612.0, 792.0)),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
-            app.pdf_rotation,
+            app.pdf.rotation,
         );
-        app.active_panel = ActivePanel::Pdf;
+        app.shell.active_panel = ActivePanel::Pdf;
         app
     }
 
     fn app_with_split_research() -> MdEditor {
         let mut app = app_with_pdf_file();
         app.workspace.active_path = Some("notes/research.md".to_string());
-        app.buffer = DocBuffer::from_text("# Research\n\n[p. 1](pdf://papers/paper.pdf?page=1)\n");
-        app.highlighted_lines = parser::highlight_markdown(&app.buffer.text());
-        app.split_view_active = true;
-        app.active_panel = ActivePanel::Markdown;
+        app.editor.buffer =
+            DocBuffer::from_text("# Research\n\n[p. 1](pdf://papers/paper.pdf?page=1)\n");
+        app.editor.highlighted_lines = parser::highlight_markdown(&app.editor.buffer.text());
+        app.shell.split_view_active = true;
+        app.shell.active_panel = ActivePanel::Markdown;
         app
     }
 
@@ -779,8 +703,8 @@ mod tests {
 
     fn app_with_pdf_search() -> MdEditor {
         let mut app = app_with_pdf_file();
-        app.pdf_state.search.visible = true;
-        app.pdf_state.search.query = "finding".to_string();
+        app.pdf.view.search.visible = true;
+        app.pdf.view.search.query = "finding".to_string();
         app
     }
 
@@ -800,7 +724,7 @@ mod tests {
 
     fn app_with_annotation_heavy_pdf() -> MdEditor {
         let mut app = app_with_pdf_file();
-        app.pdf_annotations_visible = true;
+        app.shell.pdf_annotations_visible = true;
         let annotations = (0..12)
             .map(|index| PdfAnnotation {
                 id: format!("ann-{index}"),
@@ -821,7 +745,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         for annotation in annotations {
-            app.pdf_annotations
+            app.pdf
+                .annotations
                 .entry(annotation.page_index)
                 .or_default()
                 .push(annotation);
@@ -1009,15 +934,15 @@ mod tests {
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
         assert!(app.search.editor.visible);
         assert!(!app.search.visible);
-        assert!(!app.pdf_state.search.visible);
+        assert!(!app.pdf.view.search.visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::TableOfContents));
-        assert!(app.toc_visible);
+        assert!(app.shell.toc_visible);
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::FocusMode));
-        assert!(!app.sidebar_visible);
+        assert!(!app.shell.sidebar_visible);
         assert!(!app.workspace.backlinks_visible);
-        assert!(!app.toc_visible);
+        assert!(!app.shell.toc_visible);
         assert!(!app.tracker.visible);
     }
 
@@ -1025,28 +950,28 @@ mod tests {
     fn test_active_pane_shortcut_routing_and_switching() {
         let mut app = app_with_markdown_file();
         app.workspace.active_path = Some("notes/research.md".to_string());
-        app.active_pdf_path = Some("vault/paper.pdf".to_string());
-        app.split_view_active = true;
-        app.active_panel = ActivePanel::Markdown;
+        app.pdf.active_path = Some("vault/paper.pdf".to_string());
+        app.shell.split_view_active = true;
+        app.shell.active_panel = ActivePanel::Markdown;
 
         // Switch to PDF pane
         let _ = app.update(Message::KeyboardShortcut(Shortcut::SwitchPane));
-        assert_eq!(app.active_panel, ActivePanel::Pdf);
+        assert_eq!(app.shell.active_panel, ActivePanel::Pdf);
 
         // Search is routed to PDF search
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
-        assert!(app.pdf_state.search.visible);
+        assert!(app.pdf.view.search.visible);
         assert!(!app.search.editor.visible);
 
         // Switch back to Markdown pane
         let _ = app.update(Message::KeyboardShortcut(Shortcut::SwitchPane));
-        assert_eq!(app.active_panel, ActivePanel::Markdown);
+        assert_eq!(app.shell.active_panel, ActivePanel::Markdown);
 
         // Search is routed to Markdown/editor search
-        app.pdf_state.search.visible = false;
+        app.pdf.view.search.visible = false;
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Search));
         assert!(app.search.editor.visible);
-        assert!(!app.pdf_state.search.visible);
+        assert!(!app.pdf.view.search.visible);
     }
 
     #[test]
@@ -1181,10 +1106,10 @@ mod tests {
     #[test]
     fn app_shell_status_matches_document_and_pdf_state() {
         let mut app = app_with_split_research();
-        app.buffer.dirty = true;
-        app.pdf_current_page = 1;
-        app.pdf_total_pages = 3;
-        app.pdf_state.zoom = 1.5;
+        app.editor.buffer.dirty = true;
+        app.pdf.current_page = 1;
+        app.pdf.total_pages = 3;
+        app.pdf.view.zoom = 1.5;
         app.search.global.searching = true;
         app.search.global.pdf_status = Some("Searched 2 PDFs".to_string());
 
@@ -1228,7 +1153,7 @@ mod tests {
     fn app_shell_persistence_reflects_visible_panels_and_window_width() {
         let mut app = app_with_split_research();
         app.workspace.backlinks_visible = true;
-        app.window_width = 900.0;
+        app.shell.window_width = 900.0;
         let wide = app.app_shell_state();
         assert!(!wide.persistence.sidebar_collapsed);
         assert!(!wide.persistence.reference_collapsed);
@@ -1238,7 +1163,7 @@ mod tests {
             WorkflowSidebarTab::Backlinks
         );
 
-        app.window_width = 600.0;
+        app.shell.window_width = 600.0;
         let narrow = app.app_shell_state();
         assert!(!narrow.persistence.sidebar_collapsed);
         assert!(narrow.persistence.reference_collapsed);
@@ -1248,13 +1173,13 @@ mod tests {
     #[test]
     fn app_shell_persistence_round_trips_through_config() {
         let mut app = app_with_split_research();
-        app.sidebar_visible = false;
+        app.shell.sidebar_visible = false;
         app.workspace.backlinks_visible = false;
-        app.toc_visible = true;
+        app.shell.toc_visible = true;
         app.tracker.visible = false;
-        app.pdf_annotations_visible = false;
-        app.split_ratio = 0.62;
-        app.pdf_split_ratio = 0.4;
+        app.shell.pdf_annotations_visible = false;
+        app.shell.split_ratio = 0.62;
+        app.shell.pdf_split_ratio = 0.4;
         app.set_active_panel(ActivePanel::Pdf);
         app.persist_shell_state();
 
@@ -1265,25 +1190,26 @@ mod tests {
         assert!(saved.contains("active_workflow_tab=outline"));
         assert!(saved.contains("last_focused_pane=pdf"));
 
-        app.sidebar_visible = true;
-        app.toc_visible = false;
-        app.split_ratio = 0.5;
-        app.pdf_split_ratio = 0.3;
-        app.active_panel = ActivePanel::Markdown;
+        app.shell.sidebar_visible = true;
+        app.shell.toc_visible = false;
+        app.shell.split_ratio = 0.5;
+        app.shell.pdf_split_ratio = 0.3;
+        app.shell.active_panel = ActivePanel::Markdown;
         app.load_shell_persistence();
 
-        assert!(!app.sidebar_visible);
-        assert!(app.toc_visible);
-        assert_eq!(app.active_panel, ActivePanel::Pdf);
-        assert!((app.split_ratio - 0.62).abs() < f32::EPSILON);
-        assert!((app.pdf_split_ratio - 0.4).abs() < f32::EPSILON);
+        assert!(!app.shell.sidebar_visible);
+        assert!(app.shell.toc_visible);
+        assert_eq!(app.shell.active_panel, ActivePanel::Pdf);
+        assert!((app.shell.split_ratio - 0.62).abs() < f32::EPSILON);
+        assert!((app.shell.pdf_split_ratio - 0.4).abs() < f32::EPSILON);
     }
 
     #[test]
     fn save_markdown_file_with_parser_targets_indexes_local_links() {
         let root = unique_temp_dir("native_parser_save");
         std::fs::create_dir_all(&root).unwrap();
-        let state = md_editor_core::state::AppState::new_in_memory();
+        let state = md_editor_core::state::AppState::try_new_in_memory()
+            .expect("in-memory application state should initialize");
         md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         save_markdown_file_with_parser_targets(
@@ -1328,7 +1254,8 @@ mod tests {
     fn save_markdown_file_with_reference_links_indexes_resolved_targets() {
         let root = unique_temp_dir("native_reference_save");
         std::fs::create_dir_all(&root).unwrap();
-        let state = md_editor_core::state::AppState::new_in_memory();
+        let state = md_editor_core::state::AppState::try_new_in_memory()
+            .expect("in-memory application state should initialize");
         md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
 
         save_markdown_file_with_parser_targets(
@@ -1376,7 +1303,8 @@ mod tests {
         )
         .unwrap();
 
-        let state = md_editor_core::state::AppState::new_in_memory();
+        let state = md_editor_core::state::AppState::try_new_in_memory()
+            .expect("in-memory application state should initialize");
         md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
         let regex_backlinks =
             md_editor_core::vault::get_backlinks(&state, "ignored-code-link.md").unwrap();
@@ -1411,7 +1339,8 @@ mod tests {
     fn reindex_markdown_file_with_parser_targets_updates_opened_file() {
         let root = unique_temp_dir("native_parser_open_file");
         std::fs::create_dir_all(&root).unwrap();
-        let state = md_editor_core::state::AppState::new_in_memory();
+        let state = md_editor_core::state::AppState::try_new_in_memory()
+            .expect("in-memory application state should initialize");
         md_editor_core::vault::set_vault_root(&state, root.to_str().unwrap()).unwrap();
         md_editor_core::vault::save_file(&state, "source.md", "See [[old-target]].").unwrap();
 
@@ -1609,7 +1538,7 @@ mod tests {
     #[test]
     fn pdf_text_lru_keeps_fifty_pages() {
         let mut app = MdEditor::new().0;
-        app.pdf_render_generation = 7;
+        app.pdf.render_generation = 7;
 
         for page in 0..60 {
             let page_text = md_editor_core::domain::pdf::PdfPageText {
@@ -1623,33 +1552,35 @@ mod tests {
             let _ = app.update(Message::PdfPageTextLoaded(7, page, Ok(page_text)));
         }
 
-        assert_eq!(app.pdf_text_lru.len(), PDF_TEXT_PAGE_CACHE_LIMIT);
-        assert_eq!(app.pdf_page_text.len(), PDF_TEXT_PAGE_CACHE_LIMIT);
-        assert!(!app.pdf_page_text.contains_key(&0));
-        assert!(!app.pdf_page_text.contains_key(&9));
-        assert!(app.pdf_page_text.contains_key(&10));
-        assert!(app.pdf_page_text.contains_key(&59));
+        assert_eq!(app.pdf.text_lru.len(), PDF_TEXT_PAGE_CACHE_LIMIT);
+        assert_eq!(app.pdf.page_text.len(), PDF_TEXT_PAGE_CACHE_LIMIT);
+        assert!(!app.pdf.page_text.contains_key(&0));
+        assert!(!app.pdf.page_text.contains_key(&9));
+        assert!(app.pdf.page_text.contains_key(&10));
+        assert!(app.pdf.page_text.contains_key(&59));
     }
 
     #[test]
     fn pdf_render_page_range_caps_accidental_large_spans() {
         let mut app = MdEditor::new().0;
-        app.pdf_total_pages = 1_000;
-        app.pdf_pages = vec![None; 1_000];
+        app.pdf.total_pages = 1_000;
+        app.pdf.pages = vec![None; 1_000];
 
         let _ = app.render_pdf_page_range(0, 999);
 
         assert_eq!(
-            app.pdf_pending_pages.len(),
+            app.pdf.pending_pages.len(),
             PDF_RENDER_MAX_SCHEDULED_PAGES as usize
         );
-        assert!(app.pdf_pending_pages.contains(&0));
+        assert!(app.pdf.pending_pages.contains(&0));
         assert!(
-            app.pdf_pending_pages
+            app.pdf
+                .pending_pages
                 .contains(&(PDF_RENDER_MAX_SCHEDULED_PAGES - 1))
         );
         assert!(
-            !app.pdf_pending_pages
+            !app.pdf
+                .pending_pages
                 .contains(&PDF_RENDER_MAX_SCHEDULED_PAGES)
         );
     }
@@ -1657,66 +1588,67 @@ mod tests {
     #[test]
     fn pdf_viewport_render_range_uses_visible_pages_plus_small_preload() {
         let mut app = MdEditor::new().0;
-        app.pdf_total_pages = 100;
-        app.pdf_pages = vec![None; 100];
-        app.pdf_state.page_sizes = vec![Some((100.0, 100.0)); 100];
-        app.pdf_state.layout = PdfLayout::rebuild(
-            &app.pdf_state.page_sizes,
-            app.pdf_state.zoom,
+        app.pdf.total_pages = 100;
+        app.pdf.pages = vec![None; 100];
+        app.pdf.view.page_sizes = vec![Some((100.0, 100.0)); 100];
+        app.pdf.view.layout = PdfLayout::rebuild(
+            &app.pdf.view.page_sizes,
+            app.pdf.view.zoom,
             app.pdf_placeholder_display_size(),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
-            app.pdf_rotation,
+            app.pdf.rotation,
         );
 
         let scroll_y = app.pdf_page_offset(10);
         let _ = app.render_pdf_pages_for_viewport(scroll_y, 220.0);
 
-        let expected =
-            app.pdf_state
-                .layout
-                .visible_range(scroll_y, 220.0, PDF_RENDER_PRELOAD_PAGES);
+        let expected = app
+            .pdf
+            .view
+            .layout
+            .visible_range(scroll_y, 220.0, PDF_RENDER_PRELOAD_PAGES);
         assert_eq!(expected, 7..15);
-        assert_eq!(app.pdf_pending_pages.len(), expected.len());
+        assert_eq!(app.pdf.pending_pages.len(), expected.len());
         for page in expected {
-            assert!(app.pdf_pending_pages.contains(&page));
+            assert!(app.pdf.pending_pages.contains(&page));
         }
-        assert!(!app.pdf_pending_pages.contains(&6));
-        assert!(!app.pdf_pending_pages.contains(&15));
+        assert!(!app.pdf.pending_pages.contains(&6));
+        assert!(!app.pdf.pending_pages.contains(&15));
     }
 
     #[test]
     fn pdf_zoom_keeps_existing_pages_as_stale_placeholders() {
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("dummy.pdf".to_string());
-        app.showing_pdf = true;
-        app.pdf_total_pages = 2;
-        app.pdf_state.page_sizes = vec![Some((100.0, 200.0)); 2];
-        app.pdf_state.layout = PdfLayout::rebuild(
-            &app.pdf_state.page_sizes,
-            app.pdf_state.zoom,
+        app.pdf.active_path = Some("dummy.pdf".to_string());
+        app.pdf.showing_pdf = true;
+        app.pdf.total_pages = 2;
+        app.pdf.view.page_sizes = vec![Some((100.0, 200.0)); 2];
+        app.pdf.view.layout = PdfLayout::rebuild(
+            &app.pdf.view.page_sizes,
+            app.pdf.view.zoom,
             app.pdf_placeholder_display_size(),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
-            app.pdf_rotation,
+            app.pdf.rotation,
         );
 
         let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]);
-        app.pdf_pages = vec![Some(handle.clone()), Some(handle)];
-        app.pdf_dimensions = vec![Some((100, 200)), Some((100, 200))];
+        app.pdf.pages = vec![Some(handle.clone()), Some(handle)];
+        app.pdf.dimensions = vec![Some((100, 200)), Some((100, 200))];
 
         let _ = app.update(Message::PdfZoomChanged(2.0));
 
-        assert!(app.pdf_pages.iter().all(Option::is_some));
-        assert!(app.pdf_stale_pages.contains(&0));
-        assert!(app.pdf_stale_pages.contains(&1));
-        assert_eq!(app.pdf_state.zoom, 2.0);
+        assert!(app.pdf.pages.iter().all(Option::is_some));
+        assert!(app.pdf.stale_pages.contains(&0));
+        assert!(app.pdf.stale_pages.contains(&1));
+        assert_eq!(app.pdf.view.zoom, 2.0);
     }
 
     #[test]
     fn closing_pdf_link_preview_clears_hidden_context_menu() {
         let mut app = MdEditor::new().0;
-        app.pdf_link_preview = Some(iced::widget::image::Handle::from_rgba(
+        app.pdf.link_preview = Some(iced::widget::image::Handle::from_rgba(
             1,
             1,
             vec![255, 255, 255, 255],
@@ -1730,14 +1662,14 @@ mod tests {
 
         let _ = app.update(Message::ClosePdfLinkPreview);
 
-        assert!(app.pdf_link_preview.is_none());
+        assert!(app.pdf.link_preview.is_none());
         assert!(app.overlays.active_modal.is_none());
     }
 
     #[test]
     fn escape_closing_pdf_link_preview_clears_hidden_context_menu() {
         let mut app = MdEditor::new().0;
-        app.pdf_link_preview = Some(iced::widget::image::Handle::from_rgba(
+        app.pdf.link_preview = Some(iced::widget::image::Handle::from_rgba(
             1,
             1,
             vec![255, 255, 255, 255],
@@ -1751,7 +1683,7 @@ mod tests {
 
         let _ = app.update(Message::KeyboardShortcut(Shortcut::Escape));
 
-        assert!(app.pdf_link_preview.is_none());
+        assert!(app.pdf.link_preview.is_none());
         assert!(app.overlays.active_modal.is_none());
     }
 
@@ -1778,31 +1710,31 @@ mod tests {
     fn split_view_toggle_works_from_markdown_view_with_loaded_pdf() {
         let mut app = MdEditor::new().0;
         app.workspace.active_path = Some("note.md".to_string());
-        app.active_pdf_path = Some("paper.pdf".to_string());
-        app.showing_pdf = false;
-        app.active_panel = ActivePanel::Markdown;
+        app.pdf.active_path = Some("paper.pdf".to_string());
+        app.pdf.showing_pdf = false;
+        app.shell.active_panel = ActivePanel::Markdown;
 
         let _ = app.update(Message::SplitViewToggle);
 
-        assert!(app.split_view_active);
+        assert!(app.shell.split_view_active);
     }
 
     #[test]
     fn pdf_ctrl_scroll_zoom_clamps_and_requires_modifier() {
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("dummy.pdf".to_string());
-        app.showing_pdf = true;
-        app.pdf_state.zoom = 1.0;
+        app.pdf.active_path = Some("dummy.pdf".to_string());
+        app.pdf.showing_pdf = true;
+        app.pdf.view.zoom = 1.0;
 
         let _ = app.update(Message::PdfWheelScrolledForZoom(0.5));
-        assert_eq!(app.pdf_state.zoom, 1.0);
+        assert_eq!(app.pdf.view.zoom, 1.0);
 
-        app.keyboard_modifiers = iced::keyboard::Modifiers::CTRL;
+        app.shell.keyboard_modifiers = iced::keyboard::Modifiers::CTRL;
         let _ = app.update(Message::PdfWheelScrolledForZoom(10.0));
-        assert_eq!(app.pdf_state.zoom, 1.0);
+        assert_eq!(app.pdf.view.zoom, 1.0);
 
         let _ = app.update(Message::PdfZoomChanged(10.0));
-        assert_eq!(app.pdf_state.zoom, 4.0);
+        assert_eq!(app.pdf.view.zoom, 4.0);
     }
 
     #[test]
@@ -1826,7 +1758,7 @@ mod tests {
         };
 
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("papers/My PDF File.pdf".to_string());
+        app.pdf.active_path = Some("papers/My PDF File.pdf".to_string());
         assert_eq!(
             app.default_pdf_note_path(&ann),
             "pdf-notes/my-pdf-file-p5-abcdef12.md"
@@ -1836,13 +1768,13 @@ mod tests {
     #[test]
     fn pdf_selection_quote_link_command_targets_page() {
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("papers/paper.pdf".to_string());
-        app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+        app.pdf.active_path = Some("papers/paper.pdf".to_string());
+        app.pdf.selection = Some(views::interactive_pdf::PdfSelection {
             page_index: 2,
             anchor_idx: 0,
             focus_idx: 9,
         });
-        app.pdf_page_text.insert(
+        app.pdf.page_text.insert(
             2,
             md_editor_core::domain::pdf::PdfPageText {
                 page_index: 2,
@@ -1871,8 +1803,8 @@ mod tests {
     fn pdf_insert_annotation_link_uses_annotation_target() {
         let mut app = MdEditor::new().0;
         app.workspace.active_path = Some("notes/current.md".to_string());
-        app.active_pdf_path = Some("papers/My PDF.pdf".to_string());
-        app.pdf_annotations.insert(
+        app.pdf.active_path = Some("papers/My PDF.pdf".to_string());
+        app.pdf.annotations.insert(
             4,
             vec![md_editor_core::domain::pdf::PdfAnnotation {
                 id: "ann#1".to_string(),
@@ -1896,11 +1828,11 @@ mod tests {
         let _ = app.update(Message::PdfInsertAnnotationLink("ann#1".to_string()));
 
         assert_eq!(
-            app.buffer.text(),
+            app.editor.buffer.text(),
             "[label](pdf://papers/My%20PDF.pdf?page=5&annotation=ann%231)"
         );
-        assert!(app.buffer.undo());
-        assert_eq!(app.buffer.text(), "");
+        assert!(app.editor.buffer.undo());
+        assert_eq!(app.editor.buffer.text(), "");
     }
 
     #[test]
@@ -1912,13 +1844,13 @@ mod tests {
         )));
 
         app.workspace.active_path = Some("notes/current.md".to_string());
-        app.active_pdf_path = Some("papers/paper.pdf".to_string());
-        app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+        app.pdf.active_path = Some("papers/paper.pdf".to_string());
+        app.pdf.selection = Some(views::interactive_pdf::PdfSelection {
             page_index: 2,
             anchor_idx: 0,
             focus_idx: 9,
         });
-        app.pdf_page_text.insert(
+        app.pdf.page_text.insert(
             2,
             md_editor_core::domain::pdf::PdfPageText {
                 page_index: 2,
@@ -1929,8 +1861,8 @@ mod tests {
                 lines: Vec::new(),
             },
         );
-        app.focused_annotation_id = Some("ann#1".to_string());
-        app.pdf_annotations.insert(
+        app.pdf.focused_annotation_id = Some("ann#1".to_string());
+        app.pdf.annotations.insert(
             4,
             vec![md_editor_core::domain::pdf::PdfAnnotation {
                 id: "ann#1".to_string(),
@@ -1964,13 +1896,13 @@ mod tests {
     #[test]
     fn pdf_quote_insert_requires_markdown_file() {
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("papers/paper.pdf".to_string());
-        app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+        app.pdf.active_path = Some("papers/paper.pdf".to_string());
+        app.pdf.selection = Some(views::interactive_pdf::PdfSelection {
             page_index: 2,
             anchor_idx: 0,
             focus_idx: 9,
         });
-        app.pdf_page_text.insert(
+        app.pdf.page_text.insert(
             2,
             md_editor_core::domain::pdf::PdfPageText {
                 page_index: 2,
@@ -1988,7 +1920,7 @@ mod tests {
             app.overlays.toast.as_deref(),
             Some("Open a markdown file before inserting a quote link")
         );
-        assert_eq!(app.buffer.text(), "");
+        assert_eq!(app.editor.buffer.text(), "");
     }
 
     #[test]
@@ -2001,22 +1933,22 @@ mod tests {
             app.overlays.toast.as_deref(),
             Some("Select PDF text before highlighting")
         );
-        assert!(app.pdf_annotations.values().all(Vec::is_empty));
+        assert!(app.pdf.annotations.values().all(Vec::is_empty));
     }
 
     #[test]
     fn pdf_create_annotation_uses_selected_pdf_text() {
         let mut app = app_with_pdf_file();
-        app.pdf_document_id = Some("doc-1".to_string());
+        app.pdf.document_id = Some("doc-1".to_string());
         app.state
             .save_pdf_document("doc-1", "papers/paper.pdf", 100, Some(1))
             .expect("test PDF document should register");
-        app.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+        app.pdf.selection = Some(views::interactive_pdf::PdfSelection {
             page_index: 0,
             anchor_idx: 0,
             focus_idx: 8,
         });
-        app.pdf_page_text.insert(
+        app.pdf.page_text.insert(
             0,
             md_editor_core::domain::pdf::PdfPageText {
                 page_index: 0,
@@ -2034,7 +1966,8 @@ mod tests {
         ));
 
         let page_annotations = app
-            .pdf_annotations
+            .pdf
+            .annotations
             .get(&0)
             .expect("highlight shortcut should create page annotation");
         assert_eq!(page_annotations.len(), 1);
@@ -2047,7 +1980,7 @@ mod tests {
             page_annotations[0].color,
             md_editor_core::domain::pdf::PdfAnnotationColor::Yellow
         );
-        assert!(app.pdf_selection.is_none());
+        assert!(app.pdf.selection.is_none());
     }
 
     #[test]
@@ -2126,77 +2059,79 @@ mod tests {
     #[test]
     fn test_pdf_page_rotation() {
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("dummy.pdf".to_string());
-        app.showing_pdf = true;
-        app.pdf_total_pages = 1;
-        app.pdf_state.page_sizes = vec![Some((100.0, 200.0))];
-        app.pdf_state.zoom = 1.0;
-        app.pdf_rotation = 0;
+        app.pdf.active_path = Some("dummy.pdf".to_string());
+        app.pdf.showing_pdf = true;
+        app.pdf.total_pages = 1;
+        app.pdf.view.page_sizes = vec![Some((100.0, 200.0))];
+        app.pdf.view.zoom = 1.0;
+        app.pdf.rotation = 0;
 
-        app.pdf_state.layout = PdfLayout::rebuild(
-            &app.pdf_state.page_sizes,
-            app.pdf_state.zoom,
+        app.pdf.view.layout = PdfLayout::rebuild(
+            &app.pdf.view.page_sizes,
+            app.pdf.view.zoom,
             app.pdf_placeholder_display_size(),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
-            app.pdf_rotation,
+            app.pdf.rotation,
         );
 
-        assert_eq!(app.pdf_state.layout.page_height(0), 200.0);
-        assert_eq!(app.pdf_rotation, 0);
+        assert_eq!(app.pdf.view.layout.page_height(0), 200.0);
+        assert_eq!(app.pdf.rotation, 0);
 
         let _ = app.update(Message::PdfRotateClockwise);
-        assert_eq!(app.pdf_rotation, 90);
-        assert_eq!(app.pdf_state.layout.page_height(0), 100.0);
+        assert_eq!(app.pdf.rotation, 90);
+        assert_eq!(app.pdf.view.layout.page_height(0), 100.0);
 
         let _ = app.update(Message::PdfRotateClockwise);
-        assert_eq!(app.pdf_rotation, 180);
-        assert_eq!(app.pdf_state.layout.page_height(0), 200.0);
+        assert_eq!(app.pdf.rotation, 180);
+        assert_eq!(app.pdf.view.layout.page_height(0), 200.0);
 
         let _ = app.update(Message::PdfRotateClockwise);
-        assert_eq!(app.pdf_rotation, 270);
-        assert_eq!(app.pdf_state.layout.page_height(0), 100.0);
+        assert_eq!(app.pdf.rotation, 270);
+        assert_eq!(app.pdf.view.layout.page_height(0), 100.0);
     }
 
     #[test]
     fn test_pdf_link_click_in_split_view_navigates_and_preserves_scroll() {
         let mut app = MdEditor::new().0;
-        app.split_view_active = true;
-        app.showing_pdf = true;
+        app.shell.split_view_active = true;
+        app.pdf.showing_pdf = true;
         app.workspace.active_path = Some("note.md".to_string());
-        app.active_pdf_path = Some("paper.pdf".to_string());
-        app.pdf_total_pages = 10;
-        app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 10];
-        app.pdf_state.zoom = 1.0;
+        app.pdf.active_path = Some("paper.pdf".to_string());
+        app.pdf.total_pages = 10;
+        app.pdf.view.page_sizes = vec![Some((500.0, 700.0)); 10];
+        app.pdf.view.zoom = 1.0;
 
-        app.pdf_state.layout = PdfLayout::rebuild(
-            &app.pdf_state.page_sizes,
-            app.pdf_state.zoom,
+        app.pdf.view.layout = PdfLayout::rebuild(
+            &app.pdf.view.page_sizes,
+            app.pdf.view.zoom,
             app.pdf_placeholder_display_size(),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
-            app.pdf_rotation,
+            app.pdf.rotation,
         );
 
-        app.editor_scroll_y = 120.0;
+        app.editor.scroll_y = 120.0;
 
         // Click on a relative link with hash delimiter and no schema prefix
-        let _ = app.update(Message::SidebarFileClicked("paper.pdf#page=5".to_string()));
+        let _ = app.update(Message::Workspace(WorkspaceMessage::FileClicked(
+            "paper.pdf#page=5".to_string(),
+        )));
 
         // Assert editor scroll is preserved
-        assert_eq!(app.editor_scroll_y, 120.0);
+        assert_eq!(app.editor.scroll_y, 120.0);
         // Assert PDF page navigated to page 4 (index of page 5)
-        assert_eq!(app.pdf_current_page, 4);
+        assert_eq!(app.pdf.current_page, 4);
     }
 
     #[test]
     fn test_pdf_open_race_condition_navigation() {
         let mut app = MdEditor::new().0;
         app.workspace.active_path = Some("note.md".to_string());
-        app.active_pdf_path = Some("paper.pdf".to_string());
+        app.pdf.active_path = Some("paper.pdf".to_string());
 
         // Initial target page starts at Some(4) when we click a link
-        app.pdf_initial_target_page = Some(4);
+        app.pdf.initial_target_page = Some(4);
 
         // Hashing finishes first before PDF pages count is loaded
         let _ = app.update(Message::PdfDocumentIdComputed(Some((
@@ -2207,12 +2142,12 @@ mod tests {
         ))));
 
         // Verify target page was deferred and not clamped/consumed yet
-        assert_eq!(app.pdf_initial_target_page, Some(4));
+        assert_eq!(app.pdf.initial_target_page, Some(4));
 
         // PDF total pages finishes loading
-        let generation = app.pdf_render_generation;
+        let generation = app.pdf.render_generation;
         let _ = app.update(Message::PdfLoaded(generation, 10));
-        assert_eq!(app.pdf_total_pages, 10);
+        assert_eq!(app.pdf.total_pages, 10);
 
         // Page sizes finish loading, which triggers layout rebuild and PdfFitToWidth
         let _ = app.update(Message::PdfPageSizesLoaded(
@@ -2225,75 +2160,75 @@ mod tests {
         let _ = app.update(Message::PdfFitToWidth);
 
         // Now it should be consumed and navigated to page 4
-        assert_eq!(app.pdf_initial_target_page, None);
-        assert_eq!(app.pdf_current_page, 4);
+        assert_eq!(app.pdf.initial_target_page, None);
+        assert_eq!(app.pdf.current_page, 4);
     }
 
     #[test]
     fn test_manual_scroll_clears_programmatic_scroll_target() {
         let mut app = MdEditor::new().0;
-        app.pdf_total_pages = 10;
-        app.pdf_pages = vec![None; 10];
-        app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 10];
-        app.pdf_state.layout = PdfLayout::rebuild(
-            &app.pdf_state.page_sizes,
-            app.pdf_state.zoom,
+        app.pdf.total_pages = 10;
+        app.pdf.pages = vec![None; 10];
+        app.pdf.view.page_sizes = vec![Some((500.0, 700.0)); 10];
+        app.pdf.view.layout = PdfLayout::rebuild(
+            &app.pdf.view.page_sizes,
+            app.pdf.view.zoom,
             app.pdf_placeholder_display_size(),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
-            app.pdf_rotation,
+            app.pdf.rotation,
         );
 
         // 1. Programmatic scroll to page 5 when page 5 is NOT ready (still loading)
-        app.pdf_toc_target_page = Some(5);
-        app.pdf_programmatic_scroll = true;
+        app.pdf.toc_target_page = Some(5);
+        app.pdf.programmatic_scroll = true;
 
         // Scroll event at expected placeholder position arrives
         let target_y = app.pdf_page_offset(5);
-        let _ = app.update(Message::PdfScrolled {
+        let _ = app.update(Message::Pdf(PdfMessage::Scrolled {
             y: target_y,
             viewport_height: 500.0,
-        });
+        }));
         // Since page is not ready, programmatic scroll and target page are preserved
-        assert!(app.pdf_programmatic_scroll);
-        assert_eq!(app.pdf_toc_target_page, Some(5));
+        assert!(app.pdf.programmatic_scroll);
+        assert_eq!(app.pdf.toc_target_page, Some(5));
 
         // 2. Now simulate page 5 finishing loading/rendering
         let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]);
-        app.pdf_pages[5] = Some(handle);
+        app.pdf.pages[5] = Some(handle);
 
         // Scroll event arrives now that the page is ready
-        let _ = app.update(Message::PdfScrolled {
+        let _ = app.update(Message::Pdf(PdfMessage::Scrolled {
             y: target_y,
             viewport_height: 500.0,
-        });
+        }));
         // It arrives, so both flags are cleared
-        assert!(!app.pdf_programmatic_scroll);
-        assert_eq!(app.pdf_toc_target_page, None);
+        assert!(!app.pdf.programmatic_scroll);
+        assert_eq!(app.pdf.toc_target_page, None);
 
         // 3. Manual scroll clears target page (when pdf_programmatic_scroll is false)
-        app.pdf_toc_target_page = Some(3);
-        let _ = app.update(Message::PdfScrolled {
+        app.pdf.toc_target_page = Some(3);
+        let _ = app.update(Message::Pdf(PdfMessage::Scrolled {
             y: 100.0,
             viewport_height: 500.0,
-        });
-        assert_eq!(app.pdf_toc_target_page, None);
+        }));
+        assert_eq!(app.pdf.toc_target_page, None);
     }
 
     #[test]
     fn test_split_view_width_calculations() {
         let mut app = MdEditor::new().0;
-        app.window_width = 1200.0;
-        app.sidebar_visible = false;
-        app.toc_visible = false;
+        app.shell.window_width = 1200.0;
+        app.shell.sidebar_visible = false;
+        app.shell.toc_visible = false;
         app.workspace.backlinks_visible = false;
-        app.pdf_annotations_visible = false;
-        app.editor_viewport_width = 0.0;
+        app.shell.pdf_annotations_visible = false;
+        app.editor.viewport_width = 0.0;
 
         app.workspace.active_path = Some("note.md".to_string());
-        app.active_pdf_path = Some("paper.pdf".to_string());
-        app.split_view_active = true;
-        app.split_ratio = 0.6; // PDF gets 60%, Editor gets 40%
+        app.pdf.active_path = Some("paper.pdf".to_string());
+        app.shell.split_view_active = true;
+        app.shell.split_ratio = 0.6; // PDF gets 60%, Editor gets 40%
 
         let pdf_width = app.pdf_available_width();
         let editor_width = app.estimated_editor_viewport_width();
@@ -2308,55 +2243,58 @@ mod tests {
     fn test_reference_link_resolves_and_preserves_scroll() {
         let mut app = MdEditor::new().0;
         app.workspace.active_path = Some("note.md".to_string());
-        app.editor_scroll_y = 120.0;
-        app.buffer = DocBuffer::from_text("# Heading 1\n\n[my-ref]\n\n[my-ref]: #heading-1\n");
-        app.highlighted_lines = parser::highlight_markdown(&app.buffer.text());
+        app.editor.scroll_y = 120.0;
+        app.editor.buffer =
+            DocBuffer::from_text("# Heading 1\n\n[my-ref]\n\n[my-ref]: #heading-1\n");
+        app.editor.highlighted_lines = parser::highlight_markdown(&app.editor.buffer.text());
 
         // Click on the reference "my-ref"
-        let _ = app.update(Message::SidebarFileClicked("my-ref".to_string()));
+        let _ = app.update(Message::Workspace(WorkspaceMessage::FileClicked(
+            "my-ref".to_string(),
+        )));
 
         // Active path should still be note.md
         assert_eq!(app.workspace.active_path.as_deref(), Some("note.md"));
         // Editor cursor should be moved to heading 1 (line 0)
-        assert_eq!(app.buffer.cursor_line, 0);
+        assert_eq!(app.editor.buffer.cursor_line, 0);
     }
 
     #[test]
     fn test_ctrl_click_programmatic_scroll_bypasses_cancellation() {
         let mut app = MdEditor::new().0;
-        app.pdf_total_pages = 10;
-        app.pdf_pages = vec![None; 10];
-        app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 10];
-        app.pdf_state.layout = PdfLayout::rebuild(
-            &app.pdf_state.page_sizes,
-            app.pdf_state.zoom,
+        app.pdf.total_pages = 10;
+        app.pdf.pages = vec![None; 10];
+        app.pdf.view.page_sizes = vec![Some((500.0, 700.0)); 10];
+        app.pdf.view.layout = PdfLayout::rebuild(
+            &app.pdf.view.page_sizes,
+            app.pdf.view.zoom,
             app.pdf_placeholder_display_size(),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
-            app.pdf_rotation,
+            app.pdf.rotation,
         );
 
         // Simulate Ctrl modifier active
-        app.keyboard_modifiers = iced::keyboard::Modifiers::CTRL;
+        app.shell.keyboard_modifiers = iced::keyboard::Modifiers::CTRL;
 
         // 1. Programmatic scroll is triggered
-        app.pdf_toc_target_page = Some(5);
-        app.pdf_programmatic_scroll = true;
+        app.pdf.toc_target_page = Some(5);
+        app.pdf.programmatic_scroll = true;
 
         // Populate page 5 in cache to mark as ready
         let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]);
-        app.pdf_pages[5] = Some(handle);
+        app.pdf.pages[5] = Some(handle);
 
         // Scroll event arrives (with Ctrl held down)
         let target_y = app.pdf_page_offset(5);
-        let _ = app.update(Message::PdfScrolled {
+        let _ = app.update(Message::Pdf(PdfMessage::Scrolled {
             y: target_y,
             viewport_height: 500.0,
-        });
+        }));
 
-        // Programmatic scroll bypasses Ctrl key cancellation, sets self.pdf_programmatic_scroll = false, and clears target
-        assert!(!app.pdf_programmatic_scroll);
-        assert_eq!(app.pdf_toc_target_page, None);
+        // Programmatic scroll bypasses Ctrl key cancellation, sets self.pdf.programmatic_scroll = false, and clears target
+        assert!(!app.pdf.programmatic_scroll);
+        assert_eq!(app.pdf.toc_target_page, None);
     }
 
     #[test]
@@ -2368,35 +2306,35 @@ mod tests {
         for i in 0..1005 {
             text.push_str(&format!("Line {}\n", i));
         }
-        app.buffer.set_text(&text);
+        app.editor.buffer.set_text(&text);
 
         // 1. Initial edit (opened_file = false)
         let _task = app.refresh_highlighting_for_current_buffer(false);
-        assert_eq!(app.highlight_generation, 1);
-        assert_eq!(app.pending_highlight_generation, Some(1));
-        assert!(app.pending_highlight_requested_at.is_some());
-        assert!(app.pending_highlight_text.is_some());
+        assert_eq!(app.editor.highlight_generation, 1);
+        assert_eq!(app.editor.pending_highlight_generation, Some(1));
+        assert!(app.editor.pending_highlight_requested_at.is_some());
+        assert!(app.editor.pending_highlight_text.is_some());
 
         // 2. Second edit before debounce triggers resets and increments generation
         let _task2 = app.refresh_highlighting_for_current_buffer(false);
-        assert_eq!(app.highlight_generation, 2);
-        assert_eq!(app.pending_highlight_generation, Some(2));
+        assert_eq!(app.editor.highlight_generation, 2);
+        assert_eq!(app.editor.pending_highlight_generation, Some(2));
 
         // 3. Mock time elapsed to trigger highlight debounce
-        app.pending_highlight_requested_at =
+        app.editor.pending_highlight_requested_at =
             Some(std::time::Instant::now() - std::time::Duration::from_millis(300));
-        let _debounce_task = app.update(Message::HighlightDebounceElapsed);
+        let _debounce_task = app.update(Message::Editor(EditorMessage::HighlightDebounceElapsed));
 
         // Debounce state cleared
-        assert_eq!(app.pending_highlight_generation, None);
-        assert!(app.pending_highlight_requested_at.is_none());
-        assert!(app.pending_highlight_text.is_none());
+        assert_eq!(app.editor.pending_highlight_generation, None);
+        assert!(app.editor.pending_highlight_requested_at.is_none());
+        assert!(app.editor.pending_highlight_text.is_none());
     }
 
     #[test]
     fn test_stale_highlight_generation_handling() {
         let mut app = MdEditor::new().0;
-        app.highlight_generation = 5;
+        app.editor.highlight_generation = 5;
 
         let dummy_lines_stale = vec![crate::editor::parser::StyledLine::new()];
         let mut dummy_lines_newer = vec![crate::editor::parser::StyledLine::new()];
@@ -2405,13 +2343,19 @@ mod tests {
             .push(crate::editor::parser::StyledSpan::plain("newer"));
 
         // 1. Stale highlight ready (generation 4 < 5) should be ignored
-        let _ = app.update(Message::HighlightReady(4, dummy_lines_stale));
-        assert!(app.highlighted_lines.is_empty());
+        let _ = app.update(Message::Editor(EditorMessage::HighlightReady(
+            4,
+            dummy_lines_stale,
+        )));
+        assert!(app.editor.highlighted_lines.is_empty());
 
         // 2. Newer highlight ready (generation 5 == 5) should be accepted
-        let _ = app.update(Message::HighlightReady(5, dummy_lines_newer));
-        assert_eq!(app.highlighted_lines.len(), 1);
-        assert_eq!(app.highlighted_lines[0].spans[0].text, "newer");
+        let _ = app.update(Message::Editor(EditorMessage::HighlightReady(
+            5,
+            dummy_lines_newer,
+        )));
+        assert_eq!(app.editor.highlighted_lines.len(), 1);
+        assert_eq!(app.editor.highlighted_lines[0].spans[0].text, "newer");
     }
 
     #[test]
@@ -2419,7 +2363,7 @@ mod tests {
         let mut app = MdEditor::new().0;
 
         // 1. Populate the page text cache with some dummy entries
-        app.pdf_page_text.insert(
+        app.pdf.page_text.insert(
             0,
             md_editor_core::domain::pdf::PdfPageText {
                 page_index: 0,
@@ -2430,7 +2374,7 @@ mod tests {
                 lines: vec![],
             },
         );
-        app.pdf_text_lru.push_back(0);
+        app.pdf.text_lru.push_back(0);
 
         // 2. Perform open_pdf (we'll set vault root first so path resolves)
         let root = unique_temp_dir("open_pdf_test");
@@ -2446,8 +2390,8 @@ mod tests {
         let _task = app.open_pdf("test.pdf");
 
         // 3. Verify page text cache is cleared
-        assert!(app.pdf_page_text.is_empty());
-        assert!(app.pdf_text_lru.is_empty());
+        assert!(app.pdf.page_text.is_empty());
+        assert!(app.pdf.text_lru.is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2497,12 +2441,12 @@ mod tests {
         app.state.save_pdf_annotation(&ann).unwrap();
 
         // Setup app state
-        app.active_pdf_path = Some(pdf_path.to_string());
-        app.pdf_annotations.insert(0, vec![ann.clone()]);
+        app.pdf.active_path = Some(pdf_path.to_string());
+        app.pdf.annotations.insert(0, vec![ann.clone()]);
 
         // Open the file as active in the editor so we test real-time buffer reload
         app.workspace.active_path = Some(note_path.to_string());
-        app.buffer = crate::editor::buffer::DocBuffer::from_text(&initial_content);
+        app.editor.buffer = crate::editor::buffer::DocBuffer::from_text(&initial_content);
 
         // 2. Fire PdfAddQuickNote
         let _ = app.update(Message::PdfAddQuickNote(
@@ -2513,7 +2457,8 @@ mod tests {
         // 3. Verifications
         // Check annotation in app memory
         let updated_ann = app
-            .pdf_annotations
+            .pdf
+            .annotations
             .get(&0)
             .unwrap()
             .iter()
@@ -2540,7 +2485,8 @@ mod tests {
 
         // Check active editor buffer reload
         assert!(
-            app.buffer
+            app.editor
+                .buffer
                 .text()
                 .contains("### Notes\n\nNew note update from UI\n\n")
         );
@@ -2566,12 +2512,12 @@ mod tests {
         // 1. Open the markdown file
         let _ = app.open_file(note_path);
         assert_eq!(app.workspace.active_path.as_deref(), Some(note_path));
-        assert!(!app.showing_pdf);
+        assert!(!app.pdf.showing_pdf);
 
         // 2. Open the PDF (this should trigger history push of markdown path)
         let _ = app.open_pdf(pdf_path);
-        assert_eq!(app.active_pdf_path.as_deref(), Some(pdf_path));
-        assert!(app.showing_pdf);
+        assert_eq!(app.pdf.active_path.as_deref(), Some(pdf_path));
+        assert!(app.pdf.showing_pdf);
 
         // 3. Verify history has 1 entry (for Markdown)
         assert_eq!(app.workspace.navigation_history.entries.len(), 1);
@@ -2585,12 +2531,12 @@ mod tests {
         // 4. Trigger PdfNavBack to return to Markdown
         let _ = app.update(Message::PdfNavBack);
         assert_eq!(app.workspace.active_path.as_deref(), Some(note_path));
-        assert!(!app.showing_pdf);
+        assert!(!app.pdf.showing_pdf);
 
         // 5. Trigger PdfNavForward to return to PDF
         let _ = app.update(Message::PdfNavForward);
-        assert_eq!(app.active_pdf_path.as_deref(), Some(pdf_path));
-        assert!(app.showing_pdf);
+        assert_eq!(app.pdf.active_path.as_deref(), Some(pdf_path));
+        assert!(app.pdf.showing_pdf);
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2621,7 +2567,7 @@ mod tests {
             is_syntax: false,
             id: None,
         };
-        app.highlighted_lines = vec![parser::StyledLine {
+        app.editor.highlighted_lines = vec![parser::StyledLine {
             spans: vec![link_span],
             is_code_block: false,
             is_math_block: false,
@@ -2633,14 +2579,14 @@ mod tests {
             table_cells: vec![],
         }];
 
-        app.buffer.cursor_line = 0;
-        app.buffer.cursor_col = 5;
+        app.editor.buffer.cursor_line = 0;
+        app.editor.buffer.cursor_col = 5;
         let _task = app.follow_citation();
 
-        app.buffer.cursor_col = 50;
+        app.editor.buffer.cursor_col = 50;
         let _task_none = app.follow_citation();
 
-        app.buffer.cursor_line = 10;
+        app.editor.buffer.cursor_line = 10;
         let _task_oob = app.follow_citation();
     }
 
@@ -2660,8 +2606,8 @@ mod tests {
         )
         .unwrap();
 
-        app.active_pdf_path = Some("papers/a.pdf".to_string());
-        app.showing_pdf = true;
+        app.pdf.active_path = Some("papers/a.pdf".to_string());
+        app.pdf.showing_pdf = true;
 
         let _ = app.show_usages();
 
@@ -2704,7 +2650,9 @@ mod tests {
         md_editor_core::vault::set_vault_root(&app.state, &root_str).unwrap();
 
         app.search.visible = true;
-        let _ = app.update(Message::SearchQueryChanged("vault".to_string()));
+        let _ = app.update(Message::Search(SearchMessage::QueryChanged(
+            "vault".to_string(),
+        )));
 
         assert_eq!(app.search.editor.query, "vault");
         assert!(app.search.global.searching);
@@ -2719,28 +2667,31 @@ mod tests {
             annotation_id: None,
         };
 
-        let _ = app.update(Message::UnifiedSearchMatchesFound(
+        let _ = app.update(Message::Search(SearchMessage::UnifiedMatchesFound(
             app.search.global.id,
             vec![match_item],
-        ));
+        )));
 
         assert_eq!(app.search.global.results.len(), 1);
         assert_eq!(
             app.search.global.results[0].context,
             "# Welcome to the Vault"
         );
-        let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
+        let _ = app.update(Message::Search(SearchMessage::UnifiedPdfMatchesFound(
             app.search.global.id,
             pdf_text_batch(Vec::new(), 0, 0, false, false),
-        ));
+        )));
         assert!(!app.search.global.searching);
 
-        let _ = app.update(Message::UnifiedSearchFinished(app.search.global.id, Ok(())));
+        let _ = app.update(Message::Search(SearchMessage::UnifiedFinished(
+            app.search.global.id,
+            Ok(()),
+        )));
         assert!(!app.search.global.searching);
 
-        let _click_task = app.update(Message::UnifiedSearchResultClicked(
+        let _click_task = app.update(Message::Search(SearchMessage::UnifiedResultClicked(
             app.search.global.results[0].clone(),
-        ));
+        )));
         assert!(!app.search.visible);
 
         let _ = std::fs::remove_dir_all(root);
@@ -2748,7 +2699,11 @@ mod tests {
 
     #[test]
     fn test_search_registered_pdf_text_results_does_not_deadlock() {
-        let app = MdEditor::new().0;
+        let mut app = MdEditor::new().0;
+        app.state = Arc::new(
+            md_editor_core::state::AppState::try_new_in_memory()
+                .expect("in-memory application state should initialize"),
+        );
         let root = unique_temp_dir("search_deadlock_test");
         std::fs::create_dir_all(&root).unwrap();
         let root_str = root.to_str().unwrap().to_string();
@@ -2807,36 +2762,36 @@ mod tests {
     #[test]
     fn test_pdf_toc_navigation_completes_if_already_scrolled() {
         let mut app = MdEditor::new().0;
-        app.pdf_total_pages = 5;
-        app.pdf_pages = vec![None; 5];
-        app.pdf_dimensions = vec![Some((600, 800)); 5];
+        app.pdf.total_pages = 5;
+        app.pdf.pages = vec![None; 5];
+        app.pdf.dimensions = vec![Some((600, 800)); 5];
 
         // Setup state to be programmatically scrolling to page 2
-        app.pdf_toc_target_page = Some(2);
-        app.pdf_programmatic_scroll = true;
+        app.pdf.toc_target_page = Some(2);
+        app.pdf.programmatic_scroll = true;
 
         // Mock scrollable position to be already at page 2 offset
         let scroll_y = app.pdf_page_offset(2);
-        app.pdf_scroll_y = scroll_y;
+        app.pdf.scroll_y = scroll_y;
 
         // Emit PdfRendered for page 2
         let _ = app.update(Message::PdfRendered(
-            app.pdf_render_generation,
+            app.pdf.render_generation,
             2,
             image::DynamicImage::ImageRgba8(image::ImageBuffer::new(10, 10)),
         ));
 
         // Programmatic scroll flags should be cleared and page should be marked as current
-        assert!(app.pdf_toc_target_page.is_none());
-        assert!(!app.pdf_programmatic_scroll);
-        assert_eq!(app.pdf_current_page, 2);
+        assert!(app.pdf.toc_target_page.is_none());
+        assert!(!app.pdf.programmatic_scroll);
+        assert_eq!(app.pdf.current_page, 2);
     }
 
     #[test]
     fn stale_pdf_matches_do_not_enter_global_results() {
         let mut app = MdEditor::new().0;
         app.search.visible = true;
-        app.active_pdf_path = Some("paper.pdf".to_string());
+        app.pdf.active_path = Some("paper.pdf".to_string());
         app.search.editor.query = "needle".to_string();
         app.search.pdf_active_id = 7;
         app.search.global.pdf_search_id = Some(8);
@@ -2851,7 +2806,7 @@ mod tests {
         ));
 
         assert!(app.search.global.results.is_empty());
-        assert_eq!(app.pdf_state.search.matches.len(), 1);
+        assert_eq!(app.pdf.view.search.matches.len(), 1);
     }
 
     #[test]
@@ -2859,7 +2814,7 @@ mod tests {
         let mut app = MdEditor::new().0;
         let source = md_editor_core::types::UnifiedSearchSource::PdfContent;
 
-        let _ = app.update(Message::UnifiedSearchSourceToggled(source, false));
+        let _ = app.update(Message::Search(SearchMessage::SourceToggled(source, false)));
         let query = app.build_global_search_query("needle".to_string());
 
         assert!(!query.includes(source));
@@ -2869,10 +2824,10 @@ mod tests {
     #[test]
     fn pdf_content_global_result_activates_matching_search_hit() {
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("paper.pdf".to_string());
-        app.showing_pdf = true;
-        app.pdf_total_pages = 3;
-        app.pdf_state.search.matches =
+        app.pdf.active_path = Some("paper.pdf".to_string());
+        app.pdf.showing_pdf = true;
+        app.pdf.total_pages = 3;
+        app.pdf.view.search.matches =
             vec![md_editor_core::application::pdf_service::PdfSearchMatch {
                 page_index: 1,
                 context: "needle context".to_string(),
@@ -2885,7 +2840,7 @@ mod tests {
             }];
         app.rebuild_pdf_search_page_index();
 
-        let _ = app.update(Message::UnifiedSearchResultClicked(
+        let _ = app.update(Message::Search(SearchMessage::UnifiedResultClicked(
             md_editor_core::types::UnifiedSearchResult {
                 group: md_editor_core::types::SearchResultGroup::PdfContent,
                 path: "paper.pdf".to_string(),
@@ -2895,31 +2850,31 @@ mod tests {
                 page_index: Some(1),
                 annotation_id: Some("0".to_string()),
             },
-        ));
+        )));
 
-        assert_eq!(app.pdf_state.search.active_index, Some(0));
-        assert_eq!(app.pdf_current_page, 1);
-        assert!(app.pdf_programmatic_scroll);
+        assert_eq!(app.pdf.view.search.active_index, Some(0));
+        assert_eq!(app.pdf.current_page, 1);
+        assert!(app.pdf.programmatic_scroll);
     }
 
     #[test]
     fn pdf_content_global_result_navigates_page_when_already_open_without_annotation_id() {
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("paper.pdf".to_string());
-        app.showing_pdf = true;
-        app.pdf_total_pages = 3;
-        app.pdf_pages = vec![None; 3];
-        app.pdf_state.page_sizes = vec![Some((500.0, 700.0)); 3];
-        app.pdf_state.layout = PdfLayout::rebuild(
-            &app.pdf_state.page_sizes,
-            app.pdf_state.zoom,
+        app.pdf.active_path = Some("paper.pdf".to_string());
+        app.pdf.showing_pdf = true;
+        app.pdf.total_pages = 3;
+        app.pdf.pages = vec![None; 3];
+        app.pdf.view.page_sizes = vec![Some((500.0, 700.0)); 3];
+        app.pdf.view.layout = PdfLayout::rebuild(
+            &app.pdf.view.page_sizes,
+            app.pdf.view.zoom,
             app.pdf_placeholder_display_size(),
             PDF_PAGE_SPACING,
             PDF_PAGE_LIST_PADDING,
-            app.pdf_rotation,
+            app.pdf.rotation,
         );
 
-        let _ = app.update(Message::UnifiedSearchResultClicked(
+        let _ = app.update(Message::Search(SearchMessage::UnifiedResultClicked(
             md_editor_core::types::UnifiedSearchResult {
                 group: md_editor_core::types::SearchResultGroup::PdfContent,
                 path: "paper.pdf".to_string(),
@@ -2929,14 +2884,14 @@ mod tests {
                 page_index: Some(1),
                 annotation_id: None,
             },
-        ));
+        )));
 
         // It should navigate directly, setting current page to index 1 (page 2)
-        assert_eq!(app.pdf_current_page, 1);
-        assert!(app.pdf_programmatic_scroll);
+        assert_eq!(app.pdf.current_page, 1);
+        assert!(app.pdf.programmatic_scroll);
         // It shouldn't clear pages/total pages since it was already open
-        assert_eq!(app.pdf_pages.len(), 3);
-        assert_eq!(app.pdf_total_pages, 3);
+        assert_eq!(app.pdf.pages.len(), 3);
+        assert_eq!(app.pdf.total_pages, 3);
     }
 
     #[test]
@@ -2956,17 +2911,17 @@ mod tests {
             annotation_id: None,
         };
 
-        let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
+        let _ = app.update(Message::Search(SearchMessage::UnifiedPdfMatchesFound(
             4,
             pdf_text_batch(vec![pdf_result.clone()], 1, 2, false, false),
-        ));
+        )));
         assert!(app.search.global.results.is_empty());
         assert!(app.search.global.pending_vault_pdf);
 
-        let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
+        let _ = app.update(Message::Search(SearchMessage::UnifiedPdfMatchesFound(
             5,
             pdf_text_batch(vec![pdf_result], 1, 2, false, true),
-        ));
+        )));
         assert_eq!(app.search.global.results.len(), 1);
         assert!(!app.search.global.pending_vault_pdf);
         assert_eq!(
@@ -2976,7 +2931,7 @@ mod tests {
 
         app.search.visible = false;
         app.search.global.id = 6;
-        let _ = app.update(Message::UnifiedPdfTextSearchMatchesFound(
+        let _ = app.update(Message::Search(SearchMessage::UnifiedPdfMatchesFound(
             6,
             pdf_text_batch(
                 vec![md_editor_core::types::UnifiedSearchResult {
@@ -2993,7 +2948,7 @@ mod tests {
                 false,
                 false,
             ),
-        ));
+        )));
         assert_eq!(app.search.global.results.len(), 1);
     }
 
@@ -3036,7 +2991,7 @@ mod tests {
     fn test_excerpt_mode_queue_and_batch_insert() {
         let mut app = MdEditor::new().0;
         app.workspace.active_path = Some("test_note.md".to_string());
-        app.active_pdf_path = Some("document.pdf".to_string());
+        app.pdf.active_path = Some("document.pdf".to_string());
 
         // Toggle excerpt mode
         let _ = app.update(Message::ExcerptModeToggle);
@@ -3065,7 +3020,7 @@ mod tests {
         assert!(app.overlays.excerpts_queue.is_empty());
 
         // Document buffer should contain the citations
-        let content = app.buffer.text();
+        let content = app.editor.buffer.text();
         assert!(content.contains("> first queued excerpt"));
         assert!(content.contains("[Selection (Page 2)](pdf://document.pdf?page=2)"));
         assert!(content.contains("> second queued excerpt"));
@@ -3080,7 +3035,7 @@ mod tests {
         app.workspace.active_path = Some("test_note.md".to_string());
         app.overlays.citation_palette_visible = true;
         app.overlays.excerpt_mode_active = true;
-        app.pdf_annotations.insert(
+        app.pdf.annotations.insert(
             0,
             vec![md_editor_core::domain::pdf::PdfAnnotation {
                 id: "ann-keyboard".to_string(),
@@ -3180,27 +3135,29 @@ mod tests {
         let mut app = MdEditor::new().0;
         app.workspace.active_path = Some("test.md".to_string());
         app.search.editor.visible = true;
-        app.buffer.set_text("banana apple banana");
-        app.highlighted_lines =
-            crate::editor::parser::highlight_markdown(app.buffer.text().as_str());
+        app.editor.buffer.set_text("banana apple banana");
+        app.editor.highlighted_lines =
+            crate::editor::parser::highlight_markdown(app.editor.buffer.text().as_str());
 
         // 1. Check search queries reset wrap_status
-        let _ = app.update(Message::SearchQueryChanged("banana".to_string()));
+        let _ = app.update(Message::Search(SearchMessage::QueryChanged(
+            "banana".to_string(),
+        )));
         assert_eq!(app.current_document_match_count(), 2);
         assert_eq!(app.search.editor.wrap_status, None);
 
         // First Next: active_index goes to 0 (first match)
-        let _ = app.update(Message::SearchNext);
+        let _ = app.update(Message::Search(SearchMessage::Next));
         assert_eq!(app.search.editor.active_index, Some(0));
         assert_eq!(app.search.editor.wrap_status, None);
 
         // Second Next: active_index goes to 1 (second match)
-        let _ = app.update(Message::SearchNext);
+        let _ = app.update(Message::Search(SearchMessage::Next));
         assert_eq!(app.search.editor.active_index, Some(1));
         assert_eq!(app.search.editor.wrap_status, None);
 
         // Third Next: wraps around to 0
-        let _ = app.update(Message::SearchNext);
+        let _ = app.update(Message::Search(SearchMessage::Next));
         assert_eq!(app.search.editor.active_index, Some(0));
         assert_eq!(
             app.search.editor.wrap_status,
@@ -3208,7 +3165,7 @@ mod tests {
         );
 
         // Triggering SearchPrevious when active_index is 0 wraps to 1 (last match)
-        let _ = app.update(Message::SearchPrevious);
+        let _ = app.update(Message::Search(SearchMessage::Previous));
         assert_eq!(app.search.editor.active_index, Some(1));
         assert_eq!(
             app.search.editor.wrap_status,
@@ -3216,17 +3173,21 @@ mod tests {
         );
 
         // 2. Query changes reset wrap_status
-        let _ = app.update(Message::SearchQueryChanged("apple".to_string()));
+        let _ = app.update(Message::Search(SearchMessage::QueryChanged(
+            "apple".to_string(),
+        )));
         assert_eq!(app.current_document_match_count(), 1);
         assert_eq!(app.search.editor.wrap_status, None);
 
         // 3. Single match replace
-        let _ = app.update(Message::SearchReplaceChanged("pear".to_string()));
-        let _ = app.update(Message::SearchNext); // Focus apple (index 0)
+        let _ = app.update(Message::Search(SearchMessage::ReplaceChanged(
+            "pear".to_string(),
+        )));
+        let _ = app.update(Message::Search(SearchMessage::Next)); // Focus apple (index 0)
         assert_eq!(app.search.editor.active_index, Some(0));
 
-        let _ = app.update(Message::SearchReplace);
-        assert_eq!(app.buffer.text(), "banana pear banana");
+        let _ = app.update(Message::Search(SearchMessage::Replace));
+        assert_eq!(app.editor.buffer.text(), "banana pear banana");
         // After replacement, query "apple" has no matches in the document
         assert_eq!(app.current_document_match_count(), 0);
         assert_eq!(app.search.editor.active_index, None);

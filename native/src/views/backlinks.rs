@@ -1,7 +1,7 @@
 use iced::widget::{Column, Space, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, WorkspaceMessage};
 use crate::theme;
 
 /// Render the backlinks panel.
@@ -65,22 +65,24 @@ pub(crate) fn view<'a>(
     } else {
         for item in backlinks {
             let (msg, is_annotation) = match &item.source {
-                md_editor_core::types::BacklinkTarget::MarkdownFile { path } => {
-                    (Message::SidebarFileClicked(path.clone()), false)
-                }
-                md_editor_core::types::BacklinkTarget::PdfDocument { path } => {
-                    (Message::SidebarFileClicked(path.clone()), false)
-                }
+                md_editor_core::types::BacklinkTarget::MarkdownFile { path } => (
+                    Message::Workspace(WorkspaceMessage::FileClicked(path.clone())),
+                    false,
+                ),
+                md_editor_core::types::BacklinkTarget::PdfDocument { path } => (
+                    Message::Workspace(WorkspaceMessage::FileClicked(path.clone())),
+                    false,
+                ),
                 md_editor_core::types::BacklinkTarget::PdfAnnotation {
                     document_path,
                     annotation_id,
                     page,
                 } => (
-                    Message::PdfAnnotationFocused {
+                    Message::Pdf(crate::messages::PdfMessage::AnnotationFocused {
                         document_path: document_path.clone(),
                         annotation_id: annotation_id.clone(),
                         page: *page,
-                    },
+                    }),
                     true,
                 ),
             };

@@ -682,10 +682,10 @@ pub(crate) fn view<'a>(
         let primary_actions = row![
             custom_action_button(
                 "Go",
-                Message::PdfNavigateToAnnotation {
+                Message::Pdf(crate::messages::PdfMessage::NavigateToAnnotation {
                     id: ann.id.clone(),
                     page: ann.page_index,
-                }
+                })
             ),
             custom_action_button(
                 "Note",
@@ -899,7 +899,8 @@ mod tests {
         let messages = ui.into_messages().collect::<Vec<_>>();
         assert!(matches!(
             messages.as_slice(),
-            [Message::PdfInsertAnnotationLink(id)] if id == "ann-1"
+            [Message::Pdf(crate::messages::PdfMessage::InsertAnnotationLink(id))]
+                if id == "ann-1"
         ));
     }
 

@@ -4,7 +4,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::{Message, SearchWrapStatus};
+use crate::messages::{Message, SearchMessage, SearchWrapStatus};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -43,15 +43,15 @@ pub(crate) fn file_bar<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     let search_input = text_input("Find in current file", query)
         .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
-        .on_input(Message::SearchQueryChanged)
-        .on_submit(Message::SearchNext)
+        .on_input(|query| Message::Search(SearchMessage::QueryChanged(query)))
+        .on_submit(Message::Search(SearchMessage::Next))
         .padding([8, 12])
         .size(14)
         .width(Length::FillPortion(3))
         .style(focus_visible_input_style);
 
     let replace_input = text_input("Replace", replace)
-        .on_input(Message::SearchReplaceChanged)
+        .on_input(|replace| Message::Search(SearchMessage::ReplaceChanged(replace)))
         .padding([8, 12])
         .size(14)
         .width(Length::FillPortion(2))
@@ -99,32 +99,32 @@ pub(crate) fn file_bar<'a>(
             search_input,
             replace_input,
             button(text("Replace").size(12))
-                .on_press(Message::SearchReplace)
+                .on_press(Message::Search(SearchMessage::Replace))
                 .padding([8, 12])
                 .style(button::secondary),
             button(text("Replace all").size(12))
-                .on_press(Message::SearchReplaceAll)
+                .on_press(Message::Search(SearchMessage::ReplaceAll))
                 .padding([8, 12])
                 .style(button::secondary),
             checkbox(regex)
                 .label("Regex")
-                .on_toggle(Message::SearchRegexToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::RegexToggled(value)))
                 .size(14),
             checkbox(match_case)
                 .label("Case")
-                .on_toggle(Message::SearchMatchCaseToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::MatchCaseToggled(value)))
                 .size(14),
             button(icons::view(Icon::ChevronUp, theme::text_muted(), 16.0))
-                .on_press(Message::SearchPrevious)
+                .on_press(Message::Search(SearchMessage::Previous))
                 .padding(8)
                 .style(button::text),
             button(icons::view(Icon::ChevronDown, theme::text_muted(), 16.0))
-                .on_press(Message::SearchNext)
+                .on_press(Message::Search(SearchMessage::Next))
                 .padding(8)
                 .style(button::text),
             text(count_str).size(12).color(count_color),
             button(icons::view(Icon::X, theme::text_muted(), 16.0))
-                .on_press(Message::SearchClose)
+                .on_press(Message::Search(SearchMessage::Close))
                 .padding(8)
                 .style(button::text),
         ]
@@ -168,21 +168,21 @@ pub(crate) fn view<'a>(
 
     let search_input = text_input("Search document, vault, or PDF...", query)
         .id(iced::advanced::widget::Id::new(GLOBAL_SEARCH_INPUT_ID))
-        .on_input(Message::SearchQueryChanged)
+        .on_input(|query| Message::Search(SearchMessage::QueryChanged(query)))
         .padding([10, 14])
         .size(15)
         .width(Length::Fill)
         .style(focus_visible_input_style);
 
     let replace_input = text_input("Replace in current markdown document...", replace)
-        .on_input(Message::SearchReplaceChanged)
+        .on_input(|replace| Message::Search(SearchMessage::ReplaceChanged(replace)))
         .padding([8, 12])
         .size(13)
         .width(Length::Fill)
         .style(focus_visible_input_style);
 
     let close_btn = button(icons::view(Icon::X, theme::text_muted(), 16.0))
-        .on_press(Message::SearchClose)
+        .on_press(Message::Search(SearchMessage::Close))
         .padding(8)
         .style(button::text);
 
@@ -201,7 +201,7 @@ pub(crate) fn view<'a>(
         row![
             replace_input,
             button(text("Replace all").size(12))
-                .on_press(Message::SearchReplaceAll)
+                .on_press(Message::Search(SearchMessage::ReplaceAll))
                 .padding([8, 12])
                 .style(button::secondary),
         ]
@@ -210,11 +210,11 @@ pub(crate) fn view<'a>(
         row![
             checkbox(regex)
                 .label("Regex")
-                .on_toggle(Message::SearchRegexToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::RegexToggled(value)))
                 .size(14),
             checkbox(match_case)
                 .label("Match case")
-                .on_toggle(Message::SearchMatchCaseToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::MatchCaseToggled(value)))
                 .size(14),
             text(format!(
                 "{} matches in current document",
@@ -377,7 +377,7 @@ fn source_checkbox<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     checkbox(enabled_sources.contains(&source))
         .label(label)
-        .on_toggle(move |enabled| Message::UnifiedSearchSourceToggled(source, enabled))
+        .on_toggle(move |enabled| Message::Search(SearchMessage::SourceToggled(source, enabled)))
         .size(13)
         .into()
 }
@@ -453,7 +453,9 @@ fn render_group_section<'a>(
             ]
             .spacing(2),
         )
-        .on_press(Message::UnifiedSearchResultClicked((*result).clone()))
+        .on_press(Message::Search(SearchMessage::UnifiedResultClicked(
+            (*result).clone(),
+        )))
         .padding([8, 12])
         .width(Length::Fill)
         .style(result_row_style());

@@ -1,12 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::domain::VaultPath;
 use crate::types::FileEntry;
 
 const IMAGE_EXTENSIONS: [&str; 6] = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
 
-pub fn resolve_vault_path(vault_root: &Path, vault_path: &str) -> PathBuf {
-    vault_root.join(vault_path)
+pub fn resolve_vault_path(vault_root: &Path, vault_path: &str) -> Result<PathBuf, String> {
+    let vault_path = VaultPath::new(vault_path).map_err(|error| error.to_string())?;
+    Ok(vault_root.join(vault_path.as_path()))
 }
 
 pub(super) fn read_file(abs_path: &Path) -> Result<String, String> {

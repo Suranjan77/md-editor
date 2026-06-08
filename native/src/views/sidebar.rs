@@ -4,7 +4,7 @@ use iced::advanced::text::Wrapping;
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, WorkspaceMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -115,9 +115,9 @@ fn render_tree_level<'a>(
         .align_y(Alignment::Center);
 
         let msg = if is_dir {
-            Message::SidebarFolderToggled(path.clone())
+            Message::Workspace(WorkspaceMessage::FolderToggled(path.clone()))
         } else {
-            Message::SidebarFileClicked(path.clone())
+            Message::Workspace(WorkspaceMessage::FileClicked(path.clone()))
         };
 
         let style = move |theme: &Theme, status: button::Status| {
@@ -142,7 +142,9 @@ fn render_tree_level<'a>(
             .style(style);
 
         let delete_btn = button(icons::view(Icon::Trash, theme::text_muted(), 14.0))
-            .on_press(Message::DeleteFileDialog(path.clone()))
+            .on_press(Message::Workspace(WorkspaceMessage::DeleteFileDialog(
+                path.clone(),
+            )))
             .padding(7)
             .style(button::text);
 
@@ -213,15 +215,15 @@ pub(crate) fn view<'a>(
             .font(iced::Font::default()),
         Space::new().width(Length::Fill),
         button(icons::view(Icon::FolderOpen, theme::text_muted(), 16.0))
-            .on_press(Message::OpenVaultDialog)
+            .on_press(Message::Workspace(WorkspaceMessage::OpenVaultDialog))
             .padding(4)
             .style(button::text),
         button(icons::view(Icon::FileText, theme::text_muted(), 16.0))
-            .on_press(Message::CreateFileDialog)
+            .on_press(Message::Workspace(WorkspaceMessage::CreateFileDialog))
             .padding(4)
             .style(button::text),
         button(icons::view(Icon::Folder, theme::text_muted(), 16.0))
-            .on_press(Message::CreateFolderDialog)
+            .on_press(Message::Workspace(WorkspaceMessage::CreateFolderDialog))
             .padding(4)
             .style(button::text),
     ]
@@ -246,7 +248,7 @@ pub(crate) fn view<'a>(
                 icons::view(Icon::FolderOpen, theme::text_muted(), 32.0),
                 text("No files yet").size(13).color(theme::text_muted()),
                 button(text("Create file").size(12))
-                    .on_press(Message::CreateFileDialog)
+                    .on_press(Message::Workspace(WorkspaceMessage::CreateFileDialog))
                     .padding([6, 12])
             ]
             .spacing(12)
