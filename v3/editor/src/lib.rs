@@ -9,8 +9,12 @@
 //!    cannot exist because offsets are never cached per line.
 //! 3. **Paint** — viewport-bounded, damage-tracked.
 
+pub mod buffer;
 pub mod height_tree;
 pub mod layout;
+pub mod undo;
 
+pub use buffer::{ApplyResult, Buffer, ChangedSpan, Command, Movement};
 pub use height_tree::HeightTree;
 pub use layout::{ConcealMode, Damage, LayoutEngine, LineMeasure, Measurer, StyledLine, Styler};
+pub use undo::{EditOp, Selection, Transaction, UndoTree, UndoTreeSnapshot};

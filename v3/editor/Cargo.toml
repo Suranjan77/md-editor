@@ -9,4 +9,6 @@ description = "Editor engine: 3-phase layout protocol, height sum-tree (toolkit-
 workspace = true
 
 [dependencies]
+ropey = "1.6"
 thiserror = "2"
+unicode-segmentation = "1.12"

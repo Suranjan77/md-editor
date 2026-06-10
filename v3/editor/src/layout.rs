@@ -245,6 +245,36 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         })
     }
 
+    /// Apply a buffer [`crate::ChangedSpan`]: lines `first..first +
+    /// old_lines` are replaced by `new_texts` (fetched from the buffer's
+    /// final state). This is the whole buffer→layout bridge.
+    pub fn splice<I, T>(
+        &mut self,
+        first: usize,
+        old_lines: usize,
+        new_texts: I,
+    ) -> Result<Damage, OutOfBounds>
+    where
+        I: IntoIterator<Item = T>,
+        T: AsRef<str>,
+    {
+        let mut damage = Damage::none();
+        let mut index = first;
+        let end = first + old_lines;
+        for text in new_texts {
+            damage = damage.merge(if index < end {
+                self.replace_line(index, text.as_ref())?
+            } else {
+                self.insert_line(index, text.as_ref())?
+            });
+            index += 1;
+        }
+        for _ in index..end {
+            damage = damage.merge(self.remove_line(index)?);
+        }
+        Ok(damage)
+    }
+
     /// Flip a line's conceal mode (caret entered/left it). With a
     /// layout-stable styler this never shifts geometry; the debug assertion
     /// enforces the contract on every styler that claims it.

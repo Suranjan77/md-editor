@@ -39,6 +39,9 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | Editor: 3-phase layout protocol (style/measure/paint) | §3.2 | ✅ | `v3/editor/src/layout.rs` — `Styler`/`Measurer` traits, `Damage { repaint, shifted_from }`, offsets never cached per line, viewport-bounded paint |
 | Editor: layout-stable conceal contract | §3.2 | ✅ | `Styler::layout_stable()` + debug assert in `set_conceal`; reserved-width strategy demonstrated in tests |
 | **BUG-B regression suite** (height change reflows; damage ≤ affected lines) | §5 M1 gate | ✅ | `v3/editor/tests/bug_b_layout_reflow.rs` (6 tests incl. "caret motion damages ≤ 2 lines" golden gate) |
+| Editor: rope buffer + multi-cursor + grapheme safety | §3.2 | ✅ | `v3/editor/src/buffer.rs` — ropey, `Vec<Selection>` model (sorted/merged/non-empty, boundary-snapped), `ChangedSpan` buffer→layout bridge, `LayoutEngine::splice` consumer |
+| Editor: undo tree (persistent-ready) | §3.2 | ✅ | `v3/editor/src/undo.rs` — branch-keeping tree, insert-run coalescing, save-point dirtiness, validated `UndoTreeSnapshot` for the sidecar |
+| Editor: buffer property harness | §3.2/§6 | ✅ | `v3/editor/tests/buffer_properties.rs` — undo-to-root identity, selection invariants, grapheme alignment (ZWJ/flag/CJK/CRLF), buffer↔layout lockstep; caught 2 real CRLF/cluster bugs pre-merge |
 | Vault: typed errors + atomic save | §3.4 | ✅ | `v3/vault/` — `VaultError` (thiserror), temp+fsync+rename save (watcher/index deferred) |
 | PDF: tile cache + render queue (pure logic) | §3.3 | ✅ | `v3/pdf/src/tile.rs` — 1.4^n zoom buckets (never-upscale>1.4× proven by sweep test), byte-budget LRU w/ eviction reporting, cancellable queue (pdfium wiring deferred) |
 | Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `v3/shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/V3_SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
@@ -56,8 +59,7 @@ unaffected (root workspace excludes `v3/`).
 1. **Shell UI on iced** — wire kernel Workspace + InputRouter into a real window
    (M1's "dogfood-internal" gate needs this). Kernel is UI-free by design so this is
    additive.
-2. **Rope buffer + undo tree port** — plan keeps ropey + `EditorCommand` discipline from
-   v2 (`native/src/editor/buffer.rs` is the quarry); persistent undo is new.
+2. ~~Rope buffer + undo tree port~~ — done (see status board).
 3. **Incremental parser** (ADR-0101 spike) + style phase fed by it.
 4. **Vault watcher** (`notify`, 500 ms debounce) + FTS5 index port from v2 core.
 5. **pdfium wiring** for the tile renderer (cache/queue logic lands UI-free first).
@@ -82,3 +84,19 @@ unaffected (root workspace excludes `v3/`).
   (something must be displayable); eviction reports keys so the shell owns pixmap drops.
 - 2026-06-10: `Mods` is four bools, not bitflags — avoids a dependency; revisit only if
   chord matching shows up in profiles (it won't).
+- 2026-06-10: buffer→layout bridge is a single `ChangedSpan` (first changed line +
+  old/new line counts), not per-edit line deltas: undo replays ops in descending offset
+  order, so per-edit line indices are only valid against intermediate rope states — a
+  consumer patching from the final state would mis-index. Span extremes (min first line,
+  min tail-below) are final-state-valid in both replay orders; property-tested in
+  lockstep with `LayoutEngine::splice`.
+- 2026-06-10: line-count effects of edits are *measured* from the rope after mutation,
+  never predicted from the edited text: ropey treats lone `\r` as a line break, so edits
+  adjacent to one can merge/split CRLF and break textual prediction (caught by the
+  property suite as an underflow).
+- 2026-06-10: every selection endpoint is snapped to a grapheme boundary inside the
+  buffer (`replace_selections` / `line_col_to_offset`) rather than trusting callers —
+  raw char cols from hit testing can split an emoji cluster (caught by property suite).
+- 2026-06-10: undo coalescing = insert-runs only (same caret, uniform whitespace-ness,
+  no newline); whitespace breaks the run so "hello world" is two undo steps. Deletes
+  never coalesce — backspace granularity is per cluster, cheap to revisit.
