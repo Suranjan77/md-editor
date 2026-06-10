@@ -1,5 +1,7 @@
 [workspace]
 members = ["core", "native"]
+# v3 is an independent workspace (see docs/V3_GROUND_UP_PLAN.md / docs/V3_HANDOFF.md).
+exclude = ["v3"]
 resolver = "2"
 
 [workspace.package]
