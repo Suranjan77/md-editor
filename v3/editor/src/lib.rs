@@ -10,11 +10,17 @@
 //! 3. **Paint** — viewport-bounded, damage-tracked.
 
 pub mod buffer;
+pub mod document;
 pub mod height_tree;
 pub mod layout;
+pub mod parse;
+pub mod style;
 pub mod undo;
 
 pub use buffer::{ApplyResult, Buffer, ChangedSpan, Command, Movement};
+pub use document::EditorDocument;
 pub use height_tree::HeightTree;
 pub use layout::{ConcealMode, Damage, LayoutEngine, LineMeasure, Measurer, StyledLine, Styler};
+pub use parse::{BlockState, IncrementalParser, LineKind, LineParse};
+pub use style::{MarkdownStyler, Span, SpanKind};
 pub use undo::{EditOp, Selection, Transaction, UndoTree, UndoTreeSnapshot};
