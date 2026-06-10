@@ -1,3 +1,5 @@
+#[cfg(test)]
+pub(crate) mod characterization_tests;
 pub(crate) mod effects;
 pub(crate) mod model;
 #[cfg(test)]
