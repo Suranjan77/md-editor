@@ -1,0 +1,15 @@
+[package]
+name = "md3-vault"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Vault core: typed errors, atomic saves (watcher/index land later)"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

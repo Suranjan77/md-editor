@@ -60,6 +60,11 @@ Not started except where noted below.
 bake-off, 6 squads, milestones M0–M5. The incremental plan in this repo remains the
 1–2 person path; the bug register above is the evidence base shared by both.
 
+**Execution started 2026-06-10** in the `v3/` workspace — see `docs/V3_HANDOFF.md`
+(the authoritative v3 ledger). M0 + the kernel/editor halves of M1 are built: all three
+bugs are killed by construction in v3 and pinned by named regression suites
+(bug_a/bug_b/bug_c test files). 47 tests, clippy/fmt clean, CI `v3` job added.
+
 ## Standing backlog / findings
 
 - Old docs/ tree was deleted in the working tree before this overhaul began (user action); replacement docs are written fresh by Phase 1 tasks.

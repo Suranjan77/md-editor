@@ -1,0 +1,12 @@
+[package]
+name = "md3-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PDF engine logic: tile keys, byte-budget LRU cache, cancellable render queue (pdfium lands later)"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = "2"

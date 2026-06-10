@@ -156,6 +156,22 @@ check_no_matches \
     'crate::(features|views|app)::' \
     native/src/design
 
+# --- v3 workspace (ADR-0100): engine crates are toolkit-agnostic ------------
+# Only v3/shell may ever depend on a UI toolkit; kernel/editor/vault/pdf must
+# not mention iced or winit in code or manifests. v3 must never import v2.
+if [[ -d v3 ]]; then
+    for crate in kernel editor vault pdf; do
+        check_no_matches \
+            "v3/$crate must stay toolkit-free (ADR-0100)" \
+            '(use (iced|winit)\b|\b(iced|winit)::|^\s*(iced|winit)\s*=)' \
+            "v3/$crate/src" "v3/$crate/Cargo.toml"
+    done
+    check_no_matches \
+        'v3 must not import v2 crates' \
+        'md_editor_(core|native)|md-editor-core' \
+        v3
+fi
+
 if (( failures > 0 )); then
     printf 'Architecture checks failed: %d\n' "$failures" >&2
     exit 1
