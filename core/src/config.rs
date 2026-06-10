@@ -1,17 +1,7 @@
-use crate::database::settings_repository;
-use crate::state::AppState;
+//! Legacy shim (P2.T3): configuration persistence lives in
+//! `infrastructure::config_store`. Import from there; this module dies in P2.T6.
 
-/// Get a configuration value by key.
-pub fn get_sys_config(state: &AppState, key: &str) -> Result<Option<String>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    settings_repository::get(&db, key)
-}
-
-/// Set a configuration value by key (upsert).
-pub fn set_sys_config(state: &AppState, key: &str, value: &str) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    settings_repository::set(&db, key, value)
-}
+pub use crate::infrastructure::config_store::{get_sys_config, set_sys_config};
 
 #[cfg(test)]
 mod config_scale_tests {

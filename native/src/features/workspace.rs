@@ -19,12 +19,12 @@ pub(crate) enum WorkspaceMessage {
 #[derive(Debug, Default)]
 pub(crate) struct WorkspaceState {
     pub(crate) vault_root: Option<String>,
-    pub(crate) vault_entries: Vec<md_editor_core::types::FileEntry>,
+    pub(crate) vault_entries: Vec<md_editor_core::domain::FileEntry>,
     pub(crate) selected_path: Option<String>,
     pub(crate) active_path: Option<String>,
     pub(crate) expanded_folders: BTreeSet<String>,
     pub(crate) backlinks_visible: bool,
-    pub(crate) backlinks: Vec<md_editor_core::types::BacklinkItem>,
+    pub(crate) backlinks: Vec<md_editor_core::domain::BacklinkItem>,
     pub(crate) navigation_history: NavigationHistory,
 }
 
@@ -86,8 +86,8 @@ mod tests {
             vault_root: Some("/vault".to_string()),
             selected_path: Some("notes/current.md".to_string()),
             active_path: Some("notes/current.md".to_string()),
-            backlinks: vec![md_editor_core::types::BacklinkItem {
-                source: md_editor_core::types::BacklinkTarget::MarkdownFile {
+            backlinks: vec![md_editor_core::domain::BacklinkItem {
+                source: md_editor_core::domain::BacklinkTarget::MarkdownFile {
                     path: "notes/source.md".to_string(),
                 },
                 label: "source".to_string(),

@@ -6,7 +6,7 @@ use iced::{Alignment, Background, Element, Length, Renderer, Theme};
 
 use crate::messages::{Message, TrackerMessage, TrackerTab};
 use crate::theme;
-use md_editor_core::tracker::StudySession;
+use md_editor_core::domain::StudySession;
 use serde::{Deserialize, Serialize};
 
 const BOLD: iced::Font = iced::Font {

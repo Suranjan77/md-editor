@@ -24,12 +24,12 @@ mod tests {
         );
         app.workspace.vault_root = Some("/tmp/md-editor-characterization".to_string());
         app.workspace.vault_entries = vec![
-            md_editor_core::types::FileEntry {
+            md_editor_core::domain::FileEntry {
                 path: "notes".to_string(),
                 name: "notes".to_string(),
                 is_dir: true,
             },
-            md_editor_core::types::FileEntry {
+            md_editor_core::domain::FileEntry {
                 path: "notes/research.md".to_string(),
                 name: "research.md".to_string(),
                 is_dir: false,
