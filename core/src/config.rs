@@ -48,7 +48,8 @@ mod config_scale_tests {
         }
 
         // 5. Test nonexistent key
-        let val = get_sys_config(&state, "nonexistent_key_9999").expect("Failed to get nonexistent");
+        let val =
+            get_sys_config(&state, "nonexistent_key_9999").expect("Failed to get nonexistent");
         assert_eq!(val, None);
     }
 }

@@ -151,6 +151,11 @@ while IFS= read -r match; do
     fi
 done < <(rg -n 'crate::features::[a-z_]+' native/src/features -g '*.rs' || true)
 
+check_no_matches \
+    'design system must not depend on features or views' \
+    'crate::(features|views|app)::' \
+    native/src/design
+
 if (( failures > 0 )); then
     printf 'Architecture checks failed: %d\n' "$failures" >&2
     exit 1

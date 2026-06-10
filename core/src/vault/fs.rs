@@ -10,13 +10,13 @@ use crate::domain::{BacklinkItem, BacklinkTarget, FileEntry};
 use crate::infrastructure::indexer::FileIndex;
 use crate::state::AppState;
 
+#[cfg(test)]
+use super::paths::list_all_pdf_files;
 use super::paths::{
     is_image, is_markdown_path, list_all_md_files, list_vault_entries, path_to_relative_string,
     read_file, read_image, resolve_vault_path, write_file,
 };
 use super::reference_repair::repair_rename_references;
-#[cfg(test)]
-use super::paths::list_all_pdf_files;
 #[cfg(test)]
 use super::search::search_vault;
 

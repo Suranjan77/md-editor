@@ -13,7 +13,7 @@ raw_color_ceiling = 107
 # Per-file line-count ceilings, captured 2026-06-10. Note: core/src/vault.rs
 # includes relocated scale tests from massive_tests.rs (Phase 0).
 [file_budgets]
-"native/src/app/update.rs" = 2442
+"native/src/app/update.rs" = 2438
 "native/src/app/view.rs" = 1131
 "native/src/app/effects.rs" = 934
 "native/src/app/model.rs" = 503

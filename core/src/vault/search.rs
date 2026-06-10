@@ -1,7 +1,7 @@
-use crate::state::AppState;
 use crate::domain::{
     SearchResult, SearchResultGroup, UnifiedSearchQuery, UnifiedSearchResult, UnifiedSearchSource,
 };
+use crate::state::AppState;
 
 use super::resolve_vault_path;
 
