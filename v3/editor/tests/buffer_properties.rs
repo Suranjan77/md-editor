@@ -15,8 +15,8 @@
 //! [`LayoutEngine`] keeps layout and buffer in perfect line-level agreement.
 
 use md3_editor::{
-    Buffer, Command, ConcealMode, LayoutEngine, LineMeasure, Measurer, Movement, Selection,
-    StyledLine, Styler,
+    BlockState, Buffer, Command, ConcealMode, LayoutEngine, LineMeasure, Measurer, Movement,
+    Selection, StyledLine, Styler,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -227,11 +227,8 @@ fn forward_delete_consumes_one_cluster() {
 struct WidthStyler;
 
 impl Styler for WidthStyler {
-    fn style(&self, text: &str, conceal: ConcealMode) -> StyledLine {
-        StyledLine {
-            display: text.to_string(),
-            conceal,
-        }
+    fn style(&self, text: &str, _block: &BlockState, conceal: ConcealMode) -> StyledLine {
+        StyledLine::plain(text, conceal)
     }
 
     fn layout_stable(&self) -> bool {
@@ -262,15 +259,17 @@ fn changed_spans_keep_layout_in_lockstep_with_buffer() {
         let initial = random_text(&mut rng, 12);
         let mut buffer = Buffer::from_text(&initial);
         let mut layout = LayoutEngine::new(WidthStyler, CountMeasurer, 10.0);
-        layout.set_text((0..buffer.line_count()).map(|i| buffer.line_text(i)));
+        layout
+            .set_text((0..buffer.line_count()).map(|i| (buffer.line_text(i), BlockState::Normal)));
         for step in 0..80 {
             let cmd = random_command(&mut rng, &buffer);
             let result = buffer.apply(cmd.clone());
             if let Some(span) = result.changed {
-                let new_texts: Vec<String> = (span.first..span.first + span.new_lines)
-                    .map(|i| buffer.line_text(i))
+                let new_texts: Vec<(String, BlockState)> = (span.first
+                    ..span.first + span.new_lines)
+                    .map(|i| (buffer.line_text(i), BlockState::Normal))
                     .collect();
-                if let Err(e) = layout.splice(span.first, span.old_lines, &new_texts) {
+                if let Err(e) = layout.splice(span.first, span.old_lines, new_texts) {
                     panic!("round {round} step {step}: splice {span:?} failed: {e} (cmd {cmd:?})");
                 }
             }

@@ -13,7 +13,9 @@
 //!    two affected lines ("draw-diff ≤ 2 lines" golden gate).
 
 use md3_editor::height_tree::OutOfBounds;
-use md3_editor::{ConcealMode, Damage, LayoutEngine, LineMeasure, Measurer, StyledLine, Styler};
+use md3_editor::{
+    BlockState, ConcealMode, Damage, LayoutEngine, LineMeasure, Measurer, StyledLine, Styler,
+};
 
 const LINE_HEIGHT: f64 = 16.0;
 const WRAP_COLS: f64 = 20.0;
@@ -23,12 +25,12 @@ const WRAP_COLS: f64 = 20.0;
 struct NaiveStyler;
 
 impl Styler for NaiveStyler {
-    fn style(&self, text: &str, conceal: ConcealMode) -> StyledLine {
+    fn style(&self, text: &str, _block: &BlockState, conceal: ConcealMode) -> StyledLine {
         let display = match conceal {
             ConcealMode::Concealed => text.replace("**", ""),
             ConcealMode::Revealed => text.to_string(),
         };
-        StyledLine { display, conceal }
+        StyledLine::plain(display, conceal)
     }
 
     fn layout_stable(&self) -> bool {
@@ -41,11 +43,8 @@ impl Styler for NaiveStyler {
 struct ReservedWidthStyler;
 
 impl Styler for ReservedWidthStyler {
-    fn style(&self, text: &str, conceal: ConcealMode) -> StyledLine {
-        StyledLine {
-            display: text.to_string(),
-            conceal,
-        }
+    fn style(&self, text: &str, _block: &BlockState, conceal: ConcealMode) -> StyledLine {
+        StyledLine::plain(text, conceal)
     }
 
     fn layout_stable(&self) -> bool {
@@ -80,7 +79,9 @@ const BOLD_LINE: &str = "**a study of margins**";
 
 fn doc<S: Styler>(styler: S) -> LayoutEngine<S, CharGridMeasurer> {
     let mut engine = LayoutEngine::new(styler, CharGridMeasurer, WRAP_COLS);
-    engine.set_text(["# Title", BOLD_LINE, "after one", "after two"]);
+    engine.set_text(
+        ["# Title", BOLD_LINE, "after one", "after two"].map(|t| (t, BlockState::Normal)),
+    );
     engine
 }
 
@@ -160,11 +161,15 @@ fn layout_stable_conceal_caret_motion_damages_at_most_two_lines() {
 fn edits_report_shift_only_when_height_actually_changes() {
     let mut engine = doc(ReservedWidthStyler);
 
-    let same_rows = ok(engine.replace_line(2, "after 1!!"));
+    let same_rows = ok(engine.replace_line(2, "after 1!!", BlockState::Normal));
     assert_eq!(same_rows.shifted_from, None, "same height → pure repaint");
     assert_eq!(same_rows.repaint, 2..3);
 
-    let grew = ok(engine.replace_line(2, "this line is now much longer than one row"));
+    let grew = ok(engine.replace_line(
+        2,
+        "this line is now much longer than one row",
+        BlockState::Normal,
+    ));
     assert_eq!(grew.shifted_from, Some(3));
     // Lines above: "# Title" (1 row) + BOLD_LINE (22 chars reserved → 2 rows)
     // + the new 41-char line (3 rows) = 6 rows.
@@ -174,7 +179,7 @@ fn edits_report_shift_only_when_height_actually_changes() {
 #[test]
 fn insert_and_remove_shift_subsequent_lines() {
     let mut engine = doc(ReservedWidthStyler);
-    let ins = ok(engine.insert_line(1, "inserted"));
+    let ins = ok(engine.insert_line(1, "inserted", BlockState::Normal));
     assert_eq!(ins.shifted_from, Some(2));
     assert_eq!(engine.line_count(), 5);
     assert_eq!(ok(engine.offset_of(2)), 2.0 * LINE_HEIGHT);
@@ -188,7 +193,7 @@ fn insert_and_remove_shift_subsequent_lines() {
 #[test]
 fn paint_phase_is_viewport_bounded() {
     let mut engine = LayoutEngine::new(ReservedWidthStyler, CharGridMeasurer, WRAP_COLS);
-    engine.set_text((0..1000).map(|i| format!("line {i}")));
+    engine.set_text((0..1000).map(|i| (format!("line {i}"), BlockState::Normal)));
     let visible = engine.visible_lines(50.0 * LINE_HEIGHT, 10.0 * LINE_HEIGHT);
     assert_eq!(visible, 50..61, "paint touches only the viewport slice");
     assert!(matches!(
