@@ -19,6 +19,8 @@
 use std::ops::Range;
 
 use crate::height_tree::{HeightTree, OutOfBounds};
+use crate::parse::{BlockState, LineKind};
+use crate::style::Span;
 
 /// Conceal state of a line. `Concealed` = cursor elsewhere, syntax markers
 /// hidden; `Revealed` = cursor on the line, markers visible (muted).
@@ -28,18 +30,33 @@ pub enum ConcealMode {
     Revealed,
 }
 
-/// Phase-1 output: what a line will look like. Spans/attributes will grow
-/// here with the real styler (ADR-0101); `display` is what gets measured.
+/// Phase-1 output: what a line will look like. `display` is what gets
+/// measured — always the full source text under the reserved-width conceal
+/// strategy; `spans` carry paint semantics ([`crate::style::SpanKind`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StyledLine {
     pub display: String,
     pub conceal: ConcealMode,
+    pub kind: LineKind,
+    pub spans: Vec<Span>,
 }
 
-/// Phase 1: pure per-line styling. Key: (line text, conceal mode); block
-/// state joins the key when the incremental parser lands.
+impl StyledLine {
+    /// A spanless line — handy for test stylers.
+    pub fn plain(display: impl Into<String>, conceal: ConcealMode) -> StyledLine {
+        StyledLine {
+            display: display.into(),
+            conceal,
+            kind: LineKind::Paragraph,
+            spans: Vec::new(),
+        }
+    }
+}
+
+/// Phase 1: pure per-line styling. Key: (line text, block entry state,
+/// conceal mode) — exactly the plan's cache key.
 pub trait Styler {
-    fn style(&self, text: &str, conceal: ConcealMode) -> StyledLine;
+    fn style(&self, text: &str, block: &BlockState, conceal: ConcealMode) -> StyledLine;
 
     /// True if this styler guarantees the reserved-width contract:
     /// `measure(style(t, Concealed)) == measure(style(t, Revealed))` for all
@@ -83,7 +100,7 @@ impl Damage {
         self.repaint.is_empty() && self.shifted_from.is_none()
     }
 
-    fn merge(self, other: Damage) -> Damage {
+    pub fn merge(self, other: Damage) -> Damage {
         let repaint = if self.repaint.is_empty() {
             other.repaint
         } else if other.repaint.is_empty() {
@@ -105,6 +122,7 @@ impl Damage {
 #[derive(Debug)]
 struct LineRecord {
     text: String,
+    block: BlockState,
     conceal: ConcealMode,
     measure: LineMeasure,
 }
@@ -131,25 +149,26 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         }
     }
 
-    fn style_measure(&self, text: &str, conceal: ConcealMode) -> LineMeasure {
-        let styled = self.styler.style(text, conceal);
+    fn style_measure(&self, text: &str, block: &BlockState, conceal: ConcealMode) -> LineMeasure {
+        let styled = self.styler.style(text, block, conceal);
         self.measurer.measure(&styled, self.wrap_width)
     }
 
     /// Replace the whole document (initial load). Everything is damage.
     pub fn set_text<I, T>(&mut self, lines: I)
     where
-        I: IntoIterator<Item = T>,
+        I: IntoIterator<Item = (T, BlockState)>,
         T: AsRef<str>,
     {
         self.lines.clear();
         self.heights = HeightTree::new();
-        for line in lines {
+        for (line, block) in lines {
             let text = line.as_ref().to_string();
-            let measure = self.style_measure(&text, ConcealMode::Concealed);
+            let measure = self.style_measure(&text, &block, ConcealMode::Concealed);
             self.heights.push(measure.height);
             self.lines.push(LineRecord {
                 text,
+                block,
                 conceal: ConcealMode::Concealed,
                 measure,
             });
@@ -191,10 +210,15 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         first..(last + 1).min(self.lines.len())
     }
 
-    /// Edit one line's text. Restyles + remeasures it; if the height changed,
-    /// every subsequent offset is already correct (sum tree) and the damage
-    /// says so.
-    pub fn replace_line(&mut self, index: usize, text: &str) -> Result<Damage, OutOfBounds> {
+    /// Edit one line's text (and/or its block entry state). Restyles +
+    /// remeasures it; if the height changed, every subsequent offset is
+    /// already correct (sum tree) and the damage says so.
+    pub fn replace_line(
+        &mut self,
+        index: usize,
+        text: &str,
+        block: BlockState,
+    ) -> Result<Damage, OutOfBounds> {
         let conceal = self
             .lines
             .get(index)
@@ -203,23 +227,29 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
                 index,
                 len: self.lines.len(),
             })?;
-        let measure = self.style_measure(text, conceal);
-        self.apply_measure(index, text.to_string(), conceal, measure)
+        let measure = self.style_measure(text, &block, conceal);
+        self.apply_measure(index, text.to_string(), block, conceal, measure)
     }
 
-    pub fn insert_line(&mut self, index: usize, text: &str) -> Result<Damage, OutOfBounds> {
+    pub fn insert_line(
+        &mut self,
+        index: usize,
+        text: &str,
+        block: BlockState,
+    ) -> Result<Damage, OutOfBounds> {
         if index > self.lines.len() {
             return Err(OutOfBounds {
                 index,
                 len: self.lines.len(),
             });
         }
-        let measure = self.style_measure(text, ConcealMode::Concealed);
+        let measure = self.style_measure(text, &block, ConcealMode::Concealed);
         self.heights.insert(index, measure.height)?;
         self.lines.insert(
             index,
             LineRecord {
                 text: text.to_string(),
+                block,
                 conceal: ConcealMode::Concealed,
                 measure,
             },
@@ -255,17 +285,17 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         new_texts: I,
     ) -> Result<Damage, OutOfBounds>
     where
-        I: IntoIterator<Item = T>,
+        I: IntoIterator<Item = (T, BlockState)>,
         T: AsRef<str>,
     {
         let mut damage = Damage::none();
         let mut index = first;
         let end = first + old_lines;
-        for text in new_texts {
+        for (text, block) in new_texts {
             damage = damage.merge(if index < end {
-                self.replace_line(index, text.as_ref())?
+                self.replace_line(index, text.as_ref(), block)?
             } else {
-                self.insert_line(index, text.as_ref())?
+                self.insert_line(index, text.as_ref(), block)?
             });
             index += 1;
         }
@@ -279,8 +309,8 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
     /// layout-stable styler this never shifts geometry; the debug assertion
     /// enforces the contract on every styler that claims it.
     pub fn set_conceal(&mut self, index: usize, mode: ConcealMode) -> Result<Damage, OutOfBounds> {
-        let (text, old_conceal) = match self.lines.get(index) {
-            Some(l) => (l.text.clone(), l.conceal),
+        let (text, block, old_conceal) = match self.lines.get(index) {
+            Some(l) => (l.text.clone(), l.block.clone(), l.conceal),
             None => {
                 return Err(OutOfBounds {
                     index,
@@ -291,7 +321,7 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         if old_conceal == mode {
             return Ok(Damage::none());
         }
-        let measure = self.style_measure(&text, mode);
+        let measure = self.style_measure(&text, &block, mode);
         if self.styler.layout_stable() {
             debug_assert_eq!(
                 self.lines.get(index).map(|l| l.measure.height),
@@ -299,7 +329,7 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
                 "layout-stable styler changed height on conceal flip at line {index}"
             );
         }
-        self.apply_measure(index, text, mode, measure)
+        self.apply_measure(index, text, block, mode, measure)
     }
 
     /// Caret moved between lines: conceal the old line, reveal the new one.
@@ -326,6 +356,7 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         &mut self,
         index: usize,
         text: String,
+        block: BlockState,
         conceal: ConcealMode,
         measure: LineMeasure,
     ) -> Result<Damage, OutOfBounds> {
@@ -333,6 +364,7 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         let height_changed = (old_height - measure.height).abs() > f64::EPSILON;
         if let Some(rec) = self.lines.get_mut(index) {
             rec.text = text;
+            rec.block = block;
             rec.conceal = conceal;
             rec.measure = measure;
         }

@@ -42,6 +42,9 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | Editor: rope buffer + multi-cursor + grapheme safety | §3.2 | ✅ | `v3/editor/src/buffer.rs` — ropey, `Vec<Selection>` model (sorted/merged/non-empty, boundary-snapped), `ChangedSpan` buffer→layout bridge, `LayoutEngine::splice` consumer |
 | Editor: undo tree (persistent-ready) | §3.2 | ✅ | `v3/editor/src/undo.rs` — branch-keeping tree, insert-run coalescing, save-point dirtiness, validated `UndoTreeSnapshot` for the sidecar |
 | Editor: buffer property harness | §3.2/§6 | ✅ | `v3/editor/tests/buffer_properties.rs` — undo-to-root identity, selection invariants, grapheme alignment (ZWJ/flag/CJK/CRLF), buffer↔layout lockstep; caught 2 real CRLF/cluster bugs pre-merge |
+| Editor: incremental block parser (ADR-0101) | §3.2 | ✅ | `v3/editor/src/parse.rs` — explicit entry/exit `BlockState` per line, forward reparse to convergence, returns invalidated range; differential-tested vs full reparse (2k random edits) |
+| Editor: inline spans + production styler | §3.2 | ✅ | `v3/editor/src/style.rs` — `MarkdownStyler` (reserved-width conceal, `layout_stable() == true` by construction), char-offset `Span`s (emphasis/code/math/links/wikilinks/tables), spans always tile the source line |
+| Editor: `EditorDocument` session | §3.2 | ✅ | `v3/editor/src/document.rs` — buffer + parser + layout behind one `apply()`; fence-typing cascade restyles, caret conceal-follow, merged `Damage`; "caret motion ≤ 2 lines" asserted end-to-end |
 | Vault: typed errors + atomic save | §3.4 | ✅ | `v3/vault/` — `VaultError` (thiserror), temp+fsync+rename save (watcher/index deferred) |
 | PDF: tile cache + render queue (pure logic) | §3.3 | ✅ | `v3/pdf/src/tile.rs` — 1.4^n zoom buckets (never-upscale>1.4× proven by sweep test), byte-budget LRU w/ eviction reporting, cancellable queue (pdfium wiring deferred) |
 | Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `v3/shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/V3_SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
@@ -60,7 +63,7 @@ unaffected (root workspace excludes `v3/`).
    (M1's "dogfood-internal" gate needs this). Kernel is UI-free by design so this is
    additive.
 2. ~~Rope buffer + undo tree port~~ — done (see status board).
-3. **Incremental parser** (ADR-0101 spike) + style phase fed by it.
+3. ~~Incremental parser + style phase~~ — done (see status board).
 4. **Vault watcher** (`notify`, 500 ms debounce) + FTS5 index port from v2 core.
 5. **pdfium wiring** for the tile renderer (cache/queue logic lands UI-free first).
 6. v2 hotfixes for BUG-A/BUG-B (plan §9.2) — *not ordered by user; ask before doing.*
@@ -100,3 +103,15 @@ unaffected (root workspace excludes `v3/`).
 - 2026-06-10: undo coalescing = insert-runs only (same caret, uniform whitespace-ness,
   no newline); whitespace breaks the run so "hello world" is two undo steps. Deletes
   never coalesce — backspace granularity is per cluster, cheap to revisit.
+- 2026-06-10: parser line-0 front-matter rule is encoded as a `BlockState::DocStart`
+  *entry state*, not an index special-case: convergence compares entry states, so
+  classification must stay pure on `(text, entry)` — an index-dependent rule let a line
+  moving to/from line 0 converge prematurely with a stale parse (caught in test design).
+- 2026-06-10: `Styler::style` now takes the block entry state — the plan's full style
+  key (text, block state, conceal). `StyledLine` carries `LineKind` + `Span`s (char
+  offsets); conceal stays paint-only (reserved width), so `MarkdownStyler` is
+  layout-stable by construction, not by test luck.
+- 2026-06-10: inline grammar is a pragmatic CommonMark subset (emphasis, code, inline
+  math, links incl. one paren level, wikilinks, escapes); the invariant that *spans
+  always tile the source line* is what paint correctness rests on, and is tested per
+  kind. Conformance corpus tightening deferred to M3 per plan.
