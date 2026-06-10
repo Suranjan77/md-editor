@@ -487,8 +487,8 @@ impl MdEditor {
     pub(crate) fn build_global_search_query(
         &self,
         text: String,
-    ) -> md_editor_core::types::UnifiedSearchQuery {
-        let mut query = md_editor_core::types::UnifiedSearchQuery::all_sources(text)
+    ) -> md_editor_core::domain::UnifiedSearchQuery {
+        let mut query = md_editor_core::domain::UnifiedSearchQuery::all_sources(text)
             .with_active_paths(
                 self.workspace.active_path.as_deref(),
                 self.pdf.active_path.as_deref(),

@@ -1,6 +1,6 @@
 use crate::messages::SearchWrapStatus;
 
-pub(crate) type EditorMatch = md_editor_core::types::SearchResult;
+pub(crate) type EditorMatch = md_editor_core::domain::SearchResult;
 
 #[derive(Debug, Clone)]
 pub(crate) enum SearchMessage {
@@ -10,15 +10,15 @@ pub(crate) enum SearchMessage {
     ReplaceChanged(String),
     RegexToggled(bool),
     MatchCaseToggled(bool),
-    SourceToggled(md_editor_core::types::UnifiedSearchSource, bool),
+    SourceToggled(md_editor_core::domain::UnifiedSearchSource, bool),
     Previous,
     Next,
     ReplaceAll,
     Replace,
-    UnifiedMatchesFound(u64, Vec<md_editor_core::types::UnifiedSearchResult>),
-    UnifiedPdfMatchesFound(u64, md_editor_core::types::UnifiedPdfTextSearchResultBatch),
+    UnifiedMatchesFound(u64, Vec<md_editor_core::domain::UnifiedSearchResult>),
+    UnifiedPdfMatchesFound(u64, md_editor_core::domain::UnifiedPdfTextSearchResultBatch),
     UnifiedFinished(u64, Result<(), String>),
-    UnifiedResultClicked(md_editor_core::types::UnifiedSearchResult),
+    UnifiedResultClicked(md_editor_core::domain::UnifiedSearchResult),
     PdfTextIndexFinished(Result<usize, String>),
 }
 
@@ -51,8 +51,8 @@ pub(crate) struct GlobalSearchState {
     pub(crate) pending_pdf: bool,
     pub(crate) pending_vault_pdf: bool,
     pub(crate) pdf_status: Option<String>,
-    pub(crate) sources: Vec<md_editor_core::types::UnifiedSearchSource>,
-    pub(crate) results: Vec<md_editor_core::types::UnifiedSearchResult>,
+    pub(crate) sources: Vec<md_editor_core::domain::UnifiedSearchSource>,
+    pub(crate) results: Vec<md_editor_core::domain::UnifiedSearchResult>,
     pub(crate) searching: bool,
     pub(crate) error: Option<String>,
 }
@@ -66,7 +66,7 @@ impl Default for GlobalSearchState {
             pending_pdf: false,
             pending_vault_pdf: false,
             pdf_status: None,
-            sources: md_editor_core::types::UnifiedSearchQuery::all_sources("").sources,
+            sources: md_editor_core::domain::UnifiedSearchQuery::all_sources("").sources,
             results: Vec::new(),
             searching: false,
             error: None,
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn default_enables_all_global_sources() {
         let state = SearchState::default();
-        let expected = md_editor_core::types::UnifiedSearchQuery::all_sources("").sources;
+        let expected = md_editor_core::domain::UnifiedSearchQuery::all_sources("").sources;
 
         assert!(!state.visible);
         assert_eq!(state.global.sources, expected);
@@ -188,8 +188,8 @@ mod tests {
             pending_pdf: true,
             pending_vault_pdf: true,
             pdf_status: Some("Searching PDFs".to_string()),
-            results: vec![md_editor_core::types::UnifiedSearchResult {
-                group: md_editor_core::types::SearchResultGroup::Filename,
+            results: vec![md_editor_core::domain::UnifiedSearchResult {
+                group: md_editor_core::domain::SearchResultGroup::Filename,
                 path: "note.md".to_string(),
                 line: 0,
                 context: "note.md".to_string(),
@@ -248,7 +248,7 @@ mod tests {
             visible: true,
             ..SearchState::default()
         };
-        let source = md_editor_core::types::UnifiedSearchSource::PdfContent;
+        let source = md_editor_core::domain::UnifiedSearchSource::PdfContent;
 
         assert_eq!(
             state.update_local(&SearchMessage::SourceToggled(source, false)),

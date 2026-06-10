@@ -10,7 +10,7 @@ use crate::views::icons::{self, Icon};
 
 /// Render a tree level recursively using the flat list of entries.
 fn render_tree_level<'a>(
-    entries: &'a [md_editor_core::types::FileEntry],
+    entries: &'a [md_editor_core::domain::FileEntry],
     prefix: &str,
     depth: usize,
     selected_path: Option<&str>,
@@ -197,7 +197,7 @@ fn render_tree_level<'a>(
 
 /// Render the file tree sidebar.
 pub(crate) fn view<'a>(
-    entries: &'a [md_editor_core::types::FileEntry],
+    entries: &'a [md_editor_core::domain::FileEntry],
     selected_path: Option<&'a str>,
     active_path: Option<&'a str>,
     expanded_folders: &'a BTreeSet<String>,

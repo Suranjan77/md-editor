@@ -152,11 +152,11 @@ pub(crate) fn view<'a>(
     regex: bool,
     match_case: bool,
     current_match_count: usize,
-    global_results: &'a [md_editor_core::types::UnifiedSearchResult],
+    global_results: &'a [md_editor_core::domain::UnifiedSearchResult],
     searching: bool,
     error: Option<&'a str>,
     visible: bool,
-    enabled_sources: &'a [md_editor_core::types::UnifiedSearchSource],
+    enabled_sources: &'a [md_editor_core::domain::UnifiedSearchSource],
     pdf_status: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
     if !visible {
@@ -238,32 +238,32 @@ pub(crate) fn view<'a>(
         row![
             source_checkbox(
                 enabled_sources,
-                md_editor_core::types::UnifiedSearchSource::Filename,
+                md_editor_core::domain::UnifiedSearchSource::Filename,
                 "Files"
             ),
             source_checkbox(
                 enabled_sources,
-                md_editor_core::types::UnifiedSearchSource::Heading,
+                md_editor_core::domain::UnifiedSearchSource::Heading,
                 "Headings"
             ),
             source_checkbox(
                 enabled_sources,
-                md_editor_core::types::UnifiedSearchSource::MarkdownContent,
+                md_editor_core::domain::UnifiedSearchSource::MarkdownContent,
                 "Markdown"
             ),
             source_checkbox(
                 enabled_sources,
-                md_editor_core::types::UnifiedSearchSource::PdfContent,
+                md_editor_core::domain::UnifiedSearchSource::PdfContent,
                 "PDF text"
             ),
             source_checkbox(
                 enabled_sources,
-                md_editor_core::types::UnifiedSearchSource::Annotation,
+                md_editor_core::domain::UnifiedSearchSource::Annotation,
                 "Annotations"
             ),
             source_checkbox(
                 enabled_sources,
-                md_editor_core::types::UnifiedSearchSource::QuickNote,
+                md_editor_core::domain::UnifiedSearchSource::QuickNote,
                 "Notes"
             ),
         ]
@@ -275,27 +275,27 @@ pub(crate) fn view<'a>(
 
     let md_content_results: Vec<_> = global_results
         .iter()
-        .filter(|r| r.group == md_editor_core::types::SearchResultGroup::MarkdownContent)
+        .filter(|r| r.group == md_editor_core::domain::SearchResultGroup::MarkdownContent)
         .collect();
     let pdf_content_results: Vec<_> = global_results
         .iter()
-        .filter(|r| r.group == md_editor_core::types::SearchResultGroup::PdfContent)
+        .filter(|r| r.group == md_editor_core::domain::SearchResultGroup::PdfContent)
         .collect();
     let filename_results: Vec<_> = global_results
         .iter()
-        .filter(|r| r.group == md_editor_core::types::SearchResultGroup::Filename)
+        .filter(|r| r.group == md_editor_core::domain::SearchResultGroup::Filename)
         .collect();
     let heading_results: Vec<_> = global_results
         .iter()
-        .filter(|r| r.group == md_editor_core::types::SearchResultGroup::Heading)
+        .filter(|r| r.group == md_editor_core::domain::SearchResultGroup::Heading)
         .collect();
     let annotation_results: Vec<_> = global_results
         .iter()
-        .filter(|r| r.group == md_editor_core::types::SearchResultGroup::Annotation)
+        .filter(|r| r.group == md_editor_core::domain::SearchResultGroup::Annotation)
         .collect();
     let quick_note_results: Vec<_> = global_results
         .iter()
-        .filter(|r| r.group == md_editor_core::types::SearchResultGroup::QuickNote)
+        .filter(|r| r.group == md_editor_core::domain::SearchResultGroup::QuickNote)
         .collect();
 
     let result_scroll = scrollable(
@@ -371,8 +371,8 @@ pub(crate) fn view<'a>(
 }
 
 fn source_checkbox<'a>(
-    enabled_sources: &'a [md_editor_core::types::UnifiedSearchSource],
-    source: md_editor_core::types::UnifiedSearchSource,
+    enabled_sources: &'a [md_editor_core::domain::UnifiedSearchSource],
+    source: md_editor_core::domain::UnifiedSearchSource,
     label: &'a str,
 ) -> Element<'a, Message, Theme, Renderer> {
     checkbox(enabled_sources.contains(&source))
@@ -397,7 +397,7 @@ fn result_row_style() -> impl Fn(&Theme, button::Status) -> button::Style {
 
 fn render_group_section<'a>(
     title: &str,
-    items: &[&'a md_editor_core::types::UnifiedSearchResult],
+    items: &[&'a md_editor_core::domain::UnifiedSearchResult],
     query: &str,
     regex: bool,
     match_case: bool,
@@ -416,20 +416,20 @@ fn render_group_section<'a>(
             highlighted_text(&result.path, query, regex, match_case, theme::accent(), 13);
 
         let label = match result.group {
-            md_editor_core::types::SearchResultGroup::Heading => {
+            md_editor_core::domain::SearchResultGroup::Heading => {
                 format!("Heading (Line {})", result.line)
             }
-            md_editor_core::types::SearchResultGroup::MarkdownContent => {
+            md_editor_core::domain::SearchResultGroup::MarkdownContent => {
                 format!("Line {}", result.line)
             }
-            md_editor_core::types::SearchResultGroup::Filename => "Filename".to_string(),
-            md_editor_core::types::SearchResultGroup::PdfContent => {
+            md_editor_core::domain::SearchResultGroup::Filename => "Filename".to_string(),
+            md_editor_core::domain::SearchResultGroup::PdfContent => {
                 format!("PDF Page {}", result.line)
             }
-            md_editor_core::types::SearchResultGroup::Annotation => {
+            md_editor_core::domain::SearchResultGroup::Annotation => {
                 format!("PDF Page {} Annotation", result.line)
             }
-            md_editor_core::types::SearchResultGroup::QuickNote => {
+            md_editor_core::domain::SearchResultGroup::QuickNote => {
                 format!("PDF Page {} Note", result.line)
             }
         };
@@ -564,7 +564,7 @@ fn highlighted_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use md_editor_core::types::UnifiedSearchSource;
+    use md_editor_core::domain::UnifiedSearchSource;
 
     const SOURCES: &[UnifiedSearchSource] = &[
         UnifiedSearchSource::Filename,
@@ -710,8 +710,8 @@ mod tests {
 
     #[test]
     fn global_search_renders_result_row_with_highlighted_content() {
-        let results = [md_editor_core::types::UnifiedSearchResult {
-            group: md_editor_core::types::SearchResultGroup::MarkdownContent,
+        let results = [md_editor_core::domain::UnifiedSearchResult {
+            group: md_editor_core::domain::SearchResultGroup::MarkdownContent,
             path: "notes/Rust Guide.md".to_string(),
             line: 7,
             context: "Learn rust ownership".to_string(),

@@ -28,12 +28,13 @@ Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
 | Task | Status | Notes |
 |---|---|---|
-| P2.T1 domain extraction from types.rs | ⬜ | |
-| P2.T2 VaultService consolidation | ⬜ | |
-| P2.T3 state.rs dissolution | ⬜ | |
-| P2.T4 TrackerService | ⬜ | |
-| P2.T5 SearchService + indexer | ⬜ | |
-| P2.T6 legacy deletion + API freeze | ⬜ | |
+| P2.T1 domain extraction from types.rs | ✅ | types.rs **deleted** (went beyond plan): FileEntry→domain/note.rs, search types→domain/search.rs, Backlink*→domain/links.rs. All 94 native + 7 core callers migrated to `domain::`; transitional `pub use domain as types;` alias left in lib.rs (dies P2.T6). |
+| P2.T2 VaultService consolidation | 🔶 | vault.rs fs/CRUD moved verbatim to vault/fs.rs; vault.rs is now mod decls + re-exports + scale tests (280 lines, was 821). VaultService unchanged (already the façade). Remaining: migrate native's direct `md_editor_core::vault::*` calls to VaultService; tempdir/unicode/symlink tests. |
+| P2.T3 state.rs dissolution | 🔶 | Config-dir/portable/settings-db-path logic + tests moved to infrastructure/config_store.rs (absorbs config.rs; config.rs is a shim now). state.rs 373→~250 lines. Remaining: classify the PDF-repository delegation methods (Phase 5 will move them into PdfService/AnnotationService). |
+| P2.T4 TrackerService | ✅ | application/tracker_service.rs is the only public entry; StudySession/TrackerKv live in domain/session.rs; tracker.rs free fns now pub(crate); all 4 native callers migrated (update.rs, startup.rs, features/tracker.rs, views/tracker.rs). |
+| P2.T5 SearchService + indexer | 🔶 | file_index.rs → infrastructure/indexer.rs (was core-internal only; no native impact). SearchService façade exists. Remaining: IndexProgress/scope API from the plan (Phase 6 work anyway). |
+| P2.T6 legacy deletion + API freeze | ⬜ | Blocked on T2/T3 leftovers; `#![warn(missing_docs)]` not yet enabled. |
+| — | | `cargo check -p md-editor-core --all-targets` green after all moves. |
 
 ## Phases 3–10 + UX track
 

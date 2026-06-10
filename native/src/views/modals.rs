@@ -644,7 +644,7 @@ pub(crate) fn view<'a>(
     modal_type: &'a ModalType,
     input_value: &'a str,
     picker_search: &str,
-    vault_entries: &'a [md_editor_core::types::FileEntry],
+    vault_entries: &'a [md_editor_core::domain::FileEntry],
 ) -> Element<'a, Message, Theme, Renderer> {
     if let ModalType::PdfContextMenu(state) = modal_type {
         return view_context_menu(state);

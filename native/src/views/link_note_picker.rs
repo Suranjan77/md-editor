@@ -9,9 +9,9 @@ use crate::views::icons::{self, Icon};
 pub(crate) fn view<'a>(
     input_value: &str,
     search_query: &str,
-    vault_entries: &'a [md_editor_core::types::FileEntry],
+    vault_entries: &'a [md_editor_core::domain::FileEntry],
 ) -> Element<'a, Message, Theme, Renderer> {
-    let mut entries: Vec<&md_editor_core::types::FileEntry> = vault_entries
+    let mut entries: Vec<&md_editor_core::domain::FileEntry> = vault_entries
         .iter()
         .filter(|entry| is_pickable_note_target(entry) && matches_query(&entry.path, search_query))
         .collect();
@@ -85,7 +85,7 @@ pub(crate) fn view<'a>(
     .into()
 }
 
-fn is_pickable_note_target(entry: &md_editor_core::types::FileEntry) -> bool {
+fn is_pickable_note_target(entry: &md_editor_core::domain::FileEntry) -> bool {
     entry.is_dir
         || entry.path.to_lowercase().ends_with(".md")
         || entry.path.to_lowercase().ends_with(".markdown")

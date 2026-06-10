@@ -41,7 +41,7 @@ impl MdEditor {
         let last_file = md_editor_core::config::get_sys_config(&state, "last_file")
             .ok()
             .flatten();
-        let tracker_sessions = md_editor_core::tracker::get_sessions(&state).unwrap_or_default();
+        let tracker_sessions = md_editor_core::application::TrackerService::new(&state).sessions().unwrap_or_default();
         let tracker_config_json = md_editor_core::config::get_sys_config(&state, "tracker_config")
             .ok()
             .flatten()
@@ -86,7 +86,7 @@ impl MdEditor {
             pdf: PdfFeatureState::default(),
             tracker: TrackerState::new(
                 tracker_sessions,
-                md_editor_core::tracker::get_kv(&state)
+                md_editor_core::application::TrackerService::new(&state).kv_entries()
                     .unwrap_or_default()
                     .into_iter()
                     .map(|item| (item.key, item.value))

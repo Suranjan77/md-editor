@@ -1,13 +1,8 @@
+//! Search query/result types for vault, PDF, and unified search.
+
 use serde::{Deserialize, Serialize};
 
-/// A file entry in the vault listing.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct FileEntry {
-    pub path: String,
-    pub name: String,
-    pub is_dir: bool,
-}
-
+/// A single match from a plain vault search.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SearchResult {
     pub path: String,
@@ -112,26 +107,4 @@ impl UnifiedSearchQuery {
     pub fn includes(&self, source: UnifiedSearchSource) -> bool {
         self.sources.contains(&source)
     }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub enum BacklinkTarget {
-    MarkdownFile {
-        path: String,
-    },
-    PdfDocument {
-        path: String,
-    },
-    PdfAnnotation {
-        document_path: String,
-        annotation_id: String,
-        page: u16,
-    },
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct BacklinkItem {
-    pub source: BacklinkTarget,
-    pub label: String,
-    pub context: Option<String>,
 }

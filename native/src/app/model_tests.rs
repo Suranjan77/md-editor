@@ -15,7 +15,7 @@ mod tests {
     use md_editor_core::domain::pdf::{
         PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus,
     };
-    use md_editor_core::types::FileEntry;
+    use md_editor_core::domain::FileEntry;
     use std::sync::Arc;
 
     use crate::views;
@@ -56,13 +56,13 @@ mod tests {
     }
 
     fn pdf_text_batch(
-        results: Vec<md_editor_core::types::UnifiedSearchResult>,
+        results: Vec<md_editor_core::domain::UnifiedSearchResult>,
         searched_documents: usize,
         total_candidates: usize,
         result_cap_reached: bool,
         document_cap_reached: bool,
-    ) -> md_editor_core::types::UnifiedPdfTextSearchResultBatch {
-        md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+    ) -> md_editor_core::domain::UnifiedPdfTextSearchResultBatch {
+        md_editor_core::domain::UnifiedPdfTextSearchResultBatch {
             results,
             searched_documents,
             total_candidates,
@@ -2164,8 +2164,8 @@ mod tests {
         assert_eq!(app.search.editor.query, "vault");
         assert!(app.search.global.searching);
 
-        let match_item = md_editor_core::types::UnifiedSearchResult {
-            group: md_editor_core::types::SearchResultGroup::Heading,
+        let match_item = md_editor_core::domain::UnifiedSearchResult {
+            group: md_editor_core::domain::SearchResultGroup::Heading,
             path: "source.md".to_string(),
             line: 1,
             context: "# Welcome to the Vault".to_string(),
@@ -2235,8 +2235,8 @@ mod tests {
             .save_pdf_document("doc-1", pdf_path, size, Some(mtime))
             .unwrap();
 
-        let mut query = md_editor_core::types::UnifiedSearchQuery::all_sources("Dummy".to_string());
-        query.sources = vec![md_editor_core::types::UnifiedSearchSource::PdfContent];
+        let mut query = md_editor_core::domain::UnifiedSearchQuery::all_sources("Dummy".to_string());
+        query.sources = vec![md_editor_core::domain::UnifiedSearchSource::PdfContent];
 
         // This would deadlock if state.vault_root lock guard was held and then validate_and_invalidate_pdf_cache tried to lock it again
         let _batch = search_registered_pdf_text_results(&app.state, &query, None);
@@ -2319,13 +2319,13 @@ mod tests {
     #[test]
     fn global_search_query_uses_source_toggles() {
         let mut app = MdEditor::new().0;
-        let source = md_editor_core::types::UnifiedSearchSource::PdfContent;
+        let source = md_editor_core::domain::UnifiedSearchSource::PdfContent;
 
         let _ = app.update(Message::Search(SearchMessage::SourceToggled(source, false)));
         let query = app.build_global_search_query("needle".to_string());
 
         assert!(!query.includes(source));
-        assert!(query.includes(md_editor_core::types::UnifiedSearchSource::MarkdownContent));
+        assert!(query.includes(md_editor_core::domain::UnifiedSearchSource::MarkdownContent));
     }
 
     #[test]
@@ -2348,8 +2348,8 @@ mod tests {
         app.rebuild_pdf_search_page_index();
 
         let _ = app.update(Message::Search(SearchMessage::UnifiedResultClicked(
-            md_editor_core::types::UnifiedSearchResult {
-                group: md_editor_core::types::SearchResultGroup::PdfContent,
+            md_editor_core::domain::UnifiedSearchResult {
+                group: md_editor_core::domain::SearchResultGroup::PdfContent,
                 path: "paper.pdf".to_string(),
                 line: 2,
                 context: "PDF text (1 areas): needle context".to_string(),
@@ -2382,8 +2382,8 @@ mod tests {
         );
 
         let _ = app.update(Message::Search(SearchMessage::UnifiedResultClicked(
-            md_editor_core::types::UnifiedSearchResult {
-                group: md_editor_core::types::SearchResultGroup::PdfContent,
+            md_editor_core::domain::UnifiedSearchResult {
+                group: md_editor_core::domain::SearchResultGroup::PdfContent,
                 path: "paper.pdf".to_string(),
                 line: 2,
                 context: "needle context".to_string(),
@@ -2408,8 +2408,8 @@ mod tests {
         app.search.global.id = 5;
         app.search.global.pending_vault_pdf = true;
 
-        let pdf_result = md_editor_core::types::UnifiedSearchResult {
-            group: md_editor_core::types::SearchResultGroup::PdfContent,
+        let pdf_result = md_editor_core::domain::UnifiedSearchResult {
+            group: md_editor_core::domain::SearchResultGroup::PdfContent,
             path: "other.pdf".to_string(),
             line: 3,
             context: "PDF text (1 areas): needle".to_string(),
@@ -2441,8 +2441,8 @@ mod tests {
         let _ = app.update(Message::Search(SearchMessage::UnifiedPdfMatchesFound(
             6,
             pdf_text_batch(
-                vec![md_editor_core::types::UnifiedSearchResult {
-                    group: md_editor_core::types::SearchResultGroup::PdfContent,
+                vec![md_editor_core::domain::UnifiedSearchResult {
+                    group: md_editor_core::domain::SearchResultGroup::PdfContent,
                     path: "stale.pdf".to_string(),
                     line: 1,
                     context: "stale".to_string(),

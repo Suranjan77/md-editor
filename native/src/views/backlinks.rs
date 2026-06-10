@@ -6,7 +6,7 @@ use crate::theme;
 
 /// Render the backlinks panel.
 pub(crate) fn view<'a>(
-    backlinks: &'a [md_editor_core::types::BacklinkItem],
+    backlinks: &'a [md_editor_core::domain::BacklinkItem],
     visible: bool,
     width: f32,
     is_indexing: bool,
@@ -65,15 +65,15 @@ pub(crate) fn view<'a>(
     } else {
         for item in backlinks {
             let (msg, is_annotation) = match &item.source {
-                md_editor_core::types::BacklinkTarget::MarkdownFile { path } => (
+                md_editor_core::domain::BacklinkTarget::MarkdownFile { path } => (
                     Message::Workspace(WorkspaceMessage::FileClicked(path.clone())),
                     false,
                 ),
-                md_editor_core::types::BacklinkTarget::PdfDocument { path } => (
+                md_editor_core::domain::BacklinkTarget::PdfDocument { path } => (
                     Message::Workspace(WorkspaceMessage::FileClicked(path.clone())),
                     false,
                 ),
-                md_editor_core::types::BacklinkTarget::PdfAnnotation {
+                md_editor_core::domain::BacklinkTarget::PdfAnnotation {
                     document_path,
                     annotation_id,
                     page,

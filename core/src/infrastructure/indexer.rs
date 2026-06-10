@@ -244,7 +244,7 @@ mod tests {
 
 #[cfg(test)]
 mod link_graph_scale_tests {
-    use crate::file_index::FileIndex;
+    use crate::infrastructure::indexer::FileIndex;
     use std::path::PathBuf;
 
     #[test]

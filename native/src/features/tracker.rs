@@ -56,7 +56,7 @@ pub(crate) struct TrackerState {
     pub(crate) visible: bool,
     pub(crate) running: bool,
     pub(crate) started_at: Option<Instant>,
-    pub(crate) sessions: Vec<md_editor_core::tracker::StudySession>,
+    pub(crate) sessions: Vec<md_editor_core::domain::StudySession>,
     pub(crate) kv: HashMap<String, String>,
     pub(crate) tab: TrackerTab,
     pub(crate) config_json: String,
@@ -68,7 +68,7 @@ pub(crate) struct TrackerState {
 
 impl TrackerState {
     pub(crate) fn new(
-        sessions: Vec<md_editor_core::tracker::StudySession>,
+        sessions: Vec<md_editor_core::domain::StudySession>,
         kv: HashMap<String, String>,
         config_json: String,
         manual_date: String,
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn new_sets_stable_defaults_and_preserves_loaded_data() {
-        let session = md_editor_core::tracker::StudySession {
+        let session = md_editor_core::domain::StudySession {
             id: 7,
             date: "2026-06-06".to_string(),
             hours: 1.5,
