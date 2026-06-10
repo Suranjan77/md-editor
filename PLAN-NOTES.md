@@ -18,11 +18,11 @@ Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
 | Task | Status | Notes |
 |---|---|---|
-| P1.T1 CODING_STANDARDS.md | ⬜ | |
-| P1.T2 ARCHITECTURE_RULES.md + enforcement | ⬜ | |
-| P1.T3 ADRs | ⬜ | |
-| P1.T4 TESTING.md | ⬜ | |
-| P1.T5 unwrap ratchet | ⬜ | |
+| P1.T1 CODING_STANDARDS.md | ✅ | 10 concrete standards with good/bad examples. `thiserror` dep not added yet — added when Phase 2 introduces typed errors (no point depending on it unused). |
+| P1.T2 ARCHITECTURE_RULES.md + enforcement | ✅ | architecture-check.sh extended: core↛winit, native↛pdfium_render, cross-feature import ban with shrink-only allowlist (3 pre-existing violations listed). Proven by injecting violations (core iced import + shell→tracker import both failed the script, then restored green). Added rg→grep fallback shim — script previously *silently passed* when ripgrep was missing. budgets.toml committed (file ceilings + unwrap + raw-color ratchets); check-budget.sh now pass/fail against it. |
+| P1.T3 ADRs | ✅ | 0001 keep-iced, 0002 pdfium-via-core, 0003 sqlite-sidecar, 0004 elm-with-features + index. |
+| P1.T4 TESTING.md | ✅ | Pyramid, characterization policy, fixture docs, pre-handoff commands. |
+| P1.T5 unwrap ratchet | ✅ | scripts/unwrap-budget.sh; production count is **8** (plan's 244 figure included test code). Ceiling=8 in budgets.toml; wired into quality.yml. `// INVARIANT:` escape hatch honored. |
 
 ## Phase 2 — Core Unification
 
