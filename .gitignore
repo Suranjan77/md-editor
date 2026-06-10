@@ -6,3 +6,4 @@ dist
 dist-portable
 .idea
 target
+tests-fixtures/pdf/large-500-pages.pdf
