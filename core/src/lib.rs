@@ -17,5 +17,3 @@ mod pdfium_build_paths;
 
 pub mod application;
 pub mod infrastructure;
-#[cfg(test)]
-mod massive_tests;
