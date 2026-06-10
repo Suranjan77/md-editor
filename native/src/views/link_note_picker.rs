@@ -2,7 +2,7 @@ use iced::advanced::text::Wrapping;
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, PdfMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -51,7 +51,7 @@ pub(crate) fn view<'a>(
             .size(12)
             .color(theme::text_muted()),
         text_input("Search folders and notes...", search_query)
-            .on_input(Message::PdfLinkNotePickerSearchChanged)
+            .on_input(|query| Message::Pdf(PdfMessage::LinkNotePickerSearchChanged(query)))
             .padding(10),
         container(scrollable(list).height(Length::Fixed(300.0)))
             .height(Length::Fixed(300.0))
@@ -112,9 +112,9 @@ fn picker_row<'a>(
         theme::text_secondary()
     };
     let msg = if is_dir {
-        Message::PdfLinkNoteFolderSelected(path.to_string())
+        Message::Pdf(PdfMessage::LinkNoteFolderSelected(path.to_string()))
     } else {
-        Message::PdfLinkNoteFileSelected(path.to_string())
+        Message::Pdf(PdfMessage::LinkNoteFileSelected(path.to_string()))
     };
 
     let content = row![

@@ -1,7 +1,7 @@
 use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Element, Length, Padding, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, PdfMessage};
 use crate::theme;
 
 pub(crate) type TocEntry = crate::editor::parser::OutlineEntry;
@@ -98,7 +98,7 @@ pub(crate) fn view<'a>(
 
             container(
                 crate::views::focus_button::focus_button(text(&entry.text).size(13).color(color))
-                    .on_press(Message::PdfTocClicked(entry.line))
+                    .on_press(Message::Pdf(PdfMessage::TocClicked(entry.line)))
                     .padding(8.0)
                     .subtle(!active)
                     .active(active)
