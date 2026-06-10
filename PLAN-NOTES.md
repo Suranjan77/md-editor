@@ -9,7 +9,7 @@ Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 |---|---|---|
 | P0.T1 fix quality.yml | ✅ | Corrupted step block rewritten (metrics → budget → unwrap-budget as separate steps); YAML validated with `yaml.safe_load`. |
 | P0.T2 debris removal | ✅ | `git rm`: update.patch, my_diff.patch, diff.json, issue_ui.png, dummy.pdf, skills-lock.json, ORIGINAL_REQUEST.md (content preserved in docs/HISTORY.md), native/src/{dummy.rs,dummy_test.rs,test_scroll.rs}. None were declared as modules; no code changes needed. |
-| P0.T3 test relocation | ⬜ | |
+| P0.T3 test relocation | ✅ | massive_tests.rs split verbatim: 3 link-graph tests → file_index.rs (`link_graph_scale_tests`), config upserts → config.rs, tracker sessions/KV → tracker.rs, 3 vault tests → vault.rs (`vault_scale_tests`). No assertions changed. core/tests/smoke.rs added; native is bin-only so native/tests/smoke.rs uses CARGO_BIN_EXE link check (limitation recorded). Test modules will travel with their files when Phase 2 relocates them. |
 | P0.T4 characterization tests | ⬜ | Using plain asserts (not insta) so tests are self-verifying without a snapshot-accept round. |
 | P0.T5 PDF fixture corpus | ⬜ | |
 | P0.T6 ledger | ✅ | This file. |
