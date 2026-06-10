@@ -1,6 +1,6 @@
 use iced::Subscription;
 
-use crate::messages::{EditorMessage, Message, Shortcut};
+use crate::messages::{EditorMessage, Message, PdfMessage, Shortcut};
 
 use super::model::*;
 
@@ -30,10 +30,10 @@ impl MdEditor {
                     if modifiers.alt() {
                         match key {
                             iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft) => {
-                                return Message::PdfNavBack;
+                                return Message::Pdf(PdfMessage::NavBack);
                             }
                             iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight) => {
-                                return Message::PdfNavForward;
+                                return Message::Pdf(PdfMessage::NavForward);
                             }
                             iced::keyboard::Key::Character(c) if c == "p" => {
                                 return Message::KeyboardShortcut(Shortcut::SwitchPane);
@@ -71,7 +71,7 @@ impl MdEditor {
                                 return Message::KeyboardShortcut(Shortcut::Search);
                             }
                             iced::keyboard::Key::Character(c) if c == "c" => {
-                                return Message::PdfCopySelection;
+                                return Message::Pdf(PdfMessage::CopySelection);
                             }
                             iced::keyboard::Key::Character(c) if c == "p" => {
                                 return Message::KeyboardShortcut(Shortcut::CommandPalette);
@@ -114,16 +114,16 @@ impl MdEditor {
                             return Message::KeyboardShortcut(Shortcut::PdfLastPage);
                         }
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => {
-                            return Message::PdfScrollBy(64.0);
+                            return Message::Pdf(PdfMessage::ScrollBy(64.0));
                         }
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp) => {
-                            return Message::PdfScrollBy(-64.0);
+                            return Message::Pdf(PdfMessage::ScrollBy(-64.0));
                         }
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::PageDown) => {
-                            return Message::PdfScrollBy(520.0);
+                            return Message::Pdf(PdfMessage::ScrollBy(520.0));
                         }
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::PageUp) => {
-                            return Message::PdfScrollBy(-520.0);
+                            return Message::Pdf(PdfMessage::ScrollBy(-520.0));
                         }
                         _ => {}
                     }
@@ -142,7 +142,7 @@ impl MdEditor {
                     iced::mouse::ScrollDelta::Lines { y, .. } => y * 0.1,
                     iced::mouse::ScrollDelta::Pixels { y, .. } => y * 0.001,
                 };
-                Some(Message::PdfWheelScrolledForZoom(zoom_delta))
+                Some(Message::Pdf(PdfMessage::WheelScrolledForZoom(zoom_delta)))
             }
             _ => None,
         });

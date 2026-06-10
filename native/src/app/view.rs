@@ -521,7 +521,7 @@ impl MdEditor {
                     iced::widget::row![
                         Space::new().width(Length::Fill),
                         iced::widget::button("✕")
-                            .on_press(Message::ClosePdfLinkPreview)
+                            .on_press(Message::Pdf(PdfMessage::CloseLinkPreview))
                             .padding(10)
                             .style(iced::widget::button::text)
                     ],
@@ -594,15 +594,15 @@ impl MdEditor {
             },
             move |res| {
                 if let Some((p, Ok(img))) = res {
-                    Message::PdfRendered(generation, p, img)
+                    Message::Pdf(PdfMessage::Rendered(generation, p, img))
                 } else if let Some((p, Err(err))) = res {
                     if err == "Skipped" {
-                        Message::PdfRenderSkipped(generation, p)
+                        Message::Pdf(PdfMessage::RenderSkipped(generation, p))
                     } else {
-                        Message::PdfRenderFailed(generation, p)
+                        Message::Pdf(PdfMessage::RenderFailed(generation, p))
                     }
                 } else {
-                    Message::PdfRenderFailed(generation, page)
+                    Message::Pdf(PdfMessage::RenderFailed(generation, page))
                 }
             },
         )
@@ -643,9 +643,9 @@ impl MdEditor {
             },
             move |res| {
                 if let Some((p, img)) = res {
-                    Message::PdfRendered(generation, p, img)
+                    Message::Pdf(PdfMessage::Rendered(generation, p, img))
                 } else {
-                    Message::PdfRenderFailed(generation, page)
+                    Message::Pdf(PdfMessage::RenderFailed(generation, page))
                 }
             },
         )

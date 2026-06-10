@@ -9,8 +9,8 @@ use crate::views::interactive_pdf::{
     InteractivePdf, PdfHighlights, PdfSelection, pdf_highlight_rects,
 };
 
-pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
-pub(crate) const PDF_PAGE_SPACING: f32 = 20.0;
+pub const PDF_PAGE_LIST_PADDING: f32 = 20.0;
+pub const PDF_PAGE_SPACING: f32 = 20.0;
 pub(crate) const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
 
 #[cfg(test)]
@@ -422,7 +422,7 @@ pub(crate) fn toolbar_with_companion_note<'a>(
                             ..Default::default()
                         }),
                 )
-                .on_press(Message::PdfCreateHighlight(color_enum))
+                .on_press(Message::Pdf(PdfMessage::CreateHighlight(color_enum)))
                 .style(button::text)
                 .padding(0),
             );
@@ -436,7 +436,7 @@ pub(crate) fn toolbar_with_companion_note<'a>(
                 ]
                 .align_y(Alignment::Center),
             )
-            .on_press(Message::PdfInsertQuoteLink)
+            .on_press(Message::Pdf(PdfMessage::InsertQuoteLink))
             .padding([4, 8])
             .style(toolbar_button_style(true))
         } else {
@@ -458,7 +458,7 @@ pub(crate) fn toolbar_with_companion_note<'a>(
                 cite_btn,
                 text("Ctrl+H").size(11).color(theme::text_muted()),
                 button(icons::view(Icon::X, theme::text_muted(), 14.0))
-                    .on_press(Message::PdfSelectionCleared)
+                    .on_press(Message::Pdf(PdfMessage::SelectionCleared))
                     .padding(5)
                     .style(toolbar_button_style(false)),
             ]
@@ -478,10 +478,10 @@ pub(crate) fn toolbar_with_companion_note<'a>(
             ]
             .align_y(Alignment::Center),
         )
-        .on_press(Message::PdfEditAnnotationNote(
+        .on_press(Message::Pdf(PdfMessage::EditAnnotationNote(
             ann.id.clone(),
             ann.page_index,
-        ))
+        )))
         .padding([4, 8])
         .style(toolbar_button_style(false));
 
@@ -493,7 +493,9 @@ pub(crate) fn toolbar_with_companion_note<'a>(
                 ]
                 .align_y(Alignment::Center),
             )
-            .on_press(Message::PdfInsertAnnotationLink(ann.id.clone()))
+            .on_press(Message::Pdf(PdfMessage::InsertAnnotationLink(
+                ann.id.clone(),
+            )))
             .padding([4, 8])
             .style(toolbar_button_style(true))
         } else {
@@ -517,7 +519,7 @@ pub(crate) fn toolbar_with_companion_note<'a>(
                     ]
                     .align_y(Alignment::Center),
                 )
-                .on_press(Message::PdfOpenLinkedNote(path.clone()))
+                .on_press(Message::Pdf(PdfMessage::OpenLinkedNote(path.clone())))
                 .padding([4, 8])
                 .style(toolbar_button_style(true))
             } else {
@@ -528,7 +530,10 @@ pub(crate) fn toolbar_with_companion_note<'a>(
                     ]
                     .align_y(Alignment::Center),
                 )
-                .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
+                .on_press(Message::Pdf(PdfMessage::LinkNote(
+                    ann.id.clone(),
+                    String::new(),
+                )))
                 .padding([4, 8])
                 .style(toolbar_button_style(false))
             }
@@ -540,7 +545,10 @@ pub(crate) fn toolbar_with_companion_note<'a>(
                 ]
                 .align_y(Alignment::Center),
             )
-            .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
+            .on_press(Message::Pdf(PdfMessage::LinkNote(
+                ann.id.clone(),
+                String::new(),
+            )))
             .padding([4, 8])
             .style(toolbar_button_style(false))
         };
@@ -550,7 +558,7 @@ pub(crate) fn toolbar_with_companion_note<'a>(
             Color::from_rgb8(239, 83, 80),
             14.0,
         ))
-        .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
+        .on_press(Message::Pdf(PdfMessage::DeleteHighlight(ann.id.clone())))
         .padding([4, 8])
         .style(toolbar_button_style(false));
 
@@ -574,7 +582,7 @@ pub(crate) fn toolbar_with_companion_note<'a>(
         row![
             text("PAGE").size(11).color(theme::text_muted()),
             button(text(page_label).size(12).color(theme::text_secondary()))
-                .on_press(Message::PdfGoToPage)
+                .on_press(Message::Pdf(PdfMessage::GoToPage))
                 .padding([4, 8])
                 .style(toolbar_button_style(false)),
         ]
@@ -586,14 +594,14 @@ pub(crate) fn toolbar_with_companion_note<'a>(
         row![
             text("ZOOM").size(11).color(theme::text_muted()),
             button(text("-").size(16))
-                .on_press(Message::PdfZoomChanged((zoom - 0.1).max(0.5)))
+                .on_press(Message::Pdf(PdfMessage::ZoomChanged((zoom - 0.1).max(0.5))))
                 .padding([4, 10])
                 .style(toolbar_button_style(false)),
             text(format!("{:.0}%", zoom * 100.0))
                 .size(12)
                 .color(theme::text_secondary()),
             button(text("+").size(16))
-                .on_press(Message::PdfZoomChanged((zoom + 0.1).min(4.0)))
+                .on_press(Message::Pdf(PdfMessage::ZoomChanged((zoom + 0.1).min(4.0))))
                 .padding([4, 10])
                 .style(toolbar_button_style(false)),
             button(text("Fit W").size(12).color(if fit_to_width {
@@ -601,7 +609,7 @@ pub(crate) fn toolbar_with_companion_note<'a>(
             } else {
                 theme::text_muted()
             }),)
-            .on_press(Message::PdfFitToWidth)
+            .on_press(Message::Pdf(PdfMessage::FitToWidth))
             .padding([4, 10])
             .style(toolbar_button_style(fit_to_width)),
             button(text("Fit P").size(12).color(if fit_to_page {
@@ -609,11 +617,11 @@ pub(crate) fn toolbar_with_companion_note<'a>(
             } else {
                 theme::text_muted()
             }),)
-            .on_press(Message::PdfFitToPage)
+            .on_press(Message::Pdf(PdfMessage::FitToPage))
             .padding([4, 10])
             .style(toolbar_button_style(fit_to_page)),
             button(text("Rotate").size(12).color(theme::text_muted()),)
-                .on_press(Message::PdfRotateClockwise)
+                .on_press(Message::Pdf(PdfMessage::RotateClockwise))
                 .padding([4, 10])
                 .style(toolbar_button_style(false)),
         ]
@@ -631,7 +639,9 @@ pub(crate) fn toolbar_with_companion_note<'a>(
                 ]
                 .align_y(Alignment::Center),
             )
-            .on_press(Message::PdfOpenCompanionNote(vault_path.to_string()))
+            .on_press(Message::Pdf(PdfMessage::OpenCompanionNote(
+                vault_path.to_string(),
+            )))
             .padding([4, 8])
             .style(toolbar_button_style(true))
         });
@@ -868,7 +878,9 @@ pub(crate) fn view_continuous<'a>(
                 focused_annotation_id,
                 page_links,
                 rotation,
-                move |x, y, modifiers| Message::PdfLeftClicked(page_index, x, y, modifiers),
+                move |x, y, modifiers| {
+                    Message::Pdf(PdfMessage::LeftClicked(page_index, x, y, modifiers))
+                },
                 move |x, y, absolute_pos| {
                     Message::Pdf(PdfMessage::RightClicked {
                         page_index,
@@ -877,10 +889,14 @@ pub(crate) fn view_continuous<'a>(
                         absolute_pos,
                     })
                 },
-                move |page, anchor, focus| Message::PdfSelectionChanged(page, anchor, focus),
-                move |page, anchor, focus| Message::PdfSelectionFinished(page, anchor, focus),
-                move || Message::PdfSelectionCleared,
-                move || Message::PdfCopySelection,
+                move |page, anchor, focus| {
+                    Message::Pdf(PdfMessage::SelectionChanged(page, anchor, focus))
+                },
+                move |page, anchor, focus| {
+                    Message::Pdf(PdfMessage::SelectionFinished(page, anchor, focus))
+                },
+                move || Message::Pdf(PdfMessage::SelectionCleared),
+                move || Message::Pdf(PdfMessage::CopySelection),
             );
 
             page_list = page_list.push(

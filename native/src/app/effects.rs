@@ -1,13 +1,12 @@
 use iced::Task;
 use iced::widget::operation::{self};
 
-use image::GenericImageView;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::editor::parser;
 use crate::features::pdf::navigation::parse_pdf_link;
-use crate::messages::{EditorMessage, Message, SearchMessage};
+use crate::messages::{EditorMessage, Message, PdfMessage, SearchMessage};
 use crate::views;
 
 use super::model::*;
@@ -24,7 +23,7 @@ pub(crate) fn plain_highlight_placeholders(text: &str) -> Vec<parser::StyledLine
         .collect()
 }
 
-pub(crate) fn pdf_companion_note_key(pdf_path: &str) -> String {
+pub fn pdf_companion_note_key(pdf_path: &str) -> String {
     format!("pdf_companion_note:{}", pdf_path.replace('\\', "/"))
 }
 
@@ -291,7 +290,7 @@ pub(crate) fn registered_pdf_search_targets(
         .collect()
 }
 
-pub(crate) fn focus_pdf_search_input() -> Task<Message> {
+pub fn focus_pdf_search_input() -> Task<Message> {
     focus_target(FocusTarget::PdfSearch)
 }
 
@@ -350,7 +349,7 @@ pub(crate) fn slugify(s: &str) -> String {
     crate::editor::parser::markdown_anchor_slug(s)
 }
 
-pub(crate) fn save_markdown_file_with_parser_targets(
+pub fn save_markdown_file_with_parser_targets(
     state: &md_editor_core::state::AppState,
     path: &str,
     content: &str,
@@ -364,7 +363,7 @@ pub(crate) fn save_markdown_file_with_parser_targets(
     )
 }
 
-pub(crate) fn reindex_markdown_file_with_parser_targets(
+pub fn reindex_markdown_file_with_parser_targets(
     state: &md_editor_core::state::AppState,
     path: &str,
     content: &str,
@@ -596,7 +595,13 @@ impl MdEditor {
                     .get_page_links(&path_str, md_editor_core::domain::PageIndex::from(page))
                     .ok()
             },
-            move |res| Message::PdfPageLinksLoaded(generation, page, res.unwrap_or_default()),
+            move |res| {
+                Message::Pdf(PdfMessage::PageLinksLoaded(
+                    generation,
+                    page,
+                    res.unwrap_or_default(),
+                ))
+            },
         )
     }
 
@@ -622,7 +627,7 @@ impl MdEditor {
                     .ok_or_else(|| "No PDF renderer".to_string())?;
                 renderer.get_page_text(&path_str, md_editor_core::domain::PageIndex::from(page))
             },
-            move |res| Message::PdfPageTextLoaded(generation, page, res),
+            move |res| Message::Pdf(PdfMessage::PageTextLoaded(generation, page, res)),
         )
     }
 
@@ -771,14 +776,18 @@ impl MdEditor {
                 tokio::task::spawn_blocking(move || {
                     while let Ok(m) = res_rx.recv() {
                         if tokio_tx
-                            .blocking_send(Message::PdfSearchMatchesFound(search_id, vec![m]))
+                            .blocking_send(Message::Pdf(PdfMessage::SearchMatchesFound(
+                                search_id,
+                                vec![m],
+                            )))
                             .is_err()
                         {
                             return;
                         }
                     }
                     let res = done_rx.recv().unwrap_or(Ok(()));
-                    let _ = tokio_tx.blocking_send(Message::PdfSearchFinished(search_id, res));
+                    let _ = tokio_tx
+                        .blocking_send(Message::Pdf(PdfMessage::SearchFinished(search_id, res)));
                 });
 
                 let stream = iced::futures::stream::unfold(tokio_rx, |mut rx| async move {
@@ -826,7 +835,8 @@ impl MdEditor {
                             match image::open(&img_path) {
                                 Ok(img) => {
                                     self.editor.image_errors.remove(path);
-                                    let (width, height) = img.dimensions();
+                                    let width = img.width();
+                                    let height = img.height();
                                     let handle = iced::widget::image::Handle::from_rgba(
                                         width,
                                         height,
@@ -913,7 +923,8 @@ impl MdEditor {
             render_to_png(&display_list, &options).map_err(|e| format!("Render error: {:?}", e))?;
 
         let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-        let (w, h) = img.dimensions();
+        let w = img.width();
+        let h = img.height();
         Ok((
             iced::widget::image::Handle::from_bytes(bytes),
             w as f32 / 2.0,
