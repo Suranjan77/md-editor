@@ -1,0 +1,15 @@
+[package]
+name = "md3-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shell binary: wires kernel + engines; generates keymap/palette from the command registry"
+
+[lints]
+workspace = true
+
+[dependencies]
+md3-kernel = { path = "../kernel" }
+md3-editor = { path = "../editor" }
+md3-vault = { path = "../vault" }
+md3-pdf = { path = "../pdf" }

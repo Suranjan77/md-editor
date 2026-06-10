@@ -63,3 +63,40 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+  v3:
+    name: v3 workspace (kernel/editor/vault/pdf/shell)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+          rustc --version
+
+      - name: Check formatting
+        working-directory: v3
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        working-directory: v3
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests (includes BUG-A/B/C regression suites)
+        working-directory: v3
+        run: cargo test --workspace
+
+      - name: Kernel demo walks the v2 bug scenarios
+        working-directory: v3
+        run: cargo run -p md3-shell -- --demo
+
+      - name: Generated shortcuts doc is up to date
+        working-directory: v3
+        run: |
+          cargo run -q -p md3-shell -- --dump-shortcuts > /tmp/shortcuts.md
+          diff -u ../docs/V3_SHORTCUTS.md /tmp/shortcuts.md

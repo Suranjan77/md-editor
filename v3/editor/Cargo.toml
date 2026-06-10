@@ -1,0 +1,12 @@
+[package]
+name = "md3-editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Editor engine: 3-phase layout protocol, height sum-tree (toolkit-agnostic)"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = "2"
