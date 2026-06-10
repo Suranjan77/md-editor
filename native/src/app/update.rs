@@ -724,7 +724,7 @@ impl MdEditor {
                         let state = self.state.clone();
                         let query = self.build_global_search_query(q.clone());
                         let include_pdf_content =
-                            query.includes(md_editor_core::types::UnifiedSearchSource::PdfContent);
+                            query.includes(md_editor_core::domain::UnifiedSearchSource::PdfContent);
                         let db_query = query.clone();
 
                         let db_task = Task::perform(
@@ -895,7 +895,7 @@ impl MdEditor {
             Message::Search(SearchMessage::UnifiedMatchesFound(search_id, matches)) => {
                 if search_id == self.search.global.id {
                     self.search.global.results.retain(|r| {
-                        r.group == md_editor_core::types::SearchResultGroup::PdfContent
+                        r.group == md_editor_core::domain::SearchResultGroup::PdfContent
                     });
                     self.search.global.results.extend(matches);
                     self.search.global.results.sort_by(|a, b| {
@@ -947,8 +947,8 @@ impl MdEditor {
                 self.search.visible = false;
 
                 match result.group {
-                    md_editor_core::types::SearchResultGroup::MarkdownContent
-                    | md_editor_core::types::SearchResultGroup::Heading => {
+                    md_editor_core::domain::SearchResultGroup::MarkdownContent
+                    | md_editor_core::domain::SearchResultGroup::Heading => {
                         let open_task = self.open_file(&result.path);
                         let cursor_task = Task::done(Message::Editor(EditorMessage::CursorMove(
                             result.line.saturating_sub(1),
@@ -956,7 +956,7 @@ impl MdEditor {
                         )));
                         Task::batch(vec![open_task, cursor_task])
                     }
-                    md_editor_core::types::SearchResultGroup::Filename => {
+                    md_editor_core::domain::SearchResultGroup::Filename => {
                         if result.path.ends_with(".pdf") {
                             if self.pdf_paths_match(self.pdf.active_path.as_deref(), &result.path) {
                                 self.set_active_panel(ActivePanel::Pdf);
@@ -969,7 +969,7 @@ impl MdEditor {
                             self.open_file(&result.path)
                         }
                     }
-                    md_editor_core::types::SearchResultGroup::PdfContent => {
+                    md_editor_core::domain::SearchResultGroup::PdfContent => {
                         if self.pdf_paths_match(self.pdf.active_path.as_deref(), &result.path) {
                             self.set_active_panel(ActivePanel::Pdf);
                             self.pdf.showing_pdf = true;
@@ -989,8 +989,8 @@ impl MdEditor {
                             self.open_pdf(&result.path)
                         }
                     }
-                    md_editor_core::types::SearchResultGroup::Annotation
-                    | md_editor_core::types::SearchResultGroup::QuickNote => {
+                    md_editor_core::domain::SearchResultGroup::Annotation
+                    | md_editor_core::domain::SearchResultGroup::QuickNote => {
                         if self.pdf_paths_match(self.pdf.active_path.as_deref(), &result.path) {
                             self.set_active_panel(ActivePanel::Pdf);
                             self.pdf.showing_pdf = true;
@@ -1428,7 +1428,7 @@ impl MdEditor {
             TrackerEffect::PersistShellAndReload => {
                 self.persist_shell_state();
                 if self.tracker.visible {
-                    self.tracker.kv = md_editor_core::tracker::get_kv(&self.state)
+                    self.tracker.kv = md_editor_core::application::TrackerService::new(&self.state).kv_entries()
                         .unwrap_or_default()
                         .into_iter()
                         .map(|item| (item.key, item.value))
@@ -1446,7 +1446,7 @@ impl MdEditor {
                 self.overlays.toast = Some(message.to_string());
             }
             TrackerEffect::SaveElapsed(elapsed) => {
-                let session = md_editor_core::tracker::StudySession {
+                let session = md_editor_core::domain::StudySession {
                     id: 0,
                     date: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
                     hours: (elapsed.as_secs_f32() / 3600.0).max(0.01),
@@ -1454,14 +1454,14 @@ impl MdEditor {
                     phase: "Focus".to_string(),
                     notes: None,
                 };
-                if md_editor_core::tracker::save_session(&self.state, session).is_ok() {
+                if md_editor_core::application::TrackerService::new(&self.state).save_session(session).is_ok() {
                     self.tracker.sessions =
-                        md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
+                        md_editor_core::application::TrackerService::new(&self.state).sessions().unwrap_or_default();
                     self.overlays.toast = Some("Study session saved".to_string());
                 }
             }
             TrackerEffect::PersistKv { key, value } => {
-                if md_editor_core::tracker::set_kv(&self.state, &key, &value).is_ok() {
+                if md_editor_core::application::TrackerService::new(&self.state).set_kv(&key, &value).is_ok() {
                     self.tracker.kv.insert(key, value);
                 }
             }
@@ -1484,7 +1484,7 @@ impl MdEditor {
                 }
             }
             TrackerEffect::AddManualSession { date, hours, notes } => {
-                let session = md_editor_core::tracker::StudySession {
+                let session = md_editor_core::domain::StudySession {
                     id: 0,
                     date,
                     hours,
@@ -1492,10 +1492,10 @@ impl MdEditor {
                     phase: "Manual".to_string(),
                     notes,
                 };
-                match md_editor_core::tracker::save_session(&self.state, session) {
+                match md_editor_core::application::TrackerService::new(&self.state).save_session(session) {
                     Ok(()) => {
                         self.tracker.sessions =
-                            md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
+                            md_editor_core::application::TrackerService::new(&self.state).sessions().unwrap_or_default();
                         self.tracker.manual_hours.clear();
                         self.tracker.manual_notes.clear();
                         self.overlays.toast = Some("Manual study session added".to_string());
@@ -1507,10 +1507,10 @@ impl MdEditor {
                 self.overlays.toast = Some("Enter a positive hour value".to_string());
             }
             TrackerEffect::DeleteSession(id) => {
-                match md_editor_core::tracker::delete_session(&self.state, id) {
+                match md_editor_core::application::TrackerService::new(&self.state).delete_session(id) {
                     Ok(()) => {
                         self.tracker.sessions =
-                            md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
+                            md_editor_core::application::TrackerService::new(&self.state).sessions().unwrap_or_default();
                         self.overlays.toast = Some("Session deleted".to_string());
                     }
                     Err(error) => self.overlays.toast = Some(error),

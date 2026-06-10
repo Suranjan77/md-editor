@@ -70,9 +70,9 @@ pub(crate) fn focus_citation_palette_input() -> Task<Message> {
 
 pub(crate) fn search_registered_pdf_text_results(
     state: &Arc<md_editor_core::state::AppState>,
-    query: &md_editor_core::types::UnifiedSearchQuery,
+    query: &md_editor_core::domain::UnifiedSearchQuery,
     active_pdf_path: Option<&str>,
-) -> md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+) -> md_editor_core::domain::UnifiedPdfTextSearchResultBatch {
     let Some(renderer) = state.pdf_renderer() else {
         return empty_pdf_text_batch();
     };
@@ -114,7 +114,7 @@ pub(crate) fn search_registered_pdf_text_results(
                 .then_with(|| a.path.cmp(&b.path))
                 .then_with(|| a.line.cmp(&b.line))
         });
-        return md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+        return md_editor_core::domain::UnifiedPdfTextSearchResultBatch {
             results,
             searched_documents: cached_paths.len(),
             total_candidates,
@@ -149,8 +149,8 @@ pub(crate) fn search_registered_pdf_text_results(
             {
                 score *= query.ranking.exact_phrase_boost;
             }
-            results.push(md_editor_core::types::UnifiedSearchResult {
-                group: md_editor_core::types::SearchResultGroup::PdfContent,
+            results.push(md_editor_core::domain::UnifiedSearchResult {
+                group: md_editor_core::domain::SearchResultGroup::PdfContent,
                 path: vault_path.clone(),
                 line: (search_match.page_index + 1) as usize,
                 context: format!(
@@ -183,7 +183,7 @@ pub(crate) fn search_registered_pdf_text_results(
             .then_with(|| a.path.cmp(&b.path))
             .then_with(|| a.line.cmp(&b.line))
     });
-    md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+    md_editor_core::domain::UnifiedPdfTextSearchResultBatch {
         results,
         searched_documents,
         total_candidates,
@@ -192,8 +192,8 @@ pub(crate) fn search_registered_pdf_text_results(
     }
 }
 
-pub(crate) fn empty_pdf_text_batch() -> md_editor_core::types::UnifiedPdfTextSearchResultBatch {
-    md_editor_core::types::UnifiedPdfTextSearchResultBatch {
+pub(crate) fn empty_pdf_text_batch() -> md_editor_core::domain::UnifiedPdfTextSearchResultBatch {
+    md_editor_core::domain::UnifiedPdfTextSearchResultBatch {
         results: Vec::new(),
         searched_documents: 0,
         total_candidates: 0,
@@ -203,7 +203,7 @@ pub(crate) fn empty_pdf_text_batch() -> md_editor_core::types::UnifiedPdfTextSea
 }
 
 pub(crate) fn format_pdf_search_status(
-    batch: &md_editor_core::types::UnifiedPdfTextSearchResultBatch,
+    batch: &md_editor_core::domain::UnifiedPdfTextSearchResultBatch,
 ) -> String {
     let mut status = format!(
         "PDF text: searched {} of {} registered PDFs",
@@ -706,7 +706,7 @@ impl MdEditor {
     pub(crate) fn search_registered_pdf_text_task(
         &self,
         search_id: u64,
-        query: md_editor_core::types::UnifiedSearchQuery,
+        query: md_editor_core::domain::UnifiedSearchQuery,
     ) -> Task<Message> {
         let state = self.state.clone();
         let active_pdf_path = self.pdf.active_path.clone();

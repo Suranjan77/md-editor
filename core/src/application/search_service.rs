@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use crate::types::{SearchResult, UnifiedSearchQuery, UnifiedSearchResult};
+use crate::domain::{SearchResult, UnifiedSearchQuery, UnifiedSearchResult};
 
 pub struct SearchService<'a> {
     state: &'a AppState,

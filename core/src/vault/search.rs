@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use crate::types::{
+use crate::domain::{
     SearchResult, SearchResultGroup, UnifiedSearchQuery, UnifiedSearchResult, UnifiedSearchSource,
 };
 
@@ -445,7 +445,7 @@ struct AnnotationSearchContext<'a, F: Fn(&str, &str) -> bool> {
     query_trimmed: &'a str,
     active_pdf_path: Option<&'a str>,
     active_markdown_path: Option<&'a str>,
-    ranking: &'a crate::types::UnifiedSearchRanking,
+    ranking: &'a crate::domain::UnifiedSearchRanking,
     is_linked: &'a F,
 }
 
@@ -615,7 +615,7 @@ mod tests {
             sources: vec![UnifiedSearchSource::QuickNote],
             active_markdown_path: None,
             active_pdf_path: Some("paper.pdf".to_string()),
-            ranking: crate::types::UnifiedSearchRanking::default(),
+            ranking: crate::domain::UnifiedSearchRanking::default(),
         };
 
         let results = search_vault_unified_query(&state, &query).unwrap();

@@ -955,8 +955,8 @@ pub fn update_pdf(editor: &mut MdEditor, message: PdfMessage) -> Task<Message> {
                             }
 
                             editor.search.global.results.push(
-                                md_editor_core::types::UnifiedSearchResult {
-                                    group: md_editor_core::types::SearchResultGroup::PdfContent,
+                                md_editor_core::domain::UnifiedSearchResult {
+                                    group: md_editor_core::domain::SearchResultGroup::PdfContent,
                                     path: pdf_path.clone(),
                                     line: (m.page_index + 1) as usize,
                                     context: format!(

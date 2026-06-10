@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::domain::VaultPath;
-use crate::types::FileEntry;
+use crate::domain::FileEntry;
 
 const IMAGE_EXTENSIONS: [&str; 6] = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
 
