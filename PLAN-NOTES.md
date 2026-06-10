@@ -44,6 +44,22 @@ Not started except where noted below.
 |---|---|---|
 | UXA.T2 design tokens | ⬜ | |
 
+## Known-bug register (root-caused 2026-06-10, user-reported)
+
+| ID | Symptom | Root cause | Fix home |
+|---|---|---|---|
+| BUG-A | Ctrl+Z opens go-to-page/zoom input instead of undo | Global `iced::keyboard::listen()` in `app/subscription.rs` maps Ctrl+Z→`Shortcut::PdfZoomInput` unconditionally while the editor widget separately binds Ctrl+Z→`EditorCommand::Undo` (`renderer/widget.rs:2077`); both fire, no focus scoping | v2 hotfix: gate the PDF chord block on PDF-pane focus/`active_panel`. Structural: InputRouter (V3 plan §3.1) |
+| BUG-B | Clicking a line expands it onto the next line; overflow text paints over the line below | Cursor entering a line reveals concealed markers → line re-wraps taller, but per-line layout cache (`layout_cache.rs`) has no document reflow protocol — subsequent line offsets stay stale → overdraw | v2 hotfix: invalidate subsequent offsets on height change. Structural: 3-phase layout + height sum-tree (V3 plan §3.2) |
+| BUG-C | PDFs only open in split view, never standalone | No workspace model: `split_view_active`/`showing_pdf`/`active_panel`/two `active_path`s must be hand-synced; PDF-link open hardcodes `split_view_active = true` (`update.rs:110`) | Structural only: PaneTree workspace model (V3 plan §3.1) |
+
+## V3 ground-up plan
+
+`docs/V3_GROUND_UP_PLAN.md` — fresh-eyes, 10–20 dev / 12–18 month rebuild plan written
+2026-06-10 at user request: workspace kernel (PaneTree/FocusModel/InputRouter/CommandBus),
+3-phase editor layout protocol, tile-based PDF engine, watcher-driven vault core, toolkit
+bake-off, 6 squads, milestones M0–M5. The incremental plan in this repo remains the
+1–2 person path; the bug register above is the evidence base shared by both.
+
 ## Standing backlog / findings
 
 - Old docs/ tree was deleted in the working tree before this overhaul began (user action); replacement docs are written fresh by Phase 1 tasks.
