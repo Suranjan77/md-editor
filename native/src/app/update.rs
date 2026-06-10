@@ -20,6 +20,10 @@ use super::model::*;
 use crate::app::*;
 
 impl MdEditor {
+    fn tracker_service(&self) -> md_editor_core::application::TrackerService<'_> {
+        md_editor_core::application::TrackerService::new(&self.state)
+    }
+
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             message @ Message::Shell(_) => self.coordinate(message),
@@ -1422,17 +1426,13 @@ impl MdEditor {
     }
 
     fn update_tracker(&mut self, message: TrackerMessage) -> Task<Message> {
-        let effect = self.tracker.update(message, std::time::Instant::now());
-        match effect {
+        match self.tracker.update(message, std::time::Instant::now()) {
             TrackerEffect::None => {}
             TrackerEffect::PersistShellAndReload => {
                 self.persist_shell_state();
                 if self.tracker.visible {
-                    self.tracker.kv = md_editor_core::application::TrackerService::new(&self.state).kv_entries()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|item| (item.key, item.value))
-                        .collect();
+                    let entries = self.tracker_service().kv_entries().unwrap_or_default();
+                    self.tracker.kv = entries.into_iter().map(|kv| (kv.key, kv.value)).collect();
                     let config_json =
                         md_editor_core::config::get_sys_config(&self.state, "tracker_config")
                             .ok()
@@ -1454,14 +1454,13 @@ impl MdEditor {
                     phase: "Focus".to_string(),
                     notes: None,
                 };
-                if md_editor_core::application::TrackerService::new(&self.state).save_session(session).is_ok() {
-                    self.tracker.sessions =
-                        md_editor_core::application::TrackerService::new(&self.state).sessions().unwrap_or_default();
+                if self.tracker_service().save_session(session).is_ok() {
+                    self.tracker.sessions = self.tracker_service().sessions().unwrap_or_default();
                     self.overlays.toast = Some("Study session saved".to_string());
                 }
             }
             TrackerEffect::PersistKv { key, value } => {
-                if md_editor_core::application::TrackerService::new(&self.state).set_kv(&key, &value).is_ok() {
+                if self.tracker_service().set_kv(&key, &value).is_ok() {
                     self.tracker.kv.insert(key, value);
                 }
             }
@@ -1492,10 +1491,10 @@ impl MdEditor {
                     phase: "Manual".to_string(),
                     notes,
                 };
-                match md_editor_core::application::TrackerService::new(&self.state).save_session(session) {
+                match self.tracker_service().save_session(session) {
                     Ok(()) => {
                         self.tracker.sessions =
-                            md_editor_core::application::TrackerService::new(&self.state).sessions().unwrap_or_default();
+                            self.tracker_service().sessions().unwrap_or_default();
                         self.tracker.manual_hours.clear();
                         self.tracker.manual_notes.clear();
                         self.overlays.toast = Some("Manual study session added".to_string());
@@ -1506,16 +1505,13 @@ impl MdEditor {
             TrackerEffect::InvalidManualHours => {
                 self.overlays.toast = Some("Enter a positive hour value".to_string());
             }
-            TrackerEffect::DeleteSession(id) => {
-                match md_editor_core::application::TrackerService::new(&self.state).delete_session(id) {
-                    Ok(()) => {
-                        self.tracker.sessions =
-                            md_editor_core::application::TrackerService::new(&self.state).sessions().unwrap_or_default();
-                        self.overlays.toast = Some("Session deleted".to_string());
-                    }
-                    Err(error) => self.overlays.toast = Some(error),
+            TrackerEffect::DeleteSession(id) => match self.tracker_service().delete_session(id) {
+                Ok(()) => {
+                    self.tracker.sessions = self.tracker_service().sessions().unwrap_or_default();
+                    self.overlays.toast = Some("Session deleted".to_string());
                 }
-            }
+                Err(error) => self.overlays.toast = Some(error),
+            },
         }
         Task::none()
     }

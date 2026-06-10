@@ -1,6 +1,6 @@
 use crate::domain::path::{AbsPath, VaultPath};
-use crate::state::AppState;
 use crate::domain::{BacklinkItem, FileEntry};
+use crate::state::AppState;
 
 pub struct VaultService<'a> {
     state: &'a AppState,

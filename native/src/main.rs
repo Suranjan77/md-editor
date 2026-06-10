@@ -23,6 +23,7 @@
 mod app;
 mod app_shell;
 mod command_registry;
+mod design;
 mod editor;
 mod features;
 mod integrity;

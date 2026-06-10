@@ -12,10 +12,10 @@ mod tests {
     use crate::editor::buffer::EditorCommand;
     use crate::features::pdf::view_model::PdfLayout;
     use crate::messages::*;
+    use md_editor_core::domain::FileEntry;
     use md_editor_core::domain::pdf::{
         PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfAnnotationStatus,
     };
-    use md_editor_core::domain::FileEntry;
     use std::sync::Arc;
 
     use crate::views;
@@ -2235,7 +2235,8 @@ mod tests {
             .save_pdf_document("doc-1", pdf_path, size, Some(mtime))
             .unwrap();
 
-        let mut query = md_editor_core::domain::UnifiedSearchQuery::all_sources("Dummy".to_string());
+        let mut query =
+            md_editor_core::domain::UnifiedSearchQuery::all_sources("Dummy".to_string());
         query.sources = vec![md_editor_core::domain::UnifiedSearchSource::PdfContent];
 
         // This would deadlock if state.vault_root lock guard was held and then validate_and_invalidate_pdf_cache tried to lock it again

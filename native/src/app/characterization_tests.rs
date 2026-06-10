@@ -258,7 +258,11 @@ mod tests {
         app.pdf.scroll_y = 1500.0;
         let _ = app.update(Message::Pdf(PdfMessage::FirstPage));
         assert_eq!(app.pdf.current_page, 0);
-        assert_eq!(app.pdf.scroll_y, 0.0);
+        // Scrolling is asynchronous: navigate_pdf_page flags a programmatic
+        // scroll and returns a scroll_to task; scroll_y only changes when the
+        // widget echoes a Scrolled message, so it is untouched here.
+        assert!(app.pdf.programmatic_scroll);
+        assert_eq!(app.pdf.scroll_y, 1500.0);
     }
 
     #[test]

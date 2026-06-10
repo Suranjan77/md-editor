@@ -40,7 +40,9 @@ pub(crate) fn set_kv(state: &AppState, key: &str, value: &str) -> Result<(), Str
 #[cfg(test)]
 mod tracker_scale_tests {
     use crate::state::AppState;
-    use crate::tracker::{StudySession, get_kv, get_sessions, get_total_hours, save_session, set_kv};
+    use crate::tracker::{
+        StudySession, get_kv, get_sessions, get_total_hours, save_session, set_kv,
+    };
 
     #[test]
     fn test_study_tracker_massive_sessions() {
