@@ -2,7 +2,9 @@
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::{EditorBlockActionKind, EditorMessage, Message, WorkspaceMessage};
+use crate::messages::{
+    EditorBlockActionKind, EditorMessage, Message, PdfMessage, WorkspaceMessage,
+};
 use crate::theme;
 use crate::views::link_note_picker;
 
@@ -299,7 +301,7 @@ pub(crate) fn view_context_menu<'a>(
 
         menu_col = menu_col.push(
             button(text(label).size(12).color(theme::text_primary()))
-                .on_press(Message::PdfContextMenuAction(item.clone()))
+                .on_press(Message::Pdf(PdfMessage::ContextMenuAction(item.clone())))
                 .padding([6, 12])
                 .style(button::text)
                 .width(Length::Fill),

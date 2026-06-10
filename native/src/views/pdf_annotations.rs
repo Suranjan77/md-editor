@@ -1,7 +1,7 @@
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Color, Element, Length, Padding, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, PdfMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -206,7 +206,9 @@ fn color_dot_button<'a>(
     .align_y(Alignment::Center);
 
     button(pill_content)
-        .on_press(Message::PdfFilterAnnotationsByColor(color_opt))
+        .on_press(Message::Pdf(PdfMessage::FilterAnnotationsByColor(
+            color_opt,
+        )))
         .padding([4, 10])
         .style(move |_theme, status| {
             if is_active {
@@ -378,7 +380,7 @@ pub(crate) fn view<'a>(
     let mut pages_filter = row![filter_button(
         "All Pages",
         filter_page.is_none(),
-        Message::PdfFilterAnnotationsByPage(None)
+        Message::Pdf(PdfMessage::FilterAnnotationsByPage(None))
     )]
     .spacing(4);
 
@@ -387,7 +389,7 @@ pub(crate) fn view<'a>(
         pages_filter = pages_filter.push(filter_button(
             format!("p. {}", page_idx + 1),
             is_selected,
-            Message::PdfFilterAnnotationsByPage(Some(page_idx)),
+            Message::Pdf(PdfMessage::FilterAnnotationsByPage(Some(page_idx))),
         ));
     }
 
@@ -406,7 +408,7 @@ pub(crate) fn view<'a>(
     let mut tags_filter = row![filter_button(
         "All Tags",
         filter_tag.is_none(),
-        Message::PdfFilterAnnotationsByTag(None)
+        Message::Pdf(PdfMessage::FilterAnnotationsByTag(None))
     )]
     .spacing(4);
 
@@ -415,7 +417,7 @@ pub(crate) fn view<'a>(
         tags_filter = tags_filter.push(filter_button(
             format!("#{}", tag),
             is_selected,
-            Message::PdfFilterAnnotationsByTag(Some(tag.to_string())),
+            Message::Pdf(PdfMessage::FilterAnnotationsByTag(Some(tag.to_string()))),
         ));
     }
 
@@ -426,17 +428,17 @@ pub(crate) fn view<'a>(
         filter_button(
             "All Notes",
             filter_linked.is_none(),
-            Message::PdfFilterAnnotationsByLinked(None)
+            Message::Pdf(PdfMessage::FilterAnnotationsByLinked(None))
         ),
         filter_button(
             "Linked",
             filter_linked == Some(true),
-            Message::PdfFilterAnnotationsByLinked(Some(true))
+            Message::Pdf(PdfMessage::FilterAnnotationsByLinked(Some(true)))
         ),
         filter_button(
             "Unlinked",
             filter_linked == Some(false),
-            Message::PdfFilterAnnotationsByLinked(Some(false))
+            Message::Pdf(PdfMessage::FilterAnnotationsByLinked(Some(false)))
         ),
     ]
     .spacing(4)
@@ -446,17 +448,17 @@ pub(crate) fn view<'a>(
         filter_button(
             "All Status",
             filter_unresolved.is_none(),
-            Message::PdfFilterAnnotationsByUnresolved(None)
+            Message::Pdf(PdfMessage::FilterAnnotationsByUnresolved(None))
         ),
         filter_button(
             "Open",
             filter_unresolved == Some(true),
-            Message::PdfFilterAnnotationsByUnresolved(Some(true))
+            Message::Pdf(PdfMessage::FilterAnnotationsByUnresolved(Some(true)))
         ),
         filter_button(
             "Resolved",
             filter_unresolved == Some(false),
-            Message::PdfFilterAnnotationsByUnresolved(Some(false))
+            Message::Pdf(PdfMessage::FilterAnnotationsByUnresolved(Some(false)))
         ),
     ]
     .spacing(4)
@@ -689,10 +691,15 @@ pub(crate) fn view<'a>(
             ),
             custom_action_button(
                 "Note",
-                Message::PdfEditAnnotationNote(ann.id.clone(), ann.page_index,)
+                Message::Pdf(PdfMessage::EditAnnotationNote(
+                    ann.id.clone(),
+                    ann.page_index
+                ))
             ),
             if can_insert_annotation_link {
-                custom_cite_button(Some(Message::PdfInsertAnnotationLink(ann.id.clone())))
+                custom_cite_button(Some(Message::Pdf(PdfMessage::InsertAnnotationLink(
+                    ann.id.clone(),
+                ))))
             } else {
                 custom_cite_button(None)
             },
@@ -701,16 +708,19 @@ pub(crate) fn view<'a>(
         .align_y(Alignment::Center);
 
         let secondary_actions = row![
-            custom_action_button("Tags", Message::PdfEditAnnotationTags(ann.id.clone())),
+            custom_action_button(
+                "Tags",
+                Message::Pdf(PdfMessage::EditAnnotationTags(ann.id.clone()))
+            ),
             custom_action_button(
                 match ann.status {
                     md_editor_core::domain::pdf::PdfAnnotationStatus::Unresolved => "Resolve",
                     md_editor_core::domain::pdf::PdfAnnotationStatus::Resolved => "Reopen",
                 },
-                Message::PdfToggleAnnotationStatus(ann.id.clone())
+                Message::Pdf(PdfMessage::ToggleAnnotationStatus(ann.id.clone()))
             ),
             button(icons::view(Icon::Trash, theme::danger(), 12.0))
-                .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
+                .on_press(Message::Pdf(PdfMessage::DeleteHighlight(ann.id.clone())))
                 .height(Length::Fixed(28.0))
                 .padding(6)
                 .style(|_theme, status| {
@@ -777,7 +787,7 @@ pub(crate) fn view<'a>(
         title,
         Space::new().width(Length::Fill),
         button(icons::view(Icon::FileText, theme::text_muted(), 14.0))
-            .on_press(Message::PdfExportAnnotations)
+            .on_press(Message::Pdf(PdfMessage::ExportAnnotations))
             .padding(4)
             .style(button::text),
         Space::new().width(Length::Fixed(8.0)),

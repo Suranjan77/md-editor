@@ -2,7 +2,7 @@ use iced::widget::tooltip::Position;
 use iced::widget::{Space, button, container, row, text, tooltip};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
-use crate::messages::{Message, SearchMessage};
+use crate::messages::{Message, PdfMessage, SearchMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -160,7 +160,7 @@ pub(crate) fn view<'a>(
                 },
                 18.0,
             ))
-            .on_press(Message::PdfToggleAnnotationsSidebar)
+            .on_press(Message::Pdf(PdfMessage::ToggleAnnotationsSidebar))
             .padding(8)
             .style(action_button_style(annotations_visible)),
             "Annotations",
