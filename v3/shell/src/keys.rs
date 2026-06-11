@@ -8,6 +8,37 @@ use iced::keyboard::key::Named;
 use iced::keyboard::{Key as IcedKey, Modifiers};
 use md3_kernel::{Chord, Key, Mods};
 
+/// One normalized key press: the chord form (lowercased, for keymap
+/// resolution) *and* the text the press produced (case/layout-preserved, for
+/// raw insertion into a buffer or overlay). Either may be absent.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct KeyPress {
+    pub chord: Option<Chord>,
+    pub text: Option<String>,
+}
+
+impl KeyPress {
+    pub fn chord(chord: Chord) -> KeyPress {
+        KeyPress {
+            chord: Some(chord),
+            text: None,
+        }
+    }
+}
+
+/// Normalize a toolkit key-press event. `produced` is the text the toolkit
+/// says the press generates; control characters are dropped (Enter/Backspace
+/// travel as chords, never as text).
+pub fn press(key: IcedKey, modifiers: Modifiers, produced: Option<&str>) -> KeyPress {
+    let text = produced
+        .filter(|t| !t.is_empty() && t.chars().all(|c| !c.is_control()))
+        .map(str::to_string);
+    KeyPress {
+        chord: chord(key, modifiers),
+        text,
+    }
+}
+
 /// Normalize one key press. `None` means "no chord" — a bare modifier press
 /// or a key the kernel has no name for; such events are never commands.
 pub fn chord(key: IcedKey, modifiers: Modifiers) -> Option<Chord> {
@@ -109,6 +140,24 @@ mod tests {
         let as_named = chord(IcedKey::Named(Named::Space), Modifiers::default());
         assert_eq!(as_char, as_named);
         assert_eq!(as_char, Chord::parse("space").ok());
+    }
+
+    #[test]
+    fn press_keeps_case_in_text_but_lowercases_the_chord() {
+        let p = press(IcedKey::Character("A".into()), Modifiers::SHIFT, Some("A"));
+        assert_eq!(p.chord, Chord::parse("shift+a").ok());
+        assert_eq!(p.text.as_deref(), Some("A"), "insertion text is verbatim");
+    }
+
+    #[test]
+    fn press_drops_control_text_so_enter_travels_only_as_a_chord() {
+        let p = press(
+            IcedKey::Named(Named::Enter),
+            Modifiers::default(),
+            Some("\r"),
+        );
+        assert_eq!(p.chord, Chord::parse("enter").ok());
+        assert_eq!(p.text, None);
     }
 
     #[test]

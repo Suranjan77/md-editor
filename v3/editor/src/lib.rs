@@ -1,7 +1,12 @@
 //! Editor engine for md-editor v3 (plan §3.2) — toolkit-agnostic by
 //! construction (ADR-0100): nothing in this crate knows about iced.
 //!
-//! The centerpiece is the 3-phase layout protocol with an explicit
+//! Text model: [`buffer::Buffer`] — ropey rope, `Vec<Selection>` multi-cursor
+//! model from day one, transactional [`buffer::EditorCommand`]s, and a
+//! branching [`undo::UndoTree`] (editing after undo never destroys the redo
+//! future).
+//!
+//! The rendering centerpiece is the 3-phase layout protocol with an explicit
 //! invalidation contract, the structural fix for BUG-B:
 //! 1. **Style** — pure, per line, keyed by (text, conceal mode).
 //! 2. **Measure** — any height change updates the [`height_tree::HeightTree`],
