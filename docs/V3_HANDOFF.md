@@ -51,17 +51,18 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | Vault: link graph + rename repair | §3.4 | ✅ | `v3/vault/src/links.rs` — regex-free wikilink extraction (alias/anchor aware), bidirectional graph, broken-link query, `rewrite_links` as a pure transaction (caller persists via atomic save) |
 | PDF: tile cache + render queue (pure logic) | §3.3 | ✅ | `v3/pdf/src/tile.rs` — 1.4^n zoom buckets (never-upscale>1.4× proven by sweep test), byte-budget LRU w/ eviction reporting, cancellable queue |
 | PDF: pdfium wiring (ADR-0002 re-affirmed) | §3.3 | ✅ | `v3/pdf/src/render.rs` behind the `pdfium` cargo feature — tile render (full page at bucket scale, sliced to 512 px grid), text extraction, typed errors incl. corrupt-PDF fixture test; FFI serialized by an engine-level mutex |
+| Vault: PDF text → FTS bridge (`TextExtractor` seam) | §3.4 | ✅ | `SearchIndex::sync_with`/`sync_paths_with` take an optional extractor; PDFs share the `(mtime, size)` guard (no re-extraction, fake-extractor call-count tests); real-pdfium integration test in `v3/pdf/tests/fts_bridge.rs` (dev-dep only — production composition belongs to the shell) |
 | Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `v3/shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/V3_SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
 | CI: v3 job in quality workflow | §6 | ✅ | `.github/workflows/quality.yml` `v3` job: fmt, clippy -D warnings, tests, demo, generated-doc freshness diff |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-11):** v3 — 103 tests green workspace-wide plus
-4 pdfium-wired tests against the fixture corpus (pdfium suite run 3× in parallel
-mode for race coverage; vault suite run 3× after the watcher echo-loop fix),
-clippy `-D warnings` clean in both feature configs, fmt clean, `md3-shell --demo`
-all-ok. CI v3 job now also runs `--features pdfium` (repo-local `libpdfium.so`).
-v2 suite unaffected (root workspace excludes `v3/`).
+**Verification snapshot (2026-06-11):** v3 — 106 tests green workspace-wide plus
+6 pdfium-wired tests against the fixture corpus (render + FTS-bridge; pdfium
+suite run 3× in parallel mode for race coverage; vault suite run 3× after the
+watcher echo-loop fix), clippy `-D warnings` clean in both feature configs, fmt
+clean, `md3-shell --demo` all-ok. CI v3 job now also runs `--features pdfium`
+(repo-local `libpdfium.so`). v2 suite unaffected (root workspace excludes `v3/`).
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -72,8 +73,9 @@ v2 suite unaffected (root workspace excludes `v3/`).
 3. ~~Incremental parser + style phase~~ — done (see status board).
 4. ~~Vault watcher + FTS5 index~~ — done (see status board), plus link graph.
 5. ~~pdfium wiring for the tile renderer~~ — done (see status board).
-6. **PDF text → FTS index plumbing** — `PdfRenderer::extract_text` exists and
-   `SearchIndex` exists; the bridge (index PDFs alongside `*.md`) is unwritten.
+6. ~~PDF text → FTS index plumbing~~ — done (see status board); shell owns the
+   production composition (`PdfiumExtractor` adapter lives in the bridge test as
+   the reference shape).
 7. v2 hotfixes for BUG-A/BUG-B (plan §9.2) — *not ordered by user; ask before doing.*
 
 ## Decisions made during execution
@@ -156,3 +158,7 @@ v2 suite unaffected (root workspace excludes `v3/`).
   test expected operator-stripping; the literal interpretation is the one the
   quoting design actually implements, and is now what the test asserts (with a
   positive case proving the literal match).
+- 2026-06-11: PDF indexing goes through a `TextExtractor` trait *in vault* rather
+  than a vault→pdf dependency — engines stay peers (plan §3 layering); the shell
+  composes them. Failed extraction indexes an empty body so the `(mtime, size)` row
+  lands and a corrupt file is not re-extracted every pass (call-count-tested).

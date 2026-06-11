@@ -2,6 +2,10 @@
 //! diff — a cold start over an unchanged vault re-reads *nothing* — and
 //! targeted re-sync for watcher batches. Paths are stored relative to the
 //! vault root so the sidecar survives a vault move.
+//!
+//! Markdown is read directly; other formats (PDF) come through the
+//! [`TextExtractor`] seam so the vault never depends on an engine crate —
+//! the composition root supplies a pdfium-backed extractor.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,6 +23,14 @@ CREATE TABLE IF NOT EXISTS files (
 ) STRICT;
 CREATE VIRTUAL TABLE IF NOT EXISTS notes USING fts5(path UNINDEXED, body);
 ";
+
+/// Supplies body text for non-markdown files (plan §3.4: "markdown +
+/// extracted PDF text"). `None` means "cannot extract" (corrupt file,
+/// unsupported format); the file is still recorded by `(mtime, size)` so
+/// a failed extraction is not retried until the file changes.
+pub trait TextExtractor {
+    fn extract(&self, abs_path: &Path) -> Option<String>;
+}
 
 /// What a sync pass did — the cheap-cold-start guarantee is testable:
 /// a second pass over an unchanged vault must report all-unchanged.
@@ -56,11 +68,21 @@ impl SearchIndex {
         Ok(SearchIndex { conn })
     }
 
-    /// Full incremental sync: walk `*.md` under `root`, (re)index files
-    /// whose `(mtime, size)` changed, drop rows for deleted files.
+    /// Full incremental sync over `*.md` only. See [`Self::sync_with`].
     pub fn sync(&mut self, root: &Path) -> Result<SyncReport, VaultError> {
+        self.sync_with(root, None)
+    }
+
+    /// Full incremental sync: walk indexable files under `root`, (re)index
+    /// files whose `(mtime, size)` changed, drop rows for deleted files.
+    /// With an extractor, `*.pdf` is indexed alongside `*.md`.
+    pub fn sync_with(
+        &mut self,
+        root: &Path,
+        extractor: Option<&dyn TextExtractor>,
+    ) -> Result<SyncReport, VaultError> {
         let mut on_disk = Vec::new();
-        walk_markdown(root, root, &mut on_disk)?;
+        walk_indexable(root, root, extractor.is_some(), &mut on_disk)?;
         let mut report = SyncReport::default();
 
         let mut known: HashMap<String, (i64, i64)> = HashMap::new();
@@ -81,8 +103,7 @@ impl SearchIndex {
             match known.remove(rel) {
                 Some(meta) if meta == (*mtime_ns, *size) => report.unchanged += 1,
                 _ => {
-                    let body = std::fs::read_to_string(root.join(rel))
-                        .map_err(|e| VaultError::io(root.join(rel), e))?;
+                    let body = read_body(&root.join(rel), extractor)?;
                     upsert(&tx, rel, *mtime_ns, *size, &body)?;
                     report.indexed += 1;
                 }
@@ -97,9 +118,21 @@ impl SearchIndex {
         Ok(report)
     }
 
+    /// Targeted sync for a watcher batch over `*.md` only. See
+    /// [`Self::sync_paths_with`].
+    pub fn sync_paths(&mut self, root: &Path, paths: &[PathBuf]) -> Result<SyncReport, VaultError> {
+        self.sync_paths_with(root, paths, None)
+    }
+
     /// Targeted sync for a watcher batch: each path is re-read if present,
     /// de-indexed if gone. Paths may be absolute (under `root`) or relative.
-    pub fn sync_paths(&mut self, root: &Path, paths: &[PathBuf]) -> Result<SyncReport, VaultError> {
+    /// With an extractor, `*.pdf` is handled alongside `*.md`.
+    pub fn sync_paths_with(
+        &mut self,
+        root: &Path,
+        paths: &[PathBuf],
+        extractor: Option<&dyn TextExtractor>,
+    ) -> Result<SyncReport, VaultError> {
         let mut report = SyncReport::default();
         let tx = self.conn.transaction()?;
         for path in paths {
@@ -111,14 +144,13 @@ impl SearchIndex {
             let Ok(rel) = abs.strip_prefix(root) else {
                 continue; // outside the vault — not ours
             };
-            if !is_markdown(&abs) {
+            if !is_indexable(&abs, extractor.is_some()) {
                 continue;
             }
             let rel_str = rel.to_string_lossy().to_string();
             match std::fs::metadata(&abs) {
                 Ok(meta) => {
-                    let body =
-                        std::fs::read_to_string(&abs).map_err(|e| VaultError::io(&abs, e))?;
+                    let body = read_body(&abs, extractor)?;
                     upsert(&tx, &rel_str, mtime_ns(&meta), meta.len() as i64, &body)?;
                     report.indexed += 1;
                 }
@@ -199,6 +231,27 @@ fn is_markdown(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "md")
 }
 
+fn is_pdf(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "pdf")
+}
+
+fn is_indexable(path: &Path, with_extractor: bool) -> bool {
+    is_markdown(path) || (with_extractor && is_pdf(path))
+}
+
+/// Markdown is read directly; everything else goes through the extractor.
+/// An extraction failure indexes an empty body — the `(mtime, size)` row
+/// still lands, so a corrupt file is not re-read on every pass.
+fn read_body(abs: &Path, extractor: Option<&dyn TextExtractor>) -> Result<String, VaultError> {
+    if is_markdown(abs) {
+        return std::fs::read_to_string(abs).map_err(|e| VaultError::io(abs, e));
+    }
+    match extractor {
+        Some(ex) => Ok(ex.extract(abs).unwrap_or_default()),
+        None => Ok(String::new()),
+    }
+}
+
 fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
     meta.modified()
         .ok()
@@ -207,9 +260,10 @@ fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
-fn walk_markdown(
+fn walk_indexable(
     root: &Path,
     dir: &Path,
+    with_extractor: bool,
     out: &mut Vec<(String, i64, i64)>,
 ) -> Result<(), VaultError> {
     let entries = std::fs::read_dir(dir).map_err(|e| VaultError::io(dir, e))?;
@@ -223,8 +277,8 @@ fn walk_markdown(
         }
         let meta = entry.metadata().map_err(|e| VaultError::io(&path, e))?;
         if meta.is_dir() {
-            walk_markdown(root, &path, out)?;
-        } else if is_markdown(&path)
+            walk_indexable(root, &path, with_extractor, out)?;
+        } else if is_indexable(&path, with_extractor)
             && let Ok(rel) = path.strip_prefix(root)
         {
             out.push((
@@ -337,5 +391,88 @@ mod tests {
         let report = ok(index.sync_paths(root, &[root.join("a.md")]));
         assert_eq!(report.removed, 1);
         assert_eq!(ok(index.indexed_count()), 0);
+    }
+
+    /// Counts calls so extraction cost is observable in tests.
+    struct FakeExtractor {
+        calls: std::cell::Cell<usize>,
+        text: Option<&'static str>,
+    }
+
+    impl TextExtractor for FakeExtractor {
+        fn extract(&self, _abs: &Path) -> Option<String> {
+            self.calls.set(self.calls.get() + 1);
+            self.text.map(str::to_string)
+        }
+    }
+
+    #[test]
+    fn pdfs_are_indexed_through_the_extractor_seam() {
+        let dir = vault();
+        let root = dir.path();
+        write(root, "note.md", "markdown body");
+        write(root, "paper.pdf", "%PDF-fake bytes");
+        let extractor = FakeExtractor {
+            calls: std::cell::Cell::new(0),
+            text: Some("annotated bibliography of parsers"),
+        };
+
+        let mut index = ok(SearchIndex::open_in_memory());
+        // Without an extractor, PDFs are invisible.
+        ok(index.sync(root));
+        assert_eq!(ok(index.indexed_count()), 1);
+
+        let report = ok(index.sync_with(root, Some(&extractor)));
+        assert_eq!(report.indexed, 1, "the pdf joins the index");
+        let hits = ok(index.search("bibliography", 10));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, PathBuf::from("paper.pdf"));
+        assert_eq!(extractor.calls.get(), 1);
+
+        // Unchanged pdf ⇒ no re-extraction (the expensive path is guarded
+        // by the same (mtime, size) diff as markdown).
+        let report = ok(index.sync_with(root, Some(&extractor)));
+        assert_eq!(report.indexed, 0);
+        assert_eq!(extractor.calls.get(), 1);
+    }
+
+    #[test]
+    fn failed_extraction_is_recorded_not_retried() {
+        let dir = vault();
+        let root = dir.path();
+        write(root, "corrupt.pdf", "not really a pdf");
+        let extractor = FakeExtractor {
+            calls: std::cell::Cell::new(0),
+            text: None,
+        };
+
+        let mut index = ok(SearchIndex::open_in_memory());
+        ok(index.sync_with(root, Some(&extractor)));
+        assert_eq!(extractor.calls.get(), 1);
+        assert_eq!(ok(index.indexed_count()), 1, "recorded despite failure");
+
+        ok(index.sync_with(root, Some(&extractor)));
+        assert_eq!(extractor.calls.get(), 1, "no retry until the file changes");
+    }
+
+    #[test]
+    fn watcher_batch_path_handles_pdfs_too() {
+        let dir = vault();
+        let root = dir.path();
+        write(root, "paper.pdf", "%PDF-fake bytes");
+        let extractor = FakeExtractor {
+            calls: std::cell::Cell::new(0),
+            text: Some("tile renderer profiling notes"),
+        };
+
+        let mut index = ok(SearchIndex::open_in_memory());
+        let report = ok(index.sync_paths_with(root, &[root.join("paper.pdf")], Some(&extractor)));
+        assert_eq!(report.indexed, 1);
+        assert_eq!(ok(index.search("profiling", 10)).len(), 1);
+
+        let _ = std::fs::remove_file(root.join("paper.pdf"));
+        let report = ok(index.sync_paths_with(root, &[root.join("paper.pdf")], Some(&extractor)));
+        assert_eq!(report.removed, 1);
+        assert!(ok(index.search("profiling", 10)).is_empty());
     }
 }

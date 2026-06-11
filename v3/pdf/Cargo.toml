@@ -16,3 +16,10 @@ pdfium = ["dep:pdfium-render"]
 [dependencies]
 pdfium-render = { version = "0.9.1", features = ["thread_safe"], optional = true }
 thiserror = "2"
+
+[dev-dependencies]
+# Integration test for the PDF-text → FTS bridge (vault's TextExtractor
+# seam). Dev-only: production composition happens in the shell, never
+# engine-to-engine.
+md3-vault = { path = "../vault" }
+tempfile = "3"
