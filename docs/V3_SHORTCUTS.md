@@ -16,6 +16,7 @@ Do not edit by hand — change `kernel/src/defaults.rs` instead.
 | `editor.redo` | Redo | Editor | Editor(Markdown) | `ctrl+shift+z` |
 | `editor.save` | Save | Editor | Editor(Markdown) | `ctrl+s` |
 | `editor.find` | Find in Note | Editor | Editor(Markdown) | `ctrl+f` |
+| `editor.select-all` | Select All | Editor | Editor(Markdown) | `ctrl+a` |
 | `pdf.zoom-input` | Set Zoom Level | PDF | Editor(Pdf) | `ctrl+z` |
 | `pdf.go-to-page` | Go to Page | PDF | Editor(Pdf) | `ctrl+g` |
 | `pdf.find` | Find in PDF | PDF | Editor(Pdf) | `ctrl+f` |

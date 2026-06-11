@@ -117,6 +117,12 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             "Editor",
             vec![bind(md, Chord::ctrl('f'), CommandId("editor.find"))],
         ),
+        spec(
+            "editor.select-all",
+            "Select All",
+            "Editor",
+            vec![bind(md, Chord::ctrl('a'), CommandId("editor.select-all"))],
+        ),
         // -- pdf editor -------------------------------------------------------
         // The other half of v2's BUG-A pair: same chord, different scope.
         spec(

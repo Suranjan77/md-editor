@@ -8,27 +8,39 @@
 //!    against the *derived* scope stack (the status bar displays it live).
 //! 2. Resolved commands are dispatched on the kernel `CommandBus` and drained
 //!    in `update` — palette clicks and key chords take the identical path.
-//! 3. Unresolved chords are raw text. Today the only raw-text consumers are
-//!    the overlays (palette query, paths, digits); the editor widget joins
-//!    them when the buffer engine lands.
+//! 3. Unresolved presses are raw text, delivered to whoever owns text input
+//!    right now: an open overlay (query/path/digits) or the focused markdown
+//!    buffer. Insertion uses the *produced* text (case/layout-preserved);
+//!    chords only carry control keys (backspace, arrows, …).
 //!
-//! Engine surfaces (markdown buffer, pdf tiles) render as placeholders —
-//! those are later sessions; this one makes the workspace chrome real.
+//! The markdown surface is a real `md3_editor::Buffer` (rope + branching
+//! undo), shared across tabs/panes by `DocumentId` — two views of one
+//! document edit the same state by construction. Rendering is a plain
+//! line-by-line text dump with a caret; the styled renderer (3-phase layout
+//! protocol) is a later session. PDF tiles likewise remain placeholders.
+
+use std::collections::HashMap;
+use std::path::Path;
 
 use iced::widget::{
-    button, center, column, container, mouse_area, opaque, row, space, stack, text,
+    button, center, column, container, mouse_area, opaque, row, scrollable, space, stack, text,
 };
 use iced::{Element, Length, Subscription, Task, Theme};
 
+use md3_editor::buffer::{Buffer, EditorCommand, Movement};
 use md3_kernel::command::Invocation;
 use md3_kernel::defaults::default_registry;
 use md3_kernel::pane::{Layout, Pane, PaneError, Tab};
 use md3_kernel::{
-    Chord, CommandBus, CommandId, CommandRegistry, EditorKind, Key, Keymap, PaneId, SplitAxis,
+    CommandBus, CommandId, CommandRegistry, DocumentId, EditorKind, Key, Keymap, PaneId, SplitAxis,
     TabId, Workspace,
 };
+use md3_vault::atomic_save;
 
-use crate::keys;
+use crate::keys::{self, KeyPress};
+
+/// Buffer contents for a brand-new (or unreadable) welcome note.
+const WELCOME_TEXT: &str = "# Welcome to md3\n\nThis pane is a real rope buffer with branching undo.\nType here. ctrl+z undoes, ctrl+shift+z redoes, ctrl+s saves.\n";
 
 /// Shell-side state for the kernel's modal overlay. The kernel only knows an
 /// overlay is open (the scope fence); the text being typed into it lives here.
@@ -64,11 +76,11 @@ impl OverlayUi {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Message {
     /// A normalized key press — the only keyboard entry point.
-    Key(Chord),
-    /// A keyboard event that doesn't normalize to a chord (bare modifier,
+    Key(KeyPress),
+    /// A keyboard event that doesn't normalize to a press (bare modifier,
     /// key release): ignored, but the subscription must map to *something*.
     Noop,
     FocusTab(TabId),
@@ -86,6 +98,11 @@ pub struct App {
     overlay: OverlayUi,
     status: String,
     last_command: Option<CommandId>,
+    /// Markdown buffers, keyed by document — the kernel's DocumentStore owns
+    /// identity, the shell owns engine state. Two tabs on one document share
+    /// one buffer here, which is exactly the plan's "documents own state,
+    /// panes are views" discipline.
+    buffers: HashMap<DocumentId, Buffer>,
 }
 
 /// Run the windowed shell. The caller (main) has already verified the
@@ -115,18 +132,20 @@ impl App {
             Ok(_) => "ready — ctrl+shift+p opens the command palette".to_string(),
             Err(e) => e.to_string(),
         };
-        (
-            App {
-                registry,
-                keymap,
-                ws,
-                bus: CommandBus::new(),
-                overlay: OverlayUi::None,
-                status,
-                last_command: None,
-            },
-            Task::none(),
-        )
+        let mut app = App {
+            registry,
+            keymap,
+            ws,
+            bus: CommandBus::new(),
+            overlay: OverlayUi::None,
+            status,
+            last_command: None,
+            buffers: HashMap::new(),
+        };
+        if let Some(tab) = app.ws.focused_tab() {
+            app.ensure_buffer_for_tab(tab);
+        }
+        (app, Task::none())
     }
 
     // ----- read-only access for tests and the view ---------------------------
@@ -147,20 +166,41 @@ impl App {
         self.last_command
     }
 
+    /// The buffer behind a document, if its editor state exists (markdown only
+    /// today).
+    pub fn buffer(&self, doc: DocumentId) -> Option<&Buffer> {
+        self.buffers.get(&doc)
+    }
+
+    /// The buffer of the focused tab's document.
+    pub fn focused_buffer(&self) -> Option<&Buffer> {
+        self.buffers.get(&self.focused_document()?)
+    }
+
+    fn focused_document(&self) -> Option<DocumentId> {
+        let tab = self.ws.focused_tab()?;
+        self.ws.panes.find_tab(tab).map(|(_, t)| t.document)
+    }
+
     // ----- update loop --------------------------------------------------------
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Key(chord) => match self.ws.handle_key(&self.keymap, chord) {
-                Some(cmd) => {
-                    self.bus.dispatch(cmd);
-                    self.drain_bus()
+            Message::Key(press) => {
+                let resolved = press
+                    .chord
+                    .and_then(|chord| self.ws.handle_key(&self.keymap, chord));
+                match resolved {
+                    Some(cmd) => {
+                        self.bus.dispatch(cmd);
+                        self.drain_bus()
+                    }
+                    None => {
+                        self.raw_input(press);
+                        Task::none()
+                    }
                 }
-                None => {
-                    self.raw_input(chord);
-                    Task::none()
-                }
-            },
+            }
             Message::Noop => Task::none(),
             Message::FocusTab(tab) => {
                 let r = self.ws.focus_tab(tab);
@@ -168,8 +208,7 @@ impl App {
                 Task::none()
             }
             Message::CloseTab(tab) => {
-                let r = self.ws.close_tab(tab);
-                self.report(r);
+                self.close_tab(tab);
                 Task::none()
             }
             Message::FocusPane(pane) => {
@@ -225,8 +264,7 @@ impl App {
             "workspace.split-right" => self.split_right(),
             "workspace.close-tab" => {
                 if let Some(tab) = self.ws.focused_tab() {
-                    let r = self.ws.close_tab(tab);
-                    self.report(r);
+                    self.close_tab(tab);
                 }
             }
             "workspace.next-tab" => self.next_tab(),
@@ -241,15 +279,16 @@ impl App {
                 self.status = "overlay dismissed".to_string();
             }
             "overlay.confirm" => self.confirm_overlay(),
-            // Engine-backed commands: routed correctly today, executed when
-            // their engine lands (buffer: next session; vault index, pdf
-            // renderer after that).
-            "editor.undo" | "editor.redo" | "editor.save" | "editor.find" => {
-                self.status = format!(
-                    "{cmd}: routed to markdown editor (buffer engine lands in a later session)"
-                );
+            // Real buffer commands (engine landed; renderer still plain text).
+            "editor.undo" => self.buffer_command(EditorCommand::Undo, "undo", "nothing to undo"),
+            "editor.redo" => self.buffer_command(EditorCommand::Redo, "redo", "nothing to redo"),
+            "editor.select-all" => {
+                self.buffer_command(EditorCommand::SelectAll, "select all", "select all")
             }
-            "pdf.find" | "search.global" => {
+            "editor.save" => self.save_focused(),
+            // Engine-backed commands still pending their engine (find UI,
+            // vault index, pdf renderer).
+            "editor.find" | "pdf.find" | "search.global" => {
                 self.status = format!("{cmd}: routed (engine lands in a later session)");
             }
             other => self.status = format!("`{other}` has no handler yet"),
@@ -257,52 +296,164 @@ impl App {
         None
     }
 
-    /// Unresolved chord → raw text input. Only overlays consume raw text
-    /// today. Characters arrive lowercased from [`keys`]; queries are matched
-    /// case-insensitively and demo paths are lowercase, so nothing is lost.
-    fn raw_input(&mut self, chord: Chord) {
-        if chord.mods.ctrl || chord.mods.alt || chord.mods.meta {
+    /// Run an [`EditorCommand`] on the focused document's buffer.
+    fn buffer_command(&mut self, command: EditorCommand, did: &str, noop: &str) {
+        let Some(doc) = self.focused_document() else {
+            return;
+        };
+        let Some(buffer) = self.buffers.get_mut(&doc) else {
+            self.status = "no editable buffer focused".to_string();
+            return;
+        };
+        let changed = buffer.execute(command);
+        self.status = if changed {
+            did.to_string()
+        } else {
+            noop.to_string()
+        };
+    }
+
+    fn save_focused(&mut self) {
+        let Some(doc) = self.focused_document() else {
+            return;
+        };
+        let Some(path) = self.ws.docs.get(doc).map(|d| d.path.clone()) else {
+            return;
+        };
+        let Some(buffer) = self.buffers.get_mut(&doc) else {
+            self.status = "save: no editable buffer focused".to_string();
+            return;
+        };
+        // Vault-root discipline arrives with the watcher/index port; until
+        // then paths are relative to the working directory and parents are
+        // created on demand so dogfooding can save anywhere.
+        let target = Path::new(&path);
+        if let Some(parent) = target.parent()
+            && !parent.as_os_str().is_empty()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.status = format!("save failed: {e}");
             return;
         }
+        match atomic_save(target, buffer.text().as_bytes()) {
+            Ok(()) => {
+                buffer.mark_saved();
+                self.status = format!("saved {path}");
+            }
+            Err(e) => self.status = format!("save failed: {e}"),
+        }
+    }
+
+    /// Close a tab and drop the buffer of any document the workspace
+    /// garbage-collected with it.
+    fn close_tab(&mut self, tab: TabId) {
+        let doc = self.ws.panes.find_tab(tab).map(|(_, t)| t.document);
+        let r = self.ws.close_tab(tab);
+        self.report(r);
+        if let Some(doc) = doc
+            && self.ws.docs.get(doc).is_none()
+        {
+            self.buffers.remove(&doc);
+        }
+    }
+
+    /// Create the engine state behind a tab's document if it needs one.
+    /// Loads from disk when the file exists; missing/unreadable files start
+    /// from a template (welcome note) or empty.
+    fn ensure_buffer_for_tab(&mut self, tab: TabId) {
+        let Some((_, t)) = self.ws.panes.find_tab(tab) else {
+            return;
+        };
+        if t.editor != EditorKind::Markdown {
+            return;
+        }
+        let doc = t.document;
+        let Some(path) = self.ws.docs.get(doc).map(|d| d.path.clone()) else {
+            return;
+        };
+        self.buffers.entry(doc).or_insert_with(|| {
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+                if path == "notes/welcome.md" {
+                    WELCOME_TEXT.to_string()
+                } else {
+                    String::new()
+                }
+            });
+            Buffer::from_text(&text)
+        });
+    }
+
+    /// Unresolved press → raw text input, owned by the open overlay or, with
+    /// no overlay up, by the focused markdown buffer. Insertion text comes
+    /// from [`KeyPress::text`] (case/layout-preserved); chords carry only the
+    /// control keys.
+    fn raw_input(&mut self, press: KeyPress) {
+        if matches!(self.overlay, OverlayUi::None) {
+            self.editor_input(press);
+            return;
+        }
+        let chord = press.chord;
+        let modified = chord.is_some_and(|c| c.mods.ctrl || c.mods.alt || c.mods.meta);
+        if modified {
+            return;
+        }
+        let key = chord.map(|c| c.key);
         match &mut self.overlay {
             OverlayUi::None => {}
-            OverlayUi::Palette { query, selected } => match chord.key {
-                Key::Char(c) => {
-                    query.push(c);
+            OverlayUi::Palette { query, selected } => {
+                if let Some(t) = &press.text {
+                    query.push_str(t);
                     *selected = 0;
-                }
-                Key::Space => {
-                    query.push(' ');
-                    *selected = 0;
-                }
-                Key::Backspace => {
-                    query.pop();
-                    *selected = 0;
-                }
-                Key::Down => {
-                    let n = self.registry.palette(query).len();
-                    if n > 0 {
-                        *selected = (*selected + 1).min(n - 1);
+                } else {
+                    match key {
+                        Some(Key::Backspace) => {
+                            query.pop();
+                            *selected = 0;
+                        }
+                        Some(Key::Down) => {
+                            let n = self.registry.palette(query).len();
+                            if n > 0 {
+                                *selected = (*selected + 1).min(n - 1);
+                            }
+                        }
+                        Some(Key::Up) => *selected = selected.saturating_sub(1),
+                        _ => {}
                     }
                 }
-                Key::Up => *selected = selected.saturating_sub(1),
-                _ => {}
-            },
-            OverlayUi::QuickOpen { path } => match chord.key {
-                Key::Char(c) => path.push(c),
-                Key::Space => path.push(' '),
-                Key::Backspace => {
+            }
+            OverlayUi::QuickOpen { path } => {
+                if let Some(t) = &press.text {
+                    path.push_str(t);
+                } else if key == Some(Key::Backspace) {
                     path.pop();
                 }
-                _ => {}
-            },
-            OverlayUi::GoToPage { digits } | OverlayUi::Zoom { digits } => match chord.key {
-                Key::Char(c) if c.is_ascii_digit() => digits.push(c),
-                Key::Backspace => {
+            }
+            OverlayUi::GoToPage { digits } | OverlayUi::Zoom { digits } => {
+                if let Some(t) = &press.text {
+                    digits.extend(t.chars().filter(char::is_ascii_digit));
+                } else if key == Some(Key::Backspace) {
                     digits.pop();
                 }
-                _ => {}
-            },
+            }
+        }
+    }
+
+    /// Raw input into the focused markdown buffer: this is how typing works.
+    /// Commands stay commands (the keymap resolved them before we got here);
+    /// everything below is plain text entry and caret motion.
+    fn editor_input(&mut self, press: KeyPress) {
+        let Some(doc) = self.focused_document() else {
+            return;
+        };
+        if !self.buffers.contains_key(&doc) {
+            return;
+        }
+        let command = editor_command_for(&press);
+        let Some(command) = command else {
+            return;
+        };
+        if let Some(buffer) = self.buffers.get_mut(&doc) {
+            buffer.execute(command);
         }
     }
 
@@ -337,7 +488,10 @@ impl App {
                     self.status = "quick open: empty path".to_string();
                 } else {
                     match self.ws.open(path, kind_for_path(path)) {
-                        Ok(_) => self.status = format!("opened {path}"),
+                        Ok(tab) => {
+                            self.ensure_buffer_for_tab(tab);
+                            self.status = format!("opened {path}");
+                        }
                         Err(e) => self.status = e.to_string(),
                     }
                 }
@@ -477,12 +631,19 @@ impl App {
 
         let mut strip = row![].spacing(4);
         for tab in pane.tabs() {
-            let name = self
+            let mut name = self
                 .ws
                 .docs
                 .get(tab.document)
                 .map(|d| file_name(&d.path).to_string())
                 .unwrap_or_else(|| "?".to_string());
+            if self
+                .buffers
+                .get(&tab.document)
+                .is_some_and(Buffer::is_dirty)
+            {
+                name.push_str(" ●");
+            }
             let style = if active == Some(tab.id) {
                 button::primary
             } else {
@@ -520,9 +681,48 @@ impl App {
             .into()
     }
 
-    /// Engine placeholder: identifies the document and which scoped bindings
-    /// are live for it. Replaced by real engine surfaces in later sessions.
     fn tab_content<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
+        if tab.editor == EditorKind::Markdown
+            && let Some(buffer) = self.buffers.get(&tab.document)
+        {
+            return self.editor_view(buffer);
+        }
+        self.placeholder_view(tab)
+    }
+
+    /// The markdown surface: the real rope buffer, rendered as plain
+    /// monospace lines with a caret. The styled renderer driven by the
+    /// 3-phase layout protocol replaces this in a later session; the *state*
+    /// underneath (buffer, undo tree, save) is already final.
+    fn editor_view<'a>(&'a self, buffer: &'a Buffer) -> Element<'a, Message> {
+        let (cursor_line, cursor_col) = buffer.cursor_line_col();
+        let mut lines = column![].spacing(2);
+        for i in 0..buffer.line_count() {
+            let line = buffer.line(i);
+            let element: Element<'a, Message> = if i == cursor_line {
+                let before: String = line.chars().take(cursor_col).collect();
+                let after: String = line.chars().skip(cursor_col).collect();
+                row![
+                    mono(before),
+                    text("▎").size(14).style(|theme: &Theme| text::Style {
+                        color: Some(theme.extended_palette().primary.strong.color),
+                    }),
+                    mono(after),
+                ]
+                .into()
+            } else if line.is_empty() {
+                mono(" ".to_string())
+            } else {
+                mono(line)
+            };
+            lines = lines.push(element);
+        }
+        scrollable(lines.width(Length::Fill).padding(8)).into()
+    }
+
+    /// Engine placeholder for surfaces whose engine isn't wired yet (pdf
+    /// tiles, images, graph).
+    fn placeholder_view<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
         let path = self
             .ws
             .docs
@@ -530,10 +730,7 @@ impl App {
             .map(|d| d.path.as_str())
             .unwrap_or("?");
         let (surface, hint) = match tab.editor {
-            EditorKind::Markdown => (
-                "markdown editor",
-                "ctrl+z undo · ctrl+s save · ctrl+f find (buffer engine lands next)",
-            ),
+            EditorKind::Markdown => ("markdown editor", "buffer missing — reopen the file"),
             EditorKind::Pdf => (
                 "pdf viewer",
                 "ctrl+z zoom · ctrl+g go to page · ctrl+f find (tile renderer lands later)",
@@ -568,10 +765,18 @@ impl App {
             Some(cmd) => format!("⌁ {cmd}"),
             None => String::new(),
         };
+        let cursor = match self.focused_buffer() {
+            Some(buffer) => {
+                let (line, col) = buffer.cursor_line_col();
+                format!("Ln {}, Col {}", line + 1, col + 1)
+            }
+            None => String::new(),
+        };
         container(
             row![
                 text(scopes).size(12),
                 space().width(Length::Fill),
+                text(cursor).size(12),
                 text(&self.status).size(12),
                 text(last).size(12),
             ]
@@ -653,10 +858,52 @@ impl App {
 
 fn on_keyboard_event(event: iced::keyboard::Event) -> Message {
     match event {
-        iced::keyboard::Event::KeyPressed { key, modifiers, .. } => keys::chord(key, modifiers)
-            .map(Message::Key)
-            .unwrap_or(Message::Noop),
+        iced::keyboard::Event::KeyPressed {
+            key,
+            modifiers,
+            text,
+            ..
+        } => {
+            let press = keys::press(key, modifiers, text.as_deref());
+            if press.chord.is_none() && press.text.is_none() {
+                Message::Noop
+            } else {
+                Message::Key(press)
+            }
+        }
         _ => Message::Noop,
+    }
+}
+
+/// Translate an unresolved key press into a buffer command. Plain text entry
+/// and caret motion only — anything chord-like belongs in the keymap.
+fn editor_command_for(press: &KeyPress) -> Option<EditorCommand> {
+    let mods = press.chord.map(|c| c.mods).unwrap_or_default();
+    if let Some(t) = &press.text {
+        if mods.ctrl || mods.alt || mods.meta {
+            return None;
+        }
+        return Some(EditorCommand::Insert(t.clone()));
+    }
+    if mods.alt || mods.meta {
+        return None;
+    }
+    let extend = mods.shift;
+    let mv = |movement| Some(EditorCommand::Move { movement, extend });
+    match press.chord?.key {
+        Key::Enter if !mods.ctrl => Some(EditorCommand::Insert("\n".to_string())),
+        Key::Tab if !mods.ctrl => Some(EditorCommand::Insert("    ".to_string())),
+        Key::Backspace if !mods.ctrl => Some(EditorCommand::DeleteBackward),
+        Key::Delete if !mods.ctrl => Some(EditorCommand::DeleteForward),
+        Key::Left if !mods.ctrl => mv(Movement::Left),
+        Key::Right if !mods.ctrl => mv(Movement::Right),
+        Key::Up if !mods.ctrl => mv(Movement::Up),
+        Key::Down if !mods.ctrl => mv(Movement::Down),
+        Key::Home if mods.ctrl => mv(Movement::DocStart),
+        Key::Home => mv(Movement::LineStart),
+        Key::End if mods.ctrl => mv(Movement::DocEnd),
+        Key::End => mv(Movement::LineEnd),
+        _ => None,
     }
 }
 
@@ -669,6 +916,10 @@ fn prompt_card<'a>(title: &'a str, value: &'a str, hint: &'a str) -> Element<'a,
         ]
         .spacing(10),
     )
+}
+
+fn mono<'a>(content: String) -> Element<'a, Message> {
+    text(content).font(iced::Font::MONOSPACE).size(14).into()
 }
 
 fn card(content: iced::widget::Column<'_, Message>) -> Element<'_, Message> {
