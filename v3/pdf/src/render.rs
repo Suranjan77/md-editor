@@ -76,6 +76,14 @@ impl RenderedTile {
     }
 }
 
+/// A whole page rendered at some scale: tightly-packed RGBA8.
+#[derive(Clone)]
+pub struct RenderedPage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 impl PdfRenderer {
     /// Bind to `libpdfium` next to the executable, in `lib_dir` if given,
     /// or on the system library path.
@@ -145,6 +153,31 @@ impl PdfRenderer {
             width: tile_w,
             height: tile_h,
             rgba,
+        })
+    }
+
+    /// Render a whole page at `scale` (1.0 = 72 dpi points). The shell's
+    /// simple path for single-page views; tiled rendering remains the
+    /// scrolling/zooming path.
+    pub fn render_page(
+        &self,
+        path: &Path,
+        page: u32,
+        scale: f32,
+    ) -> Result<RenderedPage, PdfError> {
+        let _calls = pdfium_lock();
+        let doc = self.open(path)?;
+        let page = get_page(&doc, page)?;
+        let page_w = (page.width().value * scale).round().max(1.0) as u32;
+        let page_h = (page.height().value * scale).round().max(1.0) as u32;
+        let config = PdfRenderConfig::new()
+            .set_target_width(page_w as i32)
+            .set_target_height(page_h as i32);
+        let bitmap = page.render_with_config(&config).map_err(PdfError::Render)?;
+        Ok(RenderedPage {
+            width: bitmap.width() as u32,
+            height: bitmap.height() as u32,
+            rgba: bitmap.as_rgba_bytes(),
         })
     }
 
@@ -243,6 +276,23 @@ mod tests {
             tile.rgba.iter().any(|&b| b != 0),
             "tile is not all-zero pixels"
         );
+    }
+
+    #[test]
+    fn renders_a_whole_page() {
+        let Some(renderer) = renderer() else {
+            eprintln!("skipping: libpdfium not available");
+            return;
+        };
+        let path = fixture("single-page.pdf");
+        let page = ok(renderer.render_page(&path, 0, 1.5));
+        assert_eq!(
+            page.rgba.len(),
+            (page.width * page.height * 4) as usize,
+            "tightly packed RGBA"
+        );
+        let (w, _) = ok(renderer.page_size(&path, 0));
+        assert_eq!(page.width, (w * 1.5).round() as u32, "scale honored");
     }
 
     #[test]

@@ -12,4 +12,4 @@ pub mod render;
 pub use tile::{RenderQueue, TileCache, TileKey, zoom_bucket, zoom_bucket_scale};
 
 #[cfg(feature = "pdfium")]
-pub use render::{PdfError, PdfRenderer, RenderedTile, TILE_PX};
+pub use render::{PdfError, PdfRenderer, RenderedPage, RenderedTile, TILE_PX};
