@@ -7,3 +7,6 @@ dist-portable
 .idea
 target
 tests-fixtures/pdf/large-500-pages.pdf
+# v3 vault sidecars (search index + annotations + session state) — per-vault
+# user data, never repo content.
+.md3/

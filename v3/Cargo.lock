@@ -2222,6 +2222,8 @@ dependencies = [
  "md3-kernel",
  "md3-pdf",
  "md3-vault",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 

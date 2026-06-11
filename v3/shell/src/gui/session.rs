@@ -73,6 +73,18 @@ pub const PAGE_GAP: f32 = 16.0;
 /// Tile pixmap budget per document (bytes).
 const TILE_BUDGET: usize = 192 * 1024 * 1024;
 
+/// An in-progress or finished text selection, anchored to one page.
+/// Geometry lives in page points (top-left origin) so it survives scroll
+/// and zoom unchanged; the canvas projects it per frame.
+#[derive(Debug, Clone)]
+pub struct PdfSelection {
+    pub page: u32,
+    /// Where the drag started, page points.
+    pub anchor: (f32, f32),
+    pub quads: Vec<md3_pdf::SelRect>,
+    pub text: String,
+}
+
 pub struct PdfSession {
     pub rel_path: String,
     /// Continuous-scroll geometry; `None` until page sizes load (no pdfium,
@@ -88,6 +100,18 @@ pub struct PdfSession {
     pub cache: md3_pdf::TileCache,
     pub queue: md3_pdf::RenderQueue,
     pub status: String,
+    /// SHA-256 of the file's bytes — the annotation identity (vault
+    /// convention). Present whenever the file was readable on open.
+    pub doc_hash: Option<String>,
+    /// Glyph geometry per page, loaded on first selection touch. Empty vec
+    /// = page has no selectable text (or no pdfium).
+    pub chars: HashMap<u32, Vec<md3_pdf::CharBox>>,
+    pub selection: Option<PdfSelection>,
+    /// This document's stored annotations, refreshed after every mutation.
+    pub annotations: Vec<md3_vault::Annotation>,
+    /// Annotation picked by clicking one of its quads; note edits and
+    /// deletion target it.
+    pub selected_annotation: Option<i64>,
 }
 
 impl PdfSession {
@@ -102,7 +126,31 @@ impl PdfSession {
             cache: md3_pdf::TileCache::new(TILE_BUDGET),
             queue: md3_pdf::RenderQueue::new(),
             status: String::new(),
+            doc_hash: None,
+            chars: HashMap::new(),
+            selection: None,
+            annotations: Vec::new(),
+            selected_annotation: None,
         }
+    }
+
+    /// The stored annotation whose quads contain the page point, topmost
+    /// (most recent) first.
+    pub fn annotation_at(&self, page: u32, pt: (f32, f32)) -> Option<&md3_vault::Annotation> {
+        self.annotations.iter().rev().find(|a| {
+            a.page == page
+                && a.quads.iter().any(|q| {
+                    f64::from(pt.0) >= q.x0
+                        && f64::from(pt.0) <= q.x1
+                        && f64::from(pt.1) >= q.y0
+                        && f64::from(pt.1) <= q.y1
+                })
+        })
+    }
+
+    pub fn selected_annotation(&self) -> Option<&md3_vault::Annotation> {
+        let id = self.selected_annotation?;
+        self.annotations.iter().find(|a| a.id == id)
     }
 
     /// 0-based page the viewport is "on" — what the page pill shows and

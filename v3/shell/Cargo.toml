@@ -19,6 +19,10 @@ md3-editor = { path = "../editor" }
 md3-vault = { path = "../vault" }
 md3-pdf = { path = "../pdf" }
 iced = { version = "0.14", features = ["canvas", "image"] }
+# Session snapshots + keymap-override files: the shell owns all file-format
+# parsing (kernel and engines stay serde-free by decision).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 # Routing tests drive the real update loop over a throwaway vault directory.

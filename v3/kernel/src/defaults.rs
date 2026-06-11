@@ -143,6 +143,29 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             "PDF",
             vec![bind(pdf, Chord::ctrl('f'), CommandId("pdf.find"))],
         ),
+        spec(
+            "pdf.highlight",
+            "Highlight Selection",
+            "PDF",
+            vec![bind(pdf, Chord::ctrl('h'), CommandId("pdf.highlight"))],
+        ),
+        spec(
+            "pdf.annotation-note",
+            "Edit Annotation Note",
+            "PDF",
+            vec![bind(
+                pdf,
+                Chord::ctrl('n'),
+                CommandId("pdf.annotation-note"),
+            )],
+        ),
+        // Palette-only: no chord, reachable via ctrl+shift+p.
+        spec(
+            "pdf.annotations-export",
+            "Export Annotations (Markdown)",
+            "PDF",
+            vec![],
+        ),
         // -- overlays ---------------------------------------------------------
         spec(
             "overlay.close",
