@@ -293,9 +293,7 @@ vault" from M2 onward) and a hard quality gate.
 ## 8. Migration & compatibility
 
 - Vault = plain files: zero migration for notes/PDFs.
-- Sidecar: v3 ships a one-shot migrator for annotations/sessions/settings (v2 schema →
-  v3, keyed by doc hash); round-trip tested on fixture DBs.
-- Keymap: ship a "v2 compatibility" keymap preset.
+- Sidecar: No migration needed, the old schema will be abandoned. And, this is a decision made by the user.
 - The v2 repo stays as `legacy/` reference; nothing imports from it.
 
 ## 9. Immediate next actions (week 1)
