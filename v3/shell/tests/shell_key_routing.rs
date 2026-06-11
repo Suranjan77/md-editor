@@ -6,6 +6,7 @@
 
 use md3_kernel::input::{Chord, EditorKind, Key, Mods};
 use md3_shell::app::{App, Message, OverlayUi};
+use md3_shell::keys::KeyPress;
 
 fn chord(s: &str) -> Chord {
     match Chord::parse(s) {
@@ -15,15 +16,27 @@ fn chord(s: &str) -> Chord {
 }
 
 fn press(app: &mut App, s: &str) {
-    let _ = app.update(Message::Key(chord(s)));
+    let _ = app.update(Message::Key(KeyPress::chord(chord(s))));
 }
 
 /// Type printable characters the way the subscription delivers them: one
-/// unmodified chord per character.
+/// press per character, carrying both the lowercased chord and the verbatim
+/// produced text.
 fn type_text(app: &mut App, text: &str) {
     for c in text.chars() {
-        let key = if c == ' ' { Key::Space } else { Key::Char(c) };
-        let _ = app.update(Message::Key(Chord::new(Mods::NONE, key)));
+        let key = if c == ' ' {
+            Key::Space
+        } else {
+            Key::Char(c.to_ascii_lowercase())
+        };
+        let mods = Mods {
+            shift: c.is_ascii_uppercase(),
+            ..Mods::NONE
+        };
+        let _ = app.update(Message::Key(KeyPress {
+            chord: Some(Chord::new(mods, key)),
+            text: Some(c.to_string()),
+        }));
     }
 }
 
@@ -186,13 +199,111 @@ fn ctrl_tab_cycles_tabs_within_the_focused_pane() {
 }
 
 #[test]
-fn unresolved_chords_outside_overlays_are_inert() {
-    // Raw text with no overlay open: today there is no buffer widget, so the
-    // shell must do nothing at all (no status change, no command).
+fn unresolved_function_keys_are_inert() {
     let mut app = app();
     let status = app.status().to_string();
-    type_text(&mut app, "hello");
     press(&mut app, "f7");
     assert_eq!(app.status(), status);
     assert_eq!(app.last_command(), None);
+}
+
+// ----- the markdown surface is a real buffer --------------------------------------
+
+fn focused_text(app: &App) -> String {
+    match app.focused_buffer() {
+        Some(b) => b.text(),
+        None => panic!("focused tab has no buffer"),
+    }
+}
+
+#[test]
+fn typing_edits_the_focused_buffer_case_preserved() {
+    let mut app = app();
+    let original = focused_text(&app);
+    type_text(&mut app, "Hi!");
+    let now = focused_text(&app);
+    assert!(
+        now.starts_with("Hi!"),
+        "typed text lands at the caret: {now:?}"
+    );
+    assert_eq!(now.len(), original.len() + 3);
+    assert!(
+        app.focused_buffer().is_some_and(|b| b.is_dirty()),
+        "editing marks the buffer dirty"
+    );
+}
+
+#[test]
+fn ctrl_z_actually_undoes_and_ctrl_shift_z_redoes() {
+    let mut app = app();
+    let original = focused_text(&app);
+    type_text(&mut app, "ab");
+
+    press(&mut app, "ctrl+z");
+    press(&mut app, "ctrl+z");
+    assert_eq!(focused_text(&app), original, "two keystrokes, two undos");
+    assert_eq!(app.last_command().map(|c| c.0), Some("editor.undo"));
+
+    press(&mut app, "ctrl+shift+z");
+    assert!(
+        focused_text(&app).starts_with('a'),
+        "redo replays the first keystroke"
+    );
+}
+
+#[test]
+fn select_all_then_typing_replaces_the_note() {
+    let mut app = app();
+    press(&mut app, "ctrl+a");
+    assert_eq!(app.last_command().map(|c| c.0), Some("editor.select-all"));
+    type_text(&mut app, "fresh");
+    assert_eq!(focused_text(&app), "fresh");
+    press(&mut app, "ctrl+z");
+    assert_ne!(focused_text(&app), "fresh", "replace-all is one undo step");
+}
+
+#[test]
+fn enter_and_backspace_edit_through_chords() {
+    let mut app = app();
+    press(&mut app, "ctrl+a");
+    type_text(&mut app, "one");
+    press(&mut app, "enter");
+    type_text(&mut app, "two");
+    assert_eq!(focused_text(&app), "one\ntwo");
+    press(&mut app, "backspace");
+    assert_eq!(focused_text(&app), "one\ntw");
+}
+
+#[test]
+fn typing_at_a_pdf_neither_edits_nor_panics() {
+    let mut app = app();
+    let md_text = focused_text(&app);
+    press(&mut app, "ctrl+p");
+    type_text(&mut app, "papers/attention.pdf");
+    press(&mut app, "enter");
+    assert_eq!(app.workspace().focused_editor_kind(), Some(EditorKind::Pdf));
+
+    type_text(&mut app, "stray keys");
+    assert!(
+        app.focused_buffer().is_none(),
+        "a pdf tab has no text buffer"
+    );
+
+    press(&mut app, "ctrl+tab"); // back to markdown
+    assert_eq!(
+        focused_text(&app),
+        md_text,
+        "stray keys at the pdf never reached the markdown buffer"
+    );
+}
+
+#[test]
+fn split_panes_share_one_buffer_per_document() {
+    let mut app = app();
+    press(&mut app, "ctrl+\\");
+    assert_eq!(app.workspace().panes.pane_count(), 2);
+    type_text(&mut app, "X");
+    // Same DocumentId in both panes — one buffer, both views see the edit.
+    assert!(focused_text(&app).starts_with('X'));
+    assert_eq!(app.workspace().docs.len(), 1);
 }
