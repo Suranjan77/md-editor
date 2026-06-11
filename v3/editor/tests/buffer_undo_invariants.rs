@@ -3,10 +3,11 @@
 //! and the undo-tree guarantee that distinguishes v3 from v2 — editing after
 //! undo never destroys history.
 
-use md3_editor::buffer::{Buffer, EditorCommand, Movement, Selection};
+use md3_editor::Selection;
+use md3_editor::buffer::{Buffer, Command, Movement};
 
 fn insert(buffer: &mut Buffer, text: &str) -> bool {
-    buffer.execute(EditorCommand::Insert(text.to_string()))
+    buffer.apply(Command::Insert(text.to_string())).text_changed
 }
 
 // ----- randomized storm -------------------------------------------------------
@@ -30,7 +31,7 @@ impl XorShift {
     }
 }
 
-fn random_command(rng: &mut XorShift) -> EditorCommand {
+fn random_command(rng: &mut XorShift) -> Command {
     let snippets = [
         "a",
         "Z",
@@ -44,27 +45,28 @@ fn random_command(rng: &mut XorShift) -> EditorCommand {
         "## h\n",
     ];
     match rng.below(10) {
-        0..=3 => EditorCommand::Insert(snippets[rng.below(snippets.len())].to_string()),
-        4 => EditorCommand::DeleteBackward,
-        5 => EditorCommand::DeleteForward,
-        6 => EditorCommand::Move {
+        0..=3 => Command::Insert(snippets[rng.below(snippets.len())].to_string()),
+        4 => Command::DeleteBackward,
+        5 => Command::DeleteForward,
+        6 => Command::Move {
             movement: [
                 Movement::Left,
                 Movement::Right,
                 Movement::Up,
                 Movement::Down,
-                Movement::LineStart,
-                Movement::LineEnd,
+                Movement::Home,
+                Movement::End,
                 Movement::DocStart,
                 Movement::DocEnd,
             ][rng.below(8)],
             extend: rng.below(3) == 0,
         },
-        7 => EditorCommand::SetCursor {
-            offset: rng.below(64),
+        7 => Command::SetCursor {
+            line: rng.below(8),
+            col: rng.below(32),
         },
-        8 => EditorCommand::SelectAll,
-        _ => EditorCommand::Undo,
+        8 => Command::SelectAll,
+        _ => Command::Undo,
     }
 }
 
@@ -97,11 +99,11 @@ fn random_storm_keeps_invariants_and_undo_to_root_restores_original() {
         let mut rng = XorShift(seed.wrapping_mul(0x9E3779B97F4A7C15));
         for step in 0..500 {
             let cmd = random_command(&mut rng);
-            buffer.execute(cmd);
+            buffer.apply(cmd);
             check_invariants(&buffer, step);
         }
         // Undo everything: apply→undo == identity, all the way down.
-        while buffer.execute(EditorCommand::Undo) {}
+        while buffer.apply(Command::Undo).text_changed {}
         assert_eq!(
             buffer.text(),
             original,
@@ -116,15 +118,18 @@ fn redo_replays_the_storm_exactly() {
     let mut buffer = Buffer::from_text("base\n");
     let mut rng = XorShift(0xDEADBEEF);
     for _ in 0..200 {
-        buffer.execute(random_command(&mut rng));
+        buffer.apply(random_command(&mut rng));
     }
     let final_text = buffer.text();
     let mut undone = 0;
-    while buffer.execute(EditorCommand::Undo) {
+    while buffer.apply(Command::Undo).text_changed {
         undone += 1;
     }
     for _ in 0..undone {
-        assert!(buffer.execute(EditorCommand::Redo), "redo chain too short");
+        assert!(
+            buffer.apply(Command::Redo).text_changed,
+            "redo chain too short"
+        );
     }
     assert_eq!(buffer.text(), final_text, "undo-all → redo-all == identity");
 }
@@ -136,8 +141,8 @@ fn backspace_deletes_whole_emoji_clusters() {
     // Family emoji: 7 chars (4 scalars + 3 ZWJ), one grapheme.
     let mut buffer = Buffer::new();
     insert(&mut buffer, "a👨‍👩‍👧‍👦b");
-    buffer.execute(EditorCommand::DeleteBackward); // b
-    buffer.execute(EditorCommand::DeleteBackward); // the whole family
+    buffer.apply(Command::DeleteBackward); // b
+    buffer.apply(Command::DeleteBackward); // the whole family
     assert_eq!(buffer.text(), "a");
 }
 
@@ -145,13 +150,13 @@ fn backspace_deletes_whole_emoji_clusters() {
 fn arrow_keys_never_land_inside_a_cluster() {
     let mut buffer = Buffer::new();
     insert(&mut buffer, "x🇳🇵y"); // flag = 2 regional indicators, 1 cluster
-    buffer.execute(EditorCommand::Move {
+    buffer.apply(Command::Move {
         movement: Movement::DocStart,
         extend: false,
     });
     let mut offsets = vec![buffer.primary().head];
     for _ in 0..3 {
-        buffer.execute(EditorCommand::Move {
+        buffer.apply(Command::Move {
             movement: Movement::Right,
             extend: false,
         });
@@ -164,27 +169,27 @@ fn arrow_keys_never_land_inside_a_cluster() {
 #[test]
 fn crlf_is_one_backspace() {
     let mut buffer = Buffer::from_text("one\r\ntwo");
-    buffer.execute(EditorCommand::Move {
+    buffer.apply(Command::Move {
         movement: Movement::Down,
         extend: false,
     });
-    buffer.execute(EditorCommand::Move {
-        movement: Movement::LineStart,
+    buffer.apply(Command::Move {
+        movement: Movement::Home,
         extend: false,
     });
-    buffer.execute(EditorCommand::DeleteBackward);
+    buffer.apply(Command::DeleteBackward);
     assert_eq!(buffer.text(), "onetwo", "CRLF deletes as a single unit");
 }
 
 #[test]
 fn cjk_motion_is_per_character() {
     let mut buffer = Buffer::from_text("汉字测试");
-    buffer.execute(EditorCommand::Move {
+    buffer.apply(Command::Move {
         movement: Movement::Right,
         extend: false,
     });
     assert_eq!(buffer.primary().head, 1);
-    buffer.execute(EditorCommand::DeleteForward);
+    buffer.apply(Command::DeleteForward);
     assert_eq!(buffer.text(), "汉测试");
 }
 
@@ -193,11 +198,11 @@ fn cjk_motion_is_per_character() {
 #[test]
 fn insert_applies_at_every_cursor() {
     let mut buffer = Buffer::from_text("aa bb cc");
-    buffer.set_selections(vec![
+    buffer.apply(Command::SetSelections(vec![
         Selection::caret(0),
         Selection::caret(3),
         Selection::caret(6),
-    ]);
+    ]));
     insert(&mut buffer, "x");
     assert_eq!(buffer.text(), "xaa xbb xcc");
     let heads: Vec<usize> = buffer.selections().iter().map(|s| s.head).collect();
@@ -207,11 +212,14 @@ fn insert_applies_at_every_cursor() {
 #[test]
 fn multi_selection_replace_and_single_undo() {
     let mut buffer = Buffer::from_text("foo bar foo");
-    buffer.set_selections(vec![Selection::new(0, 3), Selection::new(8, 11)]);
+    buffer.apply(Command::SetSelections(vec![
+        Selection::new(0, 3),
+        Selection::new(8, 11),
+    ]));
     insert(&mut buffer, "qux");
     assert_eq!(buffer.text(), "qux bar qux");
     // One command — one transaction — one undo.
-    assert!(buffer.execute(EditorCommand::Undo));
+    assert!(buffer.apply(Command::Undo).text_changed);
     assert_eq!(buffer.text(), "foo bar foo");
     let restored: Vec<(usize, usize)> = buffer.selections().iter().map(|s| s.range()).collect();
     assert_eq!(
@@ -224,7 +232,10 @@ fn multi_selection_replace_and_single_undo() {
 #[test]
 fn overlapping_selections_merge() {
     let mut buffer = Buffer::from_text("abcdefgh");
-    buffer.set_selections(vec![Selection::new(0, 4), Selection::new(2, 6)]);
+    buffer.apply(Command::SetSelections(vec![
+        Selection::new(0, 4),
+        Selection::new(2, 6),
+    ]));
     assert_eq!(buffer.selections().len(), 1);
     assert_eq!(buffer.selections()[0].range(), (0, 6));
 }
@@ -236,7 +247,7 @@ fn editing_after_undo_branches_instead_of_destroying_the_future() {
     let mut buffer = Buffer::new();
     insert(&mut buffer, "hello");
     insert(&mut buffer, " world");
-    buffer.execute(EditorCommand::Undo);
+    buffer.apply(Command::Undo);
     assert_eq!(buffer.text(), "hello");
 
     // v2 would clear the redo stack here; the tree branches instead.
@@ -244,9 +255,9 @@ fn editing_after_undo_branches_instead_of_destroying_the_future() {
     assert_eq!(buffer.text(), "hello there");
 
     // The new branch is redoable…
-    buffer.execute(EditorCommand::Undo);
+    buffer.apply(Command::Undo);
     assert_eq!(buffer.text(), "hello");
-    assert!(buffer.execute(EditorCommand::Redo));
+    assert!(buffer.apply(Command::Redo).text_changed);
     assert_eq!(
         buffer.text(),
         "hello there",
@@ -255,7 +266,7 @@ fn editing_after_undo_branches_instead_of_destroying_the_future() {
 
     // …and the abandoned " world" future still exists in the tree (history
     // UI hook): undo back and check the branch count.
-    buffer.execute(EditorCommand::Undo);
+    buffer.apply(Command::Undo);
     assert_eq!(buffer.text(), "hello");
 }
 
@@ -263,7 +274,7 @@ fn editing_after_undo_branches_instead_of_destroying_the_future() {
 fn undo_restores_cursor_and_dirty_tracks_saves() {
     let mut buffer = Buffer::from_text("12345");
     assert!(!buffer.is_dirty());
-    buffer.execute(EditorCommand::SetCursor { offset: 2 });
+    buffer.apply(Command::SetCursor { line: 0, col: 2 });
     insert(&mut buffer, "x");
     assert_eq!(buffer.text(), "12x345");
     assert!(buffer.is_dirty());
@@ -271,7 +282,7 @@ fn undo_restores_cursor_and_dirty_tracks_saves() {
     buffer.mark_saved();
     assert!(!buffer.is_dirty());
 
-    buffer.execute(EditorCommand::Undo);
+    buffer.apply(Command::Undo);
     assert_eq!(buffer.text(), "12345");
     assert_eq!(
         buffer.primary().head,
@@ -284,9 +295,9 @@ fn undo_restores_cursor_and_dirty_tracks_saves() {
 #[test]
 fn select_all_then_type_replaces_everything_in_one_transaction() {
     let mut buffer = Buffer::from_text("old content\nmore");
-    buffer.execute(EditorCommand::SelectAll);
+    buffer.apply(Command::SelectAll);
     insert(&mut buffer, "new");
     assert_eq!(buffer.text(), "new");
-    buffer.execute(EditorCommand::Undo);
+    buffer.apply(Command::Undo);
     assert_eq!(buffer.text(), "old content\nmore");
 }

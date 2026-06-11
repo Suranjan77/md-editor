@@ -4,12 +4,14 @@
 //! v2 core, ADR-0002 re-affirmed) — lives in [`render`] behind the `pdfium`
 //! cargo feature.
 
+pub mod scroll;
 pub mod tile;
 
 #[cfg(feature = "pdfium")]
 pub mod render;
 
-pub use tile::{RenderQueue, TileCache, TileKey, zoom_bucket, zoom_bucket_scale};
+pub use scroll::{DocLayout, PlacedPage, PlacedTile};
+pub use tile::{RenderQueue, TILE_PX, TileCache, TileKey, zoom_bucket, zoom_bucket_scale};
 
 #[cfg(feature = "pdfium")]
-pub use render::{PdfError, PdfRenderer, RenderedPage, RenderedTile, TILE_PX};
+pub use render::{PdfError, PdfRenderer, RenderedPage, RenderedTile};

@@ -91,11 +91,13 @@ jobs:
         working-directory: v3
         run: cargo test --workspace
 
-      - name: Run pdfium-wired PDF engine tests (repo-local libpdfium)
+      - name: Run pdfium-wired tests (repo-local libpdfium)
         working-directory: v3
         run: |
           cargo clippy -p md3-pdf --all-targets --features pdfium -- -D warnings
           cargo test -p md3-pdf --features pdfium
+          cargo clippy -p md3-shell --all-targets --features pdfium -- -D warnings
+          cargo test -p md3-shell --features pdfium
 
       - name: Kernel demo walks the v2 bug scenarios
         working-directory: v3

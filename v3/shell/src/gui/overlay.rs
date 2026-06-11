@@ -15,12 +15,28 @@ use super::editor_canvas::palette as colors;
 
 #[derive(Debug, Clone)]
 pub enum Overlay {
-    Palette { input: String, selected: usize },
-    QuickOpen { input: String, selected: usize },
-    Search { input: String, selected: usize, hits: Vec<Hit> },
-    Find { input: String },
-    PdfZoom { input: String },
-    PdfPage { input: String },
+    Palette {
+        input: String,
+        selected: usize,
+    },
+    QuickOpen {
+        input: String,
+        selected: usize,
+    },
+    Search {
+        input: String,
+        selected: usize,
+        hits: Vec<Hit>,
+    },
+    Find {
+        input: String,
+    },
+    PdfZoom {
+        input: String,
+    },
+    PdfPage {
+        input: String,
+    },
 }
 
 impl Overlay {
@@ -125,17 +141,17 @@ pub fn view<'a>(
     for (i, (title, detail)) in rows.iter().enumerate() {
         let marker = if i == selected { "▸ " } else { "  " };
         let line = row![
-            text(format!("{marker}{title}")).size(14).color(if i == selected {
-                colors::HEADING
-            } else {
-                colors::TEXT
-            }),
+            text(format!("{marker}{title}"))
+                .size(14)
+                .color(if i == selected {
+                    colors::HEADING
+                } else {
+                    colors::TEXT
+                }),
             text(detail.clone()).size(12).color(colors::MARKER),
         ]
         .spacing(10);
-        list = list.push(
-            iced::widget::mouse_area(line).on_press(Message::OverlayPick(i)),
-        );
+        list = list.push(iced::widget::mouse_area(line).on_press(Message::OverlayPick(i)));
     }
 
     let card = container(column![input_line, list].spacing(10).padding(14))
@@ -152,10 +168,7 @@ pub fn view<'a>(
             ..container::Style::default()
         });
 
-    container(card)
-        .center_x(Fill)
-        .padding([60, 0])
-        .into()
+    container(card).center_x(Fill).padding([60, 0]).into()
 }
 
 impl Overlay {
