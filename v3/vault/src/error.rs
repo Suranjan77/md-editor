@@ -16,11 +16,26 @@ pub enum VaultError {
     Conflict(PathBuf),
     #[error("path escapes the vault root: {0}")]
     OutsideVault(PathBuf),
+    #[error("index database error: {0}")]
+    Index(#[from] rusqlite::Error),
+    #[error("watcher error on {path}: {source}")]
+    Watch {
+        path: PathBuf,
+        #[source]
+        source: notify::Error,
+    },
 }
 
 impl VaultError {
     pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> VaultError {
         VaultError::Io {
+            path: path.into(),
+            source,
+        }
+    }
+
+    pub fn watch(path: impl Into<PathBuf>, source: notify::Error) -> VaultError {
+        VaultError::Watch {
             path: path.into(),
             source,
         }

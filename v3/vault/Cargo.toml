@@ -9,6 +9,8 @@ description = "Vault core: typed errors, atomic saves (watcher/index land later)
 workspace = true
 
 [dependencies]
+notify = "8"
+rusqlite = { version = "0.39", features = ["bundled"] }
 thiserror = "2"
 
 [dev-dependencies]
