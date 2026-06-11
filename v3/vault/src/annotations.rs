@@ -14,12 +14,12 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::time::UNIX_EPOCH;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::VaultError;
+use crate::migrations::{self, now};
 
 /// One highlighted region on a page, in page space (PDF points, origin
 /// top-left). A text highlight spanning lines is several quads in one
@@ -125,40 +125,7 @@ const MIGRATIONS: &[&str] = &[
 ];
 
 fn migrate(conn: &mut Connection) -> Result<(), VaultError> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS migrations (
-            component  TEXT NOT NULL,
-            version    INTEGER NOT NULL,
-            applied_at INTEGER NOT NULL,
-            PRIMARY KEY (component, version)
-        ) STRICT;",
-    )?;
-    let current: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(version), 0) FROM migrations WHERE component = ?1",
-        [COMPONENT],
-        |r| r.get(0),
-    )?;
-    for (i, sql) in MIGRATIONS.iter().enumerate() {
-        let version = (i + 1) as i64;
-        if version <= current {
-            continue;
-        }
-        let tx = conn.transaction()?;
-        tx.execute_batch(sql)?;
-        tx.execute(
-            "INSERT INTO migrations (component, version, applied_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![COMPONENT, version, now()],
-        )?;
-        tx.commit()?;
-    }
-    Ok(())
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    migrations::run(conn, COMPONENT, MIGRATIONS)
 }
 
 // ------------------------------------------------------------------ store --
@@ -184,12 +151,7 @@ impl AnnotationStore {
 
     /// Highest applied migration for the annotations component.
     pub fn schema_version(&self) -> Result<u32, VaultError> {
-        let v: i64 = self.conn.query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM migrations WHERE component = ?1",
-            [COMPONENT],
-            |r| r.get(0),
-        )?;
-        Ok(v as u32)
+        migrations::version(&self.conn, COMPONENT)
     }
 
     pub fn add(&mut self, new: NewAnnotation) -> Result<i64, VaultError> {

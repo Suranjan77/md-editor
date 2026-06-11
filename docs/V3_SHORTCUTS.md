@@ -20,5 +20,8 @@ Do not edit by hand — change `kernel/src/defaults.rs` instead.
 | `pdf.zoom-input` | Set Zoom Level | PDF | Editor(Pdf) | `ctrl+z` |
 | `pdf.go-to-page` | Go to Page | PDF | Editor(Pdf) | `ctrl+g` |
 | `pdf.find` | Find in PDF | PDF | Editor(Pdf) | `ctrl+f` |
+| `pdf.highlight` | Highlight Selection | PDF | Editor(Pdf) | `ctrl+h` |
+| `pdf.annotation-note` | Edit Annotation Note | PDF | Editor(Pdf) | `ctrl+n` |
+| `pdf.annotations-export` | Export Annotations (Markdown) | PDF | — | — |
 | `overlay.close` | Dismiss Overlay | Overlay | Overlay | `escape` |
 | `overlay.confirm` | Confirm | Overlay | Overlay | `enter` |

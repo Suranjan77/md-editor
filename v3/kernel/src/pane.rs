@@ -272,9 +272,25 @@ impl PaneTree {
     /// Split `pane`, returning the new (empty) sibling pane. An explicit
     /// layout choice, never a side effect of opening a document.
     pub fn split(&mut self, pane: PaneId, axis: SplitAxis) -> Result<PaneId, PaneError> {
+        self.split_with_ratio(pane, axis, 0.5)
+    }
+
+    /// [`Self::split`] with an explicit divider ratio — what session restore
+    /// uses to rebuild a saved layout. Clamped away from degenerate slivers.
+    pub fn split_with_ratio(
+        &mut self,
+        pane: PaneId,
+        axis: SplitAxis,
+        ratio: f32,
+    ) -> Result<PaneId, PaneError> {
         self.next_pane += 1;
         let new_id = PaneId(self.next_pane);
-        if split_leaf(&mut self.root, pane, axis, Pane::new(new_id)) {
+        let ratio = if ratio.is_finite() {
+            ratio.clamp(0.05, 0.95)
+        } else {
+            0.5
+        };
+        if split_leaf(&mut self.root, pane, axis, ratio, Pane::new(new_id)) {
             Ok(new_id)
         } else {
             self.next_pane -= 1;
@@ -342,6 +358,26 @@ impl PaneTree {
         }
     }
 
+    /// Collapse every empty pane out of the tree (the last pane always
+    /// survives). Session restore uses this after skipping tabs whose files
+    /// vanished — a split must not outlive its content.
+    pub fn collapse_empty_panes(&mut self) {
+        loop {
+            if self.pane_count() <= 1 {
+                return;
+            }
+            let empty = self.panes().iter().find(|p| p.is_empty()).map(|p| p.id);
+            match empty {
+                Some(id) => {
+                    if self.remove_pane(id).is_err() {
+                        return;
+                    }
+                }
+                None => return,
+            }
+        }
+    }
+
     /// True if any tab in any pane references `doc` — used by the workspace
     /// for document garbage collection.
     pub fn references_document(&self, doc: DocumentId) -> bool {
@@ -381,13 +417,19 @@ fn find_pane_mut(node: &mut Node, id: PaneId) -> Option<&mut Pane> {
     }
 }
 
-fn split_leaf(node: &mut Node, target: PaneId, axis: SplitAxis, new_pane: Pane) -> bool {
+fn split_leaf(
+    node: &mut Node,
+    target: PaneId,
+    axis: SplitAxis,
+    ratio: f32,
+    new_pane: Pane,
+) -> bool {
     match node {
         Node::Leaf(p) if p.id == target => {
             let old = std::mem::replace(node, Node::Leaf(Pane::new(PaneId(0))));
             *node = Node::Split {
                 axis,
-                ratio: 0.5,
+                ratio,
                 first: Box::new(old),
                 second: Box::new(Node::Leaf(new_pane)),
             };
@@ -396,9 +438,9 @@ fn split_leaf(node: &mut Node, target: PaneId, axis: SplitAxis, new_pane: Pane) 
         Node::Leaf(_) => false,
         Node::Split { first, second, .. } => {
             if find_pane(first, target).is_some() {
-                split_leaf(first, target, axis, new_pane)
+                split_leaf(first, target, axis, ratio, new_pane)
             } else {
-                split_leaf(second, target, axis, new_pane)
+                split_leaf(second, target, axis, ratio, new_pane)
             }
         }
     }
@@ -497,6 +539,57 @@ mod tests {
         let closed = ok(tree.close_tab(tab));
         assert!(!closed.pane_removed);
         assert_eq!(tree.pane_count(), 1);
+    }
+
+    #[test]
+    fn split_with_ratio_lands_in_layout_and_clamps() {
+        let mut tree = PaneTree::new();
+        let left = tree.first_pane();
+        ok(tree.split_with_ratio(left, SplitAxis::Horizontal, 0.7));
+        match tree.layout() {
+            Layout::Split { ratio, .. } => assert!((ratio - 0.7).abs() < f32::EPSILON),
+            Layout::Pane(_) => panic!("expected a split"),
+        }
+        // Degenerate inputs are tamed, not stored.
+        let inner = tree.panes()[1].id;
+        ok(tree.split_with_ratio(inner, SplitAxis::Vertical, f32::NAN));
+        let all_sane = tree_ratios(&tree.layout())
+            .iter()
+            .all(|r| r.is_finite() && (0.05..=0.95).contains(r));
+        assert!(all_sane);
+    }
+
+    fn tree_ratios(layout: &Layout<'_>) -> Vec<f32> {
+        match layout {
+            Layout::Pane(_) => Vec::new(),
+            Layout::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                let mut out = vec![*ratio];
+                out.extend(tree_ratios(first));
+                out.extend(tree_ratios(second));
+                out
+            }
+        }
+    }
+
+    #[test]
+    fn collapse_empty_panes_undoes_hollow_splits() {
+        let mut tree = PaneTree::new();
+        let a = tree.first_pane();
+        ok(tree.open_tab(a, DocumentId(1), EditorKind::Markdown));
+        let b = ok(tree.split(a, SplitAxis::Horizontal));
+        let _c = ok(tree.split(b, SplitAxis::Vertical)); // b and c both empty
+        assert_eq!(tree.pane_count(), 3);
+        tree.collapse_empty_panes();
+        assert_eq!(tree.pane_count(), 1, "only the populated pane survives");
+        // A fully empty tree keeps its one pane.
+        let mut fresh = PaneTree::new();
+        fresh.collapse_empty_panes();
+        assert_eq!(fresh.pane_count(), 1);
     }
 
     #[test]

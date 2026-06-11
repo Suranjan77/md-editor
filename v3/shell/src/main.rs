@@ -53,6 +53,12 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            // User remaps (plan §3.1): bad rows warn, never block startup.
+            let mut keymap = keymap;
+            let report = md3_shell::settings::apply_keymap_overrides(&root, &registry, &mut keymap);
+            for warning in &report.warnings {
+                eprintln!("md3: {warning}");
+            }
             if let Err(e) = gui::run(registry, keymap, root) {
                 eprintln!("md3: {e}");
                 return ExitCode::FAILURE;

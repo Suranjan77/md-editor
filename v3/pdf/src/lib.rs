@@ -5,12 +5,14 @@
 //! cargo feature.
 
 pub mod scroll;
+pub mod select;
 pub mod tile;
 
 #[cfg(feature = "pdfium")]
 pub mod render;
 
 pub use scroll::{DocLayout, PlacedPage, PlacedTile};
+pub use select::{CharBox, SelRect, TextSelection};
 pub use tile::{RenderQueue, TILE_PX, TileCache, TileKey, zoom_bucket, zoom_bucket_scale};
 
 #[cfg(feature = "pdfium")]

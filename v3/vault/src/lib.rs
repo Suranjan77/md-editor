@@ -8,6 +8,8 @@ pub mod atomic;
 pub mod error;
 pub mod index;
 pub mod links;
+pub mod migrations;
+pub mod session;
 pub mod watcher;
 
 pub use annotations::{
@@ -17,4 +19,5 @@ pub use atomic::atomic_save;
 pub use error::VaultError;
 pub use index::{Hit, SearchIndex, SyncReport, TextExtractor};
 pub use links::{LinkGraph, WikiLink, extract_wikilinks, resolve_target, rewrite_links};
+pub use session::SessionStore;
 pub use watcher::{DEFAULT_DEBOUNCE, VaultWatcher};
