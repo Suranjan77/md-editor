@@ -1,13 +1,17 @@
-//! md3 shell — currently a headless harness over the kernel while the iced
-//! UI (ADR-0100) is built in a later session. Already real today:
+//! md3 shell. Startup builds the default registry and keymap; a binding
+//! conflict makes the process exit non-zero (plan §3.1: conflicts detected
+//! at startup). Modes:
 //!
-//! - Startup builds the default registry and keymap; a binding conflict makes
-//!   the process exit non-zero (plan §3.1: conflicts detected at startup).
+//! - default / `<vault-dir>`: the iced GUI (ADR-0100) over the given vault
+//!   (current directory if omitted).
 //! - `--dump-shortcuts` prints the shortcuts table *generated from the
 //!   command registry* — the single source of truth; docs/V3_SHORTCUTS.md is
 //!   produced by this, never edited by hand.
 //! - `--palette <query>` exercises the registry-backed palette.
-//! - `--demo` walks the BUG-A/BUG-C scenario end to end on the real kernel.
+//! - `--demo` walks the BUG-A/BUG-C scenario end to end on the real kernel,
+//!   headless (used by CI).
+
+mod gui;
 
 use std::process::ExitCode;
 
@@ -36,13 +40,22 @@ fn main() -> ExitCode {
         Some("--dump-shortcuts") => dump_shortcuts(&registry),
         Some("--palette") => palette(&registry, args.get(1).map(String::as_str).unwrap_or("")),
         Some("--demo") => return demo(&keymap),
-        _ => {
-            println!(
-                "md3 shell (headless): {} commands, {} bindings, keymap conflict-free.",
-                registry.len(),
-                keymap.len()
-            );
-            println!("usage: md3-shell [--dump-shortcuts | --palette <query> | --demo]");
+        Some("--help") | Some("-h") => {
+            println!("usage: md3-shell [<vault-dir> | --dump-shortcuts | --palette <query> | --demo]");
+        }
+        first => {
+            let root = std::path::PathBuf::from(first.unwrap_or("."));
+            let root = match root.canonicalize() {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("md3: vault {}: {e}", root.display());
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(e) = gui::run(registry, keymap, root) {
+                eprintln!("md3: {e}");
+                return ExitCode::FAILURE;
+            }
         }
     }
     ExitCode::SUCCESS

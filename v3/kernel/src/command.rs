@@ -46,7 +46,7 @@ pub enum RegistryError {
 }
 
 /// The single source of truth for what the application can do.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CommandRegistry {
     specs: Vec<CommandSpec>,
     index: HashMap<CommandId, usize>,

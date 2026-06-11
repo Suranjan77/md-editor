@@ -47,6 +47,12 @@ impl<M: Measurer> EditorDocument<M> {
         &self.buffer
     }
 
+    /// Record that the buffer's current state was persisted (dirty tracking).
+    /// Not a text mutation, so it bypasses `apply` legitimately.
+    pub fn mark_saved(&mut self) {
+        self.buffer.mark_saved();
+    }
+
     pub fn layout(&self) -> &LayoutEngine<MarkdownStyler, M> {
         &self.layout
     }
