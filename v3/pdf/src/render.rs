@@ -14,7 +14,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pdfium_render::prelude::*;
 
-use crate::tile::{TileKey, zoom_bucket_scale};
+use crate::tile::{TILE_PX, TileKey, zoom_bucket_scale};
 
 // pdfium is single-threaded. pdfium-render 0.9's `thread_safe` feature only
 // makes handles Send+Sync — it does NOT serialize FFI calls (v2 serialized
@@ -25,9 +25,6 @@ static PDFIUM_CALLS: Mutex<()> = Mutex::new(());
 fn pdfium_lock() -> MutexGuard<'static, ()> {
     PDFIUM_CALLS.lock().unwrap_or_else(PoisonError::into_inner)
 }
-
-/// Tile edge in pixels at render scale.
-pub const TILE_PX: u32 = 512;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PdfError {

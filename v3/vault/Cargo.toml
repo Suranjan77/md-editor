@@ -11,6 +11,11 @@ workspace = true
 [dependencies]
 notify = "8"
 rusqlite = { version = "0.39", features = ["bundled"] }
+# Annotation wire format (plan §3.3: JSON export/import) and content hashing
+# (annotations keyed by document SHA-256 so they survive rename/move).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
 
 [dev-dependencies]

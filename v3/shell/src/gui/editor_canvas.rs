@@ -70,9 +70,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                 }))
             }
             iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                if cursor.position_in(bounds).is_none() {
-                    return None;
-                }
+                cursor.position_in(bounds)?;
                 let dy = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => -y * LINE_HEIGHT * 3.0,
                     mouse::ScrollDelta::Pixels { y, .. } => -y,
@@ -100,9 +98,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
 
         let doc = &self.session.doc;
         let scroll = f64::from(self.session.scroll);
-        let visible = doc
-            .layout()
-            .visible_lines(scroll, f64::from(bounds.height));
+        let visible = doc.layout().visible_lines(scroll, f64::from(bounds.height));
 
         // Primary selection, as (line, col) endpoints.
         let primary = doc.buffer().primary();
@@ -214,10 +210,7 @@ fn span_style(kind: &SpanKind, styled: &StyledLine) -> (Color, Font) {
         SpanKind::FrontMatter => (palette::MARKER, mono),
         SpanKind::QuoteText => (palette::QUOTE, italic),
         SpanKind::Text => {
-            if matches!(
-                styled.kind,
-                md3_editor::parse::LineKind::Heading { .. }
-            ) {
+            if matches!(styled.kind, md3_editor::parse::LineKind::Heading { .. }) {
                 (palette::HEADING, bold)
             } else {
                 (palette::TEXT, mono)

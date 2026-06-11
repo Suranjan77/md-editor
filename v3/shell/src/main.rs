@@ -11,12 +11,10 @@
 //! - `--demo` walks the BUG-A/BUG-C scenario end to end on the real kernel,
 //!   headless (used by CI).
 
-mod gui;
-
 use std::process::ExitCode;
 
 use md3_kernel::defaults::default_registry;
-use md3_shell::{app, headless};
+use md3_shell::{gui, headless};
 
 fn main() -> ExitCode {
     let registry = match default_registry() {
@@ -36,11 +34,15 @@ fn main() -> ExitCode {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("--dump-shortcuts") => dump_shortcuts(&registry),
-        Some("--palette") => palette(&registry, args.get(1).map(String::as_str).unwrap_or("")),
-        Some("--demo") => return demo(&keymap),
+        Some("--dump-shortcuts") => headless::dump_shortcuts(&registry),
+        Some("--palette") => {
+            headless::palette(&registry, args.get(1).map(String::as_str).unwrap_or(""))
+        }
+        Some("--demo") => return headless::demo(&keymap),
         Some("--help") | Some("-h") => {
-            println!("usage: md3-shell [<vault-dir> | --dump-shortcuts | --palette <query> | --demo]");
+            println!(
+                "usage: md3-shell [<vault-dir> | --dump-shortcuts | --palette <query> | --demo]"
+            );
         }
         first => {
             let root = std::path::PathBuf::from(first.unwrap_or("."));

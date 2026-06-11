@@ -16,8 +16,10 @@ pub enum VaultError {
     Conflict(PathBuf),
     #[error("path escapes the vault root: {0}")]
     OutsideVault(PathBuf),
-    #[error("index database error: {0}")]
-    Index(#[from] rusqlite::Error),
+    #[error("sidecar database error: {0}")]
+    Database(#[from] rusqlite::Error),
+    #[error("invalid annotation export: {0}")]
+    BadExport(#[from] serde_json::Error),
     #[error("watcher error on {path}: {source}")]
     Watch {
         path: PathBuf,

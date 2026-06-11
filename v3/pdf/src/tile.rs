@@ -8,6 +8,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
+/// Tile edge in pixels at render scale (the renderer's slicing grid and the
+/// scroll geometry's addressing grid — one constant, used by both).
+pub const TILE_PX: u32 = 512;
+
 /// Zoom buckets are powers of 1.4 (the plan's upscale ceiling). A tile
 /// rendered at its bucket's scale is displayed at ≤ 1.4× magnification.
 const BUCKET_BASE: f32 = 1.4;

@@ -39,7 +39,8 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | Editor: 3-phase layout protocol (style/measure/paint) | §3.2 | ✅ | `v3/editor/src/layout.rs` — `Styler`/`Measurer` traits, `Damage { repaint, shifted_from }`, offsets never cached per line, viewport-bounded paint |
 | Editor: layout-stable conceal contract | §3.2 | ✅ | `Styler::layout_stable()` + debug assert in `set_conceal`; reserved-width strategy demonstrated in tests |
 | Editor: rope buffer + `Vec<Selection>` + branching undo | §3.2 | ✅ | `v3/editor/src/buffer.rs` (ropey, multi-cursor model day-one, grapheme-safe motion/deletion incl. emoji/CJK/CRLF) + `undo.rs` (`UndoTree` — editing after undo branches, never clears the future). Quality harness: `tests/buffer_undo_invariants.rs` (12 tests: 8-seed × 500-command storms w/ undo-to-root == identity, selections-in-bounds invariant, grapheme suites, multi-cursor edits, branch preservation) |
-| Shell: markdown surface is a real buffer | §5 M1 | ✅ | typing/motion/selection via raw-input fallthrough (case-preserved via `KeyPress.text`); ctrl+z/ctrl+shift+z/ctrl+a are real buffer commands through the bus; **ctrl+s saves through `md3-vault::atomic_save`**; buffers keyed by `DocumentId` (split panes share state by construction); dirty dot in tab strip, Ln/Col in status bar; content loads from disk on open. Rendering = plain monospace lines + caret (styled renderer comes with the parser session) |
+| Shell: markdown surface is a real buffer | §5 M1 | ✅ | typing/motion/selection via raw-input fallthrough (case-preserved via `KeyEvent.text`); ctrl+z/ctrl+shift+z/ctrl+a are real buffer commands; **ctrl+s saves through `md3-vault::atomic_save`** (and re-syncs the FTS index); sessions keyed by `DocumentId` (split panes share state by construction); dirty dot in tab strip, Ln/Col in status bar; content loads from disk on open |
+| Shell: styled GUI (`gui` module) | §5 M1–M2 | ✅ | `v3/shell/src/gui/` — markdown paints through the engine's 3-phase layout on an iced canvas (`EditorCanvas` + `MonoMeasurer` grid; concealed markers keep reserved width, BUG-B end to end); PDF pane renders real pages behind the `pdfium` feature (placeholder otherwise); quick-open/palette/search/find/zoom/page overlays fed by the same single keystroke path; vault-rooted (`md3-shell <dir>`); FTS search composes the `TextExtractor` seam in the shell, as planned. Routing suite (15 tests) drives `gui::Shell::update` over a tempdir vault — BUG-A/C pinned at the shell layer, windowlessly |
 | **BUG-B regression suite** (height change reflows; damage ≤ affected lines) | §5 M1 gate | ✅ | `v3/editor/tests/bug_b_layout_reflow.rs` (6 tests incl. "caret motion damages ≤ 2 lines" golden gate) |
 | Editor: rope buffer + multi-cursor + grapheme safety | §3.2 | ✅ | `v3/editor/src/buffer.rs` — ropey, `Vec<Selection>` model (sorted/merged/non-empty, boundary-snapped), `ChangedSpan` buffer→layout bridge, `LayoutEngine::splice` consumer |
 | Editor: undo tree (persistent-ready) | §3.2 | ✅ | `v3/editor/src/undo.rs` — branch-keeping tree, insert-run coalescing, save-point dirtiness, validated `UndoTreeSnapshot` for the sidecar |
@@ -52,25 +53,28 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | Vault: debounced fs watcher | §3.4 | ✅ | `v3/vault/src/watcher.rs` — `notify` + 500 ms quiet-window debounce thread, deduped batches; M2 "external edit converges < 2 s" gate test green |
 | Vault: link graph + rename repair | §3.4 | ✅ | `v3/vault/src/links.rs` — regex-free wikilink extraction (alias/anchor aware), bidirectional graph, broken-link query, `rewrite_links` as a pure transaction (caller persists via atomic save) |
 | PDF: tile cache + render queue (pure logic) | §3.3 | ✅ | `v3/pdf/src/tile.rs` — 1.4^n zoom buckets (never-upscale>1.4× proven by sweep test), byte-budget LRU w/ eviction reporting, cancellable queue |
+| PDF: continuous-scroll geometry (pure) | §3.3 | ✅ | `v3/pdf/src/scroll.rs` — `DocLayout`: centered page strip from page sizes, cumulative offsets, `page_at`/`visible_pages` (partition-point), `visible_tiles` returning bucket-addressed `PlacedTile`s with display rects (virtualization: only viewport-intersecting tiles; ≤1.4× magnification by construction); zoom rebuild + caller re-anchoring; 9 unit tests |
+| Shell: PDF reading UX (continuous scroll + tiles) | §3.3 / §5 M2 | ✅ | `gui/pdf_view.rs` + `PdfSession` v2 — page sheets + tiles painted on a canvas from `DocLayout` at real bounds; `ensure_tiles` drives the engine `RenderQueue`/`TileCache` (offscreen requests cancelled, evicted pixmaps dropped; synchronous render, worker thread deferred); wheel/pgup·pgdn/arrows/home/end scroll the strip, ←/→ jump pages, ctrl+g jumps, ctrl+z zoom re-anchors the current page across buckets; status pill `p. N/M · zoom%`. pdfium-gated suite `shell/tests/pdf_reading.rs` (4 tests over the multipage fixture) runs in CI |
 | PDF: pdfium wiring (ADR-0002 re-affirmed) | §3.3 | ✅ | `v3/pdf/src/render.rs` behind the `pdfium` cargo feature — tile render (full page at bucket scale, sliced to 512 px grid), text extraction, typed errors incl. corrupt-PDF fixture test; FFI serialized by an engine-level mutex |
 | Vault: PDF text → FTS bridge (`TextExtractor` seam) | §3.4 | ✅ | `SearchIndex::sync_with`/`sync_paths_with` take an optional extractor; PDFs share the `(mtime, size)` guard (no re-extraction, fake-extractor call-count tests); real-pdfium integration test in `v3/pdf/tests/fts_bridge.rs` (dev-dep only — production composition belongs to the shell) |
+| **Annotations v2** (hash keys + migrations + export) | §3.3 / §5 M2 gate | ✅ | `v3/vault/src/annotations.rs` — `AnnotationStore` keyed by document SHA-256 (`document_hash`, streamed); numbered transactional migrations (`migrations(component, version)` table, sidecar-shared, append-only ladder pinned by fingerprint test); quads+color+note+linked-note CRUD; JSON export/import (serde) + Markdown summary; last-seen-path table for orphan reports. **M2 gate test green:** `v3/vault/tests/annotations_survive_rename.rs` (rename+move across sessions; edited bytes = new identity, old annotations reachable, never silently dropped). Shell wiring (highlight UI, persistent sidecar path) is a later session |
 | Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `v3/shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/V3_SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
 | CI: v3 job in quality workflow | §6 | ✅ | `.github/workflows/quality.yml` `v3` job: fmt, clippy -D warnings, tests, demo, generated-doc freshness diff |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-11):** v3 — 106 tests green workspace-wide plus
-6 pdfium-wired tests against the fixture corpus (render + FTS-bridge; pdfium
-suite run 3× in parallel mode for race coverage; vault suite run 3× after the
-watcher echo-loop fix), clippy `-D warnings` clean in both feature configs, fmt
-clean, `md3-shell --demo` all-ok. CI v3 job now also runs `--features pdfium`
-(repo-local `libpdfium.so`). v2 suite unaffected (root workspace excludes `v3/`).
+**Verification snapshot (2026-06-11, post pdf-reading-ux):** v3 — 160 tests
+green workspace-wide (171 with `--features pdfium`, incl. the fixture corpus
+and the shell reading suite), clippy `-D warnings` clean in both feature
+configs, fmt clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md`
+freshness-checked. CI's pdfium step now also covers `md3-shell` (clippy +
+tests). v2 suite unaffected (root workspace excludes `v3/`).
 
 ## Deliberately deferred (next sessions, in order)
 
-1. **Shell UI on iced** — wire kernel Workspace + InputRouter into a real window
-   (M1's "dogfood-internal" gate needs this). Kernel is UI-free by design so this is
-   additive.
+1. ~~Shell UI on iced~~ — done (see status board): the `gui` module is the one
+   shell (the interim plain-text `app` module was deleted after its routing
+   suite was ported).
 2. ~~Rope buffer + undo tree port~~ — done (see status board).
 3. ~~Incremental parser + style phase~~ — done (see status board).
 4. ~~Vault watcher + FTS5 index~~ — done (see status board), plus link graph.
@@ -78,7 +82,17 @@ clean, `md3-shell --demo` all-ok. CI v3 job now also runs `--features pdfium`
 6. ~~PDF text → FTS index plumbing~~ — done (see status board); shell owns the
    production composition (`PdfiumExtractor` adapter lives in the bridge test as
    the reference shape).
-7. v2 hotfixes for BUG-A/BUG-B (plan §9.2) — *not ordered by user; ask before doing.*
+7. **Shell wiring for annotations v2** — persistent sidecar DB path decision
+   (the GUI's `SearchIndex` is still in-memory-per-run), `record_document` on
+   PDF open, highlight creation UI (needs PDF text selection in the canvas;
+   the tile/scroll substrate is now in).
+8. ~~PDF reading UX: continuous scroll + tiles~~ — done (see status board).
+   Still open from plan §3.3: TOC with section tracking, PDF search overlay
+   wiring (`pdf.find` is routed but stubbed), text selection, back/forward
+   history, async tile worker.
+9. Session restore + settings (plan §5 M2) — would also give "resumed at
+   p. N" since `PdfSession.scroll` is the only state to persist.
+10. v2 hotfixes for BUG-A/BUG-B (plan §9.2) — *not ordered by user; ask before doing.*
 
 ## Decisions made during execution
 
@@ -164,3 +178,38 @@ clean, `md3-shell --demo` all-ok. CI v3 job now also runs `--features pdfium`
   than a vault→pdf dependency — engines stay peers (plan §3 layering); the shell
   composes them. Failed extraction indexes an empty body so the `(mtime, size)` row
   lands and a corrupt file is not re-extracted every pass (call-count-tested).
+- 2026-06-11: undo coalescing requires *uniform* inserted text — all whitespace
+  or none. The old all-whitespace flag let a mixed insert (a paste like
+  `" world"`) melt into the preceding typing run, so one undo destroyed both
+  steps; caught when the buffer storm suite was ported to the final
+  `Command`/`apply` API (it had never compiled against it). Pinned by
+  `editing_after_undo_branches_instead_of_destroying_the_future`.
+- 2026-06-11: the shell has **one** GUI: the `gui` module (canvas renderer on
+  the 3-phase layout, PDF pane, vault-rooted overlays), promoted from the
+  binary into the lib. The interim plain-text `app`/`keys` modules were
+  deleted; their routing/normalization suites were ported, not dropped —
+  `shell_key_routing.rs` now boots `gui::Shell` over a tempdir vault and
+  opens files through the real quick-open flow. Two fixes fell out of the
+  port: `editor.select-all` had no handler in `gui`, and `Character(" ")`
+  normalized to `Key::Char(' ')` so `space` keymap bindings could never match.
+- 2026-06-11: annotations live in **vault** (plan §3.4 lists annotations as
+  vault-core), keyed by SHA-256 of the PDF bytes; `md3-vault` gains `sha2` +
+  `serde`/`serde_json` (plan-mandated JSON export/import — hand-rolled JSON
+  parsing was the worse option). Migrations are a per-component ladder
+  (`migrations(component, version)`) so the FTS index can adopt the same
+  table later; the shipped prefix is frozen by a fingerprint test — schema
+  changes are new numbered entries, never edits. Edited bytes = a new
+  document identity: old annotations stay reachable under the old hash
+  (orphan-report material), re-binding across content edits is deliberately
+  not guessed at.
+- 2026-06-11: continuous-scroll geometry (`DocLayout`) lives in **md3-pdf**,
+  not the shell — what's visible and which bucket-addressed tiles cover it is
+  engine policy (mirrors the editor's layout-engine split); the shell only
+  turns `PlacedTile`s into pixmaps and paint calls. `TILE_PX` moved to the
+  always-built `tile.rs` so the pure half owns the grid constant. Painting
+  reads geometry at the canvas's *real* bounds every frame (always correct);
+  the session's stored viewport only steers which tiles get rendered, so a
+  stale viewport can never misdraw, only under-render until the next event.
+  Tile rendering is synchronous in `update` for now (512 px tiles are fast);
+  the queue/cancellation semantics are already the engine's, so an async
+  worker is a drop-in refinement, not a redesign.
