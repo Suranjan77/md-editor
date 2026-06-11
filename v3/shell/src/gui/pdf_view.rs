@@ -119,6 +119,38 @@ pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path) {
     }
 }
 
+/// Make a page's glyph geometry available for selection (idempotent; one
+/// pdfium pass per page per session). Without pdfium the cache stays empty
+/// and selection is simply inert.
+pub fn load_page_chars(session: &mut PdfSession, abs_path: &Path, page: u32) {
+    if session.chars.contains_key(&page) {
+        return;
+    }
+    #[cfg(feature = "pdfium")]
+    {
+        let Some(renderer) = renderer() else {
+            return;
+        };
+        let chars = renderer.page_chars(abs_path, page).unwrap_or_default();
+        session.chars.insert(page, chars);
+    }
+    #[cfg(not(feature = "pdfium"))]
+    {
+        let _ = abs_path;
+    }
+}
+
+/// `#rrggbb` → iced color with the given alpha; highlights fall back to the
+/// default highlight yellow on malformed input.
+fn quad_color(hex: &str, alpha: f32) -> iced::Color {
+    let parsed = hex
+        .strip_prefix('#')
+        .filter(|h| h.len() == 6)
+        .and_then(|h| u32::from_str_radix(h, 16).ok());
+    let rgb = parsed.unwrap_or(0xffd866);
+    iced::Color::from_rgba8((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, alpha)
+}
+
 pub fn view(session: &PdfSession, tab: TabId) -> Element<'_, Message> {
     if session.layout.is_none() {
         return placeholder(session);
@@ -150,16 +182,24 @@ struct PdfCanvas<'a> {
     session: &'a PdfSession,
 }
 
+/// Per-widget drag tracking: cursor moves only become messages between a
+/// press and its release.
+#[derive(Default)]
+pub struct DragState {
+    dragging: bool,
+}
+
 impl canvas::Program<Message> for PdfCanvas<'_> {
-    type State = ();
+    type State = DragState;
 
     fn update(
         &self,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         event: &iced::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
+        let viewport = (bounds.width, bounds.height);
         match event {
             iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 cursor.position_in(bounds)?;
@@ -170,16 +210,32 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
                 Some(canvas::Action::publish(Message::PdfScrolled {
                     tab: self.tab,
                     dy,
-                    viewport: (bounds.width, bounds.height),
+                    viewport,
                 }))
             }
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                cursor.position_in(bounds)?;
-                // Focus the pane; also syncs the real viewport for tiles.
-                Some(canvas::Action::publish(Message::PdfScrolled {
+                let pos = cursor.position_in(bounds)?;
+                state.dragging = true;
+                Some(canvas::Action::publish(Message::PdfMouseDown {
                     tab: self.tab,
-                    dy: 0.0,
-                    viewport: (bounds.width, bounds.height),
+                    pos: (pos.x, pos.y),
+                    viewport,
+                }))
+            }
+            iced::Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
+                let pos = cursor.position_in(bounds)?;
+                Some(canvas::Action::publish(Message::PdfMouseDragged {
+                    tab: self.tab,
+                    pos: (pos.x, pos.y),
+                    viewport,
+                }))
+            }
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.dragging =>
+            {
+                state.dragging = false;
+                Some(canvas::Action::publish(Message::PdfMouseUp {
+                    tab: self.tab,
                 }))
             }
             _ => None,
@@ -209,7 +265,7 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
                 iced::Color::WHITE,
             );
         }
-        // …then every visible tile we have a pixmap for.
+        // …then every visible tile we have a pixmap for…
         for tile in layout.visible_tiles(self.session.scroll, viewport) {
             if let Some(handle) = self.session.tiles.get(&tile.key) {
                 frame.draw_image(
@@ -219,6 +275,38 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
                     ),
                     canvas::Image::new(handle.clone()),
                 );
+            }
+        }
+        // …then annotation tints and the live selection, projected from
+        // page points onto the visible sheets.
+        let zoom = layout.zoom();
+        for page in layout.placed_pages(self.session.scroll, viewport) {
+            let project = |x0: f32, y0: f32, x1: f32, y1: f32| {
+                (
+                    Point::new(page.x + x0 * zoom, page.y + y0 * zoom),
+                    Size::new((x1 - x0) * zoom, (y1 - y0) * zoom),
+                )
+            };
+            for a in &self.session.annotations {
+                if a.page != page.page {
+                    continue;
+                }
+                let picked = self.session.selected_annotation == Some(a.id);
+                let tint = quad_color(&a.color, if picked { 0.55 } else { 0.35 });
+                for q in &a.quads {
+                    let (origin, size) =
+                        project(q.x0 as f32, q.y0 as f32, q.x1 as f32, q.y1 as f32);
+                    frame.fill_rectangle(origin, size, tint);
+                }
+            }
+            if let Some(sel) = &self.session.selection
+                && sel.page == page.page
+            {
+                let tint = iced::Color::from_rgba8(90, 130, 255, 0.30);
+                for q in &sel.quads {
+                    let (origin, size) = project(q.x0, q.y0, q.x1, q.y1);
+                    frame.fill_rectangle(origin, size, tint);
+                }
             }
         }
         vec![frame.into_geometry()]

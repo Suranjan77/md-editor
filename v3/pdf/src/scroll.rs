@@ -218,6 +218,44 @@ impl DocLayout {
     pub fn max_scroll(&self, viewport_h: f32) -> f32 {
         (self.total_height() - viewport_h).max(0.0)
     }
+
+    /// Inverse hit test: which page sheet contains the viewport point, and
+    /// where on it, in PDF points (top-left origin). `None` when the point
+    /// falls in a gap, outside a sheet horizontally, or past the strip.
+    pub fn page_at_point(
+        &self,
+        scroll: f32,
+        viewport: (f32, f32),
+        pos: (f32, f32),
+    ) -> Option<(usize, (f32, f32))> {
+        if self.pages.is_empty() {
+            return None;
+        }
+        let page = self.page_at(scroll + pos.1);
+        let (x, y) = self.point_in_page(scroll, viewport, pos, page);
+        let (w_pt, h_pt) = self.pages[page];
+        if x < 0.0 || y < 0.0 || x > w_pt || y > h_pt {
+            return None;
+        }
+        Some((page, (x, y)))
+    }
+
+    /// The viewport point expressed in `page`'s coordinate space, in PDF
+    /// points (top-left origin) — *unclamped*, so a drag that leaves the
+    /// sheet still yields a position relative to it (negative above/left,
+    /// past the size below/right).
+    pub fn point_in_page(
+        &self,
+        scroll: f32,
+        viewport: (f32, f32),
+        pos: (f32, f32),
+        page: usize,
+    ) -> (f32, f32) {
+        let (page_w, _) = self.page_size_px(page);
+        let left = page_x(viewport.0, page_w);
+        let top = self.page_top(page) - scroll;
+        ((pos.0 - left) / self.zoom, (pos.1 - top) / self.zoom)
+    }
 }
 
 /// Horizontal placement: centered, but never pushed off the left edge.
@@ -363,6 +401,63 @@ mod tests {
         let l = layout(1.0);
         assert_eq!(l.max_scroll(1.0e9), 0.0);
         assert!((l.max_scroll(600.0) - (l.total_height() - 600.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn page_at_point_inverts_placed_pages() {
+        let l = layout(2.0);
+        let viewport = (1400.0, 800.0);
+        let scroll = l.page_top(1) + 100.0;
+        // A point squarely on page 1's sheet maps back to page-1 points.
+        for placed in l.placed_pages(scroll, viewport) {
+            let pos = (
+                placed.x + placed.width / 2.0,
+                (placed.y + placed.height / 2.0).clamp(0.0, viewport.1 - 1.0),
+            );
+            // Skip probes that the clamp pushed off this sheet.
+            if pos.1 < placed.y || pos.1 >= placed.y + placed.height {
+                continue;
+            }
+            let Some((page, (x, y))) = l.page_at_point(scroll, viewport, pos) else {
+                panic!("center of placed page {} missed", placed.page);
+            };
+            assert_eq!(page as u32, placed.page);
+            // Round trip: page points back to display px.
+            assert!((placed.x + x * l.zoom() - pos.0).abs() < 0.01);
+            assert!((placed.y + y * l.zoom() - pos.1).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn page_at_point_rejects_gaps_and_margins() {
+        let l = layout(1.0);
+        let viewport = (1000.0, 800.0);
+        // The inter-page gap belongs to no sheet.
+        let gap_y = 842.0 + 8.0; // mid-gap below page 0 at scroll 0
+        assert_eq!(l.page_at_point(0.0, viewport, (500.0, gap_y)), None);
+        // Left margin beside the centered sheet.
+        assert_eq!(l.page_at_point(0.0, viewport, (10.0, 100.0)), None);
+        // On the sheet.
+        let left = (1000.0 - 595.0) / 2.0;
+        let hit = l.page_at_point(0.0, viewport, (left + 5.0, 100.0));
+        assert_eq!(hit, Some((0, (5.0, 100.0))));
+        // Empty document.
+        let empty = DocLayout::new(vec![], 1.0, 16.0);
+        assert_eq!(empty.page_at_point(0.0, viewport, (1.0, 1.0)), None);
+    }
+
+    #[test]
+    fn point_in_page_is_unclamped_for_drags() {
+        let l = layout(1.0);
+        let viewport = (1000.0, 800.0);
+        let left = (1000.0 - 595.0) / 2.0;
+        // A drag that wanders above page 0 goes negative…
+        let (x, y) = l.point_in_page(0.0, viewport, (left - 10.0, -50.0), 0);
+        assert_eq!(x, -10.0);
+        assert_eq!(y, -50.0);
+        // …and one past the sheet's bottom exceeds its height.
+        let (_, y) = l.point_in_page(0.0, viewport, (left, 900.0), 0);
+        assert!(y > 842.0);
     }
 
     #[test]

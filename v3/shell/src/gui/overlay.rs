@@ -37,6 +37,11 @@ pub enum Overlay {
     PdfPage {
         input: String,
     },
+    /// Note text for the focused PDF's picked annotation (pre-filled with
+    /// the existing note; confirm overwrites it).
+    AnnotationNote {
+        input: String,
+    },
 }
 
 impl Overlay {
@@ -50,6 +55,7 @@ impl Overlay {
             Overlay::Find { .. } => "find",
             Overlay::PdfZoom { .. } => "pdf-zoom",
             Overlay::PdfPage { .. } => "pdf-page",
+            Overlay::AnnotationNote { .. } => "annotation-note",
         }
     }
 
@@ -60,7 +66,8 @@ impl Overlay {
             | Overlay::Search { input, .. }
             | Overlay::Find { input }
             | Overlay::PdfZoom { input }
-            | Overlay::PdfPage { input } => input,
+            | Overlay::PdfPage { input }
+            | Overlay::AnnotationNote { input } => input,
         }
     }
 
@@ -81,6 +88,7 @@ impl Overlay {
             Overlay::Find { .. } => "Find in Note",
             Overlay::PdfZoom { .. } => "Zoom (%)",
             Overlay::PdfPage { .. } => "Go to Page",
+            Overlay::AnnotationNote { .. } => "Annotation Note",
         }
     }
 }
@@ -179,7 +187,8 @@ impl Overlay {
             | Overlay::Search { input, .. }
             | Overlay::Find { input }
             | Overlay::PdfZoom { input }
-            | Overlay::PdfPage { input } => input,
+            | Overlay::PdfPage { input }
+            | Overlay::AnnotationNote { input } => input,
         }
     }
 }

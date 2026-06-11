@@ -58,17 +58,23 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | PDF: pdfium wiring (ADR-0002 re-affirmed) | §3.3 | ✅ | `v3/pdf/src/render.rs` behind the `pdfium` cargo feature — tile render (full page at bucket scale, sliced to 512 px grid), text extraction, typed errors incl. corrupt-PDF fixture test; FFI serialized by an engine-level mutex |
 | Vault: PDF text → FTS bridge (`TextExtractor` seam) | §3.4 | ✅ | `SearchIndex::sync_with`/`sync_paths_with` take an optional extractor; PDFs share the `(mtime, size)` guard (no re-extraction, fake-extractor call-count tests); real-pdfium integration test in `v3/pdf/tests/fts_bridge.rs` (dev-dep only — production composition belongs to the shell) |
 | **Annotations v2** (hash keys + migrations + export) | §3.3 / §5 M2 gate | ✅ | `v3/vault/src/annotations.rs` — `AnnotationStore` keyed by document SHA-256 (`document_hash`, streamed); numbered transactional migrations (`migrations(component, version)` table, sidecar-shared, append-only ladder pinned by fingerprint test); quads+color+note+linked-note CRUD; JSON export/import (serde) + Markdown summary; last-seen-path table for orphan reports. **M2 gate test green:** `v3/vault/tests/annotations_survive_rename.rs` (rename+move across sessions; edited bytes = new identity, old annotations reachable, never silently dropped). Shell wiring (highlight UI, persistent sidecar path) is a later session |
+| PDF: text selection geometry (pure `select` + `page_chars`) | §3.3 | ✅ | `v3/pdf/src/select.rs` — line grouping by vertical overlap, caret positions from page points, per-line quads + text (synthetic-grid tests); `DocLayout::page_at_point`/`point_in_page` inverse hit-testing; `render.rs::page_chars` flips pdfium's bottom-left rects to top-left page points (fixture test drives the pure selector over real glyphs and cross-checks `extract_text`) |
+| **Shell: annotations v2 wiring** (persistent sidecar + selection + highlight UI) | §3.3–3.4 / §5 M2 | ✅ | sidecar at `<vault>/.md3/sidecar.db`, one SQLite file shared by `SearchIndex` + `AnnotationStore` (disjoint tables; in-memory index fallback for read-only vaults) — the FTS index now persists across runs (cold start re-reads nothing, test-pinned); `record_document` + streamed SHA-256 on every PDF open (works without pdfium); drag selection on the canvas (`PdfMouseDown/Dragged/Up` → engine `select()` over cached `page_chars`, page-point state so scroll/zoom never invalidates it); `pdf.highlight` (ctrl+h) persists quads, `pdf.annotation-note` (ctrl+n) edits via overlay, delete key removes the picked highlight, `pdf.annotations-export` (palette) writes `<stem>-annotations.md` through `atomic_save` + index re-sync; annotation/selection tints painted from page points each frame. Suite: `shell/tests/annotations_wiring.rs` (4 always-on + 2 pdfium end-to-end incl. reopen-reloads-from-hash) |
+| Vault: SessionStore + shared migrations runner | §3.4 / §5 M2 | ✅ | `v3/vault/src/migrations.rs` — the component-keyed ladder extracted from annotations (same `migrations` table, per-component versions); `v3/vault/src/session.rs` — single-row `session_state` holding the shell's opaque JSON snapshot (save/load/clear; cohabitation with annotations test-pinned) |
+| Kernel: restore primitives | §3.1 | ✅ | `PaneTree::split_with_ratio` (ratio clamped 0.05–0.95, NaN→0.5; `split` delegates at 0.5) + `collapse_empty_panes` (hollow splits don't outlive their content; last pane survives) |
+| **Shell: session restore** | §5 M2 | ✅ | `gui/snapshot.rs` — serde wire format (pane tree + per-path view state, all fields `#[serde(default)]` so restore degrades, never refuses); capture on open/close-tab/split/next-tab/tab-click/save/quit **and** on window close (`exit_on_close_request: false` → save → exit); restore in `Shell::new`: rebuild splits with saved ratios, skip vanished files, collapse hollow panes, reapply md caret+scroll / pdf zoom+scroll, refocus; **"resumed at p. N/M"** status when the focused doc is a PDF. Suite: `shell/tests/session_restore.rs` (5 always-on + pdfium "resumed at p. 3" E2E) |
+| **Shell: settings v1 — user keymap overrides** | §3.1 | ✅ | `shell/src/settings.rs` — `<vault>/.md3/keymap.json` (`{scope, chord, command}` rows; `command: null` unbinds); command names resolved against the registry (ids stay `'static`, typos warn); bad rows/corrupt file warn and skip, never block startup; applied in `main` before the GUI. 5 tests incl. override-beats-default and scope isolation |
 | Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `v3/shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/V3_SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
 | CI: v3 job in quality workflow | §6 | ✅ | `.github/workflows/quality.yml` `v3` job: fmt, clippy -D warnings, tests, demo, generated-doc freshness diff |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-11, post pdf-reading-ux):** v3 — 160 tests
-green workspace-wide (171 with `--features pdfium`, incl. the fixture corpus
-and the shell reading suite), clippy `-D warnings` clean in both feature
-configs, fmt clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md`
-freshness-checked. CI's pdfium step now also covers `md3-shell` (clippy +
-tests). v2 suite unaffected (root workspace excludes `v3/`).
+**Verification snapshot (2026-06-11, post session-restore):** v3 — 189
+tests green workspace-wide (204 with `--features pdfium`, incl. the fixture
+corpus, the shell reading/annotation suites, and the new session-restore +
+settings suites), clippy `-D warnings` clean in both feature configs, fmt
+clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md` freshness-checked.
+v2 suite unaffected (root workspace excludes `v3/`).
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -82,17 +88,26 @@ tests). v2 suite unaffected (root workspace excludes `v3/`).
 6. ~~PDF text → FTS index plumbing~~ — done (see status board); shell owns the
    production composition (`PdfiumExtractor` adapter lives in the bridge test as
    the reference shape).
-7. **Shell wiring for annotations v2** — persistent sidecar DB path decision
-   (the GUI's `SearchIndex` is still in-memory-per-run), `record_document` on
-   PDF open, highlight creation UI (needs PDF text selection in the canvas;
-   the tile/scroll substrate is now in).
+7. ~~Shell wiring for annotations v2~~ — done (see status board): persistent
+   sidecar, `record_document` on open, drag-select → highlight/note/delete/
+   export. Still open on this surface: highlight color choices, creating a
+   *linked note* from a highlight, an orphaned-annotation report UI
+   (`known_documents` is ready), copy-selection-to-clipboard.
 8. ~~PDF reading UX: continuous scroll + tiles~~ — done (see status board).
    Still open from plan §3.3: TOC with section tracking, PDF search overlay
-   wiring (`pdf.find` is routed but stubbed), text selection, back/forward
-   history, async tile worker.
-9. Session restore + settings (plan §5 M2) — would also give "resumed at
-   p. N" since `PdfSession.scroll` is the only state to persist.
+   wiring (`pdf.find` is routed but stubbed), back/forward history, async
+   tile worker.
+9. ~~Session restore + settings~~ — done (see status board): layout + view
+   state + focus across restarts, "resumed at p. N", keymap-override file.
+   Settings *UI* (a rendered settings surface) is still plan-M2 open scope;
+   so is a theme system on tokens.
 10. v2 hotfixes for BUG-A/BUG-B (plan §9.2) — *not ordered by user; ask before doing.*
+11. Remaining M2/M3 surfaces, in rough value order: PDF search overlay
+    (`pdf.find` routed but stubbed) + TOC with section tracking +
+    back/forward history (plan §3.3); editing-ergonomics bundle (plan §3.2 /
+    M3); link graph UI (backlinks panel — the vault service exists);
+    annotation niceties from item 7's leftovers (colors, linked notes,
+    orphan report, copy-selection).
 
 ## Decisions made during execution
 
@@ -202,6 +217,52 @@ tests). v2 suite unaffected (root workspace excludes `v3/`).
   document identity: old annotations stay reachable under the old hash
   (orphan-report material), re-binding across content edits is deliberately
   not guessed at.
+- 2026-06-11: the sidecar is **one** SQLite file, `<vault>/.md3/sidecar.db`,
+  shared by the FTS index and the annotation store — their tables are
+  disjoint and the migration ladder is component-keyed precisely so they can
+  cohabit; the dot-directory is invisible to every vault walk (index,
+  quick-open, watcher) by the existing dot-skip rule. Index falls back to
+  in-memory when the sidecar can't be created (read-only vault); annotations
+  degrade to a status message instead — search has a useful degraded mode,
+  silently-vanishing highlights do not.
+- 2026-06-11: text-selection state lives in **page points anchored to one
+  page**, not viewport px — scroll and zoom never invalidate a selection;
+  the canvas projects quads per frame from `placed_pages` (same "stale
+  viewport can under-render but never misdraw" property as tiles). The
+  selection algorithm (line grouping, caret-between-glyphs, per-line union
+  quads) is a pure md3-pdf module so its semantics are pinned by
+  synthetic-grid tests, not by what pdfium happens to return.
+- 2026-06-11: highlight interaction grammar: click picks the topmost
+  (most-recent) annotation under the cursor; `ctrl+h` auto-picks the new
+  highlight so `ctrl+n` (note) chains naturally; **delete** is raw input,
+  not a keymap chord — it only means anything while a highlight is picked,
+  and binding it globally in pdf scope would steal a key for a mode that
+  rarely exists.
+- 2026-06-11: `pdf.annotations-export` writes `<stem>-annotations.md` next
+  to the PDF inside the vault (atomic save + targeted index re-sync) rather
+  than a dialog — exports are vault citizens: searchable, linkable, plain
+  files (plan pillar 5).
+- 2026-06-11: the session snapshot is an **opaque JSON blob to the vault**
+  (`SessionStore` stores a string) and a **serde type in the shell** — same
+  split as keymap files: the vault owns durability and the single-sidecar
+  guarantee, the shell owns every file format, the kernel stays serde-free.
+  The shared migration runner moved to `vault::migrations` so annotations
+  and sessions (and later the FTS schema) version independently in one
+  `migrations` table.
+- 2026-06-11: session save points are *event-edged* (open/close/split/
+  tab-switch/save/quit/window-close), not debounced-continuous: scroll
+  positions between two save points can be lost on kill-9, files cannot
+  (crash journal is M3 scope). Window close goes through
+  `exit_on_close_request: false` → save → `iced::exit()` so the X button is
+  a save point too.
+- 2026-06-11: restore *degrades, never refuses*: unknown snapshot fields are
+  `#[serde(default)]`, vanished files are skipped, hollow splits collapse
+  (`PaneTree::collapse_empty_panes`), an unparseable snapshot starts fresh
+  with a status line. A saved session must never be able to brick startup.
+- 2026-06-11: keymap-override rows resolve command *names* against the
+  registry rather than minting new ids — `CommandId` stays `&'static str`,
+  typos become warnings instead of dead bindings, and an override can only
+  target a real command (palette/docs stay truthful).
 - 2026-06-11: continuous-scroll geometry (`DocLayout`) lives in **md3-pdf**,
   not the shell — what's visible and which bucket-addressed tiles cover it is
   engine policy (mirrors the editor's layout-engine split); the shell only

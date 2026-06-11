@@ -15,6 +15,7 @@ pub mod keys;
 pub mod overlay;
 mod pdf_view;
 pub mod session;
+pub mod snapshot;
 
 use std::path::{Path, PathBuf};
 
@@ -22,13 +23,17 @@ use iced::widget::{button, canvas, column, container, row, stack, text};
 use iced::{Element, Fill, Subscription, Task};
 use md3_editor::buffer::{Command, Movement};
 use md3_kernel::input::{Chord, EditorKind, Key};
-use md3_kernel::pane::{DocumentId, Layout, Pane, TabId};
+use md3_kernel::pane::{DocumentId, Layout, Pane, PaneId, TabId};
 use md3_kernel::{CommandId, CommandRegistry, Keymap, SplitAxis, Workspace};
-use md3_vault::SearchIndex;
+use md3_vault::{AnnotationStore, NewAnnotation, Quad, SearchIndex, SessionStore};
 
 use editor_canvas::{EditorCanvas, palette as colors};
 use overlay::Overlay;
-use session::{MdSession, PdfSession, Sessions};
+use session::{MdSession, PdfSelection, PdfSession, Sessions};
+use snapshot::{NodeSnapshot, SessionSnapshot, TabSnapshot, ViewSnapshot};
+
+/// Default highlight color for new annotations.
+const HIGHLIGHT_COLOR: &str = "#ffd866";
 
 pub fn run(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> iced::Result {
     iced::application(
@@ -41,6 +46,9 @@ pub fn run(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> ic
     .theme(Shell::theme)
     .window(iced::window::Settings {
         size: iced::Size::new(1200.0, 800.0),
+        // The shell confirms close itself so the session is saved first
+        // (Message::WindowCloseRequested → save → exit).
+        exit_on_close_request: false,
         ..Default::default()
     })
     .run()
@@ -67,7 +75,21 @@ pub enum Message {
         dy: f32,
         viewport: (f32, f32),
     },
+    PdfMouseDown {
+        tab: TabId,
+        pos: (f32, f32),
+        viewport: (f32, f32),
+    },
+    PdfMouseDragged {
+        tab: TabId,
+        pos: (f32, f32),
+        viewport: (f32, f32),
+    },
+    PdfMouseUp {
+        tab: TabId,
+    },
     OverlayPick(usize),
+    WindowCloseRequested,
 }
 
 pub struct Shell {
@@ -79,15 +101,20 @@ pub struct Shell {
     overlay: Option<Overlay>,
     /// Vault files (relative paths) for quick-open; rescanned on open.
     files: Vec<String>,
-    /// FTS index, built lazily on first vault search.
+    /// FTS index, opened lazily on first vault search; persists in the
+    /// vault sidecar so an unchanged vault re-reads nothing across runs.
     index: Option<SearchIndex>,
+    /// Annotation store on the same sidecar, opened lazily on first PDF.
+    annotations: Option<AnnotationStore>,
+    /// Session store on the same sidecar; opened on startup for restore.
+    session: Option<SessionStore>,
     status: String,
     last_command: Option<CommandId>,
 }
 
 impl Shell {
     pub fn new(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> Shell {
-        Shell {
+        let mut shell = Shell {
             registry,
             keymap,
             ws: Workspace::new(),
@@ -96,9 +123,20 @@ impl Shell {
             overlay: None,
             files: Vec::new(),
             index: None,
+            annotations: None,
+            session: None,
             status: "ctrl+p open file · ctrl+shift+p commands".to_string(),
             last_command: None,
-        }
+        };
+        shell.restore_session();
+        shell
+    }
+
+    /// The vault's sidecar database — one SQLite file (plan §2 pillar 5)
+    /// shared by the FTS index and the annotation store (disjoint tables).
+    /// Lives in a dot-directory so every vault walk skips it.
+    fn sidecar_path(&self) -> PathBuf {
+        self.vault_root.join(".md3/sidecar.db")
     }
 
     // ----- read-only access for tests and the view -------------------------
@@ -138,10 +176,13 @@ impl Shell {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::keyboard::listen().map(|event| match keys::normalize(&event) {
-            Some(ev) => Message::Key(ev),
-            None => Message::Ignored,
-        })
+        Subscription::batch([
+            iced::keyboard::listen().map(|event| match keys::normalize(&event) {
+                Some(ev) => Message::Key(ev),
+                None => Message::Ignored,
+            }),
+            iced::window::close_requests().map(|_| Message::WindowCloseRequested),
+        ])
     }
 
     // ------------------------------------------------------------- update --
@@ -154,7 +195,12 @@ impl Shell {
                 if let Err(e) = self.ws.focus_tab(tab) {
                     self.status = e.to_string();
                 }
+                self.save_session();
                 Task::none()
+            }
+            Message::WindowCloseRequested => {
+                self.save_session();
+                iced::exit()
             }
             Message::EditorClicked {
                 tab,
@@ -199,11 +245,112 @@ impl Shell {
                 self.sync_status();
                 Task::none()
             }
+            Message::PdfMouseDown { tab, pos, viewport } => {
+                if let Err(e) = self.ws.focus_tab(tab) {
+                    self.status = e.to_string();
+                }
+                self.pdf_mouse_down(tab, pos, viewport);
+                Task::none()
+            }
+            Message::PdfMouseDragged { tab, pos, viewport } => {
+                self.pdf_mouse_dragged(tab, pos, viewport);
+                Task::none()
+            }
+            Message::PdfMouseUp { tab } => {
+                let doc = self.tab_document(tab);
+                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
+                    match &session.selection {
+                        Some(sel) if !sel.text.is_empty() => {
+                            self.status = format!(
+                                "{} chars selected · ctrl+h highlights",
+                                sel.text.chars().count()
+                            );
+                        }
+                        _ => session.selection = None,
+                    }
+                }
+                Task::none()
+            }
             Message::OverlayPick(i) => {
                 if let Some(sel) = self.overlay.as_mut().and_then(Overlay::selected_mut) {
                     *sel = i;
                 }
                 self.confirm_overlay()
+            }
+        }
+    }
+
+    /// Press on the page strip: pick the annotation under the cursor, or
+    /// anchor a new text selection there.
+    fn pdf_mouse_down(&mut self, tab: TabId, pos: (f32, f32), viewport: (f32, f32)) {
+        let root = self.vault_root.clone();
+        let Some(session) = self
+            .tab_document(tab)
+            .and_then(|d| self.sessions.pdf.get_mut(&d))
+        else {
+            return;
+        };
+        session.viewport = viewport;
+        let abs = root.join(&session.rel_path);
+        pdf_view::ensure_tiles(session, &abs);
+        let hit = session
+            .layout
+            .as_ref()
+            .and_then(|l| l.page_at_point(session.scroll, viewport, pos));
+        let Some((page, pt)) = hit else {
+            session.selection = None;
+            session.selected_annotation = None;
+            self.sync_status();
+            return;
+        };
+        let page = page as u32;
+        let picked = session
+            .annotation_at(page, pt)
+            .map(|a| (a.id, a.note.clone()));
+        if let Some((id, note)) = picked {
+            session.selected_annotation = Some(id);
+            session.selection = None;
+            self.status = if note.is_empty() {
+                "highlight · ctrl+n adds a note · delete removes".to_string()
+            } else {
+                format!("note: {note} · ctrl+n edits · delete removes")
+            };
+            return;
+        }
+        session.selected_annotation = None;
+        pdf_view::load_page_chars(session, &abs, page);
+        session.selection = Some(PdfSelection {
+            page,
+            anchor: pt,
+            quads: Vec::new(),
+            text: String::new(),
+        });
+        self.sync_status();
+    }
+
+    /// Drag: extend the selection from its anchor to the cursor, expressed
+    /// in the anchor page's coordinates (the engine clamps to its text).
+    fn pdf_mouse_dragged(&mut self, tab: TabId, pos: (f32, f32), viewport: (f32, f32)) {
+        let Some(session) = self
+            .tab_document(tab)
+            .and_then(|d| self.sessions.pdf.get_mut(&d))
+        else {
+            return;
+        };
+        let (Some(layout), Some(sel)) = (session.layout.as_ref(), session.selection.as_mut())
+        else {
+            return;
+        };
+        let head = layout.point_in_page(session.scroll, viewport, pos, sel.page as usize);
+        let chars = session.chars.get(&sel.page).map_or(&[][..], Vec::as_slice);
+        match md3_pdf::select::select(chars, sel.anchor, head) {
+            Some(text_sel) => {
+                sel.quads = text_sel.quads;
+                sel.text = text_sel.text;
+            }
+            None => {
+                sel.quads.clear();
+                sel.text.clear();
             }
         }
     }
@@ -285,6 +432,10 @@ impl Shell {
     }
 
     fn pdf_raw_input(&mut self, ev: &keys::KeyEvent) {
+        if ev.chord.map(|c| c.key) == Some(Key::Delete) {
+            self.remove_selected_annotation();
+            return;
+        }
         let root = self.vault_root.clone();
         let Some(session) = self.focused_pdf_mut() else {
             return;
@@ -349,7 +500,10 @@ impl Shell {
         self.last_command = Some(cmd);
         self.status = format!("⌘ {}", cmd.0);
         match cmd.0 {
-            "app.quit" => return iced::exit(),
+            "app.quit" => {
+                self.save_session();
+                return iced::exit();
+            }
             "palette.open" => self.open_overlay(Overlay::Palette {
                 input: String::new(),
                 selected: 0,
@@ -418,9 +572,26 @@ impl Shell {
                 input: String::new(),
             }),
             "pdf.find" => self.status = "pdf find: not yet implemented".to_string(),
+            "pdf.highlight" => self.highlight_selection(),
+            "pdf.annotation-note" => {
+                match self.focused_pdf().and_then(PdfSession::selected_annotation) {
+                    Some(a) => {
+                        let input = a.note.clone();
+                        self.open_overlay(Overlay::AnnotationNote { input });
+                    }
+                    None => self.status = "click a highlight first".to_string(),
+                }
+            }
+            "pdf.annotations-export" => self.export_annotations(),
             "overlay.close" => self.close_overlay(),
             "overlay.confirm" => return self.confirm_overlay(),
             other => self.status = format!("unhandled command: {other}"),
+        }
+        if matches!(
+            cmd.0,
+            "workspace.split-right" | "workspace.close-tab" | "workspace.next-tab" | "editor.save"
+        ) {
+            self.save_session();
         }
         self.sync_status();
         Task::none()
@@ -501,6 +672,10 @@ impl Shell {
                     pdf_view::ensure_tiles(session, &abs);
                 }
             }
+            Overlay::AnnotationNote { input } => {
+                self.close_overlay();
+                self.set_annotation_note(&input);
+            }
         }
         self.sync_status();
         Task::none()
@@ -509,21 +684,31 @@ impl Shell {
     // ------------------------------------------------------------ actions --
 
     fn open_document(&mut self, rel: &str) {
+        let pane = self
+            .ws
+            .focused_pane()
+            .unwrap_or_else(|| self.ws.panes.first_pane());
+        if self.open_document_in(pane, rel).is_some() {
+            self.save_session();
+        }
+    }
+
+    /// Open `rel` as a tab of `pane` (the workhorse `open_document` and
+    /// session restore share). Returns the tab on success.
+    fn open_document_in(&mut self, pane: PaneId, rel: &str) -> Option<TabId> {
         let kind = if rel.ends_with(".pdf") {
             EditorKind::Pdf
         } else {
             EditorKind::Markdown
         };
-        let tab = match self.ws.open(rel, kind) {
+        let tab = match self.ws.open_in(pane, rel, kind) {
             Ok(t) => t,
             Err(e) => {
                 self.status = e.to_string();
-                return;
+                return None;
             }
         };
-        let Some(doc) = self.tab_document(tab) else {
-            return;
-        };
+        let doc = self.tab_document(tab)?;
         let abs = self.vault_root.join(rel);
         match kind {
             EditorKind::Markdown => {
@@ -538,23 +723,231 @@ impl Shell {
                             self.status = format!("open {rel}: {e}");
                             let _ = self.ws.close_tab(tab);
                             self.sessions.gc(&self.ws.docs);
-                            return;
+                            return None;
                         }
                     }
                 }
             }
             EditorKind::Pdf => {
+                // Annotation identity first: SHA-256 of the bytes (vault
+                // convention — survives rename/move; needs no pdfium).
+                self.ensure_annotations();
+                let hash = md3_vault::document_hash(&abs).ok();
+                if let (Some(store), Some(h)) = (self.annotations.as_mut(), &hash) {
+                    let _ = store.record_document(h, rel);
+                }
                 let entry = self
                     .sessions
                     .pdf
                     .entry(doc)
                     .or_insert_with(|| PdfSession::new(rel));
+                entry.doc_hash = hash;
                 pdf_view::load_geometry(entry, &abs);
                 pdf_view::ensure_tiles(entry, &abs);
+                if let Some(store) = self.annotations.as_ref() {
+                    refresh_annotations(store, entry);
+                }
             }
             _ => {}
         }
         self.sync_status();
+        Some(tab)
+    }
+
+    // ------------------------------------------------------------ session --
+
+    /// Open the session store on the sidecar (once).
+    fn ensure_session_store(&mut self) {
+        if self.session.is_some() {
+            return;
+        }
+        let opened = self
+            .open_sidecar_dir()
+            .and_then(|_| SessionStore::open(&self.sidecar_path()));
+        match opened {
+            Ok(store) => self.session = Some(store),
+            Err(e) => self.status = format!("session persistence unavailable: {e}"),
+        }
+    }
+
+    /// Serialize the live workspace: pane tree with vault-relative paths,
+    /// plus per-document view state.
+    fn capture_session(&self) -> SessionSnapshot {
+        let layout = self.snapshot_node(&self.ws.panes.layout());
+        let mut views = std::collections::BTreeMap::new();
+        for s in self.sessions.md.values() {
+            let head = s.doc.buffer().primary().head;
+            let caret = s.doc.buffer().offset_to_line_col(head);
+            views.insert(
+                s.rel_path.clone(),
+                ViewSnapshot {
+                    scroll: s.scroll,
+                    zoom: None,
+                    caret: Some(caret),
+                },
+            );
+        }
+        for s in self.sessions.pdf.values() {
+            views.insert(
+                s.rel_path.clone(),
+                ViewSnapshot {
+                    scroll: s.scroll,
+                    zoom: Some(s.zoom),
+                    caret: None,
+                },
+            );
+        }
+        SessionSnapshot { layout, views }
+    }
+
+    fn snapshot_node(&self, node: &Layout<'_>) -> NodeSnapshot {
+        match node {
+            Layout::Pane(pane) => {
+                let active = pane
+                    .active_tab()
+                    .and_then(|a| pane.tabs().iter().position(|t| t.id == a.id))
+                    .unwrap_or(0);
+                let tabs = pane
+                    .tabs()
+                    .iter()
+                    .filter_map(|t| {
+                        let doc = self.ws.docs.get(t.document)?;
+                        Some(TabSnapshot {
+                            path: doc.path.clone(),
+                            focused: self.ws.focused_tab() == Some(t.id),
+                        })
+                    })
+                    .collect();
+                NodeSnapshot::Pane { tabs, active }
+            }
+            Layout::Split {
+                axis,
+                ratio,
+                first,
+                second,
+            } => NodeSnapshot::Split {
+                vertical: matches!(axis, SplitAxis::Vertical),
+                ratio: *ratio,
+                first: Box::new(self.snapshot_node(first)),
+                second: Box::new(self.snapshot_node(second)),
+            },
+        }
+    }
+
+    /// Persist the current session. Failures degrade to a status line —
+    /// never block the action that triggered the save.
+    fn save_session(&mut self) {
+        let snapshot = self.capture_session();
+        let json = match serde_json::to_string(&snapshot) {
+            Ok(j) => j,
+            Err(e) => {
+                self.status = format!("session save failed: {e}");
+                return;
+            }
+        };
+        self.ensure_session_store();
+        if let Some(store) = self.session.as_mut()
+            && let Err(e) = store.save(&json)
+        {
+            self.status = format!("session save failed: {e}");
+        }
+    }
+
+    /// Rebuild the previous session at startup: layout first (skipping
+    /// files that vanished, collapsing splits that end up hollow), then
+    /// view state, then focus.
+    fn restore_session(&mut self) {
+        self.ensure_session_store();
+        let Some(json) = self.session.as_ref().and_then(|s| s.load().ok().flatten()) else {
+            return;
+        };
+        let Ok(snap) = serde_json::from_str::<SessionSnapshot>(&json) else {
+            self.status = "saved session was unreadable — starting fresh".to_string();
+            return;
+        };
+
+        let root_pane = self.ws.panes.first_pane();
+        let mut focus = None;
+        self.restore_node(&snap.layout, root_pane, &mut focus);
+        self.ws.panes.collapse_empty_panes();
+
+        let root = self.vault_root.clone();
+        for (path, view) in &snap.views {
+            if let Some(s) = self.sessions.md.values_mut().find(|s| &s.rel_path == path) {
+                if let Some((line, col)) = view.caret {
+                    s.apply(Command::SetCursor { line, col });
+                }
+                s.scroll = view.scroll;
+                s.scroll_by(0.0); // clamp against the loaded document
+            }
+            if let Some(s) = self.sessions.pdf.values_mut().find(|s| &s.rel_path == path) {
+                if let Some(zoom) = view.zoom {
+                    s.set_zoom(zoom);
+                }
+                s.scroll = view.scroll;
+                if s.layout.is_some() {
+                    s.scroll_by(0.0); // clamp; without geometry keep the value
+                }
+                let abs = root.join(&s.rel_path);
+                pdf_view::ensure_tiles(s, &abs);
+            }
+        }
+
+        if let Some(tab) = focus {
+            let _ = self.ws.focus_tab(tab);
+        }
+        self.sync_status();
+        if let Some(s) = self.focused_pdf()
+            && s.layout.is_some()
+        {
+            self.status = format!("resumed at p. {}/{}", s.current_page() + 1, s.page_count());
+        }
+    }
+
+    fn restore_node(&mut self, node: &NodeSnapshot, pane: PaneId, focus: &mut Option<TabId>) {
+        match node {
+            NodeSnapshot::Pane { tabs, active } => {
+                let mut opened = Vec::new();
+                for t in tabs {
+                    if !self.vault_root.join(&t.path).exists() {
+                        continue; // the file vanished between sessions
+                    }
+                    if let Some(id) = self.open_document_in(pane, &t.path) {
+                        opened.push((id, t.focused));
+                    }
+                }
+                if let Some(&(id, _)) = opened.get((*active).min(opened.len().saturating_sub(1))) {
+                    let _ = self.ws.panes.set_active_tab(pane, id);
+                }
+                if let Some(&(id, _)) = opened.iter().find(|(_, focused)| *focused) {
+                    *focus = Some(id);
+                }
+            }
+            NodeSnapshot::Split {
+                vertical,
+                ratio,
+                first,
+                second,
+            } => {
+                let axis = if *vertical {
+                    SplitAxis::Vertical
+                } else {
+                    SplitAxis::Horizontal
+                };
+                match self.ws.panes.split_with_ratio(pane, axis, *ratio) {
+                    Ok(sibling) => {
+                        self.restore_node(first, pane, focus);
+                        self.restore_node(second, sibling, focus);
+                    }
+                    Err(_) => {
+                        // Degenerate snapshot: flatten both sides into the
+                        // surviving pane rather than dropping documents.
+                        self.restore_node(first, pane, focus);
+                        self.restore_node(second, pane, focus);
+                    }
+                }
+            }
+        }
     }
 
     fn save_focused(&mut self) {
@@ -575,6 +968,137 @@ impl Shell {
                 }
             }
             Err(e) => self.status = format!("save failed: {e}"),
+        }
+    }
+
+    /// `pdf.highlight`: persist the focused PDF's text selection as an
+    /// annotation and pick it (so ctrl+n annotates it immediately).
+    fn highlight_selection(&mut self) {
+        self.ensure_annotations();
+        let Some(doc) = self.ws.focused_tab().and_then(|t| self.tab_document(t)) else {
+            return;
+        };
+        let (Some(store), Some(session)) =
+            (self.annotations.as_mut(), self.sessions.pdf.get_mut(&doc))
+        else {
+            return;
+        };
+        let Some(hash) = session.doc_hash.clone() else {
+            self.status = "cannot annotate: file was unreadable on open".to_string();
+            return;
+        };
+        let Some(sel) = session.selection.take_if(|s| !s.text.is_empty()) else {
+            self.status = "select text first (drag over the page)".to_string();
+            return;
+        };
+        let new = NewAnnotation {
+            doc_hash: hash,
+            page: sel.page,
+            quads: sel
+                .quads
+                .iter()
+                .map(|q| Quad {
+                    x0: f64::from(q.x0),
+                    y0: f64::from(q.y0),
+                    x1: f64::from(q.x1),
+                    y1: f64::from(q.y1),
+                })
+                .collect(),
+            color: HIGHLIGHT_COLOR.to_string(),
+            note: String::new(),
+            linked_note: None,
+        };
+        match store.add(new) {
+            Ok(id) => {
+                session.selected_annotation = Some(id);
+                refresh_annotations(store, session);
+                self.status = "highlighted · ctrl+n adds a note".to_string();
+            }
+            Err(e) => {
+                session.selection = Some(sel); // keep it; the user can retry
+                self.status = format!("highlight failed: {e}");
+            }
+        }
+    }
+
+    /// `pdf.annotations-export`: write the focused PDF's annotation summary
+    /// as a sibling markdown note in the vault.
+    fn export_annotations(&mut self) {
+        self.ensure_annotations();
+        let root = self.vault_root.clone();
+        let Some(session) = self.focused_pdf() else {
+            self.status = "focus a pdf to export its annotations".to_string();
+            return;
+        };
+        let (Some(store), Some(hash)) = (self.annotations.as_ref(), session.doc_hash.as_ref())
+        else {
+            return;
+        };
+        let rel = format!(
+            "{}-annotations.md",
+            session.rel_path.trim_end_matches(".pdf")
+        );
+        let markdown = match store.export_markdown(hash) {
+            Ok(md) => md,
+            Err(e) => {
+                self.status = format!("export failed: {e}");
+                return;
+            }
+        };
+        let abs = root.join(&rel);
+        match md3_vault::atomic_save(&abs, markdown.as_bytes()) {
+            Ok(()) => {
+                if let Some(index) = self.index.as_mut() {
+                    let _ = index.sync_paths(&root, &[abs]);
+                }
+                self.status = format!("annotations exported to {rel}");
+            }
+            Err(e) => self.status = format!("export failed: {e}"),
+        }
+    }
+
+    /// Confirm handler for the note overlay: overwrite the picked
+    /// annotation's note.
+    fn set_annotation_note(&mut self, note: &str) {
+        let Some(doc) = self.ws.focused_tab().and_then(|t| self.tab_document(t)) else {
+            return;
+        };
+        let (Some(store), Some(session)) =
+            (self.annotations.as_mut(), self.sessions.pdf.get_mut(&doc))
+        else {
+            return;
+        };
+        let Some(id) = session.selected_annotation else {
+            return;
+        };
+        match store.update_note(id, note) {
+            Ok(()) => {
+                refresh_annotations(store, session);
+                self.status = "note saved".to_string();
+            }
+            Err(e) => self.status = format!("note failed: {e}"),
+        }
+    }
+
+    /// Delete on a picked highlight (raw key in the PDF surface).
+    fn remove_selected_annotation(&mut self) {
+        let Some(doc) = self.ws.focused_tab().and_then(|t| self.tab_document(t)) else {
+            return;
+        };
+        let (Some(store), Some(session)) =
+            (self.annotations.as_mut(), self.sessions.pdf.get_mut(&doc))
+        else {
+            return;
+        };
+        let Some(id) = session.selected_annotation.take() else {
+            return;
+        };
+        match store.remove(id) {
+            Ok(()) => {
+                refresh_annotations(store, session);
+                self.status = "highlight removed".to_string();
+            }
+            Err(e) => self.status = format!("remove failed: {e}"),
         }
     }
 
@@ -621,7 +1145,13 @@ impl Shell {
         if self.index.is_some() {
             return;
         }
-        match SearchIndex::open_in_memory() {
+        // Persistent sidecar first (incremental across runs); in-memory is
+        // the read-only-vault fallback so search still works.
+        let opened = self
+            .open_sidecar_dir()
+            .and_then(|_| SearchIndex::open(&self.sidecar_path()))
+            .or_else(|_| SearchIndex::open_in_memory());
+        match opened {
             Ok(mut index) => {
                 let synced = self.sync_index(&mut index);
                 if let Err(e) = synced {
@@ -631,6 +1161,26 @@ impl Shell {
             }
             Err(e) => self.status = format!("index: {e}"),
         }
+    }
+
+    /// Open the annotation store on the sidecar; report (once per attempt)
+    /// rather than fail — annotations degrade, the document still opens.
+    fn ensure_annotations(&mut self) {
+        if self.annotations.is_some() {
+            return;
+        }
+        let opened = self
+            .open_sidecar_dir()
+            .and_then(|_| AnnotationStore::open(&self.sidecar_path()));
+        match opened {
+            Ok(store) => self.annotations = Some(store),
+            Err(e) => self.status = format!("annotations unavailable: {e}"),
+        }
+    }
+
+    fn open_sidecar_dir(&self) -> Result<(), md3_vault::VaultError> {
+        let dir = self.vault_root.join(".md3");
+        std::fs::create_dir_all(&dir).map_err(|e| md3_vault::VaultError::io(&dir, e))
     }
 
     /// Sync the FTS index; with the pdfium feature on, PDFs are indexed
@@ -851,6 +1401,20 @@ impl Shell {
             .width(Fill)
             .height(Fill)
             .into()
+    }
+}
+
+/// Re-read a document's annotations from the store into its session — the
+/// canvas paints only from the session cache, so every mutation refreshes.
+fn refresh_annotations(store: &AnnotationStore, session: &mut PdfSession) {
+    if let Some(hash) = &session.doc_hash {
+        session.annotations = store.annotations_for(hash).unwrap_or_default();
+    }
+    // A removed/missing id must not linger as a phantom pick.
+    if let Some(id) = session.selected_annotation
+        && !session.annotations.iter().any(|a| a.id == id)
+    {
+        session.selected_annotation = None;
     }
 }
 

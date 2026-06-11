@@ -178,6 +178,38 @@ impl PdfRenderer {
         })
     }
 
+    /// Per-character glyph geometry in reading order, page points with a
+    /// **top-left** origin (pdfium's bottom-left rects flipped) — the input
+    /// [`crate::select`] works on. Control characters carry no usable box
+    /// and are dropped; line structure is recovered geometrically.
+    pub fn page_chars(&self, path: &Path, page: u32) -> Result<Vec<crate::CharBox>, PdfError> {
+        let _calls = pdfium_lock();
+        let doc = self.open(path)?;
+        let page = get_page(&doc, page)?;
+        let page_h = page.height().value;
+        let text = page.text().map_err(PdfError::Render)?;
+        let mut out = Vec::new();
+        for c in text.chars().iter() {
+            let Some(ch) = c.unicode_char() else {
+                continue;
+            };
+            if ch.is_control() {
+                continue;
+            }
+            let Ok(bounds) = c.loose_bounds() else {
+                continue;
+            };
+            out.push(crate::CharBox {
+                ch,
+                x0: bounds.left().value,
+                y0: page_h - bounds.top().value,
+                x1: bounds.right().value,
+                y1: page_h - bounds.bottom().value,
+            });
+        }
+        Ok(out)
+    }
+
     /// Plain-text extraction per page (feeds the vault's FTS index).
     pub fn extract_text(&self, path: &Path, page: u32) -> Result<String, PdfError> {
         let _calls = pdfium_lock();
@@ -323,6 +355,41 @@ mod tests {
             renderer.render_tile(&path, far_tile),
             Err(PdfError::TileOutOfPage(_))
         ));
+    }
+
+    #[test]
+    fn page_chars_yield_selectable_geometry() {
+        let Some(renderer) = renderer() else {
+            eprintln!("skipping: libpdfium not available");
+            return;
+        };
+        let path = fixture("single-page.pdf");
+        let chars = ok(renderer.page_chars(&path, 0));
+        assert!(!chars.is_empty(), "fixture page has text");
+        let (page_w, page_h) = ok(renderer.page_size(&path, 0));
+        for c in &chars {
+            assert!(c.x0 < c.x1 && c.y0 < c.y1, "degenerate box: {c:?}");
+            assert!(
+                c.x0 >= -1.0 && c.x1 <= page_w + 1.0 && c.y0 >= -1.0 && c.y1 <= page_h + 1.0,
+                "box outside the page: {c:?}"
+            );
+            assert!(!c.ch.is_control(), "control char leaked: {c:?}");
+        }
+        // A whole-page drag through the pure selector recovers real text.
+        let selection = crate::select::select(&chars, (0.0, 0.0), (page_w, page_h));
+        let Some(selection) = selection else {
+            panic!("whole-page drag selected nothing");
+        };
+        assert!(!selection.quads.is_empty());
+        let extracted = ok(renderer.extract_text(&path, 0));
+        let word = selection.text.split_whitespace().next();
+        let Some(word) = word else {
+            panic!("selection has no words: {:?}", selection.text);
+        };
+        assert!(
+            extracted.contains(word),
+            "selected `{word}` not in extracted text"
+        );
     }
 
     #[test]
