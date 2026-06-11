@@ -10,6 +10,6 @@ pub mod watcher;
 
 pub use atomic::atomic_save;
 pub use error::VaultError;
-pub use index::{Hit, SearchIndex, SyncReport};
+pub use index::{Hit, SearchIndex, SyncReport, TextExtractor};
 pub use links::{LinkGraph, WikiLink, extract_wikilinks, resolve_target, rewrite_links};
 pub use watcher::{DEFAULT_DEBOUNCE, VaultWatcher};

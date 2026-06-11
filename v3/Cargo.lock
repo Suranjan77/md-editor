@@ -450,7 +450,9 @@ dependencies = [
 name = "md3-pdf"
 version = "3.0.0-dev"
 dependencies = [
+ "md3-vault",
  "pdfium-render",
+ "tempfile",
  "thiserror",
 ]
 
