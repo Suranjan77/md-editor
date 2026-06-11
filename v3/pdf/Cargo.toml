@@ -3,10 +3,16 @@ name = "md3-pdf"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "PDF engine logic: tile keys, byte-budget LRU cache, cancellable render queue (pdfium lands later)"
+description = "PDF engine: tile keys, byte-budget LRU cache, cancellable render queue; pdfium wiring behind the `pdfium` feature"
 
 [lints]
 workspace = true
 
+[features]
+# pdfium wiring is opt-in so the pure tile logic builds/tests on machines
+# without libpdfium; CI runs the pure suite always, this feature when present.
+pdfium = ["dep:pdfium-render"]
+
 [dependencies]
+pdfium-render = { version = "0.9.1", features = ["thread_safe"], optional = true }
 thiserror = "2"

@@ -45,17 +45,23 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | Editor: incremental block parser (ADR-0101) | §3.2 | ✅ | `v3/editor/src/parse.rs` — explicit entry/exit `BlockState` per line, forward reparse to convergence, returns invalidated range; differential-tested vs full reparse (2k random edits) |
 | Editor: inline spans + production styler | §3.2 | ✅ | `v3/editor/src/style.rs` — `MarkdownStyler` (reserved-width conceal, `layout_stable() == true` by construction), char-offset `Span`s (emphasis/code/math/links/wikilinks/tables), spans always tile the source line |
 | Editor: `EditorDocument` session | §3.2 | ✅ | `v3/editor/src/document.rs` — buffer + parser + layout behind one `apply()`; fence-typing cascade restyles, caret conceal-follow, merged `Damage`; "caret motion ≤ 2 lines" asserted end-to-end |
-| Vault: typed errors + atomic save | §3.4 | ✅ | `v3/vault/` — `VaultError` (thiserror), temp+fsync+rename save (watcher/index deferred) |
-| PDF: tile cache + render queue (pure logic) | §3.3 | ✅ | `v3/pdf/src/tile.rs` — 1.4^n zoom buckets (never-upscale>1.4× proven by sweep test), byte-budget LRU w/ eviction reporting, cancellable queue (pdfium wiring deferred) |
+| Vault: typed errors + atomic save | §3.4 | ✅ | `v3/vault/` — `VaultError` (thiserror), temp+fsync+rename save |
+| Vault: FTS5 incremental index | §3.4 | ✅ | `v3/vault/src/index.rs` — `(mtime, size)` diff (unchanged vault re-reads nothing, test-pinned), targeted `sync_paths` for watcher batches, quoted-token FTS queries (operator injection inert), root-relative paths |
+| Vault: debounced fs watcher | §3.4 | ✅ | `v3/vault/src/watcher.rs` — `notify` + 500 ms quiet-window debounce thread, deduped batches; M2 "external edit converges < 2 s" gate test green |
+| Vault: link graph + rename repair | §3.4 | ✅ | `v3/vault/src/links.rs` — regex-free wikilink extraction (alias/anchor aware), bidirectional graph, broken-link query, `rewrite_links` as a pure transaction (caller persists via atomic save) |
+| PDF: tile cache + render queue (pure logic) | §3.3 | ✅ | `v3/pdf/src/tile.rs` — 1.4^n zoom buckets (never-upscale>1.4× proven by sweep test), byte-budget LRU w/ eviction reporting, cancellable queue |
+| PDF: pdfium wiring (ADR-0002 re-affirmed) | §3.3 | ✅ | `v3/pdf/src/render.rs` behind the `pdfium` cargo feature — tile render (full page at bucket scale, sliced to 512 px grid), text extraction, typed errors incl. corrupt-PDF fixture test; FFI serialized by an engine-level mutex |
 | Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `v3/shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/V3_SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
 | CI: v3 job in quality workflow | §6 | ✅ | `.github/workflows/quality.yml` `v3` job: fmt, clippy -D warnings, tests, demo, generated-doc freshness diff |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-10):** v3 — 47 tests green, clippy `-D warnings`
-clean, fmt clean, `md3-shell --demo` all-ok; guardrail scripts green incl. new
-v3 toolkit-boundary rule (fires on injected `use iced::…`, verified). v2 suite
-unaffected (root workspace excludes `v3/`).
+**Verification snapshot (2026-06-11):** v3 — 103 tests green workspace-wide plus
+4 pdfium-wired tests against the fixture corpus (pdfium suite run 3× in parallel
+mode for race coverage; vault suite run 3× after the watcher echo-loop fix),
+clippy `-D warnings` clean in both feature configs, fmt clean, `md3-shell --demo`
+all-ok. CI v3 job now also runs `--features pdfium` (repo-local `libpdfium.so`).
+v2 suite unaffected (root workspace excludes `v3/`).
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -64,9 +70,11 @@ unaffected (root workspace excludes `v3/`).
    additive.
 2. ~~Rope buffer + undo tree port~~ — done (see status board).
 3. ~~Incremental parser + style phase~~ — done (see status board).
-4. **Vault watcher** (`notify`, 500 ms debounce) + FTS5 index port from v2 core.
-5. **pdfium wiring** for the tile renderer (cache/queue logic lands UI-free first).
-6. v2 hotfixes for BUG-A/BUG-B (plan §9.2) — *not ordered by user; ask before doing.*
+4. ~~Vault watcher + FTS5 index~~ — done (see status board), plus link graph.
+5. ~~pdfium wiring for the tile renderer~~ — done (see status board).
+6. **PDF text → FTS index plumbing** — `PdfRenderer::extract_text` exists and
+   `SearchIndex` exists; the bridge (index PDFs alongside `*.md`) is unwritten.
+7. v2 hotfixes for BUG-A/BUG-B (plan §9.2) — *not ordered by user; ask before doing.*
 
 ## Decisions made during execution
 
@@ -115,3 +123,36 @@ unaffected (root workspace excludes `v3/`).
   math, links incl. one paren level, wikilinks, escapes); the invariant that *spans
   always tile the source line* is what paint correctness rests on, and is tested per
   kind. Conformance corpus tightening deferred to M3 per plan.
+- 2026-06-11: pdfium wiring is a cargo **feature** (`pdfium`), not a separate crate —
+  the pure tile logic always builds/tests; CI runs the feature too since
+  `core/pdfium/libpdfium.so` is tracked in git. Tests skip (not fail) when no library
+  binds, so contributor machines stay green.
+- 2026-06-11: pdfium-render 0.9's `thread_safe` feature only makes handles Send+Sync;
+  it does **not** serialize FFI calls — concurrent calls SIGSEGV/SIGTRAP (reproduced
+  by the parallel test suite). v2 dodged this with a single worker thread; v3's
+  `PdfRenderer` serializes every method through a process-wide mutex instead, so the
+  engine is safe under any caller topology rather than by convention.
+- 2026-06-11: tile rendering renders the whole page at bucket scale and slices the
+  512 px tile out (correct-first); pdfium clip-rect rendering is the optimization
+  path once profiles justify it (~4× zoom on very large pages).
+- 2026-06-11: FTS queries are built by quoting each whitespace token (`"tok"*`) —
+  FTS5 operators in user input (`NEAR(`, `AND`, unbalanced quotes) are inert by
+  construction, test-pinned. Prefix matching falls out of the trailing `*`.
+- 2026-06-11: index change detection is `(mtime_ns, size)`, not content hash — the
+  plan says "mtime+hash diff" but hashing requires reading every file, which defeats
+  the "cold start with no changes = no reindex" gate; `(mtime, size)` is what makes
+  it cheap. Revisit only if a sync tool that preserves both while changing content
+  shows up in practice.
+- 2026-06-11: rename repair is split: `LinkGraph::rename_file` mutates the graph and
+  *reports referrers*; `rewrite_links` is a pure text transform; the caller composes
+  them with `atomic_save`. No fs access inside the link module keeps the
+  "transactions" testable without a vault.
+- 2026-06-11: the watcher **drops `Access` events** — consumers read files in
+  response to a batch, and on inotify those reads emit open/close events, so
+  forwarding them feeds the watcher its own echo: an infinite reindex loop
+  (manifested as the vault test suite hanging; reproduced, fixed, suite re-run 3×).
+- 2026-06-11: search semantics pinned: quoted tokens mean `AND`/`OR`/`NEAR` are
+  *literal words* — `parsers AND` requires the word "and" in the body. The original
+  test expected operator-stripping; the literal interpretation is the one the
+  quoting design actually implements, and is now what the test asserts (with a
+  positive case proving the literal match).
