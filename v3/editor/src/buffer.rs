@@ -451,8 +451,14 @@ impl Buffer {
     ) {
         let after = self.selections.clone();
         let whitespace = text.chars().all(char::is_whitespace);
-        let coalescable =
-            !replaced_range && ops.len() == 1 && !text.contains('\n') && before.len() == 1;
+        // Only uniform text — all whitespace or none — may join a run; mixed
+        // inserts (a paste like " world") stay their own undo step.
+        let uniform = whitespace || !text.chars().any(char::is_whitespace);
+        let coalescable = !replaced_range
+            && ops.len() == 1
+            && uniform
+            && !text.contains('\n')
+            && before.len() == 1;
         let continues = match (coalescable, self.coalesce, ops.first()) {
             (true, Some(c), Some(EditOp::Insert { at, .. })) => {
                 c.end == *at && c.whitespace == whitespace

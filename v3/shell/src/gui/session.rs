@@ -62,21 +62,31 @@ impl MdSession {
     }
 
     fn clamp_scroll(&mut self) {
-        let max = (self.doc.layout().total_height() as f32 - self.viewport_h + LINE_HEIGHT)
-            .max(0.0);
+        let max =
+            (self.doc.layout().total_height() as f32 - self.viewport_h + LINE_HEIGHT).max(0.0);
         self.scroll = self.scroll.clamp(0.0, max);
     }
 }
 
-#[derive(Debug, Default)]
+/// Gap between page sheets in display px (zoom-independent).
+pub const PAGE_GAP: f32 = 16.0;
+/// Tile pixmap budget per document (bytes).
+const TILE_BUDGET: usize = 192 * 1024 * 1024;
+
 pub struct PdfSession {
     pub rel_path: String,
-    pub page: u32,
-    pub page_count: u32,
+    /// Continuous-scroll geometry; `None` until page sizes load (no pdfium,
+    /// or the file failed to open) — the placeholder view shows `status`.
+    pub layout: Option<md3_pdf::DocLayout>,
+    pub scroll: f32,
     pub zoom: f32,
-    /// Rendered current page, when the `pdfium` feature is on and the
-    /// library bound: (width, height, rgba image handle).
-    pub frame: Option<(u32, u32, iced::widget::image::Handle)>,
+    /// Last viewport a canvas event reported (px); used by tile requests.
+    pub viewport: (f32, f32),
+    /// Rendered tile pixmaps, owned here; the engine cache owns the budget
+    /// accounting and tells us what to drop.
+    pub tiles: HashMap<md3_pdf::TileKey, iced::widget::image::Handle>,
+    pub cache: md3_pdf::TileCache,
+    pub queue: md3_pdf::RenderQueue,
     pub status: String,
 }
 
@@ -84,11 +94,58 @@ impl PdfSession {
     pub fn new(rel_path: &str) -> PdfSession {
         PdfSession {
             rel_path: rel_path.to_string(),
-            page: 0,
-            page_count: 0,
+            layout: None,
+            scroll: 0.0,
             zoom: 1.0,
-            frame: None,
+            viewport: (1000.0, 750.0),
+            tiles: HashMap::new(),
+            cache: md3_pdf::TileCache::new(TILE_BUDGET),
+            queue: md3_pdf::RenderQueue::new(),
             status: String::new(),
+        }
+    }
+
+    /// 0-based page the viewport is "on" — what the page pill shows and
+    /// what zoom changes re-anchor to (the page a third down the screen).
+    pub fn current_page(&self) -> usize {
+        match &self.layout {
+            Some(layout) => layout.page_at(self.scroll + self.viewport.1 / 3.0),
+            None => 0,
+        }
+    }
+
+    pub fn page_count(&self) -> usize {
+        self.layout
+            .as_ref()
+            .map_or(0, md3_pdf::DocLayout::page_count)
+    }
+
+    pub fn scroll_by(&mut self, dy: f32) {
+        let max = self
+            .layout
+            .as_ref()
+            .map_or(0.0, |l| l.max_scroll(self.viewport.1));
+        self.scroll = (self.scroll + dy).clamp(0.0, max);
+    }
+
+    pub fn go_to_page(&mut self, page: usize) {
+        if let Some(layout) = &self.layout {
+            let max = layout.max_scroll(self.viewport.1);
+            self.scroll = layout.page_top(page).clamp(0.0, max);
+        }
+    }
+
+    /// Change zoom, keeping the current page anchored at the top of the
+    /// viewport. Tiles from the old bucket stay cached (zoom wiggles within
+    /// a bucket cost nothing); newly needed ones render on the next ensure.
+    pub fn set_zoom(&mut self, zoom: f32) {
+        let zoom = zoom.clamp(0.25, 6.0);
+        let anchor = self.current_page();
+        self.zoom = zoom;
+        if let Some(layout) = &mut self.layout {
+            layout.set_zoom(zoom);
+            let max = layout.max_scroll(self.viewport.1);
+            self.scroll = layout.page_top(anchor).clamp(0.0, max);
         }
     }
 }

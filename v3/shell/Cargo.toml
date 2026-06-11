@@ -19,3 +19,7 @@ md3-editor = { path = "../editor" }
 md3-vault = { path = "../vault" }
 md3-pdf = { path = "../pdf" }
 iced = { version = "0.14", features = ["canvas", "image"] }
+
+[dev-dependencies]
+# Routing tests drive the real update loop over a throwaway vault directory.
+tempfile = "3"

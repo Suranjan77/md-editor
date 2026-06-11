@@ -11,10 +11,10 @@
 //!   documents are peers — any kind in any pane (BUG-C discipline).
 
 pub mod editor_canvas;
-mod keys;
-mod overlay;
+pub mod keys;
+pub mod overlay;
 mod pdf_view;
-mod session;
+pub mod session;
 
 use std::path::{Path, PathBuf};
 
@@ -62,6 +62,11 @@ pub enum Message {
         dy: f32,
         viewport_h: f32,
     },
+    PdfScrolled {
+        tab: TabId,
+        dy: f32,
+        viewport: (f32, f32),
+    },
     OverlayPick(usize),
 }
 
@@ -77,10 +82,11 @@ pub struct Shell {
     /// FTS index, built lazily on first vault search.
     index: Option<SearchIndex>,
     status: String,
+    last_command: Option<CommandId>,
 }
 
 impl Shell {
-    fn new(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> Shell {
+    pub fn new(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> Shell {
         Shell {
             registry,
             keymap,
@@ -91,7 +97,40 @@ impl Shell {
             files: Vec::new(),
             index: None,
             status: "ctrl+p open file · ctrl+shift+p commands".to_string(),
+            last_command: None,
         }
+    }
+
+    // ----- read-only access for tests and the view -------------------------
+
+    pub fn workspace(&self) -> &Workspace {
+        &self.ws
+    }
+
+    pub fn overlay(&self) -> Option<&Overlay> {
+        self.overlay.as_ref()
+    }
+
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    pub fn last_command(&self) -> Option<CommandId> {
+        self.last_command
+    }
+
+    /// The focused tab's markdown session, if it is one.
+    pub fn focused_md(&self) -> Option<&MdSession> {
+        let tab = self.ws.focused_tab()?;
+        let doc = self.tab_document(tab)?;
+        self.sessions.md.get(&doc)
+    }
+
+    /// The focused tab's PDF session, if it is one.
+    pub fn focused_pdf(&self) -> Option<&PdfSession> {
+        let tab = self.ws.focused_tab()?;
+        let doc = self.tab_document(tab)?;
+        self.sessions.pdf.get(&doc)
     }
 
     fn theme(&self) -> iced::Theme {
@@ -107,7 +146,7 @@ impl Shell {
 
     // ------------------------------------------------------------- update --
 
-    fn update(&mut self, message: Message) -> Task<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Ignored => Task::none(),
             Message::Key(ev) => self.on_key(ev),
@@ -143,6 +182,21 @@ impl Shell {
                     session.viewport_h = viewport_h;
                     session.scroll_by(dy);
                 }
+                Task::none()
+            }
+            Message::PdfScrolled { tab, dy, viewport } => {
+                if let Err(e) = self.ws.focus_tab(tab) {
+                    self.status = e.to_string();
+                }
+                let root = self.vault_root.clone();
+                let doc = self.tab_document(tab);
+                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
+                    session.viewport = viewport;
+                    session.scroll_by(dy);
+                    let abs = root.join(&session.rel_path);
+                    pdf_view::ensure_tiles(session, &abs);
+                }
+                self.sync_status();
                 Task::none()
             }
             Message::OverlayPick(i) => {
@@ -235,15 +289,20 @@ impl Shell {
         let Some(session) = self.focused_pdf_mut() else {
             return;
         };
-        let delta: i64 = match ev.chord.map(|c| c.key) {
-            Some(Key::PageDown) | Some(Key::Right) => 1,
-            Some(Key::PageUp) | Some(Key::Left) => -1,
+        let screen = session.viewport.1 * 0.9;
+        match ev.chord.map(|c| c.key) {
+            Some(Key::PageDown) => session.scroll_by(screen),
+            Some(Key::PageUp) => session.scroll_by(-screen),
+            Some(Key::Down) => session.scroll_by(60.0),
+            Some(Key::Up) => session.scroll_by(-60.0),
+            Some(Key::Right) => session.go_to_page(session.current_page() + 1),
+            Some(Key::Left) => session.go_to_page(session.current_page().saturating_sub(1)),
+            Some(Key::Home) => session.go_to_page(0),
+            Some(Key::End) => session.scroll_by(f32::MAX),
             _ => return,
-        };
-        let last = i64::from(session.page_count.saturating_sub(1));
-        session.page = (i64::from(session.page) + delta).clamp(0, last.max(0)) as u32;
+        }
         let abs = root.join(&session.rel_path);
-        pdf_view::refresh(session, &abs);
+        pdf_view::ensure_tiles(session, &abs);
     }
 
     fn overlay_raw_input(&mut self, ev: &keys::KeyEvent) {
@@ -287,6 +346,7 @@ impl Shell {
     // --------------------------------------------------------- commands --
 
     fn run_command(&mut self, cmd: CommandId) -> Task<Message> {
+        self.last_command = Some(cmd);
         self.status = format!("⌘ {}", cmd.0);
         match cmd.0 {
             "app.quit" => return iced::exit(),
@@ -340,6 +400,11 @@ impl Shell {
             "editor.redo" => {
                 if let Some(s) = self.focused_md_mut() {
                     s.apply(Command::Redo);
+                }
+            }
+            "editor.select-all" => {
+                if let Some(s) = self.focused_md_mut() {
+                    s.apply(Command::SelectAll);
                 }
             }
             "editor.save" => self.save_focused(),
@@ -417,11 +482,12 @@ impl Shell {
             Overlay::PdfZoom { input } => {
                 self.close_overlay();
                 let root = self.vault_root.clone();
-                if let (Ok(pct), Some(session)) = (input.trim().parse::<f32>(), self.focused_pdf_mut())
+                if let (Ok(pct), Some(session)) =
+                    (input.trim().parse::<f32>(), self.focused_pdf_mut())
                 {
-                    session.zoom = (pct / 100.0).clamp(0.25, 6.0);
+                    session.set_zoom(pct / 100.0);
                     let abs = root.join(&session.rel_path);
-                    pdf_view::refresh(session, &abs);
+                    pdf_view::ensure_tiles(session, &abs);
                 }
             }
             Overlay::PdfPage { input } => {
@@ -430,9 +496,9 @@ impl Shell {
                 if let (Ok(page), Some(session)) =
                     (input.trim().parse::<u32>(), self.focused_pdf_mut())
                 {
-                    session.page = page.saturating_sub(1);
+                    session.go_to_page((page.saturating_sub(1)) as usize);
                     let abs = root.join(&session.rel_path);
-                    pdf_view::refresh(session, &abs);
+                    pdf_view::ensure_tiles(session, &abs);
                 }
             }
         }
@@ -461,10 +527,12 @@ impl Shell {
         let abs = self.vault_root.join(rel);
         match kind {
             EditorKind::Markdown => {
-                if !self.sessions.md.contains_key(&doc) {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    self.sessions.md.entry(doc)
+                {
                     match std::fs::read_to_string(&abs) {
                         Ok(text) => {
-                            self.sessions.md.insert(doc, MdSession::new(rel, &text));
+                            entry.insert(MdSession::new(rel, &text));
                         }
                         Err(e) => {
                             self.status = format!("open {rel}: {e}");
@@ -481,7 +549,8 @@ impl Shell {
                     .pdf
                     .entry(doc)
                     .or_insert_with(|| PdfSession::new(rel));
-                pdf_view::refresh(entry, &abs);
+                pdf_view::load_geometry(entry, &abs);
+                pdf_view::ensure_tiles(entry, &abs);
             }
             _ => {}
         }
@@ -629,6 +698,16 @@ impl Shell {
                 ""
             };
             self.status = format!("{}{dirty} — Ln {}, Col {}", session.rel_path, line + 1, col);
+        } else if let Some(session) = self.sessions.pdf.get(&doc)
+            && session.layout.is_some()
+        {
+            self.status = format!(
+                "{} — p. {}/{} · {:.0}%",
+                session.rel_path,
+                session.current_page() + 1,
+                session.page_count(),
+                session.zoom * 100.0
+            );
         }
     }
 
@@ -636,13 +715,9 @@ impl Shell {
 
     fn view(&self) -> Element<'_, Message> {
         let workspace = self.layout_view(&self.ws.panes.layout());
-        let status = container(
-            text(self.status.clone())
-                .size(13)
-                .color(colors::MARKER),
-        )
-        .padding([4, 10])
-        .width(Fill);
+        let status = container(text(self.status.clone()).size(13).color(colors::MARKER))
+            .padding([4, 10])
+            .width(Fill);
 
         let base = column![container(workspace).height(Fill), status];
         match &self.overlay {
@@ -660,12 +735,8 @@ impl Shell {
                 first,
                 second,
             } => {
-                let a = container(self.layout_view(first))
-                    .width(Fill)
-                    .height(Fill);
-                let b = container(self.layout_view(second))
-                    .width(Fill)
-                    .height(Fill);
+                let a = container(self.layout_view(first)).width(Fill).height(Fill);
+                let b = container(self.layout_view(second)).width(Fill).height(Fill);
                 let (pa, pb) = (
                     ((ratio * 1000.0) as u16).max(1),
                     (((1.0 - ratio) * 1000.0) as u16).max(1),
@@ -712,8 +783,8 @@ impl Shell {
                     }
                 })
                 .unwrap_or_else(|| "?".to_string());
-            let active = focused_tab == Some(tab.id)
-                || pane.active_tab().map(|t| t.id) == Some(tab.id);
+            let active =
+                focused_tab == Some(tab.id) || pane.active_tab().map(|t| t.id) == Some(tab.id);
             strip = strip.push(
                 button(text(title).size(13))
                     .padding([3, 10])
@@ -753,7 +824,7 @@ impl Shell {
                         None => missing_session(),
                     },
                     EditorKind::Pdf => match self.sessions.pdf.get(&tab.document) {
-                        Some(session) => pdf_view::view(session),
+                        Some(session) => pdf_view::view(session, tab.id),
                         None => missing_session(),
                     },
                     _ => container(text("unsupported editor kind").color(colors::MARKER))
@@ -829,9 +900,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
         }
         if path.is_dir() {
             walk(root, &path, out);
-        } else if path
-            .extension()
-            .is_some_and(|e| e == "md" || e == "pdf")
+        } else if path.extension().is_some_and(|e| e == "md" || e == "pdf")
             && let Ok(rel) = path.strip_prefix(root)
         {
             out.push(rel.to_string_lossy().to_string());
