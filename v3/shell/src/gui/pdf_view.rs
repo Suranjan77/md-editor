@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use iced::widget::{canvas, column, container, text};
+use iced::widget::{canvas, column, container, stack, text};
 use iced::{Element, Fill, Point, Rectangle, Size, mouse};
 use md3_kernel::pane::TabId;
 
@@ -62,6 +62,7 @@ pub fn load_geometry(session: &mut PdfSession, abs_path: &Path) {
             }
         }
         session.layout = Some(md3_pdf::DocLayout::new(sizes, session.zoom, PAGE_GAP));
+        session.outline = renderer.outline(abs_path).unwrap_or_default();
         session.status = String::new();
     }
     #[cfg(not(feature = "pdfium"))]
@@ -88,6 +89,16 @@ pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path) {
         let placed = layout.visible_tiles(session.scroll, session.viewport);
         let visible: std::collections::HashSet<md3_pdf::TileKey> =
             placed.iter().map(|t| t.key).collect();
+        // Glyph geometry for the visible pages, so hovering shows the text
+        // cursor before any click and a drag never starts against an
+        // unloaded page (idempotent per page).
+        let pages: Vec<u32> = layout
+            .visible_pages(session.scroll, session.viewport.1)
+            .map(|p| p as u32)
+            .collect();
+        for page in pages {
+            load_page_chars(session, abs_path, page);
+        }
         session.queue.retain_visible(&visible);
         for key in &visible {
             if session.cache.touch(*key) {
@@ -155,10 +166,19 @@ pub fn view(session: &PdfSession, tab: TabId) -> Element<'_, Message> {
     if session.layout.is_none() {
         return placeholder(session);
     }
-    canvas(PdfCanvas { tab, session })
-        .width(Fill)
-        .height(Fill)
-        .into()
+    // Tints live on a second stacked canvas, not in the page frame: within
+    // one layer iced_wgpu renders every image after every mesh, so quads
+    // filled in the same frame as `draw_image` land *under* the opaque page
+    // tiles. The stack gives the tint canvas its own layer, which renders
+    // after the page layer. It captures nothing, so all mouse events fall
+    // through to the page canvas below.
+    stack![
+        canvas(PdfCanvas { tab, session }).width(Fill).height(Fill),
+        canvas(TintCanvas { session }).width(Fill).height(Fill),
+    ]
+    .width(Fill)
+    .height(Fill)
+    .into()
 }
 
 fn placeholder(session: &PdfSession) -> Element<'_, Message> {
@@ -265,7 +285,9 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
                 iced::Color::WHITE,
             );
         }
-        // …then every visible tile we have a pixmap for…
+        // …then every visible tile we have a pixmap for. Annotation and
+        // selection tints are painted by `TintCanvas` on the stacked layer
+        // above (see `view`).
         for tile in layout.visible_tiles(self.session.scroll, viewport) {
             if let Some(handle) = self.session.tiles.get(&tile.key) {
                 frame.draw_image(
@@ -277,8 +299,72 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
                 );
             }
         }
-        // …then annotation tints and the live selection, projected from
-        // page points onto the visible sheets.
+        vec![frame.into_geometry()]
+    }
+
+    /// I-beam over selectable text, pointer over a stored highlight — the
+    /// affordances for the two things a press can do here. Glyph geometry is
+    /// loaded per visible page by `ensure_tiles`, so hover works pre-click.
+    fn mouse_interaction(
+        &self,
+        _state: &Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        let Some(pos) = cursor.position_in(bounds) else {
+            return mouse::Interaction::default();
+        };
+        let Some(layout) = &self.session.layout else {
+            return mouse::Interaction::default();
+        };
+        let hit = layout.page_at_point(
+            self.session.scroll,
+            (bounds.width, bounds.height),
+            (pos.x, pos.y),
+        );
+        let Some((page, pt)) = hit else {
+            return mouse::Interaction::default();
+        };
+        let page = page as u32;
+        if self.session.annotation_at(page, pt).is_some() {
+            return mouse::Interaction::Pointer;
+        }
+        let over_text = self.session.chars.get(&page).is_some_and(|chars| {
+            chars
+                .iter()
+                .any(|c| pt.0 >= c.x0 && pt.0 <= c.x1 && pt.1 >= c.y0 && pt.1 <= c.y1)
+        });
+        if over_text {
+            mouse::Interaction::Text
+        } else {
+            mouse::Interaction::default()
+        }
+    }
+}
+
+/// Annotation tints and the live selection, projected from page points onto
+/// the visible sheets. A separate canvas (own render layer) so the
+/// translucent quads composite *over* the tile images; it handles no events.
+struct TintCanvas<'a> {
+    session: &'a PdfSession,
+}
+
+impl canvas::Program<Message> for TintCanvas<'_> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &iced::Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let Some(layout) = &self.session.layout else {
+            return vec![frame.into_geometry()];
+        };
+        let viewport = (bounds.width, bounds.height);
         let zoom = layout.zoom();
         for page in layout.placed_pages(self.session.scroll, viewport) {
             let project = |x0: f32, y0: f32, x1: f32, y1: f32| {
@@ -310,14 +396,5 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
             }
         }
         vec![frame.into_geometry()]
-    }
-
-    fn mouse_interaction(
-        &self,
-        _state: &Self::State,
-        _bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> mouse::Interaction {
-        mouse::Interaction::default()
     }
 }

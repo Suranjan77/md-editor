@@ -210,6 +210,50 @@ impl PdfRenderer {
         Ok(out)
     }
 
+    /// The document outline (bookmark tree) flattened to prefix order with
+    /// depths — [`crate::outline`]'s input. Entries without a title or a
+    /// page destination are skipped (their subtrees are still walked).
+    /// Empty when the document has no outline.
+    pub fn outline(&self, path: &Path) -> Result<Vec<crate::OutlineEntry>, PdfError> {
+        // Defensive caps: pdfium documents can carry cyclic or absurd
+        // bookmark graphs; a TOC deeper or larger than this is garbage.
+        const MAX_DEPTH: u8 = 32;
+        const MAX_ENTRIES: usize = 4096;
+        let _calls = pdfium_lock();
+        let doc = self.open(path)?;
+        let mut out = Vec::new();
+        let mut stack: Vec<(PdfBookmark<'_>, u8)> = doc
+            .bookmarks()
+            .root()
+            .map(|root| vec![(root, 0)])
+            .unwrap_or_default();
+        while let Some((node, depth)) = stack.pop() {
+            if out.len() >= MAX_ENTRIES {
+                break;
+            }
+            // Sibling first so it pops after this node's subtree (prefix
+            // order from a LIFO stack).
+            if let Some(sibling) = node.next_sibling() {
+                stack.push((sibling, depth));
+            }
+            if depth < MAX_DEPTH
+                && let Some(child) = node.first_child()
+            {
+                stack.push((child, depth + 1));
+            }
+            let page = node
+                .destination()
+                .and_then(|d| d.page_index().ok())
+                .and_then(|i| u32::try_from(i).ok());
+            if let (Some(title), Some(page)) = (node.title(), page)
+                && !title.trim().is_empty()
+            {
+                out.push(crate::OutlineEntry { title, page, depth });
+            }
+        }
+        Ok(out)
+    }
+
     /// Plain-text extraction per page (feeds the vault's FTS index).
     pub fn extract_text(&self, path: &Path, page: u32) -> Result<String, PdfError> {
         let _calls = pdfium_lock();
@@ -390,6 +434,31 @@ mod tests {
             extracted.contains(word),
             "selected `{word}` not in extracted text"
         );
+    }
+
+    #[test]
+    fn outline_flattens_the_fixture_bookmark_tree() {
+        let Some(renderer) = renderer() else {
+            eprintln!("skipping: libpdfium not available");
+            return;
+        };
+        let toc = ok(renderer.outline(&fixture("multipage-outline.pdf")));
+        assert!(!toc.is_empty(), "fixture has a bookmark tree");
+        let pages = ok(renderer.page_count(&fixture("multipage-outline.pdf")));
+        for e in &toc {
+            assert!(!e.title.trim().is_empty());
+            assert!(e.page < u32::from(pages), "destination in range: {e:?}");
+        }
+        assert!(
+            toc.windows(2).any(|w| w[0].page <= w[1].page),
+            "document order"
+        );
+        // Section tracking composes with the pure half.
+        let last = toc.last().map(|e| e.page).unwrap_or(0);
+        assert!(crate::outline::section_at(&toc, last).is_some());
+        // No outline is an empty list, not an error.
+        let none = ok(renderer.outline(&fixture("single-page.pdf")));
+        assert!(none.is_empty());
     }
 
     #[test]
