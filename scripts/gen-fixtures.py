@@ -217,6 +217,54 @@ def fixture_cjk():
     return b.build(1)
 
 
+def fixture_tight_leading():
+    b = PdfBuilder()
+    b.add(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    b.add(2, "<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
+    b.add(3, helvetica(3))
+    b.add(
+        4,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        "/Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>",
+    )
+    lines = [
+        "Tight-leading line 1",
+        "Tight-leading line 2",
+        "Tight-leading line 3",
+        "Tight-leading line 4",
+        "Tight-leading line 5",
+        "Tight-leading line 6",
+    ]
+    b.stream(5, text_stream(lines, size=12, leading=12))
+    return b.build(1)
+
+
+def fixture_two_column():
+    b = PdfBuilder()
+    b.add(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    b.add(2, "<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
+    b.add(3, helvetica(3))
+    b.add(
+        4,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        "/Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>",
+    )
+    col1 = text_stream([
+        "Col 1 Line 1",
+        "Col 1 Line 2",
+        "Col 1 Line 3",
+        "Col 1 Line 4",
+    ], x=72, y=700)
+    col2 = text_stream([
+        "Col 2 Line 1",
+        "Col 2 Line 2",
+        "Col 2 Line 3",
+        "Col 2 Line 4",
+    ], x=320, y=700)
+    b.stream(5, col1 + "\n" + col2)
+    return b.build(1)
+
+
 def fixture_corrupt():
     """Valid header, then garbage and a truncated xref: must error, not panic."""
     good = fixture_single_page()
@@ -235,12 +283,16 @@ FIXTURES = {
     "internal-links.pdf": fixture_internal_links,
     "rotated-pages.pdf": fixture_rotated,
     "cjk-text.pdf": fixture_cjk,
+    "tight-leading.pdf": fixture_tight_leading,
+    "two-column.pdf": fixture_two_column,
     "corrupt.pdf": fixture_corrupt,
 }
+
 
 LARGE_FIXTURES = {
     "large-500-pages.pdf": fixture_500_pages,
 }
+
 
 README = """# PDF fixture corpus
 
@@ -254,6 +306,8 @@ do not edit these files by hand; edit the generator).
 | internal-links.pdf | Page 1 has a /Link annotation jumping to page 2: link hit-testing & navigation. |
 | rotated-pages.pdf | Pages with /Rotate 0/90/180/270: geometry & rendering orientation. |
 | cjk-text.pdf | Identity-H CID font with ToUnicode CMap spelling 日本語: unicode text extraction. |
+| tight-leading.pdf | Single page with overlap-prone 12pt font and 12pt leading: text selection tests. |
+| two-column.pdf | Single page with side-by-side text columns: multi-column text selection tests. |
 | corrupt.pdf | Truncated/garbage tail: loaders must return an error, never panic. |
 | large-500-pages.pdf | (Not committed; `--large`, generated in CI.) Virtualized-rendering stress doc. |
 
