@@ -1,0 +1,56 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 226  >>
+stream
+BT
+/F1 12 Tf
+72 700 Td
+16 TL
+(Col 1 Line 1) Tj
+T*
+(Col 1 Line 2) Tj
+T*
+(Col 1 Line 3) Tj
+T*
+(Col 1 Line 4) Tj
+ET
+BT
+/F1 12 Tf
+320 700 Td
+16 TL
+(Col 2 Line 1) Tj
+T*
+(Col 2 Line 2) Tj
+T*
+(Col 2 Line 3) Tj
+T*
+(Col 2 Line 4) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000000344 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+622
+%%EOF

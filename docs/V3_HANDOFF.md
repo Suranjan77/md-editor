@@ -77,16 +77,25 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **Shell: TOC overlay + section tracking** (`pdf.toc`) | §3.3 / §5 M2 | ✅ | ctrl+t — `Overlay::PdfToc` lists the outline (depth-indented, filterable; `toc_matches` shared by display rows and confirm so the row shown is the row picked), enter jumps; status pill appends `· § section` via `PdfSession::current_section`. Suite: `shell/tests/pdf_toc.rs` |
 | **Shell: PDF back/forward jump history** | §3.3 | ✅ | alt+left / alt+right (`pdf.back`/`pdf.forward`; `Mods::ALT` added to the kernel) — jump-list grammar (new jump drops the forward branch, cap 64); positions stored in *points* (px ÷ zoom) so history survives zoom changes; recorded on go-to-page, TOC and find jumps. Covered in the pdf_toc e2e |
 | CI: v3 job in quality workflow | §6 | ✅ | `.github/workflows/quality.yml` `v3` job: fmt, clippy -D warnings, tests, demo, generated-doc freshness diff |
+| PDF geometry paint plans | Phase 0.1 | ✅ | `v3/shell/src/gui/paint.rs` — extracted `tint_plan` and `page_plan` to decouple geometry math from iced canvases; tested in `shell/tests/pdf_paint_plan.rs` |
+| Hostile glyph selection tests | Phase 0.2 | ✅ | `v3/pdf/tests/selection_real_glyphs.rs` — added selection tests with real-glyph boxes on tight-leading and two-column layouts; verified same-line drag tie-breakers |
+| Rotated pages selection audit | Phase 0.3 | ✅ | `v3/pdf/tests/selection_real_glyphs.rs` — verified selection bounds checks and whole-page drags for `/Rotate 90/180/270` |
+| PDF search eager load cap | Phase 0.5 | ✅ | `v3/shell/src/gui/mod.rs` — capped eager page load at 200 pages to guard against UI freeze; added scale guard tests in `shell/tests/pdf_find.rs` |
+| PDF internal-reference popup | Phase 1 | ✅ | Engine: `v3/pdf/src/select.rs`, `v3/pdf/src/render.rs` (page_links). Shell: `v3/shell/src/gui/session.rs` (link_at), `v3/shell/src/gui/pdf_view.rs` (load_page_links, RightClick), `v3/shell/src/gui/mod.rs` (PdfRightClick, pdf_mouse_down left-click navigation), `v3/shell/src/gui/overlay.rs` (Overlay::PdfLinkPreview); tested in `v3/shell/tests/pdf_links.rs` |
+| File browser panel | Phase 2 | ✅ | `v3/shell/src/gui/file_tree.rs` — derived file tree from flat list; registered `workspace.toggle-files` hotkey; toggles open/collapsed state and handles file clicks; tested in `v3/shell/tests/file_tree.rs` |
+| Theme tokens + branding | Phase 3 | ✅ | `v3/shell/src/gui/tokens.rs` — centralized v2 dark hex palette; updated editors/overlays/status/sidebar to read from tokens; wired application custom theme and window icon; desktop entry installer in `v3/shell/src/desktop.rs` |
+| Study Tracker panel | Phase 4 | ✅ | `v3/vault/src/tracker.rs` (SQLite store) and `v3/shell/src/gui/tracker_view.rs` (curriculum, activities, log, config tabs); tested in `v3/vault/tests/tracker_store.rs` and `v3/shell/tests/tracker_wiring.rs` |
+| **Overlay hit lists scroll** (user-reported: TOC panel unscrollable) | UX | ✅ | `gui/overlay.rs` — the 12-row display cap is gone; the full match set renders in a `scrollable` (capped 420 px) shared by every list overlay (palette/quick-open/search/pdf-find/toc); ↑/↓ clamp to the rows actually displayed and `snap_selected` keeps the row in view; vault search returns 50 hits. Suite: `shell/tests/overlay_list.rs` (4 tests). Stale `V3_SHORTCUTS.md` regenerated (toggle-files/toggle-tracker rows were missing) |
+| Whitespace-elastic `pdf.find` | P5 backlog №5 | ✅ | `v3/pdf/src/select.rs::find` — needle whitespace matches ≥0 stream whitespace (a dropped `\r\n` wrap is zero chars wide), so multi-word needles match across line wraps; 3 new synthetic tests pin elastic/wrap/punctuation semantics. The P6 known-limitation is closed |
+| **Backlinks panel** (`note.backlinks`) | P5 backlog №2 / §3.4 | ✅ | ctrl+shift+b on a focused note — `Overlay::Backlinks` lists referrers from `LinkGraph` (built fresh per call from the vault's notes), filterable, enter opens the referrer; md-scope chord is inert on PDFs (BUG-A discipline test-pinned). Suite: `shell/tests/backlinks.rs` (4 tests) |
+| **Annotation niceties** (copy/color/linked-note/orphans) | P5 backlog №3 | ✅ | `pdf.copy-selection` (ctrl+c, pdf scope → `iced::clipboard::write`); `pdf.highlight-color` cycles a 4-entry palette via new `AnnotationStore::set_color` path (`HIGHLIGHT_PALETTE`, entry 0 = the default); `pdf.annotation-link-note` creates `<stem>-notes.md` through `atomic_save` + index sync, records it via new `AnnotationStore::set_linked_note`, opens it; `pdf.annotations-orphans` lists known docs whose hash matches no vault file (read-only `Overlay::OrphanReport`). Suite: `shell/tests/annotation_niceties.rs` (5 always-on tests) |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-12, post pdf.find/toc/history + selection
-fixes):** v3 — 200 tests green workspace-wide (218 with `--features
-pdfium`, incl. the fixture corpus and the shell
-reading/annotation/find/toc suites), clippy `-D warnings` clean in both
+**Verification snapshot (2026-06-12, post P5 backlog items 2/3/5):** v3 — 234 tests green workspace-wide (258 with `--features
+pdfium`, incl. the fixture corpus, the shell reading/annotation/find/toc/paint/scale-guard/links/file-tree/desktop/tracker/overlay-list/backlinks/niceties suites, and all kernel/editor/vault/tracker unit and integration tests), clippy `-D warnings` clean in both
 feature configs, fmt clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md`
-regenerated (pdf.toc/back/forward added). v2 suite unaffected (root
-workspace excludes `v3/`).
+regenerated (note.backlinks + pdf.copy-selection + 3 palette-only commands added). v2 suite unaffected (root workspace excludes `v3/`).
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -125,18 +134,22 @@ workspace excludes `v3/`).
     modal showing the referenced item, esc closes
     (`tests-fixtures/pdf/internal-links.pdf` is ready);
     (b) left file-browser panel for the vault tree;
-    (c) the bespoke study tracker (v2: `core/src/tracker.rs`,
-    `StudySession`/`TrackerKv`, `TrackerService`) — ask the user which
-    behaviors make it "bespoke" before building the v3 UI;
+    (c) ~~the bespoke study tracker~~ — done (see status board);
     (d) colors: v2's palette is the preferred baseline ("or better") —
     fold into the plan-M2 theme-tokens work;
     (e) app icon branding — `md-editor.png` at repo root; v2 installed a
     desktop entry + icons (`native/src/main.rs --install`).
 13. Remaining M2/M3 surfaces, in rough value order:
-    editing-ergonomics bundle (plan §3.2 / M3); link graph UI (backlinks
-    panel — the vault service exists); annotation niceties from item 7's
-    leftovers (colors, linked notes, orphan report, copy-selection);
-    async tile worker.
+    editing-ergonomics bundle (plan §3.2 / M3); ~~link graph UI (backlinks
+    panel)~~ — done (see status board); ~~annotation niceties (colors,
+    linked notes, orphan report, copy-selection)~~ — done (see status
+    board); async tile worker (impl plan P5.1 — still open).
+14. **GUI/UX overhaul (user-ordered 2026-06-12):** the app must stop
+    feeling terminal-like; v2's mouse-first GUI is the floor. Full
+    multi-phase program in `docs/V3_UX_OVERHAUL_PLAN.md` (menu/toolbar
+    chrome + shortcuts help first). Remaining from the impl plan's Phase 5
+    backlog besides the worker: settings UI surface (P5.6), URI links open
+    in browser (P5.7), editing-ergonomics bundle (P5.4).
 
 ## Decisions made during execution
 
@@ -339,3 +352,46 @@ workspace excludes `v3/`).
   open time (a snapshot), while the session keeps raw `OutlineEntry`s —
   the status pill needs un-indented titles, and the overlay must not
   re-derive rows from a session that might change under it.
+- 2026-06-12: pure paint plans (`tint_plan`, `page_plan`) decouple drawing coordinates from the toolkit canvas, making geometry assertions testable windowlessly.
+- 2026-06-12: rotated pages selection audit: verified that bounds checks and whole-page drags for `/Rotate 90/180/270` pages are fully correct, meaning pdfium's post-rotation width/height dimensions align correctly with the character coordinate space and geometry flips.
+- 2026-06-12: `pdf.find` cap: loading all glyphs synchronously can freeze large documents, so we cap eager load at 200 pages. This is a deliberate stopgap until the async tile/glyph worker is implemented (Phase 5.1).
+- 2026-06-12: `LinkBox` is moved to `select.rs` and exported unconditionally from the `md3-pdf` engine so the shell crate builds successfully without the `pdfium` feature configuration.
+- 2026-06-12: `PdfLinkPreview` overlay uses optional `input_mut()` returning `None` as it has no text input, and standardizes overlay input processing to prevent backspace/typing panics on non-input modals.
+- 2026-06-12: PDF left-click link navigation runs at the top of `pdf_mouse_down` and navigates immediately if clicked inside a link bounding box, preventing selection or highlight picking on the same click.
+- 2026-06-12: overlay hit lists render the *full* match set in one shared
+  `scrollable` (stable widget id), not a `take(12)` window: the cap let ↓
+  walk the selection past what the view showed while confirm resolved
+  against the full list — enter picked rows the user never saw
+  (user-reported on the TOC). Selection is clamped against
+  `list_rows().len()` on every overlay keystroke (typing that narrows the
+  list pulls the selection back in), and keyboard navigation issues
+  `operation::snap_to` with relative offset `sel/(n−1)`, which keeps the
+  selected row fully in view for any viewport ≥ one row tall.
+- 2026-06-12: GUI/UX direction (user, 2026-06-12): the app reads as a
+  terminal-style keyboard tool; v2's mouse-first GUI is the bar. The
+  step-by-step program is `docs/V3_UX_OVERHAUL_PLAN.md` — next agents
+  execute it phase by phase (menu/toolbar chrome and a shortcuts/help
+  surface first, since nothing is discoverable without knowing chords).
+- 2026-06-12: `find` whitespace elasticity allows the *empty* gap on
+  purpose: pdfium drops `\r\n` from the char stream, so the wrap the user
+  reads as a space is zero characters wide — requiring ≥1 whitespace char
+  would keep cross-wrap matches impossible, which was the whole bug.
+  Greedy gap-skipping is safe because segments start with non-whitespace.
+- 2026-06-12: the backlinks graph is built **fresh on every invocation**
+  (read all vault notes), not cached: it mirrors quick-open's rescan
+  philosophy — always correct, vault-sized cost, zero invalidation logic.
+  A cached graph fed by watcher batches is the upgrade path when a real
+  vault makes ctrl+shift+b feel slow, and `links.rs` already supports it.
+- 2026-06-12: highlight colors are a fixed 4-entry cycle
+  (`HIGHLIGHT_PALETTE`), not a color picker: one command, no new overlay,
+  and entry 0 stays the historical default so existing annotations are
+  already "on the cycle". The orphan report hashes every vault PDF on
+  demand (same freshness-over-caching trade as backlinks; it's a
+  palette-invoked report, not a hot path).
+- 2026-06-12: `pdf.annotation-link-note` reuses an existing `linked_note`
+  path when the annotation has one (open, don't re-create), and the
+  sibling note is a vault citizen like the annotations export — created
+  via `atomic_save`, indexed immediately, named `<stem>-notes.md`.
+
+
+
