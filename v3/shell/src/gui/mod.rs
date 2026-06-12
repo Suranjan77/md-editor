@@ -28,7 +28,7 @@ use md3_kernel::{CommandId, CommandRegistry, Keymap, SplitAxis, Workspace};
 use md3_vault::{AnnotationStore, NewAnnotation, Quad, SearchIndex, SessionStore};
 
 use editor_canvas::{EditorCanvas, palette as colors};
-use overlay::Overlay;
+use overlay::{Overlay, PdfFindHit};
 use session::{MdSession, PdfSelection, PdfSession, Sessions};
 use snapshot::{NodeSnapshot, SessionSnapshot, TabSnapshot, ViewSnapshot};
 
@@ -492,6 +492,18 @@ impl Shell {
                 *hits = new_hits;
             }
         }
+        // Same for pdf.find — matches recompute over the cached glyphs.
+        let query = match self.overlay.as_ref() {
+            Some(Overlay::PdfFind { input, .. }) => Some(input.clone()),
+            _ => None,
+        };
+        if let Some(q) = query {
+            let new_hits = self.pdf_find_hits(&q);
+            if let Some(Overlay::PdfFind { hits, selected, .. }) = self.overlay.as_mut() {
+                *selected = (*selected).min(new_hits.len().saturating_sub(1));
+                *hits = new_hits;
+            }
+        }
     }
 
     // --------------------------------------------------------- commands --
@@ -571,7 +583,20 @@ impl Shell {
             "pdf.go-to-page" => self.open_overlay(Overlay::PdfPage {
                 input: String::new(),
             }),
-            "pdf.find" => self.status = "pdf find: not yet implemented".to_string(),
+            // Early return: the no-pdf guidance must survive the trailing
+            // sync_status (which would repaint the md caret pill over it).
+            "pdf.find" => {
+                self.open_pdf_find();
+                return Task::none();
+            }
+            "pdf.toc" => {
+                self.open_pdf_toc();
+                return Task::none();
+            }
+            "pdf.back" | "pdf.forward" => {
+                self.pdf_nav_history(cmd.0 == "pdf.back");
+                return Task::none();
+            }
             "pdf.highlight" => self.highlight_selection(),
             "pdf.annotation-note" => {
                 match self.focused_pdf().and_then(PdfSession::selected_annotation) {
@@ -650,6 +675,45 @@ impl Shell {
                 self.close_overlay();
                 self.find_in_note(&input);
             }
+            Overlay::PdfFind {
+                input,
+                selected,
+                hits,
+            } => {
+                self.close_overlay();
+                match hits.get(selected.min(hits.len().saturating_sub(1))) {
+                    Some(hit) => self.jump_to_pdf_match(hit),
+                    None if !input.trim().is_empty() => {
+                        self.status = format!("no matches for `{}`", input.trim());
+                    }
+                    None => {}
+                }
+                // Keep the jump/no-match message; sync_status would replace
+                // it with the page pill.
+                return Task::none();
+            }
+            Overlay::PdfToc {
+                input,
+                selected,
+                entries,
+            } => {
+                self.close_overlay();
+                let matches = overlay::toc_matches(&entries, &input);
+                let picked = matches
+                    .get(selected.min(matches.len().saturating_sub(1)))
+                    .map(|(title, page)| (title.clone(), *page));
+                if let Some((title, page)) = picked {
+                    let root = self.vault_root.clone();
+                    if let Some(session) = self.focused_pdf_mut() {
+                        session.record_jump();
+                        session.go_to_page(page as usize);
+                        let abs = root.join(&session.rel_path);
+                        pdf_view::ensure_tiles(session, &abs);
+                        self.status = format!("§ {}", title.trim_start());
+                        return Task::none();
+                    }
+                }
+            }
             Overlay::PdfZoom { input } => {
                 self.close_overlay();
                 let root = self.vault_root.clone();
@@ -667,6 +731,7 @@ impl Shell {
                 if let (Ok(page), Some(session)) =
                     (input.trim().parse::<u32>(), self.focused_pdf_mut())
                 {
+                    session.record_jump();
                     session.go_to_page((page.saturating_sub(1)) as usize);
                     let abs = root.join(&session.rel_path);
                     pdf_view::ensure_tiles(session, &abs);
@@ -1124,6 +1189,144 @@ impl Shell {
         }
     }
 
+    /// `pdf.find`: load glyph geometry for every page once (cached on the
+    /// session afterwards), then open the live-filtering match overlay.
+    fn open_pdf_find(&mut self) {
+        let root = self.vault_root.clone();
+        let Some(session) = self.focused_pdf_mut() else {
+            self.status = "find: no pdf focused".to_string();
+            return;
+        };
+        if session.layout.is_none() {
+            self.status = "find: pdf pages not loaded".to_string();
+            return;
+        }
+        let abs = root.join(&session.rel_path);
+        for page in 0..session.page_count() as u32 {
+            pdf_view::load_page_chars(session, &abs, page);
+        }
+        self.open_overlay(Overlay::PdfFind {
+            input: String::new(),
+            selected: 0,
+            hits: Vec::new(),
+        });
+    }
+
+    /// `pdf.toc`: the outline as a filterable jump list, depth as
+    /// indentation. Loaded with the geometry on open, so this is a snapshot.
+    fn open_pdf_toc(&mut self) {
+        let Some(session) = self.focused_pdf() else {
+            self.status = "toc: no pdf focused".to_string();
+            return;
+        };
+        if session.outline.is_empty() {
+            self.status = "this pdf has no table of contents".to_string();
+            return;
+        }
+        let entries = session
+            .outline
+            .iter()
+            .map(|e| {
+                let indent = "  ".repeat(usize::from(e.depth));
+                (format!("{indent}{}", e.title), e.page)
+            })
+            .collect();
+        self.open_overlay(Overlay::PdfToc {
+            input: String::new(),
+            selected: 0,
+            entries,
+        });
+    }
+
+    /// `pdf.back` / `pdf.forward`: walk the focused PDF's jump history.
+    fn pdf_nav_history(&mut self, back: bool) {
+        let root = self.vault_root.clone();
+        let Some(session) = self.focused_pdf_mut() else {
+            self.status = "history: no pdf focused".to_string();
+            return;
+        };
+        let moved = if back {
+            session.nav_back()
+        } else {
+            session.nav_forward()
+        };
+        if !moved {
+            self.status = format!(
+                "nothing to go {}",
+                if back { "back to" } else { "forward to" }
+            );
+            return;
+        }
+        let abs = root.join(&session.rel_path);
+        pdf_view::ensure_tiles(session, &abs);
+        self.sync_status();
+    }
+
+    /// All matches for `query` across the focused PDF, in page order,
+    /// capped — enough to scroll a hit list, no reason to mine more.
+    fn pdf_find_hits(&self, query: &str) -> Vec<PdfFindHit> {
+        const CAP: usize = 100;
+        let query = query.trim();
+        let mut out = Vec::new();
+        if query.is_empty() {
+            return out;
+        }
+        let Some(session) = self.focused_pdf() else {
+            return out;
+        };
+        let mut pages: Vec<u32> = session.chars.keys().copied().collect();
+        pages.sort_unstable();
+        for page in pages {
+            let Some(chars) = session.chars.get(&page) else {
+                continue;
+            };
+            for range in md3_pdf::select::find(chars, query) {
+                let Some(sel) = md3_pdf::select::range_selection(chars, range.clone()) else {
+                    continue;
+                };
+                let ctx = range.start.saturating_sub(12)..(range.end + 28).min(chars.len());
+                out.push(PdfFindHit {
+                    page,
+                    quads: sel.quads,
+                    text: sel.text,
+                    preview: chars[ctx].iter().map(|c| c.ch).collect(),
+                });
+                if out.len() >= CAP {
+                    return out;
+                }
+            }
+        }
+        out
+    }
+
+    /// Scroll the match a third down the viewport and plant it as the live
+    /// selection — the tint marks it and `ctrl+h` can highlight it directly.
+    fn jump_to_pdf_match(&mut self, hit: &PdfFindHit) {
+        let root = self.vault_root.clone();
+        let Some(session) = self.focused_pdf_mut() else {
+            return;
+        };
+        let Some(target) = session.layout.as_ref().map(|layout| {
+            let y = hit.quads.first().map_or(0.0, |q| q.y0);
+            let top = layout.page_top(hit.page as usize) + y * layout.zoom();
+            (top - session.viewport.1 / 3.0).clamp(0.0, layout.max_scroll(session.viewport.1))
+        }) else {
+            return;
+        };
+        session.record_jump();
+        session.scroll = target;
+        session.selected_annotation = None;
+        session.selection = Some(PdfSelection {
+            page: hit.page,
+            anchor: hit.quads.first().map_or((0.0, 0.0), |q| (q.x0, q.y0)),
+            quads: hit.quads.clone(),
+            text: hit.text.clone(),
+        });
+        let abs = root.join(&session.rel_path);
+        pdf_view::ensure_tiles(session, &abs);
+        self.status = format!("match on p. {} · ctrl+h highlights", hit.page + 1);
+    }
+
     fn cycle_tab(&mut self) {
         let Some(current) = self.ws.focused_tab() else {
             return;
@@ -1251,8 +1454,12 @@ impl Shell {
         } else if let Some(session) = self.sessions.pdf.get(&doc)
             && session.layout.is_some()
         {
+            let section = session
+                .current_section()
+                .map(|t| format!(" · § {t}"))
+                .unwrap_or_default();
             self.status = format!(
-                "{} — p. {}/{} · {:.0}%",
+                "{} — p. {}/{} · {:.0}%{section}",
                 session.rel_path,
                 session.current_page() + 1,
                 session.page_count(),

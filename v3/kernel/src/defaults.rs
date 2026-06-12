@@ -144,6 +144,12 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             vec![bind(pdf, Chord::ctrl('f'), CommandId("pdf.find"))],
         ),
         spec(
+            "pdf.toc",
+            "Table of Contents",
+            "PDF",
+            vec![bind(pdf, Chord::ctrl('t'), CommandId("pdf.toc"))],
+        ),
+        spec(
             "pdf.highlight",
             "Highlight Selection",
             "PDF",
@@ -157,6 +163,26 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
                 pdf,
                 Chord::ctrl('n'),
                 CommandId("pdf.annotation-note"),
+            )],
+        ),
+        spec(
+            "pdf.back",
+            "Back (Jump History)",
+            "PDF",
+            vec![bind(
+                pdf,
+                Chord::new(Mods::ALT, Key::Left),
+                CommandId("pdf.back"),
+            )],
+        ),
+        spec(
+            "pdf.forward",
+            "Forward (Jump History)",
+            "PDF",
+            vec![bind(
+                pdf,
+                Chord::new(Mods::ALT, Key::Right),
+                CommandId("pdf.forward"),
             )],
         ),
         // Palette-only: no chord, reachable via ctrl+shift+p.

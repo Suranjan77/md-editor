@@ -107,11 +107,18 @@ pub struct PdfSession {
     /// = page has no selectable text (or no pdfium).
     pub chars: HashMap<u32, Vec<md3_pdf::CharBox>>,
     pub selection: Option<PdfSelection>,
+    /// Flattened bookmark tree (empty: none, or no pdfium); loaded with the
+    /// page geometry on open.
+    pub outline: Vec<md3_pdf::OutlineEntry>,
     /// This document's stored annotations, refreshed after every mutation.
     pub annotations: Vec<md3_vault::Annotation>,
     /// Annotation picked by clicking one of its quads; note edits and
     /// deletion target it.
     pub selected_annotation: Option<i64>,
+    /// Jump-list history (plan §3.3 back/forward): scroll positions in
+    /// *points* (display px ÷ zoom) so entries survive zoom changes.
+    back: Vec<f32>,
+    forward: Vec<f32>,
 }
 
 impl PdfSession {
@@ -129,9 +136,58 @@ impl PdfSession {
             doc_hash: None,
             chars: HashMap::new(),
             selection: None,
+            outline: Vec::new(),
             annotations: Vec::new(),
             selected_annotation: None,
+            back: Vec::new(),
+            forward: Vec::new(),
         }
+    }
+
+    /// Call *before* a jump (go-to-page, TOC, find): the position being
+    /// left becomes reachable with `pdf.back`, and the forward branch is
+    /// dropped (same grammar as every jump list).
+    pub fn record_jump(&mut self) {
+        const CAP: usize = 64;
+        self.forward.clear();
+        self.back.push(self.scroll / self.zoom);
+        if self.back.len() > CAP {
+            self.back.remove(0);
+        }
+    }
+
+    /// Pop the jump history. `false` when there is nowhere to go.
+    pub fn nav_back(&mut self) -> bool {
+        let Some(pos) = self.back.pop() else {
+            return false;
+        };
+        self.forward.push(self.scroll / self.zoom);
+        self.scroll_to_points(pos);
+        true
+    }
+
+    pub fn nav_forward(&mut self) -> bool {
+        let Some(pos) = self.forward.pop() else {
+            return false;
+        };
+        self.back.push(self.scroll / self.zoom);
+        self.scroll_to_points(pos);
+        true
+    }
+
+    fn scroll_to_points(&mut self, points: f32) {
+        let max = self
+            .layout
+            .as_ref()
+            .map_or(0.0, |l| l.max_scroll(self.viewport.1));
+        self.scroll = (points * self.zoom).clamp(0.0, max);
+    }
+
+    /// Title of the outline section the viewport is in, for the status
+    /// pill. `None` without an outline or above the first section.
+    pub fn current_section(&self) -> Option<&str> {
+        let i = md3_pdf::section_at(&self.outline, self.current_page() as u32)?;
+        Some(self.outline[i].title.as_str())
     }
 
     /// The stored annotation whose quads contain the page point, topmost
