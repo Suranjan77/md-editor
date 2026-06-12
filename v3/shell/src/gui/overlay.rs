@@ -13,6 +13,16 @@ use md3_vault::Hit;
 use super::Message;
 use super::editor_canvas::palette as colors;
 
+/// One `pdf.find` match: where it lives (page points, ready to tint) and
+/// what the hit list shows.
+#[derive(Debug, Clone)]
+pub struct PdfFindHit {
+    pub page: u32,
+    pub quads: Vec<md3_pdf::SelRect>,
+    pub text: String,
+    pub preview: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum Overlay {
     Palette {
@@ -30,6 +40,18 @@ pub enum Overlay {
     },
     Find {
         input: String,
+    },
+    PdfFind {
+        input: String,
+        selected: usize,
+        hits: Vec<PdfFindHit>,
+    },
+    /// Table of contents: `entries` are `(indented title, 0-based page)`
+    /// snapshotted from the focused PDF's outline at open.
+    PdfToc {
+        input: String,
+        selected: usize,
+        entries: Vec<(String, u32)>,
     },
     PdfZoom {
         input: String,
@@ -53,6 +75,8 @@ impl Overlay {
             Overlay::QuickOpen { .. } => "quick-open",
             Overlay::Search { .. } => "search",
             Overlay::Find { .. } => "find",
+            Overlay::PdfFind { .. } => "pdf-find",
+            Overlay::PdfToc { .. } => "pdf-toc",
             Overlay::PdfZoom { .. } => "pdf-zoom",
             Overlay::PdfPage { .. } => "pdf-page",
             Overlay::AnnotationNote { .. } => "annotation-note",
@@ -65,6 +89,8 @@ impl Overlay {
             | Overlay::QuickOpen { input, .. }
             | Overlay::Search { input, .. }
             | Overlay::Find { input }
+            | Overlay::PdfFind { input, .. }
+            | Overlay::PdfToc { input, .. }
             | Overlay::PdfZoom { input }
             | Overlay::PdfPage { input }
             | Overlay::AnnotationNote { input } => input,
@@ -75,7 +101,9 @@ impl Overlay {
         match self {
             Overlay::Palette { selected, .. }
             | Overlay::QuickOpen { selected, .. }
-            | Overlay::Search { selected, .. } => Some(selected),
+            | Overlay::Search { selected, .. }
+            | Overlay::PdfFind { selected, .. }
+            | Overlay::PdfToc { selected, .. } => Some(selected),
             _ => None,
         }
     }
@@ -86,6 +114,8 @@ impl Overlay {
             Overlay::QuickOpen { .. } => "Quick Open",
             Overlay::Search { .. } => "Search Vault",
             Overlay::Find { .. } => "Find in Note",
+            Overlay::PdfFind { .. } => "Find in PDF",
+            Overlay::PdfToc { .. } => "Table of Contents",
             Overlay::PdfZoom { .. } => "Zoom (%)",
             Overlay::PdfPage { .. } => "Go to Page",
             Overlay::AnnotationNote { .. } => "Annotation Note",
@@ -119,6 +149,16 @@ pub fn list_rows(
             .take(12)
             .map(|h| (h.path.to_string_lossy().to_string(), h.snippet.clone()))
             .collect(),
+        Overlay::PdfFind { hits, .. } => hits
+            .iter()
+            .take(12)
+            .map(|h| (format!("p. {}", h.page + 1), h.preview.clone()))
+            .collect(),
+        Overlay::PdfToc { input, entries, .. } => toc_matches(entries, input)
+            .into_iter()
+            .take(12)
+            .map(|(title, page)| (title.clone(), format!("p. {}", page + 1)))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -132,7 +172,9 @@ pub fn view<'a>(
     let selected = match overlay {
         Overlay::Palette { selected, .. }
         | Overlay::QuickOpen { selected, .. }
-        | Overlay::Search { selected, .. } => *selected,
+        | Overlay::Search { selected, .. }
+        | Overlay::PdfFind { selected, .. }
+        | Overlay::PdfToc { selected, .. } => *selected,
         _ => 0,
     };
 
@@ -186,9 +228,22 @@ impl Overlay {
             | Overlay::QuickOpen { input, .. }
             | Overlay::Search { input, .. }
             | Overlay::Find { input }
+            | Overlay::PdfFind { input, .. }
+            | Overlay::PdfToc { input, .. }
             | Overlay::PdfZoom { input }
             | Overlay::PdfPage { input }
             | Overlay::AnnotationNote { input } => input,
         }
     }
+}
+
+/// TOC entries whose title contains the query (case-insensitive), in
+/// document order — the display rows and confirm resolution share this so
+/// the row the user sees is the row enter picks.
+pub fn toc_matches<'a>(entries: &'a [(String, u32)], input: &str) -> Vec<&'a (String, u32)> {
+    let needle = input.to_lowercase();
+    entries
+        .iter()
+        .filter(|(title, _)| title.to_lowercase().contains(&needle))
+        .collect()
 }

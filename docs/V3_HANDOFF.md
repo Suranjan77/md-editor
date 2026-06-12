@@ -2,6 +2,10 @@
 
 > **Read this first when resuming v3 work.** Updated after every completed unit of work.
 > Sibling ledgers: `PLAN-NOTES.md` (v2 incremental plan), `docs/V3_GROUND_UP_PLAN.md` (the master plan).
+> **Next work is specified step-by-step in `docs/V3_IMPLEMENTATION_PLAN.md`**
+> (2026-06-12): Phase 0 hardening first, then the user-ordered v2 parity
+> features. Its §0.4 pitfalls register supersedes re-deriving past bugs from
+> the decision log.
 
 ## Ground rules for this execution
 
@@ -65,16 +69,24 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **Shell: session restore** | §5 M2 | ✅ | `gui/snapshot.rs` — serde wire format (pane tree + per-path view state, all fields `#[serde(default)]` so restore degrades, never refuses); capture on open/close-tab/split/next-tab/tab-click/save/quit **and** on window close (`exit_on_close_request: false` → save → exit); restore in `Shell::new`: rebuild splits with saved ratios, skip vanished files, collapse hollow panes, reapply md caret+scroll / pdf zoom+scroll, refocus; **"resumed at p. N/M"** status when the focused doc is a PDF. Suite: `shell/tests/session_restore.rs` (5 always-on + pdfium "resumed at p. 3" E2E) |
 | **Shell: settings v1 — user keymap overrides** | §3.1 | ✅ | `shell/src/settings.rs` — `<vault>/.md3/keymap.json` (`{scope, chord, command}` rows; `command: null` unbinds); command names resolved against the registry (ids stay `'static`, typos warn); bad rows/corrupt file warn and skip, never block startup; applied in `main` before the GUI. 5 tests incl. override-beats-default and scope isolation |
 | Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `v3/shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/V3_SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
+| **PDF selection/highlight paint fixes** (user-reported) | §3.3 | ✅ | (1) tints were invisible: iced_wgpu draws images after meshes *within a layer*, so same-frame `fill_rectangle` landed under the page tiles — `TintCanvas` now stacks above `PdfCanvas` (own layer, captures nothing); (2) quads landed on line 1: `select::lines()` any-overlap banding chained tightly-leaded loose boxes into one band — now requires >50% overlap of the smaller height (test-pinned); (3) hover I-beam over text / pointer over highlights via `mouse_interaction` (glyphs pre-load per visible page in `ensure_tiles`) |
+| PDF: `select::find` + `range_selection` (pure search) | §3.3 | ✅ | `v3/pdf/src/select.rs` — case-insensitive char-stream match returning index ranges; `range_selection` (extracted from `select`) turns any range into quads+text; synthetic-grid tests |
+| **Shell: PDF search overlay** (`pdf.find`) | §3.3 / §5 M2 | ✅ | `Overlay::PdfFind` — ctrl+f in pdf scope loads all pages' glyphs once, live-filters hits (`p. N · context` rows, capped 100), enter scrolls the match a third down the viewport and plants it as the live selection (tinted; `ctrl+h` chains). Suite: `shell/tests/pdf_find.rs` (2 always-on guard rails + pdfium e2e incl. case-insensitive needle + cross-page jump) |
+| **PDF selection robustness** (user-reported, same-line drags) | §3.3 | ✅ | `joins_line` is now *vertical-center containment*: the interim ≥50%-overlap rule split visual lines at pdfium's degenerate (zero-height) synthesized space boxes, after which `position()` resolved every same-row caret into the first segment — same-line drags drew nothing while multi-line worked. `position()` also breaks vertical ties by x (`(dy, dx)` key), so same-row bands (two-column layouts) resolve under the cursor. Both pinned by synthetic-grid tests |
+| PDF: outline extraction + section math | §3.3 | ✅ | `v3/pdf/src/outline.rs` (pure `OutlineEntry` + `section_at`, malformed-order tolerant) + `render.rs::outline()` (manual DFS over pdfium bookmarks w/ depth tags, cycle/size caps); fixture test over `multipage-outline.pdf` |
+| **Shell: TOC overlay + section tracking** (`pdf.toc`) | §3.3 / §5 M2 | ✅ | ctrl+t — `Overlay::PdfToc` lists the outline (depth-indented, filterable; `toc_matches` shared by display rows and confirm so the row shown is the row picked), enter jumps; status pill appends `· § section` via `PdfSession::current_section`. Suite: `shell/tests/pdf_toc.rs` |
+| **Shell: PDF back/forward jump history** | §3.3 | ✅ | alt+left / alt+right (`pdf.back`/`pdf.forward`; `Mods::ALT` added to the kernel) — jump-list grammar (new jump drops the forward branch, cap 64); positions stored in *points* (px ÷ zoom) so history survives zoom changes; recorded on go-to-page, TOC and find jumps. Covered in the pdf_toc e2e |
 | CI: v3 job in quality workflow | §6 | ✅ | `.github/workflows/quality.yml` `v3` job: fmt, clippy -D warnings, tests, demo, generated-doc freshness diff |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-11, post session-restore):** v3 — 189
-tests green workspace-wide (204 with `--features pdfium`, incl. the fixture
-corpus, the shell reading/annotation suites, and the new session-restore +
-settings suites), clippy `-D warnings` clean in both feature configs, fmt
-clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md` freshness-checked.
-v2 suite unaffected (root workspace excludes `v3/`).
+**Verification snapshot (2026-06-12, post pdf.find/toc/history + selection
+fixes):** v3 — 200 tests green workspace-wide (218 with `--features
+pdfium`, incl. the fixture corpus and the shell
+reading/annotation/find/toc suites), clippy `-D warnings` clean in both
+feature configs, fmt clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md`
+regenerated (pdf.toc/back/forward added). v2 suite unaffected (root
+workspace excludes `v3/`).
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -102,12 +114,29 @@ v2 suite unaffected (root workspace excludes `v3/`).
    Settings *UI* (a rendered settings surface) is still plan-M2 open scope;
    so is a theme system on tokens.
 10. v2 hotfixes for BUG-A/BUG-B (plan §9.2) — *not ordered by user; ask before doing.*
-11. Remaining M2/M3 surfaces, in rough value order: PDF search overlay
-    (`pdf.find` routed but stubbed) + TOC with section tracking +
-    back/forward history (plan §3.3); editing-ergonomics bundle (plan §3.2 /
-    M3); link graph UI (backlinks panel — the vault service exists);
-    annotation niceties from item 7's leftovers (colors, linked notes,
-    orphan report, copy-selection).
+11. ~~PDF search overlay + TOC with section tracking + back/forward
+    history~~ — done (see status board). Known pdf.find limitation:
+    pdfium's `\r\n` chars are dropped from the char stream, so multi-word
+    needles only match within a line (whitespace-elastic matching is a
+    pure-engine refinement).
+12. **User-ordered v2 parity (2026-06-12, see also agent memory
+    `v3-feature-parity-expectations`):**
+    (a) PDF internal-reference popup — right-click an internal link →
+    modal showing the referenced item, esc closes
+    (`tests-fixtures/pdf/internal-links.pdf` is ready);
+    (b) left file-browser panel for the vault tree;
+    (c) the bespoke study tracker (v2: `core/src/tracker.rs`,
+    `StudySession`/`TrackerKv`, `TrackerService`) — ask the user which
+    behaviors make it "bespoke" before building the v3 UI;
+    (d) colors: v2's palette is the preferred baseline ("or better") —
+    fold into the plan-M2 theme-tokens work;
+    (e) app icon branding — `md-editor.png` at repo root; v2 installed a
+    desktop entry + icons (`native/src/main.rs --install`).
+13. Remaining M2/M3 surfaces, in rough value order:
+    editing-ergonomics bundle (plan §3.2 / M3); link graph UI (backlinks
+    panel — the vault service exists); annotation niceties from item 7's
+    leftovers (colors, linked notes, orphan report, copy-selection);
+    async tile worker.
 
 ## Decisions made during execution
 
@@ -274,3 +303,39 @@ v2 suite unaffected (root workspace excludes `v3/`).
   Tile rendering is synchronous in `update` for now (512 px tiles are fast);
   the queue/cancellation semantics are already the engine's, so an async
   worker is a drop-in refinement, not a redesign.
+- 2026-06-12: canvas overlays that must paint *over* `draw_image` content
+  need their own render layer: iced_wgpu batches each layer as quads →
+  meshes → images → text regardless of frame call order, so a
+  `fill_rectangle` after `draw_image` in one frame still renders *under*
+  the image. The shell's pattern is a `stack![]` of canvases (stack
+  children after the first get `with_layer`); an inert overlay canvas
+  (default `update`/`mouse_interaction`) lets all events fall through.
+- 2026-06-12: `select::lines()` bands by *majority* vertical overlap
+  (>50% of the smaller height), not any-overlap: pdfium loose boxes span
+  full line height and overlap across tightly-leaded lines, which chained
+  whole pages into one band (user-visible as selections painting on
+  line 1). Synthetic fixtures had generous leading and missed it —
+  regression test now uses a 14pt-box/12pt-step grid.
+- 2026-06-12: pdf.find matches are *contiguous char-stream* matches:
+  pdfium emits `\r\n` as control chars which `page_chars` drops, so a
+  multi-word needle never matches across a line wrap. Acceptable for v1
+  (single words dominate); whitespace-elastic matching is a pure-engine
+  refinement when it itches.
+- 2026-06-12: line banding is *vertical-center containment* (char center
+  in band, or band center in char), not overlap ratios: real PDFs carry
+  degenerate zero-height boxes for pdfium-synthesized spaces, and a
+  ratio rule splits the line at each one — `position()` then resolved
+  every same-row caret into the first segment, so same-line drags
+  selected nothing (user-reported; multi-line drags worked, which was
+  the tell). Caret resolution also tie-breaks vertically-equidistant
+  bands by horizontal distance, which is what makes two-column rows
+  resolve under the cursor.
+- 2026-06-12: jump-history positions are stored in points (display px ÷
+  zoom), not px or page indices: px goes stale across zoom changes and
+  page indices lose the within-page offset; points re-anchor exactly at
+  any zoom. History is per-session (not persisted in the snapshot) —
+  a fresh run starts with empty history, deliberately.
+- 2026-06-12: TOC depth is baked into the overlay rows as indentation at
+  open time (a snapshot), while the session keeps raw `OutlineEntry`s —
+  the status pill needs un-indented titles, and the overlay must not
+  re-derive rows from a session that might change under it.

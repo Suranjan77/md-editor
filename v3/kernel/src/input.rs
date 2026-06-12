@@ -37,6 +37,10 @@ impl Mods {
         shift: true,
         ..Mods::NONE
     };
+    pub const ALT: Mods = Mods {
+        alt: true,
+        ..Mods::NONE
+    };
 }
 
 /// A logical, layout-independent key. Characters are stored lowercased; the
