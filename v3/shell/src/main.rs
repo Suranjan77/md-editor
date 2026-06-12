@@ -75,14 +75,21 @@ fn main() -> ExitCode {
             );
         }
         first => {
-            let root = std::path::PathBuf::from(first.unwrap_or("."));
-            let root = match root.canonicalize() {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("md3: vault {}: {e}", root.display());
+            let requested = first.map(std::path::PathBuf::from);
+            let root = requested
+                .as_ref()
+                .and_then(|path| path.canonicalize().ok())
+                .filter(|path| path.is_dir());
+            let Some(root) = root else {
+                let message = requested
+                    .map(|path| format!("Vault folder is unavailable: {}", path.display()));
+                if let Err(e) = gui::welcome::run_startup(message) {
+                    eprintln!("md3: {e}");
                     return ExitCode::FAILURE;
                 }
+                return ExitCode::SUCCESS;
             };
+            md3_shell::vault_picker::record_recent(&root);
             // User remaps (plan §3.1): bad rows warn, never block startup.
             let mut keymap = keymap;
             let report = md3_shell::settings::apply_keymap_overrides(&root, &registry, &mut keymap);

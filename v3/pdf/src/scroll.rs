@@ -256,6 +256,36 @@ impl DocLayout {
         let top = self.page_top(page) - scroll;
         ((pos.0 - left) / self.zoom, (pos.1 - top) / self.zoom)
     }
+
+    /// Calculate zoom factor to fit the width of the page in the viewport.
+    pub fn zoom_for_fit_width(&self, page: usize, viewport_w: f32) -> f32 {
+        if self.pages.is_empty() || viewport_w <= 0.0 {
+            return self.zoom;
+        }
+        let page = page.min(self.pages.len().saturating_sub(1));
+        let (w_pt, _) = self.pages[page];
+        if w_pt <= 0.0 {
+            return self.zoom;
+        }
+        // Subtract a small margin (e.g. 32px) so the page isn't flush against the edges.
+        (viewport_w - 32.0).max(10.0) / w_pt
+    }
+
+    /// Calculate zoom factor to fit the entire page in the viewport.
+    pub fn zoom_for_fit_page(&self, page: usize, viewport: (f32, f32)) -> f32 {
+        if self.pages.is_empty() || viewport.0 <= 0.0 || viewport.1 <= 0.0 {
+            return self.zoom;
+        }
+        let page = page.min(self.pages.len().saturating_sub(1));
+        let (w_pt, h_pt) = self.pages[page];
+        if w_pt <= 0.0 || h_pt <= 0.0 {
+            return self.zoom;
+        }
+        // Subtract margins (e.g. 32px for width, 32px for height)
+        let target_w = (viewport.0 - 32.0).max(10.0);
+        let target_h = (viewport.1 - 32.0).max(10.0);
+        (target_w / w_pt).min(target_h / h_pt)
+    }
 }
 
 /// Horizontal placement: centered, but never pushed off the left edge.
@@ -468,5 +498,26 @@ mod tests {
         // The caller re-anchors: page_top of the same page at the new zoom.
         let new_scroll = l.page_top(anchor);
         assert_eq!(l.page_at(new_scroll), anchor);
+    }
+
+    #[test]
+    fn zoom_for_fit_width_calculates_correctly() {
+        let l = layout(1.0);
+        // Page 0 size is (595.0, 842.0). Viewport width is 627.0.
+        // target_w = (627.0 - 32.0).max(10.0) = 595.0.
+        // zoom = 595.0 / 595.0 = 1.0.
+        let z = l.zoom_for_fit_width(0, 627.0);
+        assert!((z - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn zoom_for_fit_page_calculates_correctly() {
+        let l = layout(1.0);
+        // Page 0 size is (595.0, 842.0). Viewport is (627.0, 874.0).
+        // target_w = (627.0 - 32.0).max(10.0) = 595.0.
+        // target_h = (874.0 - 32.0).max(10.0) = 842.0.
+        // zoom = min(595/595, 842/842) = 1.0.
+        let z = l.zoom_for_fit_page(0, (627.0, 874.0));
+        assert!((z - 1.0).abs() < 0.001);
     }
 }

@@ -1,5 +1,11 @@
 use std::collections::BTreeSet;
 
+use iced::widget::{button, column, container, mouse_area, text};
+use iced::{Background, Border, Element, Fill, Padding};
+use md3_kernel::CommandId;
+
+use super::{Message, tokens};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeRow {
     pub label: String,
@@ -81,6 +87,60 @@ fn append_level(
         }
     }
 }
+
+pub fn context_popover(tree_width: f32, is_dir: bool) -> Element<'static, Message> {
+    let backdrop = mouse_area(
+        container(iced::widget::Space::new())
+            .width(Fill)
+            .height(Fill),
+    )
+    .on_press(Message::TreeContextClosed);
+    let mut items = column![].spacing(1).padding(5);
+    if !is_dir {
+        items = items
+            .push(
+                button(text("Open").size(13))
+                    .width(190)
+                    .style(button::text)
+                    .on_press(Message::TreeContextOpen { split: false }),
+            )
+            .push(
+                button(text("Open in Split").size(13))
+                    .width(190)
+                    .style(button::text)
+                    .on_press(Message::TreeContextOpen { split: true }),
+            );
+    }
+    for (label, command) in [
+        ("Rename", CommandId("file.rename")),
+        ("Delete", CommandId("file.delete")),
+        ("New Note Here", CommandId("file.new-note")),
+        ("New Folder Here", CommandId("file.new-folder")),
+    ] {
+        items = items.push(
+            button(text(label).size(13))
+                .width(190)
+                .style(button::text)
+                .on_press(Message::TreeContextCommand(command)),
+        );
+    }
+    let card = container(items).style(|_| container::Style {
+        background: Some(Background::Color(tokens::dark().bg_secondary)),
+        border: Border {
+            color: tokens::dark().border,
+            width: 1.0,
+            radius: 5.0.into(),
+        },
+        ..container::Style::default()
+    });
+    let positioned = container(card).width(Fill).height(Fill).padding(Padding {
+        top: 78.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: (tree_width - 8.0).max(0.0),
+    });
+    iced::widget::stack![backdrop, positioned].into()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +151,21 @@ mod tests {
         let expanded = BTreeSet::new();
         let rows = visible_rows(&files, &expanded);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn empty_directory_marker_stays_visible() {
+        let files = vec!["empty/".to_string()];
+        let rows = visible_rows(&files, &BTreeSet::new());
+        assert_eq!(
+            rows,
+            vec![TreeRow {
+                label: "empty".to_string(),
+                rel_path: "empty".to_string(),
+                is_dir: true,
+                depth: 0,
+            }]
+        );
     }
 
     #[test]

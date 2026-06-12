@@ -17,3 +17,4 @@ pub mod desktop;
 pub mod gui;
 pub mod headless;
 pub mod settings;
+pub mod vault_picker;

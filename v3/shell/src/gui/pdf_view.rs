@@ -7,12 +7,14 @@
 
 use std::path::Path;
 
-use iced::widget::{canvas, column, container, stack, text};
-use iced::{Element, Fill, Point, Rectangle, Size, mouse};
+use iced::widget::{button, canvas, column, container, row, stack, text};
+use iced::{Background, Border, Element, Fill, Padding, Point, Rectangle, Size, mouse};
+use md3_kernel::CommandId;
 use md3_kernel::pane::TabId;
 
 use super::Message;
 use super::editor_canvas::palette as colors;
+use super::icons::{self, Icon};
 use super::paint::{self, Tint};
 #[cfg(feature = "pdfium")]
 use super::session::PAGE_GAP;
@@ -87,9 +89,6 @@ pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path, worker: Option<&W
         let Some(layout) = &session.layout else {
             return;
         };
-        let Some(renderer) = renderer() else {
-            return;
-        };
         let placed = layout.visible_tiles(session.scroll, session.viewport);
         let visible: std::collections::HashSet<md3_pdf::TileKey> =
             placed.iter().map(|t| t.key).collect();
@@ -124,6 +123,9 @@ pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path, worker: Option<&W
             }
             return;
         }
+        let Some(renderer) = renderer() else {
+            return;
+        };
         while let Some(key) = session.queue.pop() {
             match renderer.render_tile(abs_path, key) {
                 Ok(tile) => {
@@ -172,6 +174,7 @@ pub fn request_page_chars(
 }
 
 /// Link rectangles for one page; same shape as [`request_page_chars`].
+#[cfg(feature = "pdfium")]
 pub fn request_page_links(
     session: &mut PdfSession,
     abs_path: &Path,
@@ -236,7 +239,7 @@ pub fn load_page_links(session: &mut PdfSession, abs_path: &Path, page: u32) {
 
 /// `#rrggbb` → iced color with the given alpha; highlights fall back to the
 /// default highlight yellow on malformed input.
-fn quad_color(hex: &str, alpha: f32) -> iced::Color {
+pub(crate) fn quad_color(hex: &str, alpha: f32) -> iced::Color {
     let parsed = hex
         .strip_prefix('#')
         .filter(|h| h.len() == 6)
@@ -265,9 +268,67 @@ pub fn view(session: &PdfSession, tab: TabId) -> Element<'_, Message> {
     // tiles. The stack gives the tint canvas its own layer, which renders
     // after the page layer. It captures nothing, so all mouse events fall
     // through to the page canvas below.
+    let pages = format!("{}/{}", session.current_page() + 1, session.page_count());
+    let zoom = format!("{:.0}%", session.zoom * 100.0);
+    let control = |icon, command| {
+        button(icons::view(icon, tokens::dark().text_primary, 16.0))
+            .padding(7)
+            .style(button::text)
+            .on_press(Message::PdfCommand { tab, command })
+    };
+    let bar = container(
+        row![
+            control(Icon::Back, CommandId("pdf.previous-page")),
+            button(text(pages).size(12))
+                .padding([7, 10])
+                .style(button::text)
+                .on_press(Message::PdfCommand {
+                    tab,
+                    command: CommandId("pdf.go-to-page"),
+                }),
+            control(Icon::Forward, CommandId("pdf.next-page")),
+            control(Icon::ZoomOut, CommandId("pdf.zoom-out")),
+            button(text(zoom).size(12))
+                .padding([7, 10])
+                .style(button::text)
+                .on_press(Message::PdfCommand {
+                    tab,
+                    command: CommandId("pdf.zoom-input"),
+                }),
+            control(Icon::ZoomIn, CommandId("pdf.zoom-in")),
+            control(Icon::FitWidth, CommandId("pdf.fit-width")),
+            control(Icon::FitPage, CommandId("pdf.fit-page")),
+            control(Icon::Find, CommandId("pdf.find")),
+            control(Icon::ListTree, CommandId("pdf.toc")),
+        ]
+        .spacing(2)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding(5)
+    .style(|_| container::Style {
+        background: Some(Background::Color(tokens::dark().bg_secondary)),
+        border: Border {
+            color: tokens::dark().border,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..container::Style::default()
+    });
+    let positioned = container(bar)
+        .width(Fill)
+        .height(Fill)
+        .padding(Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: 18.0,
+            left: 0.0,
+        })
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Bottom);
     stack![
         canvas(PdfCanvas { tab, session }).width(Fill).height(Fill),
         canvas(TintCanvas { session }).width(Fill).height(Fill),
+        positioned,
     ]
     .width(Fill)
     .height(Fill)
@@ -337,9 +398,11 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
             }
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 let pos = cursor.position_in(bounds)?;
+                let abs = cursor.position().unwrap_or(pos);
                 Some(canvas::Action::publish(Message::PdfRightClick {
                     tab: self.tab,
                     pos: (pos.x, pos.y),
+                    abs_pos: (abs.x, abs.y),
                     viewport,
                 }))
             }

@@ -12,7 +12,7 @@
 
 use crate::buffer::{ApplyResult, Buffer, Command};
 use crate::layout::{ConcealMode, Damage, LayoutEngine, Measurer, StyledLine, Styler};
-use crate::parse::{BlockState, IncrementalParser};
+use crate::parse::{BlockState, IncrementalParser, LineKind};
 use crate::style::MarkdownStyler;
 
 pub struct EditorDocument<M> {
@@ -137,6 +137,20 @@ impl<M: Measurer> EditorDocument<M> {
         }
         damage
     }
+
+    pub fn headings(&self) -> Vec<(u8, String, usize)> {
+        let mut out = Vec::new();
+        for i in 0..self.line_count() {
+            if let Some(parse) = self.parser.line(i)
+                && let LineKind::Heading { level } = parse.kind
+            {
+                let raw = self.buffer.line_text(i);
+                let clean = raw.trim_start_matches('#').trim().to_string();
+                out.push((level, clean, i));
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -229,5 +243,14 @@ mod tests {
             Some(s) => assert_eq!(s.kind, crate::parse::LineKind::Paragraph),
             None => panic!("line 0 missing"),
         }
+    }
+
+    #[test]
+    fn test_headings_outline() {
+        let d = doc("# Title\n## Sub\nParagraph");
+        let heads = d.headings();
+        assert_eq!(heads.len(), 2);
+        assert_eq!(heads[0], (1, "Title".to_string(), 0));
+        assert_eq!(heads[1], (2, "Sub".to_string(), 1));
     }
 }

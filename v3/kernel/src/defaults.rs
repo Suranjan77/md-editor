@@ -48,6 +48,23 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
                 CommandId("file.quick-open"),
             )],
         ),
+        spec("vault.open", "Open Vault Folder", "Workspace", vec![]),
+        spec("file.new-note", "New Note", "Workspace", vec![]),
+        spec("file.new-folder", "New Folder", "Workspace", vec![]),
+        spec("file.rename", "Rename File", "Workspace", vec![]),
+        spec("file.delete", "Delete File", "Workspace", vec![]),
+        spec(
+            "workspace.refresh-files",
+            "Refresh File Panel",
+            "Workspace",
+            vec![],
+        ),
+        spec(
+            "workspace.collapse-files",
+            "Collapse File Folders",
+            "Workspace",
+            vec![],
+        ),
         spec(
             "workspace.split-right",
             "Split Right",
@@ -58,6 +75,8 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
                 CommandId("workspace.split-right"),
             )],
         ),
+        spec("workspace.split-down", "Split Down", "Workspace", vec![]),
+        spec("workspace.close-pane", "Close Pane", "Workspace", vec![]),
         spec(
             "workspace.toggle-files",
             "Toggle File Panel",
@@ -108,6 +127,16 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
                 CommandId("search.global"),
             )],
         ),
+        spec(
+            "help.shortcuts",
+            "Keyboard Shortcuts",
+            "Help",
+            vec![bind(
+                Scope::Workspace,
+                Chord::ctrl('/'),
+                CommandId("help.shortcuts"),
+            )],
+        ),
         // -- markdown editor --------------------------------------------------
         spec(
             "editor.undo",
@@ -153,6 +182,42 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
                 CommandId("note.backlinks"),
             )],
         ),
+        spec("note.outline-panel", "Outline Panel", "Editor", vec![]),
+        spec("editor.toggle-bold", "Bold", "Editor", vec![]),
+        spec("editor.toggle-italic", "Italic", "Editor", vec![]),
+        spec("editor.toggle-code", "Inline Code", "Editor", vec![]),
+        spec(
+            "editor.heading-cycle",
+            "Heading Cycle",
+            "Editor",
+            vec![bind(
+                md,
+                Chord::new(Mods::CTRL, Key::Char('1')),
+                CommandId("editor.heading-cycle"),
+            )],
+        ),
+        spec(
+            "editor.toggle-bullet",
+            "Toggle Bullet List",
+            "Editor",
+            vec![],
+        ),
+        spec(
+            "editor.toggle-checkbox",
+            "Toggle Checkbox",
+            "Editor",
+            vec![bind(
+                md,
+                Chord::new(Mods::CTRL, Key::Enter),
+                CommandId("editor.toggle-checkbox"),
+            )],
+        ),
+        spec(
+            "editor.toggle-wikilink",
+            "Toggle Wikilink",
+            "Editor",
+            vec![],
+        ),
         // -- pdf editor -------------------------------------------------------
         // The other half of v2's BUG-A pair: same chord, different scope.
         spec(
@@ -160,6 +225,18 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             "Set Zoom Level",
             "PDF",
             vec![bind(pdf, Chord::ctrl('z'), CommandId("pdf.zoom-input"))],
+        ),
+        spec(
+            "pdf.zoom-in",
+            "Zoom In",
+            "PDF",
+            vec![bind(pdf, Chord::ctrl('='), CommandId("pdf.zoom-in"))],
+        ),
+        spec(
+            "pdf.zoom-out",
+            "Zoom Out",
+            "PDF",
+            vec![bind(pdf, Chord::ctrl('-'), CommandId("pdf.zoom-out"))],
         ),
         spec(
             "pdf.go-to-page",
@@ -195,6 +272,8 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
                 CommandId("pdf.annotation-note"),
             )],
         ),
+        spec("pdf.previous-page", "Previous Page", "PDF", vec![]),
+        spec("pdf.next-page", "Next Page", "PDF", vec![]),
         spec(
             "pdf.back",
             "Back (Jump History)",
@@ -246,6 +325,11 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             "PDF",
             vec![],
         ),
+        spec("pdf.fit-width", "Fit Width", "PDF", vec![]),
+        spec("pdf.fit-page", "Fit Page", "PDF", vec![]),
+        spec("pdf.toc-panel", "TOC Panel", "PDF", vec![]),
+        spec("pdf.annotations-panel", "Annotations Panel", "PDF", vec![]),
+        spec("pdf.highlight-and-note", "Highlight + Note", "PDF", vec![]),
         // -- overlays ---------------------------------------------------------
         spec(
             "overlay.close",

@@ -23,6 +23,9 @@ pub struct TabId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DocumentId(pub u64);
 
+/// Route to a split node. `false` descends first; `true` descends second.
+pub type SplitPath = Vec<bool>;
+
 /// Metadata for an open document. Buffer/annotation state will hang off this
 /// (owned here, never by a pane) when the editor engine is wired in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +70,27 @@ impl DocumentStore {
 
     pub fn get(&self, id: DocumentId) -> Option<&Document> {
         self.docs.get(&id)
+    }
+
+    /// Change an open document's path without changing its identity.
+    ///
+    /// Returns `false` when `id` is unknown or `new_path` belongs to a
+    /// different open document.
+    pub fn rename(&mut self, id: DocumentId, new_path: &str) -> bool {
+        if self
+            .by_path
+            .get(new_path)
+            .is_some_and(|existing| *existing != id)
+        {
+            return false;
+        }
+        let Some(doc) = self.docs.get_mut(&id) else {
+            return false;
+        };
+        self.by_path.remove(&doc.path);
+        doc.path = new_path.to_string();
+        self.by_path.insert(new_path.to_string(), id);
+        true
     }
 
     /// Drop a document nothing references anymore (the workspace decides when).
@@ -166,6 +190,8 @@ pub enum PaneError {
     NoSuchTab(TabId),
     #[error("cannot remove the last pane")]
     LastPane,
+    #[error("pane is not empty: {0:?}")]
+    PaneNotEmpty(PaneId),
 }
 
 /// What [`PaneTree::close_tab`] did, so the workspace can fix focus and
@@ -285,16 +311,36 @@ impl PaneTree {
     ) -> Result<PaneId, PaneError> {
         self.next_pane += 1;
         let new_id = PaneId(self.next_pane);
-        let ratio = if ratio.is_finite() {
-            ratio.clamp(0.05, 0.95)
-        } else {
-            0.5
-        };
+        let ratio = sane_ratio(ratio);
         if split_leaf(&mut self.root, pane, axis, ratio, Pane::new(new_id)) {
             Ok(new_id)
         } else {
             self.next_pane -= 1;
             Err(PaneError::NoSuchPane(pane))
+        }
+    }
+
+    /// Update a split ratio addressed by its route from the root.
+    pub fn set_ratio(&mut self, path: &[bool], ratio: f32) -> Result<(), PaneError> {
+        let mut node = &mut self.root;
+        for descend_second in path {
+            node = match node {
+                Node::Split { first, second, .. } => {
+                    if *descend_second {
+                        second
+                    } else {
+                        first
+                    }
+                }
+                Node::Leaf(pane) => return Err(PaneError::NoSuchPane(pane.id)),
+            };
+        }
+        match node {
+            Node::Split { ratio: current, .. } => {
+                *current = sane_ratio(ratio);
+                Ok(())
+            }
+            Node::Leaf(pane) => Err(PaneError::NoSuchPane(pane.id)),
         }
     }
 
@@ -358,6 +404,15 @@ impl PaneTree {
         }
     }
 
+    /// Remove an empty non-last pane.
+    pub fn close_empty_pane(&mut self, pane: PaneId) -> Result<(), PaneError> {
+        let existing = self.pane(pane).ok_or(PaneError::NoSuchPane(pane))?;
+        if !existing.is_empty() {
+            return Err(PaneError::PaneNotEmpty(pane));
+        }
+        self.remove_pane(pane)
+    }
+
     /// Collapse every empty pane out of the tree (the last pane always
     /// survives). Session restore uses this after skipping tabs whose files
     /// vanished — a split must not outlive its content.
@@ -384,6 +439,14 @@ impl PaneTree {
         self.panes()
             .iter()
             .any(|p| p.tabs.iter().any(|t| t.document == doc))
+    }
+}
+
+fn sane_ratio(ratio: f32) -> f32 {
+    if ratio.is_finite() {
+        ratio.clamp(0.05, 0.95)
+    } else {
+        0.5
     }
 }
 
@@ -559,6 +622,19 @@ mod tests {
         assert!(all_sane);
     }
 
+    #[test]
+    fn split_ratio_updates_by_tree_path_and_clamps() {
+        let mut tree = PaneTree::new();
+        let first = tree.first_pane();
+        let second = ok(tree.split(first, SplitAxis::Horizontal));
+        ok(tree.split(second, SplitAxis::Vertical));
+
+        ok(tree.set_ratio(&[], 0.8));
+        ok(tree.set_ratio(&[true], -1.0));
+        assert_eq!(tree_ratios(&tree.layout()), vec![0.8, 0.05]);
+        assert!(tree.set_ratio(&[false], 0.5).is_err());
+    }
+
     fn tree_ratios(layout: &Layout<'_>) -> Vec<f32> {
         match layout {
             Layout::Pane(_) => Vec::new(),
@@ -618,6 +694,17 @@ mod tests {
         assert!(tree.references_document(a));
         ok(tree.close_tab(tab));
         assert!(!tree.references_document(a));
+    }
+
+    #[test]
+    fn document_rename_keeps_identity_and_updates_path_lookup() {
+        let mut docs = DocumentStore::new();
+        let id = docs.open("old.md", EditorKind::Markdown);
+
+        assert!(docs.rename(id, "new.md"));
+        assert_eq!(docs.get(id).map(|doc| doc.path.as_str()), Some("new.md"));
+        assert_eq!(docs.open("new.md", EditorKind::Markdown), id);
+        assert_ne!(docs.open("old.md", EditorKind::Markdown), id);
     }
 
     #[test]

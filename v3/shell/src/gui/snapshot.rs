@@ -15,12 +15,18 @@ pub struct SessionSnapshot {
     pub views: BTreeMap<String, ViewSnapshot>,
     #[serde(default)]
     pub tree_open: bool,
+    #[serde(default = "default_tree_width")]
+    pub tree_width: f32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tree_expanded: Vec<String>,
     #[serde(default)]
     pub tracker_open: bool,
     #[serde(default)]
     pub tracker_active_tab: Option<String>,
+}
+
+fn default_tree_width() -> f32 {
+    240.0
 }
 
 /// Mirror of the kernel's `Layout` tree in serializable form.
@@ -59,4 +65,22 @@ pub struct ViewSnapshot {
     /// Markdown caret as (line, col).
     #[serde(default)]
     pub caret: Option<(usize, usize)>,
+    #[serde(default)]
+    pub toc_open: bool,
+    #[serde(default)]
+    pub toc_width: Option<f32>,
+    #[serde(default)]
+    pub annotations_open: bool,
+    #[serde(default)]
+    pub annotations_width: Option<f32>,
+    #[serde(default)]
+    pub outline_open: bool,
+    #[serde(default)]
+    pub outline_width: Option<f32>,
+    #[serde(default)]
+    pub find_open: bool,
+    #[serde(default)]
+    pub find_query: Option<String>,
+    #[serde(default)]
+    pub replace_text: Option<String>,
 }

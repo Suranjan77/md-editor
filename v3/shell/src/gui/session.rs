@@ -19,6 +19,11 @@ pub struct MdSession {
     /// Last viewport height a canvas event reported; used to keep the caret
     /// visible after edits. Refined on every mouse interaction.
     pub viewport_h: f32,
+    pub outline_open: bool,
+    pub outline_width: f32,
+    pub find_open: bool,
+    pub find_query: String,
+    pub replace_text: String,
 }
 
 impl MdSession {
@@ -30,6 +35,11 @@ impl MdSession {
             rel_path: rel_path.to_string(),
             scroll: 0.0,
             viewport_h: 600.0,
+            outline_open: false,
+            outline_width: 250.0,
+            find_open: false,
+            find_query: String::new(),
+            replace_text: String::new(),
         }
     }
 
@@ -128,6 +138,10 @@ pub struct PdfSession {
     /// *points* (display px ÷ zoom) so entries survive zoom changes.
     back: Vec<f32>,
     forward: Vec<f32>,
+    pub toc_open: bool,
+    pub toc_width: f32,
+    pub annotations_open: bool,
+    pub annotations_width: f32,
 }
 
 impl PdfSession {
@@ -154,6 +168,10 @@ impl PdfSession {
             selected_annotation: None,
             back: Vec::new(),
             forward: Vec::new(),
+            toc_open: false,
+            toc_width: 240.0,
+            annotations_open: false,
+            annotations_width: 240.0,
         }
     }
 
@@ -201,6 +219,33 @@ impl PdfSession {
     pub fn current_section(&self) -> Option<&str> {
         let i = md3_pdf::section_at(&self.outline, self.current_page() as u32)?;
         Some(self.outline[i].title.as_str())
+    }
+
+    /// Return the index of the outline section the viewport is currently viewing.
+    pub fn current_section_index(&self) -> Option<usize> {
+        md3_pdf::section_at(&self.outline, self.current_page() as u32)
+    }
+
+    /// Extract highlight text for a given annotation by checking which character boxes' centers lie within the annotation's quads.
+    pub fn annotation_text(&self, a: &md3_vault::Annotation) -> String {
+        let Some(chars) = self.chars.get(&a.page) else {
+            return String::new();
+        };
+        let mut text = String::new();
+        for c in chars {
+            let cx = (c.x0 + c.x1) / 2.0;
+            let cy = (c.y0 + c.y1) / 2.0;
+            let inside = a.quads.iter().any(|q| {
+                f64::from(cx) >= q.x0
+                    && f64::from(cx) <= q.x1
+                    && f64::from(cy) >= q.y0
+                    && f64::from(cy) <= q.y1
+            });
+            if inside {
+                text.push(c.ch);
+            }
+        }
+        text.trim().to_string()
     }
 
     /// The stored annotation whose quads contain the page point, topmost
