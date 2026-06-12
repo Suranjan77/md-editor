@@ -89,13 +89,19 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | Whitespace-elastic `pdf.find` | P5 backlog №5 | ✅ | `v3/pdf/src/select.rs::find` — needle whitespace matches ≥0 stream whitespace (a dropped `\r\n` wrap is zero chars wide), so multi-word needles match across line wraps; 3 new synthetic tests pin elastic/wrap/punctuation semantics. The P6 known-limitation is closed |
 | **Backlinks panel** (`note.backlinks`) | P5 backlog №2 / §3.4 | ✅ | ctrl+shift+b on a focused note — `Overlay::Backlinks` lists referrers from `LinkGraph` (built fresh per call from the vault's notes), filterable, enter opens the referrer; md-scope chord is inert on PDFs (BUG-A discipline test-pinned). Suite: `shell/tests/backlinks.rs` (4 tests) |
 | **Annotation niceties** (copy/color/linked-note/orphans) | P5 backlog №3 | ✅ | `pdf.copy-selection` (ctrl+c, pdf scope → `iced::clipboard::write`); `pdf.highlight-color` cycles a 4-entry palette via new `AnnotationStore::set_color` path (`HIGHLIGHT_PALETTE`, entry 0 = the default); `pdf.annotation-link-note` creates `<stem>-notes.md` through `atomic_save` + index sync, records it via new `AnnotationStore::set_linked_note`, opens it; `pdf.annotations-orphans` lists known docs whose hash matches no vault file (read-only `Overlay::OrphanReport`). Suite: `shell/tests/annotation_niceties.rs` (5 always-on tests) |
+| **Async PDF worker** | P5 backlog №1 | ✅ | `gui/worker.rs` owns one FIFO worker thread for tile/glyph/link pdfium calls; shell subscription handshake installs its nonblocking submit handle, tracks in-flight work, routes results by absolute path, refreshes open find results incrementally, and keeps synchronous fallback for windowless tests. Production `pdf.find` queues every page instead of the 200-page stopgap. Suites: worker unit tests + `shell/tests/pdf_worker.rs` |
+| **UX overhaul Phase 0: discoverability triage** | UX Phase 0 | ✅ | Fresh sessions open file tree; empty panes render registry-backed welcome buttons through `Message::RunCommand`; `help.shortcuts` (`ctrl+/`) opens filterable registry-backed help and runs selected commands; status bar has independent message and position segments. Suites: `shell/tests/discoverability.rs`, `file_tree.rs`, `session_restore.rs` |
+| **UX overhaul Phase 1: menu chrome** | UX Phase 1 | ✅ | In-house anchored menu bar using kernel overlay fence; registry-derived labels/chords; every command menu-reachable or explicitly overlay-exempt via `shell/tests/mouse_coverage.rs`. Global icon toolbar was removed by user direction because it duplicated the menu. Suite: `shell/tests/chrome.rs` |
+| **UX overhaul Phase 2: file manager + vault welcome** | UX Phase 2 | ✅ | `file.new-note/new-folder/rename/delete` use input/confirm overlays, atomic saves, link repair, index refresh, stable `DocumentId`, and affected-tab closure; tree header/hover/context menu/dirty markers; persistent 160–480 px drag width. No/invalid-arg startup shows an in-app welcome with Open/Create/recents; OS picker opens only after click. Suite: `shell/tests/file_tree.rs` |
+| **Floating PDF controls & docked panels** | UX Phase 4 | ✅ | Bottom-centered per-PDF bar: previous/next page, page input, zoom −/%/+, find, TOC, fit-width/page. Resizable docked TOC and Annotations panels, and selection context menus (Copy, Highlight, Highlight + Note) fully wired. Suite: `shell/tests/chrome.rs` |
+| **UX overhaul Phase 3: mouse-driven panes/tabs** | UX Phase 3 | ✅ | Per-tab close buttons and middle-click close; horizontal overflow strip plus quick-open button; per-pane split-right/split-down/close controls; `PaneTree::set_ratio` by split path and draggable 6 px dividers with persisted ratios. Direct tab drag remains optional stretch work. Suite: `kernel::pane` ratio tests + `shell/tests/chrome.rs` |
+| **UX overhaul Phase 5: Markdown formatting toolbar** | UX Phase 5 | ✅ | Markdown formatting toolbar with bold, italic, inline code, heading cycle, bullet list, checkbox, and wikilink toggle commands fully implemented in the editor engine and wired to the GUI panel toolbar. Suite: `editor/tests/formatting.rs` |
+| **UX overhaul Phase 5: Markdown outline panel** | UX Phase 5 | ✅ | Resizable docked Outline panel listing depth-indented headings extracted from the Markdown document, highlighting active heading, and jumping to heading on click. Suite: `shell/tests/markdown_outline.rs` |
+| **UX overhaul Phase 5: Markdown find/replace bar** | UX Phase 5 | ✅ | Docked Find/Replace bar under the markdown editor toolbar supporting case-insensitive search, match counting, prev/next navigation, replacing individual matches, and transactional Replace All. Suite: `shell/tests/markdown_find_replace.rs` |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-12, post P5 backlog items 2/3/5):** v3 — 234 tests green workspace-wide (258 with `--features
-pdfium`, incl. the fixture corpus, the shell reading/annotation/find/toc/paint/scale-guard/links/file-tree/desktop/tracker/overlay-list/backlinks/niceties suites, and all kernel/editor/vault/tracker unit and integration tests), clippy `-D warnings` clean in both
-feature configs, fmt clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md`
-regenerated (note.backlinks + pdf.copy-selection + 3 palette-only commands added). v2 suite unaffected (root workspace excludes `v3/`).
+**Verification snapshot (2026-06-12, after Markdown find/replace bar completion):** v3 — 279 tests green workspace-wide (including formatting, outline, find/replace, panels, splits, chrome, worker, and fixture suites), clippy `-D warnings` clean in both feature configs, fmt clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md` regenerated. v2 suite unaffected (root workspace excludes `v3/`).
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -143,13 +149,14 @@ regenerated (note.backlinks + pdf.copy-selection + 3 palette-only commands added
     editing-ergonomics bundle (plan §3.2 / M3); ~~link graph UI (backlinks
     panel)~~ — done (see status board); ~~annotation niceties (colors,
     linked notes, orphan report, copy-selection)~~ — done (see status
-    board); async tile worker (impl plan P5.1 — still open).
+    board); ~~async tile worker~~ — done (see status board).
 14. **GUI/UX overhaul (user-ordered 2026-06-12):** the app must stop
     feeling terminal-like; v2's mouse-first GUI is the floor. Full
-    multi-phase program in `docs/V3_UX_OVERHAUL_PLAN.md` (menu/toolbar
-    chrome + shortcuts help first). Remaining from the impl plan's Phase 5
-    backlog besides the worker: settings UI surface (P5.6), URI links open
-    in browser (P5.7), editing-ergonomics bundle (P5.4).
+    multi-phase program in `docs/V3_UX_OVERHAUL_PLAN.md` (menu chrome +
+    shortcuts help first). Phases 0–3 are done; Phase 4 PDF reading
+    chrome is next. Remaining from the implementation plan's
+    Phase 5 backlog: settings UI surface (P5.6), URI links open in browser
+    (P5.7), editing-ergonomics bundle (P5.4).
 
 ## Decisions made during execution
 
@@ -370,7 +377,7 @@ regenerated (note.backlinks + pdf.copy-selection + 3 palette-only commands added
 - 2026-06-12: GUI/UX direction (user, 2026-06-12): the app reads as a
   terminal-style keyboard tool; v2's mouse-first GUI is the bar. The
   step-by-step program is `docs/V3_UX_OVERHAUL_PLAN.md` — next agents
-  execute it phase by phase (menu/toolbar chrome and a shortcuts/help
+  execute it phase by phase (menu chrome and a shortcuts/help
   surface first, since nothing is discoverable without knowing chords).
 - 2026-06-12: `find` whitespace elasticity allows the *empty* gap on
   purpose: pdfium drops `\r\n` from the char stream, so the wrap the user
@@ -392,6 +399,32 @@ regenerated (note.backlinks + pdf.copy-selection + 3 palette-only commands added
   path when the annotation has one (open, don't re-create), and the
   sibling note is a vault citizen like the annotations export — created
   via `atomic_save`, indexed immediately, named `<stem>-notes.md`.
-
-
-
+- 2026-06-12: one async PDF worker owns FIFO tile/glyph/link jobs. More
+  workers add no throughput because pdfium is process-serialized; unbounded
+  submission keeps the UI thread below the 16 ms input budget. Results route
+  by absolute path, so closed-document results are harmlessly dropped.
+- 2026-06-12: UX status is two fields: command/error messages on the left,
+  document position on the right. `sync_status` can no longer erase
+  guidance, closing pitfall P7 structurally.
+- 2026-06-12: menu chrome is in-house, not `iced_aw`: five small anchored
+  dropdowns need no dependency. Opening a menu enters the kernel's existing
+  overlay scope, so Escape works through `overlay.close` and unbound editor
+  shortcuts cannot leak through the menu.
+- 2026-06-12: mouse discoverability is a CI invariant. Every registered
+  command must appear in `menu_model` or a context-local control model; only
+  `overlay.close` and `overlay.confirm` are exempt because they operate
+  inside already-open modal surfaces.
+- 2026-06-12: file rename keeps `DocumentId` stable. Kernel path lookup,
+  markdown/PDF session paths, and snapshot paths move together; panes and
+  shared editor state do not churn merely because a vault-relative name
+  changed.
+- 2026-06-12: vault selection uses `rfd` native folder dialogs only after an
+  explicit Open/Create click. No/invalid startup arguments show the app-owned
+  welcome; `vault.open` records recent paths and relaunches the selected vault.
+- 2026-06-12: split dividers address nodes by root-relative boolean paths,
+  not pane ids. Pane ids identify leaves; a divider belongs to an internal
+  node. Paths serialize no new state and remain valid for the current layout
+  frame; ratio writes retain the kernel's 0.05–0.95 clamp.
+- 2026-06-12: global icon toolbar removed by user direction; menu remains the
+  global command surface. Icons move to context-local controls, notably the
+  bottom-floating PDF bar.

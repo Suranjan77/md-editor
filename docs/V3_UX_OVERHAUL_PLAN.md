@@ -41,7 +41,7 @@ lands.
    overlay, and the keymap-override file must always tell the whole truth.
    Widgets still bind **no keys** (BUG-A discipline; pitfall P9).
 2. **The discoverability invariant (CI-enforced from Phase 1 on):** every
-   registered command id appears in the menu/toolbar model or in an explicit
+   registered command id appears in the menu or a context-local control model, or in an explicit
    `MOUSE_EXEMPT` list in the test (e.g. `overlay.confirm`). A windowless
    test walks the pure menu model and asserts coverage. New command ⇒ the
    test forces you to place it somewhere the mouse can reach.
@@ -68,7 +68,7 @@ lands.
 | Phase | What | Size |
 |---|---|---|
 | 0 | Discoverability triage: tree open by default, welcome pane, shortcuts/help overlay, status-bar split | S |
-| 1 | Toolbar + menu bar + icon set + `RunCommand` plumbing | M |
+| 1 | Menu bar + contextual icon set + `RunCommand` plumbing | M |
 | 2 | File sidebar → real file manager (create/rename/delete, context menu, resizable, vault picker) | L |
 | 3 | Mouse-driven panes/tabs: close buttons, draggable split ratios, tab overflow | M |
 | 4 | PDF reading chrome: pane toolbar, docked TOC, annotations sidebar, color picker, async worker | L |
@@ -77,7 +77,7 @@ lands.
 
 ---
 
-## Phase 0 — Discoverability triage (do first; every step is shippable alone)
+## Phase 0 — Discoverability triage ✅ complete 2026-06-12
 
 ### 0.1 File tree opens by default
 
@@ -133,9 +133,13 @@ working buttons; `ctrl+/` lists every shortcut and enter runs one.
 
 ---
 
-## Phase 1 — Toolbar + menu bar (the chrome)
+## Phase 1 — Menu bar chrome ✅ complete 2026-06-12
 
 v2 reference: `native/src/views/toolbar.rs`, `native/src/views/icons.rs`.
+
+Direction correction (user, 2026-06-12): global icon toolbar removed because
+it duplicated the menu bar. Icon controls belong on local surfaces where
+their context is clear, starting with the floating PDF control bar.
 
 ### 1.1 Plumbing
 
@@ -157,7 +161,13 @@ Search, Command, Split, ListTree, Clock, Chevrons, Trash, X, …) into
 font/asset dependency; colors become token parameters. This is the one
 place straight porting (not redesign) is right.
 
-### 1.3 The toolbar (`v3/shell/src/gui/toolbar.rs`)
+### 1.3 Global toolbar — superseded and removed
+
+User direction removed this row because it duplicated the menu bar. Keep
+`icons.rs` for context-local controls; do not restore a second global
+command surface.
+
+Historical design, rejected 2026-06-12 because it duplicated the menu:
 
 One row, height ~38 px, `bg_secondary`, under the menu bar (or standalone
 until 1.4 lands):
@@ -174,7 +184,8 @@ until 1.4 lands):
 
 Every button: `tooltip(button(icon), "<Title> · <chord>", Bottom)` —
 title + chord from `registry.get(id)`; never hardcode either. Pure model
-first: `fn toolbar_model(registry, focused_kind, dirty) -> Vec<ToolGroup>`
+Proposed pure model was
+`fn toolbar_model(registry, focused_kind, dirty) -> Vec<ToolGroup>`
 (id, icon, enabled, active) — windowless tests assert the pdf group appears
 iff a PDF is focused, and that every model entry resolves to a registered
 command. Handlers for unfocused-surface clicks already no-op gracefully
@@ -215,7 +226,7 @@ back/forward · highlight · note · export annotations.
 ### 1.5 The discoverability invariant test (ground rule 2)
 
 `v3/shell/tests/mouse_coverage.rs`: every id in `registry.specs()` is in
-`menu_model` ∪ `toolbar_model` ∪ `MOUSE_EXEMPT` (exempt: `overlay.close`,
+`menu_model` ∪ context-local controls ∪ `MOUSE_EXEMPT` (exempt: `overlay.close`,
 `overlay.confirm`, and nothing else without a written reason next to it).
 This is the test that keeps the GUI honest forever.
 
@@ -224,7 +235,7 @@ read every shortcut — mouse only, fresh vault, no docs.
 
 ---
 
-## Phase 2 — File sidebar → file manager
+## Phase 2 — File sidebar → file manager ✅ complete 2026-06-12
 
 v2 reference: `native/src/views/sidebar.rs`, `modals.rs`, `welcome.rs`.
 
@@ -274,9 +285,15 @@ welcome flow instead: recent-vaults list (stored via
 used native dialogs too), "Create Vault…". Out: changing vaults mid-run
 (quit-and-reopen is fine at this stage; note it).
 
+Implementation note: no/invalid vault startup opens an in-app
+welcome window instead of opening an OS dialog automatically. It shows Open
+Vault, Create Vault, and recent-vault actions; native folder selection opens
+only after a click. `vault.open` exposes the same picker from the File menu
+and relaunches into the selected vault.
+
 ---
 
-## Phase 3 — Panes & tabs you can drive with a mouse
+## Phase 3 — Panes & tabs you can drive with a mouse ✅ complete 2026-06-12
 
 ### 3.1 Tab strip
 
@@ -313,6 +330,10 @@ drag-and-drop in iced is manual (track press→move→release with a floating
 ghost on the stack). Skip unless the rest of the phase lands early; the
 split buttons + "Open in Split" context item cover the need.
 
+Deferred as specified: direct tab drag remains stretch work. Core Phase 3
+ships tab close/middle-close, overflow scrolling, quick-open button,
+split-right/down, close-pane, and persistent draggable split ratios.
+
 ---
 
 ## Phase 4 — PDF reading chrome
@@ -329,6 +350,11 @@ toolbar — per pane, so split PDFs each get one): page `N / M` (click N →
 `DocLayout` page sizes ÷ viewport — add `DocLayout::zoom_for_fit_width
 (viewport_w)` etc. in `v3/pdf/src/scroll.rs` with unit tests), find, TOC,
 back/forward.
+
+Direction correction (user, 2026-06-12): controls render as a floating bar
+at the bottom of each PDF view, not a top pane toolbar. Initial bar includes
+previous/next page, page input, zoom −/%/+, find, and TOC; commands target
+the bar's tab before execution so split PDFs remain independent.
 
 ### 4.2 TOC as a docked panel (the modal stays for quick-jump)
 
@@ -477,7 +503,7 @@ yes, `ws.open_overlay("menu")`) and pin it in the decision log.
 | v2 file (`native/src/views/`) | v3 target | Phase |
 |---|---|---|
 | `welcome.rs` | welcome pane buttons / vault picker | 0.2 / 2.4 |
-| `toolbar.rs` | `gui/toolbar.rs` | 1.3 |
+| `toolbar.rs` | global port removed; local controls use `icons.rs` | 1.3 / 4.1 |
 | `icons.rs` | `gui/icons.rs` (straight port) | 1.2 |
 | `sidebar.rs` | file tree header/context/resize | 2 |
 | `modals.rs` | `Overlay::Confirm` | 6.2 |
