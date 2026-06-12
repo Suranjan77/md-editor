@@ -83,7 +83,7 @@ fn main() -> ExitCode {
             let Some(root) = root else {
                 let message = requested
                     .map(|path| format!("Vault folder is unavailable: {}", path.display()));
-                if let Err(e) = gui::welcome::run_startup(message) {
+                if let Err(e) = gui::welcome::run_startup(registry, keymap, message) {
                     eprintln!("md3: {e}");
                     return ExitCode::FAILURE;
                 }

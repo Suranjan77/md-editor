@@ -23,21 +23,21 @@ use std::path::Path;
 
 use md3_kernel::input::{Binding, Chord, EditorKind, Keymap, Scope};
 use md3_kernel::{CommandId, CommandRegistry};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
-struct KeymapFile {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeymapFile {
     #[serde(default)]
-    bindings: Vec<BindingRow>,
+    pub bindings: Vec<BindingRow>,
 }
 
-#[derive(Debug, Deserialize)]
-struct BindingRow {
-    scope: String,
-    chord: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BindingRow {
+    pub scope: String,
+    pub chord: String,
     /// `None` (JSON `null` or absent) unbinds.
     #[serde(default)]
-    command: Option<String>,
+    pub command: Option<String>,
 }
 
 /// What applying the overrides file did — the caller decides how loudly to
@@ -124,6 +124,52 @@ fn parse_scope(s: &str) -> Option<Scope> {
         "overlay" => Scope::Overlay,
         _ => return None,
     })
+}
+
+pub fn read_keymap_overrides(root: &Path) -> Result<KeymapFile, String> {
+    let path = root.join(".md3/keymap.json");
+    if !path.exists() {
+        return Ok(KeymapFile {
+            bindings: Vec::new(),
+        });
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("read failed: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("parse keymap.json failed: {e}"))
+}
+
+pub fn save_keymap_overrides(root: &Path, file: &KeymapFile) -> Result<(), String> {
+    let dir = root.join(".md3");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return Err(format!("failed to create .md3 dir: {e}"));
+    }
+    let path = dir.join("keymap.json");
+    let json = serde_json::to_string_pretty(file).map_err(|e| format!("serialize failed: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("write keymap.json failed: {e}"))
+}
+
+pub fn validate_overrides(registry: &CommandRegistry, file: &KeymapFile) -> Result<(), String> {
+    let mut check_map = std::collections::HashMap::new();
+    for (i, row) in file.bindings.iter().enumerate() {
+        let Some(scope) = parse_scope(&row.scope) else {
+            return Err(format!("row {i}: unknown scope `{}`", row.scope));
+        };
+        let chord = Chord::parse(&row.chord)
+            .map_err(|e| format!("row {i}: bad chord `{}`: {e}", row.chord))?;
+        if let Some(name) = &row.command {
+            let Some(_id) = command_id(registry, name) else {
+                return Err(format!("row {i}: unknown command `{name}`"));
+            };
+            if let Some((prev_idx, prev_cmd)) = check_map.insert((scope, chord), (i, name))
+                && prev_cmd != name
+            {
+                return Err(format!(
+                    "conflict: row {prev_idx} and row {i} both bind scope `{}` chord `{}` to different commands (`{prev_cmd}` and `{name}`)",
+                    row.scope, row.chord
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

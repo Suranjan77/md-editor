@@ -1,5 +1,10 @@
 # Architecture Rules
 
+> **Scope: v2 (`core/`, `native/`).** The v3 workspace (`v3/`) is governed by
+> `V3_IMPLEMENTATION_PLAN.md` §0 (layering in §0.1, hard rules in §0.2). The
+> practices here — strict layering, ratcheted budgets, enforcement proven by
+> injection — carry over to v3 and are being ported (impl-plan Phase 6.1).
+
 Referenced by `AGENTS.md`. Machine-enforced by `scripts/architecture-check.sh`
 (run in CI by `.github/workflows/quality.yml`). If a rule here and the script
 disagree, fix the script — the rule wins.

@@ -154,6 +154,30 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         self.measurer.measure(&styled, self.wrap_width)
     }
 
+    pub fn set_wrap_width(&mut self, wrap_width: f64) {
+        if (self.wrap_width - wrap_width).abs() < 1.0 {
+            return;
+        }
+        self.wrap_width = wrap_width;
+        self.remeasure();
+    }
+
+    pub fn remeasure(&mut self) {
+        for i in 0..self.lines.len() {
+            let measure = {
+                let record = &self.lines[i];
+                let styled = self
+                    .styler
+                    .style(&record.text, &record.block, record.conceal);
+                self.measurer.measure(&styled, self.wrap_width)
+            };
+            if measure != self.lines[i].measure {
+                let _ = self.heights.set(i, measure.height);
+                self.lines[i].measure = measure;
+            }
+        }
+    }
+
     /// Replace the whole document (initial load). Everything is damage.
     pub fn set_text<I, T>(&mut self, lines: I)
     where

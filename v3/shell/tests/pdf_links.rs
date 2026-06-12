@@ -37,6 +37,9 @@ fn type_text(shell: &mut Shell, text: &str) {
 }
 
 fn new_shell(root: &Path) -> Shell {
+    unsafe {
+        std::env::set_var("MD3_TEST_MODE", "1");
+    }
     let registry = match default_registry() {
         Ok(r) => r,
         Err(e) => panic!("registry: {e}"),
@@ -297,5 +300,61 @@ fn enter_in_preview_navigates() {
         shell.focused_pdf().unwrap().current_page(),
         1,
         "confirming preview should navigate to page 1"
+    );
+}
+
+#[cfg(feature = "pdfium")]
+#[test]
+fn left_click_on_uri_link_updates_status_line_and_does_not_panic() {
+    let dir = vault(true);
+    let mut shell = new_shell(dir.path());
+    open_via_quick_open(&mut shell, "paper.pdf");
+
+    let tab = shell.workspace().focused_tab().unwrap();
+    let viewport = (800.0, 600.0);
+
+    // Trigger link loading
+    let _ = shell.update(Message::PdfMouseDown {
+        tab,
+        pos: (0.0, 0.0),
+        viewport,
+    });
+
+    let session = shell.focused_pdf().unwrap();
+    if session.layout.is_none() {
+        eprintln!("skipping: libpdfium not available");
+        return;
+    }
+
+    let links = session
+        .links
+        .get(&0)
+        .expect("page 0 links should be loaded");
+
+    // Find the link targeting a URI
+    let link = links
+        .iter()
+        .find(|l| l.uri.is_some())
+        .expect("fixture has link targeting a URI");
+
+    let layout = session.layout.as_ref().unwrap();
+    let page = layout.placed_pages(session.scroll, viewport)[0];
+    let zoom = layout.zoom();
+    let center_pt = (
+        page.x + (link.rect.x0 + link.rect.x1) / 2.0 * zoom,
+        page.y + (link.rect.y0 + link.rect.y1) / 2.0 * zoom,
+    );
+
+    // Left click on link
+    let _ = shell.update(Message::PdfMouseDown {
+        tab,
+        pos: center_pt,
+        viewport,
+    });
+
+    assert_eq!(
+        shell.status(),
+        "link: https://example.com",
+        "left click on URI link should update status to link: https://example.com"
     );
 }

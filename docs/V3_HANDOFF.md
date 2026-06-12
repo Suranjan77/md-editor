@@ -2,10 +2,13 @@
 
 > **Read this first when resuming v3 work.** Updated after every completed unit of work.
 > Sibling ledgers: `PLAN-NOTES.md` (v2 incremental plan), `docs/V3_GROUND_UP_PLAN.md` (the master plan).
-> **Next work is specified step-by-step in `docs/V3_IMPLEMENTATION_PLAN.md`**
-> (2026-06-12): Phase 0 hardening first, then the user-ordered v2 parity
-> features. Its §0.4 pitfalls register supersedes re-deriving past bugs from
-> the decision log.
+> **Next work is `docs/V3_IMPLEMENTATION_PLAN.md` Phase 6** (course
+> correction, 2026-06-12): start at 6.0; no new renderer/shell feature work
+> until 6.0–6.3 are done. After 6.3, renderer work is **Phase 7 —
+> Typora-grade live editor** (user-ordered 2026-06-13; ADR-0104/0105) —
+> Phase 6.4/6.5 are superseded by it. The §0.2 hard rules were tightened
+> 2026-06-12 — reread them even if you have worked here before. The §0.4
+> pitfalls register supersedes re-deriving past bugs from the decision log.
 
 ## Ground rules for this execution
 
@@ -98,10 +101,20 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **UX overhaul Phase 5: Markdown formatting toolbar** | UX Phase 5 | ✅ | Markdown formatting toolbar with bold, italic, inline code, heading cycle, bullet list, checkbox, and wikilink toggle commands fully implemented in the editor engine and wired to the GUI panel toolbar. Suite: `editor/tests/formatting.rs` |
 | **UX overhaul Phase 5: Markdown outline panel** | UX Phase 5 | ✅ | Resizable docked Outline panel listing depth-indented headings extracted from the Markdown document, highlighting active heading, and jumping to heading on click. Suite: `shell/tests/markdown_outline.rs` |
 | **UX overhaul Phase 5: Markdown find/replace bar** | UX Phase 5 | ✅ | Docked Find/Replace bar under the markdown editor toolbar supporting case-insensitive search, match counting, prev/next navigation, replacing individual matches, and transactional Replace All. Suite: `shell/tests/markdown_find_replace.rs` |
+| **UX overhaul Phase 6: Feedback, Polish & settings** | UX Phase 6 | 🔶 | Toasts, confirm modals for unsaved changes/delete, light/dark tokens, and keymap settings UI landed — but `shell/tests/tracker_wiring.rs::tracker_manual_log_and_delete` is **red** (feedback-channel fork, pitfall P14; fix specced in impl-plan Phase 6.0) and the light theme is a global atomic (`tokens::set_light_theme` — scheduled debt, Phase 6.6). Suites: `shell/tests/chrome.rs`, `session_restore.rs`, `tracker_wiring.rs` |
+| **URI links open in browser** | P5 backlog №7 | ✅ | Added `open` dependency under ADR-0102, left-clicking a PDF external link opens it in browser asynchronously. Suite: `shell/tests/pdf_links.rs` |
+| **User-reported stabilization pass** | UX / renderer | 🔶 | `docs/V3_STABILIZATION_2026-06-12.md` — startup file-tree population, markdown wrap and measure-before-paint asset geometry, inline math flow, larger typography/rhythm, transparent display math, consolidated multi-line LaTeX environments, PDF resize-fit/reference crop, welcome transition, and toast runtime fix. Core defects addressed; Typora/Obsidian-level markdown polish remains open (specced as impl-plan Phase 6.3 + Phase 7). |
+| **Iced async runtime** | ADR-0103 | ✅ | `md3-shell` enables iced `tokio` feature so toast timer tasks run inside a Tokio reactor; fixes production panic from `tokio::time::sleep`. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-12, after Markdown find/replace bar completion):** v3 — 279 tests green workspace-wide (including formatting, outline, find/replace, panels, splits, chrome, worker, and fixture suites), clippy `-D warnings` clean in both feature configs, fmt clean, `md3-shell --demo` all-ok, `V3_SHORTCUTS.md` regenerated. v2 suite unaffected (root workspace excludes `v3/`).
+**Verification snapshot (2026-06-12, after stabilization pass):** fmt clean; clippy `-D warnings` clean; `cargo check -p md3-shell --features pdfium` clean; shell library suite 28/28 green. Full workspace has **one red test**: `tracker_manual_log_and_delete` (see `docs/V3_STABILIZATION_2026-06-12.md`). v2 suite unaffected (root workspace excludes `v3/`).
+
+⚠️ **This snapshot describes an uncommitted working tree** (~3 200 lines
+across 27 files on `v3`), and under the binary-gate rule (impl-plan §0.2) a
+red test means the last unit of work is **not done**. Both are resolved by
+impl-plan Phase 6.0: fix the test contract (toast assertion), run the full
+gate, commit, then re-take this snapshot from the commit.
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -153,10 +166,27 @@ Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 14. **GUI/UX overhaul (user-ordered 2026-06-12):** the app must stop
     feeling terminal-like; v2's mouse-first GUI is the floor. Full
     multi-phase program in `docs/V3_UX_OVERHAUL_PLAN.md` (menu chrome +
-    shortcuts help first). Phases 0–3 are done; Phase 4 PDF reading
-    chrome is next. Remaining from the implementation plan's
-    Phase 5 backlog: settings UI surface (P5.6), URI links open in browser
-    (P5.7), editing-ergonomics bundle (P5.4).
+    shortcuts help first). Phases 0–6 and the full editing-ergonomics bundle (P5.4)
+    are complete (auto-pairs, smart lists, table cell nav, smart paste, and heading cycles).
+15. **Markdown live-preview quality:** stabilized against overlap and missing
+    environment rendering, but heading scale, polished tables, interactive
+    checkboxes, rich hit-testing, proportional-font shaping, and golden
+    draw-command coverage remain. Historical detail in
+    `docs/V3_STABILIZATION_2026-06-12.md`; the work is now **specced
+    step-by-step as impl-plan Phase 6.3, then Phase 7** — work from that
+    spec, not from the report's loose list.
+16. **Course correction (architect review, 2026-06-12) — current work:**
+    impl-plan Phase 6, in order: green-and-committed tree (6.0), v3 size
+    budgets in CI (6.1), `gui/mod.rs`/`buffer.rs` decomposition (6.2),
+    renderer golden draw-plan snapshots (6.3). No new feature work on the
+    renderer or shell before 6.0–6.3.
+17. **Typora-grade live editor (user-ordered 2026-06-13):** the live
+    markdown editor's rendered artifacts are clanky; the editing experience
+    must be comparable to Typora. Specced as **impl-plan Phase 7**
+    (7.0 shaped measurement → 7.1 conceal v2 → 7.2 typography → 7.3 block
+    rendering → 7.4 stable assets → 7.5 interaction exactness → 7.6
+    motion/refinements), governed by ADR-0104 (proposed, spike resolves)
+    and ADR-0105 (accepted). Supersedes impl-plan 6.4/6.5.
 
 ## Decisions made during execution
 
@@ -428,3 +458,65 @@ Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 - 2026-06-12: global icon toolbar removed by user direction; menu remains the
   global command surface. Icons move to context-local controls, notably the
   bottom-floating PDF bar.
+- 2026-06-12: rendered markdown assets are layout inputs, not paint-only
+  decorations. Image/math dimensions enter `MonoMeasurer`, then
+  `EditorDocument::remeasure()` updates height-tree offsets before paint.
+  This restores the plan's style → measure → paint contract and prevents
+  following lines from overlapping variable-height content.
+- 2026-06-12: a fenced display-math block is rendered as one TeX unit.
+  Session code groups parser-classified `MathContent` lines and stores the
+  rendered asset on the first content line; continuation lines paint
+  nothing. This supports Ratex environments without moving parsing rules
+  into renderer.
+- 2026-06-12: iced shell uses Tokio executor (ADR-0103). Iced's default
+  thread pool cannot poll `tokio::time::sleep`; enabling iced `tokio`
+  feature fixes toast auto-dismiss panic without a manually-owned runtime.
+- 2026-06-12 (architect review — course correction): execution drifted from
+  the plan's quality bar while UX phases 1–6 landed: `gui/mod.rs` reached
+  4 838 lines (the god-file disease plan §1 cites as the reason v3 exists;
+  v2's reducer was 2 400), a known-red test was handed off with prose instead
+  of a fix, renderer geometry/hit-testing shipped "approximate" (violating
+  the §3.2 measure-phase contract), ADR-0102 was written after its code, and
+  theme state landed in a global atomic. Features are kept; the *practices*
+  are corrected: new binding rules in impl-plan §0.2 (binary gate, size
+  ratchets with frozen ceilings, measure-phase ownership, ADR-before-code,
+  truthful handoff), pitfalls P13/P14 added, and remediation specced as
+  impl-plan Phase 6. Renderer/shell feature work is frozen until 6.0–6.3
+  are done.
+- 2026-06-12: feedback-channel contract pinned (P14): transient command
+  outcomes are **toasts**; the status-left segment is lightweight inline echo
+  only; position pill stays right (P7). Consequence: the red
+  `tracker_manual_log_and_delete` is fixed by making the manual-log handler
+  toast once and asserting `Shell::toasts()` in the test (Phase 6.0) — not
+  by restoring the status write.
+- 2026-06-12: v3 adopts v2's size-ratchet practice (impl-plan Phase 6.1):
+  `v3/budgets.toml` + `scripts/v3-budget.sh` in CI; frozen ceilings
+  `gui/mod.rs` 4 838, `editor/buffer.rs` 1 911, `tracker_view.rs` 1 218,
+  `editor_canvas.rs` 755; everything else hard-capped at 700. Ceilings only
+  go down.
+- 2026-06-12: document canon table added (impl-plan §0.2.1). Dated reports
+  (`V3_STABILIZATION_*.md`) are historical records — work is always specced
+  in the implementation plan, never executed from a report's bullet list.
+  No new top-level docs without explicit user instruction.
+- 2026-06-13 (user order): the live markdown editor must reach a
+  **Typora-grade editing experience** — the rendered artifacts are clanky.
+  Architect's diagnosis: two founding renderer contracts are structurally
+  un-Typora and are re-decided by ADR rather than patched around: the
+  monospace measuring grid (`MonoMeasurer`/`wrap_columns` — ADR-0104,
+  shaped text measurement behind the existing `Measurer` seam) and
+  reserved-width conceal ("columns advance, pixels don't" — ADR-0105,
+  conceal becomes a measure input with reveal through the normal
+  remeasure/damage path). The layout *protocol* (3 phases, height
+  sum-tree, damage) is explicitly unchanged — it was always the real
+  Bug-B kill; reserved width was a tactic. Program: impl-plan Phase 7;
+  master plan §3.2 carries the supersession note.
+- 2026-06-13: impl-plan Phases 6.4/6.5 superseded by 7.2/7.5 — typographic
+  hierarchy and exact hit-testing will not be built twice (once on the mono
+  grid, again on shaped text). Sequencing stands: 6.0–6.3 first (the 6.3
+  golden corpus is the safety net for the Phase 7 rebuild), then 7.0.
+- 2026-06-13: BUG-B gate v2 defined (with ADR-0105): the regression
+  contract moves from "caret motion must not reflow" to "offsets never
+  stale, content never overlaps, styled-damage ≤ 2 lines with correct
+  shift" — asserted differentially against from-scratch layout plus a
+  seeded caret-motion storm. `Styler::layout_stable()` retires in favor of
+  a remeasure-before-paint invariant.

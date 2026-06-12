@@ -178,6 +178,43 @@ impl PdfRenderer {
         })
     }
 
+    /// Render a compact internal-link preview centered on destination content.
+    ///
+    /// PDF destinations usually expose page + y, not an object rectangle.
+    /// Nearby glyph bounds provide the tightest reliable content box.
+    pub fn render_link_preview(
+        &self,
+        path: &Path,
+        page: u32,
+        dest_y: Option<f32>,
+    ) -> Result<RenderedPage, PdfError> {
+        const SCALE: f32 = 2.0;
+        let rendered = self.render_page(path, page, SCALE)?;
+        let (page_w, page_h) = self.page_size(path, page)?;
+        let chars = self.page_chars(path, page)?;
+        let target_y = dest_y.unwrap_or(page_h / 2.0);
+        let nearby = chars.iter().filter(|c| {
+            let center_y = (c.y0 + c.y1) / 2.0;
+            (center_y - target_y).abs() <= 110.0
+        });
+        let mut content: Option<(f32, f32, f32, f32)> = None;
+        for c in nearby {
+            content = Some(match content {
+                Some((x0, y0, x1, y1)) => (x0.min(c.x0), y0.min(c.y0), x1.max(c.x1), y1.max(c.y1)),
+                None => (c.x0, c.y0, c.x1, c.y1),
+            });
+        }
+        let (crop_x, crop_y, crop_w, crop_h) = preview_crop(
+            rendered.width,
+            rendered.height,
+            page_w,
+            target_y,
+            SCALE,
+            content,
+        );
+        Ok(crop_rgba(rendered, crop_x, crop_y, crop_w, crop_h))
+    }
+
     /// Per-character glyph geometry in reading order, page points with a
     /// **top-left** origin (pdfium's bottom-left rects flipped) — the input
     /// [`crate::select`] works on. Control characters carry no usable box
@@ -354,6 +391,87 @@ impl PdfRenderer {
                 path: path.to_path_buf(),
                 source,
             })
+    }
+}
+
+fn preview_crop(
+    full_width: u32,
+    full_height: u32,
+    page_width: f32,
+    target_y: f32,
+    scale: f32,
+    content: Option<(f32, f32, f32, f32)>,
+) -> (u32, u32, u32, u32) {
+    let (left, right) = content.map_or((page_width * 0.09, page_width * 0.91), |bounds| {
+        (
+            (bounds.0 - 28.0).max(0.0),
+            (bounds.2 + 28.0).min(page_width),
+        )
+    });
+    let crop_x = (left * scale).round().clamp(0.0, full_width as f32) as u32;
+    let desired_w = ((right - left) * scale).round().max(1.0) as u32;
+    let crop_w = desired_w.min(full_width.saturating_sub(crop_x).max(1));
+
+    let content_height = content.map_or(180.0, |bounds| (bounds.3 - bounds.1) + 80.0);
+    let desired_h = (content_height.clamp(180.0, 360.0) * scale).round() as u32;
+    let crop_h = desired_h.min(full_height.max(1));
+    let target_px = target_y * scale;
+    let max_y = full_height.saturating_sub(crop_h);
+    let crop_y = (target_px - crop_h as f32 * 0.32)
+        .round()
+        .clamp(0.0, max_y as f32) as u32;
+    (crop_x, crop_y, crop_w, crop_h)
+}
+
+fn crop_rgba(rendered: RenderedPage, x: u32, y: u32, width: u32, height: u32) -> RenderedPage {
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    let stride = rendered.width as usize * 4;
+    let row_bytes = width as usize * 4;
+    for row in y..y + height {
+        let start = row as usize * stride + x as usize * 4;
+        let end = start + row_bytes;
+        if let Some(slice) = rendered.rgba.get(start..end) {
+            rgba.extend_from_slice(slice);
+        }
+    }
+    RenderedPage {
+        width,
+        height,
+        rgba,
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::{RenderedPage, crop_rgba, preview_crop};
+
+    #[test]
+    fn preview_crop_centers_destination_and_uses_content_width() {
+        let crop = preview_crop(
+            1200,
+            1600,
+            600.0,
+            400.0,
+            2.0,
+            Some((100.0, 380.0, 400.0, 420.0)),
+        );
+        assert_eq!(crop.0, 144);
+        assert!(crop.1 < 800 && crop.1 + crop.3 > 800);
+        assert_eq!(crop.2, 712);
+        assert!(crop.3 < 1600);
+    }
+
+    #[test]
+    fn rgba_crop_keeps_requested_pixels() {
+        let rendered = RenderedPage {
+            width: 2,
+            height: 2,
+            rgba: vec![1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255],
+        };
+        let cropped = crop_rgba(rendered, 1, 0, 1, 2);
+        assert_eq!(cropped.width, 1);
+        assert_eq!(cropped.height, 2);
+        assert_eq!(cropped.rgba, vec![2, 0, 0, 255, 4, 0, 0, 255]);
     }
 }
 

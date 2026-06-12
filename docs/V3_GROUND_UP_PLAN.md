@@ -140,6 +140,15 @@ doesn't).
   in concealed form. The transition is a cross-fade, never a reflow of neighbors
   (golden-test asserted: caret motion produces draw-diffs confined to the two affected
   lines).
+  > **Superseded 2026-06-13 (ADR-0105; impl-plan Phase 7.1).** The user ordered a
+  > Typora-grade editing experience; reserved-width gaps in prose read as clanky.
+  > Conceal becomes a *measure input*: concealed lines are measured without marker
+  > glyphs, and revealing re-measures through the standard invalidation protocol.
+  > The protocol itself (three phases, height sum-tree, damage contract) is
+  > unchanged — it, not frozen geometry, is what kills Bug B. The golden gate
+  > evolves from "no reflow" to "offsets never stale, content never overlaps,
+  > damage confined" (BUG-B gate v2). The monospace measuring grid is likewise
+  > replaced by shaped text measurement (ADR-0104; impl-plan Phase 7.0).
 - **Editing ergonomics** (from the UX addendum, all command-bus citizens): auto-pairs,
   smart lists/checkboxes with renumbering, table editing, smart paste (URL→link,
   image→vault asset), heading cycling, multi-cursor (the model is `Vec<Selection>` from

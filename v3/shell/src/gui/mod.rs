@@ -41,7 +41,7 @@ use md3_vault::{
 
 use editor_canvas::{EditorCanvas, palette as colors};
 use overlay::{NamePurpose, Overlay, PdfFindHit};
-use session::{MdSession, PdfSelection, PdfSession, Sessions};
+use session::{MdSession, PdfFitMode, PdfSelection, PdfSession, Sessions};
 use snapshot::{NodeSnapshot, SessionSnapshot, TabSnapshot, ViewSnapshot};
 
 /// Highlight color cycle (`pdf.highlight-color`); new annotations start at
@@ -103,10 +103,20 @@ pub enum Message {
         dy: f32,
         viewport_h: f32,
     },
+    EditorViewportChanged {
+        tab: TabId,
+        width: f32,
+        height: f32,
+    },
     PdfScrolled {
         tab: TabId,
         dy: f32,
         viewport: (f32, f32),
+    },
+    PdfViewportChanged {
+        tab: TabId,
+        width: f32,
+        height: f32,
     },
     PdfMouseDown {
         tab: TabId,
@@ -214,6 +224,31 @@ pub enum Message {
         tab: TabId,
         command: CommandId,
     },
+    DismissToast(usize),
+    CloseToastClicked(usize),
+    SettingsThemeChanged(String),
+    SettingsScopeChanged(usize, String),
+    SettingsChordChanged(usize, String),
+    SettingsCommandChanged(usize, String),
+    SettingsAddRow,
+    SettingsRemoveRow(usize),
+    SettingsSave,
+    SettingsCancel,
+}
+
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub id: usize,
+    pub kind: ToastKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Success,
+    Error,
+    Warning,
 }
 
 pub struct PdfContextMenuState {
@@ -262,6 +297,9 @@ pub struct Shell {
     tracker_manual_hours: String,
     tracker_manual_notes: String,
     pdf_context_menu: Option<PdfContextMenuState>,
+    toasts: Vec<Toast>,
+    next_toast_id: usize,
+    theme_name: String,
 }
 
 impl Shell {
@@ -325,8 +363,14 @@ impl Shell {
             tracker_manual_hours: String::new(),
             tracker_manual_notes: String::new(),
             pdf_context_menu: None,
+            toasts: Vec::new(),
+            next_toast_id: 0,
+            theme_name: "dark".to_string(),
         };
         shell.restore_session();
+        if shell.tree_open {
+            shell.files = scan_vault(&shell.vault_root);
+        }
         shell
     }
 
@@ -372,6 +416,10 @@ impl Shell {
 
     pub fn tree_open(&self) -> bool {
         self.tree_open
+    }
+
+    pub fn tree_files(&self) -> &[String] {
+        &self.files
     }
 
     pub fn tracker_open(&self) -> bool {
@@ -423,7 +471,7 @@ impl Shell {
         }
     }
 
-    fn theme(&self) -> iced::Theme {
+    pub(crate) fn theme(&self) -> iced::Theme {
         let t = tokens::dark();
         iced::Theme::custom_with_fn(
             "MD Editor Dark".to_string(),
@@ -439,7 +487,7 @@ impl Shell {
         )
     }
 
-    fn subscription(&self) -> Subscription<Message> {
+    pub(crate) fn subscription(&self) -> Subscription<Message> {
         let subscriptions = vec![
             iced::keyboard::listen().map(|event| match keys::normalize(&event) {
                 Some(ev) => Message::Key(ev),
@@ -466,6 +514,109 @@ impl Shell {
             Message::Ignored => Task::none(),
             Message::Key(ev) => self.on_key(ev),
             Message::RunCommand(command) => self.run_command(command),
+            Message::DismissToast(id) => {
+                self.toasts.retain(|t| t.id != id);
+                Task::none()
+            }
+            Message::CloseToastClicked(id) => {
+                self.toasts.retain(|t| t.id != id);
+                Task::none()
+            }
+            Message::SettingsThemeChanged(theme) => {
+                if let Some(Overlay::Settings { theme: t, .. }) = &mut self.overlay {
+                    *t = theme;
+                }
+                Task::none()
+            }
+            Message::SettingsScopeChanged(idx, val) => {
+                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
+                    && let Some(row) = keymap.bindings.get_mut(idx)
+                {
+                    row.scope = val;
+                }
+                Task::none()
+            }
+            Message::SettingsChordChanged(idx, val) => {
+                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
+                    && let Some(row) = keymap.bindings.get_mut(idx)
+                {
+                    row.chord = val;
+                }
+                Task::none()
+            }
+            Message::SettingsCommandChanged(idx, val) => {
+                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
+                    && let Some(row) = keymap.bindings.get_mut(idx)
+                {
+                    row.command = if val.trim().is_empty() {
+                        None
+                    } else {
+                        Some(val)
+                    };
+                }
+                Task::none()
+            }
+            Message::SettingsAddRow => {
+                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay {
+                    keymap.bindings.push(crate::settings::BindingRow {
+                        scope: "workspace".to_string(),
+                        chord: String::new(),
+                        command: None,
+                    });
+                }
+                Task::none()
+            }
+            Message::SettingsRemoveRow(idx) => {
+                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
+                    && idx < keymap.bindings.len()
+                {
+                    keymap.bindings.remove(idx);
+                }
+                Task::none()
+            }
+            Message::SettingsSave => {
+                if let Some(Overlay::Settings {
+                    theme,
+                    keymap,
+                    error: _,
+                }) = self.overlay.clone()
+                {
+                    match crate::settings::validate_overrides(&self.registry, &keymap) {
+                        Ok(()) => {
+                            if let Err(e) =
+                                crate::settings::save_keymap_overrides(&self.vault_root, &keymap)
+                            {
+                                if let Some(Overlay::Settings {
+                                    error: err_field, ..
+                                }) = &mut self.overlay
+                                {
+                                    *err_field = Some(e);
+                                }
+                            } else {
+                                self.theme_name = theme;
+                                tokens::set_light_theme(self.theme_name == "light");
+                                self.reload_keymap();
+                                self.close_overlay();
+                                self.save_session();
+                                return self.success("Settings saved successfully");
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(Overlay::Settings {
+                                error: err_field, ..
+                            }) = &mut self.overlay
+                            {
+                                *err_field = Some(e);
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::SettingsCancel => {
+                self.close_overlay();
+                Task::none()
+            }
             Message::MenuToggled(menu) => {
                 if self.open_menu == Some(menu) {
                     self.close_menu();
@@ -507,8 +658,16 @@ impl Shell {
                 Task::none()
             }
             Message::WindowCloseRequested => {
-                self.save_session();
-                iced::exit()
+                if self.is_any_tab_dirty() {
+                    self.open_overlay(Overlay::Confirm {
+                        message: "Abandon unsaved changes and quit?".to_string(),
+                        on_confirm: CommandId("app.force-quit"),
+                    });
+                    Task::none()
+                } else {
+                    self.save_session();
+                    iced::exit()
+                }
             }
             Message::EditorClicked {
                 tab,
@@ -535,6 +694,24 @@ impl Shell {
                 if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
                     session.viewport_h = viewport_h;
                     session.scroll_by(dy);
+                }
+                Task::none()
+            }
+            Message::EditorViewportChanged { tab, width, height } => {
+                let doc = self.tab_document(tab);
+                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
+                    session.set_viewport(width, height);
+                }
+                Task::none()
+            }
+            Message::PdfViewportChanged { tab, width, height } => {
+                let root = self.vault_root.clone();
+                let worker = self.pdf_worker.clone();
+                let doc = self.tab_document(tab);
+                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
+                    session.set_viewport((width, height));
+                    let abs = root.join(&session.rel_path);
+                    pdf_view::ensure_tiles(session, &abs, worker.as_ref());
                 }
                 Task::none()
             }
@@ -1260,6 +1437,12 @@ impl Shell {
                 return;
             } else if let Some(uri) = &link.uri {
                 self.status = format!("link: {uri}");
+                let url = uri.clone();
+                if std::env::var("MD3_TEST_MODE").is_err() {
+                    std::thread::spawn(move || {
+                        let _ = open::that(url);
+                    });
+                }
                 return;
             }
         }
@@ -1335,18 +1518,7 @@ impl Shell {
                 #[cfg(feature = "pdfium")]
                 {
                     if let Some(renderer) = pdf_view::renderer() {
-                        let w_px = session
-                            .layout
-                            .as_ref()
-                            .map(|l| l.page_size_px(dest_page as usize).0)
-                            .unwrap_or(0.0);
-                        let page_width_pts = w_px / session.zoom;
-                        let scale = if page_width_pts > 0.0 {
-                            (520.0 / page_width_pts).min(2.0)
-                        } else {
-                            1.0
-                        };
-                        match renderer.render_page(&abs, dest_page, scale) {
+                        match renderer.render_link_preview(&abs, dest_page, dest_y) {
                             Ok(rendered) => {
                                 let handle = iced::widget::image::Handle::from_rgba(
                                     rendered.width,
@@ -1438,7 +1610,7 @@ impl Shell {
                 let extend = mods.shift;
                 match key {
                     Key::Enter => Some(Command::Insert("\n".to_string())),
-                    Key::Tab => Some(Command::Insert("  ".to_string())),
+                    Key::Tab => Some(Command::TableTab { backward: extend }),
                     Key::Backspace => Some(Command::DeleteBackward),
                     Key::Delete => Some(Command::DeleteForward),
                     Key::Up => Some(Command::Move {
@@ -1572,6 +1744,37 @@ impl Shell {
         Task::none()
     }
 
+    pub fn show_toast(&mut self, message: String, kind: ToastKind) -> Task<Message> {
+        self.status = message.clone();
+        let id = self.next_toast_id;
+        self.next_toast_id += 1;
+        self.toasts.push(Toast { id, kind, message });
+
+        Task::perform(
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                id
+            },
+            Message::DismissToast,
+        )
+    }
+
+    pub fn info(&mut self, message: impl Into<String>) -> Task<Message> {
+        self.show_toast(message.into(), ToastKind::Info)
+    }
+
+    pub fn success(&mut self, message: impl Into<String>) -> Task<Message> {
+        self.show_toast(message.into(), ToastKind::Success)
+    }
+
+    pub fn warning(&mut self, message: impl Into<String>) -> Task<Message> {
+        self.show_toast(message.into(), ToastKind::Warning)
+    }
+
+    pub fn error(&mut self, message: impl Into<String>) -> Task<Message> {
+        self.show_toast(message.into(), ToastKind::Error)
+    }
+
     // --------------------------------------------------------- commands --
 
     fn run_command(&mut self, cmd: CommandId) -> Task<Message> {
@@ -1579,8 +1782,31 @@ impl Shell {
         self.status.clear();
         match cmd.0 {
             "app.quit" => {
+                if self.is_any_tab_dirty() {
+                    self.open_overlay(Overlay::Confirm {
+                        message: "Abandon unsaved changes and quit?".to_string(),
+                        on_confirm: CommandId("app.force-quit"),
+                    });
+                } else {
+                    self.save_session();
+                    return iced::exit();
+                }
+            }
+            "app.force-quit" => {
                 self.save_session();
                 return iced::exit();
+            }
+            "app.settings" => {
+                let overrides = crate::settings::read_keymap_overrides(&self.vault_root).unwrap_or(
+                    crate::settings::KeymapFile {
+                        bindings: Vec::new(),
+                    },
+                );
+                self.open_overlay(Overlay::Settings {
+                    theme: self.theme_name.clone(),
+                    keymap: overrides,
+                    error: None,
+                });
             }
             "palette.open" => self.open_overlay(Overlay::Palette {
                 input: String::new(),
@@ -1639,7 +1865,7 @@ impl Shell {
             }
             "workspace.refresh-files" => {
                 self.files = scan_vault(&self.vault_root);
-                self.status = "file panel refreshed".to_string();
+                return self.success("File panel refreshed");
             }
             "workspace.collapse-files" => {
                 self.tree_expanded.clear();
@@ -1702,6 +1928,19 @@ impl Shell {
             }
             "workspace.close-tab" => {
                 if let Some(tab) = self.ws.focused_tab() {
+                    if self.is_tab_dirty(tab) {
+                        let name = self.tab_name(tab);
+                        self.open_overlay(Overlay::Confirm {
+                            message: format!("Abandon unsaved changes in `{name}`?"),
+                            on_confirm: CommandId("workspace.force-close-tab"),
+                        });
+                    } else {
+                        self.close_tab(tab);
+                    }
+                }
+            }
+            "workspace.force-close-tab" => {
+                if let Some(tab) = self.ws.focused_tab() {
                     self.close_tab(tab);
                 }
             }
@@ -1759,6 +1998,36 @@ impl Shell {
                     s.apply(Command::HeadingCycle);
                 }
             }
+            "editor.heading-1" => {
+                if let Some(s) = self.focused_md_mut() {
+                    s.apply(Command::SetHeading(1));
+                }
+            }
+            "editor.heading-2" => {
+                if let Some(s) = self.focused_md_mut() {
+                    s.apply(Command::SetHeading(2));
+                }
+            }
+            "editor.heading-3" => {
+                if let Some(s) = self.focused_md_mut() {
+                    s.apply(Command::SetHeading(3));
+                }
+            }
+            "editor.heading-4" => {
+                if let Some(s) = self.focused_md_mut() {
+                    s.apply(Command::SetHeading(4));
+                }
+            }
+            "editor.heading-5" => {
+                if let Some(s) = self.focused_md_mut() {
+                    s.apply(Command::SetHeading(5));
+                }
+            }
+            "editor.heading-6" => {
+                if let Some(s) = self.focused_md_mut() {
+                    s.apply(Command::SetHeading(6));
+                }
+            }
             "editor.toggle-bullet" => {
                 if let Some(s) = self.focused_md_mut() {
                     s.apply(Command::ToggleBullet);
@@ -1774,7 +2043,7 @@ impl Shell {
                     s.apply(Command::ToggleWikilink);
                 }
             }
-            "editor.save" => self.save_focused(),
+            "editor.save" => return self.save_focused(),
             "editor.find" => {
                 if let Some(session) = self.focused_md_mut() {
                     session.find_open = !session.find_open;
@@ -1820,7 +2089,7 @@ impl Shell {
                     None => self.status = "click a highlight first".to_string(),
                 }
             }
-            "pdf.annotations-export" => self.export_annotations(),
+            "pdf.annotations-export" => return self.export_annotations(),
             "pdf.copy-selection" => {
                 let text = self
                     .focused_pdf()
@@ -1851,32 +2120,20 @@ impl Shell {
                 return Task::none();
             }
             "pdf.fit-width" => {
-                let viewport = self.focused_pdf().map(|s| s.viewport);
                 let root = self.vault_root.clone();
                 let worker = self.pdf_worker.clone();
-                if let Some(session) = self.focused_pdf_mut()
-                    && let Some(layout) = &session.layout
-                {
-                    let page = session.current_page();
-                    let new_zoom =
-                        layout.zoom_for_fit_width(page, viewport.map(|v| v.0).unwrap_or(1000.0));
-                    session.set_zoom(new_zoom);
+                if let Some(session) = self.focused_pdf_mut() {
+                    session.set_fit_mode(PdfFitMode::Width);
                     let abs = root.join(&session.rel_path);
                     pdf_view::ensure_tiles(session, &abs, worker.as_ref());
                 }
                 self.save_session();
             }
             "pdf.fit-page" => {
-                let viewport = self.focused_pdf().map(|s| s.viewport);
                 let root = self.vault_root.clone();
                 let worker = self.pdf_worker.clone();
-                if let Some(session) = self.focused_pdf_mut()
-                    && let Some(layout) = &session.layout
-                {
-                    let page = session.current_page();
-                    let new_zoom =
-                        layout.zoom_for_fit_page(page, viewport.unwrap_or((1000.0, 750.0)));
-                    session.set_zoom(new_zoom);
+                if let Some(session) = self.focused_pdf_mut() {
+                    session.set_fit_mode(PdfFitMode::Page);
                     let abs = root.join(&session.rel_path);
                     pdf_view::ensure_tiles(session, &abs, worker.as_ref());
                 }
@@ -2119,6 +2376,13 @@ impl Shell {
                 self.close_overlay();
                 self.delete_path(&target);
             }
+            Overlay::Confirm { on_confirm, .. } => {
+                self.close_overlay();
+                return self.run_command(on_confirm);
+            }
+            Overlay::Settings { .. } => {
+                return self.update(Message::SettingsSave);
+            }
             // Read-only report: confirm = dismiss.
             Overlay::OrphanReport { .. } => self.close_overlay(),
             Overlay::PdfLinkPreview {
@@ -2147,6 +2411,49 @@ impl Shell {
         }
         self.sync_status();
         Task::none()
+    }
+
+    fn reload_keymap(&mut self) {
+        if let Ok(mut keymap) = self.registry.keymap() {
+            let report = crate::settings::apply_keymap_overrides(
+                &self.vault_root,
+                &self.registry,
+                &mut keymap,
+            );
+            self.keymap = keymap;
+            if !report.warnings.is_empty() {
+                let msg = report.warnings.join("\n");
+                let _ = self.warning(msg);
+            }
+        }
+    }
+
+    fn is_tab_dirty(&self, tab: TabId) -> bool {
+        let Some((_, t)) = self.ws.panes.find_tab(tab) else {
+            return false;
+        };
+        self.sessions
+            .md
+            .get(&t.document)
+            .is_some_and(|s| s.doc.buffer().is_dirty())
+    }
+
+    fn tab_name(&self, tab: TabId) -> String {
+        let Some((_, t)) = self.ws.panes.find_tab(tab) else {
+            return String::new();
+        };
+        self.ws
+            .docs
+            .get(t.document)
+            .map(|d| d.path.rsplit('/').next().unwrap_or(&d.path).to_string())
+            .unwrap_or_else(|| "?".to_string())
+    }
+
+    fn is_any_tab_dirty(&self) -> bool {
+        self.sessions
+            .md
+            .values()
+            .any(|session| session.doc.buffer().is_dirty())
     }
 
     // ------------------------------------------------------------ actions --
@@ -2490,7 +2797,9 @@ impl Shell {
                 {
                     match std::fs::read_to_string(&abs) {
                         Ok(text) => {
-                            entry.insert(MdSession::new(rel, &text));
+                            let mut session = MdSession::new(rel, &text);
+                            session.load_visual_assets(&abs);
+                            entry.insert(session);
                         }
                         Err(e) => {
                             self.status = format!("open {rel}: {e}");
@@ -2603,6 +2912,7 @@ impl Shell {
                 tracker_view::TrackerTab::Reading => "Reading".to_string(),
                 tracker_view::TrackerTab::Config => "Config".to_string(),
             }),
+            theme: self.theme_name.clone(),
         }
     }
 
@@ -2722,6 +3032,8 @@ impl Shell {
         self.tree_width = snap.tree_width.clamp(160.0, 480.0);
         self.tree_expanded = snap.tree_expanded.into_iter().collect();
         self.tracker_open = snap.tracker_open;
+        self.theme_name = snap.theme;
+        tokens::set_light_theme(self.theme_name == "light");
         if let Some(tab_str) = snap.tracker_active_tab {
             self.tracker_active_tab = match tab_str.as_str() {
                 "Dashboard" => tracker_view::TrackerTab::Dashboard,
@@ -2787,10 +3099,10 @@ impl Shell {
         }
     }
 
-    fn save_focused(&mut self) {
+    fn save_focused(&mut self) -> Task<Message> {
         let root = self.vault_root.clone();
         let Some(session) = self.focused_md_mut() else {
-            return;
+            return Task::none();
         };
         let abs = root.join(&session.rel_path);
         let text = session.doc.buffer().text();
@@ -2798,7 +3110,6 @@ impl Shell {
             Ok(()) => {
                 session.doc.mark_saved();
                 let rel = session.rel_path.clone();
-                self.status = format!("saved {rel}");
                 // Keep the search index converged with the save.
                 if let Some(index) = self.index.as_mut() {
                     let _ = index.sync_paths(&root, &[abs]);
@@ -2806,8 +3117,9 @@ impl Shell {
                 if self.tree_open {
                     self.files = scan_vault(&root);
                 }
+                self.success(format!("Saved {rel}"))
             }
-            Err(e) => self.status = format!("save failed: {e}"),
+            Err(e) => self.error(format!("Save failed: {e}")),
         }
     }
 
@@ -2863,16 +3175,15 @@ impl Shell {
 
     /// `pdf.annotations-export`: write the focused PDF's annotation summary
     /// as a sibling markdown note in the vault.
-    fn export_annotations(&mut self) {
+    fn export_annotations(&mut self) -> Task<Message> {
         self.ensure_annotations();
         let root = self.vault_root.clone();
         let Some(session) = self.focused_pdf() else {
-            self.status = "focus a pdf to export its annotations".to_string();
-            return;
+            return self.error("focus a pdf to export its annotations");
         };
         let (Some(store), Some(hash)) = (self.annotations.as_ref(), session.doc_hash.as_ref())
         else {
-            return;
+            return Task::none();
         };
         let rel = format!(
             "{}-annotations.md",
@@ -2881,8 +3192,7 @@ impl Shell {
         let markdown = match store.export_markdown(hash) {
             Ok(md) => md,
             Err(e) => {
-                self.status = format!("export failed: {e}");
-                return;
+                return self.error(format!("export failed: {e}"));
             }
         };
         let abs = root.join(&rel);
@@ -2891,9 +3201,9 @@ impl Shell {
                 if let Some(index) = self.index.as_mut() {
                     let _ = index.sync_paths(&root, &[abs]);
                 }
-                self.status = format!("annotations exported to {rel}");
+                self.success(format!("annotations exported to {rel}"))
             }
-            Err(e) => self.status = format!("export failed: {e}"),
+            Err(e) => self.error(format!("export failed: {e}")),
         }
     }
 
@@ -3415,7 +3725,7 @@ impl Shell {
 
     // --------------------------------------------------------------- view --
 
-    fn view(&self) -> Element<'_, Message> {
+    pub(crate) fn view(&self) -> Element<'_, Message> {
         let workspace = self.layout_view(&self.ws.panes.layout());
         let focused_kind = self.ws.focused_editor_kind();
         let mut row_children = Vec::new();
@@ -3613,13 +3923,11 @@ impl Shell {
             container(workspace_content).height(Fill),
             status
         ];
-        if let Some(overlay) = &self.overlay {
-            return stack![base, overlay::view(overlay, &self.registry, &self.files)].into();
-        }
-        if let Some(ctx) = &self.pdf_context_menu {
-            return stack![base, self.view_pdf_context_menu(ctx)].into();
-        }
-        if self.tree_resizing {
+        let mut final_view: Element<'_, Message> = if let Some(overlay) = &self.overlay {
+            stack![base, overlay::view(overlay, &self.registry, &self.files)].into()
+        } else if let Some(ctx) = &self.pdf_context_menu {
+            stack![base, self.view_pdf_context_menu(ctx)].into()
+        } else if self.tree_resizing {
             let drag_layer = iced::widget::mouse_area(
                 container(iced::widget::Space::new())
                     .width(Fill)
@@ -3627,20 +3935,85 @@ impl Shell {
             )
             .on_move(|point| Message::TreeResized(point.x))
             .on_release(Message::TreeResizeFinished);
-            return stack![base, drag_layer].into();
-        }
-        if let Some((_, is_dir)) = self.tree_context.as_ref() {
-            return stack![base, file_tree::context_popover(self.tree_width, *is_dir)].into();
-        }
-        if let Some(open_menu) = self.open_menu {
+            stack![base, drag_layer].into()
+        } else if let Some((_, is_dir)) = self.tree_context.as_ref() {
+            stack![base, file_tree::context_popover(self.tree_width, *is_dir)].into()
+        } else if let Some(open_menu) = self.open_menu {
             let model = menu::menu_model(
                 &self.registry,
                 focused_kind,
                 self.ws.focused_tab().is_some(),
             );
-            return stack![base, menu::popover(open_menu, model, &self.registry)].into();
+            stack![base, menu::popover(open_menu, model, &self.registry)].into()
+        } else {
+            base.into()
+        };
+
+        if !self.toasts.is_empty() {
+            final_view = stack![final_view, self.view_toasts()].into();
         }
-        base.into()
+        final_view
+    }
+
+    fn view_toasts(&self) -> Element<'_, Message> {
+        let mut col = column![].spacing(10).align_x(iced::Alignment::End);
+        for toast in &self.toasts {
+            let border_color = match toast.kind {
+                ToastKind::Info => tokens::dark().accent,
+                ToastKind::Success => tokens::dark().success,
+                ToastKind::Warning => tokens::dark().warning,
+                ToastKind::Error => tokens::dark().danger,
+            };
+
+            let bg_color = tokens::dark().bg_secondary;
+            let text_color = tokens::dark().text_primary;
+            let icon_color = border_color;
+
+            let badge = match toast.kind {
+                ToastKind::Info => "ℹ",
+                ToastKind::Success => "✓",
+                ToastKind::Warning => "⚠",
+                ToastKind::Error => "✗",
+            };
+
+            let close_btn = button(text("×").size(14))
+                .padding([2, 5])
+                .style(button::text)
+                .on_press(Message::CloseToastClicked(toast.id));
+
+            let card = container(
+                row![
+                    text(badge).size(16).color(icon_color),
+                    text(toast.message.clone())
+                        .size(13)
+                        .color(text_color)
+                        .width(iced::Length::Fill),
+                    close_btn
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center)
+                .padding(12),
+            )
+            .width(320)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(bg_color)),
+                border: iced::Border {
+                    color: border_color,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..container::Style::default()
+            });
+            col = col.push(card);
+        }
+
+        container(iced::widget::scrollable(col))
+            .width(iced::Length::Fill)
+            .height(iced::Length::Fill)
+            .align_x(iced::Alignment::End)
+            .align_y(iced::Alignment::Start)
+            .padding(16)
+            .into()
     }
 
     fn layout_view<'a>(&'a self, node: &Layout<'a>) -> Element<'a, Message> {

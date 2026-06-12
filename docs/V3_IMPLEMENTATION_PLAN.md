@@ -6,6 +6,14 @@
 > Companion documents: `docs/V3_HANDOFF.md` (execution ledger — update it
 > after every phase), `docs/V3_GROUND_UP_PLAN.md` (the master plan, cited as
 > "plan §…"), `docs/V3_SHORTCUTS.md` (generated — never edit by hand).
+>
+> **Current position (2026-06-13):** Phases 0–5 and UX phases 0–6 are landed,
+> but a course-correction review found the quality bar drifted while they
+> did. **Start at Phase 6** — 6.0 first, and no new renderer/shell feature
+> work until 6.0–6.3 are complete. The added §0.2 rules are binding.
+> After 6.3, the renderer work is **Phase 7 (Typora-grade live editor,
+> user-ordered 2026-06-13)** — Phase 6.4/6.5 are superseded by it; do not
+> build typography or hit-testing on the monospace grid.
 
 ---
 
@@ -41,6 +49,61 @@ shell knows file formats and iced.
   name or a new numbered step. Never edit an existing migration (a
   fingerprint test will fail if you do).
 - The decision log in `V3_HANDOFF.md` is append-only, newest last.
+
+The following rules were added 2026-06-12 after a course-correction review
+(see Phase 6). Each one exists because it was violated; none is optional.
+
+- **The gate is binary.** `cargo test --workspace` in *both* feature configs
+  green is part of "done". A red test is never handed off, documented around,
+  or deferred to "a later decision" — either fix the code or change the test
+  contract *in the same unit of work*, and record which in the decision log.
+  (Cautionary example: the 2026-06-12 tracker-wiring failure was shipped with
+  a paragraph explaining it instead of a fix. Its resolution is Phase 6.0.)
+- **Size budgets (ratchet).** New v3 files: soft limit 400 lines, hard limit
+  700. Functions: soft limit 75. Files already over the hard limit are frozen
+  at their current size and may only shrink:
+  `shell/src/gui/mod.rs` (4 838), `editor/src/buffer.rs` (1 911),
+  `shell/src/gui/tracker_view.rs` (1 218), `shell/src/gui/editor_canvas.rs`
+  (755). Adding a feature to a frozen file requires extracting at least as
+  many lines as you add. Until the CI script exists (Phase 6.1), check with
+  `wc -l` before handoff. A 4 800-line `mod.rs` is v2's god-file disease —
+  the exact thing the ground-up plan (§1) was written to kill — regrowing
+  inside v3; it does not get to keep growing.
+- **Layout math belongs to the engine's measure phase.** Anything that
+  affects a line's height or vertical offset (heading scale, images, math
+  blocks, wrap width) flows Styler → Measurer → height tree → paint
+  (plan §3.2). The canvas paints; it never invents geometry the engine has
+  not measured. Hit-testing must read the *same* measured grid that paint
+  uses — "click-to-caret mapping is approximate" describes a defect, not a
+  polish item. The BUG-B gate ("caret motion damages ≤ 2 lines") applies to
+  every renderer feature, including rendered assets.
+- **Dependencies and global mutable state need an ADR *before* the code.**
+  ADR-0102 was written after the `open` crate had already shipped — do not
+  repeat that ordering. `static`/atomic globals for app state are banned;
+  state belongs on `Shell` (persisted via the snapshot when it should
+  survive a restart). The light-theme atomic in `gui/tokens.rs`
+  (`set_light_theme`) is grandfathered debt scheduled for removal in
+  Phase 6.6 — do not copy the pattern.
+- **The handoff stays truthful.** A status-board ✅ means: gate green, every
+  suite named explicitly (never "etc."), smoke items run. Known quality gaps
+  make the row 🔶 with the gap stated in the row. The verification snapshot
+  is updated only *after* committing, so it always describes a reachable
+  state (retrospective rule, now binding).
+
+### 0.2.1 Document canon
+
+When two documents disagree, the higher row wins; fix the lower one in the
+same change. Do not create new top-level docs without explicit user
+instruction — sprawl is how plans stop being followed.
+
+| Authority | Document |
+|---|---|
+| Product bar, architecture, quality gates | `V3_GROUND_UP_PLAN.md` |
+| Working rules + step-by-step next work | `V3_IMPLEMENTATION_PLAN.md` (this file) |
+| UX direction and chrome phases | `V3_UX_OVERHAUL_PLAN.md` |
+| Execution state (status board, decision log) | `V3_HANDOFF.md` |
+| Dated reports (e.g. `V3_STABILIZATION_*.md`) | historical record only — never work from them directly |
+| `V3_SHORTCUTS.md` | generated — never hand-edit |
 
 ### 0.3 The verification gate (run after every unit of work)
 
@@ -80,6 +143,8 @@ status-board row + decision-log entries for any non-obvious choice.
 | P10 | tests vs paint | The windowless suites drive `Shell::update` and never call `draw()`. They **cannot see paint bugs** (P1 was invisible to 200 green tests). | Paint geometry must live in pure "paint plan" functions (Phase 0.1) with unit tests; toolkit-level effects are covered by the manual smoke checklist only. |
 | P11 | fixtures | The generated fixtures are *friendly* (uniform boxes, generous leading) — they missed P3 entirely. | Hostile fixtures exist after Phase 0.2 (`tight-leading.pdf`, `two-column.pdf`). Run selection/search tests against them, not just `single-page.pdf`. |
 | P12 | feature configs | Code/tests gated on `pdfium` rot silently in the other config. | Always run the gate's two clippy + two test invocations. Imports used only by gated tests need `#[cfg(feature = "pdfium")]`. |
+| P13 | shell growth | Every UX phase landed its handlers and views directly in `gui/mod.rs`, growing it to 4 838 lines — twice the size of the v2 reducer this rebuild exists to escape. | New handler/view logic goes in a surface module (`gui/<surface>.rs`); `mod.rs` only routes. Frozen-file budget applies (§0.2). Decomposition program: Phase 6.2. |
+| P14 | feedback channels | Some handlers report transient outcomes via the status message segment, others via toasts; a test asserting one channel met the other (the red tracker test). | Contract: **toasts carry transient command outcomes**; the status-left segment is for lightweight inline echo only (selection counts, mode hints); position stays right (P7). When moving a feedback path between channels, update its tests in the same change. |
 
 ---
 
@@ -514,7 +579,7 @@ into the handoff before starting one.
    (`pdf.annotation-link-note`: create `<stem>-notes.md`, store
    `linked_note`, open it), orphan report (palette command listing
    `known_documents` rows whose hash no longer matches any vault file).
-4. **Editing ergonomics bundle** (plan §3.2/M3) — engine-side, one PR each,
+4. ✅ **Editing ergonomics bundle** (plan §3.2/M3) — engine-side, one PR each,
    all property-tested in `v3/editor`: auto-pairs; smart list continuation +
    renumbering; checkbox toggle (`ctrl+enter`); table cell `tab` navigation +
    reflow; smart paste (URL over selection → link); heading cycle
@@ -523,12 +588,346 @@ into the handoff before starting one.
 5. ✅ **Whitespace-elastic `pdf.find`** (P6): in `select::find`, treat any
    whitespace run in the needle as matching ≥0 whitespace/line-break gap in
    the stream; pure change + synthetic tests; removes the multi-word limit.
-6. **Settings UI surface** (plan M2) — render `keymap.json` + theme choice;
+6. ✅ **Settings UI surface** (plan M2) — render `keymap.json` + theme choice;
    low urgency, the files work today.
-7. **URI links open in browser** (from 1.2.5) — decide on the `open` crate
+7. ✅ **URI links open in browser** (from 1.2.5) — decide on the `open` crate
    (new dependency: record an ADR-style decision-log entry) or print-only.
+   Landed with the ADR (0102) written *after* the code — the §0.2 ADR-first
+   rule exists so this is not repeated.
 
 ---
+
+## Phase 6 — Course correction: restore the bar (2026-06-12; do in this order)
+
+**Why this phase exists.** Phases 1–5 and the UX overhaul landed real features,
+but the quality bar drifted while they did: `gui/mod.rs` grew to 4 838 lines
+(the god-file disease the master plan's §1 names as the reason v3 exists),
+the workspace was handed off with a known-red test and a paragraph explaining
+it, renderer features shipped with paint-only geometry and "approximate"
+hit-testing, a dependency ADR was written after the code, and theme state went
+into a global atomic. None of this is rolled back — the features stay — but
+**no new feature work happens on the markdown renderer or the shell until
+6.0–6.3 are done.**
+
+**Re-sequenced 2026-06-13:** the user ordered a Typora-grade live editing
+experience (Phase 7). Phases 6.4 and 6.5 are **superseded** by Phase 7.2 and
+7.5 — doing typographic hierarchy and exact hit-testing on the monospace
+grid, then redoing them on shaped text, would be the same work twice. After
+6.3, go straight to Phase 7.0. Phase 6.6 keeps only its non-renderer items.
+
+Every sub-phase below ends with the §0.3 gate and a handoff row, like any
+other unit of work. Sub-phases are sized for one session each.
+
+### 6.0 Make the tree green and committed (do first, small)
+
+1. **Fix the red tracker test** — the decision is made, do not re-litigate:
+   transient command outcomes are **toasts** (P14;
+   `V3_UX_OVERHAUL_PLAN.md` §6.1). `gui/mod.rs:1311` still writes
+   `self.status = "tracker: session logged manually"` while the path the test
+   exercises reports via toast; unify them:
+   - the manual-log handler reports exactly once, via
+     `self.success_toast("tracker: session logged manually")`; delete the
+     status write (position pill untouched — P7).
+   - expose toasts to tests: `pub fn toasts(&self) -> &[Toast]` on `Shell`
+     (and public read access to `Toast::message`/`kind` if not already).
+   - `shell/tests/tracker_wiring.rs::tracker_manual_log_and_delete` asserts
+     the toast message instead of `shell.status()`.
+2. Run the full gate (§0.3) — both feature configs.
+3. **Commit.** The working tree carries ~3 200 uncommitted lines across 27
+   files; the handoff snapshot currently describes an unreachable state.
+   Commit first, then update the snapshot (§0.2 truthfulness rule).
+
+**Done when:** gate fully green, zero known-failing tests, tree committed,
+handoff snapshot re-taken from the commit.
+
+### 6.1 v3 size budgets in CI
+
+Port v2's ratchet idea (`scripts/check-budget.sh` + `budgets.toml`) to v3:
+
+1. `v3/budgets.toml` — `[file_budgets]` mapping the frozen files (§0.2) to
+   their current line counts; a global `hard_limit = 700` for everything
+   else.
+2. `scripts/v3-budget.sh` — fails when an unlisted `v3/**/*.rs` file exceeds
+   the hard limit or a listed file exceeds its ceiling; prints the offender.
+   When you shrink a frozen file, lower its ceiling in the same PR.
+3. Wire into the `v3` job in `.github/workflows/quality.yml` next to the
+   shortcuts-freshness check.
+4. Prove the script fires by injecting a violation and watching it fail
+   (the `ARCHITECTURE_RULES.md` verification practice), then remove the
+   injection.
+
+### 6.2 Decompose `gui/mod.rs` (mechanical, behavior-frozen)
+
+Target shape — names may flex to what the code wants, sizes may not
+(each new file ≤ 700):
+
+```
+gui/mod.rs            Shell struct, update() routing, view() assembly only
+gui/commands_file.rs  file.* / vault.* / workspace.* handlers
+gui/commands_md.rs    editor.* handlers incl. formatting dispatch
+gui/commands_pdf.rs   pdf.* handlers
+gui/chrome.rs         menu bar, tab strip, pane scaffolding views
+gui/toast.rs          Toast type, queue, view_toasts
+gui/status.rs         two-segment status bar
+```
+
+Rules of engagement:
+- **Pure moves.** Use `impl Shell { … }` blocks in the new files (Rust allows
+  inherent impls split across files in one crate) so call sites do not churn.
+  No behavior edits in a move commit — if you spot a bug while moving, note
+  it in the handoff and fix it in a separate commit after the move lands.
+- One extraction = one commit; the routing suites must be green after each;
+  lower the `mod.rs` ceiling in `v3/budgets.toml` in the same commit.
+- Same treatment for `editor/src/buffer.rs` (1 911): the ergonomics
+  operations (auto-pairs, list continuation/renumbering, table nav, heading
+  set/cycle) move to `editor/src/edit_ops.rs` built on the buffer's public
+  command surface; their tests move with them.
+
+**Done when:** `gui/mod.rs` ≤ 1 500 lines (routing + state only), every
+extracted file ≤ 700, all ceilings lowered, suites green throughout.
+
+### 6.3 Golden draw-plan snapshots for the markdown renderer
+
+The renderer's quality gaps shipped invisibly because nothing in CI sees what
+it paints (P10). Mirror PDF Phase 0.1 — pure plans, then a golden corpus:
+
+1. Extract the geometry from `editor_canvas.rs` paint functions into a pure
+   plan: `pub(crate) fn line_plan(…) -> Vec<PaintOp>` where `PaintOp` is a
+   toolkit-free enum (text run: content/x/y/size/color-role; rect; asset
+   placement: kind/rect). `paint_line`/`paint_block_asset`/
+   `paint_inline_preview` become iteration over ops. This also starts paying
+   the 755-line budget down.
+2. Fixture document (checked in under `v3/shell/tests/fixtures/golden.md`):
+   h1–h3 headings, plain + wrapped paragraph, bullet list with checkbox,
+   table, fenced code, inline math, multi-line display math, an image
+   reference, a wikilink — plus the caret parked on a styled line so one line
+   is in revealed state.
+3. `v3/shell/tests/editor_draw_plan.rs`: render the plan for the whole
+   fixture at a fixed wrap width, serialize ops line-by-line to text, compare
+   against a checked-in snapshot file with plain `assert_eq!` (no `insta` —
+   matches the repo's self-verifying-suite philosophy). A renderer change ⇒
+   a reviewable snapshot diff in the PR.
+4. Keep the BUG-B golden gate honest: caret enter/leave on the fixture doc
+   still damages ≤ 2 lines.
+
+**Done when:** paint fns contain no geometry beyond iterating plans; the
+snapshot exists and a deliberate one-token style change produces exactly the
+expected diff (verify once, revert).
+
+### 6.4 ~~Typographic hierarchy through the measure phase~~ — superseded
+
+Superseded 2026-06-13 by **Phase 7.2**: heading scale built on the monospace
+grid would be redone immediately after the shaped-text swap (7.0). The
+principle stands and moved with it — hierarchy is *measurement*, never paint
+decoration.
+
+### 6.5 ~~Exact click-to-caret on rendered lines~~ — superseded
+
+Superseded 2026-06-13 by **Phase 7.5**: the round-trip property test is
+specified there, against the shaped layout that paint and hit-testing will
+share. "Approximate" still ends — it ends on the right substrate.
+
+### 6.6 Non-renderer polish backlog (renderer items moved to Phase 7)
+
+- **Theme state off the global atomic:** theme choice becomes a `Shell`
+  field persisted in the snapshot; `tokens::set_light_theme` and the
+  `USE_LIGHT_THEME` static are deleted; views receive tokens. (Debt from UX
+  Phase 6 — grandfathered, not endorsed.)
+- Moved to Phase 7: tables as measured cells (7.3), list hanging indent
+  (7.2), interactive checkboxes (7.5), async assets (7.4), proportional
+  font (7.0 — now mandatory, not a spike option), CJK/emoji/bidi (7.6),
+  p95 keypress bench (7.6).
+
+## Phase 7 — Typora-grade live editor (user-ordered 2026-06-13)
+
+**The order.** The user's verdict on the live markdown editor: the rendered
+artifacts are clanky, and the editing experience must be comparable to
+Typora. This is a product bar, not a polish list. Concretely, Typora-grade
+means:
+
+- prose in a proportional reading font with real text shaping; headings
+  visibly larger; comfortable vertical rhythm;
+- syntax markers **fully hidden** when the caret is elsewhere — no
+  reserved-width gaps in the middle of words;
+- moving the caret into a line/block reveals its source *in place*,
+  smoothly; leaving re-renders it — and layout never corrupts during the
+  transition;
+- tables, fenced code, display math, and images render as real blocks;
+  caret inside a block shows that block's source;
+- assets never make the layout jump; checkboxes and links are clickable;
+- typing stays sacred: p95 keypress→frame < 8 ms (master plan pillar 1)
+  through all of it.
+
+**Prerequisites:** Phase 6.0–6.3 complete. The golden draw-plan corpus (6.3)
+is the safety net for this rebuild — every Phase 7 step regenerates it
+deliberately, and the diff is the review. The §0.2 hard rules apply to every
+step, especially measure-phase ownership and the size budgets.
+
+**Why this is a program, not a polish pass.** Two of the renderer's founding
+contracts are structurally incapable of the Typora bar, and each gets
+re-decided by ADR *before* code (§0.2 rule):
+
+1. The shell measures on a **monospace column grid** (`MonoMeasurer`,
+   `wrap_columns`; `editor_canvas.rs` says it itself: "columns advance,
+   pixels don't"). No grid, no Typora typography. → ADR-0104, Phase 7.0.
+2. Conceal is **reserved-width** (markers keep their columns, painted or
+   not — master plan §3.2). That guarantees layout stability but reads as
+   gaps punched into prose. → ADR-0105, Phase 7.1.
+
+What does *not* change: the three-phase layout protocol, the height
+sum-tree, the damage contract, the Styler/Measurer seam, the parser, the
+buffer, the kernel. The seams were built for exactly this swap — use them.
+If a step seems to require bypassing a seam, stop and re-read §0.2.
+
+### 7.0 Shaped text measurement (ADR-0104; replaces the mono grid)
+
+ADR-0104 is drafted as **proposed** with the candidates and criteria; the
+spike resolves it to accepted with measured numbers.
+
+1. **Time-boxed spike (≤ 2 days):** measure + paint + hit-test one
+   paragraph and one heading with both candidates:
+   (a) `cosmic-text` directly (it is iced's own shaper — pin the same
+   version iced resolves, check `v3/Cargo.lock`);
+   (b) iced's `advanced::text::Paragraph` API.
+   Selection criteria, in order: one geometry source usable by measure,
+   paint, *and* hit-test (no parallel math — that is how "approximate"
+   happened); cost of measuring a 100k-line document (if a full pass is too
+   slow, an estimate-then-refine strategy is acceptable **only** if refined
+   heights flow through the normal `Damage`/height-tree path and converge);
+   grapheme-cluster and IME behavior. Default if tied: (a), because the
+   measurer must be constructible without an iced renderer in windowless
+   tests.
+2. `ShapedMeasurer` in `v3/shell/src/gui/` implements the engine's
+   `Measurer` trait: visual rows + per-row heights from shaped runs, plus
+   `caret_to_point` / `point_to_caret` on the same shaped layout, exposed
+   for paint plans and hit-testing.
+3. `MonoMeasurer` survives **only** as a test measurer for engine-level
+   suites (cheap, deterministic). Shell tests run `ShapedMeasurer` with an
+   embedded test font so geometry is byte-reproducible in CI — never the
+   host's font stack.
+4. Wire it through `EditorDocument` (the `Measurer` is already injected);
+   regenerate the 6.3 golden snapshot once; record p95 keypress and
+   open-document timings for the large fixture in the handoff row.
+
+**Done when:** the editor paints shaped proportional text; BUG-B suite
+green; hit-tests resolve through the shaped layout; timings recorded.
+
+### 7.1 Conceal v2 — true hide, measured reveal (ADR-0105)
+
+ADR-0105 (accepted — the direction is user-ordered) retires reserved-width:
+
+1. Conceal state becomes a **measure input**, not a paint trick. A
+   concealed line is styled *and measured* without its marker glyphs; when
+   the caret enters, the line is re-styled and re-measured in revealed
+   form; the height tree shifts subsequent offsets; paint damage = the
+   revealed line + the shifted region.
+2. `Styler::layout_stable()` is retired. Its replacement invariant: every
+   conceal transition goes through remeasure *before* paint (debug-assert
+   in `set_conceal` / `EditorDocument::apply`, the same place the old
+   assert lived).
+3. **BUG-B gate v2** (update `v3/editor/tests/bug_b_layout_reflow.rs`): the
+   contract was never "geometry must not change" — it is "offsets are never
+   stale, content never overlaps". Assert: (a) styled-damage from a caret
+   move ≤ 2 lines, plus a correct `shifted_from`; (b) after any transition,
+   offsets equal a from-scratch layout of the same content+conceal state
+   (differential); (c) a caret-motion storm (random walks over the golden
+   fixture, 8 seeds) never produces overlap or a stale offset.
+4. Reveal granularity v1 is the **line** (and the **block** for block
+   constructs, 7.3). Element-level reveal — only the span under the caret
+   shows its markers, Typora's exact behavior — is 7.6 refinement, built on
+   the same mechanism (a reveal-set is just a finer style key).
+
+**Done when:** no reserved gaps anywhere; the storm test is green; the
+golden diff shows concealed lines tightening (review it consciously).
+
+### 7.2 Reading typography & rhythm (subsumes old 6.4)
+
+On shaped text, set the type system once, in tokens/metrics — not per
+widget:
+
+1. Per-`LineKind` scale table (h1–h6, body, code, quote) and spacing rhythm
+   (paragraph spacing, blockquote bar + indent, list hang-indent from real
+   glyph advance, hr). Final values come from a side-by-side review against
+   Typora's defaults — match the *feel*, not necessarily the pixels.
+2. Heading-edit reflow test: editing a paragraph into `# heading` shifts
+   subsequent offsets through the height tree.
+3. Regenerate goldens deliberately.
+
+### 7.3 Blocks render as units
+
+The parser's block states already group lines; expose
+`EditorDocument::reveal_range(caret) -> Range<usize>` (engine, tested) so
+the reveal unit for block constructs is the block:
+
+1. **Fenced code:** background panel + monospace runs first (structure
+   now); syntax highlighting is a separate step behind its own dependency
+   ADR (default candidate `syntect`) — do not fold a highlighter in
+   silently.
+2. **Tables:** real measured columns (widths from shaped cell content),
+   padded cells, header rule. Caret inside ⇒ the whole table reveals as
+   source.
+3. **Display math / images:** already render via the TeX renderer and asset
+   pipeline; move them onto the same block-reveal contract (caret inside a
+   `$$` block reveals the TeX source in place — today's per-line behavior
+   unifies with tables/code).
+
+**Done when:** the golden fixture's table/code/math sections render as
+blocks, reveal as blocks, and click-into-block lands the caret at the
+nearest source char (hit-test through the shaped layout).
+
+### 7.4 Assets never pop the layout
+
+1. Asset discovery/render moves off the document-load path onto the
+   `gui/worker.rs` pattern (one queue, results routed by path).
+2. Last-known asset dimensions are cached in the sidecar (new migrations
+   component `asset_sizes`, append-only ladder as always) so a reopened
+   document measures correctly *immediately*; the async result refines
+   through the normal remeasure path — when the cached size still matches,
+   zero visual movement.
+3. Tests: reopen-with-cache ⇒ no second reflow; a genuinely resized image ⇒
+   one reflow through `Damage`, offsets correct (differential check).
+
+### 7.5 Interaction exactness (subsumes old 6.5)
+
+1. Round-trip property test (`v3/shell/tests/editor_hit_testing.rs`): for
+   every char of the golden fixture, in concealed *and* revealed states:
+   plan-position → hit-test → same char. One shared geometry path is what
+   makes this pass; if it fails, fix the divergence, never add a fudge
+   constant.
+2. Clickable checkboxes: click toggles `[ ]`↔`[x]` through the existing
+   engine formatting command — a command through the bus, like every
+   interaction (mouse-coverage test updates itself).
+3. Links/wikilinks: plain click positions the caret (it's an editor);
+   **ctrl+click follows** (wikilink → open note; URI → ADR-0102 path).
+   Typora's rule; pin it in a test. Hover: I-beam over text, pointer +
+   underline over links with ctrl held.
+
+### 7.6 Smoothness & refinement backlog (after 7.0–7.5, one at a time)
+
+- Element-level reveal granularity (the full Typora behavior).
+- Conceal cross-fade and caret/scroll motion polish — subtle, fast,
+  disableable (`reduce-motion`; master plan pillar 6).
+- Syntax-highlighting ADR + implementation if deferred from 7.3.
+- CJK/emoji width property tests on shaped runs, then bidi (in that
+  order).
+- p95 keypress→frame bench in CI (master plan §6's promise, finally
+  honored — a coarse timing assertion in a quiet job beats nothing).
+
+### Typora-parity acceptance checklist
+
+Run after each sub-phase; all must hold by the end of 7.6. Append these to
+`docs/V3_SMOKE.md` as their sub-phases land:
+
+```
+27. Open a real note: headings are visibly larger, prose is proportional, no gaps where ** or # hide.
+28. Click into a bold word: markers appear in place; the line reflows only itself; click away: they vanish.
+29. Caret-walk an entire document end to end: no overlap, no jumping, no stale lines (the Bug-B feel test).
+30. Table renders as a grid; click inside: source appears; edit a cell; click away: grid re-renders.
+31. Fenced code shows as a mono block; display math renders; click into math: TeX source in place.
+32. Reopen a document with images: layout is identical instantly (no pop when assets load).
+33. Click a checkbox: it toggles (undo undoes it). Ctrl+click a wikilink: the note opens.
+34. Type fast in a 5k-line document: zero perceptible lag, undo always undoes.
+```
 
 ## Appendix A — Test harness recipes
 

@@ -1,5 +1,12 @@
 # Coding Standards
 
+> **Scope: written for v2 (`core/`, `native/`).** For v3 (`v3/`),
+> `V3_IMPLEMENTATION_PLAN.md` §0.2 is binding and *stricter* (unwrap/expect
+> banned outright, typed errors only, no legacy escape hatches). Two sections
+> here apply to v3 verbatim: the naming contracts (§3 — `page_index` /
+> `page_number` / `vault_path` / `abs_path`) and the module/function size
+> limits (§6 — 400 soft / 700 hard / 75-line functions).
+
 Referenced by `AGENTS.md`. Enforced where possible by `scripts/architecture-check.sh`,
 `scripts/check-budget.sh`, `scripts/unwrap-budget.sh`, and clippy (`-D warnings`).
 Keep this doc concrete: every rule has a good/bad example.
