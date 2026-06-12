@@ -85,6 +85,7 @@ fn right_click_on_nothing_is_inert() {
     let _ = shell.update(Message::PdfRightClick {
         tab,
         pos: (100.0, 100.0),
+        abs_pos: (100.0, 100.0),
         viewport: (800.0, 600.0),
     });
 
@@ -147,6 +148,7 @@ fn right_click_on_an_internal_link_opens_the_preview_and_esc_closes() {
     let _ = shell.update(Message::PdfRightClick {
         tab,
         pos: center_pt,
+        abs_pos: center_pt,
         viewport,
     });
 
@@ -281,6 +283,7 @@ fn enter_in_preview_navigates() {
     let _ = shell.update(Message::PdfRightClick {
         tab,
         pos: center_pt,
+        abs_pos: center_pt,
         viewport,
     });
 

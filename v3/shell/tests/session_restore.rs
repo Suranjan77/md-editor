@@ -170,6 +170,7 @@ fn fresh_vault_starts_empty_and_a_quit_session_restores_empty() {
     let dir = vault();
     let shell = new_shell(dir.path());
     assert!(shell.workspace().focused_tab().is_none(), "no session yet");
+    assert!(shell.tree_open(), "file tree opens on first run");
     drop(shell);
 
     // Quit without opening anything: the saved session is an empty layout.
@@ -179,6 +180,20 @@ fn fresh_vault_starts_empty_and_a_quit_session_restores_empty() {
     let second = new_shell(dir.path());
     assert!(second.workspace().focused_tab().is_none());
     assert_eq!(second.workspace().panes.pane_count(), 1);
+}
+
+#[test]
+fn saved_closed_file_tree_stays_closed() {
+    let dir = vault();
+    let mut first = new_shell(dir.path());
+    assert!(first.tree_open());
+    press(&mut first, "ctrl+b");
+    assert!(!first.tree_open());
+    press(&mut first, "ctrl+q");
+    drop(first);
+
+    let second = new_shell(dir.path());
+    assert!(!second.tree_open());
 }
 
 #[test]

@@ -56,6 +56,13 @@ pub enum Command {
     SelectAll,
     Undo,
     Redo,
+    ToggleBold,
+    ToggleItalic,
+    ToggleCode,
+    HeadingCycle,
+    ToggleBullet,
+    ToggleCheckbox,
+    ToggleWikilink,
 }
 
 /// The line-level consequence of one command, as a single splice: lines
@@ -251,6 +258,13 @@ impl Buffer {
             }
             Command::Undo => self.undo_step(),
             Command::Redo => self.redo_step(),
+            Command::ToggleBold => self.toggle_wrap("**"),
+            Command::ToggleItalic => self.toggle_wrap("*"),
+            Command::ToggleCode => self.toggle_wrap("`"),
+            Command::HeadingCycle => self.heading_cycle(),
+            Command::ToggleBullet => self.toggle_bullet(),
+            Command::ToggleCheckbox => self.toggle_checkbox(),
+            Command::ToggleWikilink => self.toggle_wrap_double("[[", "]]"),
         }
     }
 
@@ -370,6 +384,362 @@ impl Buffer {
             selection_changed: true,
             changed: acc.span(old_total, self.line_count()),
         }
+    }
+
+    fn toggle_wrap(&mut self, marker: &str) -> ApplyResult {
+        let old_total = self.line_count();
+        let before = self.selections.clone();
+        let mut ops: Vec<EditOp> = Vec::new();
+        let mut acc = SpanAcc::default();
+        let mut new_sels = Vec::with_capacity(before.len());
+        let mut delta: isize = 0;
+        let m_len = marker.chars().count();
+
+        for sel in &before {
+            let (start, end) = sel.range();
+            let start = shift(start, delta);
+            let end = shift(end, delta);
+
+            let is_empty = start == end;
+            let mut unwrapped = false;
+
+            if is_empty {
+                if start >= m_len && start + m_len <= self.rope.len_chars() {
+                    let prev = self.rope.slice(start - m_len..start).to_string();
+                    let next = self.rope.slice(start..start + m_len).to_string();
+                    if prev == marker && next == marker {
+                        let r2 = self.rope_delete(start, start + m_len, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: start,
+                            text: r2,
+                        });
+                        let r1 = self.rope_delete(start - m_len, start, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: start - m_len,
+                            text: r1,
+                        });
+
+                        new_sels.push(Selection::caret(start - m_len));
+                        delta -= (m_len * 2) as isize;
+                        unwrapped = true;
+                    }
+                }
+            } else {
+                if end - start >= m_len * 2 {
+                    let first = self.rope.slice(start..start + m_len).to_string();
+                    let last = self.rope.slice(end - m_len..end).to_string();
+                    if first == marker && last == marker {
+                        let r2 = self.rope_delete(end - m_len, end, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: end - m_len,
+                            text: r2,
+                        });
+                        let r1 = self.rope_delete(start, start + m_len, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: start,
+                            text: r1,
+                        });
+
+                        new_sels.push(Selection::new(start, end - m_len * 2));
+                        delta -= (m_len * 2) as isize;
+                        unwrapped = true;
+                    }
+                }
+
+                if !unwrapped && start >= m_len && end + m_len <= self.rope.len_chars() {
+                    let prev = self.rope.slice(start - m_len..start).to_string();
+                    let next = self.rope.slice(end..end + m_len).to_string();
+                    if prev == marker && next == marker {
+                        let r2 = self.rope_delete(end, end + m_len, &mut acc);
+                        ops.push(EditOp::Delete { at: end, text: r2 });
+                        let r1 = self.rope_delete(start - m_len, start, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: start - m_len,
+                            text: r1,
+                        });
+
+                        new_sels.push(Selection::new(start - m_len, end - m_len));
+                        delta -= (m_len * 2) as isize;
+                        unwrapped = true;
+                    }
+                }
+            }
+
+            if !unwrapped {
+                self.rope_insert(end, marker, &mut acc);
+                ops.push(EditOp::Insert {
+                    at: end,
+                    text: marker.to_string(),
+                });
+                self.rope_insert(start, marker, &mut acc);
+                ops.push(EditOp::Insert {
+                    at: start,
+                    text: marker.to_string(),
+                });
+
+                if is_empty {
+                    new_sels.push(Selection::caret(start + m_len));
+                } else {
+                    new_sels.push(Selection::new(start + m_len, end + m_len));
+                }
+                delta += (m_len * 2) as isize;
+            }
+        }
+
+        let text_changed = !ops.is_empty();
+        self.replace_selections(new_sels);
+        if text_changed {
+            let after = self.selections.clone();
+            self.undo.commit(Transaction { ops, before, after });
+        }
+        ApplyResult {
+            text_changed,
+            selection_changed: true,
+            changed: acc.span(old_total, self.line_count()),
+        }
+    }
+
+    fn toggle_wrap_double(&mut self, start_marker: &str, end_marker: &str) -> ApplyResult {
+        let old_total = self.line_count();
+        let before = self.selections.clone();
+        let mut ops: Vec<EditOp> = Vec::new();
+        let mut acc = SpanAcc::default();
+        let mut new_sels = Vec::with_capacity(before.len());
+        let mut delta: isize = 0;
+        let s_len = start_marker.chars().count();
+        let e_len = end_marker.chars().count();
+
+        for sel in &before {
+            let (start, end) = sel.range();
+            let start = shift(start, delta);
+            let end = shift(end, delta);
+
+            let is_empty = start == end;
+            let mut unwrapped = false;
+
+            if is_empty {
+                if start >= s_len && start + e_len <= self.rope.len_chars() {
+                    let prev = self.rope.slice(start - s_len..start).to_string();
+                    let next = self.rope.slice(start..start + e_len).to_string();
+                    if prev == start_marker && next == end_marker {
+                        let r2 = self.rope_delete(start, start + e_len, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: start,
+                            text: r2,
+                        });
+                        let r1 = self.rope_delete(start - s_len, start, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: start - s_len,
+                            text: r1,
+                        });
+
+                        new_sels.push(Selection::caret(start - s_len));
+                        delta -= (s_len + e_len) as isize;
+                        unwrapped = true;
+                    }
+                }
+            } else {
+                if end - start >= s_len + e_len {
+                    let first = self.rope.slice(start..start + s_len).to_string();
+                    let last = self.rope.slice(end - e_len..end).to_string();
+                    if first == start_marker && last == end_marker {
+                        let r2 = self.rope_delete(end - e_len, end, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: end - e_len,
+                            text: r2,
+                        });
+                        let r1 = self.rope_delete(start, start + s_len, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: start,
+                            text: r1,
+                        });
+
+                        new_sels.push(Selection::new(start, end - s_len - e_len));
+                        delta -= (s_len + e_len) as isize;
+                        unwrapped = true;
+                    }
+                }
+
+                if !unwrapped && start >= s_len && end + e_len <= self.rope.len_chars() {
+                    let prev = self.rope.slice(start - s_len..start).to_string();
+                    let next = self.rope.slice(end..end + e_len).to_string();
+                    if prev == start_marker && next == end_marker {
+                        let r2 = self.rope_delete(end, end + e_len, &mut acc);
+                        ops.push(EditOp::Delete { at: end, text: r2 });
+                        let r1 = self.rope_delete(start - s_len, start, &mut acc);
+                        ops.push(EditOp::Delete {
+                            at: start - s_len,
+                            text: r1,
+                        });
+
+                        new_sels.push(Selection::new(start - s_len, end - s_len));
+                        delta -= (s_len + e_len) as isize;
+                        unwrapped = true;
+                    }
+                }
+            }
+
+            if !unwrapped {
+                self.rope_insert(end, end_marker, &mut acc);
+                ops.push(EditOp::Insert {
+                    at: end,
+                    text: end_marker.to_string(),
+                });
+                self.rope_insert(start, start_marker, &mut acc);
+                ops.push(EditOp::Insert {
+                    at: start,
+                    text: start_marker.to_string(),
+                });
+
+                if is_empty {
+                    new_sels.push(Selection::caret(start + s_len));
+                } else {
+                    new_sels.push(Selection::new(start + s_len, end + s_len));
+                }
+                delta += (s_len + e_len) as isize;
+            }
+        }
+
+        let text_changed = !ops.is_empty();
+        self.replace_selections(new_sels);
+        if text_changed {
+            let after = self.selections.clone();
+            self.undo.commit(Transaction { ops, before, after });
+        }
+        ApplyResult {
+            text_changed,
+            selection_changed: true,
+            changed: acc.span(old_total, self.line_count()),
+        }
+    }
+
+    fn mutate_lines<F>(&mut self, mut mutate_fn: F) -> ApplyResult
+    where
+        F: FnMut(&str) -> (usize, usize, String),
+    {
+        let old_total = self.line_count();
+        let before = self.selections.clone();
+        let mut ops: Vec<EditOp> = Vec::new();
+        let mut acc = SpanAcc::default();
+
+        let mut lines = std::collections::BTreeSet::new();
+        for sel in &before {
+            let (start, end) = sel.range();
+            let start_line = self.rope.char_to_line(start);
+            let end_line = self.rope.char_to_line(end);
+            for l in start_line..=end_line {
+                lines.insert(l);
+            }
+        }
+
+        let mut new_sels = before.clone();
+
+        for l in lines.into_iter().rev() {
+            if l >= self.rope.len_lines() {
+                continue;
+            }
+            let line_start = self.rope.line_to_char(l);
+            let line_end = self.rope.line_to_char(l + 1).min(self.rope.len_chars());
+            let line_str = self.rope.slice(line_start..line_end).to_string();
+
+            let (local_offset, delete_len, insert_text) = mutate_fn(&line_str);
+            let edit_at = line_start + local_offset;
+
+            let delta = insert_text.chars().count() as isize - delete_len as isize;
+
+            if delete_len > 0 {
+                let removed = self.rope_delete(edit_at, edit_at + delete_len, &mut acc);
+                ops.push(EditOp::Delete {
+                    at: edit_at,
+                    text: removed,
+                });
+            }
+            if !insert_text.is_empty() {
+                self.rope_insert(edit_at, &insert_text, &mut acc);
+                ops.push(EditOp::Insert {
+                    at: edit_at,
+                    text: insert_text,
+                });
+            }
+
+            for sel in &mut new_sels {
+                if sel.anchor >= edit_at {
+                    sel.anchor = shift(sel.anchor, delta);
+                }
+                if sel.head >= edit_at {
+                    sel.head = shift(sel.head, delta);
+                }
+            }
+        }
+
+        let text_changed = !ops.is_empty();
+        self.replace_selections(new_sels);
+        if text_changed {
+            let after = self.selections.clone();
+            self.undo.commit(Transaction { ops, before, after });
+        }
+        ApplyResult {
+            text_changed,
+            selection_changed: true,
+            changed: acc.span(old_total, self.line_count()),
+        }
+    }
+
+    fn heading_cycle(&mut self) -> ApplyResult {
+        self.mutate_lines(|line| {
+            if line.starts_with("###### ") {
+                (0, 7, String::new())
+            } else if line.starts_with("##### ") {
+                (0, 6, "###### ".to_string())
+            } else if line.starts_with("#### ") {
+                (0, 5, "##### ".to_string())
+            } else if line.starts_with("### ") {
+                (0, 4, "#### ".to_string())
+            } else if line.starts_with("## ") {
+                (0, 3, "### ".to_string())
+            } else if line.starts_with("# ") {
+                (0, 2, "## ".to_string())
+            } else {
+                (0, 0, "# ".to_string())
+            }
+        })
+    }
+
+    fn toggle_bullet(&mut self) -> ApplyResult {
+        self.mutate_lines(|line| {
+            if line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ") {
+                (0, 2, String::new())
+            } else {
+                (0, 0, "- ".to_string())
+            }
+        })
+    }
+
+    fn toggle_checkbox(&mut self) -> ApplyResult {
+        self.mutate_lines(|line| {
+            let list_marker = if line.starts_with("- ") {
+                Some("- ")
+            } else if line.starts_with("* ") {
+                Some("* ")
+            } else if line.starts_with("+ ") {
+                Some("+ ")
+            } else {
+                None
+            };
+
+            if let Some(marker) = list_marker {
+                let after_marker = &line[marker.len()..];
+                if after_marker.starts_with("[ ] ") {
+                    (marker.len(), 4, "[x] ".to_string())
+                } else if after_marker.starts_with("[x] ") {
+                    (marker.len(), 4, "[ ] ".to_string())
+                } else {
+                    (marker.len(), 0, "[ ] ".to_string())
+                }
+            } else {
+                (0, 0, "- [ ] ".to_string())
+            }
+        })
     }
 
     fn move_carets(&mut self, movement: Movement, extend: bool) -> ApplyResult {

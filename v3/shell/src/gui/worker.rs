@@ -147,3 +147,76 @@ pub fn subscribe() -> impl iced::futures::Stream<Item = super::Message> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    fn glyph_job(page: u32) -> PdfJob {
+        PdfJob::PageGlyphs {
+            path: Path::new("paper.pdf").to_path_buf(),
+            page,
+        }
+    }
+
+    fn glyph_output(job: &PdfJob) -> Option<PdfJobOutput> {
+        let PdfJob::PageGlyphs { path, page } = job else {
+            return None;
+        };
+        Some(PdfJobOutput::PageGlyphs {
+            path: path.clone(),
+            page: *page,
+            chars: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn worker_delivers_results_in_request_order() {
+        let (tx, rx) = mpsc::channel();
+        let handle = spawn(glyph_output, move |output| {
+            let _ = tx.send(output);
+        });
+        for page in 0..4 {
+            handle.submit(glyph_job(page));
+        }
+        let pages: Vec<u32> = (0..4)
+            .filter_map(|_| rx.recv_timeout(Duration::from_secs(1)).ok())
+            .filter_map(|output| match output {
+                PdfJobOutput::PageGlyphs { page, .. } => Some(page),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pages, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn submitting_large_document_work_does_not_wait_for_renderer() {
+        let (tx, rx) = mpsc::channel();
+        let handle = spawn(
+            |job| {
+                std::thread::sleep(Duration::from_millis(2));
+                glyph_output(job)
+            },
+            move |output| {
+                let _ = tx.send(output);
+            },
+        );
+
+        let started = Instant::now();
+        for page in 0..500 {
+            handle.submit(glyph_job(page));
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(16),
+            "queueing 500 pages blocked the caller"
+        );
+        assert!(
+            rx.recv_timeout(Duration::from_secs(1)).is_ok(),
+            "worker never delivered queued work"
+        );
+    }
+}

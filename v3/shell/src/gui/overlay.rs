@@ -24,9 +24,20 @@ pub struct PdfFindHit {
     pub preview: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NamePurpose {
+    NewNote { parent: String },
+    NewFolder { parent: String },
+    Rename { target: String },
+}
+
 #[derive(Debug, Clone)]
 pub enum Overlay {
     Palette {
+        input: String,
+        selected: usize,
+    },
+    Help {
         input: String,
         selected: usize,
     },
@@ -72,6 +83,14 @@ pub enum Overlay {
     AnnotationNote {
         input: String,
     },
+    NameInput {
+        purpose: NamePurpose,
+        input: String,
+    },
+    ConfirmDelete {
+        target: String,
+        is_dir: bool,
+    },
     /// Read-only report: documents whose annotations no longer match any
     /// vault file's content hash — `(last seen path, "N annotations")`.
     OrphanReport {
@@ -92,6 +111,7 @@ impl Overlay {
     pub fn kernel_name(&self) -> &'static str {
         match self {
             Overlay::Palette { .. } => "palette",
+            Overlay::Help { .. } => "help-shortcuts",
             Overlay::QuickOpen { .. } => "quick-open",
             Overlay::Search { .. } => "search",
             Overlay::Find { .. } => "find",
@@ -101,6 +121,8 @@ impl Overlay {
             Overlay::PdfZoom { .. } => "pdf-zoom",
             Overlay::PdfPage { .. } => "pdf-page",
             Overlay::AnnotationNote { .. } => "annotation-note",
+            Overlay::NameInput { .. } => "file-name",
+            Overlay::ConfirmDelete { .. } => "confirm-delete",
             Overlay::OrphanReport { .. } => "orphan-report",
             Overlay::PdfLinkPreview { .. } => "pdf-link-preview",
         }
@@ -109,6 +131,7 @@ impl Overlay {
     pub fn input_mut(&mut self) -> Option<&mut String> {
         match self {
             Overlay::Palette { input, .. }
+            | Overlay::Help { input, .. }
             | Overlay::QuickOpen { input, .. }
             | Overlay::Search { input, .. }
             | Overlay::Find { input }
@@ -117,14 +140,18 @@ impl Overlay {
             | Overlay::Backlinks { input, .. }
             | Overlay::PdfZoom { input }
             | Overlay::PdfPage { input }
-            | Overlay::AnnotationNote { input } => Some(input),
-            Overlay::OrphanReport { .. } | Overlay::PdfLinkPreview { .. } => None,
+            | Overlay::AnnotationNote { input }
+            | Overlay::NameInput { input, .. } => Some(input),
+            Overlay::ConfirmDelete { .. }
+            | Overlay::OrphanReport { .. }
+            | Overlay::PdfLinkPreview { .. } => None,
         }
     }
 
     pub fn selected_mut(&mut self) -> Option<&mut usize> {
         match self {
             Overlay::Palette { selected, .. }
+            | Overlay::Help { selected, .. }
             | Overlay::QuickOpen { selected, .. }
             | Overlay::Search { selected, .. }
             | Overlay::PdfFind { selected, .. }
@@ -137,6 +164,7 @@ impl Overlay {
     fn title(&self) -> &'static str {
         match self {
             Overlay::Palette { .. } => "Command Palette",
+            Overlay::Help { .. } => "Keyboard Shortcuts",
             Overlay::QuickOpen { .. } => "Quick Open",
             Overlay::Search { .. } => "Search Vault",
             Overlay::Find { .. } => "Find in Note",
@@ -146,6 +174,12 @@ impl Overlay {
             Overlay::PdfZoom { .. } => "Zoom (%)",
             Overlay::PdfPage { .. } => "Go to Page",
             Overlay::AnnotationNote { .. } => "Annotation Note",
+            Overlay::NameInput { purpose, .. } => match purpose {
+                NamePurpose::NewNote { .. } => "New Note",
+                NamePurpose::NewFolder { .. } => "New Folder",
+                NamePurpose::Rename { .. } => "Rename",
+            },
+            Overlay::ConfirmDelete { .. } => "Confirm Delete",
             Overlay::OrphanReport { .. } => "Orphaned Annotations",
             Overlay::PdfLinkPreview { .. } => "Reference",
         }
@@ -187,10 +221,23 @@ pub fn list_rows(
             .into_iter()
             .map(|spec| (spec.title.to_string(), spec.id.0.to_string()))
             .collect(),
+        Overlay::Help { input, .. } => registry
+            .palette(input)
+            .into_iter()
+            .map(|spec| {
+                let chord = spec
+                    .bindings
+                    .first()
+                    .map(|binding| binding.chord.to_string())
+                    .unwrap_or_default();
+                (format!("{} · {}", spec.title, spec.category), chord)
+            })
+            .collect(),
         Overlay::QuickOpen { input, .. } => {
             let needle = input.to_lowercase();
             files
                 .iter()
+                .filter(|f| !f.ends_with('/'))
                 .filter(|f| f.to_lowercase().contains(&needle))
                 .map(|f| (f.clone(), String::new()))
                 .collect()
@@ -227,6 +274,38 @@ pub fn view<'a>(
     registry: &'a CommandRegistry,
     files: &'a [String],
 ) -> Element<'a, Message> {
+    if let Overlay::ConfirmDelete { target, is_dir } = overlay {
+        let kind = if *is_dir { "folder" } else { "file" };
+        let detail = if target.ends_with(".pdf") {
+            "PDF annotations remain stored by content hash."
+        } else {
+            "This cannot be undone."
+        };
+        let card = container(
+            column![
+                text("Confirm Delete").size(16).color(colors::heading()),
+                text(format!("Delete {kind} `{target}`?")).size(14),
+                text(detail).size(12).color(colors::marker()),
+                text("Enter confirms · Esc cancels")
+                    .size(12)
+                    .color(colors::marker()),
+            ]
+            .spacing(10)
+            .padding(16),
+        )
+        .width(520)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(tokens::dark().bg_secondary)),
+            border: iced::Border {
+                color: tokens::dark().border,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        });
+        return container(card).center_x(Fill).padding([60, 0]).into();
+    }
+
     if let Overlay::PdfLinkPreview {
         dest_page, image, ..
     } = overlay
@@ -265,6 +344,7 @@ pub fn view<'a>(
     let rows = list_rows(overlay, registry, files);
     let selected = match overlay {
         Overlay::Palette { selected, .. }
+        | Overlay::Help { selected, .. }
         | Overlay::QuickOpen { selected, .. }
         | Overlay::Search { selected, .. }
         | Overlay::PdfFind { selected, .. }
@@ -323,6 +403,7 @@ impl Overlay {
     pub fn input(&self) -> &str {
         match self {
             Overlay::Palette { input, .. }
+            | Overlay::Help { input, .. }
             | Overlay::QuickOpen { input, .. }
             | Overlay::Search { input, .. }
             | Overlay::Find { input }
@@ -331,8 +412,11 @@ impl Overlay {
             | Overlay::Backlinks { input, .. }
             | Overlay::PdfZoom { input }
             | Overlay::PdfPage { input }
-            | Overlay::AnnotationNote { input } => input,
-            Overlay::OrphanReport { .. } | Overlay::PdfLinkPreview { .. } => "",
+            | Overlay::AnnotationNote { input }
+            | Overlay::NameInput { input, .. } => input,
+            Overlay::ConfirmDelete { .. }
+            | Overlay::OrphanReport { .. }
+            | Overlay::PdfLinkPreview { .. } => "",
         }
     }
 }

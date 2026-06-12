@@ -7,6 +7,7 @@ use std::path::Path;
 use md3_kernel::defaults::default_registry;
 use md3_kernel::input::{Chord, EditorKind, Key, Mods};
 use md3_shell::gui::keys::KeyEvent;
+use md3_shell::gui::overlay::{NamePurpose, Overlay};
 use md3_shell::gui::{Message, Shell};
 use tempfile::TempDir;
 
@@ -22,6 +23,10 @@ fn press(shell: &mut Shell, s: &str) {
         chord: Some(chord(s)),
         text: None,
     }));
+}
+
+fn run(shell: &mut Shell, id: &'static str) {
+    let _ = shell.update(Message::RunCommand(md3_kernel::CommandId(id)));
 }
 
 fn type_text(shell: &mut Shell, text: &str) {
@@ -83,30 +88,30 @@ fn focused_path(shell: &Shell) -> Option<String> {
 fn ctrl_b_toggles_and_persists() {
     let dir = vault();
 
-    // 1. Fresh shell starts with file tree closed.
+    // 1. Fresh shell starts with file tree open for discoverability.
     let mut shell = new_shell(dir.path());
-    assert!(!shell.tree_open());
-
-    // 2. Pressing ctrl+b toggles it open.
-    press(&mut shell, "ctrl+b");
     assert!(shell.tree_open());
+
+    // 2. Pressing ctrl+b toggles it closed.
+    press(&mut shell, "ctrl+b");
+    assert!(!shell.tree_open());
 
     // 3. Quitting and restoring saves/loads the state.
     press(&mut shell, "ctrl+q");
     drop(shell);
 
     let mut shell = new_shell(dir.path());
-    assert!(shell.tree_open());
-
-    // 4. Pressing ctrl+b toggles it closed, and that persists too.
-    press(&mut shell, "ctrl+b");
     assert!(!shell.tree_open());
+
+    // 4. Pressing ctrl+b toggles it open, and that persists too.
+    press(&mut shell, "ctrl+b");
+    assert!(shell.tree_open());
 
     press(&mut shell, "ctrl+q");
     drop(shell);
 
     let shell = new_shell(dir.path());
-    assert!(!shell.tree_open());
+    assert!(shell.tree_open());
 }
 
 #[test]
@@ -140,10 +145,92 @@ fn ctrl_b_works_from_pdf_focus() {
     );
 
     // Toggle tree and ensure it works while PDF has focus.
-    assert!(!shell.tree_open());
-    press(&mut shell, "ctrl+b");
     assert!(shell.tree_open());
+    press(&mut shell, "ctrl+b");
+    assert!(!shell.tree_open());
 
     press(&mut shell, "ctrl+b");
-    assert!(!shell.tree_open());
+    assert!(shell.tree_open());
+}
+
+#[test]
+fn create_rename_repair_and_delete_flow() {
+    let dir = vault();
+    write(dir.path(), "target.md", "# target\n");
+    write(dir.path(), "referrer.md", "See [[target]].\n");
+    let mut shell = new_shell(dir.path());
+
+    run(&mut shell, "file.new-note");
+    type_text(&mut shell, "created");
+    press(&mut shell, "enter");
+    assert!(dir.path().join("created.md").is_file());
+    assert_eq!(focused_path(&shell).as_deref(), Some("created.md"));
+
+    let _ = shell.update(Message::TreeFileClicked("target.md".to_string()));
+    let original_id = shell
+        .workspace()
+        .panes
+        .find_tab(shell.workspace().focused_tab().expect("focused tab"))
+        .map(|(_, tab)| tab.document)
+        .expect("open target document");
+    run(&mut shell, "file.rename");
+    for _ in 0.."target.md".len() {
+        press(&mut shell, "backspace");
+    }
+    type_text(&mut shell, "renamed");
+    press(&mut shell, "enter");
+
+    assert!(!dir.path().join("target.md").exists());
+    assert!(dir.path().join("renamed.md").is_file());
+    assert_eq!(focused_path(&shell).as_deref(), Some("renamed.md"));
+    let renamed_id = shell
+        .workspace()
+        .panes
+        .find_tab(shell.workspace().focused_tab().expect("focused tab"))
+        .map(|(_, tab)| tab.document)
+        .expect("renamed target document");
+    assert_eq!(renamed_id, original_id, "rename keeps DocumentId stable");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("referrer.md")).ok(),
+        Some("See [[renamed]].\n".to_string())
+    );
+
+    run(&mut shell, "file.delete");
+    press(&mut shell, "enter");
+    assert!(!dir.path().join("renamed.md").exists());
+    assert!(
+        shell.workspace().docs.get(original_id).is_none(),
+        "deleting open file closes affected tabs and document"
+    );
+}
+
+#[test]
+fn context_menu_routes_commands_and_sidebar_width_persists() {
+    let dir = vault();
+    let mut shell = new_shell(dir.path());
+
+    let _ = shell.update(Message::TreeContextRequested {
+        rel_path: "alpha.md".to_string(),
+        is_dir: false,
+    });
+    let _ = shell.update(Message::TreeContextCommand(md3_kernel::CommandId(
+        "file.new-note",
+    )));
+    assert!(matches!(
+        shell.overlay(),
+        Some(Overlay::NameInput {
+            purpose: NamePurpose::NewNote { parent },
+            ..
+        }) if parent.is_empty()
+    ));
+    press(&mut shell, "escape");
+
+    let _ = shell.update(Message::TreeResizeStarted);
+    let _ = shell.update(Message::TreeResized(900.0));
+    let _ = shell.update(Message::TreeResizeFinished);
+    assert_eq!(shell.tree_width(), 480.0);
+    drop(shell);
+
+    let shell = new_shell(dir.path());
+    assert_eq!(shell.tree_width(), 480.0);
 }
