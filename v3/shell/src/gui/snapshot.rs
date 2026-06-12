@@ -13,6 +13,14 @@ pub struct SessionSnapshot {
     /// View state per vault-relative path (BTreeMap: stable JSON output).
     #[serde(default)]
     pub views: BTreeMap<String, ViewSnapshot>,
+    #[serde(default)]
+    pub tree_open: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tree_expanded: Vec<String>,
+    #[serde(default)]
+    pub tracker_open: bool,
+    #[serde(default)]
+    pub tracker_active_tab: Option<String>,
 }
 
 /// Mirror of the kernel's `Layout` tree in serializable form.

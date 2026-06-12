@@ -94,7 +94,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), palette::BG);
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), palette::bg());
 
         let doc = &self.session.doc;
         let scroll = f64::from(self.session.scroll);
@@ -127,7 +127,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                     frame.fill_rectangle(
                         Point::new(PAD + c0 as f32 * CHAR_WIDTH, y),
                         Size::new((c1.saturating_sub(c0)) as f32 * CHAR_WIDTH, LINE_HEIGHT),
-                        palette::SELECTION,
+                        palette::selection(),
                     );
                 }
             }
@@ -139,7 +139,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                 frame.fill_rectangle(
                     Point::new(PAD + caret_col as f32 * CHAR_WIDTH, y + 2.0),
                     Size::new(1.5, LINE_HEIGHT - 4.0),
-                    palette::CARET,
+                    palette::caret(),
                 );
             }
         }
@@ -200,37 +200,60 @@ fn span_style(kind: &SpanKind, styled: &StyledLine) -> (Color, Font) {
         ..Font::MONOSPACE
     };
     match kind {
-        SpanKind::Marker => (palette::MARKER, mono),
-        SpanKind::Bold => (palette::TEXT, bold),
-        SpanKind::Italic => (palette::TEXT, italic),
-        SpanKind::Code | SpanKind::CodeContent => (palette::CODE, mono),
-        SpanKind::Math | SpanKind::MathContent => (palette::MATH, mono),
-        SpanKind::LinkText { .. } => (palette::LINK, mono),
-        SpanKind::WikiLink => (palette::WIKILINK, mono),
-        SpanKind::FrontMatter => (palette::MARKER, mono),
-        SpanKind::QuoteText => (palette::QUOTE, italic),
+        SpanKind::Marker => (palette::marker(), mono),
+        SpanKind::Bold => (palette::text(), bold),
+        SpanKind::Italic => (palette::text(), italic),
+        SpanKind::Code | SpanKind::CodeContent => (palette::code(), mono),
+        SpanKind::Math | SpanKind::MathContent => (palette::math(), mono),
+        SpanKind::LinkText { .. } => (palette::link(), mono),
+        SpanKind::WikiLink => (palette::wikilink(), mono),
+        SpanKind::FrontMatter => (palette::marker(), mono),
+        SpanKind::QuoteText => (palette::quote(), italic),
         SpanKind::Text => {
             if matches!(styled.kind, md3_editor::parse::LineKind::Heading { .. }) {
-                (palette::HEADING, bold)
+                (palette::heading(), bold)
             } else {
-                (palette::TEXT, mono)
+                (palette::text(), mono)
             }
         }
     }
 }
 
 pub mod palette {
+    use crate::gui::tokens;
     use iced::Color;
 
-    pub const BG: Color = Color::from_rgb(0.117, 0.117, 0.165);
-    pub const TEXT: Color = Color::from_rgb(0.847, 0.847, 0.878);
-    pub const MARKER: Color = Color::from_rgb(0.424, 0.424, 0.502);
-    pub const HEADING: Color = Color::from_rgb(0.953, 0.545, 0.659);
-    pub const CODE: Color = Color::from_rgb(0.651, 0.890, 0.631);
-    pub const MATH: Color = Color::from_rgb(0.976, 0.886, 0.686);
-    pub const LINK: Color = Color::from_rgb(0.537, 0.706, 0.980);
-    pub const WIKILINK: Color = Color::from_rgb(0.706, 0.745, 0.996);
-    pub const QUOTE: Color = Color::from_rgb(0.580, 0.886, 0.835);
-    pub const CARET: Color = Color::from_rgb(0.96, 0.76, 0.91);
-    pub const SELECTION: Color = Color::from_rgba(0.35, 0.45, 0.75, 0.35);
+    pub fn bg() -> Color {
+        tokens::dark().bg_primary
+    }
+    pub fn text() -> Color {
+        tokens::dark().text_primary
+    }
+    pub fn marker() -> Color {
+        tokens::dark().text_muted
+    }
+    pub fn heading() -> Color {
+        tokens::dark().danger
+    }
+    pub fn code() -> Color {
+        tokens::dark().success
+    }
+    pub fn math() -> Color {
+        tokens::dark().warning
+    }
+    pub fn link() -> Color {
+        tokens::dark().accent
+    }
+    pub fn wikilink() -> Color {
+        tokens::dark().accent_secondary
+    }
+    pub fn quote() -> Color {
+        tokens::dark().accent
+    }
+    pub fn caret() -> Color {
+        tokens::dark().accent
+    }
+    pub fn selection() -> Color {
+        tokens::dark().sel_tint
+    }
 }

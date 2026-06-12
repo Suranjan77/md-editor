@@ -99,6 +99,14 @@ pub struct PdfSession {
     pub tiles: HashMap<md3_pdf::TileKey, iced::widget::image::Handle>,
     pub cache: md3_pdf::TileCache,
     pub queue: md3_pdf::RenderQueue,
+    /// Tiles handed to the async worker and not yet returned — never
+    /// re-scheduled while here (the worker cannot cancel in-flight work;
+    /// stale results land in the LRU cache harmlessly).
+    pub tiles_in_flight: std::collections::HashSet<md3_pdf::TileKey>,
+    /// Pages whose glyph/link loads are at the worker; absence from the map
+    /// + absence here = not yet requested.
+    pub chars_pending: std::collections::HashSet<u32>,
+    pub links_pending: std::collections::HashSet<u32>,
     pub status: String,
     /// SHA-256 of the file's bytes — the annotation identity (vault
     /// convention). Present whenever the file was readable on open.
@@ -106,6 +114,7 @@ pub struct PdfSession {
     /// Glyph geometry per page, loaded on first selection touch. Empty vec
     /// = page has no selectable text (or no pdfium).
     pub chars: HashMap<u32, Vec<md3_pdf::CharBox>>,
+    pub links: HashMap<u32, Vec<md3_pdf::LinkBox>>,
     pub selection: Option<PdfSelection>,
     /// Flattened bookmark tree (empty: none, or no pdfium); loaded with the
     /// page geometry on open.
@@ -132,9 +141,13 @@ impl PdfSession {
             tiles: HashMap::new(),
             cache: md3_pdf::TileCache::new(TILE_BUDGET),
             queue: md3_pdf::RenderQueue::new(),
+            tiles_in_flight: std::collections::HashSet::new(),
+            chars_pending: std::collections::HashSet::new(),
+            links_pending: std::collections::HashSet::new(),
             status: String::new(),
             doc_hash: None,
             chars: HashMap::new(),
+            links: HashMap::new(),
             selection: None,
             outline: Vec::new(),
             annotations: Vec::new(),
@@ -201,6 +214,13 @@ impl PdfSession {
                         && f64::from(pt.1) >= q.y0
                         && f64::from(pt.1) <= q.y1
                 })
+        })
+    }
+
+    /// Find link at the given point, topmost-last.
+    pub fn link_at(&self, page: u32, pt: (f32, f32)) -> Option<&md3_pdf::LinkBox> {
+        self.links.get(&page)?.iter().rev().find(|l| {
+            pt.0 >= l.rect.x0 && pt.0 <= l.rect.x1 && pt.1 >= l.rect.y0 && pt.1 <= l.rect.y1
         })
     }
 

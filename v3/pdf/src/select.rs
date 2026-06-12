@@ -37,6 +37,15 @@ pub struct TextSelection {
     pub text: String,
 }
 
+/// One link annotation on a page; rect in page points, top-left origin.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkBox {
+    pub rect: SelRect,
+    /// Internal destination: 0-based page + optional y (page points, top-left).
+    pub dest: Option<(u32, Option<f32>)>,
+    pub uri: Option<String>,
+}
+
 /// A maximal run of consecutive chars forming one visual line.
 struct Line {
     start: usize,
@@ -169,20 +178,48 @@ pub fn range_selection(chars: &[CharBox], range: std::ops::Range<usize>) -> Opti
 /// char-index ranges (feed them to [`range_selection`] for quads). Folding
 /// is per-scalar (`char::to_lowercase`, first scalar), which covers the
 /// practical alphabets; locale-grade folding is not this module's business.
+///
+/// Whitespace in the needle is **elastic**: each run matches any run of
+/// whitespace in the stream, *including the empty one* — pdfium emits line
+/// breaks as control chars that `page_chars` drops, so a needle spanning a
+/// line wrap meets zero gap characters where the user typed a space. This
+/// is what lets multi-word needles match across wraps at all.
 pub fn find(chars: &[CharBox], needle: &str) -> Vec<std::ops::Range<usize>> {
     let fold = |c: char| c.to_lowercase().next().unwrap_or(c);
-    let needle: Vec<char> = needle.chars().map(fold).collect();
-    if needle.is_empty() || needle.len() > chars.len() {
+    let segments: Vec<Vec<char>> = needle
+        .split_whitespace()
+        .map(|w| w.chars().map(fold).collect())
+        .collect();
+    if segments.is_empty() {
         return Vec::new();
     }
     let haystack: Vec<char> = chars.iter().map(|c| fold(c.ch)).collect();
     let mut out = Vec::new();
-    for start in 0..=(haystack.len() - needle.len()) {
-        if haystack[start..start + needle.len()] == needle[..] {
-            out.push(start..start + needle.len());
+    for start in 0..haystack.len() {
+        if let Some(end) = match_at(&haystack, &segments, start) {
+            out.push(start..end);
         }
     }
     out
+}
+
+/// `Some(end)` when every segment matches from `start`, skipping any run of
+/// stream whitespace between segments (greedy — segments start with
+/// non-whitespace, so skipping the whole run never skips a match).
+fn match_at(haystack: &[char], segments: &[Vec<char>], start: usize) -> Option<usize> {
+    let mut i = start;
+    for (k, seg) in segments.iter().enumerate() {
+        if k > 0 {
+            while i < haystack.len() && haystack[i].is_whitespace() {
+                i += 1;
+            }
+        }
+        if i + seg.len() > haystack.len() || haystack[i..i + seg.len()] != seg[..] {
+            return None;
+        }
+        i += seg.len();
+    }
+    Some(i)
 }
 
 fn selection_for(chars: &[CharBox], lines: &[Line], lo: usize, hi: usize) -> Option<TextSelection> {
@@ -339,8 +376,38 @@ mod tests {
         assert_eq!(find(&chars, "ab"), vec![0..2, 3..5, 6..8]);
         assert!(find(&chars, "zz").is_empty());
         assert!(find(&chars, "").is_empty());
+        assert!(find(&chars, "   ").is_empty(), "all-whitespace needle");
         assert!(find(&[], "a").is_empty());
         assert!(range_selection(&chars, 5..99).is_none(), "oob is None");
+    }
+
+    #[test]
+    fn find_matches_across_a_dropped_line_wrap() {
+        // pdfium drops the line break from the char stream entirely: the
+        // wrap between "hello" and "world" is *zero* characters wide. A
+        // multi-word needle must still match (the v1 contiguous matcher
+        // could not — the known limitation this replaces).
+        let mut chars = line_of("hello", 0.0, 0.0);
+        chars.extend(line_of("world", 0.0, 20.0));
+        let hits = find(&chars, "hello world");
+        assert_eq!(hits, vec![0..10]);
+        let s = match range_selection(&chars, hits[0].clone()) {
+            Some(s) => s,
+            None => panic!("wrap match yields no selection"),
+        };
+        assert_eq!(s.quads.len(), 2, "one quad per wrapped line");
+    }
+
+    #[test]
+    fn find_needle_whitespace_is_elastic_over_stream_whitespace() {
+        // One typed space matches a multi-space gap…
+        let chars = line_of("hello  world", 0.0, 0.0);
+        assert_eq!(find(&chars, "hello world"), vec![0..12]);
+        // …and extra needle whitespace (incl. leading/trailing) is inert.
+        assert_eq!(find(&chars, "  hello   world "), vec![0..12]);
+        // Non-whitespace gaps are not elastic: no match through punctuation.
+        let chars = line_of("hello,world", 0.0, 0.0);
+        assert!(find(&chars, "hello world").is_empty());
     }
 
     #[test]

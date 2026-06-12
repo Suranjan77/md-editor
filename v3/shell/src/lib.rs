@@ -13,6 +13,7 @@
 //! - [`settings`] — user keymap overrides from `<vault>/.md3/keymap.json`
 //!   (plan §3.1), applied to the kernel keymap at startup.
 
+pub mod desktop;
 pub mod gui;
 pub mod headless;
 pub mod settings;

@@ -196,3 +196,55 @@ fn hits_len(shell: &Shell) -> usize {
         _ => 0,
     }
 }
+
+#[test]
+fn pdf_find_scale_guard_always_on() {
+    let dir = vault(false);
+    let mut shell = new_shell(dir.path());
+    open_via_quick_open(&mut shell, "paper.pdf");
+
+    let fake_layout = md3_pdf::DocLayout::new(vec![(612.0, 792.0); 500], 1.0, 16.0);
+    shell.inject_pdf_session_layout(fake_layout);
+
+    press(&mut shell, "ctrl+f");
+
+    assert!(
+        matches!(
+            shell.overlay(),
+            Some(md3_shell::gui::overlay::Overlay::PdfFind { .. })
+        ),
+        "find overlay should open"
+    );
+
+    assert!(
+        shell.status().contains("searching first 200 of 500 pages"),
+        "status message should reflect scale guard cap: {}",
+        shell.status()
+    );
+}
+
+#[test]
+fn pdf_find_scale_guard_not_triggered_under_cap() {
+    let dir = vault(false);
+    let mut shell = new_shell(dir.path());
+    open_via_quick_open(&mut shell, "paper.pdf");
+
+    let fake_layout = md3_pdf::DocLayout::new(vec![(612.0, 792.0); 150], 1.0, 16.0);
+    shell.inject_pdf_session_layout(fake_layout);
+
+    press(&mut shell, "ctrl+f");
+
+    assert!(
+        matches!(
+            shell.overlay(),
+            Some(md3_shell::gui::overlay::Overlay::PdfFind { .. })
+        ),
+        "find overlay should open"
+    );
+
+    assert!(
+        !shell.status().contains("searching first 200"),
+        "status message should not reflect scale guard under cap: {}",
+        shell.status()
+    );
+}

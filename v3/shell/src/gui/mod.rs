@@ -11,11 +11,15 @@
 //!   documents are peers — any kind in any pane (BUG-C discipline).
 
 pub mod editor_canvas;
+pub mod file_tree;
 pub mod keys;
 pub mod overlay;
+pub mod paint;
 mod pdf_view;
 pub mod session;
 pub mod snapshot;
+pub mod tokens;
+pub mod tracker_view;
 
 use std::path::{Path, PathBuf};
 
@@ -32,8 +36,12 @@ use overlay::{Overlay, PdfFindHit};
 use session::{MdSession, PdfSelection, PdfSession, Sessions};
 use snapshot::{NodeSnapshot, SessionSnapshot, TabSnapshot, ViewSnapshot};
 
+/// Highlight color cycle (`pdf.highlight-color`); new annotations start at
+/// the first entry. Stored per annotation (`#rrggbb`, schema column).
+const HIGHLIGHT_PALETTE: [&str; 4] = ["#ffd866", "#a9dc76", "#78dce8", "#ab9df2"];
+
 /// Default highlight color for new annotations.
-const HIGHLIGHT_COLOR: &str = "#ffd866";
+const HIGHLIGHT_COLOR: &str = HIGHLIGHT_PALETTE[0];
 
 pub fn run(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> iced::Result {
     iced::application(
@@ -49,6 +57,8 @@ pub fn run(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> ic
         // The shell confirms close itself so the session is saved first
         // (Message::WindowCloseRequested → save → exit).
         exit_on_close_request: false,
+        icon: iced::window::icon::from_file_data(include_bytes!("../../../../md-editor.png"), None)
+            .ok(),
         ..Default::default()
     })
     .run()
@@ -88,8 +98,16 @@ pub enum Message {
     PdfMouseUp {
         tab: TabId,
     },
+    PdfRightClick {
+        tab: TabId,
+        pos: (f32, f32),
+        viewport: (f32, f32),
+    },
     OverlayPick(usize),
     WindowCloseRequested,
+    TreeFileClicked(String),
+    TreeDirToggled(String),
+    Tracker(tracker_view::TrackerMessage),
 }
 
 pub struct Shell {
@@ -110,10 +128,48 @@ pub struct Shell {
     session: Option<SessionStore>,
     status: String,
     last_command: Option<CommandId>,
+    tree_open: bool,
+    tree_expanded: std::collections::BTreeSet<String>,
+    // Study Tracker State (Phase 4)
+    tracker_open: bool,
+    tracker_running: bool,
+    tracker_started_at: Option<std::time::Instant>,
+    tracker_sessions: Vec<md3_vault::tracker::StudySession>,
+    tracker_kv: std::collections::HashMap<String, String>,
+    tracker_active_tab: tracker_view::TrackerTab,
+    tracker_config_json: iced::widget::text_editor::Content,
+    tracker_manual_date: String,
+    tracker_manual_hours: String,
+    tracker_manual_notes: String,
 }
 
 impl Shell {
     pub fn new(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> Shell {
+        let tracker_db = directories::ProjectDirs::from("com", "Suranjan77", "md-editor")
+            .map(|p| p.config_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let _ = std::fs::create_dir_all(&tracker_db);
+        let tracker_db_path = tracker_db.join("tracker.db");
+
+        let mut tracker_sessions = Vec::new();
+        let mut tracker_kv = std::collections::HashMap::new();
+        let mut tracker_config_json =
+            iced::widget::text_editor::Content::with_text(&tracker_view::default_config_json());
+
+        if let Ok(store) = md3_vault::tracker::TrackerStore::open(&tracker_db_path) {
+            if let Ok(sessions) = store.get_sessions() {
+                tracker_sessions = sessions;
+            }
+            if let Ok(kvs) = store.get_kv() {
+                for kv in kvs {
+                    tracker_kv.insert(kv.key, kv.value);
+                }
+            }
+            if let Some(json) = tracker_kv.get("tracker_config") {
+                tracker_config_json = iced::widget::text_editor::Content::with_text(json);
+            }
+        }
+
         let mut shell = Shell {
             registry,
             keymap,
@@ -127,6 +183,19 @@ impl Shell {
             session: None,
             status: "ctrl+p open file · ctrl+shift+p commands".to_string(),
             last_command: None,
+            tree_open: false,
+            tree_expanded: std::collections::BTreeSet::new(),
+            // Study Tracker (Phase 4)
+            tracker_open: false,
+            tracker_running: false,
+            tracker_started_at: None,
+            tracker_sessions,
+            tracker_kv,
+            tracker_active_tab: tracker_view::TrackerTab::Dashboard,
+            tracker_config_json,
+            tracker_manual_date: String::new(),
+            tracker_manual_hours: String::new(),
+            tracker_manual_notes: String::new(),
         };
         shell.restore_session();
         shell
@@ -137,6 +206,17 @@ impl Shell {
     /// Lives in a dot-directory so every vault walk skips it.
     fn sidecar_path(&self) -> PathBuf {
         self.vault_root.join(".md3/sidecar.db")
+    }
+
+    fn open_tracker_store(
+        &self,
+    ) -> Result<md3_vault::tracker::TrackerStore, md3_vault::error::VaultError> {
+        let proj = directories::ProjectDirs::from("com", "Suranjan77", "md-editor");
+        let dir = proj
+            .map(|p| p.config_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let _ = std::fs::create_dir_all(&dir);
+        md3_vault::tracker::TrackerStore::open(&dir.join("tracker.db"))
     }
 
     // ----- read-only access for tests and the view -------------------------
@@ -157,6 +237,18 @@ impl Shell {
         self.last_command
     }
 
+    pub fn tree_open(&self) -> bool {
+        self.tree_open
+    }
+
+    pub fn tracker_open(&self) -> bool {
+        self.tracker_open
+    }
+
+    pub fn tree_expanded(&self) -> &std::collections::BTreeSet<String> {
+        &self.tree_expanded
+    }
+
     /// The focused tab's markdown session, if it is one.
     pub fn focused_md(&self) -> Option<&MdSession> {
         let tab = self.ws.focused_tab()?;
@@ -171,8 +263,39 @@ impl Shell {
         self.sessions.pdf.get(&doc)
     }
 
+    /// Mutable access to the focused PDF session — a test seam, like
+    /// [`Self::inject_pdf_session_layout`]: the canvas is the production
+    /// writer of selection state; windowless suites inject it here.
+    pub fn focused_pdf_session_mut(&mut self) -> Option<&mut PdfSession> {
+        let tab = self.ws.focused_tab()?;
+        let doc = self.tab_document(tab)?;
+        self.sessions.pdf.get_mut(&doc)
+    }
+
+    pub fn inject_pdf_session_layout(&mut self, layout: md3_pdf::DocLayout) {
+        let tab = self.ws.focused_tab();
+        let doc = tab.and_then(|t| self.tab_document(t));
+        if let Some(doc) = doc
+            && let Some(session) = self.sessions.pdf.get_mut(&doc)
+        {
+            session.layout = Some(layout);
+        }
+    }
+
     fn theme(&self) -> iced::Theme {
-        iced::Theme::Dark
+        let t = tokens::dark();
+        iced::Theme::custom_with_fn(
+            "MD Editor Dark".to_string(),
+            iced::theme::Palette {
+                background: t.bg_primary,
+                text: t.text_primary,
+                primary: t.accent,
+                success: t.success,
+                danger: t.danger,
+                warning: t.warning,
+            },
+            iced::theme::palette::Extended::generate,
+        )
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -252,6 +375,13 @@ impl Shell {
                 self.pdf_mouse_down(tab, pos, viewport);
                 Task::none()
             }
+            Message::PdfRightClick { tab, pos, viewport } => {
+                if let Err(e) = self.ws.focus_tab(tab) {
+                    self.status = e.to_string();
+                }
+                self.pdf_right_click(tab, pos, viewport);
+                Task::none()
+            }
             Message::PdfMouseDragged { tab, pos, viewport } => {
                 self.pdf_mouse_dragged(tab, pos, viewport);
                 Task::none()
@@ -276,6 +406,183 @@ impl Shell {
                     *sel = i;
                 }
                 self.confirm_overlay()
+            }
+            Message::TreeFileClicked(rel_path) => {
+                self.open_document(&rel_path);
+                Task::none()
+            }
+            Message::TreeDirToggled(dir_path) => {
+                if self.tree_expanded.contains(&dir_path) {
+                    self.tree_expanded.remove(&dir_path);
+                } else {
+                    self.tree_expanded.insert(dir_path);
+                }
+                self.save_session();
+                Task::none()
+            }
+            Message::Tracker(msg) => {
+                match msg {
+                    tracker_view::TrackerMessage::Toggle => {
+                        self.tracker_open = !self.tracker_open;
+                        self.save_session();
+                    }
+                    tracker_view::TrackerMessage::Start => {
+                        self.tracker_running = true;
+                        self.tracker_started_at = Some(std::time::Instant::now());
+                        self.status = "timer: started".to_string();
+                    }
+                    tracker_view::TrackerMessage::Stop => {
+                        if self.tracker_running {
+                            self.tracker_running = false;
+                            if let Some(started_at) = self.tracker_started_at.take() {
+                                let elapsed =
+                                    std::time::Instant::now().saturating_duration_since(started_at);
+                                let hours = (elapsed.as_secs_f32() / 3600.0).max(0.01);
+                                let date =
+                                    chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+                                let session = md3_vault::tracker::StudySession {
+                                    id: 0,
+                                    date,
+                                    hours,
+                                    activity_type: "Study".to_string(),
+                                    phase: "Focus".to_string(),
+                                    notes: None,
+                                };
+                                if let Ok(mut store) = self.open_tracker_store()
+                                    && store.save_session(&session).is_ok()
+                                {
+                                    if let Ok(sessions) = store.get_sessions() {
+                                        self.tracker_sessions = sessions;
+                                    }
+                                    self.status = format!("timer: saved {:.2} hours", hours);
+                                }
+                            }
+                        }
+                    }
+                    tracker_view::TrackerMessage::TabSelected(tab) => {
+                        self.tracker_active_tab = tab;
+                        self.save_session();
+                    }
+                    tracker_view::TrackerMessage::ProjectStatusChanged(id, val) => {
+                        let key = format!("proj_{}", id);
+                        if let Ok(mut store) = self.open_tracker_store()
+                            && store.set_kv(&key, &val).is_ok()
+                        {
+                            self.tracker_kv.insert(key, val);
+                        }
+                    }
+                    tracker_view::TrackerMessage::GateToggled(id, idx) => {
+                        let key = format!("gate_{}_{}", id, idx);
+                        let val = if self
+                            .tracker_kv
+                            .get(&key)
+                            .map(|v| v == "true")
+                            .unwrap_or(false)
+                        {
+                            "false"
+                        } else {
+                            "true"
+                        };
+                        if let Ok(mut store) = self.open_tracker_store()
+                            && store.set_kv(&key, val).is_ok()
+                        {
+                            self.tracker_kv.insert(key, val.to_string());
+                        }
+                    }
+                    tracker_view::TrackerMessage::ReadingToggled(section, idx) => {
+                        let key = format!("read_{}_{}", section, idx);
+                        let val = if self
+                            .tracker_kv
+                            .get(&key)
+                            .map(|v| v == "true")
+                            .unwrap_or(false)
+                        {
+                            "false"
+                        } else {
+                            "true"
+                        };
+                        if let Ok(mut store) = self.open_tracker_store()
+                            && store.set_kv(&key, val).is_ok()
+                        {
+                            self.tracker_kv.insert(key, val.to_string());
+                        }
+                    }
+                    tracker_view::TrackerMessage::ConfigEdited(action) => {
+                        self.tracker_config_json.perform(action);
+                    }
+                    tracker_view::TrackerMessage::ConfigSave => {
+                        let text = self.tracker_config_json.text();
+                        match tracker_view::parse_config(&text) {
+                            Ok(_) => {
+                                if let Ok(mut store) = self.open_tracker_store()
+                                    && store.set_kv("tracker_config", &text).is_ok()
+                                {
+                                    self.tracker_kv.insert("tracker_config".to_string(), text);
+                                    self.status = "tracker: configuration saved".to_string();
+                                }
+                            }
+                            Err(e) => {
+                                self.status = format!("tracker: invalid config: {}", e);
+                            }
+                        }
+                    }
+                    tracker_view::TrackerMessage::ManualDateChanged(val) => {
+                        self.tracker_manual_date = val;
+                    }
+                    tracker_view::TrackerMessage::ManualHoursChanged(val) => {
+                        self.tracker_manual_hours = val;
+                    }
+                    tracker_view::TrackerMessage::ManualNotesChanged(val) => {
+                        self.tracker_manual_notes = val;
+                    }
+                    tracker_view::TrackerMessage::ManualAdd => {
+                        let Ok(hours) = self.tracker_manual_hours.trim().parse::<f32>() else {
+                            self.status = "tracker: invalid hours".to_string();
+                            return Task::none();
+                        };
+                        if hours <= 0.0 {
+                            self.status = "tracker: invalid hours".to_string();
+                            return Task::none();
+                        }
+                        let date = if self.tracker_manual_date.trim().is_empty() {
+                            chrono::Local::now().format("%Y-%m-%d").to_string()
+                        } else {
+                            self.tracker_manual_date.trim().to_string()
+                        };
+                        let notes = (!self.tracker_manual_notes.trim().is_empty())
+                            .then(|| self.tracker_manual_notes.trim().to_string());
+
+                        let session = md3_vault::tracker::StudySession {
+                            id: 0,
+                            date,
+                            hours,
+                            activity_type: "Manual".to_string(),
+                            phase: "Manual".to_string(),
+                            notes,
+                        };
+                        if let Ok(mut store) = self.open_tracker_store()
+                            && store.save_session(&session).is_ok()
+                        {
+                            if let Ok(sessions) = store.get_sessions() {
+                                self.tracker_sessions = sessions;
+                            }
+                            self.tracker_manual_hours = String::new();
+                            self.tracker_manual_notes = String::new();
+                            self.status = "tracker: session logged manually".to_string();
+                        }
+                    }
+                    tracker_view::TrackerMessage::SessionDelete(id) => {
+                        if let Ok(mut store) = self.open_tracker_store()
+                            && store.delete_session(id).is_ok()
+                        {
+                            if let Ok(sessions) = store.get_sessions() {
+                                self.tracker_sessions = sessions;
+                            }
+                            self.status = "tracker: session deleted".to_string();
+                        }
+                    }
+                }
+                Task::none()
             }
         }
     }
@@ -304,6 +611,27 @@ impl Shell {
             return;
         };
         let page = page as u32;
+        if let Some(link) = session.link_at(page, pt) {
+            if let Some((dest_page, dest_y)) = link.dest {
+                session.record_jump();
+                session.go_to_page(dest_page as usize);
+                if let Some(y) = dest_y {
+                    let zoom = session.zoom;
+                    if let Some(layout) = &session.layout {
+                        let max = layout.max_scroll(session.viewport.1);
+                        let top = layout.page_top(dest_page as usize);
+                        session.scroll = (top + y * zoom).clamp(0.0, max);
+                    }
+                }
+                let abs = root.join(&session.rel_path);
+                pdf_view::ensure_tiles(session, &abs);
+                self.status = format!("→ p. {} · alt+left returns", dest_page + 1);
+                return;
+            } else if let Some(uri) = &link.uri {
+                self.status = format!("link: {uri}");
+                return;
+            }
+        }
         let picked = session
             .annotation_at(page, pt)
             .map(|a| (a.id, a.note.clone()));
@@ -326,6 +654,74 @@ impl Shell {
             text: String::new(),
         });
         self.sync_status();
+    }
+
+    fn pdf_right_click(&mut self, tab: TabId, pos: (f32, f32), viewport: (f32, f32)) {
+        let root = self.vault_root.clone();
+        let Some(session) = self
+            .tab_document(tab)
+            .and_then(|d| self.sessions.pdf.get_mut(&d))
+        else {
+            return;
+        };
+        session.viewport = viewport;
+        let abs = root.join(&session.rel_path);
+        pdf_view::ensure_tiles(session, &abs);
+        let hit = session
+            .layout
+            .as_ref()
+            .and_then(|l| l.page_at_point(session.scroll, viewport, pos));
+        let Some((page, pt)) = hit else {
+            return;
+        };
+        let page = page as u32;
+        if let Some(link) = session.link_at(page, pt) {
+            if let Some(uri) = &link.uri {
+                self.status = format!("link: {uri}");
+            } else if let Some((dest_page, dest_y)) = link.dest {
+                #[cfg(feature = "pdfium")]
+                {
+                    if let Some(renderer) = pdf_view::renderer() {
+                        let w_px = session
+                            .layout
+                            .as_ref()
+                            .map(|l| l.page_size_px(dest_page as usize).0)
+                            .unwrap_or(0.0);
+                        let page_width_pts = w_px / session.zoom;
+                        let scale = if page_width_pts > 0.0 {
+                            (520.0 / page_width_pts).min(2.0)
+                        } else {
+                            1.0
+                        };
+                        match renderer.render_page(&abs, dest_page, scale) {
+                            Ok(rendered) => {
+                                let handle = iced::widget::image::Handle::from_rgba(
+                                    rendered.width,
+                                    rendered.height,
+                                    rendered.rgba,
+                                );
+                                self.open_overlay(Overlay::PdfLinkPreview {
+                                    dest_page,
+                                    dest_y,
+                                    image: handle,
+                                    width: rendered.width,
+                                    height: rendered.height,
+                                });
+                            }
+                            Err(e) => {
+                                self.status = format!("preview render failed: {e}");
+                            }
+                        }
+                    }
+                }
+                #[cfg(not(feature = "pdfium"))]
+                {
+                    let _ = dest_page;
+                    let _ = dest_y;
+                    self.status = "preview: built without pdfium".to_string();
+                }
+            }
+        }
     }
 
     /// Drag: extend the selection from its anchor to the cursor, expressed
@@ -364,8 +760,7 @@ impl Shell {
         }
         // Not a command: raw input for the focused surface.
         if self.overlay.is_some() {
-            self.overlay_raw_input(&ev);
-            return Task::none();
+            return self.overlay_raw_input(&ev);
         }
         match self.ws.focused_editor_kind() {
             Some(EditorKind::Markdown) => self.editor_raw_input(&ev),
@@ -456,13 +851,15 @@ impl Shell {
         pdf_view::ensure_tiles(session, &abs);
     }
 
-    fn overlay_raw_input(&mut self, ev: &keys::KeyEvent) {
+    fn overlay_raw_input(&mut self, ev: &keys::KeyEvent) -> Task<Message> {
         let Some(overlay) = self.overlay.as_mut() else {
-            return;
+            return Task::none();
         };
         match ev.chord.map(|c| c.key) {
             Some(Key::Backspace) => {
-                overlay.input_mut().pop();
+                if let Some(input) = overlay.input_mut() {
+                    input.pop();
+                }
             }
             Some(Key::Up) => {
                 if let Some(sel) = overlay.selected_mut() {
@@ -471,12 +868,14 @@ impl Shell {
             }
             Some(Key::Down) => {
                 if let Some(sel) = overlay.selected_mut() {
-                    *sel += 1; // clamped against the row count on confirm/draw
+                    *sel += 1; // clamped against the live row count below
                 }
             }
             _ => {
-                if let Some(t) = &ev.text {
-                    overlay.input_mut().push_str(t);
+                if let Some(t) = &ev.text
+                    && let Some(input) = overlay.input_mut()
+                {
+                    input.push_str(t);
                 }
             }
         }
@@ -504,6 +903,18 @@ impl Shell {
                 *hits = new_hits;
             }
         }
+        // Clamp selection against the rows actually displayed (typing can
+        // shrink the list; down must not walk past it — what's on screen is
+        // what enter picks), then keep the selected row scrolled into view.
+        let rows = match self.overlay.as_ref() {
+            Some(ov) => overlay::list_rows(ov, &self.registry, &self.files).len(),
+            None => 0,
+        };
+        if let Some(sel) = self.overlay.as_mut().and_then(Overlay::selected_mut) {
+            *sel = (*sel).min(rows.saturating_sub(1));
+            return overlay::snap_selected(rows, *sel);
+        }
+        Task::none()
     }
 
     // --------------------------------------------------------- commands --
@@ -535,6 +946,22 @@ impl Shell {
                     hits: Vec::new(),
                 });
             }
+            "note.backlinks" => {
+                let Some((path, EditorKind::Markdown)) = self.focused_doc_info() else {
+                    self.status = "backlinks: focus a note".to_string();
+                    return Task::none();
+                };
+                let referrers = self.note_backlinks(&path);
+                if referrers.is_empty() {
+                    self.status = format!("no backlinks to {path}");
+                    return Task::none();
+                }
+                self.open_overlay(Overlay::Backlinks {
+                    input: String::new(),
+                    selected: 0,
+                    referrers,
+                });
+            }
             "workspace.split-right" => {
                 let focused = self.focused_doc_info();
                 match focused {
@@ -558,6 +985,17 @@ impl Shell {
                 }
             }
             "workspace.next-tab" => self.cycle_tab(),
+            "workspace.toggle-files" => {
+                self.tree_open = !self.tree_open;
+                if self.tree_open {
+                    self.files = scan_vault(&self.vault_root);
+                }
+                self.save_session();
+            }
+            "workspace.toggle-tracker" => {
+                self.tracker_open = !self.tracker_open;
+                self.save_session();
+            }
             "editor.undo" => {
                 if let Some(s) = self.focused_md_mut() {
                     s.apply(Command::Undo);
@@ -608,6 +1046,35 @@ impl Shell {
                 }
             }
             "pdf.annotations-export" => self.export_annotations(),
+            "pdf.copy-selection" => {
+                let text = self
+                    .focused_pdf()
+                    .and_then(|s| s.selection.as_ref())
+                    .map(|sel| sel.text.clone())
+                    .filter(|t| !t.is_empty());
+                return match text {
+                    Some(text) => {
+                        self.status = format!("{} chars copied", text.chars().count());
+                        iced::clipboard::write(text)
+                    }
+                    None => {
+                        self.status = "select text first (drag over the page)".to_string();
+                        Task::none()
+                    }
+                };
+            }
+            "pdf.highlight-color" => {
+                self.cycle_highlight_color();
+                return Task::none();
+            }
+            "pdf.annotation-link-note" => {
+                self.link_note_for_annotation();
+                return Task::none();
+            }
+            "pdf.annotations-orphans" => {
+                self.orphan_report();
+                return Task::none();
+            }
             "overlay.close" => self.close_overlay(),
             "overlay.confirm" => return self.confirm_overlay(),
             other => self.status = format!("unhandled command: {other}"),
@@ -666,6 +1133,28 @@ impl Shell {
                 let picked = hits
                     .get(selected.min(hits.len().saturating_sub(1)))
                     .map(|h| h.path.to_string_lossy().to_string());
+                self.close_overlay();
+                if let Some(path) = picked {
+                    self.open_document(&path);
+                }
+            }
+            Overlay::Backlinks {
+                input,
+                selected,
+                referrers,
+            } => {
+                let rows = overlay::list_rows(
+                    &Overlay::Backlinks {
+                        input,
+                        selected,
+                        referrers,
+                    },
+                    &self.registry,
+                    &self.files,
+                );
+                let picked = rows
+                    .get(selected.min(rows.len().saturating_sub(1)))
+                    .map(|(p, _)| p.clone());
                 self.close_overlay();
                 if let Some(path) = picked {
                     self.open_document(&path);
@@ -741,6 +1230,30 @@ impl Shell {
                 self.close_overlay();
                 self.set_annotation_note(&input);
             }
+            // Read-only report: confirm = dismiss.
+            Overlay::OrphanReport { .. } => self.close_overlay(),
+            Overlay::PdfLinkPreview {
+                dest_page, dest_y, ..
+            } => {
+                self.close_overlay();
+                let root = self.vault_root.clone();
+                if let Some(session) = self.focused_pdf_mut() {
+                    session.record_jump();
+                    session.go_to_page(dest_page as usize);
+                    if let Some(y) = dest_y {
+                        let zoom = session.zoom;
+                        if let Some(layout) = &session.layout {
+                            let max = layout.max_scroll(session.viewport.1);
+                            let top = layout.page_top(dest_page as usize);
+                            session.scroll = (top + y * zoom).clamp(0.0, max);
+                        }
+                    }
+                    let abs = root.join(&session.rel_path);
+                    pdf_view::ensure_tiles(session, &abs);
+                    self.status = format!("→ p. {} · alt+left returns", dest_page + 1);
+                    return Task::none();
+                }
+            }
         }
         self.sync_status();
         Task::none()
@@ -754,6 +1267,9 @@ impl Shell {
             .focused_pane()
             .unwrap_or_else(|| self.ws.panes.first_pane());
         if self.open_document_in(pane, rel).is_some() {
+            if self.tree_open {
+                self.files = scan_vault(&self.vault_root);
+            }
             self.save_session();
         }
     }
@@ -862,7 +1378,21 @@ impl Shell {
                 },
             );
         }
-        SessionSnapshot { layout, views }
+        SessionSnapshot {
+            layout,
+            views,
+            tree_open: self.tree_open,
+            tree_expanded: self.tree_expanded.iter().cloned().collect(),
+            tracker_open: self.tracker_open,
+            tracker_active_tab: Some(match self.tracker_active_tab {
+                tracker_view::TrackerTab::Dashboard => "Dashboard".to_string(),
+                tracker_view::TrackerTab::Log => "Log".to_string(),
+                tracker_view::TrackerTab::Projects => "Projects".to_string(),
+                tracker_view::TrackerTab::Gates => "Gates".to_string(),
+                tracker_view::TrackerTab::Reading => "Reading".to_string(),
+                tracker_view::TrackerTab::Config => "Config".to_string(),
+            }),
+        }
     }
 
     fn snapshot_node(&self, node: &Layout<'_>) -> NodeSnapshot {
@@ -961,6 +1491,20 @@ impl Shell {
         if let Some(tab) = focus {
             let _ = self.ws.focus_tab(tab);
         }
+        self.tree_open = snap.tree_open;
+        self.tree_expanded = snap.tree_expanded.into_iter().collect();
+        self.tracker_open = snap.tracker_open;
+        if let Some(tab_str) = snap.tracker_active_tab {
+            self.tracker_active_tab = match tab_str.as_str() {
+                "Dashboard" => tracker_view::TrackerTab::Dashboard,
+                "Log" => tracker_view::TrackerTab::Log,
+                "Projects" => tracker_view::TrackerTab::Projects,
+                "Gates" => tracker_view::TrackerTab::Gates,
+                "Reading" => tracker_view::TrackerTab::Reading,
+                "Config" => tracker_view::TrackerTab::Config,
+                _ => tracker_view::TrackerTab::Dashboard,
+            };
+        }
         self.sync_status();
         if let Some(s) = self.focused_pdf()
             && s.layout.is_some()
@@ -1030,6 +1574,9 @@ impl Shell {
                 // Keep the search index converged with the save.
                 if let Some(index) = self.index.as_mut() {
                     let _ = index.sync_paths(&root, &[abs]);
+                }
+                if self.tree_open {
+                    self.files = scan_vault(&root);
                 }
             }
             Err(e) => self.status = format!("save failed: {e}"),
@@ -1122,6 +1669,119 @@ impl Shell {
         }
     }
 
+    /// `pdf.highlight-color`: step the picked highlight through the token
+    /// palette (an unknown stored color restarts the cycle).
+    fn cycle_highlight_color(&mut self) {
+        let Some(doc) = self.ws.focused_tab().and_then(|t| self.tab_document(t)) else {
+            return;
+        };
+        let (Some(store), Some(session)) =
+            (self.annotations.as_mut(), self.sessions.pdf.get_mut(&doc))
+        else {
+            return;
+        };
+        let Some(current) = session.selected_annotation() else {
+            self.status = "click a highlight first".to_string();
+            return;
+        };
+        let id = current.id;
+        let next = HIGHLIGHT_PALETTE
+            .iter()
+            .position(|c| *c == current.color)
+            .map(|i| HIGHLIGHT_PALETTE[(i + 1) % HIGHLIGHT_PALETTE.len()])
+            .unwrap_or(HIGHLIGHT_PALETTE[0]);
+        match store.set_color(id, next) {
+            Ok(()) => {
+                refresh_annotations(store, session);
+                self.status = format!("highlight color {next}");
+            }
+            Err(e) => self.status = format!("color failed: {e}"),
+        }
+    }
+
+    /// `pdf.annotation-link-note`: open the picked highlight's linked note,
+    /// creating `<stem>-notes.md` beside the PDF on first use (a vault
+    /// citizen, like the annotations export) and recording it on the
+    /// annotation.
+    fn link_note_for_annotation(&mut self) {
+        self.ensure_annotations();
+        let root = self.vault_root.clone();
+        let Some(doc) = self.ws.focused_tab().and_then(|t| self.tab_document(t)) else {
+            return;
+        };
+        let (Some(store), Some(session)) =
+            (self.annotations.as_mut(), self.sessions.pdf.get_mut(&doc))
+        else {
+            return;
+        };
+        let Some(current) = session.selected_annotation() else {
+            self.status = "click a highlight first".to_string();
+            return;
+        };
+        let id = current.id;
+        let rel = current
+            .linked_note
+            .clone()
+            .unwrap_or_else(|| format!("{}-notes.md", session.rel_path.trim_end_matches(".pdf")));
+        let abs = root.join(&rel);
+        if !abs.exists() {
+            let seed = format!("# Notes — {}\n", session.rel_path);
+            if let Err(e) = md3_vault::atomic_save(&abs, seed.as_bytes()) {
+                self.status = format!("linked note failed: {e}");
+                return;
+            }
+            if let Some(index) = self.index.as_mut() {
+                let _ = index.sync_paths(&root, &[abs]);
+            }
+        }
+        match store.set_linked_note(id, &rel) {
+            Ok(()) => {
+                refresh_annotations(store, session);
+                self.open_document(&rel);
+                self.status = format!("linked note {rel}");
+            }
+            Err(e) => self.status = format!("linked note failed: {e}"),
+        }
+    }
+
+    /// `pdf.annotations-orphans`: list sidecar documents whose annotations
+    /// no longer match any vault file's content (edited bytes = new
+    /// identity; the old annotations stay reachable, never silently drop).
+    fn orphan_report(&mut self) {
+        self.ensure_annotations();
+        let Some(store) = self.annotations.as_ref() else {
+            self.status = "annotation store unavailable".to_string();
+            return;
+        };
+        let known = match store.known_documents() {
+            Ok(k) => k,
+            Err(e) => {
+                self.status = format!("orphan report failed: {e}");
+                return;
+            }
+        };
+        let live: std::collections::HashSet<String> = scan_vault(&self.vault_root)
+            .iter()
+            .filter(|rel| rel.ends_with(".pdf"))
+            .filter_map(|rel| md3_vault::document_hash(&self.vault_root.join(rel)).ok())
+            .collect();
+        let rows: Vec<(String, String)> = known
+            .iter()
+            .filter(|d| d.annotation_count > 0 && !live.contains(&d.doc_hash))
+            .map(|d| {
+                (
+                    d.last_path.clone(),
+                    format!("{} annotations", d.annotation_count),
+                )
+            })
+            .collect();
+        if rows.is_empty() {
+            self.status = "no orphaned annotations".to_string();
+            return;
+        }
+        self.open_overlay(Overlay::OrphanReport { rows });
+    }
+
     /// Confirm handler for the note overlay: overwrite the picked
     /// annotation's note.
     fn set_annotation_note(&mut self, note: &str) {
@@ -1202,7 +1862,9 @@ impl Shell {
             return;
         }
         let abs = root.join(&session.rel_path);
-        for page in 0..session.page_count() as u32 {
+        let count = session.page_count();
+        let cap = count.min(200);
+        for page in 0..cap as u32 {
             pdf_view::load_page_chars(session, &abs, page);
         }
         self.open_overlay(Overlay::PdfFind {
@@ -1210,6 +1872,9 @@ impl Shell {
             selected: 0,
             hits: Vec::new(),
         });
+        if count > 200 {
+            self.status = format!("find: searching first 200 of {count} pages");
+        }
     }
 
     /// `pdf.toc`: the outline as a filterable jump list, depth as
@@ -1402,11 +2067,35 @@ impl Shell {
         Ok(())
     }
 
+    /// Referrers of `rel_path` per the wikilink graph, built fresh from the
+    /// vault's notes on every call (mirrors quick-open's rescan: always
+    /// current, vault-sized work — a cached graph + watcher refresh is the
+    /// upgrade path if vaults outgrow it).
+    fn note_backlinks(&self, rel_path: &str) -> Vec<String> {
+        let mut graph = md3_vault::LinkGraph::new();
+        for rel in scan_vault(&self.vault_root) {
+            if !rel.ends_with(".md") {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(self.vault_root.join(&rel)) else {
+                continue;
+            };
+            graph.update_file(Path::new(&rel), &content);
+        }
+        graph
+            .backlinks(Path::new(rel_path))
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect()
+    }
+
     fn search_vault(&mut self, query: &str) -> Vec<md3_vault::Hit> {
         let Some(index) = self.index.as_ref() else {
             return Vec::new();
         };
-        index.search(query, 12).unwrap_or_default()
+        // The overlay list scrolls, so this bound is about FTS query cost,
+        // not what fits on screen.
+        index.search(query, 50).unwrap_or_default()
     }
 
     // ------------------------------------------------------------ helpers --
@@ -1472,11 +2161,101 @@ impl Shell {
 
     fn view(&self) -> Element<'_, Message> {
         let workspace = self.layout_view(&self.ws.panes.layout());
-        let status = container(text(self.status.clone()).size(13).color(colors::MARKER))
+
+        let mut row_children = Vec::new();
+
+        if self.tree_open {
+            let rows = file_tree::visible_rows(&self.files, &self.tree_expanded);
+            let focused_path = self
+                .ws
+                .focused_tab()
+                .and_then(|t| self.tab_document(t))
+                .and_then(|d| self.ws.docs.get(d))
+                .map(|doc| doc.path.as_str());
+
+            let mut col = column![].spacing(2);
+            for row in rows {
+                let indent = row.depth as f32 * 14.0;
+                let marker = if row.is_dir {
+                    if self.tree_expanded.contains(&row.rel_path) {
+                        "▾ "
+                    } else {
+                        "▸ "
+                    }
+                } else {
+                    "  "
+                };
+
+                let is_active = focused_path.is_some_and(|p| p == row.rel_path);
+                let text_color = if is_active {
+                    tokens::dark().accent
+                } else {
+                    colors::text()
+                };
+
+                let content = row![
+                    iced::widget::Space::new().width(indent),
+                    text(format!("{marker}{}", row.label))
+                        .size(13)
+                        .color(text_color)
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(4);
+
+                let msg = if row.is_dir {
+                    Message::TreeDirToggled(row.rel_path.clone())
+                } else {
+                    Message::TreeFileClicked(row.rel_path.clone())
+                };
+
+                let item = iced::widget::mouse_area(content).on_press(msg);
+                col = col.push(item);
+            }
+
+            let sidebar_bg = tokens::dark().bg_secondary;
+            let border_color = tokens::dark().border;
+
+            let panel = container(iced::widget::scrollable(col))
+                .width(240)
+                .height(Fill)
+                .padding(8)
+                .style(move |_| container::Style {
+                    background: Some(iced::Background::Color(sidebar_bg)),
+                    border: iced::Border {
+                        color: border_color,
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..container::Style::default()
+                });
+
+            row_children.push(panel.into());
+        }
+
+        row_children.push(container(workspace).width(Fill).height(Fill).into());
+
+        if self.tracker_open {
+            let tracker_panel = tracker_view::view(
+                self.tracker_open,
+                self.tracker_running,
+                &self.tracker_sessions,
+                &self.tracker_kv,
+                self.tracker_active_tab,
+                &self.tracker_config_json,
+                &self.tracker_manual_date,
+                &self.tracker_manual_hours,
+                &self.tracker_manual_notes,
+            );
+            row_children.push(tracker_panel);
+        }
+
+        let workspace_content = row(row_children).spacing(0);
+
+        let status = container(text(self.status.clone()).size(13).color(colors::marker()))
             .padding([4, 10])
             .width(Fill);
 
-        let base = column![container(workspace).height(Fill), status];
+        let base = column![container(workspace_content).height(Fill), status];
         match &self.overlay {
             Some(ov) => stack![base, overlay::view(ov, &self.registry, &self.files)].into(),
             None => base.into(),
@@ -1562,7 +2341,7 @@ impl Shell {
             None => container(
                 text("ctrl+p to open a file · ctrl+shift+p for commands")
                     .size(14)
-                    .color(colors::MARKER),
+                    .color(colors::marker()),
             )
             .center(Fill)
             .into(),
@@ -1584,7 +2363,7 @@ impl Shell {
                         Some(session) => pdf_view::view(session, tab.id),
                         None => missing_session(),
                     },
-                    _ => container(text("unsupported editor kind").color(colors::MARKER))
+                    _ => container(text("unsupported editor kind").color(colors::marker()))
                         .center(Fill)
                         .into(),
                 }
@@ -1592,9 +2371,9 @@ impl Shell {
         };
 
         let border_color = if pane_focused {
-            iced::Color::from_rgb(0.45, 0.55, 0.85)
+            tokens::dark().accent
         } else {
-            iced::Color::from_rgb(0.25, 0.25, 0.33)
+            tokens::dark().border
         };
         container(column![strip, container(content).height(Fill)])
             .style(move |_| container::Style {
@@ -1645,7 +2424,7 @@ impl md3_vault::TextExtractor for PdfTextExtractor {
 }
 
 fn missing_session<'a>() -> Element<'a, Message> {
-    container(text("document failed to load").color(colors::MARKER))
+    container(text("document failed to load").color(colors::marker()))
         .center(Fill)
         .into()
 }

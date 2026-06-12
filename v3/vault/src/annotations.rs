@@ -197,8 +197,13 @@ impl AnnotationStore {
         self.touch(id, "color", color)
     }
 
+    /// Record the vault-relative path of the annotation's linked note.
+    pub fn set_linked_note(&mut self, id: i64, rel_path: &str) -> Result<(), VaultError> {
+        self.touch(id, "linked_note", rel_path)
+    }
+
     fn touch(&mut self, id: i64, column: &str, value: &str) -> Result<(), VaultError> {
-        // `column` is a compile-time constant from the two callers above,
+        // `column` is a compile-time constant from the callers above,
         // never user input.
         let sql = format!("UPDATE annotations SET {column} = ?1, modified_at = ?2 WHERE id = ?3");
         let n = self
@@ -518,9 +523,11 @@ mod tests {
         let id = ok(store.add(highlight("doc", 0, "first")));
         ok(store.update_note(id, "revised"));
         ok(store.set_color(id, "#ff6188"));
+        ok(store.set_linked_note(id, "notes/first.md"));
         let anns = ok(store.annotations_for("doc"));
         assert_eq!(anns[0].note, "revised");
         assert_eq!(anns[0].color, "#ff6188");
+        assert_eq!(anns[0].linked_note.as_deref(), Some("notes/first.md"));
         assert!(anns[0].modified_at >= anns[0].created_at);
 
         ok(store.remove(id));
