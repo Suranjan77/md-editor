@@ -59,6 +59,26 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             )],
         ),
         spec(
+            "workspace.toggle-files",
+            "Toggle File Panel",
+            "Workspace",
+            vec![bind(
+                Scope::Workspace,
+                Chord::ctrl('b'),
+                CommandId("workspace.toggle-files"),
+            )],
+        ),
+        spec(
+            "workspace.toggle-tracker",
+            "Toggle Study Tracker",
+            "Workspace",
+            vec![bind(
+                Scope::Workspace,
+                Chord::new(Mods::CTRL_SHIFT, Key::Char('t')),
+                CommandId("workspace.toggle-tracker"),
+            )],
+        ),
+        spec(
             "workspace.close-tab",
             "Close Tab",
             "Workspace",
@@ -123,6 +143,16 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             "Editor",
             vec![bind(md, Chord::ctrl('a'), CommandId("editor.select-all"))],
         ),
+        spec(
+            "note.backlinks",
+            "Backlinks",
+            "Editor",
+            vec![bind(
+                md,
+                Chord::new(Mods::CTRL_SHIFT, Key::Char('b')),
+                CommandId("note.backlinks"),
+            )],
+        ),
         // -- pdf editor -------------------------------------------------------
         // The other half of v2's BUG-A pair: same chord, different scope.
         spec(
@@ -185,10 +215,34 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
                 CommandId("pdf.forward"),
             )],
         ),
+        spec(
+            "pdf.copy-selection",
+            "Copy Selection",
+            "PDF",
+            vec![bind(pdf, Chord::ctrl('c'), CommandId("pdf.copy-selection"))],
+        ),
         // Palette-only: no chord, reachable via ctrl+shift+p.
         spec(
             "pdf.annotations-export",
             "Export Annotations (Markdown)",
+            "PDF",
+            vec![],
+        ),
+        spec(
+            "pdf.highlight-color",
+            "Cycle Highlight Color",
+            "PDF",
+            vec![],
+        ),
+        spec(
+            "pdf.annotation-link-note",
+            "Open Linked Note for Highlight",
+            "PDF",
+            vec![],
+        ),
+        spec(
+            "pdf.annotations-orphans",
+            "Orphaned Annotations Report",
             "PDF",
             vec![],
         ),

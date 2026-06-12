@@ -10,6 +10,7 @@ pub mod index;
 pub mod links;
 pub mod migrations;
 pub mod session;
+pub mod tracker;
 pub mod watcher;
 
 pub use annotations::{
@@ -20,4 +21,5 @@ pub use error::VaultError;
 pub use index::{Hit, SearchIndex, SyncReport, TextExtractor};
 pub use links::{LinkGraph, WikiLink, extract_wikilinks, resolve_target, rewrite_links};
 pub use session::SessionStore;
+pub use tracker::{StudySession, TrackerKv, TrackerStore};
 pub use watcher::{DEFAULT_DEBOUNCE, VaultWatcher};

@@ -210,6 +210,90 @@ impl PdfRenderer {
         Ok(out)
     }
 
+    pub fn page_links(&self, path: &Path, page: u32) -> Result<Vec<crate::LinkBox>, PdfError> {
+        let _calls = pdfium_lock();
+        let doc = self.open(path)?;
+        let page_obj = get_page(&doc, page)?;
+        let page_h = page_obj.height().value;
+        let mut out = Vec::new();
+        for link in page_obj.links().iter() {
+            let Ok(rect) = link.rect() else {
+                continue;
+            };
+            let sel_rect = crate::SelRect {
+                x0: rect.left().value,
+                y0: page_h - rect.top().value,
+                x1: rect.right().value,
+                y1: page_h - rect.bottom().value,
+            };
+
+            let mut dest_page = None;
+            let mut dest_y = None;
+            let mut uri = None;
+
+            let extract_dest = |dest: &PdfDestination| {
+                let p = dest.page_index().ok().map(|i| i as u32);
+                let y = p.and_then(|dp| {
+                    let dest_page_obj = doc.pages().get(dp as i32).ok()?;
+                    let dest_page_h = dest_page_obj.height().value;
+                    match dest.view_settings() {
+                        Ok(PdfDestinationViewSettings::SpecificCoordinatesAndZoom(
+                            _,
+                            Some(y_pts),
+                            _,
+                        )) => Some(dest_page_h - y_pts.value),
+                        Ok(PdfDestinationViewSettings::FitPageHorizontallyToWindow(Some(
+                            y_pts,
+                        ))) => Some(dest_page_h - y_pts.value),
+                        Ok(PdfDestinationViewSettings::FitBoundsHorizontallyToWindow(Some(
+                            y_pts,
+                        ))) => Some(dest_page_h - y_pts.value),
+                        _ => None,
+                    }
+                });
+                (p, y)
+            };
+
+            if let Some(action) = link.action() {
+                match action {
+                    PdfAction::Uri(ref uri_action) => {
+                        uri = uri_action.uri().ok();
+                    }
+                    PdfAction::LocalDestination(ref local) => {
+                        if let Ok(dest) = local.destination() {
+                            let (p, y) = extract_dest(&dest);
+                            dest_page = p;
+                            dest_y = y;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if dest_page.is_none()
+                && uri.is_none()
+                && let Some(dest) = link.destination()
+            {
+                let (p, y) = extract_dest(&dest);
+                dest_page = p;
+                dest_y = y;
+            }
+
+            if dest_page.is_none() && uri.is_none() {
+                continue;
+            }
+
+            let dest = dest_page.map(|p| (p, dest_y));
+
+            out.push(crate::LinkBox {
+                rect: sel_rect,
+                dest,
+                uri,
+            });
+        }
+        Ok(out)
+    }
+
     /// The document outline (bookmark tree) flattened to prefix order with
     /// depths — [`crate::outline`]'s input. Entries without a title or a
     /// page destination are skipped (their subtrees are still walked).
@@ -469,5 +553,34 @@ mod tests {
         };
         let text = ok(renderer.extract_text(&fixture("cjk-text.pdf"), 0));
         assert!(!text.trim().is_empty(), "extracted some text");
+    }
+
+    #[test]
+    fn internal_links_fixture_yields_a_page_two_destination() {
+        let Some(renderer) = renderer() else {
+            eprintln!("skipping: libpdfium not available");
+            return;
+        };
+        let path = fixture("internal-links.pdf");
+        let links = ok(renderer.page_links(&path, 0));
+        assert!(!links.is_empty(), "internal-links.pdf should have links");
+
+        let link = links.iter().find(|l| {
+            if let Some((dest_page, _)) = l.dest {
+                dest_page == 1
+            } else {
+                false
+            }
+        });
+        assert!(link.is_some(), "should find a link dest on page 1");
+
+        let (page_w, page_h) = ok(renderer.page_size(&path, 0));
+        if let Some(l) = link {
+            assert!(l.rect.x0 >= -1.0 && l.rect.x1 <= page_w + 1.0);
+            assert!(l.rect.y0 >= -1.0 && l.rect.y1 <= page_h + 1.0);
+        }
+
+        let empty_links = ok(renderer.page_links(&fixture("single-page.pdf"), 0));
+        assert!(empty_links.is_empty(), "single-page.pdf has no links");
     }
 }

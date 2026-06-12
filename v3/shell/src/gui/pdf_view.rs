@@ -13,9 +13,12 @@ use md3_kernel::pane::TabId;
 
 use super::Message;
 use super::editor_canvas::palette as colors;
+use super::paint::{self, Tint};
 #[cfg(feature = "pdfium")]
 use super::session::PAGE_GAP;
 use super::session::PdfSession;
+use super::tokens;
+use super::worker::{PdfJob, WorkerHandle};
 
 #[cfg(feature = "pdfium")]
 pub fn renderer() -> Option<&'static md3_pdf::render::PdfRenderer> {
@@ -74,10 +77,11 @@ pub fn load_geometry(session: &mut PdfSession, abs_path: &Path) {
 }
 
 /// Make every tile the viewport needs displayable: schedule missing ones,
-/// cancel offscreen requests (plan §3.3: dropped, not rendered), render the
-/// rest, and drop pixmaps the byte budget evicts. Synchronous for now — a
-/// worker thread is a refinement once tiles dominate a profile.
-pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path) {
+/// cancel offscreen requests (plan §3.3: dropped, not rendered), and drop
+/// pixmaps the byte budget evicts. With a worker, queued tiles are submitted
+/// and arrive as [`Message::PdfWorker`] results; without one (windowless
+/// tests, or before the subscription's handshake) they render inline.
+pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path, worker: Option<&WorkerHandle>) {
     #[cfg(feature = "pdfium")]
     {
         let Some(layout) = &session.layout else {
@@ -97,14 +101,28 @@ pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path) {
             .map(|p| p as u32)
             .collect();
         for page in pages {
-            load_page_chars(session, abs_path, page);
+            request_page_chars(session, abs_path, page, worker);
+            request_page_links(session, abs_path, page, worker);
         }
         session.queue.retain_visible(&visible);
         for key in &visible {
             if session.cache.touch(*key) {
                 continue; // displayable already; recency bumped
             }
+            if session.tiles_in_flight.contains(key) {
+                continue; // already at the worker
+            }
             session.queue.schedule(*key);
+        }
+        if let Some(worker) = worker {
+            while let Some(key) = session.queue.pop() {
+                session.tiles_in_flight.insert(key);
+                worker.submit(PdfJob::Tile {
+                    path: abs_path.to_path_buf(),
+                    key,
+                });
+            }
+            return;
         }
         while let Some(key) = session.queue.pop() {
             match renderer.render_tile(abs_path, key) {
@@ -125,8 +143,53 @@ pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path) {
     }
     #[cfg(not(feature = "pdfium"))]
     {
-        let _ = abs_path;
+        let _ = (abs_path, worker);
         let _ = &session.tiles;
+    }
+}
+
+/// Glyph geometry for one page: through the worker when present (tracked in
+/// `chars_pending`), inline otherwise. Idempotent either way.
+pub fn request_page_chars(
+    session: &mut PdfSession,
+    abs_path: &Path,
+    page: u32,
+    worker: Option<&WorkerHandle>,
+) {
+    if session.chars.contains_key(&page) || session.chars_pending.contains(&page) {
+        return;
+    }
+    match worker {
+        Some(worker) => {
+            session.chars_pending.insert(page);
+            worker.submit(PdfJob::PageGlyphs {
+                path: abs_path.to_path_buf(),
+                page,
+            });
+        }
+        None => load_page_chars(session, abs_path, page),
+    }
+}
+
+/// Link rectangles for one page; same shape as [`request_page_chars`].
+pub fn request_page_links(
+    session: &mut PdfSession,
+    abs_path: &Path,
+    page: u32,
+    worker: Option<&WorkerHandle>,
+) {
+    if session.links.contains_key(&page) || session.links_pending.contains(&page) {
+        return;
+    }
+    match worker {
+        Some(worker) => {
+            session.links_pending.insert(page);
+            worker.submit(PdfJob::PageLinks {
+                path: abs_path.to_path_buf(),
+                page,
+            });
+        }
+        None => load_page_links(session, abs_path, page),
     }
 }
 
@@ -151,6 +214,26 @@ pub fn load_page_chars(session: &mut PdfSession, abs_path: &Path, page: u32) {
     }
 }
 
+/// Load a page's link annotations (idempotent).
+#[allow(dead_code)]
+pub fn load_page_links(session: &mut PdfSession, abs_path: &Path, page: u32) {
+    if session.links.contains_key(&page) {
+        return;
+    }
+    #[cfg(feature = "pdfium")]
+    {
+        let Some(renderer) = renderer() else {
+            return;
+        };
+        let links = renderer.page_links(abs_path, page).unwrap_or_default();
+        session.links.insert(page, links);
+    }
+    #[cfg(not(feature = "pdfium"))]
+    {
+        let _ = abs_path;
+    }
+}
+
 /// `#rrggbb` → iced color with the given alpha; highlights fall back to the
 /// default highlight yellow on malformed input.
 fn quad_color(hex: &str, alpha: f32) -> iced::Color {
@@ -158,8 +241,18 @@ fn quad_color(hex: &str, alpha: f32) -> iced::Color {
         .strip_prefix('#')
         .filter(|h| h.len() == 6)
         .and_then(|h| u32::from_str_radix(h, 16).ok());
-    let rgb = parsed.unwrap_or(0xffd866);
-    iced::Color::from_rgba8((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, alpha)
+    match parsed {
+        Some(rgb) => iced::Color::from_rgba8((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, alpha),
+        None => {
+            let c = tokens::dark().highlight_default;
+            iced::Color {
+                r: c.r,
+                g: c.g,
+                b: c.b,
+                a: alpha,
+            }
+        }
+    }
 }
 
 pub fn view(session: &PdfSession, tab: TabId) -> Element<'_, Message> {
@@ -242,6 +335,14 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
                     viewport,
                 }))
             }
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                let pos = cursor.position_in(bounds)?;
+                Some(canvas::Action::publish(Message::PdfRightClick {
+                    tab: self.tab,
+                    pos: (pos.x, pos.y),
+                    viewport,
+                }))
+            }
             iced::Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
                 let pos = cursor.position_in(bounds)?;
                 Some(canvas::Action::publish(Message::PdfMouseDragged {
@@ -271,30 +372,21 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), colors::BG);
-        let Some(layout) = &self.session.layout else {
-            return vec![frame.into_geometry()];
-        };
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), colors::bg());
         let viewport = (bounds.width, bounds.height);
 
-        // Page sheets first (white, so unrendered regions read as paper)…
-        for page in layout.placed_pages(self.session.scroll, viewport) {
+        let (sheets, tiles) = paint::page_plan(self.session, viewport);
+        for sheet in sheets {
             frame.fill_rectangle(
-                Point::new(page.x, page.y),
-                Size::new(page.width, page.height),
+                Point::new(sheet.x, sheet.y),
+                Size::new(sheet.w, sheet.h),
                 iced::Color::WHITE,
             );
         }
-        // …then every visible tile we have a pixmap for. Annotation and
-        // selection tints are painted by `TintCanvas` on the stacked layer
-        // above (see `view`).
-        for tile in layout.visible_tiles(self.session.scroll, viewport) {
-            if let Some(handle) = self.session.tiles.get(&tile.key) {
+        for (key, rect) in tiles {
+            if let Some(handle) = self.session.tiles.get(&key) {
                 frame.draw_image(
-                    Rectangle::new(
-                        Point::new(tile.x, tile.y),
-                        Size::new(tile.width, tile.height),
-                    ),
+                    Rectangle::new(Point::new(rect.x, rect.y), Size::new(rect.w, rect.h)),
                     canvas::Image::new(handle.clone()),
                 );
             }
@@ -326,6 +418,9 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
             return mouse::Interaction::default();
         };
         let page = page as u32;
+        if self.session.link_at(page, pt).is_some() {
+            return mouse::Interaction::Pointer;
+        }
         if self.session.annotation_at(page, pt).is_some() {
             return mouse::Interaction::Pointer;
         }
@@ -361,39 +456,20 @@ impl canvas::Program<Message> for TintCanvas<'_> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let Some(layout) = &self.session.layout else {
-            return vec![frame.into_geometry()];
-        };
         let viewport = (bounds.width, bounds.height);
-        let zoom = layout.zoom();
-        for page in layout.placed_pages(self.session.scroll, viewport) {
-            let project = |x0: f32, y0: f32, x1: f32, y1: f32| {
-                (
-                    Point::new(page.x + x0 * zoom, page.y + y0 * zoom),
-                    Size::new((x1 - x0) * zoom, (y1 - y0) * zoom),
-                )
+        let ops = paint::tint_plan(self.session, viewport);
+        for op in ops {
+            let color = match &op.tint {
+                Tint::Annotation { color, picked } => {
+                    quad_color(color, if *picked { 0.55 } else { 0.35 })
+                }
+                Tint::Selection => tokens::dark().sel_tint,
             };
-            for a in &self.session.annotations {
-                if a.page != page.page {
-                    continue;
-                }
-                let picked = self.session.selected_annotation == Some(a.id);
-                let tint = quad_color(&a.color, if picked { 0.55 } else { 0.35 });
-                for q in &a.quads {
-                    let (origin, size) =
-                        project(q.x0 as f32, q.y0 as f32, q.x1 as f32, q.y1 as f32);
-                    frame.fill_rectangle(origin, size, tint);
-                }
-            }
-            if let Some(sel) = &self.session.selection
-                && sel.page == page.page
-            {
-                let tint = iced::Color::from_rgba8(90, 130, 255, 0.30);
-                for q in &sel.quads {
-                    let (origin, size) = project(q.x0, q.y0, q.x1, q.y1);
-                    frame.fill_rectangle(origin, size, tint);
-                }
-            }
+            frame.fill_rectangle(
+                Point::new(op.rect.x, op.rect.y),
+                Size::new(op.rect.w, op.rect.h),
+                color,
+            );
         }
         vec![frame.into_geometry()]
     }

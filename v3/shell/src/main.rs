@@ -39,9 +39,39 @@ fn main() -> ExitCode {
             headless::palette(&registry, args.get(1).map(String::as_str).unwrap_or(""))
         }
         Some("--demo") => return headless::demo(&keymap),
+        Some("--install-desktop") => {
+            if !cfg!(target_os = "linux") {
+                println!("not supported");
+                return ExitCode::SUCCESS;
+            }
+            match md3_shell::desktop::install() {
+                Ok(()) => {
+                    println!("Desktop entry and icons installed successfully.");
+                }
+                Err(e) => {
+                    eprintln!("md3: desktop installation failed: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        Some("--uninstall-desktop") => {
+            if !cfg!(target_os = "linux") {
+                println!("not supported");
+                return ExitCode::SUCCESS;
+            }
+            match md3_shell::desktop::uninstall() {
+                Ok(()) => {
+                    println!("Desktop entry and icons uninstalled successfully.");
+                }
+                Err(e) => {
+                    eprintln!("md3: desktop uninstallation failed: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
         Some("--help") | Some("-h") => {
             println!(
-                "usage: md3-shell [<vault-dir> | --dump-shortcuts | --palette <query> | --demo]"
+                "usage: md3-shell [<vault-dir> | --dump-shortcuts | --palette <query> | --demo | --install-desktop | --uninstall-desktop]"
             );
         }
         first => {

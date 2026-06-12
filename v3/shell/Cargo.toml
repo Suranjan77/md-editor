@@ -18,11 +18,15 @@ md3-kernel = { path = "../kernel" }
 md3-editor = { path = "../editor" }
 md3-vault = { path = "../vault" }
 md3-pdf = { path = "../pdf" }
-iced = { version = "0.14", features = ["canvas", "image"] }
+iced = { version = "0.14", features = ["canvas", "image", "advanced"] }
 # Session snapshots + keymap-override files: the shell owns all file-format
 # parsing (kernel and engines stay serde-free by decision).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+image = "0.25"
+thiserror = "2"
+directories = "5"
+chrono = "0.4"
 
 [dev-dependencies]
 # Routing tests drive the real update loop over a throwaway vault directory.
