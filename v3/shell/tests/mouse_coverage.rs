@@ -5,7 +5,19 @@ use md3_kernel::defaults::default_registry;
 use md3_kernel::input::EditorKind;
 use md3_shell::gui::menu;
 
-const MOUSE_EXEMPT: [CommandId; 2] = [CommandId("overlay.close"), CommandId("overlay.confirm")];
+const MOUSE_EXEMPT: [CommandId; 11] = [
+    CommandId("overlay.close"),
+    CommandId("overlay.confirm"),
+    CommandId("app.settings"),
+    CommandId("app.force-quit"),
+    CommandId("workspace.force-close-tab"),
+    CommandId("editor.heading-1"),
+    CommandId("editor.heading-2"),
+    CommandId("editor.heading-3"),
+    CommandId("editor.heading-4"),
+    CommandId("editor.heading-5"),
+    CommandId("editor.heading-6"),
+];
 
 #[test]
 fn every_registered_command_is_mouse_reachable_or_explicitly_exempt() {

@@ -5,8 +5,8 @@
 //! else reaches the overlay as raw input. No iced text_input widget: the
 //! input line is fed by the same single keystroke path as the editors.
 
-use iced::widget::{column, container, row, scrollable, text};
-use iced::{Element, Fill, Task};
+use iced::widget::{button, column, container, row, scrollable, text};
+use iced::{Element, Fill, Length, Task};
 use md3_kernel::CommandRegistry;
 use md3_vault::Hit;
 
@@ -78,6 +78,15 @@ pub enum Overlay {
     PdfPage {
         input: String,
     },
+    Confirm {
+        message: String,
+        on_confirm: md3_kernel::CommandId,
+    },
+    Settings {
+        theme: String,
+        keymap: crate::settings::KeymapFile,
+        error: Option<String>,
+    },
     /// Note text for the focused PDF's picked annotation (pre-filled with
     /// the existing note; confirm overwrites it).
     AnnotationNote {
@@ -125,6 +134,8 @@ impl Overlay {
             Overlay::ConfirmDelete { .. } => "confirm-delete",
             Overlay::OrphanReport { .. } => "orphan-report",
             Overlay::PdfLinkPreview { .. } => "pdf-link-preview",
+            Overlay::Confirm { .. } => "confirm",
+            Overlay::Settings { .. } => "settings",
         }
     }
 
@@ -144,7 +155,9 @@ impl Overlay {
             | Overlay::NameInput { input, .. } => Some(input),
             Overlay::ConfirmDelete { .. }
             | Overlay::OrphanReport { .. }
-            | Overlay::PdfLinkPreview { .. } => None,
+            | Overlay::PdfLinkPreview { .. }
+            | Overlay::Confirm { .. }
+            | Overlay::Settings { .. } => None,
         }
     }
 
@@ -182,6 +195,8 @@ impl Overlay {
             Overlay::ConfirmDelete { .. } => "Confirm Delete",
             Overlay::OrphanReport { .. } => "Orphaned Annotations",
             Overlay::PdfLinkPreview { .. } => "Reference",
+            Overlay::Confirm { .. } => "Confirm Action",
+            Overlay::Settings { .. } => "User Settings",
         }
     }
 }
@@ -281,16 +296,27 @@ pub fn view<'a>(
         } else {
             "This cannot be undone."
         };
+        let delete_btn = button(text("Delete").size(13))
+            .padding([6, 12])
+            .style(button::primary)
+            .on_press(Message::RunCommand(md3_kernel::CommandId(
+                "overlay.confirm",
+            )));
+        let cancel_btn = button(text("Cancel").size(13))
+            .padding([6, 12])
+            .style(button::secondary)
+            .on_press(Message::RunCommand(md3_kernel::CommandId("overlay.close")));
         let card = container(
             column![
                 text("Confirm Delete").size(16).color(colors::heading()),
                 text(format!("Delete {kind} `{target}`?")).size(14),
                 text(detail).size(12).color(colors::marker()),
+                row![delete_btn, cancel_btn].spacing(10),
                 text("Enter confirms · Esc cancels")
-                    .size(12)
+                    .size(11)
                     .color(colors::marker()),
             ]
-            .spacing(10)
+            .spacing(12)
             .padding(16),
         )
         .width(520)
@@ -304,6 +330,51 @@ pub fn view<'a>(
             ..container::Style::default()
         });
         return container(card).center_x(Fill).padding([60, 0]).into();
+    }
+
+    if let Overlay::Confirm { message, .. } = overlay {
+        let confirm_btn = button(text("Confirm").size(13))
+            .padding([6, 12])
+            .style(button::primary)
+            .on_press(Message::RunCommand(md3_kernel::CommandId(
+                "overlay.confirm",
+            )));
+        let cancel_btn = button(text("Cancel").size(13))
+            .padding([6, 12])
+            .style(button::secondary)
+            .on_press(Message::RunCommand(md3_kernel::CommandId("overlay.close")));
+        let card = container(
+            column![
+                text("Confirm Action").size(16).color(colors::heading()),
+                text(message.clone()).size(14),
+                row![confirm_btn, cancel_btn].spacing(10),
+                text("Enter confirms · Esc cancels")
+                    .size(11)
+                    .color(colors::marker()),
+            ]
+            .spacing(12)
+            .padding(16),
+        )
+        .width(520)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(tokens::dark().bg_secondary)),
+            border: iced::Border {
+                color: tokens::dark().border,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        });
+        return container(card).center_x(Fill).padding([60, 0]).into();
+    }
+
+    if let Overlay::Settings {
+        theme,
+        keymap,
+        error,
+    } = overlay
+    {
+        return view_settings(theme, keymap, error);
     }
 
     if let Overlay::PdfLinkPreview {
@@ -416,7 +487,9 @@ impl Overlay {
             | Overlay::NameInput { input, .. } => input,
             Overlay::ConfirmDelete { .. }
             | Overlay::OrphanReport { .. }
-            | Overlay::PdfLinkPreview { .. } => "",
+            | Overlay::PdfLinkPreview { .. }
+            | Overlay::Confirm { .. }
+            | Overlay::Settings { .. } => "",
         }
     }
 }
@@ -430,4 +503,141 @@ pub fn toc_matches<'a>(entries: &'a [(String, u32)], input: &str) -> Vec<&'a (St
         .iter()
         .filter(|(title, _)| title.to_lowercase().contains(&needle))
         .collect()
+}
+
+fn view_settings<'a>(
+    theme: &'a str,
+    keymap: &'a crate::settings::KeymapFile,
+    error: &'a Option<String>,
+) -> Element<'a, Message> {
+    use iced::widget::{button, text_input};
+
+    let theme_row = row![
+        text("Theme:").size(14).color(colors::text()),
+        button(text("Dark").size(13))
+            .padding([4, 10])
+            .style(move |theme_style, status| {
+                let active = theme == "dark";
+                if active {
+                    button::primary(theme_style, status)
+                } else {
+                    button::secondary(theme_style, status)
+                }
+            })
+            .on_press(Message::SettingsThemeChanged("dark".to_string())),
+        button(text("Light").size(13))
+            .padding([4, 10])
+            .style(move |theme_style, status| {
+                let active = theme == "light";
+                if active {
+                    button::primary(theme_style, status)
+                } else {
+                    button::secondary(theme_style, status)
+                }
+            })
+            .on_press(Message::SettingsThemeChanged("light".to_string())),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center);
+
+    let mut bindings_col = column![].spacing(8);
+    // Header
+    bindings_col = bindings_col.push(
+        row![
+            text("Scope")
+                .size(12)
+                .color(colors::marker())
+                .width(Length::FillPortion(1)),
+            text("Chord")
+                .size(12)
+                .color(colors::marker())
+                .width(Length::FillPortion(1)),
+            text("Command")
+                .size(12)
+                .color(colors::marker())
+                .width(Length::FillPortion(2)),
+            iced::widget::Space::new().width(40),
+        ]
+        .spacing(10),
+    );
+
+    for (i, binding) in keymap.bindings.iter().enumerate() {
+        let scope_input = text_input("e.g. workspace", &binding.scope)
+            .on_input(move |val| Message::SettingsScopeChanged(i, val))
+            .padding(6)
+            .size(13);
+
+        let chord_input = text_input("e.g. ctrl+s", &binding.chord)
+            .on_input(move |val| Message::SettingsChordChanged(i, val))
+            .padding(6)
+            .size(13);
+
+        let cmd_val = binding.command.clone().unwrap_or_default();
+        let cmd_input = text_input("command or leave empty to unbind", &cmd_val)
+            .on_input(move |val| Message::SettingsCommandChanged(i, val))
+            .padding(6)
+            .size(13);
+
+        let remove_btn = button(text("×").size(14))
+            .padding([4, 8])
+            .style(button::text)
+            .on_press(Message::SettingsRemoveRow(i));
+
+        bindings_col = bindings_col.push(
+            row![
+                container(scope_input).width(Length::FillPortion(1)),
+                container(chord_input).width(Length::FillPortion(1)),
+                container(cmd_input).width(Length::FillPortion(2)),
+                remove_btn,
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        );
+    }
+
+    let add_btn = button(text("+ Add Custom Binding").size(13))
+        .padding([6, 12])
+        .style(button::secondary)
+        .on_press(Message::SettingsAddRow);
+
+    let mut actions = row![
+        button(text("Save").size(13))
+            .padding([6, 16])
+            .style(button::primary)
+            .on_press(Message::SettingsSave),
+        button(text("Cancel").size(13))
+            .padding([6, 16])
+            .style(button::secondary)
+            .on_press(Message::SettingsCancel),
+    ]
+    .spacing(12);
+
+    if let Some(err) = error {
+        actions = actions.push(text(err.clone()).size(13).color(tokens::dark().danger));
+    }
+
+    let card = container(
+        column![
+            text("User Settings").size(18).color(colors::heading()),
+            theme_row,
+            text("Keymap Overrides").size(14).color(colors::heading()),
+            scrollable(bindings_col).height(240),
+            add_btn,
+            actions,
+        ]
+        .spacing(14)
+        .padding(18),
+    )
+    .width(620)
+    .style(|_| container::Style {
+        background: Some(iced::Background::Color(tokens::dark().bg_secondary)),
+        border: iced::Border {
+            color: tokens::dark().border,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..container::Style::default()
+    });
+
+    container(card).center_x(Fill).padding([40, 0]).into()
 }

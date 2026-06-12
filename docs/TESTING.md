@@ -1,5 +1,10 @@
 # Testing
 
+> **Scope: v2 suites.** v3's test pyramid is defined in
+> `V3_GROUND_UP_PLAN.md` §6 (property/differential harnesses, named BUG-A/B/C
+> regression suites, golden draw-plan snapshots) and enforced by the
+> verification gate in `V3_IMPLEMENTATION_PLAN.md` §0.3.
+
 ## Test pyramid
 
 | Layer | Where | Run with |

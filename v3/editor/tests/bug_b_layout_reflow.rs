@@ -191,6 +191,19 @@ fn insert_and_remove_shift_subsequent_lines() {
 }
 
 #[test]
+fn changing_wrap_width_reflows_all_line_offsets() {
+    let mut engine = doc(ReservedWidthStyler);
+    engine.set_wrap_width(10.0);
+
+    assert_eq!(engine.height_of(1), Some(3.0 * LINE_HEIGHT));
+    assert_eq!(ok(engine.offset_of(2)), 4.0 * LINE_HEIGHT);
+
+    engine.set_wrap_width(40.0);
+    assert_eq!(engine.height_of(1), Some(LINE_HEIGHT));
+    assert_eq!(ok(engine.offset_of(2)), 2.0 * LINE_HEIGHT);
+}
+
+#[test]
 fn paint_phase_is_viewport_bounded() {
     let mut engine = LayoutEngine::new(ReservedWidthStyler, CharGridMeasurer, WRAP_COLS);
     engine.set_text((0..1000).map(|i| (format!("line {i}"), BlockState::Normal)));

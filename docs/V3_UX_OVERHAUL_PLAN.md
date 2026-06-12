@@ -4,6 +4,11 @@
 > Sibling plan: `docs/V3_IMPLEMENTATION_PLAN.md` (its §0 working rules, §0.4
 > pitfalls register, and verification gate apply to **every** step here —
 > reread them first; they are not repeated in full).
+>
+> **Status (2026-06-12 architect review):** phases 0–5 complete, phase 6
+> partial. The impl-plan **Phase 6 course correction takes precedence** over
+> anything remaining here — do not start new chrome work before impl-plan
+> 6.0–6.3 are done.
 
 ## Why this plan exists
 
@@ -336,7 +341,11 @@ split-right/down, close-pane, and persistent draggable split ratios.
 
 ---
 
-## Phase 4 — PDF reading chrome
+## Phase 4 — PDF reading chrome ✅ complete 2026-06-12
+
+Landed as a floating bottom-of-view control bar (user direction correction,
+§4.1 note) plus docked TOC/annotations panels, selection context menus, and
+the async worker. See the handoff status board.
 
 v2 reference: `native/src/views/pdf_viewer.rs`, `toc.rs`,
 `pdf_annotations.rs`, `interactive_pdf.rs`.
@@ -394,7 +403,11 @@ cap. Respect P4 (one worker = the serialization).
 
 ---
 
-## Phase 5 — Markdown editing chrome
+## Phase 5 — Markdown editing chrome ✅ complete 2026-06-12
+
+Formatting toolbar (engine commands first, as specced), find/replace bar,
+outline panel, and the earlier backlinks overlay all landed. See the handoff
+status board.
 
 ### 5.1 Formatting toolbar group
 
@@ -430,7 +443,14 @@ batches.
 
 ---
 
-## Phase 6 — Feedback & polish
+## Phase 6 — Feedback & polish 🔶 landed 2026-06-12 with open defects
+
+Toasts, confirm modals, light/dark tokens, and the keymap settings UI exist,
+but the phase is **not** ✅: the tracker feedback test is red (feedback
+channels forked — impl-plan pitfall P14, fix in impl-plan Phase 6.0) and the
+light theme was wired through a global atomic instead of `Shell` state
+(removal specced in impl-plan Phase 6.6). Close those before claiming this
+phase.
 
 ### 6.1 Toasts (v2 `toast.rs`)
 

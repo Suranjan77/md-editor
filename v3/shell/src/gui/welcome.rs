@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Background, Border, Element, Fill, Task};
-use md3_kernel::{CommandId, CommandRegistry};
+use md3_kernel::{CommandId, CommandRegistry, Keymap};
 
-use super::tokens;
+use super::{Message, Shell, tokens};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WelcomeRow {
@@ -41,26 +41,40 @@ pub enum StartupMessage {
     CreateVault,
     OpenRecent(PathBuf),
     VaultPicked(Option<PathBuf>),
+    Shell(Message),
+    ExitRequested,
 }
 
 struct StartupWelcome {
     recent: Vec<PathBuf>,
     message: String,
+    registry: CommandRegistry,
+    keymap: Keymap,
+    shell: Option<Shell>,
 }
 
-pub fn run_startup(message: Option<String>) -> iced::Result {
+pub fn run_startup(
+    registry: CommandRegistry,
+    keymap: Keymap,
+    message: Option<String>,
+) -> iced::Result {
     iced::application(
         move || StartupWelcome {
             recent: crate::vault_picker::recent_vaults(),
             message: message.clone().unwrap_or_default(),
+            registry: registry.clone(),
+            keymap: keymap.clone(),
+            shell: None,
         },
         StartupWelcome::update,
         StartupWelcome::view,
     )
     .title("md3")
     .theme(StartupWelcome::theme)
+    .subscription(StartupWelcome::subscription)
     .window(iced::window::Settings {
-        size: iced::Size::new(760.0, 560.0),
+        size: iced::Size::new(1200.0, 800.0),
+        exit_on_close_request: false,
         icon: iced::window::icon::from_file_data(include_bytes!("../../../../md-editor.png"), None)
             .ok(),
         ..Default::default()
@@ -70,10 +84,24 @@ pub fn run_startup(message: Option<String>) -> iced::Result {
 
 impl StartupWelcome {
     fn theme(&self) -> iced::Theme {
-        iced::Theme::Dark
+        self.shell.as_ref().map_or(iced::Theme::Dark, Shell::theme)
+    }
+
+    fn subscription(&self) -> iced::Subscription<StartupMessage> {
+        match &self.shell {
+            Some(shell) => shell.subscription().map(StartupMessage::Shell),
+            None => iced::window::close_requests().map(|_| StartupMessage::ExitRequested),
+        }
     }
 
     fn update(&mut self, message: StartupMessage) -> Task<StartupMessage> {
+        if let Some(shell) = &mut self.shell {
+            return match message {
+                StartupMessage::Shell(message) => shell.update(message).map(StartupMessage::Shell),
+                StartupMessage::ExitRequested => iced::exit(),
+                _ => Task::none(),
+            };
+        }
         match message {
             StartupMessage::OpenVault => Task::perform(
                 crate::vault_picker::pick_vault_async_with_title("Open Vault Folder"),
@@ -86,20 +114,32 @@ impl StartupWelcome {
             StartupMessage::OpenRecent(path) => self.launch(path),
             StartupMessage::VaultPicked(Some(path)) => self.launch(path),
             StartupMessage::VaultPicked(None) => Task::none(),
+            StartupMessage::ExitRequested => iced::exit(),
+            StartupMessage::Shell(_) => Task::none(),
         }
     }
 
     fn launch(&mut self, path: PathBuf) -> Task<StartupMessage> {
-        match crate::vault_picker::launch_vault(&path) {
-            Ok(()) => iced::exit(),
-            Err(error) => {
-                self.message = format!("Open {}: {error}", path.display());
-                Task::none()
-            }
+        let Ok(root) = path.canonicalize() else {
+            self.message = format!("Vault folder is unavailable: {}", path.display());
+            return Task::none();
+        };
+        if !root.is_dir() {
+            self.message = format!("Vault folder is unavailable: {}", root.display());
+            return Task::none();
         }
+        crate::vault_picker::record_recent(&root);
+        let mut keymap = self.keymap.clone();
+        let report = crate::settings::apply_keymap_overrides(&root, &self.registry, &mut keymap);
+        self.shell = Some(Shell::new(self.registry.clone(), keymap, root));
+        self.message = report.warnings.join("\n");
+        Task::none()
     }
 
     fn view(&self) -> Element<'_, StartupMessage> {
+        if let Some(shell) = &self.shell {
+            return shell.view().map(StartupMessage::Shell);
+        }
         let primary = button(text("Open Vault Folder").size(16))
             .padding([11, 22])
             .on_press(StartupMessage::OpenVault);

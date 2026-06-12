@@ -148,14 +148,16 @@ def fixture_multipage_outline():
 
 def fixture_internal_links():
     texts = [
-        ["Page 1: the words below link to page 2.", "CLICK HERE"],
+        ["Page 1: the words below link to page 2.", "CLICK HERE", "EXTERNAL LINK"],
         ["Page 2: link target."],
     ]
 
     def annots_p1(page_nums):
         return (
             "<< /Type /Annot /Subtype /Link /Rect [72 690 200 715] /Border [0 0 0] "
-            "/Dest [%d 0 R /XYZ 0 792 null] >>" % page_nums[1]
+            "/Dest [%d 0 R /XYZ 0 792 null] >> "
+            "<< /Type /Annot /Subtype /Link /Rect [72 650 300 675] /Border [0 0 0] "
+            "/A << /S /URI /URI (https://example.com) >> >>" % page_nums[1]
         )
 
     # annot must be its own object normally, but inline dict in /Annots array is legal.

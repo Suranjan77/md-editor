@@ -23,10 +23,16 @@ pub struct SessionSnapshot {
     pub tracker_open: bool,
     #[serde(default)]
     pub tracker_active_tab: Option<String>,
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
 
 fn default_tree_width() -> f32 {
     240.0
+}
+
+fn default_theme() -> String {
+    "dark".to_string()
 }
 
 /// Mirror of the kernel's `Layout` tree in serializable form.

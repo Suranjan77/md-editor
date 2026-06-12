@@ -18,7 +18,7 @@ md3-kernel = { path = "../kernel" }
 md3-editor = { path = "../editor" }
 md3-vault = { path = "../vault" }
 md3-pdf = { path = "../pdf" }
-iced = { version = "0.14", features = ["canvas", "image", "advanced"] }
+iced = { version = "0.14", features = ["canvas", "image", "advanced", "tokio"] }
 # Session snapshots + keymap-override files: the shell owns all file-format
 # parsing (kernel and engines stay serde-free by decision).
 serde = { version = "1", features = ["derive"] }
@@ -28,6 +28,12 @@ thiserror = "2"
 directories = "5"
 chrono = "0.4"
 rfd = "0.17.2"
+tokio = { version = "1", features = ["time"] }
+open = "5"
+ratex-render = { version = "0.1.7", features = ["embed-fonts"] }
+ratex-parser = "0.1.7"
+ratex-layout = "0.1.7"
+ratex-types = "0.1.7"
 
 [dev-dependencies]
 # Routing tests drive the real update loop over a throwaway vault directory.

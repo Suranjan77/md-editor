@@ -133,6 +133,17 @@ fn clicking_a_file_row_opens_it_in_the_focused_pane() {
 }
 
 #[test]
+fn open_tree_is_populated_on_startup() {
+    let dir = vault();
+    let shell = new_shell(dir.path());
+
+    assert_eq!(
+        shell.tree_files(),
+        ["alpha.md", "beta.md", "papers/", "papers/attention.pdf"]
+    );
+}
+
+#[test]
 fn ctrl_b_works_from_pdf_focus() {
     let dir = vault();
     let mut shell = new_shell(dir.path());

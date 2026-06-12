@@ -361,6 +361,7 @@ struct PdfCanvas<'a> {
 #[derive(Default)]
 pub struct DragState {
     dragging: bool,
+    viewport: Option<Size>,
 }
 
 impl canvas::Program<Message> for PdfCanvas<'_> {
@@ -374,6 +375,14 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
         let viewport = (bounds.width, bounds.height);
+        if state.viewport != Some(bounds.size()) {
+            state.viewport = Some(bounds.size());
+            return Some(canvas::Action::publish(Message::PdfViewportChanged {
+                tab: self.tab,
+                width: bounds.width,
+                height: bounds.height,
+            }));
+        }
         match event {
             iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 cursor.position_in(bounds)?;

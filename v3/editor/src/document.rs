@@ -57,6 +57,14 @@ impl<M: Measurer> EditorDocument<M> {
         &self.layout
     }
 
+    pub fn set_wrap_width(&mut self, wrap_width: f64) {
+        self.layout.set_wrap_width(wrap_width);
+    }
+
+    pub fn remeasure(&mut self) {
+        self.layout.remeasure();
+    }
+
     pub fn line_count(&self) -> usize {
         self.buffer.line_count()
     }

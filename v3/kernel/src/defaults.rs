@@ -27,6 +27,17 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             "Application",
             vec![bind(Scope::Global, Chord::ctrl('q'), CommandId("app.quit"))],
         ),
+        spec(
+            "app.settings",
+            "Settings",
+            "Application",
+            vec![bind(
+                Scope::Workspace,
+                Chord::new(Mods::CTRL, Key::Char(',')),
+                CommandId("app.settings"),
+            )],
+        ),
+        spec("app.force-quit", "Force Quit", "Application", vec![]),
         // -- workspace --------------------------------------------------------
         spec(
             "palette.open",
@@ -108,6 +119,12 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             )],
         ),
         spec(
+            "workspace.force-close-tab",
+            "Force Close Tab",
+            "Workspace",
+            vec![],
+        ),
+        spec(
             "workspace.next-tab",
             "Next Tab",
             "Workspace",
@@ -186,14 +203,65 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
         spec("editor.toggle-bold", "Bold", "Editor", vec![]),
         spec("editor.toggle-italic", "Italic", "Editor", vec![]),
         spec("editor.toggle-code", "Inline Code", "Editor", vec![]),
+        spec("editor.heading-cycle", "Heading Cycle", "Editor", vec![]),
         spec(
-            "editor.heading-cycle",
-            "Heading Cycle",
+            "editor.heading-1",
+            "Heading 1",
             "Editor",
             vec![bind(
                 md,
                 Chord::new(Mods::CTRL, Key::Char('1')),
-                CommandId("editor.heading-cycle"),
+                CommandId("editor.heading-1"),
+            )],
+        ),
+        spec(
+            "editor.heading-2",
+            "Heading 2",
+            "Editor",
+            vec![bind(
+                md,
+                Chord::new(Mods::CTRL, Key::Char('2')),
+                CommandId("editor.heading-2"),
+            )],
+        ),
+        spec(
+            "editor.heading-3",
+            "Heading 3",
+            "Editor",
+            vec![bind(
+                md,
+                Chord::new(Mods::CTRL, Key::Char('3')),
+                CommandId("editor.heading-3"),
+            )],
+        ),
+        spec(
+            "editor.heading-4",
+            "Heading 4",
+            "Editor",
+            vec![bind(
+                md,
+                Chord::new(Mods::CTRL, Key::Char('4')),
+                CommandId("editor.heading-4"),
+            )],
+        ),
+        spec(
+            "editor.heading-5",
+            "Heading 5",
+            "Editor",
+            vec![bind(
+                md,
+                Chord::new(Mods::CTRL, Key::Char('5')),
+                CommandId("editor.heading-5"),
+            )],
+        ),
+        spec(
+            "editor.heading-6",
+            "Heading 6",
+            "Editor",
+            vec![bind(
+                md,
+                Chord::new(Mods::CTRL, Key::Char('6')),
+                CommandId("editor.heading-6"),
             )],
         ),
         spec(

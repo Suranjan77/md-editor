@@ -31,6 +31,10 @@ pub enum SpanKind {
     LinkText {
         url: String,
     },
+    /// Markdown image label; `url` is resolved by shell-side asset loading.
+    Image {
+        url: String,
+    },
     WikiLink,
     /// Whole-line kinds reuse spans too:
     CodeContent,
@@ -202,6 +206,17 @@ fn parse_inline(chars: &[char], start: usize, end: usize, out: &mut Vec<Span>) {
                     out.push(Span::new(i + 1..close, SpanKind::Math));
                     out.push(Span::new(close..close + 1, SpanKind::Marker));
                     i = close + 1;
+                    text_start = i;
+                } else {
+                    i += 1;
+                }
+            }
+            '!' if i + 1 < end && chars[i + 1] == '[' => {
+                if let Some((label_end, url_end)) = find_link(chars, i + 1, end) {
+                    flush(text_start, i, out);
+                    let url: String = chars[label_end + 2..url_end].iter().collect();
+                    out.push(Span::new(i..url_end + 1, SpanKind::Image { url }));
+                    i = url_end + 1;
                     text_start = i;
                 } else {
                     i += 1;
@@ -418,6 +433,23 @@ mod tests {
                 ("note".into(), SpanKind::WikiLink),
                 ("]]".into(), SpanKind::Marker),
                 (" b".into(), SpanKind::Text),
+            ]
+        );
+    }
+
+    #[test]
+    fn image_is_one_semantic_span() {
+        assert_eq!(
+            spans("before ![plot](images/plot.png) after"),
+            vec![
+                ("before ".into(), SpanKind::Text),
+                (
+                    "![plot](images/plot.png)".into(),
+                    SpanKind::Image {
+                        url: "images/plot.png".into()
+                    }
+                ),
+                (" after".into(), SpanKind::Text),
             ]
         );
     }
