@@ -74,7 +74,7 @@ status-board row + decision-log entries for any non-obvious choice.
 | P4 | pdfium FFI | pdfium is single-threaded; `pdfium-render`'s `thread_safe` feature only makes handles Send/Sync, it does **not** serialize calls (concurrent calls SIGSEGV). | Every `PdfRenderer` method takes the process-wide `pdfium_lock()` first. Keep that pattern in any new method. |
 | P5 | pdfium coords | pdfium rects are **bottom-left** origin; v3 stores **top-left**. | Flip with `y_top_left = page_height - y_bottom_left` at the FFI boundary (`render.rs`) and nowhere else. |
 | P6 | pdfium text | `\r\n` come back as control chars and are dropped by `page_chars`, so multi-word search can't match across a line wrap. | Known limitation; don't "fix" it ad hoc — whitespace-elastic matching is a pure `select::find` change with tests. |
-| P7 | status line | `run_command` ends with `sync_status()`, which **overwrites** `self.status` with the caret/page pill. | A handler whose message must survive (guidance, "no matches") ends with `return Task::none();` before the fallthrough. Grep `"pdf.find"` arm for the pattern. |
+| P7 | status line | Closed in UX Phase 0.4: command messages and caret/page position are separate fields. | `sync_status()` writes only the position segment; handlers write only the message segment. Never merge them again. |
 | P8 | borrows | `self.focused_pdf_mut()` borrows all of `self`; touching `self.status`/`self.vault_root` while it lives won't compile. | Clone `let root = self.vault_root.clone();` *before* taking the session; write `self.status` *after* the last session use. |
 | P9 | keymap | A chord claimed by any reachable scope never falls through to raw input. Raw-input matches in `pdf_raw_input`/`editor_raw_input` ignore modifiers. | Check `docs/V3_SHORTCUTS.md` before picking a chord. Bind in the narrowest scope that works. Overlay scope is a modal fence — while an overlay is open only Overlay+Global resolve. |
 | P10 | tests vs paint | The windowless suites drive `Shell::update` and never call `draw()`. They **cannot see paint bugs** (P1 was invisible to 200 green tests). | Paint geometry must live in pure "paint plan" functions (Phase 0.1) with unit tests; toolkit-level effects are covered by the manual smoke checklist only. |
@@ -496,7 +496,7 @@ activity_type, phase, notes }`) and a KV store (`TrackerKv`) — see
 Each is independently shippable; specs are intentionally shorter — expand
 into the handoff before starting one.
 
-1. **Async tile + glyph worker.** Move `render_tile`/`page_chars`/
+1. ✅ **Async tile + glyph worker.** Move `render_tile`/`page_chars`/
    `page_links` calls off the update thread: one worker thread owning a
    channel of engine `TileKey`/page requests (the `RenderQueue` cancellation
    semantics already fit), results returned via
@@ -504,10 +504,10 @@ into the handoff before starting one.
    hitch on huge PDFs. Gate: scrolling a 500-page doc (CI's `--large`
    fixture) never blocks input > 16 ms (manual check + a timing assertion in
    a worker unit test).
-2. **Backlinks panel** (plan §3.4 — service exists in `vault/src/links.rs`):
+2. ✅ **Backlinks overlay** (plan §3.4 — service exists in `vault/src/links.rs`):
    command `note.backlinks` lists referrers of the focused note via
    `LinkGraph`; reuse the overlay list pattern; enter opens the referrer.
-3. **Annotation niceties** (handoff item 7 leftovers): color cycling
+3. ✅ **Annotation niceties** (handoff item 7 leftovers): color cycling
    (`pdf.highlight-color` rotating a small token palette, stored per
    annotation — schema already has `color`), copy-selection-to-clipboard
    (`ctrl+c` in pdf scope via `iced::clipboard::write`), linked-note creation
@@ -520,7 +520,7 @@ into the handoff before starting one.
    reflow; smart paste (URL over selection → link); heading cycle
    (`ctrl+1..6`). Every one is a `Command` through the bus, undo-coalescing
    rules decided per command (see `undo.rs` doc comments).
-5. **Whitespace-elastic `pdf.find`** (P6): in `select::find`, treat any
+5. ✅ **Whitespace-elastic `pdf.find`** (P6): in `select::find`, treat any
    whitespace run in the needle as matching ≥0 whitespace/line-break gap in
    the stream; pure change + synthetic tests; removes the multi-word limit.
 6. **Settings UI surface** (plan M2) — render `keymap.json` + theme choice;

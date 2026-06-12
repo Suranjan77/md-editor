@@ -21,3 +21,7 @@ Run: cd v3 && cargo run -p md3-shell --features pdfium -- <a real vault with a r
  20. On a picked highlight: palette → "Cycle Highlight Color" changes the tint (4-color cycle); palette → "Open Linked Note for Highlight" creates and opens <stem>-notes.md (second use reopens the same note).
  21. ctrl+shift+b in a note that other notes [[link]] to: referrers listed, enter opens one; a note with no referrers shows "no backlinks".
  22. Edit a PDF's bytes outside the app, then palette → "Orphaned Annotations Report": the old document is listed with its annotation count; esc closes.
+ 23. Fresh vault: file tree starts open; empty pane shows Open File, Browse Vault, Command Palette, and Keyboard Shortcuts buttons; each button works with the mouse.
+ 24. ctrl+/: every registered command appears with category and chord; typing filters; enter runs the selected command. Command messages stay on the left while caret/page position stays on the right.
+ 25. Mouse only: toolbar toggles files/tracker, opens quick-open/search/palette/help, splits focused document, and switches to markdown/PDF-specific controls with tooltips.
+ 26. Mouse only: File/Edit/View/PDF/Help menus expose registered commands, disable commands for the wrong focused surface, close on outside click or esc, and PDF +/- buttons rerender at the shown zoom.
