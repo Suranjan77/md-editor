@@ -12,6 +12,8 @@
 
 use std::ops::Range;
 
+use crate::syntax::{Lang, LexState, lex_line};
+
 /// State carried *across* a line boundary. `PartialEq` is what convergence
 /// is defined over.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -27,7 +29,18 @@ pub enum BlockState {
     Normal,
     /// Inside a fenced code block. Closing requires the same marker char
     /// and at least the same run length (CommonMark rule).
-    Fence { marker: char, len: usize },
+    ///
+    /// `lang` is the resolved highlight language (constant within a fence,
+    /// so it never perturbs convergence) and `lex` is the cross-line syntax
+    /// lexer state (ADR-0106) — opening a multi-line construct changes the
+    /// exit state, so following code lines reparse until it converges, reusing
+    /// the same forward-convergence rule the fence itself relies on.
+    Fence {
+        marker: char,
+        len: usize,
+        lang: Lang,
+        lex: LexState,
+    },
     /// Inside a `$$ … $$` display-math block.
     Math,
     /// Inside the YAML front-matter block (only enterable from line 0).
@@ -70,12 +83,30 @@ pub enum LineKind {
 pub fn classify(text: &str, entry: &BlockState) -> (LineKind, BlockState) {
     let trimmed = text.trim();
     match entry {
-        BlockState::Fence { marker, len } => {
+        BlockState::Fence {
+            marker,
+            len,
+            lang,
+            lex,
+        } => {
             let close_run = trimmed.chars().take_while(|c| c == marker).count();
             if close_run >= *len && trimmed.chars().all(|c| c == *marker) {
                 (LineKind::FenceClose, BlockState::Normal)
             } else {
-                (LineKind::CodeContent, entry.clone())
+                // Advance the syntax lexer across this code line so multi-line
+                // constructs carry forward (the styler recomputes the tokens
+                // themselves for paint). Only the exit state matters for
+                // convergence, so the tokens are discarded here.
+                let exit_lex = lex_line(*lang, *lex, text, |_, _, _| {});
+                (
+                    LineKind::CodeContent,
+                    BlockState::Fence {
+                        marker: *marker,
+                        len: *len,
+                        lang: *lang,
+                        lex: exit_lex,
+                    },
+                )
             }
         }
         BlockState::Math => {
@@ -116,9 +147,15 @@ fn classify_normal(trimmed: &str) -> (LineKind, BlockState) {
             if marker == '`' && trimmed[len..].contains('`') {
                 break;
             }
+            let resolved = Lang::from_tag(&lang);
             return (
                 LineKind::FenceOpen { lang },
-                BlockState::Fence { marker, len },
+                BlockState::Fence {
+                    marker,
+                    len,
+                    lang: resolved,
+                    lex: LexState::Normal,
+                },
             );
         }
     }
@@ -417,6 +454,90 @@ mod tests {
         assert_eq!(kind(&p, 3), LineKind::Paragraph);
     }
 
+    fn entry_lex(p: &IncrementalParser, i: usize) -> LexState {
+        let entry = match p.line(i) {
+            Some(l) => &l.entry,
+            None => panic!("no line {i}"),
+        };
+        match entry {
+            BlockState::Fence { lex, .. } => *lex,
+            other => panic!("line {i} entry is {other:?}, not a fence"),
+        }
+    }
+
+    fn fence_lang(p: &IncrementalParser, i: usize) -> Lang {
+        let entry = match p.line(i) {
+            Some(l) => &l.entry,
+            None => panic!("no line {i}"),
+        };
+        match entry {
+            BlockState::Fence { lang, .. } => *lang,
+            other => panic!("line {i} entry is {other:?}, not a fence"),
+        }
+    }
+
+    #[test]
+    fn fence_carries_resolved_language() {
+        let p = parse("```rust\nlet x = 1;\n```\n```\nplain\n```");
+        assert_eq!(fence_lang(&p, 1), Lang::Rust);
+        assert_eq!(fence_lang(&p, 4), Lang::None);
+    }
+
+    /// ADR-0106 contract: editing inside a multi-line construct must keep
+    /// invalidating following lines until the *lexer* state converges, reusing
+    /// the same forward-convergence rule fences already use.
+    #[test]
+    fn block_comment_lexer_state_cascades_and_converges() {
+        let base = ["```rust", "let a = 1;", "let b = 2;", "let c = 3;", "```"];
+        let mut p = parse(&base.join("\n"));
+        assert_eq!(entry_lex(&p, 2), LexState::Normal);
+
+        // Open a block comment at the end of line 1 (no close on that line).
+        // The cascade must run forward through the code lines until the fence
+        // close, flipping each to "inside comment" lexer state.
+        let opened = [
+            "```rust",
+            "let a = 1; /*",
+            "let b = 2;",
+            "let c = 3;",
+            "```",
+        ];
+        let changed = p.splice(1, 1, 1, |i| opened[i].to_string());
+        assert_eq!(
+            entry_lex(&p, 2),
+            LexState::BlockComment { depth: 1 },
+            "open comment carries into following code lines"
+        );
+        assert_eq!(entry_lex(&p, 3), LexState::BlockComment { depth: 1 });
+        assert!(
+            changed.contains(&2) && changed.contains(&3),
+            "cascade ({changed:?}) reaches past the edited line until close"
+        );
+
+        // Close the comment on line 2: line 3's lexer state must converge back
+        // to Normal. The incrementally-maintained parse must match a full
+        // reparse exactly — including every line's entry/exit lexer state.
+        let closed = [
+            "```rust",
+            "let a = 1; /*",
+            "*/ let b = 2;",
+            "let c = 3;",
+            "```",
+        ];
+        p.splice(2, 1, 1, |i| closed[i].to_string());
+        assert_eq!(
+            entry_lex(&p, 3),
+            LexState::Normal,
+            "closing the comment converges the following line"
+        );
+        let mut fresh = IncrementalParser::new();
+        fresh.parse_full(closed.iter());
+        assert_eq!(
+            p.lines, fresh.lines,
+            "incremental cascade matches full reparse"
+        );
+    }
+
     #[test]
     fn local_edit_converges_immediately() {
         let mut p = parse("a\nb\nc");
@@ -459,8 +580,22 @@ mod tests {
             rng.wrapping_mul(0x2545_F491_4F6C_DD1D)
         };
         let atoms = [
-            "para", "# h", "```", "````", "$$", "x=y$$", "- item", "> q", "---", "", "| a |",
+            "para",
+            "# h",
+            "```",
+            "```rust",
+            "````",
+            "$$",
+            "x=y$$",
+            "- item",
+            "> q",
+            "---",
+            "",
+            "| a |",
             "code",
+            "let x = 1; /*",
+            "*/ done",
+            "fn f() {}",
         ];
         let mut doc: Vec<String> = vec!["start".into()];
         let mut p = IncrementalParser::new();
