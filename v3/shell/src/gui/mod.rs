@@ -10,6 +10,7 @@
 //! - **View:** the kernel's `Layout` tree is walked into iced rows/columns;
 //!   documents are peers — any kind in any pane (BUG-C discipline).
 
+mod chrome_context;
 mod commands_file;
 mod commands_md;
 mod commands_pdf_annotations;
@@ -3157,68 +3158,6 @@ impl Shell {
                 ..Default::default()
             })
             .into()
-    }
-
-    fn view_pdf_context_menu(&self, ctx: &PdfContextMenuState) -> Element<'_, Message> {
-        let backdrop = mouse_area(
-            container(iced::widget::Space::new())
-                .width(Fill)
-                .height(Fill),
-        )
-        .on_press(Message::PdfContextMenuClosed);
-
-        let t = tokens::dark();
-        let mut items = column![].spacing(1).padding(5);
-
-        items = items.push(
-            button(text("Copy").size(13))
-                .width(150)
-                .style(button::text)
-                .on_press(Message::PdfContextMenuCommand {
-                    tab: ctx.tab,
-                    command: CommandId("pdf.copy-selection"),
-                }),
-        );
-        items = items.push(
-            button(text("Highlight").size(13))
-                .width(150)
-                .style(button::text)
-                .on_press(Message::PdfContextMenuCommand {
-                    tab: ctx.tab,
-                    command: CommandId("pdf.highlight"),
-                }),
-        );
-        items = items.push(
-            button(text("Highlight + Note").size(13))
-                .width(150)
-                .style(button::text)
-                .on_press(Message::PdfContextMenuCommand {
-                    tab: ctx.tab,
-                    command: CommandId("pdf.highlight-and-note"),
-                }),
-        );
-
-        let card = container(items).style(|_| container::Style {
-            background: Some(iced::Background::Color(t.bg_secondary)),
-            border: iced::Border {
-                color: t.border,
-                width: 1.0,
-                radius: 5.0.into(),
-            },
-            ..container::Style::default()
-        });
-
-        let positioned = container(card)
-            .width(Fill)
-            .height(Fill)
-            .padding(iced::Padding {
-                top: ctx.abs_pos.1,
-                right: 0.0,
-                bottom: 0.0,
-                left: ctx.abs_pos.0,
-            });
-
-        stack![backdrop, positioned].into()
     }
 }
 
