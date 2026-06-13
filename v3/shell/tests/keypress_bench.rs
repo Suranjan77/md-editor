@@ -26,9 +26,8 @@ fn large_document(lines: usize) -> String {
             0 => text.push_str("## Section heading with **bold** and *italic* prose\n"),
             3 => text.push_str("- a bullet item with a [wikilink] and `inline code`\n"),
             6 => text.push_str("> a quoted line that wraps around the editor width nicely\n"),
-            _ => text.push_str(
-                "The quick brown fox jumps over the lazy dog while typing fast here.\n",
-            ),
+            _ => text
+                .push_str("The quick brown fox jumps over the lazy dog while typing fast here.\n"),
         }
     }
     text
@@ -48,10 +47,7 @@ fn keypress_to_layout_p95_under_budget() {
 
     // Park the caret deep into the document so motion and edits exercise the
     // height tree at depth, not at the cheap top edge.
-    session.apply(Command::SetCursor {
-        line: 2500,
-        col: 0,
-    });
+    session.apply(Command::SetCursor { line: 2500, col: 0 });
 
     // Warm up: first shapes can pay one-time font/cache costs unrelated to the
     // steady-state keystroke loop.

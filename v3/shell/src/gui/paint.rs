@@ -358,7 +358,14 @@ pub fn line_plan(
                             ops.push(PaintOp::Text {
                                 content: cell_text[glyph.start..glyph.end].to_string(),
                                 x: current_x + 8.0 + glyph.x, // padding
-                                y: y + pad_top + run.line_y + glyph.y,
+                                // Center the cell's text line within the full
+                                // cell box and use the same `line_y - font_size`
+                                // top reference prose uses. The old `line_y`
+                                // (baseline) as top placed text ~font_size too
+                                // low, overflowing the cell into the next row.
+                                y: y + (line_height - metrics.line_height) / 2.0 + run.line_y
+                                    - metrics.font_size
+                                    + glyph.y,
                                 size: metrics.font_size,
                                 role: PaintRole::Text,
                                 font: FontRole::Sans,
