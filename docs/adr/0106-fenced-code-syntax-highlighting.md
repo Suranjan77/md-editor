@@ -56,5 +56,11 @@ one geometry source.
 - Phase 7.3's code-block geometry remains stable while syntax color arrives.
 - Themes can change without re-tokenizing.
 - Parser and renderer ownership stay explicit.
-- Syntax highlighting is still unimplemented; this ADR removes design
-  ambiguity but does not mark that refinement complete.
+- Implemented in Phase 7.6 (commits 8f9b4be + 5eeb54e): a stateful Rust
+  tokenizer in `v3/editor/src/syntax.rs`, `Lang`/`LexState` threaded through
+  `BlockState::Fence`, styler-side role-tagged sub-spans, and a shell
+  role→color map in `editor_canvas/palette.rs`. Geometry is invariant by
+  construction (tokens shape with the plain-code monospace attrs) and pinned
+  by the golden draw plan plus measure-equality, fallback, and
+  tokens-before-paint tests. Further languages are additive (extend `Lang` +
+  the lexer); no architectural change needed.

@@ -112,7 +112,7 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **Phase 7.3 blocks render as units** | Phase 7.3 | 🔶 | `paint.rs`, `editor/src/document.rs`, `session.rs` — measured table grid, fenced-code panel, unified block reveal, source/display offset mapping, shaped table hit-testing. Golden draw plan and BUG-B suites green; manual smoke items 30–31 pending. |
 | **Phase 7.4 stable assets** | Phase 7.4 | 🔶 | `vault/src/asset_sizes.rs`, `gui/markdown_assets.rs`, `gui/worker.rs`, `gui/pdf_worker_events.rs` — sidecar dimensions, async image/math loading, cached first layout, remeasure only on changed dimensions. Store/worker/layout tests green; manual smoke item 32 pending. |
 | **Phase 7.5 interaction exactness** | Phase 7.5 | 🔶 | `shaped_measurer.rs`, `editor_canvas.rs`, `editor_hit_testing.rs`, `markdown_interactions.rs` — one shaped geometry path for paint/caret/selection/hit-test, full golden round-trip, clickable checkbox through registered command, ctrl+click URI/wikilink, ctrl-hover pointer+underline. Manual smoke item 33 pending. |
-| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | CJK, emoji, and mixed-direction bidi shaped round-trip properties landed in `editor_hit_testing.rs`; caret geometry now follows bidi levels and ignores zero-width duplicate glyph records. ADR-0106 fixes fenced-code syntax ownership. **Inline-math vertical alignment fixed** (`paint.rs` — centered on the text row, not a `line_height`-tall box; golden re-pinned). **Table-cell text vertical overflow fixed** (`paint.rs` — centered in the cell box instead of overflowing into the next row; guard `table_cell_text_stays_within_its_cell_box`). **p95 keypress→layout CI bench landed** (`shell/tests/keypress_bench.rs` — 5k-line doc, p95 < 16ms, ~0.4ms locally). Remaining: element-level reveal, optional motion, fenced-code syntax implementation. |
+| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | CJK, emoji, and mixed-direction bidi shaped round-trip properties landed in `editor_hit_testing.rs`; caret geometry now follows bidi levels and ignores zero-width duplicate glyph records. ADR-0106 fixes fenced-code syntax ownership. **Inline-math vertical alignment fixed** (`paint.rs` — centered on the text row, not a `line_height`-tall box; golden re-pinned). **Table-cell text vertical overflow fixed** (`paint.rs` — centered in the cell box instead of overflowing into the next row; guard `table_cell_text_stays_within_its_cell_box`). **p95 keypress→layout CI bench landed** (`shell/tests/keypress_bench.rs` — 5k-line doc, p95 < 16ms, ~0.4ms locally). **Fenced-code syntax highlighting implemented** (ADR-0106): `editor/src/syntax.rs` stateful Rust tokenizer (semantic roles, no colors); `Lang`/`LexState` threaded through `BlockState::Fence` (lang constant within a fence; block-comment `lex` cascades via the existing convergence rule); styler splits `CodeContent` into role-tagged `CodeToken` sub-spans (unknown lang → single-span fallback); measurer shapes tokens with identical mono attrs and shell maps roles→colors in `editor_canvas/palette.rs` — golden re-pinned with byte-identical glyph geometry. Remaining: element-level reveal, optional motion. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
@@ -630,3 +630,24 @@ size targets.
   per the ADR. Golden + a convergence test + a geometry-invariance test + a
   paint-visits-only-visible-lines budget test complete the verification
   contract.
+- 2026-06-13 (implemented, commits 8f9b4be + 5eeb54e): fenced-code syntax
+  highlighting per the scope above, with two refinements learned in the
+  build. (1) The final `BlockState::Fence` shape is `{ marker, len, lang,
+  lex }` where `lang: Lang` (parsed once at the open) and `lex: LexState`
+  (block-comment nesting depth). `lang` is **constant within a fence**, so it
+  adds payload without perturbing convergence at all; `lex` is the only field
+  that varies per line, and it perturbs convergence in exactly the intended
+  way (open `/*` taints following lines until `*/`). The differential
+  random-edit test (extended with rust/comment atoms) proves incremental ==
+  full reparse including lexer state. (2) The role→color map lives in a new
+  `editor_canvas/palette.rs` **child module**, not a new top-level `gui`
+  module: the public path `editor_canvas::palette` is unchanged, so `mod.rs`,
+  `overlay.rs`, and `pdf_view.rs` stay untouched and the mandatory module
+  declaration lands in `editor_canvas.rs` (which extracting palette dropped to
+  636 lines, well under its 678 ratchet) rather than pushing `mod.rs` over its
+  ceiling — `budgets.toml` says ceilings may only decrease. Geometry
+  invariance is proven directly: the golden's existing rust fence now paints
+  per-token roles at byte-identical x/y/size (only role labels + op count
+  changed), plus a measure-equality test (highlighted vs plain), a
+  known-vs-unknown-language paint test, and a tokens-precomputed-before-paint
+  test. Tokenization runs in the editor (style/measure), never in `line_plan`.
