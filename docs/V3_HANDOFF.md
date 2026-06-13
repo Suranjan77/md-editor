@@ -105,16 +105,19 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **URI links open in browser** | P5 backlog №7 | ✅ | Added `open` dependency under ADR-0102, left-clicking a PDF external link opens it in browser asynchronously. Suite: `shell/tests/pdf_links.rs` |
 | **User-reported stabilization pass** | UX / renderer | 🔶 | `docs/V3_STABILIZATION_2026-06-12.md` — startup file-tree population, markdown wrap and measure-before-paint asset geometry, inline math flow, larger typography/rhythm, transparent display math, consolidated multi-line LaTeX environments, PDF resize-fit/reference crop, welcome transition, and toast runtime fix. Core defects addressed; Typora/Obsidian-level markdown polish remains open (specced as impl-plan Phase 6.3 + Phase 7). |
 | **Iced async runtime** | ADR-0103 | ✅ | `md3-shell` enables iced `tokio` feature so toast timer tasks run inside a Tokio reactor; fixes production panic from `tokio::time::sleep`. |
+| **Course correction 6.0: green baseline** | Phase 6.0 | ✅ | Tracker manual-log success now queues one success toast and `tracker_wiring` asserts that channel. Full default + pdfium workspace gates green. |
+| **Course correction 6.1: v3 size budgets** | Phase 6.1 | ✅ | `v3/budgets.toml` + `scripts/v3-budget.sh`, wired into CI. Hard limit 700; six pre-existing oversized files ratcheted. Enforcement proven by temporary hard-limit injection. |
+| **Course correction 6.2: decomposition** | Phase 6.2 | 🔶 | Started: toast queue/helpers/view moved from `gui/mod.rs` to `gui/toast.rs`; `mod.rs` ceiling reduced from 4,841 to 4,751. File/Markdown/PDF/chrome extraction and `buffer.rs` edit-op extraction remain. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-12, after stabilization pass):** fmt clean; clippy `-D warnings` clean; `cargo check -p md3-shell --features pdfium` clean; shell library suite 28/28 green. Full workspace has **one red test**: `tracker_manual_log_and_delete` (see `docs/V3_STABILIZATION_2026-06-12.md`). v2 suite unaffected (root workspace excludes `v3/`).
-
-⚠️ **This snapshot describes an uncommitted working tree** (~3 200 lines
-across 27 files on `v3`), and under the binary-gate rule (impl-plan §0.2) a
-red test means the last unit of work is **not done**. Both are resolved by
-impl-plan Phase 6.0: fix the test contract (toast assertion), run the full
-gate, commit, then re-take this snapshot from the commit.
+**Verification snapshot (2026-06-13, Phase 6.0–6.1):** fmt clean; both
+clippy `-D warnings` configurations clean; both full workspace test
+configurations green; kernel demo green; v3 size budget green; generated
+shortcut document refreshed. Local test runs used isolated
+`XDG_CONFIG_HOME` because the tracker is intentionally app-global and the
+developer machine already has a tracker database. v2 suite unaffected
+(root workspace excludes `v3/`).
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -187,6 +190,10 @@ gate, commit, then re-take this snapshot from the commit.
     rendering → 7.4 stable assets → 7.5 interaction exactness → 7.6
     motion/refinements), governed by ADR-0104 (proposed, spike resolves)
     and ADR-0105 (accepted). Supersedes impl-plan 6.4/6.5.
+18. **Course correction Phase 6 execution (2026-06-13):** 6.0 and 6.1 are
+    complete. 6.2 is active; toast code is extracted, but `gui/mod.rs` and
+    `editor/src/buffer.rs` remain above target. Do not start 6.3 or Phase 7
+    until 6.2 reaches its stated size gates.
 
 ## Decisions made during execution
 
@@ -520,3 +527,12 @@ gate, commit, then re-take this snapshot from the commit.
   shift" — asserted differentially against from-scratch layout plus a
   seeded caret-motion storm. `Styler::layout_stable()` retires in favor of
   a remeasure-before-paint invariant.
+- 2026-06-13: tracker manual-log uses a dedicated toast-only helper. Existing
+  `show_toast` callers still mirror messages into status because several
+  established command contracts and tests depend on that behavior; migrating
+  those channels is separate work, not folded into the Phase 6.0 test fix.
+- 2026-06-13: Phase 6.1's complete file scan found two additional modules
+  already above the 700-line hard limit: `kernel/src/pane.rs` (725) and
+  `pdf/src/render.rs` (704). They receive frozen ceilings alongside the four
+  review-listed files; omission from the review list was documentation drift,
+  not permission to bypass the ratchet.

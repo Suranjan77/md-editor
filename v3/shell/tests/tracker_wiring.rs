@@ -6,7 +6,7 @@ use md3_kernel::defaults::default_registry;
 use md3_kernel::input::Chord;
 use md3_shell::gui::keys::KeyEvent;
 use md3_shell::gui::tracker_view::{TrackerMessage, TrackerTab};
-use md3_shell::gui::{Message, Shell};
+use md3_shell::gui::{Message, Shell, ToastKind};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -76,7 +76,9 @@ fn tracker_manual_log_and_delete() {
     )));
     let _ = shell.update(Message::Tracker(TrackerMessage::ManualAdd));
 
-    assert_eq!(shell.status(), "tracker: session logged manually");
+    assert!(shell.toasts().iter().any(|toast| {
+        toast.kind == ToastKind::Success && toast.message == "tracker: session logged manually"
+    }));
 
     // Verify state: we can query the database directly or toggle tabs
     let _ = shell.update(Message::Tracker(TrackerMessage::TabSelected(

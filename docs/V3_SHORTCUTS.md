@@ -6,6 +6,8 @@ Do not edit by hand — change `kernel/src/defaults.rs` instead.
 | Command | Title | Category | Scope | Chord |
 |---|---|---|---|---|
 | `app.quit` | Quit | Application | Global | `ctrl+q` |
+| `app.settings` | Settings | Application | Workspace | `ctrl+,` |
+| `app.force-quit` | Force Quit | Application | — | — |
 | `palette.open` | Command Palette | Workspace | Workspace | `ctrl+shift+p` |
 | `file.quick-open` | Quick Open File | Workspace | Workspace | `ctrl+p` |
 | `vault.open` | Open Vault Folder | Workspace | — | — |
@@ -21,6 +23,7 @@ Do not edit by hand — change `kernel/src/defaults.rs` instead.
 | `workspace.toggle-files` | Toggle File Panel | Workspace | Workspace | `ctrl+b` |
 | `workspace.toggle-tracker` | Toggle Study Tracker | Workspace | Workspace | `ctrl+shift+t` |
 | `workspace.close-tab` | Close Tab | Workspace | Workspace | `ctrl+w` |
+| `workspace.force-close-tab` | Force Close Tab | Workspace | — | — |
 | `workspace.next-tab` | Next Tab | Workspace | Workspace | `ctrl+tab` |
 | `search.global` | Search Vault | Workspace | Workspace | `ctrl+shift+f` |
 | `help.shortcuts` | Keyboard Shortcuts | Help | Workspace | `ctrl+/` |
@@ -34,7 +37,13 @@ Do not edit by hand — change `kernel/src/defaults.rs` instead.
 | `editor.toggle-bold` | Bold | Editor | — | — |
 | `editor.toggle-italic` | Italic | Editor | — | — |
 | `editor.toggle-code` | Inline Code | Editor | — | — |
-| `editor.heading-cycle` | Heading Cycle | Editor | Editor(Markdown) | `ctrl+1` |
+| `editor.heading-cycle` | Heading Cycle | Editor | — | — |
+| `editor.heading-1` | Heading 1 | Editor | Editor(Markdown) | `ctrl+1` |
+| `editor.heading-2` | Heading 2 | Editor | Editor(Markdown) | `ctrl+2` |
+| `editor.heading-3` | Heading 3 | Editor | Editor(Markdown) | `ctrl+3` |
+| `editor.heading-4` | Heading 4 | Editor | Editor(Markdown) | `ctrl+4` |
+| `editor.heading-5` | Heading 5 | Editor | Editor(Markdown) | `ctrl+5` |
+| `editor.heading-6` | Heading 6 | Editor | Editor(Markdown) | `ctrl+6` |
 | `editor.toggle-bullet` | Toggle Bullet List | Editor | — | — |
 | `editor.toggle-checkbox` | Toggle Checkbox | Editor | Editor(Markdown) | `ctrl+enter` |
 | `editor.toggle-wikilink` | Toggle Wikilink | Editor | — | — |
