@@ -166,6 +166,127 @@ fn table_cell_text_stays_within_its_cell_box() {
     );
 }
 
+/// ADR-0106: token boundaries change paint only. The measured geometry of a
+/// highlighted code line must equal the same code measured as plain content.
+#[test]
+fn syntax_highlighting_is_geometry_invariant() {
+    use md3_editor::layout::{ConcealMode, Measurer, Styler};
+    use md3_editor::parse::BlockState;
+    use md3_editor::style::{MarkdownStyler, SpanKind};
+    use md3_editor::syntax::{Lang, LexState};
+
+    let measurer = md3_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
+        std::sync::Mutex::new(cosmic_text::FontSystem::new()),
+    ));
+    let code = "fn main() { let x = 42; /* note */ }";
+
+    // Highlighted (rust) vs plain (no language) styling of the identical line.
+    let highlighted = MarkdownStyler.style(
+        code,
+        &BlockState::Fence {
+            marker: '`',
+            len: 3,
+            lang: Lang::Rust,
+            lex: LexState::Normal,
+        },
+        ConcealMode::Concealed,
+    );
+    let plain = MarkdownStyler.style(
+        code,
+        &BlockState::Fence {
+            marker: '`',
+            len: 3,
+            lang: Lang::None,
+            lex: LexState::Normal,
+        },
+        ConcealMode::Concealed,
+    );
+
+    // Sanity: the highlighted line really did split into multiple role spans,
+    // while plain stayed a single code span — otherwise the test is vacuous.
+    assert!(highlighted.spans.len() > 1);
+    assert_eq!(plain.spans.len(), 1);
+    assert!(
+        highlighted
+            .spans
+            .iter()
+            .any(|s| matches!(s.kind, SpanKind::CodeToken(_)))
+    );
+
+    // Same display text, same measured height/rows — geometry is untouched.
+    assert_eq!(highlighted.display, plain.display);
+    assert_eq!(
+        measurer.measure(&highlighted, 800.0),
+        measurer.measure(&plain, 800.0)
+    );
+}
+
+/// Known-language code paints with semantic syntax roles; an unknown language
+/// falls back to the single plain `Code` role (no `Syntax` ops).
+#[test]
+fn known_language_paints_syntax_roles_unknown_falls_back() {
+    use md3_shell::gui::paint::PaintRole;
+
+    let rust = session("intro\n```rust\nlet x = 1;\n```\n");
+    let plain = session("intro\n```text\nlet x = 1;\n```\n");
+
+    // Line 2 is the code content in both.
+    let rust_ops = {
+        let styled = rust.doc.styled_line(2).unwrap();
+        line_plan(2, &styled, 0.0, 24.0, 800.0, &rust)
+    };
+    let plain_ops = {
+        let styled = plain.doc.styled_line(2).unwrap();
+        line_plan(2, &styled, 0.0, 24.0, 800.0, &plain)
+    };
+
+    let has_syntax = |ops: &[PaintOp]| {
+        ops.iter().any(|op| {
+            matches!(
+                op,
+                PaintOp::Text {
+                    role: PaintRole::Syntax(_),
+                    ..
+                }
+            )
+        })
+    };
+    assert!(
+        has_syntax(&rust_ops),
+        "rust code should produce syntax roles"
+    );
+    assert!(
+        !has_syntax(&plain_ops),
+        "unknown language must fall back to the plain code role"
+    );
+    // The fallback still paints the code text with the base Code role.
+    assert!(plain_ops.iter().any(|op| matches!(
+        op,
+        PaintOp::Text {
+            role: PaintRole::Code,
+            ..
+        }
+    )));
+}
+
+/// Paint must not tokenize: the styled line handed to `line_plan` already
+/// carries the role-tagged spans (tokenization happens in the editor during
+/// styling/measure, off the viewport paint path).
+#[test]
+fn tokens_are_precomputed_before_paint() {
+    use md3_editor::style::SpanKind;
+
+    let rust = session("intro\n```rust\nlet x = 1;\n```\n");
+    let styled = rust.doc.styled_line(2).unwrap();
+    assert!(
+        styled
+            .spans
+            .iter()
+            .any(|s| matches!(s.kind, SpanKind::CodeToken(_))),
+        "styled_line already carries syntax tokens before paint runs"
+    );
+}
+
 #[test]
 fn inline_math_reserves_its_rendered_width_before_following_text() {
     let mut session = session("before $x$ after\nnext");
