@@ -6,15 +6,16 @@ use std::collections::{HashMap, HashSet};
 
 use md3_editor::buffer::Command;
 use md3_editor::document::EditorDocument;
-use md3_editor::layout::Damage;
-use md3_editor::style::SpanKind;
+use md3_editor::layout::{Damage, Measurer};
 use md3_kernel::pane::DocumentId;
 
-use super::editor_canvas::{LINE_HEIGHT, MonoMeasurer};
+use super::editor_canvas::LINE_HEIGHT;
+use super::markdown_assets::table_cells;
+use super::shaped_measurer::ShapedMeasurer;
 
 pub struct MdSession {
-    pub doc: EditorDocument<MonoMeasurer>,
-    measurer: MonoMeasurer,
+    pub doc: EditorDocument<ShapedMeasurer>,
+    pub measurer: ShapedMeasurer,
     /// Vault-relative path (the kernel document path).
     pub rel_path: String,
     pub scroll: f32,
@@ -28,14 +29,14 @@ pub struct MdSession {
     pub replace_text: String,
     pub image_cache: HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     pub math_cache: HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    math_blocks: HashMap<usize, String>,
-    math_block_continuations: HashSet<usize>,
+    pub(super) math_blocks: HashMap<usize, String>,
+    pub(super) math_block_continuations: HashSet<usize>,
+    table_column_widths: HashMap<usize, Vec<f32>>,
 }
 
 impl MdSession {
-    pub fn new(rel_path: &str, text: &str) -> MdSession {
-        let measurer = MonoMeasurer::default();
-        MdSession {
+    pub fn new(rel_path: &str, text: &str, measurer: ShapedMeasurer) -> MdSession {
+        let mut session = MdSession {
             doc: EditorDocument::new(measurer.clone(), 976.0, text),
             measurer,
             rel_path: rel_path.to_string(),
@@ -50,7 +51,10 @@ impl MdSession {
             math_cache: HashMap::new(),
             math_blocks: HashMap::new(),
             math_block_continuations: HashSet::new(),
-        }
+            table_column_widths: HashMap::new(),
+        };
+        session.refresh_block_metadata();
+        session
     }
 
     /// Apply an editor command and keep the caret on screen.
@@ -92,60 +96,6 @@ impl MdSession {
         self.scroll_caret_into_view();
     }
 
-    pub fn load_visual_assets(&mut self, abs_path: &std::path::Path) {
-        let Some(base_path) = abs_path.parent() else {
-            return;
-        };
-        let block_lines = self.load_math_blocks();
-        for line in 0..self.doc.line_count() {
-            if block_lines.contains(&line) {
-                continue;
-            }
-            let Some(styled) = self.doc.styled_line(line) else {
-                continue;
-            };
-            for span in styled.spans {
-                match span.kind {
-                    SpanKind::Image { url } if !self.image_cache.contains_key(&url) => {
-                        if let Ok(image) = image::open(base_path.join(&url)) {
-                            let width = image.width();
-                            let height = image.height();
-                            let handle = iced::widget::image::Handle::from_rgba(
-                                width,
-                                height,
-                                image.into_rgba8().into_raw(),
-                            );
-                            self.image_cache
-                                .insert(url.clone(), (handle, width as f32, height as f32));
-                            self.measurer
-                                .set_image_size(url, width as f32, height as f32);
-                        }
-                    }
-                    SpanKind::Math | SpanKind::MathContent => {
-                        let chars = styled.display.chars().collect::<Vec<_>>();
-                        let tex = chars[span.range]
-                            .iter()
-                            .collect::<String>()
-                            .trim_matches('$')
-                            .trim()
-                            .to_string();
-                        if !tex.is_empty()
-                            && !self.math_cache.contains_key(&tex)
-                            && let Ok(rendered) = render_math(&tex)
-                        {
-                            self.measurer
-                                .set_math_size(tex.clone(), rendered.1, rendered.2);
-                            self.math_cache.insert(tex, rendered);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        self.doc.remeasure();
-        self.clamp_scroll();
-    }
-
     pub fn math_block_at(&self, line: usize) -> Option<&str> {
         self.math_blocks.get(&line).map(String::as_str)
     }
@@ -154,9 +104,41 @@ impl MdSession {
         self.math_block_continuations.contains(&line)
     }
 
-    fn load_math_blocks(&mut self) -> HashSet<usize> {
+    pub fn table_widths(&self, index: usize) -> Option<&[f32]> {
+        self.table_column_widths.get(&index).map(|v| v.as_slice())
+    }
+
+    pub fn table_hit_test(&self, index: usize, x: f32, y: f32) -> Option<usize> {
+        let widths = self.table_widths(index)?;
+        let source = self.doc.buffer().line_text(index);
+        let cells = table_cells(&source);
+        let mut left = 0.0;
+        for (cell_index, cell) in cells.iter().enumerate() {
+            let width = widths.get(cell_index).copied().unwrap_or(0.0) + 16.0;
+            if x <= left + width || cell_index + 1 == cells.len() {
+                let styled = md3_editor::layout::StyledLine::plain(
+                    cell.text.trim(),
+                    md3_editor::layout::ConcealMode::Concealed,
+                );
+                let display_col = self.measurer.hit_test(
+                    &styled,
+                    f64::from(width),
+                    f64::from((x - left - 8.0).max(0.0)),
+                    f64::from(y),
+                );
+                let leading = cell.text.chars().take_while(|c| c.is_whitespace()).count();
+                return Some(cell.start + leading + display_col);
+            }
+            left += width;
+        }
+        None
+    }
+
+    pub(super) fn refresh_block_metadata(&mut self) -> HashSet<usize> {
         self.math_blocks.clear();
         self.math_block_continuations.clear();
+        self.table_column_widths.clear();
+
         let mut covered = HashSet::new();
         let mut line = 0;
         while line < self.doc.line_count() {
@@ -191,25 +173,86 @@ impl MdSession {
             if let Some(&leader) = content_lines.first() {
                 let tex = content.join("\n");
                 if !tex.is_empty() {
-                    if !self.math_cache.contains_key(&tex)
-                        && let Ok(rendered) = render_math(&tex)
-                    {
-                        self.math_cache.insert(tex.clone(), rendered);
-                    }
                     if let Some((_, width, height)) = self.math_cache.get(&tex) {
                         self.measurer.set_math_block_size(
                             self.doc.buffer().line_text(leader),
                             *width,
                             *height,
                         );
-                        self.math_blocks.insert(leader, tex);
-                        self.math_block_continuations
-                            .extend(content_lines.into_iter().skip(1));
                     }
+                    self.math_blocks.insert(leader, tex);
+                    self.math_block_continuations
+                        .extend(content_lines.into_iter().skip(1));
                 }
             }
             line = cursor.saturating_add(1);
         }
+
+        // Also compute table column widths
+        let mut in_table = false;
+        let mut table_start = 0;
+        let mut table_widths: Vec<f32> = Vec::new();
+
+        for index in 0..self.doc.line_count() {
+            let styled = self.doc.styled_line(index).unwrap_or_else(|| {
+                md3_editor::layout::StyledLine::plain(
+                    "",
+                    md3_editor::layout::ConcealMode::Concealed,
+                )
+            });
+            let kind = styled.kind;
+            if matches!(
+                kind,
+                md3_editor::parse::LineKind::TableRow | md3_editor::parse::LineKind::TableSep
+            ) {
+                if !in_table {
+                    in_table = true;
+                    table_start = index;
+                    table_widths.clear();
+                }
+                let text = self.doc.buffer().line_text(index);
+                let cells = text.split('|').skip(1).collect::<Vec<_>>();
+                // Usually the last split is empty if it ends with |
+                let cell_count = if cells.last().is_some_and(|&s| s.trim().is_empty()) {
+                    cells.len().saturating_sub(1)
+                } else {
+                    cells.len()
+                };
+                for (i, cell) in cells.iter().take(cell_count).enumerate() {
+                    let cell_text = cell.trim();
+                    if cell_text.is_empty() || cell_text.chars().all(|c| c == '-' || c == ':') {
+                        continue; // table sep
+                    }
+                    let cell_styled = md3_editor::layout::StyledLine::plain(
+                        cell_text,
+                        md3_editor::layout::ConcealMode::Concealed,
+                    );
+                    let buffer = self.measurer.create_buffer(&cell_styled, 10000.0);
+                    let width = buffer
+                        .layout_runs()
+                        .map(|r| r.line_w)
+                        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                        .unwrap_or(0.0);
+
+                    if i >= table_widths.len() {
+                        table_widths.push(width);
+                    } else {
+                        table_widths[i] = table_widths[i].max(width);
+                    }
+                }
+            } else if in_table {
+                in_table = false;
+                for i in table_start..index {
+                    self.table_column_widths.insert(i, table_widths.clone());
+                }
+            }
+        }
+        if in_table {
+            for i in table_start..self.doc.line_count() {
+                self.table_column_widths.insert(i, table_widths.clone());
+            }
+        }
+
         covered
     }
 
@@ -218,45 +261,6 @@ impl MdSession {
             (self.doc.layout().total_height() as f32 - self.viewport_h + LINE_HEIGHT).max(0.0);
         self.scroll = self.scroll.clamp(0.0, max);
     }
-}
-
-fn render_math(tex: &str) -> Result<(iced::widget::image::Handle, f32, f32), String> {
-    use ratex_layout::{LayoutOptions, layout, to_display_list};
-    use ratex_parser::parser::parse;
-    use ratex_render::{RenderOptions, render_to_png};
-    use ratex_types::color::Color as RatexColor;
-    use ratex_types::math_style::MathStyle;
-
-    let render_options = RenderOptions {
-        font_size: 24.0,
-        padding: 4.0,
-        background_color: RatexColor {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 0.0,
-        },
-        font_dir: String::new(),
-        device_pixel_ratio: 2.0,
-    };
-    let layout_options = LayoutOptions::default()
-        .with_style(MathStyle::Display)
-        .with_color(RatexColor {
-            r: 0.89,
-            g: 0.90,
-            b: 0.93,
-            a: 1.0,
-        });
-    let ast = parse(tex).map_err(|error| format!("math parse: {error}"))?;
-    let layout_box = layout(&ast, &layout_options);
-    let bytes = render_to_png(&to_display_list(&layout_box), &render_options)
-        .map_err(|error| format!("math render: {error:?}"))?;
-    let image = image::load_from_memory(&bytes).map_err(|error| error.to_string())?;
-    Ok((
-        iced::widget::image::Handle::from_bytes(bytes),
-        image.width() as f32 / 2.0,
-        image.height() as f32 / 2.0,
-    ))
 }
 
 /// Gap between page sheets in display px (zoom-independent).
@@ -560,10 +564,10 @@ impl Sessions {
         self.pdf.retain(|id, _| docs.get(*id).is_some());
     }
 }
-
 #[cfg(test)]
 mod tests {
-    use super::{MdSession, PdfFitMode, PdfSession};
+    use super::*;
+    use crate::gui::shaped_measurer::ShapedMeasurer;
 
     #[test]
     fn fit_width_tracks_viewport_resize_until_manual_zoom() {
@@ -603,7 +607,10 @@ mod tests {
             panic!("save image: {error}");
         }
         let note_path = dir.path().join("note.md");
-        let mut session = MdSession::new("note.md", "![plot](plot.png)\n$x^2$");
+        let measurer = ShapedMeasurer::new(std::sync::Arc::new(std::sync::Mutex::new(
+            cosmic_text::FontSystem::new(),
+        )));
+        let mut session = MdSession::new("note.md", "![plot](plot.png)\n$x^2$", measurer);
         session.load_visual_assets(&note_path);
 
         assert!(session.image_cache.contains_key("plot.png"));
@@ -618,7 +625,10 @@ mod tests {
         };
         let note_path = dir.path().join("note.md");
         let text = "$$\n\\begin{align}\nx &= a + b \\\\\ny &= c + d\n\\end{align}\n$$";
-        let mut session = MdSession::new("note.md", text);
+        let measurer = ShapedMeasurer::new(std::sync::Arc::new(std::sync::Mutex::new(
+            cosmic_text::FontSystem::new(),
+        )));
+        let mut session = MdSession::new("note.md", text, measurer);
         session.load_visual_assets(&note_path);
 
         assert!(session.math_block_at(1).is_some());

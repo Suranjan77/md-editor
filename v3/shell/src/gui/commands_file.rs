@@ -368,9 +368,7 @@ impl Shell {
                 {
                     match std::fs::read_to_string(&abs) {
                         Ok(text) => {
-                            let mut session = MdSession::new(rel, &text);
-                            session.load_visual_assets(&abs);
-                            entry.insert(session);
+                            entry.insert(MdSession::new(rel, &text, self.measurer.clone()));
                         }
                         Err(error) => {
                             self.status = format!("open {rel}: {error}");
@@ -401,7 +399,212 @@ impl Shell {
             }
             _ => {}
         }
+        if matches!(kind, EditorKind::Markdown) {
+            self.schedule_open_markdown_work();
+        }
         self.sync_status();
         Some(tab)
+    }
+}
+
+impl Shell {
+    pub(super) fn run_file_command(&mut self, cmd: &str) -> Option<Task<Message>> {
+        match cmd {
+            "file.quick-open" => {
+                self.files = super::scan_vault(&self.vault_root);
+                self.open_overlay(Overlay::QuickOpen {
+                    input: String::new(),
+                    selected: 0,
+                });
+            }
+            "vault.open" => {
+                return Some(Task::perform(
+                    crate::vault_picker::pick_vault_async(),
+                    Message::VaultPicked,
+                ));
+            }
+            "file.new-note" => {
+                self.open_overlay(Overlay::NameInput {
+                    purpose: NamePurpose::NewNote {
+                        parent: self.selected_parent(),
+                    },
+                    input: String::new(),
+                });
+            }
+            "file.new-folder" => {
+                self.open_overlay(Overlay::NameInput {
+                    purpose: NamePurpose::NewFolder {
+                        parent: self.selected_parent(),
+                    },
+                    input: String::new(),
+                });
+            }
+            "file.rename" => {
+                let Some(target) = self.selected_target() else {
+                    self.status = "rename: select a file or folder".to_string();
+                    return Some(Task::none());
+                };
+                let input = std::path::Path::new(&target)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                self.open_overlay(Overlay::NameInput {
+                    purpose: NamePurpose::Rename { target },
+                    input,
+                });
+            }
+            "file.delete" => {
+                let Some(target) = self.selected_target() else {
+                    self.status = "delete: select a file or folder".to_string();
+                    return Some(Task::none());
+                };
+                let is_dir = self.vault_root.join(&target).is_dir();
+                self.open_overlay(Overlay::ConfirmDelete { target, is_dir });
+            }
+            "workspace.refresh-files" => {
+                self.files = super::scan_vault(&self.vault_root);
+                return Some(self.success("File panel refreshed"));
+            }
+            "workspace.collapse-files" => {
+                self.tree_expanded.clear();
+                self.save_session();
+            }
+            "workspace.split-right" | "workspace.split-down" => {
+                let focused = self.focused_doc_info();
+                let axis = if cmd == "workspace.split-down" {
+                    md3_kernel::SplitAxis::Vertical
+                } else {
+                    md3_kernel::SplitAxis::Horizontal
+                };
+                match focused {
+                    Some((path, kind)) => {
+                        if let Err(e) = self.ws.open_in_new_split(&path, kind, axis) {
+                            self.status = e.to_string();
+                        }
+                    }
+                    None => {
+                        let pane = self.ws.panes.first_pane();
+                        if let Err(error) = self.ws.panes.split(pane, axis) {
+                            self.status = error.to_string();
+                        }
+                    }
+                }
+            }
+            "workspace.close-tab" => {
+                if let Some(tab) = self.ws.focused_tab() {
+                    if self.is_tab_dirty(tab) {
+                        let name = self.tab_name(tab);
+                        self.open_overlay(Overlay::Confirm {
+                            message: format!("Abandon unsaved changes in `{name}`?"),
+                            on_confirm: CommandId("workspace.force-close-tab"),
+                        });
+                    } else {
+                        self.close_tab(tab);
+                    }
+                }
+            }
+            "workspace.force-close-tab" => {
+                if let Some(tab) = self.ws.focused_tab() {
+                    self.close_tab(tab);
+                }
+            }
+            "workspace.close-pane" => {
+                let pane = self
+                    .ws
+                    .focused_pane()
+                    .unwrap_or_else(|| self.ws.panes.first_pane());
+                self.close_pane(pane);
+            }
+            "workspace.next-tab" => self.cycle_tab(),
+            "workspace.toggle-files" => {
+                self.tree_open = !self.tree_open;
+                if self.tree_open {
+                    self.files = super::scan_vault(&self.vault_root);
+                }
+                self.save_session();
+            }
+            "workspace.toggle-tracker" => {
+                self.tracker_open = !self.tracker_open;
+                self.save_session();
+            }
+
+            _ => return None,
+        }
+        Some(Task::none())
+    }
+}
+
+impl Shell {
+    pub(super) fn handle_tree_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::TreeFileClicked(rel_path) => {
+                self.tree_selected = Some(rel_path.clone());
+                self.open_document(&rel_path);
+                Task::none()
+            }
+            Message::TreeDirToggled(dir_path) => {
+                self.tree_selected = Some(dir_path.clone());
+                if self.tree_expanded.contains(&dir_path) {
+                    self.tree_expanded.remove(&dir_path);
+                } else {
+                    self.tree_expanded.insert(dir_path);
+                }
+                self.save_session();
+                Task::none()
+            }
+            Message::TreeContextRequested { rel_path, is_dir } => {
+                self.close_overlay();
+                self.close_menu();
+                self.tree_selected = Some(rel_path.clone());
+                self.tree_context = Some((rel_path, is_dir));
+                self.ws.open_overlay("file-context");
+                Task::none()
+            }
+            Message::TreeContextCommand(command) => {
+                self.close_tree_context();
+                self.run_command(command)
+            }
+            Message::TreeContextOpen { split } => {
+                let target = self.tree_context.as_ref().map(|(path, _)| path.clone());
+                self.close_tree_context();
+                let Some(path) = target else {
+                    return Task::none();
+                };
+                if split {
+                    let pane = self
+                        .ws
+                        .focused_pane()
+                        .unwrap_or_else(|| self.ws.panes.first_pane());
+                    match self.ws.panes.split(pane, SplitAxis::Horizontal) {
+                        Ok(pane) => {
+                            let _ = self.open_document_in(pane, &path);
+                        }
+                        Err(error) => self.status = error.to_string(),
+                    }
+                } else {
+                    self.open_document(&path);
+                }
+                Task::none()
+            }
+            Message::TreeContextClosed => {
+                self.close_tree_context();
+                Task::none()
+            }
+            Message::TreeResizeStarted => {
+                self.tree_resizing = true;
+                Task::none()
+            }
+            Message::TreeResized(x) => {
+                self.tree_width = x.clamp(160.0, 480.0);
+                Task::none()
+            }
+            Message::TreeResizeFinished => {
+                self.tree_resizing = false;
+                self.save_session();
+                Task::none()
+            }
+
+            _ => Task::none(),
+        }
     }
 }

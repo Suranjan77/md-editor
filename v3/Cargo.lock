@@ -2292,6 +2292,7 @@ name = "md3-shell"
 version = "3.0.0-dev"
 dependencies = [
  "chrono",
+ "cosmic-text",
  "directories",
  "iced",
  "image",
@@ -2310,6 +2311,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "unicode-segmentation",
 ]
 
 [[package]]

@@ -26,9 +26,28 @@ use md3_pdf::TileKey;
 /// A request the update loop hands to the worker thread.
 #[derive(Debug, Clone)]
 pub enum PdfJob {
-    Tile { path: PathBuf, key: TileKey },
-    PageGlyphs { path: PathBuf, page: u32 },
-    PageLinks { path: PathBuf, page: u32 },
+    Tile {
+        path: PathBuf,
+        key: TileKey,
+    },
+    PageGlyphs {
+        path: PathBuf,
+        page: u32,
+    },
+    PageLinks {
+        path: PathBuf,
+        page: u32,
+    },
+    MarkdownImage {
+        document: PathBuf,
+        key: String,
+        abs_path: PathBuf,
+    },
+    MarkdownMath {
+        document: PathBuf,
+        key: String,
+        tex: String,
+    },
 }
 
 /// What the worker sends back. Routed to a session by `path` (sessions know
@@ -55,6 +74,18 @@ pub enum PdfJobOutput {
         path: PathBuf,
         page: u32,
         links: Vec<md3_pdf::LinkBox>,
+    },
+    MarkdownAsset {
+        document: PathBuf,
+        key: String,
+        handle: iced::widget::image::Handle,
+        width: f32,
+        height: f32,
+    },
+    MarkdownAssetFailed {
+        document: PathBuf,
+        key: String,
+        error: String,
     },
 }
 
@@ -94,38 +125,84 @@ where
 /// The production executor: one pdfium call per job, errors degrade the way
 /// the synchronous paths do (failed tile reports, failed glyphs/links become
 /// empty sets so the page is not re-requested every frame).
-#[cfg(feature = "pdfium")]
 pub fn execute_job(job: &PdfJob) -> Option<PdfJobOutput> {
-    let renderer = super::pdf_view::renderer()?;
     match job {
-        PdfJob::Tile { path, key } => Some(match renderer.render_tile(path, *key) {
-            Ok(tile) => {
-                let bytes = tile.byte_size();
-                let handle =
-                    iced::widget::image::Handle::from_rgba(tile.width, tile.height, tile.rgba);
-                PdfJobOutput::Tile {
-                    path: path.clone(),
-                    key: *key,
-                    handle,
-                    bytes,
-                }
-            }
-            Err(e) => PdfJobOutput::TileFailed {
-                path: path.clone(),
-                key: *key,
-                error: e.to_string(),
+        PdfJob::MarkdownImage {
+            document,
+            key,
+            abs_path,
+        } => Some(match super::markdown_assets::load_image(abs_path) {
+            Ok((handle, width, height)) => PdfJobOutput::MarkdownAsset {
+                document: document.clone(),
+                key: key.clone(),
+                handle,
+                width,
+                height,
+            },
+            Err(error) => PdfJobOutput::MarkdownAssetFailed {
+                document: document.clone(),
+                key: key.clone(),
+                error,
             },
         }),
-        PdfJob::PageGlyphs { path, page } => Some(PdfJobOutput::PageGlyphs {
-            path: path.clone(),
-            page: *page,
-            chars: renderer.page_chars(path, *page).unwrap_or_default(),
-        }),
-        PdfJob::PageLinks { path, page } => Some(PdfJobOutput::PageLinks {
-            path: path.clone(),
-            page: *page,
-            links: renderer.page_links(path, *page).unwrap_or_default(),
-        }),
+        PdfJob::MarkdownMath { document, key, tex } => {
+            Some(match super::markdown_assets::render_math(tex) {
+                Ok((handle, width, height)) => PdfJobOutput::MarkdownAsset {
+                    document: document.clone(),
+                    key: key.clone(),
+                    handle,
+                    width,
+                    height,
+                },
+                Err(error) => PdfJobOutput::MarkdownAssetFailed {
+                    document: document.clone(),
+                    key: key.clone(),
+                    error,
+                },
+            })
+        }
+        #[cfg(feature = "pdfium")]
+        PdfJob::Tile { path, key } => {
+            let renderer = super::pdf_view::renderer()?;
+            Some(match renderer.render_tile(path, *key) {
+                Ok(tile) => {
+                    let bytes = tile.byte_size();
+                    let handle =
+                        iced::widget::image::Handle::from_rgba(tile.width, tile.height, tile.rgba);
+                    PdfJobOutput::Tile {
+                        path: path.clone(),
+                        key: *key,
+                        handle,
+                        bytes,
+                    }
+                }
+                Err(e) => PdfJobOutput::TileFailed {
+                    path: path.clone(),
+                    key: *key,
+                    error: e.to_string(),
+                },
+            })
+        }
+        #[cfg(feature = "pdfium")]
+        PdfJob::PageGlyphs { path, page } => {
+            let renderer = super::pdf_view::renderer()?;
+            Some(PdfJobOutput::PageGlyphs {
+                path: path.clone(),
+                page: *page,
+                chars: renderer.page_chars(path, *page).unwrap_or_default(),
+            })
+        }
+        #[cfg(feature = "pdfium")]
+        PdfJob::PageLinks { path, page } => {
+            let renderer = super::pdf_view::renderer()?;
+            Some(PdfJobOutput::PageLinks {
+                path: path.clone(),
+                page: *page,
+                links: renderer.page_links(path, *page).unwrap_or_default(),
+            })
+        }
+        #[cfg(not(feature = "pdfium"))]
+        PdfJob::Tile { .. } | PdfJob::PageGlyphs { .. } | PdfJob::PageLinks { .. } => None,
     }
 }
 
@@ -133,7 +210,6 @@ pub fn execute_job(job: &PdfJob) -> Option<PdfJobOutput> {
 /// the app as the first message, then forwards every output. The handshake
 /// is what lets windowless tests (which run no subscriptions) stay on the
 /// synchronous fallback for free.
-#[cfg(feature = "pdfium")]
 pub fn subscribe() -> impl iced::futures::Stream<Item = super::Message> {
     use iced::futures::{SinkExt, StreamExt};
     iced::stream::channel(64, async move |mut output| {
@@ -191,6 +267,25 @@ mod tests {
             })
             .collect();
         assert_eq!(pages, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn markdown_image_job_loads_dimensions_off_thread_path() {
+        let dir = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
+        let image_path = dir.path().join("plot.png");
+        let image = image::RgbaImage::from_pixel(8, 6, image::Rgba([1, 2, 3, 255]));
+        image
+            .save(&image_path)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let job = PdfJob::MarkdownImage {
+            document: dir.path().join("note.md"),
+            key: "image:plot.png".to_string(),
+            abs_path: image_path,
+        };
+        let Some(PdfJobOutput::MarkdownAsset { width, height, .. }) = execute_job(&job) else {
+            panic!("expected loaded Markdown asset");
+        };
+        assert_eq!((width, height), (8.0, 6.0));
     }
 
     #[test]

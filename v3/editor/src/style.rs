@@ -63,17 +63,66 @@ pub struct MarkdownStyler;
 impl Styler for MarkdownStyler {
     fn style(&self, text: &str, block: &BlockState, conceal: ConcealMode) -> StyledLine {
         let (kind, _) = classify(text, block);
-        let spans = line_spans(text, &kind);
+        let mut spans = line_spans(text, &kind);
+        let mut display = text.to_string();
+
+        if conceal == ConcealMode::Concealed {
+            // Drop marker spans and adjust remaining span offsets
+            let mut new_spans = Vec::new();
+            let mut new_display = String::new();
+            let chars: Vec<char> = text.chars().collect();
+
+            // Build a list of ranges that we KEEP.
+            // A character is kept if it is not inside any SpanKind::Marker.
+            let mut keep = vec![true; chars.len()];
+
+            // Some markers shouldn't be concealed in block contexts like tables, wait, marker_is_concealed handled this!
+            // Let's see what marker_is_concealed did.
+            // "Pipes are markers (never concealed by the shell — tables keep their structure visible)"
+            let hide_markers = !matches!(kind, LineKind::TableRow | LineKind::TableSep);
+
+            if hide_markers {
+                for span in &spans {
+                    if span.kind == SpanKind::Marker {
+                        for i in span.range.clone() {
+                            if i < keep.len() {
+                                keep[i] = false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut old_to_new = vec![0; chars.len() + 1];
+            let mut current = 0;
+            for (i, &k) in keep.iter().enumerate() {
+                old_to_new[i] = current;
+                if k {
+                    new_display.push(chars[i]);
+                    current += 1;
+                }
+            }
+            old_to_new[chars.len()] = current;
+
+            for span in spans {
+                if span.kind != SpanKind::Marker || !hide_markers {
+                    let start = old_to_new[span.range.start.min(chars.len())];
+                    let end = old_to_new[span.range.end.min(chars.len())];
+                    if start < end {
+                        new_spans.push(Span::new(start..end, span.kind));
+                    }
+                }
+            }
+            display = new_display;
+            spans = new_spans;
+        }
+
         StyledLine {
-            display: text.to_string(),
+            display,
             conceal,
             kind,
             spans,
         }
-    }
-
-    fn layout_stable(&self) -> bool {
-        true // display is always the full source text
     }
 }
 
@@ -488,15 +537,6 @@ mod tests {
         ] {
             assert_tiles(text);
         }
-    }
-
-    #[test]
-    fn styler_is_layout_stable_by_construction() {
-        let styler = MarkdownStyler;
-        let a = styler.style("**bold**", &BlockState::Normal, ConcealMode::Concealed);
-        let b = styler.style("**bold**", &BlockState::Normal, ConcealMode::Revealed);
-        assert_eq!(a.display, b.display, "same measured text in both modes");
-        assert_eq!(a.spans, b.spans);
     }
 
     #[test]

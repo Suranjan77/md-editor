@@ -230,10 +230,6 @@ impl Styler for WidthStyler {
     fn style(&self, text: &str, _block: &BlockState, conceal: ConcealMode) -> StyledLine {
         StyledLine::plain(text, conceal)
     }
-
-    fn layout_stable(&self) -> bool {
-        true
-    }
 }
 
 struct CountMeasurer;
@@ -246,6 +242,9 @@ impl Measurer for CountMeasurer {
             height: rows * 16.0,
             rows: rows as u32,
         }
+    }
+    fn hit_test(&self, _line: &StyledLine, _wrap_width: f64, _x: f64, _y: f64) -> usize {
+        0
     }
 }
 

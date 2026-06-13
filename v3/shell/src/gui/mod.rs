@@ -10,18 +10,22 @@
 //! - **View:** the kernel's `Layout` tree is walked into iced rows/columns;
 //!   documents are peers — any kind in any pane (BUG-C discipline).
 
+mod chrome;
 mod chrome_context;
 mod chrome_panels;
 mod commands_file;
 mod commands_md;
+mod commands_pdf;
 mod commands_pdf_annotations;
 mod commands_pdf_nav;
+mod commands_settings;
 pub mod drag;
 pub mod editor_canvas;
 pub mod file_tree;
 pub mod icons;
 mod input;
 pub mod keys;
+mod markdown_assets;
 pub mod menu;
 pub mod overlay;
 pub mod paint;
@@ -30,6 +34,7 @@ mod pdf_view;
 mod pdf_worker_events;
 pub mod session;
 mod session_persist;
+pub mod shaped_measurer;
 pub mod snapshot;
 mod status;
 mod stores;
@@ -47,12 +52,12 @@ use md3_editor::buffer::{Command, Movement, Selection};
 use md3_kernel::input::{Chord, EditorKind, Key};
 use md3_kernel::pane::{DocumentId, Layout, Pane, PaneId, SplitPath, TabId};
 use md3_kernel::{CommandId, CommandRegistry, Keymap, SplitAxis, Workspace};
-use md3_vault::{AnnotationStore, SearchIndex, SessionStore};
+use md3_vault::{AnnotationStore, AssetSizeStore, SearchIndex, SessionStore};
 
 use chrome_panels::find_all_matches;
 use editor_canvas::{EditorCanvas, palette as colors};
 use overlay::{NamePurpose, Overlay, PdfFindHit};
-use session::{MdSession, PdfFitMode, PdfSelection, PdfSession, Sessions};
+use session::{MdSession, PdfSelection, PdfSession, Sessions};
 use snapshot::{NodeSnapshot, SessionSnapshot, TabSnapshot, ViewSnapshot};
 
 /// Highlight color cycle (`pdf.highlight-color`); new annotations start at
@@ -108,6 +113,8 @@ pub enum Message {
         line: usize,
         col: usize,
         viewport_h: f32,
+        checkbox: bool,
+        ctrl: bool,
     },
     EditorScrolled {
         tab: TabId,
@@ -272,7 +279,9 @@ pub struct Shell {
     keymap: Keymap,
     ws: Workspace,
     sessions: Sessions,
+    measurer: shaped_measurer::ShapedMeasurer,
     vault_root: PathBuf,
+    tracker_db_path: PathBuf,
     overlay: Option<Overlay>,
     open_menu: Option<menu::MenuId>,
     /// Vault files (relative paths) for quick-open; rescanned on open.
@@ -284,7 +293,9 @@ pub struct Shell {
     annotations: Option<AnnotationStore>,
     /// Session store on the same sidecar; opened on startup for restore.
     session: Option<SessionStore>,
+    asset_sizes: Option<AssetSizeStore>,
     pdf_worker: Option<worker::WorkerHandle>,
+    md_assets_pending: std::collections::HashSet<(PathBuf, String)>,
     /// Transient user-facing command result, warning, or error.
     status: String,
     /// Focused document position. Only [`Self::sync_status`] writes this.
@@ -315,11 +326,24 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> Shell {
-        let tracker_db = directories::ProjectDirs::from("com", "Suranjan77", "md-editor")
-            .map(|p| p.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let _ = std::fs::create_dir_all(&tracker_db);
-        let tracker_db_path = tracker_db.join("tracker.db");
+        let tracker_db_path = directories::ProjectDirs::from("com", "Suranjan77", "md-editor")
+            .map(|project| project.config_dir().join("tracker.db"))
+            .unwrap_or_else(|| PathBuf::from("tracker.db"));
+        Self::new_with_tracker_db(registry, keymap, vault_root, tracker_db_path)
+    }
+
+    pub fn new_with_tracker_db(
+        registry: CommandRegistry,
+        keymap: Keymap,
+        vault_root: PathBuf,
+        tracker_db_path: PathBuf,
+    ) -> Shell {
+        let measurer = shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
+            std::sync::Mutex::new(cosmic_text::FontSystem::new()),
+        ));
+        if let Some(parent) = tracker_db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
 
         let mut tracker_sessions = Vec::new();
         let mut tracker_kv = std::collections::HashMap::new();
@@ -345,14 +369,18 @@ impl Shell {
             keymap,
             ws: Workspace::new(),
             sessions: Sessions::default(),
+            measurer,
             vault_root,
+            tracker_db_path,
             overlay: None,
             open_menu: None,
             files: Vec::new(),
             index: None,
             annotations: None,
             session: None,
+            asset_sizes: None,
             pdf_worker: None,
+            md_assets_pending: std::collections::HashSet::new(),
             status: String::new(),
             position_status: String::new(),
             last_command: None,
@@ -468,22 +496,6 @@ impl Shell {
         }
     }
 
-    pub(crate) fn theme(&self) -> iced::Theme {
-        let t = tokens::dark();
-        iced::Theme::custom_with_fn(
-            "MD Editor Dark".to_string(),
-            iced::theme::Palette {
-                background: t.bg_primary,
-                text: t.text_primary,
-                primary: t.accent,
-                success: t.success,
-                danger: t.danger,
-                warning: t.warning,
-            },
-            iced::theme::palette::Extended::generate,
-        )
-    }
-
     pub(crate) fn subscription(&self) -> Subscription<Message> {
         let subscriptions = vec![
             iced::keyboard::listen().map(|event| match keys::normalize(&event) {
@@ -491,23 +503,59 @@ impl Shell {
                 None => Message::Ignored,
             }),
             iced::window::close_requests().map(|_| Message::WindowCloseRequested),
+            Subscription::run(worker::subscribe),
         ];
-        #[cfg(feature = "pdfium")]
-        {
-            let mut subscriptions = subscriptions;
-            subscriptions.push(Subscription::run(worker::subscribe));
-            Subscription::batch(subscriptions)
-        }
-        #[cfg(not(feature = "pdfium"))]
-        {
-            Subscription::batch(subscriptions)
-        }
+        Subscription::batch(subscriptions)
     }
 
     // ------------------------------------------------------------- update --
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::SettingsThemeChanged(_)
+            | Message::SettingsScopeChanged(..)
+            | Message::SettingsChordChanged(..)
+            | Message::SettingsCommandChanged(..)
+            | Message::SettingsAddRow
+            | Message::SettingsRemoveRow(_)
+            | Message::SettingsSave
+            | Message::SettingsCancel => self.handle_settings_message(message),
+            Message::TreeFileClicked(_)
+            | Message::TreeDirToggled(_)
+            | Message::TreeContextRequested { .. }
+            | Message::TreeContextCommand(_)
+            | Message::TreeContextOpen { .. }
+            | Message::TreeContextClosed
+            | Message::TreeResizeStarted
+            | Message::TreeResized(_)
+            | Message::TreeResizeFinished => self.handle_tree_message(message),
+            Message::EditorClicked { .. }
+            | Message::EditorScrolled { .. }
+            | Message::EditorViewportChanged { .. }
+            | Message::MdJumpToLine { .. }
+            | Message::MdFindQueryChanged { .. }
+            | Message::MdReplaceTextChanged { .. }
+            | Message::MdFindNext { .. }
+            | Message::MdFindPrev { .. }
+            | Message::MdReplace { .. }
+            | Message::MdReplaceAll { .. }
+            | Message::MdCloseFind { .. } => self.handle_md_message(message),
+            Message::PdfViewportChanged { .. }
+            | Message::PdfScrolled { .. }
+            | Message::PdfMouseDown { .. }
+            | Message::PdfRightClick { .. }
+            | Message::PdfJumpToPage { .. }
+            | Message::PdfJumpToAnnotation { .. }
+            | Message::PdfDeleteAnnotation { .. }
+            | Message::PdfEditAnnotationNote { .. }
+            | Message::PdfCycleAnnotationColor { .. }
+            | Message::PdfContextMenuClosed
+            | Message::PdfContextMenuCommand { .. }
+            | Message::PdfCommand { .. }
+            | Message::PdfMouseDragged { .. }
+            | Message::PdfMouseUp { .. }
+            | Message::PdfWorkerReady(..)
+            | Message::PdfWorker(..) => self.handle_pdf_message(message),
             Message::Ignored => Task::none(),
             Message::Key(ev) => self.on_key(ev),
             Message::RunCommand(command) => self.run_command(command),
@@ -517,101 +565,6 @@ impl Shell {
             }
             Message::CloseToastClicked(id) => {
                 self.toasts.retain(|t| t.id != id);
-                Task::none()
-            }
-            Message::SettingsThemeChanged(theme) => {
-                if let Some(Overlay::Settings { theme: t, .. }) = &mut self.overlay {
-                    *t = theme;
-                }
-                Task::none()
-            }
-            Message::SettingsScopeChanged(idx, val) => {
-                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
-                    && let Some(row) = keymap.bindings.get_mut(idx)
-                {
-                    row.scope = val;
-                }
-                Task::none()
-            }
-            Message::SettingsChordChanged(idx, val) => {
-                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
-                    && let Some(row) = keymap.bindings.get_mut(idx)
-                {
-                    row.chord = val;
-                }
-                Task::none()
-            }
-            Message::SettingsCommandChanged(idx, val) => {
-                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
-                    && let Some(row) = keymap.bindings.get_mut(idx)
-                {
-                    row.command = if val.trim().is_empty() {
-                        None
-                    } else {
-                        Some(val)
-                    };
-                }
-                Task::none()
-            }
-            Message::SettingsAddRow => {
-                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay {
-                    keymap.bindings.push(crate::settings::BindingRow {
-                        scope: "workspace".to_string(),
-                        chord: String::new(),
-                        command: None,
-                    });
-                }
-                Task::none()
-            }
-            Message::SettingsRemoveRow(idx) => {
-                if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
-                    && idx < keymap.bindings.len()
-                {
-                    keymap.bindings.remove(idx);
-                }
-                Task::none()
-            }
-            Message::SettingsSave => {
-                if let Some(Overlay::Settings {
-                    theme,
-                    keymap,
-                    error: _,
-                }) = self.overlay.clone()
-                {
-                    match crate::settings::validate_overrides(&self.registry, &keymap) {
-                        Ok(()) => {
-                            if let Err(e) =
-                                crate::settings::save_keymap_overrides(&self.vault_root, &keymap)
-                            {
-                                if let Some(Overlay::Settings {
-                                    error: err_field, ..
-                                }) = &mut self.overlay
-                                {
-                                    *err_field = Some(e);
-                                }
-                            } else {
-                                self.theme_name = theme;
-                                tokens::set_light_theme(self.theme_name == "light");
-                                self.reload_keymap();
-                                self.close_overlay();
-                                self.save_session();
-                                return self.success("Settings saved successfully");
-                            }
-                        }
-                        Err(e) => {
-                            if let Some(Overlay::Settings {
-                                error: err_field, ..
-                            }) = &mut self.overlay
-                            {
-                                *err_field = Some(e);
-                            }
-                        }
-                    }
-                }
-                Task::none()
-            }
-            Message::SettingsCancel => {
-                self.close_overlay();
                 Task::none()
             }
             Message::MenuToggled(menu) => {
@@ -666,350 +619,6 @@ impl Shell {
                     iced::exit()
                 }
             }
-            Message::EditorClicked {
-                tab,
-                line,
-                col,
-                viewport_h,
-            } => {
-                if let Err(e) = self.ws.focus_tab(tab) {
-                    self.status = e.to_string();
-                }
-                if let Some(session) = self.focused_md_mut() {
-                    session.viewport_h = viewport_h;
-                    session.apply(Command::SetCursor { line, col });
-                }
-                self.sync_status();
-                Task::none()
-            }
-            Message::EditorScrolled {
-                tab,
-                dy,
-                viewport_h,
-            } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    session.viewport_h = viewport_h;
-                    session.scroll_by(dy);
-                }
-                Task::none()
-            }
-            Message::EditorViewportChanged { tab, width, height } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    session.set_viewport(width, height);
-                }
-                Task::none()
-            }
-            Message::PdfViewportChanged { tab, width, height } => {
-                let root = self.vault_root.clone();
-                let worker = self.pdf_worker.clone();
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
-                    session.set_viewport((width, height));
-                    let abs = root.join(&session.rel_path);
-                    pdf_view::ensure_tiles(session, &abs, worker.as_ref());
-                }
-                Task::none()
-            }
-            Message::PdfScrolled { tab, dy, viewport } => {
-                if let Err(e) = self.ws.focus_tab(tab) {
-                    self.status = e.to_string();
-                }
-                let root = self.vault_root.clone();
-                let worker = self.pdf_worker.clone();
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
-                    session.viewport = viewport;
-                    session.scroll_by(dy);
-                    let abs = root.join(&session.rel_path);
-                    pdf_view::ensure_tiles(session, &abs, worker.as_ref());
-                }
-                self.sync_status();
-                Task::none()
-            }
-            Message::PdfMouseDown { tab, pos, viewport } => {
-                if let Err(e) = self.ws.focus_tab(tab) {
-                    self.status = e.to_string();
-                }
-                self.pdf_mouse_down(tab, pos, viewport);
-                Task::none()
-            }
-            Message::PdfRightClick {
-                tab,
-                pos,
-                abs_pos,
-                viewport,
-            } => {
-                if let Err(e) = self.ws.focus_tab(tab) {
-                    self.status = e.to_string();
-                }
-                self.pdf_right_click(tab, pos, abs_pos, viewport);
-                Task::none()
-            }
-            Message::MdJumpToLine { tab, line } => {
-                if let Err(error) = self.ws.focus_tab(tab) {
-                    self.status = error.to_string();
-                    return Task::none();
-                }
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    session.apply(Command::SetCursor { line, col: 0 });
-                }
-                self.sync_status();
-                Task::none()
-            }
-            Message::MdFindQueryChanged { tab, query } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    session.find_query = query;
-                    let text = session.doc.buffer().text();
-                    let matches = find_all_matches(&text, &session.find_query);
-                    if !matches.is_empty() {
-                        let head = session.doc.buffer().primary().head;
-                        let target = matches
-                            .iter()
-                            .find(|&&(start, _)| start >= head)
-                            .or(matches.first())
-                            .copied();
-                        if let Some((start, end)) = target {
-                            session.apply(Command::SetSelections(vec![Selection::new(start, end)]));
-                        }
-                    }
-                }
-                Task::none()
-            }
-            Message::MdReplaceTextChanged { tab, text } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    session.replace_text = text;
-                }
-                Task::none()
-            }
-            Message::MdFindNext { tab } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    let text = session.doc.buffer().text();
-                    let matches = find_all_matches(&text, &session.find_query);
-                    if !matches.is_empty() {
-                        let head = session.doc.buffer().primary().head;
-                        let target = matches
-                            .iter()
-                            .find(|&&(start, _)| start >= head)
-                            .or(matches.first())
-                            .copied();
-                        if let Some((start, end)) = target {
-                            session.apply(Command::SetSelections(vec![Selection::new(start, end)]));
-                        }
-                    }
-                }
-                Task::none()
-            }
-            Message::MdFindPrev { tab } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    let text = session.doc.buffer().text();
-                    let matches = find_all_matches(&text, &session.find_query);
-                    if !matches.is_empty() {
-                        let primary = session.doc.buffer().primary();
-                        let caret_start = primary.anchor.min(primary.head);
-                        let target = matches
-                            .iter()
-                            .rfind(|&&(start, _)| start < caret_start)
-                            .or(matches.last())
-                            .copied();
-                        if let Some((start, end)) = target {
-                            session.apply(Command::SetSelections(vec![Selection::new(start, end)]));
-                        }
-                    }
-                }
-                Task::none()
-            }
-            Message::MdReplace { tab } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    let text = session.doc.buffer().text();
-                    let primary = session.doc.buffer().primary();
-                    let (caret_start, caret_end) = (
-                        primary.anchor.min(primary.head),
-                        primary.anchor.max(primary.head),
-                    );
-                    let matches = find_all_matches(&text, &session.find_query);
-                    if matches
-                        .iter()
-                        .any(|&(s, e)| s == caret_start && e == caret_end)
-                    {
-                        session.apply(Command::Insert(session.replace_text.clone()));
-                        let new_text = session.doc.buffer().text();
-                        let new_matches = find_all_matches(&new_text, &session.find_query);
-                        if !new_matches.is_empty() {
-                            let new_head = session.doc.buffer().primary().head;
-                            let next_match = new_matches
-                                .iter()
-                                .find(|&&(start, _)| start >= new_head)
-                                .or(new_matches.first())
-                                .copied();
-                            if let Some((start, end)) = next_match {
-                                session.apply(Command::SetSelections(vec![Selection::new(
-                                    start, end,
-                                )]));
-                            }
-                        }
-                    } else if !matches.is_empty() {
-                        let head = session.doc.buffer().primary().head;
-                        let next_match = matches
-                            .iter()
-                            .find(|&&(start, _)| start >= head)
-                            .or(matches.first())
-                            .copied();
-                        if let Some((start, end)) = next_match {
-                            session.apply(Command::SetSelections(vec![Selection::new(start, end)]));
-                        }
-                    }
-                    self.save_session();
-                }
-                Task::none()
-            }
-            Message::MdReplaceAll { tab } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    let text = session.doc.buffer().text();
-                    let matches = find_all_matches(&text, &session.find_query);
-                    if !matches.is_empty() {
-                        let selections = matches
-                            .into_iter()
-                            .map(|(start, end)| Selection::new(start, end))
-                            .collect::<Vec<_>>();
-                        session.apply(Command::SetSelections(selections));
-                        session.apply(Command::Insert(session.replace_text.clone()));
-                        self.status = "replaced all occurrences".to_string();
-                    }
-                    self.save_session();
-                }
-                Task::none()
-            }
-            Message::MdCloseFind { tab } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
-                    session.find_open = false;
-                    self.save_session();
-                }
-                Task::none()
-            }
-            Message::PdfJumpToPage { tab, page } => {
-                if let Err(error) = self.ws.focus_tab(tab) {
-                    self.status = error.to_string();
-                    return Task::none();
-                }
-                let root = self.vault_root.clone();
-                let worker = self.pdf_worker.clone();
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
-                    session.record_jump();
-                    session.go_to_page(page);
-                    let abs = root.join(&session.rel_path);
-                    pdf_view::ensure_tiles(session, &abs, worker.as_ref());
-                }
-                self.sync_status();
-                Task::none()
-            }
-            Message::PdfJumpToAnnotation { tab, annotation_id } => {
-                if let Err(error) = self.ws.focus_tab(tab) {
-                    self.status = error.to_string();
-                    return Task::none();
-                }
-                let root = self.vault_root.clone();
-                let worker = self.pdf_worker.clone();
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
-                    session.selected_annotation = Some(annotation_id);
-                    if let Some(ann) = session.selected_annotation() {
-                        let target = session.layout.as_ref().map(|layout| {
-                            let y = ann.quads.first().map_or(0.0, |q| q.y0 as f32);
-                            let top = layout.page_top(ann.page as usize) + y * layout.zoom();
-                            (top - session.viewport.1 / 3.0)
-                                .clamp(0.0, layout.max_scroll(session.viewport.1))
-                        });
-                        if let Some(scroll) = target {
-                            session.record_jump();
-                            session.scroll = scroll;
-                            let abs = root.join(&session.rel_path);
-                            pdf_view::ensure_tiles(session, &abs, worker.as_ref());
-                        }
-                    }
-                }
-                self.sync_status();
-                Task::none()
-            }
-            Message::PdfDeleteAnnotation { tab, annotation_id } => {
-                if let Err(error) = self.ws.focus_tab(tab) {
-                    self.status = error.to_string();
-                    return Task::none();
-                }
-                self.ensure_annotations();
-                let doc = self.tab_document(tab);
-                if let (Some(store), Some(session)) = (
-                    self.annotations.as_mut(),
-                    doc.and_then(|d| self.sessions.pdf.get_mut(&d)),
-                ) {
-                    if session.selected_annotation == Some(annotation_id) {
-                        session.selected_annotation = None;
-                    }
-                    match store.remove(annotation_id) {
-                        Ok(()) => {
-                            refresh_annotations(store, session);
-                            self.status = "highlight removed".to_string();
-                        }
-                        Err(e) => self.status = format!("remove failed: {e}"),
-                    }
-                }
-                Task::none()
-            }
-            Message::PdfEditAnnotationNote { tab, annotation_id } => {
-                if let Err(error) = self.ws.focus_tab(tab) {
-                    self.status = error.to_string();
-                    return Task::none();
-                }
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
-                    session.selected_annotation = Some(annotation_id);
-                    if let Some(ann) = session.selected_annotation() {
-                        let input = ann.note.clone();
-                        self.open_overlay(Overlay::AnnotationNote { input });
-                    }
-                }
-                Task::none()
-            }
-            Message::PdfCycleAnnotationColor { tab, annotation_id } => {
-                if let Err(error) = self.ws.focus_tab(tab) {
-                    self.status = error.to_string();
-                    return Task::none();
-                }
-                self.ensure_annotations();
-                let doc = self.tab_document(tab);
-                if let (Some(store), Some(session)) = (
-                    self.annotations.as_mut(),
-                    doc.and_then(|d| self.sessions.pdf.get_mut(&d)),
-                ) {
-                    session.selected_annotation = Some(annotation_id);
-                    if let Some(current) = session.selected_annotation() {
-                        let next = match current.color.as_str() {
-                            "#f1c40f" => "#e74c3c", // yellow -> red
-                            "#e74c3c" => "#2ecc71", // red -> green
-                            "#2ecc71" => "#3498db", // green -> blue
-                            _ => "#f1c40f",         // blue (or other) -> yellow
-                        };
-                        match store.set_color(current.id, next) {
-                            Ok(()) => {
-                                refresh_annotations(store, session);
-                                self.status = "color updated".to_string();
-                            }
-                            Err(e) => self.status = format!("update failed: {e}"),
-                        }
-                    }
-                }
-                Task::none()
-            }
             Message::PanelResized { kind, width } => {
                 let width = width.clamp(160.0, 480.0);
                 match kind {
@@ -1035,115 +644,11 @@ impl Shell {
                 self.save_session();
                 Task::none()
             }
-            Message::PdfContextMenuClosed => {
-                self.pdf_context_menu = None;
-                Task::none()
-            }
-            Message::PdfContextMenuCommand { tab, command } => {
-                self.pdf_context_menu = None;
-                if let Err(error) = self.ws.focus_tab(tab) {
-                    self.status = error.to_string();
-                    return Task::none();
-                }
-                self.run_command(command)
-            }
-            Message::PdfCommand { tab, command } => {
-                if let Err(error) = self.ws.focus_tab(tab) {
-                    self.status = error.to_string();
-                    return Task::none();
-                }
-                self.run_command(command)
-            }
-            Message::PdfMouseDragged { tab, pos, viewport } => {
-                self.pdf_mouse_dragged(tab, pos, viewport);
-                Task::none()
-            }
-            Message::PdfMouseUp { tab } => {
-                let doc = self.tab_document(tab);
-                if let Some(session) = doc.and_then(|d| self.sessions.pdf.get_mut(&d)) {
-                    match &session.selection {
-                        Some(sel) if !sel.text.is_empty() => {
-                            self.status = format!(
-                                "{} chars selected · ctrl+h highlights",
-                                sel.text.chars().count()
-                            );
-                        }
-                        _ => session.selection = None,
-                    }
-                }
-                Task::none()
-            }
             Message::OverlayPick(i) => {
                 if let Some(sel) = self.overlay.as_mut().and_then(Overlay::selected_mut) {
                     *sel = i;
                 }
                 self.confirm_overlay()
-            }
-            Message::TreeFileClicked(rel_path) => {
-                self.tree_selected = Some(rel_path.clone());
-                self.open_document(&rel_path);
-                Task::none()
-            }
-            Message::TreeDirToggled(dir_path) => {
-                self.tree_selected = Some(dir_path.clone());
-                if self.tree_expanded.contains(&dir_path) {
-                    self.tree_expanded.remove(&dir_path);
-                } else {
-                    self.tree_expanded.insert(dir_path);
-                }
-                self.save_session();
-                Task::none()
-            }
-            Message::TreeContextRequested { rel_path, is_dir } => {
-                self.close_overlay();
-                self.close_menu();
-                self.tree_selected = Some(rel_path.clone());
-                self.tree_context = Some((rel_path, is_dir));
-                self.ws.open_overlay("file-context");
-                Task::none()
-            }
-            Message::TreeContextCommand(command) => {
-                self.close_tree_context();
-                self.run_command(command)
-            }
-            Message::TreeContextOpen { split } => {
-                let target = self.tree_context.as_ref().map(|(path, _)| path.clone());
-                self.close_tree_context();
-                let Some(path) = target else {
-                    return Task::none();
-                };
-                if split {
-                    let pane = self
-                        .ws
-                        .focused_pane()
-                        .unwrap_or_else(|| self.ws.panes.first_pane());
-                    match self.ws.panes.split(pane, SplitAxis::Horizontal) {
-                        Ok(pane) => {
-                            let _ = self.open_document_in(pane, &path);
-                        }
-                        Err(error) => self.status = error.to_string(),
-                    }
-                } else {
-                    self.open_document(&path);
-                }
-                Task::none()
-            }
-            Message::TreeContextClosed => {
-                self.close_tree_context();
-                Task::none()
-            }
-            Message::TreeResizeStarted => {
-                self.tree_resizing = true;
-                Task::none()
-            }
-            Message::TreeResized(x) => {
-                self.tree_width = x.clamp(160.0, 480.0);
-                Task::none()
-            }
-            Message::TreeResizeFinished => {
-                self.tree_resizing = false;
-                self.save_session();
-                Task::none()
             }
             Message::VaultPicked(path) => {
                 let Some(path) = path else {
@@ -1321,15 +826,6 @@ impl Shell {
                 }
                 Task::none()
             }
-            Message::PdfWorkerReady(handle) => {
-                self.pdf_worker = Some(handle);
-                self.schedule_open_pdf_work();
-                Task::none()
-            }
-            Message::PdfWorker(output) => {
-                self.apply_pdf_worker_output(output);
-                Task::none()
-            }
         }
     }
 
@@ -1338,6 +834,17 @@ impl Shell {
     fn run_command(&mut self, cmd: CommandId) -> Task<Message> {
         self.last_command = Some(cmd);
         self.status.clear();
+
+        if let Some(task) = self.run_file_command(cmd.0) {
+            return task;
+        }
+        if let Some(task) = self.run_md_command(cmd.0) {
+            return task;
+        }
+        if let Some(task) = self.run_pdf_command(cmd.0) {
+            return task;
+        }
+
         match cmd.0 {
             "app.quit" => {
                 if self.is_any_tab_dirty() {
@@ -1370,65 +877,10 @@ impl Shell {
                 input: String::new(),
                 selected: 0,
             }),
-            "file.quick-open" => {
-                self.files = scan_vault(&self.vault_root);
-                self.open_overlay(Overlay::QuickOpen {
-                    input: String::new(),
-                    selected: 0,
-                });
-            }
-            "vault.open" => {
-                return Task::perform(
-                    crate::vault_picker::pick_vault_async(),
-                    Message::VaultPicked,
-                );
-            }
-            "file.new-note" => {
-                self.open_overlay(Overlay::NameInput {
-                    purpose: NamePurpose::NewNote {
-                        parent: self.selected_parent(),
-                    },
-                    input: String::new(),
-                });
-            }
-            "file.new-folder" => {
-                self.open_overlay(Overlay::NameInput {
-                    purpose: NamePurpose::NewFolder {
-                        parent: self.selected_parent(),
-                    },
-                    input: String::new(),
-                });
-            }
-            "file.rename" => {
-                let Some(target) = self.selected_target() else {
-                    self.status = "rename: select a file or folder".to_string();
-                    return Task::none();
-                };
-                let input = Path::new(&target)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                self.open_overlay(Overlay::NameInput {
-                    purpose: NamePurpose::Rename { target },
-                    input,
-                });
-            }
-            "file.delete" => {
-                let Some(target) = self.selected_target() else {
-                    self.status = "delete: select a file or folder".to_string();
-                    return Task::none();
-                };
-                let is_dir = self.vault_root.join(&target).is_dir();
-                self.open_overlay(Overlay::ConfirmDelete { target, is_dir });
-            }
-            "workspace.refresh-files" => {
-                self.files = scan_vault(&self.vault_root);
-                return self.success("File panel refreshed");
-            }
-            "workspace.collapse-files" => {
-                self.tree_expanded.clear();
-                self.save_session();
-            }
+            "help.shortcuts" => self.open_overlay(Overlay::Help {
+                input: String::new(),
+                selected: 0,
+            }),
             "search.global" => {
                 self.ensure_index();
                 self.open_overlay(Overlay::Search {
@@ -1436,287 +888,6 @@ impl Shell {
                     selected: 0,
                     hits: Vec::new(),
                 });
-            }
-            "help.shortcuts" => self.open_overlay(Overlay::Help {
-                input: String::new(),
-                selected: 0,
-            }),
-            "note.outline-panel" => {
-                if let Some(session) = self.focused_md_mut() {
-                    session.outline_open = !session.outline_open;
-                    self.save_session();
-                }
-            }
-            "note.backlinks" => {
-                let Some((path, EditorKind::Markdown)) = self.focused_doc_info() else {
-                    self.status = "backlinks: focus a note".to_string();
-                    return Task::none();
-                };
-                let referrers = self.note_backlinks(&path);
-                if referrers.is_empty() {
-                    self.status = format!("no backlinks to {path}");
-                    return Task::none();
-                }
-                self.open_overlay(Overlay::Backlinks {
-                    input: String::new(),
-                    selected: 0,
-                    referrers,
-                });
-            }
-            "workspace.split-right" | "workspace.split-down" => {
-                let focused = self.focused_doc_info();
-                let axis = if cmd.0 == "workspace.split-down" {
-                    SplitAxis::Vertical
-                } else {
-                    SplitAxis::Horizontal
-                };
-                match focused {
-                    Some((path, kind)) => {
-                        if let Err(e) = self.ws.open_in_new_split(&path, kind, axis) {
-                            self.status = e.to_string();
-                        }
-                    }
-                    None => {
-                        let pane = self.ws.panes.first_pane();
-                        if let Err(error) = self.ws.panes.split(pane, axis) {
-                            self.status = error.to_string();
-                        }
-                    }
-                }
-            }
-            "workspace.close-tab" => {
-                if let Some(tab) = self.ws.focused_tab() {
-                    if self.is_tab_dirty(tab) {
-                        let name = self.tab_name(tab);
-                        self.open_overlay(Overlay::Confirm {
-                            message: format!("Abandon unsaved changes in `{name}`?"),
-                            on_confirm: CommandId("workspace.force-close-tab"),
-                        });
-                    } else {
-                        self.close_tab(tab);
-                    }
-                }
-            }
-            "workspace.force-close-tab" => {
-                if let Some(tab) = self.ws.focused_tab() {
-                    self.close_tab(tab);
-                }
-            }
-            "workspace.close-pane" => {
-                let pane = self
-                    .ws
-                    .focused_pane()
-                    .unwrap_or_else(|| self.ws.panes.first_pane());
-                self.close_pane(pane);
-            }
-            "workspace.next-tab" => self.cycle_tab(),
-            "workspace.toggle-files" => {
-                self.tree_open = !self.tree_open;
-                if self.tree_open {
-                    self.files = scan_vault(&self.vault_root);
-                }
-                self.save_session();
-            }
-            "workspace.toggle-tracker" => {
-                self.tracker_open = !self.tracker_open;
-                self.save_session();
-            }
-            "editor.undo" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::Undo);
-                }
-            }
-            "editor.redo" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::Redo);
-                }
-            }
-            "editor.select-all" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::SelectAll);
-                }
-            }
-            "editor.toggle-bold" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::ToggleBold);
-                }
-            }
-            "editor.toggle-italic" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::ToggleItalic);
-                }
-            }
-            "editor.toggle-code" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::ToggleCode);
-                }
-            }
-            "editor.heading-cycle" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::HeadingCycle);
-                }
-            }
-            "editor.heading-1" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::SetHeading(1));
-                }
-            }
-            "editor.heading-2" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::SetHeading(2));
-                }
-            }
-            "editor.heading-3" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::SetHeading(3));
-                }
-            }
-            "editor.heading-4" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::SetHeading(4));
-                }
-            }
-            "editor.heading-5" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::SetHeading(5));
-                }
-            }
-            "editor.heading-6" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::SetHeading(6));
-                }
-            }
-            "editor.toggle-bullet" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::ToggleBullet);
-                }
-            }
-            "editor.toggle-checkbox" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::ToggleCheckbox);
-                }
-            }
-            "editor.toggle-wikilink" => {
-                if let Some(s) = self.focused_md_mut() {
-                    s.apply(Command::ToggleWikilink);
-                }
-            }
-            "editor.save" => return self.save_focused(),
-            "editor.find" => {
-                if let Some(session) = self.focused_md_mut() {
-                    session.find_open = !session.find_open;
-                    self.save_session();
-                }
-            }
-            "pdf.zoom-input" => self.open_overlay(Overlay::PdfZoom {
-                input: String::new(),
-            }),
-            "pdf.zoom-in" => self.adjust_pdf_zoom(1.25),
-            "pdf.zoom-out" => self.adjust_pdf_zoom(0.8),
-            "pdf.go-to-page" => self.open_overlay(Overlay::PdfPage {
-                input: String::new(),
-            }),
-            "pdf.previous-page" | "pdf.next-page" => {
-                let root = self.vault_root.clone();
-                let worker = self.pdf_worker.clone();
-                if let Some(session) = self.focused_pdf_mut() {
-                    session.record_jump();
-                    let current = session.current_page();
-                    let page = if cmd.0 == "pdf.next-page" {
-                        current.saturating_add(1)
-                    } else {
-                        current.saturating_sub(1)
-                    };
-                    session.go_to_page(page);
-                    let abs = root.join(&session.rel_path);
-                    pdf_view::ensure_tiles(session, &abs, worker.as_ref());
-                }
-            }
-            "pdf.find" => self.open_pdf_find(),
-            "pdf.toc" => self.open_pdf_toc(),
-            "pdf.back" | "pdf.forward" => {
-                self.pdf_nav_history(cmd.0 == "pdf.back");
-            }
-            "pdf.highlight" => self.highlight_selection(),
-            "pdf.annotation-note" => {
-                match self.focused_pdf().and_then(PdfSession::selected_annotation) {
-                    Some(a) => {
-                        let input = a.note.clone();
-                        self.open_overlay(Overlay::AnnotationNote { input });
-                    }
-                    None => self.status = "click a highlight first".to_string(),
-                }
-            }
-            "pdf.annotations-export" => return self.export_annotations(),
-            "pdf.copy-selection" => {
-                let text = self
-                    .focused_pdf()
-                    .and_then(|s| s.selection.as_ref())
-                    .map(|sel| sel.text.clone())
-                    .filter(|t| !t.is_empty());
-                return match text {
-                    Some(text) => {
-                        self.status = format!("{} chars copied", text.chars().count());
-                        iced::clipboard::write(text)
-                    }
-                    None => {
-                        self.status = "select text first (drag over the page)".to_string();
-                        Task::none()
-                    }
-                };
-            }
-            "pdf.highlight-color" => {
-                self.cycle_highlight_color();
-                return Task::none();
-            }
-            "pdf.annotation-link-note" => {
-                self.link_note_for_annotation();
-                return Task::none();
-            }
-            "pdf.annotations-orphans" => {
-                self.orphan_report();
-                return Task::none();
-            }
-            "pdf.fit-width" => {
-                let root = self.vault_root.clone();
-                let worker = self.pdf_worker.clone();
-                if let Some(session) = self.focused_pdf_mut() {
-                    session.set_fit_mode(PdfFitMode::Width);
-                    let abs = root.join(&session.rel_path);
-                    pdf_view::ensure_tiles(session, &abs, worker.as_ref());
-                }
-                self.save_session();
-            }
-            "pdf.fit-page" => {
-                let root = self.vault_root.clone();
-                let worker = self.pdf_worker.clone();
-                if let Some(session) = self.focused_pdf_mut() {
-                    session.set_fit_mode(PdfFitMode::Page);
-                    let abs = root.join(&session.rel_path);
-                    pdf_view::ensure_tiles(session, &abs, worker.as_ref());
-                }
-                self.save_session();
-            }
-            "pdf.toc-panel" => {
-                if let Some(session) = self.focused_pdf_mut() {
-                    session.toc_open = !session.toc_open;
-                    self.save_session();
-                }
-            }
-            "pdf.annotations-panel" => {
-                if let Some(session) = self.focused_pdf_mut() {
-                    session.annotations_open = !session.annotations_open;
-                    self.save_session();
-                }
-            }
-            "pdf.highlight-and-note" => {
-                self.highlight_selection();
-                if let Some(session) = self.focused_pdf()
-                    && let Some(a) = session.selected_annotation()
-                {
-                    let input = a.note.clone();
-                    self.open_overlay(Overlay::AnnotationNote { input });
-                }
             }
             "overlay.close" => {
                 if self.tree_context.is_some() {
@@ -1730,18 +901,7 @@ impl Shell {
             "overlay.confirm" => return self.confirm_overlay(),
             other => self.status = format!("unhandled command: {other}"),
         }
-        if matches!(
-            cmd.0,
-            "workspace.split-right"
-                | "workspace.split-down"
-                | "workspace.close-pane"
-                | "workspace.close-tab"
-                | "workspace.next-tab"
-                | "editor.save"
-        ) {
-            self.save_session();
-        }
-        self.sync_status();
+
         Task::none()
     }
 
@@ -2259,268 +1419,6 @@ impl Shell {
         }
         final_view
     }
-
-    fn layout_view<'a>(&'a self, node: &Layout<'a>) -> Element<'a, Message> {
-        self.layout_view_at(node, Vec::new())
-    }
-
-    fn layout_view_at<'a>(&'a self, node: &Layout<'a>, path: SplitPath) -> Element<'a, Message> {
-        match node {
-            Layout::Pane(pane) => self.pane_view(pane),
-            Layout::Split {
-                axis,
-                ratio,
-                first,
-                second,
-            } => {
-                let mut first_path = path.clone();
-                first_path.push(false);
-                let mut second_path = path.clone();
-                second_path.push(true);
-                let a = container(self.layout_view_at(first, first_path))
-                    .width(Fill)
-                    .height(Fill);
-                let b = container(self.layout_view_at(second, second_path))
-                    .width(Fill)
-                    .height(Fill);
-                let divider = drag::divider(path, *axis, *ratio);
-                let (pa, pb) = (
-                    ((ratio * 1000.0) as u16).max(1),
-                    (((1.0 - ratio) * 1000.0) as u16).max(1),
-                );
-                match axis {
-                    SplitAxis::Horizontal => row![
-                        a.width(iced::Length::FillPortion(pa)),
-                        divider,
-                        b.width(iced::Length::FillPortion(pb))
-                    ]
-                    .spacing(0)
-                    .into(),
-                    SplitAxis::Vertical => column![
-                        a.height(iced::Length::FillPortion(pa)),
-                        divider,
-                        b.height(iced::Length::FillPortion(pb))
-                    ]
-                    .spacing(0)
-                    .into(),
-                }
-            }
-        }
-    }
-
-    fn pane_view<'a>(&'a self, pane: &Pane) -> Element<'a, Message> {
-        let focused_tab = self.ws.focused_tab();
-        let pane_focused = self.ws.focused_pane() == Some(pane.id);
-
-        let mut tabs = row![].spacing(2);
-        for tab in pane.tabs() {
-            let title = self
-                .ws
-                .docs
-                .get(tab.document)
-                .map(|d| {
-                    let name = d.path.rsplit('/').next().unwrap_or(&d.path);
-                    let dirty = self
-                        .sessions
-                        .md
-                        .get(&tab.document)
-                        .is_some_and(|s| s.doc.buffer().is_dirty());
-                    if dirty {
-                        format!("{name} ●")
-                    } else {
-                        name.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "?".to_string());
-            let active =
-                focused_tab == Some(tab.id) || pane.active_tab().map(|t| t.id) == Some(tab.id);
-            let select = button(text(title).size(13))
-                .padding([3, 8])
-                .style(move |theme, status| {
-                    if active && pane_focused {
-                        button::primary(theme, status)
-                    } else if active {
-                        button::secondary(theme, status)
-                    } else {
-                        button::text(theme, status)
-                    }
-                })
-                .on_press(Message::TabSelected(tab.id));
-            let close = button(text("×").size(13))
-                .padding([3, 6])
-                .style(button::text)
-                .on_press(Message::TabCloseClicked(tab.id));
-            tabs = tabs.push(
-                iced::widget::mouse_area(row![select, close].spacing(0))
-                    .on_middle_press(Message::TabCloseClicked(tab.id)),
-            );
-        }
-        tabs = tabs.push(
-            button(text("+").size(15))
-                .padding([2, 8])
-                .style(button::text)
-                .on_press(Message::RunCommand(CommandId("file.quick-open"))),
-        );
-        let tabs = iced::widget::scrollable(tabs).direction(
-            iced::widget::scrollable::Direction::Horizontal(
-                iced::widget::scrollable::Scrollbar::default(),
-            ),
-        );
-        let pane_action = |label, command| {
-            button(text(label).size(13))
-                .padding([3, 6])
-                .style(button::text)
-                .on_press(Message::PaneCommand {
-                    pane: pane.id,
-                    command,
-                })
-        };
-        let strip = row![
-            container(tabs).width(Fill),
-            pane_action("⇥", CommandId("workspace.split-right")),
-            pane_action("⇩", CommandId("workspace.split-down")),
-            pane_action("×", CommandId("workspace.close-pane")),
-        ]
-        .spacing(2)
-        .padding(2)
-        .align_y(iced::Alignment::Center);
-
-        let content: Element<'_, Message> = match pane.active_tab() {
-            None => {
-                let mut welcome = column![
-                    text("MD Editor").size(24).color(colors::heading()),
-                    text("Open a note or browse the vault to begin.")
-                        .size(14)
-                        .color(colors::marker())
-                ]
-                .spacing(10)
-                .width(320);
-                for item in welcome::welcome_rows(&self.registry) {
-                    let chord = item.chord.unwrap_or_default();
-                    welcome = welcome.push(
-                        button(
-                            row![
-                                text(item.label).size(14),
-                                iced::widget::Space::new().width(Fill),
-                                text(chord).size(12).color(colors::marker())
-                            ]
-                            .width(Fill),
-                        )
-                        .width(Fill)
-                        .padding([8, 12])
-                        .on_press(Message::RunCommand(item.command)),
-                    );
-                }
-                container(welcome).center(Fill).into()
-            }
-            Some(tab) => {
-                let focused = focused_tab == Some(tab.id);
-                match tab.editor {
-                    EditorKind::Markdown => match self.sessions.md.get(&tab.document) {
-                        Some(session) => {
-                            let toolbar = row![
-                                button(text("B").font(BOLD).size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId("editor.toggle-bold"))),
-                                button(text("I").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.toggle-italic"
-                                    ))),
-                                button(text("Code").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId("editor.toggle-code"))),
-                                button(text("H").font(BOLD).size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.heading-cycle"
-                                    ))),
-                                button(text("List").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.toggle-bullet"
-                                    ))),
-                                button(text("Todo").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.toggle-checkbox"
-                                    ))),
-                                button(text("Link").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.toggle-wikilink"
-                                    ))),
-                            ]
-                            .spacing(2)
-                            .padding(2)
-                            .align_y(iced::Alignment::Center);
-
-                            let toolbar_container =
-                                container(toolbar).width(Fill).style(|_| container::Style {
-                                    background: Some(iced::Background::Color(
-                                        tokens::dark().bg_secondary,
-                                    )),
-                                    border: iced::Border {
-                                        color: tokens::dark().border_subtle,
-                                        width: 1.0,
-                                        radius: 0.0.into(),
-                                    },
-                                    ..container::Style::default()
-                                });
-
-                            let editor = canvas(EditorCanvas {
-                                tab: tab.id,
-                                session,
-                                focused,
-                            })
-                            .width(Fill)
-                            .height(Fill);
-
-                            let mut view_col = column![toolbar_container];
-                            if session.find_open {
-                                view_col =
-                                    view_col.push(self.view_md_find_replace_bar(session, tab.id));
-                            }
-                            view_col.push(editor).into()
-                        }
-                        None => missing_session(),
-                    },
-                    EditorKind::Pdf => match self.sessions.pdf.get(&tab.document) {
-                        Some(session) => pdf_view::view(session, tab.id),
-                        None => missing_session(),
-                    },
-                    _ => container(text("unsupported editor kind").color(colors::marker()))
-                        .center(Fill)
-                        .into(),
-                }
-            }
-        };
-
-        let border_color = if pane_focused {
-            tokens::dark().accent
-        } else {
-            tokens::dark().border
-        };
-        container(column![strip, container(content).height(Fill)])
-            .style(move |_| container::Style {
-                border: iced::Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..container::Style::default()
-            })
-            .width(Fill)
-            .height(Fill)
-            .into()
-    }
 }
 
 /// Re-read a document's annotations from the store into its session — the
@@ -2535,12 +1433,6 @@ fn refresh_annotations(store: &AnnotationStore, session: &mut PdfSession) {
     {
         session.selected_annotation = None;
     }
-}
-
-fn missing_session<'a>() -> Element<'a, Message> {
-    container(text("document failed to load").color(colors::marker()))
-        .center(Fill)
-        .into()
 }
 
 fn safe_relative(input: &str) -> Option<PathBuf> {

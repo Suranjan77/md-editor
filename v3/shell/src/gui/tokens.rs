@@ -107,3 +107,21 @@ pub fn dark() -> &'static Tokens {
 pub fn light() -> &'static Tokens {
     &LIGHT_TOKENS
 }
+
+impl super::Shell {
+    pub(crate) fn theme(&self) -> iced::Theme {
+        let tokens = dark();
+        iced::Theme::custom_with_fn(
+            "MD Editor Dark".to_string(),
+            iced::theme::Palette {
+                background: tokens.bg_primary,
+                text: tokens.text_primary,
+                primary: tokens.accent,
+                success: tokens.success,
+                danger: tokens.danger,
+                warning: tokens.warning,
+            },
+            iced::theme::palette::Extended::generate,
+        )
+    }
+}

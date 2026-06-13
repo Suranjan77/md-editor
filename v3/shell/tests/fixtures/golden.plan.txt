@@ -1,0 +1,92 @@
+L00 [Concealed] 'Golden Snapshot'
+  Text { content: "Golden Snapshot", x: 16.0, y: 28.414063, size: 32.0, role: Heading, font: SansBold }
+L01 [Concealed] 'Subheading'
+  Text { content: "Subheading", x: 16.0, y: 111.31055, size: 24.0, role: Heading, font: SansBold }
+L02 [Concealed] 'Third level'
+  Text { content: "Third level", x: 16.0, y: 176.75879, size: 20.0, role: Heading, font: SansBold }
+L03 [Concealed] ''
+L04 [Concealed] 'This is a bold and italic plain paragraph that is long enough to wrap across multiple lines on a narrow screen, demonstrating the layout engine's line-breaking capabilities and the measurer's column math.'
+  Text { content: "This is a ", x: 16.0, y: 246.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "bold", x: 79.39844, y: 246.20703, size: 16.0, role: Text, font: SansBold }
+  Text { content: " and ", x: 114.4375, y: 246.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "italic", x: 151.27344, y: 246.20703, size: 16.0, role: Text, font: SansItalic }
+  Text { content: " plain paragraph that is long enough to wrap across multiple lines on a narrow", x: 184.89063, y: 246.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "screen, demonstrating the layout engine's line-breaking capabilities and the measurer's column math.", x: 16.0, y: 270.20703, size: 16.0, role: Text, font: Sans }
+L05 [Concealed] ''
+L06 [Concealed] 'Unchecked item'
+  StrokeRect { rect: RectPx { x: 16.0, y: 329.0, w: 12.0, h: 12.0 }, role: Marker, thickness: 1.0 }
+  Text { content: "Unchecked item", x: 16.0, y: 328.20703, size: 16.0, role: Text, font: Sans }
+L07 [Concealed] 'Checked item with code'
+  StrokeRect { rect: RectPx { x: 16.0, y: 357.0, w: 12.0, h: 12.0 }, role: Marker, thickness: 1.0 }
+  Text { content: "✓", x: 17.0, y: 353.0, size: 14.0, role: Caret, font: Sans }
+  Text { content: "Checked item with ", x: 16.0, y: 356.208, size: 16.0, role: Text, font: Sans }
+  Text { content: "code", x: 157.35156, y: 356.208, size: 16.0, role: Code, font: Mono }
+L08 [Concealed] ''
+L09 [Concealed] '| Heading | Another |'
+  StrokeRect { rect: RectPx { x: 16.0, y: 404.0, w: 78.11719, h: 36.0 }, role: Marker, thickness: 1.0 }
+  Text { content: "H", x: 24.0, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "e", x: 35.804688, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "a", x: 44.78125, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "d", x: 53.679688, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "i", x: 63.484375, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "n", x: 67.53125, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "g", x: 77.35156, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  StrokeRect { rect: RectPx { x: 94.11719, y: 404.0, w: 76.58594, h: 36.0 }, role: Marker, thickness: 1.0 }
+  Text { content: "A", x: 102.11719, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "n", x: 112.24219, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "o", x: 122.0625, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "t", x: 131.72656, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "h", x: 137.375, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "e", x: 147.19531, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "r", x: 156.17188, y: 426.20703, size: 16.0, role: Text, font: Sans }
+L10 [Concealed] '| ------- | ------- |'
+  FillRect { rect: RectPx { x: 16.0, y: 458.0, w: 70.11719, h: 1.0 }, role: Marker }
+  FillRect { rect: RectPx { x: 94.11719, y: 458.0, w: 68.58594, h: 1.0 }, role: Marker }
+L11 [Concealed] '| Cell 1  | Cell 2  |'
+  StrokeRect { rect: RectPx { x: 16.0, y: 476.0, w: 78.11719, h: 36.0 }, role: Marker, thickness: 1.0 }
+  Text { content: "C", x: 24.0, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "e", x: 34.09375, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "l", x: 43.070313, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "l", x: 47.117188, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: " ", x: 51.164063, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "1", x: 55.320313, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  StrokeRect { rect: RectPx { x: 94.11719, y: 476.0, w: 76.58594, h: 36.0 }, role: Marker, thickness: 1.0 }
+  Text { content: "C", x: 102.11719, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "e", x: 112.21094, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "l", x: 121.1875, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "l", x: 125.234375, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: " ", x: 129.28125, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "2", x: 133.4375, y: 498.20703, size: 16.0, role: Text, font: Sans }
+L12 [Concealed] ''
+L13 [Concealed] ''
+L14 [Concealed] 'fn main() {'
+  FillRect { rect: RectPx { x: 4.0, y: 572.0, w: 792.0, h: 21.599998 }, role: CodeBg }
+  Text { content: "fn main() {", x: 16.0, y: 573.9872, size: 14.4, role: Code, font: Mono }
+L15 [Concealed] '    println!("Hello");'
+  FillRect { rect: RectPx { x: 4.0, y: 593.6, w: 792.0, h: 21.599998 }, role: CodeBg }
+  Text { content: "    println!(\"Hello\");", x: 16.0, y: 595.58716, size: 14.4, role: Code, font: Mono }
+L16 [Concealed] '}'
+  FillRect { rect: RectPx { x: 4.0, y: 615.2, w: 792.0, h: 21.599998 }, role: CodeBg }
+  Text { content: "}", x: 16.0, y: 617.1872, size: 14.4, role: Code, font: Mono }
+L17 [Concealed] ''
+L18 [Concealed] ''
+L19 [Concealed] 'Here is some inline math: E = mc^2 and a [wikilink].'
+  Text { content: "Here is some inline math: ", x: 16.0, y: 703.008, size: 16.0, role: Text, font: Sans }
+  Asset { kind: Math("E = mc^2"), rect: RectPx { x: 209.85156, y: 696.008, w: 110.0, h: 22.0 } }
+  Text { content: " and a [wikilink].", x: 319.85156, y: 703.008, size: 16.0, role: Text, font: Sans }
+L20 [Concealed] ''
+L21 [Concealed] ''
+L22 [Concealed] '\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}'
+  Asset { kind: Math("\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}"), rect: RectPx { x: 300.0, y: 804.8, w: 200.0, h: 60.0 } }
+L23 [Concealed] ''
+L24 [Concealed] ''
+L25 [Concealed] '![An image](foo.png)'
+  Asset { kind: Image("foo.png"), rect: RectPx { x: 120.0, y: 948.8, w: 560.0, h: 420.0 } }
+L26 [Concealed] ''
+L27 [Revealed] 'This is the *revealed* line where the caret sits.'
+  Text { content: "This is the ", x: 16.0, y: 1411.008, size: 16.0, role: Text, font: Sans }
+  Text { content: "*", x: 94.94531, y: 1411.008, size: 16.0, role: Marker, font: Mono }
+  Text { content: "revealed", x: 104.54531, y: 1411.008, size: 16.0, role: Text, font: SansItalic }
+  Text { content: "*", x: 181.34532, y: 1411.008, size: 16.0, role: Marker, font: Mono }
+  Text { content: " line where the caret sits.", x: 190.94533, y: 1411.008, size: 16.0, role: Text, font: Sans }
+L28 [Concealed] ''

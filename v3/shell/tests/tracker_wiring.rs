@@ -33,7 +33,12 @@ fn new_shell(root: &Path) -> Shell {
         Ok(k) => k,
         Err(e) => panic!("keymap: {e}"),
     };
-    Shell::new(registry, keymap, root.to_path_buf())
+    Shell::new_with_tracker_db(
+        registry,
+        keymap,
+        root.to_path_buf(),
+        root.join(".md3/tracker.db"),
+    )
 }
 
 #[test]
