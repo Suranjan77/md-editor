@@ -112,7 +112,7 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **Phase 7.3 blocks render as units** | Phase 7.3 | 🔶 | `paint.rs`, `editor/src/document.rs`, `session.rs` — measured table grid, fenced-code panel, unified block reveal, source/display offset mapping, shaped table hit-testing. Golden draw plan and BUG-B suites green; manual smoke items 30–31 pending. |
 | **Phase 7.4 stable assets** | Phase 7.4 | 🔶 | `vault/src/asset_sizes.rs`, `gui/markdown_assets.rs`, `gui/worker.rs`, `gui/pdf_worker_events.rs` — sidecar dimensions, async image/math loading, cached first layout, remeasure only on changed dimensions. Store/worker/layout tests green; manual smoke item 32 pending. |
 | **Phase 7.5 interaction exactness** | Phase 7.5 | 🔶 | `shaped_measurer.rs`, `editor_canvas.rs`, `editor_hit_testing.rs`, `markdown_interactions.rs` — one shaped geometry path for paint/caret/selection/hit-test, full golden round-trip, clickable checkbox through registered command, ctrl+click URI/wikilink, ctrl-hover pointer+underline. Manual smoke item 33 pending. |
-| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | CJK, emoji, and mixed-direction bidi shaped round-trip properties landed in `editor_hit_testing.rs`; caret geometry now follows bidi levels and ignores zero-width duplicate glyph records. ADR-0106 fixes fenced-code syntax ownership. Remaining: element-level reveal, optional motion, syntax implementation, p95 CI bench. |
+| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | CJK, emoji, and mixed-direction bidi shaped round-trip properties landed in `editor_hit_testing.rs`; caret geometry now follows bidi levels and ignores zero-width duplicate glyph records. ADR-0106 fixes fenced-code syntax ownership. **Inline-math vertical alignment fixed** (`paint.rs` — centered on the text row, not a `line_height`-tall box; golden re-pinned). **p95 keypress→layout CI bench landed** (`shell/tests/keypress_bench.rs` — 5k-line doc, p95 < 16ms, ~0.4ms locally). Remaining: element-level reveal, optional motion, fenced-code syntax implementation. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
@@ -593,3 +593,12 @@ size targets.
   caret/hit geometry are untouched; golden draw plan re-pinned (the single
   changed line moved the `E = mc^2` asset 696→700, centering it on text at
   703). Block math/images still center in their own full-height lines.
+- 2026-06-13: p95 keypress→layout bench added (`shell/tests/keypress_bench.rs`,
+  impl-plan Phase 7.6 / master plan §6). It drives the real shell keystroke
+  cycle (`MdSession::apply`: incremental parse + restyle + shaped remeasure of
+  the touched range) over a 5k-line document, 1k insert+motion pairs after a
+  warm-up, and asserts p95 < 16ms (one 60fps frame). The budget is deliberately
+  generous — it guards against an order-of-magnitude regression (a full
+  reparse/remeasure creeping onto the keystroke path), not micro-cost; ~0.4ms
+  locally in debug. Runs inside the existing `cargo test --workspace` CI step,
+  no new job or dependency.
