@@ -40,7 +40,7 @@ pub mod worker;
 
 use std::path::{Path, PathBuf};
 
-use iced::widget::{button, canvas, column, container, mouse_area, row, stack, text, text_input};
+use iced::widget::{button, canvas, column, container, mouse_area, row, stack, text};
 use iced::{Element, Fill, Subscription, Task};
 use md3_editor::buffer::{Command, Movement, Selection};
 use md3_kernel::input::{Chord, EditorKind, Key};
@@ -48,6 +48,7 @@ use md3_kernel::pane::{DocumentId, Layout, Pane, PaneId, SplitPath, TabId};
 use md3_kernel::{CommandId, CommandRegistry, Keymap, SplitAxis, Workspace};
 use md3_vault::{AnnotationStore, SearchIndex, SessionStore};
 
+use chrome_panels::find_all_matches;
 use editor_canvas::{EditorCanvas, palette as colors};
 use overlay::{NamePurpose, Overlay, PdfFindHit};
 use session::{MdSession, PdfFitMode, PdfSelection, PdfSession, Sessions};
@@ -2688,83 +2689,6 @@ impl Shell {
             .into()
     }
 
-    fn view_md_find_replace_bar(&self, session: &MdSession, tab: TabId) -> Element<'_, Message> {
-        let t = tokens::dark();
-
-        let text_val = session.doc.buffer().text();
-        let matches = find_all_matches(&text_val, &session.find_query);
-        let primary = session.doc.buffer().primary();
-        let (caret_start, caret_end) = (
-            primary.anchor.min(primary.head),
-            primary.anchor.max(primary.head),
-        );
-        let active_idx = matches
-            .iter()
-            .position(|&(start, end)| start == caret_start && end == caret_end);
-
-        let count_text = if session.find_query.is_empty() {
-            "0 of 0".to_string()
-        } else {
-            match active_idx {
-                Some(idx) => format!("{} of {}", idx + 1, matches.len()),
-                None => format!("0 of {}", matches.len()),
-            }
-        };
-
-        let find_input = text_input("Find...", &session.find_query)
-            .on_input(move |q| Message::MdFindQueryChanged { tab, query: q })
-            .width(180)
-            .padding(4)
-            .size(13);
-
-        let replace_input = text_input("Replace with...", &session.replace_text)
-            .on_input(move |val| Message::MdReplaceTextChanged { tab, text: val })
-            .width(180)
-            .padding(4)
-            .size(13);
-
-        let bar_content = row![
-            text("Find:").size(12).color(t.text_muted),
-            find_input,
-            text(count_text).size(12).color(t.text_muted),
-            button(text("▲").size(10))
-                .padding([2, 6])
-                .on_press(Message::MdFindPrev { tab }),
-            button(text("▼").size(10))
-                .padding([2, 6])
-                .on_press(Message::MdFindNext { tab }),
-            iced::widget::Space::new().width(12),
-            text("Replace:").size(12).color(t.text_muted),
-            replace_input,
-            button(text("Replace").size(12))
-                .padding([3, 8])
-                .on_press(Message::MdReplace { tab }),
-            button(text("Replace All").size(12))
-                .padding([3, 8])
-                .on_press(Message::MdReplaceAll { tab }),
-            iced::widget::Space::new().width(iced::Length::Fill),
-            button(text("✕").size(12).font(BOLD))
-                .style(button::text)
-                .on_press(Message::MdCloseFind { tab })
-        ]
-        .spacing(8)
-        .padding([4, 8])
-        .align_y(iced::Alignment::Center);
-
-        container(bar_content)
-            .width(Fill)
-            .style(move |_| container::Style {
-                background: Some(iced::Background::Color(t.bg_secondary)),
-                border: iced::Border {
-                    color: t.border_subtle,
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-    }
-
     fn view_pdf_annotations_panel(&self, session: &PdfSession, tab: TabId) -> Element<'_, Message> {
         let t = tokens::dark();
         let title = row![
@@ -2976,20 +2900,4 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
             out.push(rel.to_string_lossy().to_string());
         }
     }
-}
-
-fn find_all_matches(text: &str, query: &str) -> Vec<(usize, usize)> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let query_lower = query.to_lowercase();
-    let text_lower = text.to_lowercase();
-    let mut matches = Vec::new();
-    let mut start = 0;
-    while let Some(pos) = text_lower[start..].find(&query_lower) {
-        let actual_pos = start + pos;
-        matches.push((actual_pos, actual_pos + query.len()));
-        start = actual_pos + query.len().max(1);
-    }
-    matches
 }
