@@ -30,6 +30,7 @@ pub mod session;
 mod session_persist;
 pub mod snapshot;
 mod status;
+mod stores;
 mod toast;
 pub mod tokens;
 pub mod tracker_view;
@@ -379,24 +380,6 @@ impl Shell {
             shell.files = scan_vault(&shell.vault_root);
         }
         shell
-    }
-
-    /// The vault's sidecar database — one SQLite file (plan §2 pillar 5)
-    /// shared by the FTS index and the annotation store (disjoint tables).
-    /// Lives in a dot-directory so every vault walk skips it.
-    fn sidecar_path(&self) -> PathBuf {
-        self.vault_root.join(".md3/sidecar.db")
-    }
-
-    fn open_tracker_store(
-        &self,
-    ) -> Result<md3_vault::tracker::TrackerStore, md3_vault::error::VaultError> {
-        let proj = directories::ProjectDirs::from("com", "Suranjan77", "md-editor");
-        let dir = proj
-            .map(|p| p.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let _ = std::fs::create_dir_all(&dir);
-        md3_vault::tracker::TrackerStore::open(&dir.join("tracker.db"))
     }
 
     // ----- read-only access for tests and the view -------------------------
@@ -2185,64 +2168,6 @@ impl Shell {
         }
     }
 
-    fn ensure_index(&mut self) {
-        if self.index.is_some() {
-            return;
-        }
-        // Persistent sidecar first (incremental across runs); in-memory is
-        // the read-only-vault fallback so search still works.
-        let opened = self
-            .open_sidecar_dir()
-            .and_then(|_| SearchIndex::open(&self.sidecar_path()))
-            .or_else(|_| SearchIndex::open_in_memory());
-        match opened {
-            Ok(mut index) => {
-                let synced = self.sync_index(&mut index);
-                if let Err(e) = synced {
-                    self.status = format!("index: {e}");
-                }
-                self.index = Some(index);
-            }
-            Err(e) => self.status = format!("index: {e}"),
-        }
-    }
-
-    /// Open the annotation store on the sidecar; report (once per attempt)
-    /// rather than fail — annotations degrade, the document still opens.
-    fn ensure_annotations(&mut self) {
-        if self.annotations.is_some() {
-            return;
-        }
-        let opened = self
-            .open_sidecar_dir()
-            .and_then(|_| AnnotationStore::open(&self.sidecar_path()));
-        match opened {
-            Ok(store) => self.annotations = Some(store),
-            Err(e) => self.status = format!("annotations unavailable: {e}"),
-        }
-    }
-
-    fn open_sidecar_dir(&self) -> Result<(), md3_vault::VaultError> {
-        let dir = self.vault_root.join(".md3");
-        std::fs::create_dir_all(&dir).map_err(|e| md3_vault::VaultError::io(&dir, e))
-    }
-
-    /// Sync the FTS index; with the pdfium feature on, PDFs are indexed
-    /// through the vault's `TextExtractor` seam — the production composition
-    /// the engine crates deliberately leave to the shell.
-    fn sync_index(&self, index: &mut SearchIndex) -> Result<(), md3_vault::VaultError> {
-        #[cfg(feature = "pdfium")]
-        {
-            if let Some(renderer) = pdf_view::renderer() {
-                let extractor = PdfTextExtractor(renderer);
-                index.sync_with(&self.vault_root, Some(&extractor))?;
-                return Ok(());
-            }
-        }
-        index.sync(&self.vault_root)?;
-        Ok(())
-    }
-
     // ------------------------------------------------------------ helpers --
 
     fn tab_document(&self, tab: TabId) -> Option<DocumentId> {
@@ -3172,25 +3097,6 @@ fn refresh_annotations(store: &AnnotationStore, session: &mut PdfSession) {
         && !session.annotations.iter().any(|a| a.id == id)
     {
         session.selected_annotation = None;
-    }
-}
-
-/// Production PDF→FTS composition (the bridge the engines leave to the
-/// shell): every page's text, concatenated; failures yield `None` so the
-/// index records-without-retrying.
-#[cfg(feature = "pdfium")]
-struct PdfTextExtractor(&'static md3_pdf::render::PdfRenderer);
-
-#[cfg(feature = "pdfium")]
-impl md3_vault::TextExtractor for PdfTextExtractor {
-    fn extract(&self, abs_path: &Path) -> Option<String> {
-        let pages = self.0.page_count(abs_path).ok()?;
-        let mut out = String::new();
-        for page in 0..u32::from(pages) {
-            out.push_str(&self.0.extract_text(abs_path, page).ok()?);
-            out.push('\n');
-        }
-        Some(out)
     }
 }
 
