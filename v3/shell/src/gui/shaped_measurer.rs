@@ -67,8 +67,12 @@ impl ShapedMeasurer {
                     SpanKind::Italic | SpanKind::QuoteText | SpanKind::Image { .. } => {
                         default_attrs.clone().style(Style::Italic)
                     }
+                    // CodeToken shapes identically to CodeContent — same mono
+                    // family, no weight/style change. Syntax color is applied
+                    // only in paint, so highlighting never moves a glyph.
                     SpanKind::Code
                     | SpanKind::CodeContent
+                    | SpanKind::CodeToken(_)
                     | SpanKind::Math
                     | SpanKind::MathContent
                     | SpanKind::Marker

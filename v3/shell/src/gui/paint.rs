@@ -101,6 +101,7 @@ use super::session::MdSession;
 use md3_editor::layout::{ConcealMode, StyledLine};
 use md3_editor::parse::LineKind;
 use md3_editor::style::SpanKind;
+use md3_editor::syntax::SyntaxRole;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaintRole {
@@ -114,6 +115,8 @@ pub enum PaintRole {
     Quote,
     Caret,
     CodeBg,
+    /// A syntax-highlighted code token; the canvas maps the role to a color.
+    Syntax(SyntaxRole),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +175,7 @@ fn span_style(kind: &SpanKind, styled: &StyledLine) -> (PaintRole, FontRole) {
         SpanKind::Bold => (PaintRole::Text, FontRole::SansBold),
         SpanKind::Italic => (PaintRole::Text, FontRole::SansItalic),
         SpanKind::Code | SpanKind::CodeContent => (PaintRole::Code, FontRole::Mono),
+        SpanKind::CodeToken(role) => (PaintRole::Syntax(*role), FontRole::Mono),
         SpanKind::Math | SpanKind::MathContent => (PaintRole::Math, FontRole::Mono),
         SpanKind::LinkText { .. } => (PaintRole::Link, FontRole::Sans),
         SpanKind::Image { .. } => (PaintRole::Link, FontRole::SansItalic),

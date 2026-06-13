@@ -6,6 +6,8 @@ use std::sync::{Arc, RwLock};
 
 use super::paint::{AssetKind, FontRole, PaintOp, PaintRole};
 use super::{Message, session::MdSession};
+
+pub mod palette;
 use iced::widget::canvas;
 use iced::{Color, Font, Point, Rectangle, Size, mouse};
 use md3_editor::layout::{LineMeasure, Measurer, StyledLine};
@@ -530,6 +532,7 @@ fn paint_role_color(role: &PaintRole) -> Color {
         PaintRole::Quote => palette::quote(),
         PaintRole::Caret => palette::caret(),
         PaintRole::CodeBg => palette::code_bg(),
+        PaintRole::Syntax(syntax_role) => palette::syntax(*syntax_role),
     }
 }
 
@@ -630,49 +633,5 @@ mod tests {
         let measured = measurer.measure(&line, 800.0);
         assert_eq!(measured.rows, 1);
         assert_eq!(measured.height, f64::from(LINE_HEIGHT + 6.0));
-    }
-}
-
-pub mod palette {
-    use crate::gui::tokens;
-    use iced::Color;
-
-    pub fn bg() -> Color {
-        tokens::dark().bg_secondary
-    }
-    pub fn text() -> Color {
-        tokens::dark().text_primary
-    }
-    pub fn marker() -> Color {
-        tokens::dark().text_muted
-    }
-    pub fn heading() -> Color {
-        tokens::dark().danger
-    }
-    pub fn code() -> Color {
-        tokens::dark().success
-    }
-    pub fn math() -> Color {
-        tokens::dark().warning
-    }
-    pub fn link() -> Color {
-        tokens::dark().accent
-    }
-    pub fn wikilink() -> Color {
-        tokens::dark().accent_secondary
-    }
-    pub fn quote() -> Color {
-        tokens::dark().accent
-    }
-    pub fn caret() -> Color {
-        tokens::dark().accent
-    }
-    pub fn selection() -> Color {
-        tokens::dark().sel_tint
-    }
-    pub fn code_bg() -> Color {
-        let mut color = tokens::dark().bg_tertiary;
-        color.a = 0.72;
-        color
     }
 }
