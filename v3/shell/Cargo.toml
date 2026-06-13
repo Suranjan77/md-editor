@@ -34,6 +34,8 @@ ratex-render = { version = "0.1.7", features = ["embed-fonts"] }
 ratex-parser = "0.1.7"
 ratex-layout = "0.1.7"
 ratex-types = "0.1.7"
+cosmic-text = "0.15.0"
+unicode-segmentation = "1.12"
 
 [dev-dependencies]
 # Routing tests drive the real update loop over a throwaway vault directory.

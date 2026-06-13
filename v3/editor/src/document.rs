@@ -19,8 +19,8 @@ pub struct EditorDocument<M> {
     buffer: Buffer,
     parser: IncrementalParser,
     layout: LayoutEngine<MarkdownStyler, M>,
-    /// Line currently rendered revealed (the primary caret's line).
-    revealed: Option<usize>,
+    /// Range of lines currently rendered revealed (the primary caret's block).
+    revealed: Option<std::ops::Range<usize>>,
 }
 
 impl<M: Measurer> EditorDocument<M> {
@@ -72,12 +72,30 @@ impl<M: Measurer> EditorDocument<M> {
     /// Style a line for painting (pure; spans + conceal mode included).
     pub fn styled_line(&self, index: usize) -> Option<StyledLine> {
         let block = self.parser.line(index)?.entry.clone();
-        let conceal = if self.revealed == Some(index) {
+        let conceal = if self.revealed.as_ref().is_some_and(|r| r.contains(&index)) {
             ConcealMode::Revealed
         } else {
             ConcealMode::Concealed
         };
         Some(MarkdownStyler.style(&self.buffer.line_text(index), &block, conceal))
+    }
+
+    /// Map a character offset in styled display text back to source text.
+    pub fn display_col_to_source(&self, line: usize, display_col: usize) -> usize {
+        let source = self.buffer.line_text(line);
+        let Some(styled) = self.styled_line(line) else {
+            return display_col.min(source.chars().count());
+        };
+        subsequence_offset(&source, &styled.display, display_col)
+    }
+
+    /// Map a source character offset to nearest styled display offset.
+    pub fn source_col_to_display(&self, line: usize, source_col: usize) -> usize {
+        let source = self.buffer.line_text(line);
+        let Some(styled) = self.styled_line(line) else {
+            return source_col.min(source.chars().count());
+        };
+        source_to_subsequence_offset(&source, &styled.display, source_col)
     }
 
     /// The single mutation path. Returns the merged damage plus what the
@@ -122,28 +140,114 @@ impl<M: Measurer> EditorDocument<M> {
             .unwrap_or_default()
     }
 
-    /// Reveal the primary caret's line, conceal the previously revealed one.
-    /// With the layout-stable styler this damages at most two lines and
-    /// never shifts geometry — the M1 golden gate, now wired end to end.
+    /// Reveal the primary caret's block, conceal the previously revealed one.
     fn sync_conceal(&mut self) -> Damage {
         let (line, _) = self.buffer.offset_to_line_col(self.buffer.primary().head);
-        let old = self.revealed;
-        if old == Some(line) {
+        let new_range = self.reveal_range(line);
+        if self.revealed.as_ref() == Some(&new_range) {
             return Damage::none();
         }
-        self.revealed = Some(line);
+        let old_range = self.revealed.clone();
+        self.revealed = Some(new_range.clone());
         let mut damage = Damage::none();
-        // The old line may have been removed by the edit; ignore stale ids.
-        if let Some(old) = old
-            && old < self.layout.line_count()
-            && let Ok(d) = self.layout.set_conceal(old, ConcealMode::Concealed)
-        {
-            damage = damage.merge(d);
+
+        if let Some(old) = &old_range {
+            for i in old.clone() {
+                if i < self.layout.line_count()
+                    && !new_range.contains(&i)
+                    && let Ok(d) = self.layout.set_conceal(i, ConcealMode::Concealed)
+                {
+                    damage = damage.merge(d);
+                }
+            }
         }
-        if let Ok(d) = self.layout.set_conceal(line, ConcealMode::Revealed) {
-            damage = damage.merge(d);
+
+        for i in new_range {
+            let was_revealed = old_range.as_ref().is_some_and(|r| r.contains(&i));
+            if !was_revealed
+                && i < self.layout.line_count()
+                && let Ok(d) = self.layout.set_conceal(i, ConcealMode::Revealed)
+            {
+                damage = damage.merge(d);
+            }
         }
+
         damage
+    }
+
+    pub fn reveal_range(&self, line: usize) -> std::ops::Range<usize> {
+        if line >= self.line_count() {
+            return line..line + 1;
+        }
+        let p = match self.parser.line(line) {
+            Some(p) => p,
+            None => return line..line + 1,
+        };
+
+        let is_block_state = |state: &BlockState| {
+            matches!(
+                state,
+                BlockState::Fence { .. } | BlockState::Math | BlockState::FrontMatter
+            )
+        };
+
+        if is_block_state(&p.entry) || is_block_state(&p.exit) {
+            let mut start = line;
+            while start > 0 {
+                if let Some(prev) = self.parser.line(start - 1) {
+                    if is_block_state(&prev.entry) || is_block_state(&prev.exit) {
+                        start -= 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            let mut end = line + 1;
+            while end < self.line_count() {
+                if let Some(next) = self.parser.line(end) {
+                    if is_block_state(&next.entry) || is_block_state(&next.exit) {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            return start..end;
+        }
+
+        if matches!(p.kind, LineKind::TableRow | LineKind::TableSep) {
+            let mut start = line;
+            while start > 0 {
+                if let Some(prev) = self.parser.line(start - 1) {
+                    if matches!(prev.kind, LineKind::TableRow | LineKind::TableSep) {
+                        start -= 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            let mut end = line + 1;
+            while end < self.line_count() {
+                if let Some(next) = self.parser.line(end) {
+                    if matches!(next.kind, LineKind::TableRow | LineKind::TableSep) {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            return start..end;
+        }
+
+        line..line + 1
     }
 
     pub fn headings(&self) -> Vec<(u8, String, usize)> {
@@ -159,6 +263,34 @@ impl<M: Measurer> EditorDocument<M> {
         }
         out
     }
+}
+
+fn subsequence_offset(source: &str, display: &str, display_col: usize) -> usize {
+    let source = source.chars().collect::<Vec<_>>();
+    let display = display.chars().collect::<Vec<_>>();
+    let mut source_col = 0;
+    for displayed in display.iter().take(display_col.min(display.len())) {
+        while source_col < source.len() && source[source_col] != *displayed {
+            source_col += 1;
+        }
+        source_col = (source_col + 1).min(source.len());
+    }
+    source_col
+}
+
+fn source_to_subsequence_offset(source: &str, display: &str, source_col: usize) -> usize {
+    let source = source.chars().collect::<Vec<_>>();
+    let display = display.chars().collect::<Vec<_>>();
+    let target = source_col.min(source.len());
+    let mut source_index = 0;
+    let mut display_col = 0;
+    while source_index < target && display_col < display.len() {
+        if source[source_index] == display[display_col] {
+            display_col += 1;
+        }
+        source_index += 1;
+    }
+    display_col
 }
 
 #[cfg(test)]
@@ -178,10 +310,28 @@ mod tests {
                 rows: rows as u32,
             }
         }
+
+        fn hit_test(&self, line: &StyledLine, wrap_width: f64, x: f64, y: f64) -> usize {
+            let cols = wrap_width.floor().max(1.0) as usize;
+            let row = (y / 16.0).floor().max(0.0) as usize;
+            let col = (x / 10.0).round().max(0.0) as usize;
+            let char_idx = row * cols + col;
+            char_idx.min(line.display.chars().count())
+        }
     }
 
     fn doc(text: &str) -> EditorDocument<CharMeasurer> {
         EditorDocument::new(CharMeasurer, 80.0, text)
+    }
+
+    #[test]
+    fn concealed_display_offsets_map_to_source_markers() {
+        let mut doc = doc("before **bold** after\nnext");
+        doc.apply(Command::SetCursor { line: 1, col: 0 });
+        assert_eq!(doc.display_col_to_source(0, 7), 7);
+        assert_eq!(doc.display_col_to_source(0, 8), 10);
+        assert_eq!(doc.source_col_to_display(0, 9), 7);
+        assert_eq!(doc.source_col_to_display(0, 13), 11);
     }
 
     #[test]

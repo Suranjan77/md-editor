@@ -8,12 +8,7 @@ impl Shell {
     pub(super) fn open_tracker_store(
         &self,
     ) -> Result<md3_vault::tracker::TrackerStore, md3_vault::error::VaultError> {
-        let project = directories::ProjectDirs::from("com", "Suranjan77", "md-editor");
-        let dir = project
-            .map(|project| project.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let _ = std::fs::create_dir_all(&dir);
-        md3_vault::tracker::TrackerStore::open(&dir.join("tracker.db"))
+        md3_vault::tracker::TrackerStore::open(&self.tracker_db_path)
     }
 
     pub(super) fn ensure_index(&mut self) {
@@ -46,6 +41,16 @@ impl Shell {
             Ok(store) => self.annotations = Some(store),
             Err(error) => self.status = format!("annotations unavailable: {error}"),
         }
+    }
+
+    pub(super) fn ensure_asset_sizes(&mut self) {
+        if self.asset_sizes.is_some() {
+            return;
+        }
+        self.asset_sizes = self
+            .open_sidecar_dir()
+            .and_then(|_| md3_vault::AssetSizeStore::open(&self.sidecar_path()))
+            .ok();
     }
 
     pub(super) fn open_sidecar_dir(&self) -> Result<(), md3_vault::VaultError> {

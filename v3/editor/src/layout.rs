@@ -57,12 +57,6 @@ impl StyledLine {
 /// conceal mode) — exactly the plan's cache key.
 pub trait Styler {
     fn style(&self, text: &str, block: &BlockState, conceal: ConcealMode) -> StyledLine;
-
-    /// True if this styler guarantees the reserved-width contract:
-    /// `measure(style(t, Concealed)) == measure(style(t, Revealed))` for all
-    /// `t`. Production stylers must return true; the contract is asserted by
-    /// [`LayoutEngine::set_conceal`] in debug builds.
-    fn layout_stable(&self) -> bool;
 }
 
 /// Phase-2 output for one line.
@@ -75,6 +69,9 @@ pub struct LineMeasure {
 /// Phase 2: turn a styled line into geometry at a wrap width.
 pub trait Measurer {
     fn measure(&self, line: &StyledLine, wrap_width: f64) -> LineMeasure;
+
+    /// Return the character offset for a click at (x, y) relative to the top-left of the layout.
+    fn hit_test(&self, line: &StyledLine, wrap_width: f64, x: f64, y: f64) -> usize;
 }
 
 /// What the paint phase must do after a mutation.
@@ -329,9 +326,7 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         Ok(damage)
     }
 
-    /// Flip a line's conceal mode (caret entered/left it). With a
-    /// layout-stable styler this never shifts geometry; the debug assertion
-    /// enforces the contract on every styler that claims it.
+    /// Flip a line's conceal mode (caret entered/left it).
     pub fn set_conceal(&mut self, index: usize, mode: ConcealMode) -> Result<Damage, OutOfBounds> {
         let (text, block, old_conceal) = match self.lines.get(index) {
             Some(l) => (l.text.clone(), l.block.clone(), l.conceal),
@@ -346,19 +341,10 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
             return Ok(Damage::none());
         }
         let measure = self.style_measure(&text, &block, mode);
-        if self.styler.layout_stable() {
-            debug_assert_eq!(
-                self.lines.get(index).map(|l| l.measure.height),
-                Some(measure.height),
-                "layout-stable styler changed height on conceal flip at line {index}"
-            );
-        }
         self.apply_measure(index, text, block, mode, measure)
     }
 
     /// Caret moved between lines: conceal the old line, reveal the new one.
-    /// With a layout-stable styler the returned damage is confined to those
-    /// two lines and `shifted_from` is `None` — the M1 golden gate.
     pub fn caret_moved(
         &mut self,
         from: Option<usize>,
