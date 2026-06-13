@@ -258,6 +258,159 @@ impl Shell {
             })
             .into()
     }
+
+    pub(super) fn view_pdf_annotations_panel(
+        &self,
+        session: &PdfSession,
+        tab: TabId,
+    ) -> Element<'_, Message> {
+        let tokens = tokens::dark();
+        let title = iced::widget::row![
+            text("Annotations")
+                .size(14)
+                .color(tokens.text_primary)
+                .font(BOLD),
+            iced::widget::Space::new().width(iced::Length::Fill),
+            button(text("✕").size(12).font(BOLD))
+                .on_press(Message::PdfCommand {
+                    tab,
+                    command: CommandId("pdf.annotations-panel"),
+                })
+                .style(button::text),
+        ]
+        .align_y(iced::Alignment::Center);
+
+        let mut list = iced::widget::column![].spacing(6);
+        for annotation in &session.annotations {
+            let text_value = match session.annotation_text(annotation) {
+                text if text.is_empty() => "Highlight".to_string(),
+                text => text,
+            };
+            let text_value = if text_value.chars().count() > 60 {
+                format!("{}...", text_value.chars().take(57).collect::<String>())
+            } else {
+                text_value
+            };
+            let swatch_color = pdf_view::quad_color(&annotation.color, 1.0);
+            let swatch = button(
+                container(iced::widget::Space::new())
+                    .width(12)
+                    .height(12)
+                    .style(move |_| container::Style {
+                        background: Some(iced::Background::Color(swatch_color)),
+                        border: iced::Border {
+                            color: tokens.border,
+                            width: 1.0,
+                            radius: 3.0.into(),
+                        },
+                        ..Default::default()
+                    }),
+            )
+            .padding(0)
+            .on_press(Message::PdfCycleAnnotationColor {
+                tab,
+                annotation_id: annotation.id,
+            });
+            let note_preview = if annotation.note.is_empty() {
+                None
+            } else {
+                let note = if annotation.note.chars().count() > 40 {
+                    format!(
+                        "{}...",
+                        annotation.note.chars().take(37).collect::<String>()
+                    )
+                } else {
+                    annotation.note.clone()
+                };
+                Some(text(note).size(11).color(tokens.accent_secondary))
+            };
+            let delete = button(text("🗑").size(12).color(tokens.danger))
+                .style(button::text)
+                .on_press(Message::PdfDeleteAnnotation {
+                    tab,
+                    annotation_id: annotation.id,
+                });
+            let edit = button(text("📝").size(12).color(tokens.text_primary))
+                .style(button::text)
+                .on_press(Message::PdfEditAnnotationNote {
+                    tab,
+                    annotation_id: annotation.id,
+                });
+            let active = Some(annotation.id) == session.selected_annotation;
+            let text_color = if active {
+                tokens.accent
+            } else {
+                tokens.text_primary
+            };
+            let mut content = iced::widget::column![
+                iced::widget::row![
+                    swatch,
+                    iced::widget::Space::new().width(4),
+                    text(format!("Page {}", annotation.page + 1))
+                        .size(11)
+                        .color(tokens.text_muted),
+                    iced::widget::Space::new().width(iced::Length::Fill),
+                    edit,
+                    delete,
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(2),
+                text(text_value).size(12).color(text_color)
+            ]
+            .spacing(4);
+            if let Some(note) = note_preview {
+                content = content.push(note);
+            }
+            let card = container(content)
+                .padding(8)
+                .width(Fill)
+                .style(move |_| container::Style {
+                    background: Some(iced::Background::Color(if active {
+                        tokens.bg_tertiary
+                    } else {
+                        tokens.bg_surface
+                    })),
+                    border: iced::Border {
+                        color: if active {
+                            tokens.accent
+                        } else {
+                            tokens.border_subtle
+                        },
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                });
+            let item = button(card).width(Fill).style(button::text).on_press(
+                Message::PdfJumpToAnnotation {
+                    tab,
+                    annotation_id: annotation.id,
+                },
+            );
+            list = list.push(item);
+        }
+
+        let panel = iced::widget::column![
+            title,
+            iced::widget::Space::new().height(8),
+            iced::widget::scrollable(list).height(iced::Length::Fill)
+        ]
+        .spacing(4)
+        .padding(10);
+        container(panel)
+            .width(iced::Length::Fixed(session.annotations_width))
+            .height(iced::Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(tokens.bg_secondary)),
+                border: iced::Border {
+                    color: tokens.border,
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            })
+            .into()
+    }
 }
 
 pub(super) fn find_all_matches(text: &str, query: &str) -> Vec<(usize, usize)> {
