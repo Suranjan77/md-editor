@@ -926,8 +926,12 @@ nearest source char (hit-test through the shaped layout).
   roles to theme colors and never parses syntax in the paint path.
 - ~~CJK/emoji and mixed-direction bidi round-trip properties on shaped
   runs~~ done in `editor_hit_testing.rs`.
-- p95 keypress→frame bench in CI (master plan §6's promise, finally
-  honored — a coarse timing assertion in a quiet job beats nothing).
+- ~~p95 keypress→frame bench in CI (master plan §6's promise, finally
+  honored — a coarse timing assertion in a quiet job beats nothing)~~ done in
+  `shell/tests/keypress_bench.rs`: drives `MdSession::apply` over a 5k-line
+  document (incremental parse + restyle + shaped remeasure of the touched
+  range), asserts p95 < 16ms. Runs in the existing `cargo test --workspace`
+  CI step; ~0.4ms locally, generous margin against shared-runner variance.
 
 ### Typora-parity acceptance checklist
 
