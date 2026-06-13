@@ -11,6 +11,7 @@
 //!   documents are peers — any kind in any pane (BUG-C discipline).
 
 mod commands_file;
+mod commands_md;
 pub mod drag;
 pub mod editor_canvas;
 pub mod file_tree;
@@ -2402,30 +2403,6 @@ impl Shell {
         }
     }
 
-    fn save_focused(&mut self) -> Task<Message> {
-        let root = self.vault_root.clone();
-        let Some(session) = self.focused_md_mut() else {
-            return Task::none();
-        };
-        let abs = root.join(&session.rel_path);
-        let text = session.doc.buffer().text();
-        match md3_vault::atomic_save(&abs, text.as_bytes()) {
-            Ok(()) => {
-                session.doc.mark_saved();
-                let rel = session.rel_path.clone();
-                // Keep the search index converged with the save.
-                if let Some(index) = self.index.as_mut() {
-                    let _ = index.sync_paths(&root, &[abs]);
-                }
-                if self.tree_open {
-                    self.files = scan_vault(&root);
-                }
-                self.success(format!("Saved {rel}"))
-            }
-            Err(e) => self.error(format!("Save failed: {e}")),
-        }
-    }
-
     /// `pdf.highlight`: persist the focused PDF's text selection as an
     /// annotation and pick it (so ctrl+n annotates it immediately).
     fn highlight_selection(&mut self) {
@@ -2665,28 +2642,6 @@ impl Shell {
                 self.status = "highlight removed".to_string();
             }
             Err(e) => self.status = format!("remove failed: {e}"),
-        }
-    }
-
-    fn find_in_note(&mut self, needle: &str) {
-        if needle.is_empty() {
-            return;
-        }
-        let Some(session) = self.focused_md_mut() else {
-            return;
-        };
-        let text = session.doc.buffer().text();
-        let from = session.doc.buffer().primary().head;
-        let hit = text[from.min(text.len())..]
-            .find(needle)
-            .map(|i| i + from)
-            .or_else(|| text.find(needle));
-        match hit {
-            Some(offset) => {
-                let (line, col) = session.doc.buffer().offset_to_line_col(offset);
-                session.apply(Command::SetCursor { line, col });
-            }
-            None => self.status = format!("not found: {needle}"),
         }
     }
 
@@ -2932,37 +2887,6 @@ impl Shell {
         }
         index.sync(&self.vault_root)?;
         Ok(())
-    }
-
-    /// Referrers of `rel_path` per the wikilink graph, built fresh from the
-    /// vault's notes on every call (mirrors quick-open's rescan: always
-    /// current, vault-sized work — a cached graph + watcher refresh is the
-    /// upgrade path if vaults outgrow it).
-    fn note_backlinks(&self, rel_path: &str) -> Vec<String> {
-        let mut graph = md3_vault::LinkGraph::new();
-        for rel in scan_vault(&self.vault_root) {
-            if !rel.ends_with(".md") {
-                continue;
-            }
-            let Ok(content) = std::fs::read_to_string(self.vault_root.join(&rel)) else {
-                continue;
-            };
-            graph.update_file(Path::new(&rel), &content);
-        }
-        graph
-            .backlinks(Path::new(rel_path))
-            .into_iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect()
-    }
-
-    fn search_vault(&mut self, query: &str) -> Vec<md3_vault::Hit> {
-        let Some(index) = self.index.as_ref() else {
-            return Vec::new();
-        };
-        // The overlay list scrolls, so this bound is about FTS query cost,
-        // not what fits on screen.
-        index.search(query, 50).unwrap_or_default()
     }
 
     // ------------------------------------------------------------ helpers --
