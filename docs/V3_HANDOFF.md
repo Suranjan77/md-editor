@@ -2,14 +2,10 @@
 
 > **Read this first when resuming v3 work.** Updated after every completed unit of work.
 > Sibling ledgers: `PLAN-NOTES.md` (v2 incremental plan), `docs/V3_GROUND_UP_PLAN.md` (the master plan).
-> **Next work is `docs/V3_IMPLEMENTATION_PLAN.md` Phase 6.2** (course
-> correction, 2026-06-12): continue decomposition until both size gates are
-> met; no new renderer/shell feature work until 6.0–6.3 are done. After 6.3,
-> renderer work is **Phase 7 —
-> Typora-grade live editor** (user-ordered 2026-06-13; ADR-0104/0105) —
-> Phase 6.4/6.5 are superseded by it. The §0.2 hard rules were tightened
-> 2026-06-12 — reread them even if you have worked here before. The §0.4
-> pitfalls register supersedes re-deriving past bugs from the decision log.
+> **Next work is `docs/V3_IMPLEMENTATION_PLAN.md` Phase 7.6**, one
+> refinement at a time. Course correction 6.0–6.3 and Typora-grade 7.0–7.5
+> are implemented; manual smoke items 27–33 still gate full acceptance of
+> 7.3–7.5. The §0.2 hard rules and §0.4 pitfalls register remain binding.
 
 ## Ground rules for this execution
 
@@ -108,11 +104,19 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **Iced async runtime** | ADR-0103 | ✅ | `md3-shell` enables iced `tokio` feature so toast timer tasks run inside a Tokio reactor; fixes production panic from `tokio::time::sleep`. |
 | **Course correction 6.0: green baseline** | Phase 6.0 | ✅ | Tracker manual-log success now queues one success toast and `tracker_wiring` asserts that channel. Full default + pdfium workspace gates green. |
 | **Course correction 6.1: v3 size budgets** | Phase 6.1 | ✅ | `v3/budgets.toml` + `scripts/v3-budget.sh`, wired into CI. Hard limit 700; six pre-existing oversized files ratcheted. Enforcement proven by temporary hard-limit injection. |
-| **Course correction 6.2: decomposition** | Phase 6.2 | 🔶 | Active: foundation extraction plus 16 follow-up extraction commits landed. `gui/mod.rs` ceiling fell from 4,838 to **2,587**; extracted session persistence, status, toast, file/Markdown/PDF commands, PDF input/worker events, stores, input routing, and chrome panels/context. `editor/src/buffer.rs` fell from 1,911 to **1,557**; formatting mutations live in `buffer/formatting.rs`. Every new module is ≤700 lines. Remaining exit work: `gui/mod.rs` ≤1,500 and fuller ergonomics/edit-op extraction from `buffer.rs`. |
+| **Course correction 6.2: decomposition** | Phase 6.2 | ✅ | `gui/mod.rs` fell from 4,838 to **1,479**; `editor/src/buffer.rs` from 1,911 to **833**. Shell surface modules, `buffer/formatting.rs`, `buffer/edit_ops.rs`, and `buffer/typing.rs` keep extracted files ≤700 lines. Ratchets lowered in `v3/budgets.toml`; `scripts/v3-budget.sh` green. |
+| **Phase 6.3 golden snapshots** | Phase 6.3 | ✅ | `editor_draw_plan.rs`, `paint.rs` — Paint geometry extracted; strict diff-based test verifies exact `PaintOp` stream against `golden.md` |
+| **ADR-0104 typora grade** | Phase 7.0 | ✅ | `docs/adr/0104-v3-typora-grade.md` — layout engine refactored for shaped lines via `Measurer` trait |
+| **Phase 7.1 hide/measured reveal** | Phase 7.1 | ✅ | `editor/src/document.rs`, `sync_conceal` — Conceal mode now true hide, layout stable invariant dropped |
+| **Phase 7.2 typography** | Phase 7.2 | ✅ | `shell/src/gui/shaped_measurer.rs` — heading scales, rhythm, spacing |
+| **Phase 7.3 blocks render as units** | Phase 7.3 | 🔶 | `paint.rs`, `editor/src/document.rs`, `session.rs` — measured table grid, fenced-code panel, unified block reveal, source/display offset mapping, shaped table hit-testing. Golden draw plan and BUG-B suites green; manual smoke items 30–31 pending. |
+| **Phase 7.4 stable assets** | Phase 7.4 | 🔶 | `vault/src/asset_sizes.rs`, `gui/markdown_assets.rs`, `gui/worker.rs`, `gui/pdf_worker_events.rs` — sidecar dimensions, async image/math loading, cached first layout, remeasure only on changed dimensions. Store/worker/layout tests green; manual smoke item 32 pending. |
+| **Phase 7.5 interaction exactness** | Phase 7.5 | 🔶 | `shaped_measurer.rs`, `editor_canvas.rs`, `editor_hit_testing.rs`, `markdown_interactions.rs` — one shaped geometry path for paint/caret/selection/hit-test, full golden round-trip, clickable checkbox through registered command, ctrl+click URI/wikilink, ctrl-hover pointer+underline. Manual smoke item 33 pending. |
+| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | CJK, emoji, and mixed-direction bidi shaped round-trip properties landed in `editor_hit_testing.rs`; caret geometry now follows bidi levels and ignores zero-width duplicate glyph records. ADR-0106 fixes fenced-code syntax ownership. Remaining: element-level reveal, optional motion, syntax implementation, p95 CI bench. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-13, Phase 6.2 in progress):** Phase 6.0–6.1
+**Last committed verification snapshot (2026-06-13, Phase 6.2 in progress):** Phase 6.0–6.1
 full gate was green in both feature configurations, kernel demo was green,
 and shortcuts were fresh. Each Phase 6.2 extraction then passed fmt, the
 relevant focused routing/editor suites, clippy `-D warnings` (both shell
@@ -182,7 +186,7 @@ size targets.
     `docs/V3_STABILIZATION_2026-06-12.md`; the work is now **specced
     step-by-step as impl-plan Phase 6.3, then Phase 7** — work from that
     spec, not from the report's loose list.
-16. **Course correction (architect review, 2026-06-12) — current work:**
+16. ~~**Course correction (architect review, 2026-06-12):**~~ complete.
     impl-plan Phase 6, in order: green-and-committed tree (6.0), v3 size
     budgets in CI (6.1), `gui/mod.rs`/`buffer.rs` decomposition (6.2),
     renderer golden draw-plan snapshots (6.3). No new feature work on the
@@ -194,11 +198,9 @@ size targets.
     rendering → 7.4 stable assets → 7.5 interaction exactness → 7.6
     motion/refinements), governed by ADR-0104 (proposed, spike resolves)
     and ADR-0105 (accepted). Supersedes impl-plan 6.4/6.5.
-18. **Course correction Phase 6 execution (2026-06-13):** 6.0 and 6.1 are
-    complete. 6.2 is active: `gui/mod.rs` is 2,587 lines (from 4,838) and
-    `editor/src/buffer.rs` is 1,557 (from 1,911). Continue mechanical
-    extraction until `gui/mod.rs` ≤1,500 and buffer ergonomics/edit operations
-    are separated as specified. Do not start 6.3 or Phase 7 before that gate.
+18. ~~**Course correction Phase 6 execution (2026-06-13):**~~ complete.
+    `gui/mod.rs` is 1,479 lines and `editor/src/buffer.rs` is 833; Phase 6.3
+    goldens are green.
 
 ## Decisions made during execution
 
@@ -554,3 +556,40 @@ size targets.
   asymmetric marker wrapping behind one private helper; the full editor
   property/undo/formatting suite pins equivalence. Current ratchets are
   `gui/mod.rs` 2,587 and `buffer.rs` 1,557; ceilings only decrease.
+- 2026-06-13: Phase 6.2 exit gates reached. `gui/mod.rs` is 1,479 lines,
+  `buffer.rs` is 833, and new extraction modules stay below 700 lines.
+- 2026-06-13: Markdown asset dimensions use the shared sidecar under the
+  new append-only `asset_sizes` migration component. Cached dimensions enter
+  measure before async rendering; identical worker dimensions install pixels
+  without reflow, changed dimensions trigger one normal remeasure.
+- 2026-06-13: shaped geometry is the sole Markdown caret/selection/hit-test
+  source. Concealed display offsets map through the editor engine back to
+  source offsets; tables use measured cell columns. Ctrl-click follows links,
+  while checkbox clicks dispatch the registered toggle command.
+- 2026-06-13: tracker integration tests receive an explicit per-test database
+  path. Production still uses the application config database; tests no
+  longer race through shared global state during the binary workspace gate.
+- 2026-06-13: ADR-0106 assigns fenced-code syntax tokenization to
+  `v3/editor` and theme-color mapping to shell. Tokens are incremental cached
+  document state and paint-only; renderer parsing and geometry changes are
+  forbidden. Implementation remains a separate Phase 7.6 slice.
+- 2026-06-13: shaped caret geometry resolves logical clusters independently
+  of visual glyph order, follows each glyph's bidi level, and skips
+  zero-width duplicate records emitted by shaping. Mixed Latin, Hebrew,
+  numeric, and Arabic caret-to-hit round trips are pinned.
+- 2026-06-13: Markdown measure/paint font families now agree: prose,
+  headings, links, and emphasis paint with the same sans attributes used by
+  shaping; code and math remain monospace. Cached inline-math dimensions now
+  reserve their rendered width during shaping, so following text wraps and
+  hit-tests after the asset instead of painting underneath it.
+- 2026-06-13: inline-math vertical alignment fixed (user-reported: math drawn
+  ~7px above the text row, occasionally overlapping a neighbour). The asset
+  was centered against a `line_height`-tall box topped at
+  `run.line_y - line_height`, but prose paints at `run.line_y - font_size`
+  (cosmic's visual line top). The two references disagreed by
+  `line_height - font_size` (8px). Inline math now centers within the same
+  `font_size` box the surrounding text uses, so the rendered glyph rides the
+  text row. Paint-only change — measure, shaping, wrap width reservation, and
+  caret/hit geometry are untouched; golden draw plan re-pinned (the single
+  changed line moved the `E = mc^2` asset 696→700, centering it on text at
+  703). Block math/images still center in their own full-height lines.

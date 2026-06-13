@@ -15,3 +15,4 @@ relitigate them. To overturn one, write a superseding ADR — don't edit history
 | [0103](0103-iced-tokio-executor.md) | Use iced Tokio executor for shell async tasks | Accepted |
 | [0104](0104-shaped-text-measurement.md) | Shaped proportional text measurement replaces the mono grid | Proposed (spike resolves) |
 | [0105](0105-conceal-v2-measured-reveal.md) | Conceal v2 — true hide with measured reveal | Accepted |
+| [0106](0106-fenced-code-syntax-highlighting.md) | Fenced-code syntax highlighting stays outside renderer | Accepted |

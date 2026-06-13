@@ -25,3 +25,10 @@ Run: cd v3 && cargo run -p md3-shell --features pdfium -- <a real vault with a r
  24. ctrl+/: every registered command appears with category and chord; typing filters; enter runs the selected command. Command messages stay on the left while caret/page position stays on the right.
  25. Mouse only: toolbar toggles files/tracker, opens quick-open/search/palette/help, splits focused document, and switches to markdown/PDF-specific controls with tooltips.
  26. Mouse only: File/Edit/View/PDF/Help menus expose registered commands, disable commands for the wrong focused surface, close on outside click or esc, and PDF +/- buttons rerender at the shown zoom.
+ 27. Open a real note: headings are visibly larger, prose is proportional, no gaps where ** or # hide.
+ 28. Click into a bold word: markers appear in place; the line reflows only itself; click away: they vanish.
+ 29. Caret-walk an entire document end to end: no overlap, no jumping, no stale lines.
+ 30. Table renders as a grid; click inside: source appears; edit a cell; click away: grid re-renders.
+ 31. Fenced code shows as a mono block; display math renders; click into math: TeX source appears in place.
+ 32. Reopen a document with images: layout is identical immediately; no pop when assets load.
+ 33. Click a checkbox: it toggles and undo restores it. Ctrl+click a wikilink opens the note; ctrl+click a URI opens the browser.
