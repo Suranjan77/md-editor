@@ -16,6 +16,7 @@ use md3_editor::height_tree::OutOfBounds;
 use md3_editor::layout::{Damage, LayoutEngine, LineMeasure, Measurer, StyledLine, Styler};
 use md3_editor::parse::BlockState;
 use md3_editor::style::MarkdownStyler;
+use md3_editor::syntax::{Lang, LexState};
 
 const LINE_HEIGHT: f64 = 16.0;
 const WRAP_COLS: f64 = 20.0;
@@ -259,6 +260,8 @@ fn block_reveal_contract_exposes_whole_fence() {
                 BlockState::Fence {
                     marker: '`',
                     len: 3,
+                    lang: Lang::Rust,
+                    lex: LexState::Normal,
                 },
             ),
             (
@@ -266,6 +269,8 @@ fn block_reveal_contract_exposes_whole_fence() {
                 BlockState::Fence {
                     marker: '`',
                     len: 3,
+                    lang: Lang::Rust,
+                    lex: LexState::Normal,
                 },
             ),
             ("after", BlockState::Normal),

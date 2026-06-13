@@ -13,6 +13,7 @@ use std::ops::Range;
 
 use crate::layout::{ConcealMode, StyledLine, Styler};
 use crate::parse::{BlockState, LineKind, classify};
+use crate::syntax::{Lang, LexState, SyntaxRole, lex_line};
 
 /// Paint semantics of a span. The shell maps these to theme attributes;
 /// nothing here knows about colors or fonts (ADR-0100).
@@ -26,6 +27,11 @@ pub enum SpanKind {
     Bold,
     Italic,
     Code,
+    /// A syntax-highlighted run inside fenced code (ADR-0106). The shell maps
+    /// the [`SyntaxRole`] to a theme color; the measurer shapes it with the
+    /// *identical* monospace attrs it uses for [`SpanKind::CodeContent`], so
+    /// highlighting changes paint only and never moves a glyph.
+    CodeToken(SyntaxRole),
     Math,
     /// Link label; `url` is what activation opens.
     LinkText {
@@ -64,6 +70,18 @@ impl Styler for MarkdownStyler {
     fn style(&self, text: &str, block: &BlockState, conceal: ConcealMode) -> StyledLine {
         let (kind, _) = classify(text, block);
         let mut spans = line_spans(text, &kind);
+
+        // Syntax-highlight fenced code: replace the single `CodeContent` span
+        // with role-tagged sub-spans (ADR-0106). The entry lexer state lives
+        // in the line's `Fence` block state, so multi-line constructs resolve
+        // correctly. This is paint-only — the sub-spans tile the same range
+        // and shape with identical monospace attrs (geometry-invariant).
+        if let (LineKind::CodeContent, BlockState::Fence { lang, lex, .. }) = (&kind, block)
+            && *lang != Lang::None
+        {
+            spans = highlight_code(text, *lang, *lex);
+        }
+
         let mut display = text.to_string();
 
         if conceal == ConcealMode::Concealed {
@@ -124,6 +142,29 @@ impl Styler for MarkdownStyler {
             spans,
         }
     }
+}
+
+/// Tokenize a fenced-code line into role-tagged spans that **tile** `0..n`
+/// exactly (gaps between highlighted runs become base [`SpanKind::CodeContent`]).
+/// Char-offset based, matching the buffer/display offset space.
+fn highlight_code(text: &str, lang: Lang, lex: LexState) -> Vec<Span> {
+    let n = text.chars().count();
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    lex_line(lang, lex, text, |start, end, role| {
+        if start > cursor {
+            spans.push(Span::new(cursor..start, SpanKind::CodeContent));
+        }
+        spans.push(Span::new(start..end, SpanKind::CodeToken(role)));
+        cursor = end;
+    });
+    if cursor < n {
+        spans.push(Span::new(cursor..n, SpanKind::CodeContent));
+    }
+    if spans.is_empty() {
+        spans.push(Span::new(0..n, SpanKind::CodeContent));
+    }
+    spans
 }
 
 /// Spans for one line given its block kind. Char-offset based.
@@ -542,11 +583,14 @@ mod tests {
     #[test]
     fn block_state_overrides_inline_rules() {
         let styler = MarkdownStyler;
+        // A plain (no-language) fence keeps the single code span.
         let inside_fence = styler.style(
             "**not bold**",
             &BlockState::Fence {
                 marker: '`',
                 len: 3,
+                lang: Lang::None,
+                lex: LexState::Normal,
             },
             ConcealMode::Concealed,
         );
@@ -554,5 +598,64 @@ mod tests {
             inside_fence.spans,
             vec![Span::new(0..12, SpanKind::CodeContent)]
         );
+    }
+
+    fn fence(lang: Lang, lex: LexState) -> BlockState {
+        BlockState::Fence {
+            marker: '`',
+            len: 3,
+            lang,
+            lex,
+        }
+    }
+
+    #[test]
+    fn rust_code_line_splits_into_role_spans() {
+        let styled = MarkdownStyler.style(
+            "let x = 1;",
+            &fence(Lang::Rust, LexState::Normal),
+            ConcealMode::Concealed,
+        );
+        // Spans must still tile the full line (reserved-width invariant).
+        let joined: String = styled
+            .spans
+            .iter()
+            .flat_map(|s| "let x = 1;".chars().collect::<Vec<_>>()[s.range.clone()].to_vec())
+            .collect();
+        assert_eq!(joined, "let x = 1;");
+        assert!(
+            styled
+                .spans
+                .iter()
+                .any(|s| s.kind == SpanKind::CodeToken(SyntaxRole::Keyword))
+        );
+        assert!(
+            styled
+                .spans
+                .iter()
+                .any(|s| s.kind == SpanKind::CodeToken(SyntaxRole::Number))
+        );
+    }
+
+    #[test]
+    fn unknown_language_keeps_single_code_span() {
+        let styled = MarkdownStyler.style(
+            "let x = 1;",
+            &fence(Lang::None, LexState::Normal),
+            ConcealMode::Concealed,
+        );
+        assert_eq!(styled.spans, vec![Span::new(0..10, SpanKind::CodeContent)]);
+    }
+
+    #[test]
+    fn highlight_span_set_does_not_depend_on_conceal_mode() {
+        // Code has no markers, so conceal must not change the spans — this is
+        // what keeps highlighting geometry-invariant across reveal toggles.
+        let line = "fn main() {}";
+        let block = fence(Lang::Rust, LexState::Normal);
+        let concealed = MarkdownStyler.style(line, &block, ConcealMode::Concealed);
+        let revealed = MarkdownStyler.style(line, &block, ConcealMode::Revealed);
+        assert_eq!(concealed.spans, revealed.spans);
+        assert_eq!(concealed.display, revealed.display);
     }
 }
