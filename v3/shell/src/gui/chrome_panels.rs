@@ -1,4 +1,5 @@
 use super::*;
+use iced::widget::text_input;
 
 impl Shell {
     pub(super) fn view_pdf_toc_panel(
@@ -182,4 +183,95 @@ impl Shell {
             })
             .into()
     }
+
+    pub(super) fn view_md_find_replace_bar(
+        &self,
+        session: &MdSession,
+        tab: TabId,
+    ) -> Element<'_, Message> {
+        let tokens = tokens::dark();
+        let text_value = session.doc.buffer().text();
+        let matches = find_all_matches(&text_value, &session.find_query);
+        let primary = session.doc.buffer().primary();
+        let caret_start = primary.anchor.min(primary.head);
+        let caret_end = primary.anchor.max(primary.head);
+        let active_index = matches
+            .iter()
+            .position(|&(start, end)| start == caret_start && end == caret_end);
+        let count = if session.find_query.is_empty() {
+            "0 of 0".to_string()
+        } else {
+            active_index.map_or_else(
+                || format!("0 of {}", matches.len()),
+                |index| format!("{} of {}", index + 1, matches.len()),
+            )
+        };
+
+        let find_input = text_input("Find...", &session.find_query)
+            .on_input(move |query| Message::MdFindQueryChanged { tab, query })
+            .width(180)
+            .padding(4)
+            .size(13);
+        let replace_input = text_input("Replace with...", &session.replace_text)
+            .on_input(move |text| Message::MdReplaceTextChanged { tab, text })
+            .width(180)
+            .padding(4)
+            .size(13);
+        let content = iced::widget::row![
+            text("Find:").size(12).color(tokens.text_muted),
+            find_input,
+            text(count).size(12).color(tokens.text_muted),
+            button(text("▲").size(10))
+                .padding([2, 6])
+                .on_press(Message::MdFindPrev { tab }),
+            button(text("▼").size(10))
+                .padding([2, 6])
+                .on_press(Message::MdFindNext { tab }),
+            iced::widget::Space::new().width(12),
+            text("Replace:").size(12).color(tokens.text_muted),
+            replace_input,
+            button(text("Replace").size(12))
+                .padding([3, 8])
+                .on_press(Message::MdReplace { tab }),
+            button(text("Replace All").size(12))
+                .padding([3, 8])
+                .on_press(Message::MdReplaceAll { tab }),
+            iced::widget::Space::new().width(iced::Length::Fill),
+            button(text("✕").size(12).font(BOLD))
+                .style(button::text)
+                .on_press(Message::MdCloseFind { tab })
+        ]
+        .spacing(8)
+        .padding([4, 8])
+        .align_y(iced::Alignment::Center);
+
+        container(content)
+            .width(Fill)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(tokens.bg_secondary)),
+                border: iced::Border {
+                    color: tokens.border_subtle,
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+}
+
+pub(super) fn find_all_matches(text: &str, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let query_lower = query.to_lowercase();
+    let text_lower = text.to_lowercase();
+    let mut matches = Vec::new();
+    let mut start = 0;
+    while let Some(position) = text_lower[start..].find(&query_lower) {
+        let position = start + position;
+        matches.push((position, position + query.len()));
+        start = position + query.len().max(1);
+    }
+    matches
 }
