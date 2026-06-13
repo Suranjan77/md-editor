@@ -11,6 +11,7 @@
 //!   documents are peers — any kind in any pane (BUG-C discipline).
 
 mod chrome_context;
+mod chrome_panels;
 mod commands_file;
 mod commands_md;
 mod commands_pdf_annotations;
@@ -2684,92 +2685,6 @@ impl Shell {
             })
             .width(Fill)
             .height(Fill)
-            .into()
-    }
-
-    fn view_pdf_toc_panel(&self, session: &PdfSession, tab: TabId) -> Element<'_, Message> {
-        let t = tokens::dark();
-        let title = row![
-            text("Table of Contents")
-                .size(14)
-                .color(t.text_primary)
-                .font(BOLD),
-            iced::widget::Space::new().width(iced::Length::Fill),
-            button(text("✕").size(12).font(BOLD))
-                .on_press(Message::PdfCommand {
-                    tab,
-                    command: CommandId("pdf.toc-panel"),
-                })
-                .style(button::text),
-        ]
-        .align_y(iced::Alignment::Center);
-
-        let current_idx = session.current_section_index();
-
-        let mut list = column![].spacing(2);
-        for (i, entry) in session.outline.iter().enumerate() {
-            let active = Some(i) == current_idx;
-            let text_color = if active { t.accent } else { t.text_primary };
-            let font = if active { BOLD } else { iced::Font::DEFAULT };
-
-            let content = row![
-                iced::widget::Space::new().width(iced::Length::Fixed(entry.depth as f32 * 12.0)),
-                text(entry.title.clone())
-                    .size(12)
-                    .color(text_color)
-                    .font(font),
-                iced::widget::Space::new().width(iced::Length::Fill),
-                text(format!("{}", entry.page + 1))
-                    .size(11)
-                    .color(t.text_muted),
-            ]
-            .align_y(iced::Alignment::Center)
-            .padding([4, 6]);
-
-            let item = button(content)
-                .width(Fill)
-                .style(move |_theme, status| {
-                    let hovered =
-                        matches!(status, button::Status::Hovered | button::Status::Pressed);
-                    button::Style {
-                        background: if active {
-                            Some(iced::Background::Color(t.bg_tertiary))
-                        } else if hovered {
-                            Some(iced::Background::Color(t.bg_surface))
-                        } else {
-                            None
-                        },
-                        ..button::Style::default()
-                    }
-                })
-                .on_press(Message::PdfJumpToPage {
-                    tab,
-                    page: entry.page as usize,
-                });
-
-            list = list.push(item);
-        }
-
-        let panel_content = column![
-            title,
-            iced::widget::Space::new().height(8),
-            iced::widget::scrollable(list).height(iced::Length::Fill)
-        ]
-        .spacing(4)
-        .padding(10);
-
-        container(panel_content)
-            .width(iced::Length::Fixed(session.toc_width))
-            .height(iced::Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(iced::Background::Color(t.bg_secondary)),
-                border: iced::Border {
-                    color: t.border,
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            })
             .into()
     }
 
