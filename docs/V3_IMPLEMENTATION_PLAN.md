@@ -7,10 +7,12 @@
 > after every phase), `docs/V3_GROUND_UP_PLAN.md` (the master plan, cited as
 > "plan §…"), `docs/V3_SHORTCUTS.md` (generated — never edit by hand).
 >
-> **Current position (2026-06-13):** Phases 0–5 and UX phases 0–6 are landed,
-> but a course-correction review found the quality bar drifted while they
-> did. **Start at Phase 6** — 6.0 first, and no new renderer/shell feature
-> work until 6.0–6.3 are complete. The added §0.2 rules are binding.
+> **Current position (2026-06-13):** Phases 0–5 and UX phases 0–6 are landed.
+> Course-correction Phases 6.0 and 6.1 are complete; **Phase 6.2 is active**.
+> `gui/mod.rs` is 2,587 lines (from 4,838) and `editor/src/buffer.rs` is
+> 1,557 (from 1,911). Continue decomposition to the stated exit gates; no new
+> renderer/shell feature work until 6.0–6.3 are complete. The added §0.2
+> rules are binding.
 > After 6.3, the renderer work is **Phase 7 (Typora-grade live editor,
 > user-ordered 2026-06-13)** — Phase 6.4/6.5 are superseded by it; do not
 > build typography or hit-testing on the monospace grid.
@@ -61,8 +63,9 @@ The following rules were added 2026-06-12 after a course-correction review
   a paragraph explaining it instead of a fix. Its resolution is Phase 6.0.)
 - **Size budgets (ratchet).** New v3 files: soft limit 400 lines, hard limit
   700. Functions: soft limit 75. Files already over the hard limit are frozen
-  at their current size and may only shrink:
-  `shell/src/gui/mod.rs` (4 838), `editor/src/buffer.rs` (1 911),
+  at their current ratchet and may only shrink:
+  `shell/src/gui/mod.rs` (2 587; initial 4 838),
+  `editor/src/buffer.rs` (1 557; initial 1 911),
   `shell/src/gui/tracker_view.rs` (1 218), `shell/src/gui/editor_canvas.rs`
   (755), `kernel/src/pane.rs` (725), `pdf/src/render.rs` (704). The last two
   were discovered when Phase 6.1 enumerated every Rust file; omitting them
@@ -660,6 +663,16 @@ Port v2's ratchet idea (`scripts/check-budget.sh` + `budgets.toml`) to v3:
    injection.
 
 ### 6.2 Decompose `gui/mod.rs` (mechanical, behavior-frozen)
+
+**Progress, 2026-06-13:** active. Landed modules:
+`toast.rs`, `status.rs`, `session_persist.rs`, `commands_file.rs`,
+`commands_md.rs`, `commands_pdf_annotations.rs`, `commands_pdf_nav.rs`,
+`pdf_input.rs`, `pdf_worker_events.rs`, `stores.rs`, `input.rs`,
+`chrome_context.rs`, and `chrome_panels.rs`. All are ≤700 lines.
+`gui/mod.rs` is 2,587. Buffer formatting moved to
+`editor/src/buffer/formatting.rs` (209 lines), reducing `buffer.rs` to 1,557.
+Remaining work is command/update/view decomposition to ≤1,500 and extraction
+of the remaining ergonomics operations from `buffer.rs`.
 
 Target shape — names may flex to what the code wants, sizes may not
 (each new file ≤ 700):

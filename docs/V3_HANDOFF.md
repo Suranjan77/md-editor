@@ -2,9 +2,10 @@
 
 > **Read this first when resuming v3 work.** Updated after every completed unit of work.
 > Sibling ledgers: `PLAN-NOTES.md` (v2 incremental plan), `docs/V3_GROUND_UP_PLAN.md` (the master plan).
-> **Next work is `docs/V3_IMPLEMENTATION_PLAN.md` Phase 6** (course
-> correction, 2026-06-12): start at 6.0; no new renderer/shell feature work
-> until 6.0–6.3 are done. After 6.3, renderer work is **Phase 7 —
+> **Next work is `docs/V3_IMPLEMENTATION_PLAN.md` Phase 6.2** (course
+> correction, 2026-06-12): continue decomposition until both size gates are
+> met; no new renderer/shell feature work until 6.0–6.3 are done. After 6.3,
+> renderer work is **Phase 7 —
 > Typora-grade live editor** (user-ordered 2026-06-13; ADR-0104/0105) —
 > Phase 6.4/6.5 are superseded by it. The §0.2 hard rules were tightened
 > 2026-06-12 — reread them even if you have worked here before. The §0.4
@@ -101,23 +102,26 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **UX overhaul Phase 5: Markdown formatting toolbar** | UX Phase 5 | ✅ | Markdown formatting toolbar with bold, italic, inline code, heading cycle, bullet list, checkbox, and wikilink toggle commands fully implemented in the editor engine and wired to the GUI panel toolbar. Suite: `editor/tests/formatting.rs` |
 | **UX overhaul Phase 5: Markdown outline panel** | UX Phase 5 | ✅ | Resizable docked Outline panel listing depth-indented headings extracted from the Markdown document, highlighting active heading, and jumping to heading on click. Suite: `shell/tests/markdown_outline.rs` |
 | **UX overhaul Phase 5: Markdown find/replace bar** | UX Phase 5 | ✅ | Docked Find/Replace bar under the markdown editor toolbar supporting case-insensitive search, match counting, prev/next navigation, replacing individual matches, and transactional Replace All. Suite: `shell/tests/markdown_find_replace.rs` |
-| **UX overhaul Phase 6: Feedback, Polish & settings** | UX Phase 6 | 🔶 | Toasts, confirm modals for unsaved changes/delete, light/dark tokens, and keymap settings UI landed — but `shell/tests/tracker_wiring.rs::tracker_manual_log_and_delete` is **red** (feedback-channel fork, pitfall P14; fix specced in impl-plan Phase 6.0) and the light theme is a global atomic (`tokens::set_light_theme` — scheduled debt, Phase 6.6). Suites: `shell/tests/chrome.rs`, `session_restore.rs`, `tracker_wiring.rs` |
+| **UX overhaul Phase 6: Feedback, Polish & settings** | UX Phase 6 | 🔶 | Toasts, confirm modals for unsaved changes/delete, light/dark tokens, and keymap settings UI landed. Tracker manual-log feedback is fixed and `tracker_wiring` is green; phase remains partial because light theme is a global atomic (`tokens::set_light_theme` — scheduled debt, Phase 6.6). Suites: `shell/tests/chrome.rs`, `session_restore.rs`, `tracker_wiring.rs` |
 | **URI links open in browser** | P5 backlog №7 | ✅ | Added `open` dependency under ADR-0102, left-clicking a PDF external link opens it in browser asynchronously. Suite: `shell/tests/pdf_links.rs` |
 | **User-reported stabilization pass** | UX / renderer | 🔶 | `docs/V3_STABILIZATION_2026-06-12.md` — startup file-tree population, markdown wrap and measure-before-paint asset geometry, inline math flow, larger typography/rhythm, transparent display math, consolidated multi-line LaTeX environments, PDF resize-fit/reference crop, welcome transition, and toast runtime fix. Core defects addressed; Typora/Obsidian-level markdown polish remains open (specced as impl-plan Phase 6.3 + Phase 7). |
 | **Iced async runtime** | ADR-0103 | ✅ | `md3-shell` enables iced `tokio` feature so toast timer tasks run inside a Tokio reactor; fixes production panic from `tokio::time::sleep`. |
 | **Course correction 6.0: green baseline** | Phase 6.0 | ✅ | Tracker manual-log success now queues one success toast and `tracker_wiring` asserts that channel. Full default + pdfium workspace gates green. |
 | **Course correction 6.1: v3 size budgets** | Phase 6.1 | ✅ | `v3/budgets.toml` + `scripts/v3-budget.sh`, wired into CI. Hard limit 700; six pre-existing oversized files ratcheted. Enforcement proven by temporary hard-limit injection. |
-| **Course correction 6.2: decomposition** | Phase 6.2 | 🔶 | Started: toast queue/helpers/view moved from `gui/mod.rs` to `gui/toast.rs`; `mod.rs` ceiling reduced from 4,841 to 4,751. File/Markdown/PDF/chrome extraction and `buffer.rs` edit-op extraction remain. |
+| **Course correction 6.2: decomposition** | Phase 6.2 | 🔶 | Active: foundation extraction plus 16 follow-up extraction commits landed. `gui/mod.rs` ceiling fell from 4,838 to **2,587**; extracted session persistence, status, toast, file/Markdown/PDF commands, PDF input/worker events, stores, input routing, and chrome panels/context. `editor/src/buffer.rs` fell from 1,911 to **1,557**; formatting mutations live in `buffer/formatting.rs`. Every new module is ≤700 lines. Remaining exit work: `gui/mod.rs` ≤1,500 and fuller ergonomics/edit-op extraction from `buffer.rs`. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
-**Verification snapshot (2026-06-13, Phase 6.0–6.1):** fmt clean; both
-clippy `-D warnings` configurations clean; both full workspace test
-configurations green; kernel demo green; v3 size budget green; generated
-shortcut document refreshed. Local test runs used isolated
-`XDG_CONFIG_HOME` because the tracker is intentionally app-global and the
-developer machine already has a tracker database. v2 suite unaffected
-(root workspace excludes `v3/`).
+**Verification snapshot (2026-06-13, Phase 6.2 in progress):** Phase 6.0–6.1
+full gate was green in both feature configurations, kernel demo was green,
+and shortcuts were fresh. Each Phase 6.2 extraction then passed fmt, the
+relevant focused routing/editor suites, clippy `-D warnings` (both shell
+feature configurations for PDF-facing moves), and the v3 size budget. Full
+`md3-editor` suite after the buffer split: 48 unit tests plus all integration,
+property, undo-storm, BUG-B, and formatting suites green. Local shell tests
+used isolated `XDG_CONFIG_HOME` because tracker storage is app-global. A new
+full dual-configuration workspace gate is still required when 6.2 reaches its
+size targets.
 
 ## Deliberately deferred (next sessions, in order)
 
@@ -191,9 +195,10 @@ developer machine already has a tracker database. v2 suite unaffected
     motion/refinements), governed by ADR-0104 (proposed, spike resolves)
     and ADR-0105 (accepted). Supersedes impl-plan 6.4/6.5.
 18. **Course correction Phase 6 execution (2026-06-13):** 6.0 and 6.1 are
-    complete. 6.2 is active; toast code is extracted, but `gui/mod.rs` and
-    `editor/src/buffer.rs` remain above target. Do not start 6.3 or Phase 7
-    until 6.2 reaches its stated size gates.
+    complete. 6.2 is active: `gui/mod.rs` is 2,587 lines (from 4,838) and
+    `editor/src/buffer.rs` is 1,557 (from 1,911). Continue mechanical
+    extraction until `gui/mod.rs` ≤1,500 and buffer ergonomics/edit operations
+    are separated as specified. Do not start 6.3 or Phase 7 before that gate.
 
 ## Decisions made during execution
 
@@ -536,3 +541,16 @@ developer machine already has a tracker database. v2 suite unaffected
   `pdf/src/render.rs` (704). They receive frozen ceilings alongside the four
   review-listed files; omission from the review list was documentation drift,
   not permission to bypass the ratchet.
+- 2026-06-13: Phase 6.2 uses split inherent `impl Shell` blocks and one
+  extraction per commit. Shell behavior moved into `commands_file.rs`,
+  `commands_md.rs`, `commands_pdf_annotations.rs`, `commands_pdf_nav.rs`,
+  `pdf_input.rs`, `pdf_worker_events.rs`, `input.rs`, `stores.rs`,
+  `session_persist.rs`, `status.rs`, `toast.rs`, `chrome_context.rs`, and
+  `chrome_panels.rs`. This is mechanical ownership separation; public command
+  routing and the single `Shell::on_key` path are unchanged.
+- 2026-06-13: buffer formatting mutations moved to
+  `editor/src/buffer/formatting.rs`, still reachable only through
+  `Buffer::apply(Command)`. The extraction consolidated symmetric and
+  asymmetric marker wrapping behind one private helper; the full editor
+  property/undo/formatting suite pins equivalence. Current ratchets are
+  `gui/mod.rs` 2,587 and `buffer.rs` 1,557; ceilings only decrease.

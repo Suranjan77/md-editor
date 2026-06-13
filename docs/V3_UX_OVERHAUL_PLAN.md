@@ -5,10 +5,10 @@
 > pitfalls register, and verification gate apply to **every** step here —
 > reread them first; they are not repeated in full).
 >
-> **Status (2026-06-12 architect review):** phases 0–5 complete, phase 6
-> partial. The impl-plan **Phase 6 course correction takes precedence** over
-> anything remaining here — do not start new chrome work before impl-plan
-> 6.0–6.3 are done.
+> **Status (updated 2026-06-13):** phases 0–5 complete, phase 6 partial.
+> Tracker toast feedback is fixed; remaining phase-6 debt is theme state.
+> The impl-plan **Phase 6 course correction takes precedence** over anything
+> remaining here — do not start new chrome work before impl-plan 6.0–6.3.
 
 ## Why this plan exists
 
@@ -443,14 +443,13 @@ batches.
 
 ---
 
-## Phase 6 — Feedback & polish 🔶 landed 2026-06-12 with open defects
+## Phase 6 — Feedback & polish 🔶 landed 2026-06-12, theme debt remains
 
 Toasts, confirm modals, light/dark tokens, and the keymap settings UI exist,
-but the phase is **not** ✅: the tracker feedback test is red (feedback
-channels forked — impl-plan pitfall P14, fix in impl-plan Phase 6.0) and the
-light theme was wired through a global atomic instead of `Shell` state
-(removal specced in impl-plan Phase 6.6). Close those before claiming this
-phase.
+but the phase is **not** ✅: tracker manual-log feedback was unified on the
+toast channel in impl-plan Phase 6.0 and `tracker_wiring` is green; light
+theme still uses a global atomic instead of `Shell` state (removal specced in
+impl-plan Phase 6.6). Close that debt before claiming this phase.
 
 ### 6.1 Toasts (v2 `toast.rs`)
 
