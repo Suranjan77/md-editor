@@ -4,7 +4,7 @@
 hard_limit = 700
 
 [file_budgets]
-"v3/shell/src/gui/mod.rs" = 3489
+"v3/shell/src/gui/mod.rs" = 3321
 "v3/editor/src/buffer.rs" = 1911
 "v3/shell/src/gui/tracker_view.rs" = 1218
 "v3/shell/src/gui/editor_canvas.rs" = 755
