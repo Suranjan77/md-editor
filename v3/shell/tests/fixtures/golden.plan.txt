@@ -72,7 +72,7 @@ L17 [Concealed] ''
 L18 [Concealed] ''
 L19 [Concealed] 'Here is some inline math: E = mc^2 and a [wikilink].'
   Text { content: "Here is some inline math: ", x: 16.0, y: 703.008, size: 16.0, role: Text, font: Sans }
-  Asset { kind: Math("E = mc^2"), rect: RectPx { x: 209.85156, y: 696.008, w: 110.0, h: 22.0 } }
+  Asset { kind: Math("E = mc^2"), rect: RectPx { x: 209.85156, y: 700.008, w: 110.0, h: 22.0 } }
   Text { content: " and a [wikilink].", x: 319.85156, y: 703.008, size: 16.0, role: Text, font: Sans }
 L20 [Concealed] ''
 L21 [Concealed] ''

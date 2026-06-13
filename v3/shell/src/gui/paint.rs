@@ -417,12 +417,18 @@ pub fn line_plan(
                     {
                         let available_w = content_width(width);
                         let (draw_w, draw_h) = inline_math_size(*asset_w, *asset_h, available_w);
+                        // Center the rendered glyph on the same text row the
+                        // surrounding prose paints against. Text tops at
+                        // `run.line_y - font_size` (cosmic's visual line top);
+                        // centering within that font-size box keeps the math
+                        // vertically aligned with the text rather than riding
+                        // a `line_height`-tall box that sits ~7px too high.
                         ops.push(PaintOp::Asset {
                             kind: AssetKind::Math(tex.clone()),
                             rect: RectPx {
                                 x: PAD + start_glyph.x,
-                                y: y + pad_top + run.line_y - metrics.line_height
-                                    + (metrics.line_height - draw_h) / 2.0,
+                                y: y + pad_top + run.line_y - metrics.font_size
+                                    + (metrics.font_size - draw_h) / 2.0,
                                 w: draw_w,
                                 h: draw_h,
                             },

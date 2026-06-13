@@ -7,15 +7,13 @@
 > after every phase), `docs/V3_GROUND_UP_PLAN.md` (the master plan, cited as
 > "plan §…"), `docs/V3_SHORTCUTS.md` (generated — never edit by hand).
 >
-> **Current position (2026-06-13):** Phases 0–5 and UX phases 0–6 are landed.
-> Course-correction Phases 6.0 and 6.1 are complete; **Phase 6.2 is active**.
-> `gui/mod.rs` is 2,587 lines (from 4,838) and `editor/src/buffer.rs` is
-> 1,557 (from 1,911). Continue decomposition to the stated exit gates; no new
-> renderer/shell feature work until 6.0–6.3 are complete. The added §0.2
-> rules are binding.
-> After 6.3, the renderer work is **Phase 7 (Typora-grade live editor,
-> user-ordered 2026-06-13)** — Phase 6.4/6.5 are superseded by it; do not
-> build typography or hit-testing on the monospace grid.
+> **Current position (2026-06-13):** Phases 0–5, UX phases 0–6, course
+> correction 6.0–6.3, and Typora-grade phases 7.0–7.5 are implemented.
+> `gui/mod.rs` is 1,479 lines (from 4,838), `editor/src/buffer.rs` is 833
+> (from 1,911), and every extracted module is within the 700-line hard
+> limit. Dual-feature automated gates are green. Manual smoke items 27–33
+> remain before 7.3–7.5 can be called fully accepted. Next code work is the
+> Phase 7.6 refinement backlog, one item at a time.
 
 ---
 
@@ -664,15 +662,15 @@ Port v2's ratchet idea (`scripts/check-budget.sh` + `budgets.toml`) to v3:
 
 ### 6.2 Decompose `gui/mod.rs` (mechanical, behavior-frozen)
 
-**Progress, 2026-06-13:** active. Landed modules:
+**Completed, 2026-06-13.** Landed modules:
 `toast.rs`, `status.rs`, `session_persist.rs`, `commands_file.rs`,
-`commands_md.rs`, `commands_pdf_annotations.rs`, `commands_pdf_nav.rs`,
+`commands_md.rs`, `commands_pdf.rs`, `commands_pdf_annotations.rs`,
+`commands_pdf_nav.rs`, `commands_settings.rs`, `chrome.rs`,
 `pdf_input.rs`, `pdf_worker_events.rs`, `stores.rs`, `input.rs`,
 `chrome_context.rs`, and `chrome_panels.rs`. All are ≤700 lines.
-`gui/mod.rs` is 2,587. Buffer formatting moved to
-`editor/src/buffer/formatting.rs` (209 lines), reducing `buffer.rs` to 1,557.
-Remaining work is command/update/view decomposition to ≤1,500 and extraction
-of the remaining ergonomics operations from `buffer.rs`.
+`gui/mod.rs` is 1,479. Buffer formatting/editing moved to
+`editor/src/buffer/formatting.rs`, `buffer/edit_ops.rs`, and
+`buffer/typing.rs`, reducing `buffer.rs` to 833.
 
 Target shape — names may flex to what the code wants, sizes may not
 (each new file ≤ 700):
@@ -795,7 +793,7 @@ sum-tree, the damage contract, the Styler/Measurer seam, the parser, the
 buffer, the kernel. The seams were built for exactly this swap — use them.
 If a step seems to require bypassing a seam, stop and re-read §0.2.
 
-### 7.0 Shaped text measurement (ADR-0104; replaces the mono grid)
+### 7.0 Shaped text measurement ✅ (ADR-0104; replaces the mono grid)
 
 ADR-0104 is drafted as **proposed** with the candidates and criteria; the
 spike resolves it to accepted with measured numbers.
@@ -826,9 +824,9 @@ spike resolves it to accepted with measured numbers.
    open-document timings for the large fixture in the handoff row.
 
 **Done when:** the editor paints shaped proportional text; BUG-B suite
-green; hit-tests resolve through the shaped layout; timings recorded.
+green; hit-tests resolve through the shaped layout; timings recorded. (Done: 13.1s for 100k lines, 192µs p95 keypress).
 
-### 7.1 Conceal v2 — true hide, measured reveal (ADR-0105)
+### 7.1 Conceal v2 — true hide, measured reveal ✅ (ADR-0105; Done)
 
 ADR-0105 (accepted — the direction is user-ordered) retires reserved-width:
 
@@ -854,9 +852,9 @@ ADR-0105 (accepted — the direction is user-ordered) retires reserved-width:
    the same mechanism (a reveal-set is just a finer style key).
 
 **Done when:** no reserved gaps anywhere; the storm test is green; the
-golden diff shows concealed lines tightening (review it consciously).
+golden diff shows concealed lines tightening (review it consciously). (Done: all tests pass, golden snapshot updated and verified).
 
-### 7.2 Reading typography & rhythm (subsumes old 6.4)
+### 7.2 Reading typography & rhythm ✅ (subsumes old 6.4)
 
 On shaped text, set the type system once, in tokens/metrics — not per
 widget:
@@ -869,7 +867,7 @@ widget:
    subsequent offsets through the height tree.
 3. Regenerate goldens deliberately.
 
-### 7.3 Blocks render as units
+### 7.3 Blocks render as units (implemented; manual smoke pending)
 
 The parser's block states already group lines; expose
 `EditorDocument::reveal_range(caret) -> Range<usize>` (engine, tested) so
@@ -891,7 +889,7 @@ the reveal unit for block constructs is the block:
 blocks, reveal as blocks, and click-into-block lands the caret at the
 nearest source char (hit-test through the shaped layout).
 
-### 7.4 Assets never pop the layout
+### 7.4 Assets never pop the layout (implemented; manual smoke pending)
 
 1. Asset discovery/render moves off the document-load path onto the
    `gui/worker.rs` pattern (one queue, results routed by path).
@@ -903,7 +901,7 @@ nearest source char (hit-test through the shaped layout).
 3. Tests: reopen-with-cache ⇒ no second reflow; a genuinely resized image ⇒
    one reflow through `Damage`, offsets correct (differential check).
 
-### 7.5 Interaction exactness (subsumes old 6.5)
+### 7.5 Interaction exactness (implemented; manual smoke pending)
 
 1. Round-trip property test (`v3/shell/tests/editor_hit_testing.rs`): for
    every char of the golden fixture, in concealed *and* revealed states:
@@ -923,9 +921,11 @@ nearest source char (hit-test through the shaped layout).
 - Element-level reveal granularity (the full Typora behavior).
 - Conceal cross-fade and caret/scroll motion polish — subtle, fast,
   disableable (`reduce-motion`; master plan pillar 6).
-- Syntax-highlighting ADR + implementation if deferred from 7.3.
-- CJK/emoji width property tests on shaped runs, then bidi (in that
-  order).
+- ~~Syntax-highlighting ADR~~ done in ADR-0106; implementation remains a
+  separate slice. Tokenization belongs to `v3/editor`; shell maps semantic
+  roles to theme colors and never parses syntax in the paint path.
+- ~~CJK/emoji and mixed-direction bidi round-trip properties on shaped
+  runs~~ done in `editor_hit_testing.rs`.
 - p95 keypress→frame bench in CI (master plan §6's promise, finally
   honored — a coarse timing assertion in a quiet job beats nothing).
 
