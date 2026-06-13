@@ -24,39 +24,39 @@ L07 [Concealed] 'Checked item with code'
 L08 [Concealed] ''
 L09 [Concealed] '| Heading | Another |'
   StrokeRect { rect: RectPx { x: 16.0, y: 404.0, w: 78.11719, h: 36.0 }, role: Marker, thickness: 1.0 }
-  Text { content: "H", x: 24.0, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "e", x: 35.804688, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "a", x: 44.78125, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "d", x: 53.679688, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "i", x: 63.484375, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "n", x: 67.53125, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "g", x: 77.35156, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "H", x: 24.0, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "e", x: 35.804688, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "a", x: 44.78125, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "d", x: 53.679688, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "i", x: 63.484375, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "n", x: 67.53125, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "g", x: 77.35156, y: 412.20703, size: 16.0, role: Text, font: Sans }
   StrokeRect { rect: RectPx { x: 94.11719, y: 404.0, w: 76.58594, h: 36.0 }, role: Marker, thickness: 1.0 }
-  Text { content: "A", x: 102.11719, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "n", x: 112.24219, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "o", x: 122.0625, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "t", x: 131.72656, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "h", x: 137.375, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "e", x: 147.19531, y: 426.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "r", x: 156.17188, y: 426.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "A", x: 102.11719, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "n", x: 112.24219, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "o", x: 122.0625, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "t", x: 131.72656, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "h", x: 137.375, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "e", x: 147.19531, y: 412.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "r", x: 156.17188, y: 412.20703, size: 16.0, role: Text, font: Sans }
 L10 [Concealed] '| ------- | ------- |'
   FillRect { rect: RectPx { x: 16.0, y: 458.0, w: 70.11719, h: 1.0 }, role: Marker }
   FillRect { rect: RectPx { x: 94.11719, y: 458.0, w: 68.58594, h: 1.0 }, role: Marker }
 L11 [Concealed] '| Cell 1  | Cell 2  |'
   StrokeRect { rect: RectPx { x: 16.0, y: 476.0, w: 78.11719, h: 36.0 }, role: Marker, thickness: 1.0 }
-  Text { content: "C", x: 24.0, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "e", x: 34.09375, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "l", x: 43.070313, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "l", x: 47.117188, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: " ", x: 51.164063, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "1", x: 55.320313, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "C", x: 24.0, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "e", x: 34.09375, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "l", x: 43.070313, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "l", x: 47.117188, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: " ", x: 51.164063, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "1", x: 55.320313, y: 484.20703, size: 16.0, role: Text, font: Sans }
   StrokeRect { rect: RectPx { x: 94.11719, y: 476.0, w: 76.58594, h: 36.0 }, role: Marker, thickness: 1.0 }
-  Text { content: "C", x: 102.11719, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "e", x: 112.21094, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "l", x: 121.1875, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "l", x: 125.234375, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: " ", x: 129.28125, y: 498.20703, size: 16.0, role: Text, font: Sans }
-  Text { content: "2", x: 133.4375, y: 498.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "C", x: 102.11719, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "e", x: 112.21094, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "l", x: 121.1875, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "l", x: 125.234375, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: " ", x: 129.28125, y: 484.20703, size: 16.0, role: Text, font: Sans }
+  Text { content: "2", x: 133.4375, y: 484.20703, size: 16.0, role: Text, font: Sans }
 L12 [Concealed] ''
 L13 [Concealed] ''
 L14 [Concealed] 'fn main() {'

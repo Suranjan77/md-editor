@@ -128,6 +128,45 @@ fn prose_paints_with_same_sans_family_used_for_measurement() {
 }
 
 #[test]
+fn table_cell_text_stays_within_its_cell_box() {
+    // Caret on line 0 so the table rows (1..) render concealed as a grid.
+    let session = session("intro\n| Heading | Another |\n| --- | --- |\n| Cell 1 | Cell 2 |\n");
+
+    let mut checked = 0;
+    for index in 1..session.doc.line_count() {
+        let Some(styled) = session.doc.styled_line(index) else {
+            continue;
+        };
+        let top = session.doc.layout().offset_of(index).unwrap_or(0.0) as f32;
+        let height = session.doc.layout().height_of(index).unwrap_or(36.0) as f32;
+        let ops = line_plan(index, &styled, top, height, 800.0, &session);
+
+        // The cell box is the StrokeRect; every text glyph on this row must
+        // sit inside it vertically (no spilling into the neighbouring row).
+        let cell = ops.iter().find_map(|op| match op {
+            PaintOp::StrokeRect { rect, .. } => Some(rect.clone()),
+            _ => None,
+        });
+        let Some(cell) = cell else { continue };
+        for op in &ops {
+            if let PaintOp::Text { y, size, .. } = op {
+                assert!(
+                    *y >= cell.y - 0.5 && *y + *size <= cell.y + cell.h + 0.5,
+                    "cell text at y={y} size={size} escapes box [{}, {}]",
+                    cell.y,
+                    cell.y + cell.h
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        checked > 0,
+        "expected at least one rendered table cell glyph"
+    );
+}
+
+#[test]
 fn inline_math_reserves_its_rendered_width_before_following_text() {
     let mut session = session("before $x$ after\nnext");
     session.doc.apply(Command::SetCursor { line: 1, col: 0 });

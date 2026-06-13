@@ -593,6 +593,15 @@ size targets.
   caret/hit geometry are untouched; golden draw plan re-pinned (the single
   changed line moved the `E = mc^2` asset 696→700, centering it on text at
   703). Block math/images still center in their own full-height lines.
+- 2026-06-13: table-cell text vertical alignment fixed (same bug family as
+  inline math). Cell glyphs were painted at `run.line_y + glyph.y` (the
+  baseline used as the iced Top-aligned position), placing text ~font_size too
+  low so it overflowed the cell box into the next row. Now centered within the
+  full cell box using prose's `run.line_y - font_size` top reference
+  (`y + (line_height - metrics.line_height)/2 + run.line_y - font_size`).
+  Paint-only; golden re-pinned (cell text 426.2→412.2, 498.2→484.2). Pinned by
+  `table_cell_text_stays_within_its_cell_box` (asserts every cell glyph's
+  vertical extent stays inside its StrokeRect).
 - 2026-06-13: p95 keypress→layout bench added (`shell/tests/keypress_bench.rs`,
   impl-plan Phase 7.6 / master plan §6). It drives the real shell keystroke
   cycle (`MdSession::apply`: incremental parse + restyle + shaped remeasure of
