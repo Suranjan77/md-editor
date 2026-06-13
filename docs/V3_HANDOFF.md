@@ -112,7 +112,7 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **Phase 7.3 blocks render as units** | Phase 7.3 | 🔶 | `paint.rs`, `editor/src/document.rs`, `session.rs` — measured table grid, fenced-code panel, unified block reveal, source/display offset mapping, shaped table hit-testing. Golden draw plan and BUG-B suites green; manual smoke items 30–31 pending. |
 | **Phase 7.4 stable assets** | Phase 7.4 | 🔶 | `vault/src/asset_sizes.rs`, `gui/markdown_assets.rs`, `gui/worker.rs`, `gui/pdf_worker_events.rs` — sidecar dimensions, async image/math loading, cached first layout, remeasure only on changed dimensions. Store/worker/layout tests green; manual smoke item 32 pending. |
 | **Phase 7.5 interaction exactness** | Phase 7.5 | 🔶 | `shaped_measurer.rs`, `editor_canvas.rs`, `editor_hit_testing.rs`, `markdown_interactions.rs` — one shaped geometry path for paint/caret/selection/hit-test, full golden round-trip, clickable checkbox through registered command, ctrl+click URI/wikilink, ctrl-hover pointer+underline. Manual smoke item 33 pending. |
-| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | CJK, emoji, and mixed-direction bidi shaped round-trip properties landed in `editor_hit_testing.rs`; caret geometry now follows bidi levels and ignores zero-width duplicate glyph records. ADR-0106 fixes fenced-code syntax ownership. **Inline-math vertical alignment fixed** (`paint.rs` — centered on the text row, not a `line_height`-tall box; golden re-pinned). **p95 keypress→layout CI bench landed** (`shell/tests/keypress_bench.rs` — 5k-line doc, p95 < 16ms, ~0.4ms locally). Remaining: element-level reveal, optional motion, fenced-code syntax implementation. |
+| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | CJK, emoji, and mixed-direction bidi shaped round-trip properties landed in `editor_hit_testing.rs`; caret geometry now follows bidi levels and ignores zero-width duplicate glyph records. ADR-0106 fixes fenced-code syntax ownership. **Inline-math vertical alignment fixed** (`paint.rs` — centered on the text row, not a `line_height`-tall box; golden re-pinned). **Table-cell text vertical overflow fixed** (`paint.rs` — centered in the cell box instead of overflowing into the next row; guard `table_cell_text_stays_within_its_cell_box`). **p95 keypress→layout CI bench landed** (`shell/tests/keypress_bench.rs` — 5k-line doc, p95 < 16ms, ~0.4ms locally). Remaining: element-level reveal, optional motion, fenced-code syntax implementation. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
@@ -611,3 +611,22 @@ size targets.
   reparse/remeasure creeping onto the keystroke path), not micro-cost; ~0.4ms
   locally in debug. Runs inside the existing `cargo test --workspace` CI step,
   no new job or dependency.
+- 2026-06-13 (scoping note for the next session): fenced-code syntax
+  highlighting (ADR-0106) is the last substantive 7.6 slice and is **bigger
+  than a paint tweak** — it is a parser-core change. CodeContent lines must
+  know their fence language: carry `lang` in `BlockState::Fence` (only 4
+  non-test match sites: `parse.rs` x2, `style.rs` x1, `document.rs` x1, plus
+  test updates). The hard part is **multi-line constructs** (block comments,
+  multi-line strings): to keep the parser's forward-convergence correct, the
+  lexer's cross-line state must live in `BlockState::Fence` too, so a line
+  whose entry lexer-state changed re-tokenizes — this is exactly the
+  convergence contract the ADR's "invalidation continues until lexer state
+  converges" test requires. Plan: add a `SpanKind` syntax-role variant (e.g.
+  `Syntax(SynRole)`), have the styler split a CodeContent line into role-
+  tagged sub-spans for known langs (single `CodeContent` span fallback for
+  unknown/empty), and map roles to colors in `paint.rs`/`shaped_measurer.rs`
+  **using the same Monospace attrs** so shaping/measure/caret/hit geometry stay
+  byte-identical (ADR-0106 geometry-invariance). Keep the lexer dependency-light
+  per the ADR. Golden + a convergence test + a geometry-invariance test + a
+  paint-visits-only-visible-lines budget test complete the verification
+  contract.
