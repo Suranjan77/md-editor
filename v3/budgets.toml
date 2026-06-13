@@ -1,0 +1,12 @@
+# Ratchet budgets for v3 Rust modules. Ceilings may only decrease.
+
+[ratchets]
+hard_limit = 700
+
+[file_budgets]
+"v3/shell/src/gui/mod.rs" = 4751
+"v3/editor/src/buffer.rs" = 1911
+"v3/shell/src/gui/tracker_view.rs" = 1218
+"v3/shell/src/gui/editor_canvas.rs" = 755
+"v3/kernel/src/pane.rs" = 725
+"v3/pdf/src/render.rs" = 704

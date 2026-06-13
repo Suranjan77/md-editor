@@ -64,9 +64,12 @@ The following rules were added 2026-06-12 after a course-correction review
   at their current size and may only shrink:
   `shell/src/gui/mod.rs` (4 838), `editor/src/buffer.rs` (1 911),
   `shell/src/gui/tracker_view.rs` (1 218), `shell/src/gui/editor_canvas.rs`
-  (755). Adding a feature to a frozen file requires extracting at least as
-  many lines as you add. Until the CI script exists (Phase 6.1), check with
-  `wc -l` before handoff. A 4 800-line `mod.rs` is v2's god-file disease —
+  (755), `kernel/src/pane.rs` (725), `pdf/src/render.rs` (704). The last two
+  were discovered when Phase 6.1 enumerated every Rust file; omitting them
+  from the original review list did not make them compliant. Adding a
+  feature to a frozen file requires extracting at least as many lines as
+  you add. Until the CI script exists (Phase 6.1), check with `wc -l` before
+  handoff. A 4 800-line `mod.rs` is v2's god-file disease —
   the exact thing the ground-up plan (§1) was written to kill — regrowing
   inside v3; it does not get to keep growing.
 - **Layout math belongs to the engine's measure phase.** Anything that

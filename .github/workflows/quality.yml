@@ -83,6 +83,9 @@ jobs:
         working-directory: v3
         run: cargo fmt --all -- --check
 
+      - name: Check v3 size budgets
+        run: ./scripts/v3-budget.sh
+
       - name: Run clippy
         working-directory: v3
         run: cargo clippy --workspace --all-targets -- -D warnings
