@@ -47,8 +47,8 @@ pub fn code_bg(tokens: &Tokens) -> Color {
 /// Map a semantic syntax role (ADR-0106) to a theme color. Roles, not
 /// colors, cross the editor→shell boundary; this is the only place that
 /// decides how a token looks.
-pub fn syntax(tokens: &Tokens, role: md3_editor::syntax::SyntaxRole) -> Color {
-    use md3_editor::syntax::SyntaxRole::*;
+pub fn syntax(tokens: &Tokens, role: md_editor::syntax::SyntaxRole) -> Color {
+    use md_editor::syntax::SyntaxRole::*;
     match role {
         Comment => tokens.text_muted,
         Keyword => tokens.danger,

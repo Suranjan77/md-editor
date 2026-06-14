@@ -5,11 +5,11 @@
 //! here, windowlessly. The vault is a throwaway directory; files open through
 //! the same quick-open flow a user types.
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, EditorKind, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::overlay::Overlay;
-use md3_shell::gui::{Message, Shell};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, EditorKind, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::overlay::Overlay;
+use md_shell::gui::{Message, Shell};
 use tempfile::TempDir;
 
 const WELCOME: &str = "# Welcome\n\nfirst line\nsecond line\n";

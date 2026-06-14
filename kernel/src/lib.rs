@@ -1,11 +1,11 @@
-//! Workspace kernel for md-editor v3 (plan §3.1).
+//! Workspace kernel for MD Editor.
 //!
 //! UI-free by construction: no toolkit types appear in this crate. The shell
 //! translates toolkit events into [`input::Chord`]s, asks the kernel to resolve
 //! them against the focused editor's scope stack, and executes the resulting
 //! [`command::CommandId`]s.
 //!
-//! The four pillars, each killing a class of v2 bug by construction:
+//! The four pillars, each killing a class of bug by construction:
 //! - [`command`]: every action is a registered command (palette/menus/docs are
 //!   generated from the registry, never hand-maintained).
 //! - [`input`]: one declarative keymap with scope-stack resolution and static

@@ -3,15 +3,15 @@
 //! inset clear of it, and the inset is a *measure* input so a wrapped item
 //! never paints past its measured height onto the line below.
 
-use md3_editor::buffer::Command;
-use md3_shell::gui::paint::{PaintOp, line_plan};
-use md3_shell::gui::session::MdSession;
+use md_editor::buffer::Command;
+use md_shell::gui::paint::{PaintOp, line_plan};
+use md_shell::gui::session::MdSession;
 
 fn session(text: &str) -> MdSession {
     MdSession::new(
         "t.md",
         text,
-        md3_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
+        md_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
             std::sync::Mutex::new(cosmic_text::FontSystem::new()),
         )),
     )

@@ -1,5 +1,5 @@
 [package]
-name = "md3-kernel"
+name = "md-kernel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

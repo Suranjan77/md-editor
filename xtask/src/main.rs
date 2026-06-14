@@ -5,14 +5,14 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const BINARY: &str = "md3-shell";
+const BINARY: &str = "md-editor";
 const PRODUCT: &str = "md-editor";
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("md3-xtask: {error}");
+            eprintln!("md-xtask: {error}");
             ExitCode::FAILURE
         }
     }
@@ -42,7 +42,7 @@ fn dist(archive_only: bool) -> Result<(), String> {
             "--release",
             "--locked",
             "-p",
-            "md3-shell",
+            "md-shell",
             "--features",
             "pdfium",
         ]),
@@ -115,7 +115,7 @@ impl Platform {
 
     fn executable(self) -> &'static str {
         match self {
-            Self::Windows => "md3-shell.exe",
+            Self::Windows => "md-editor.exe",
             Self::Linux | Self::Macos => BINARY,
         }
     }
@@ -163,7 +163,7 @@ fn create_layout(
         )
         .map_err(io_error("writing Info.plist"))?;
         create_icns(root, &resources)?;
-        copy(&root.join("../LICENSE"), &package.join("LICENSE"))?;
+        copy(&root.join("LICENSE"), &package.join("LICENSE"))?;
         run_command(
             Command::new("codesign")
                 .args(["--force", "--deep", "--sign", "-"])
@@ -178,11 +178,8 @@ fn create_layout(
             &package.join(platform.packaged_executable()),
         )?;
         copy(pdfium_lib, &resources.join(platform.pdfium()))?;
-        copy(&root.join("../LICENSE"), &package.join("LICENSE"))?;
-        copy(
-            &root.join("../md-editor.png"),
-            &package.join("md-editor.png"),
-        )?;
+        copy(&root.join("LICENSE"), &package.join("LICENSE"))?;
+        copy(&root.join("md-editor.png"), &package.join("md-editor.png"))?;
     }
     copy_licenses(&package)?;
     File::create(package.join("portable.flag")).map_err(io_error("creating portable marker"))?;
@@ -230,7 +227,7 @@ fn create_icns(root: &Path, resources: &Path) -> Result<(), String> {
         run_command(
             Command::new("sips")
                 .args(["-z", &size.to_string(), &size.to_string()])
-                .arg(root.join("../md-editor.png"))
+                .arg(root.join("md-editor.png"))
                 .arg("--out")
                 .arg(iconset.join(name)),
             "creating app icon",
@@ -310,7 +307,7 @@ fn appimage(root: &Path, dist: &Path, package: &Path, stem: &str) -> Result<Path
             .arg("--desktop-file")
             .arg(root.join("packaging/linux/md-editor.desktop"))
             .arg("--icon-file")
-            .arg(root.join("../md-editor.png"))
+            .arg(root.join("md-editor.png"))
             .arg("--library")
             .arg(package.join("resources/libpdfium.so"))
             .args(["--output", "appimage"]),

@@ -1,5 +1,5 @@
 [package]
-name = "md3-vault"
+name = "md-vault"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

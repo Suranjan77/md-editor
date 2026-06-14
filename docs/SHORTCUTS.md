@@ -1,6 +1,6 @@
-# Shortcuts (v3)
+# Keyboard Shortcuts
 
-Generated from the command registry by `md3-shell --dump-shortcuts`.
+Generated from the command registry by `md-editor --dump-shortcuts`.
 Do not edit by hand — change `kernel/src/defaults.rs` instead.
 
 | Command | Title | Category | Scope | Chord |

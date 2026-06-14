@@ -43,51 +43,54 @@ Use it for:
 
 ### 1. Open A Vault
 
-Choose a folder and MD Editor turns it into a working vault. The sidebar indexes
-supported files and gives you a familiar tree for opening, creating, and deleting
-notes.
+Choose a folder and MD Editor turns it into a working vault. The file panel
+indexes supported files and gives you a familiar tree for opening, creating, and
+deleting notes.
 
 ### 2. Write In Markdown
 
-The editor supports the things you expect in a real Markdown workspace:
+The editor renders Markdown live as you type and supports the things you expect
+in a real Markdown workspace:
 
 - headings, emphasis, links, blockquotes, and task checkboxes;
 - fenced code blocks with syntax highlighting;
 - tables, images, and math rendering;
 - in-file search with highlighted matches;
 - table of contents navigation for longer notes;
-- backlinks for discovering connected material.
+- backlinks for discovering connected material;
+- a tree-structured undo history that never discards your redo path.
 
 ### 3. Keep References Beside Your Notes
 
 PDFs open inside the app, so reading and writing can happen in one place.
 
-- Continuous page rendering
-- Fit-to-width viewing
-- PDF table of contents
-- Internal PDF links
+- Continuous page rendering and fit-to-width viewing
+- PDF table of contents and internal links
 - Text selection and copy
 - PDF search with highlighted matches
 - Sidecar highlights and quick notes
 - Linked Markdown notes for important passages
 
-PDF highlights are stored separately, so the original PDF is not modified.
+PDF highlights are stored separately, so the original PDF is not modified, and
+they are keyed by content hash so they survive renaming or moving the file.
 
 ### 4. Search Without Breaking Flow
 
 MD Editor has separate search modes for different kinds of work:
 
-- `Ctrl+F` in Markdown searches the active note.
-- Global search scans the vault and indexed PDF text.
-- `Ctrl+F` in the PDF pane searches the active PDF.
-- Split view keeps Markdown and PDF search behavior tied to the active pane.
-- `Ctrl+P` opens command palette.
+- `Ctrl+F` searches the active note or PDF (whichever pane is focused).
+- `Ctrl+Shift+F` searches the whole vault, including indexed PDF text.
+- `Ctrl+P` quick-opens a file by name.
+- `Ctrl+Shift+P` opens the command palette.
 
 ### 5. Track Study Progress
 
-The built-in tracker helps you record sessions, reading, project stages, gates,
-and configuration. It is useful when your notes are not just reference material,
-but part of a steady study or research routine.
+The built-in tracker (`Ctrl+Shift+T`) helps you record sessions, reading,
+project stages, gates, and configuration — stored in your vault alongside your
+notes, for when your notes are part of a steady study or research routine.
+
+See the [User Guide](docs/USER_GUIDE.md) for a full tour and the
+[Keyboard Shortcuts](docs/SHORTCUTS.md) for every binding.
 
 ## Screenshots
 
@@ -113,23 +116,20 @@ but part of a steady study or research routine.
 
 ## A Local-First Promise
 
-MD Editor does not try to hide your work inside a proprietary database.
+MD Editor does not hide your work inside a proprietary database.
 
 - Your vault is a normal folder.
-- Notes are normal Markdown files.
-- PDFs and images stay where you put them.
-- Release archives are portable by default.
-- Development and unmarked installs use platform user configuration directory.
+- Notes are normal Markdown files; PDFs and images stay where you put them.
+- App-managed state for a vault lives under `<vault>/.md-editor/` (search index,
+  annotations, session, keymap overrides). It is rebuildable and can be deleted
+  safely — it never mixes into your content.
+- Global state (recent vaults, the study tracker database) lives beside the
+  executable for **portable** builds, or in the platform configuration directory
+  for **installed** builds.
 
-The app stores settings in SQLite file named:
-
-```text
-md_editor_settings.sqlite
-```
-
-Release archives include `portable.flag`. For custom builds, place it beside
-executable. On macOS, place it beside `MD Editor.app`. Existing local
-`md_editor_settings.sqlite` also keeps portable mode.
+Release archives are portable by default — they ship a `portable.flag` next to
+the executable. For a custom build, place a `portable.flag` beside the
+executable (or beside `MD Editor.app` on macOS) to opt into portable mode.
 
 ## Supported Files
 
@@ -141,7 +141,7 @@ executable. On macOS, place it beside `MD Editor.app`. Existing local
 
 ## Supported Platforms
 
-MD Editor 3.0+ targets:
+MD Editor targets:
 
 | Platform | Architectures |
 | --- | --- |
@@ -149,9 +149,9 @@ MD Editor 3.0+ targets:
 | Linux | x64, ARM64 |
 | macOS | Intel, Apple Silicon |
 
-PDF support uses PDFium. The build script downloads the matching PDFium binary
-for the target operating system and architecture, then copies the shared library
-next to the executable.
+PDF rendering uses [PDFium](https://pdfium.googlesource.com/pdfium/). Official
+release packages bundle the matching PDFium library next to the executable; see
+[Build From Source](#build-from-source) for running with PDF support locally.
 
 ## Build From Source
 
@@ -159,99 +159,100 @@ next to the executable.
 
 - Rust stable with Cargo
 - A desktop environment capable of creating native windows
-- Internet access on the first build if PDFium is not already cached
+- For PDF rendering: a `libpdfium` shared library (see below)
 
 ### Run In Development
 
 ```bash
-cargo run
+cargo run -- <vault-folder>
+```
+
+Omitting the folder (`cargo run`) opens the welcome screen. With
+[`just`](https://github.com/casey/just) installed, `just run <vault-folder>`
+does the same.
+
+The default build does **not** include PDF rasterization, so the app builds and
+runs on machines without PDFium. To enable PDF rendering, build with the
+`pdfium` feature and make a `libpdfium` library discoverable (place it next to
+the built binary under `target/`, or point `PDFIUM_LIB_DIR` at its directory):
+
+```bash
+cargo run --features pdfium -- <vault-folder>
 ```
 
 ### Build A Release Binary
 
 ```bash
-cargo build --release
+cargo build --release -p md-shell --features pdfium
 ```
-
-Release output:
 
 | Platform | Executable |
 | --- | --- |
 | Windows | `target\release\md-editor.exe` |
 | Linux/macOS | `target/release/md-editor` |
 
-The PDFium library is copied into the same Cargo profile output directory during
-the build.
-
-## PDFium Placement
-
-For packaged or portable builds, place the PDFium shared library in either:
-
-1. a `resources` folder next to the executable; or
-2. the same directory as the executable.
-
-Expected library names:
-
-| Platform | Library |
-| --- | --- |
-| Windows | `pdfium.dll` |
-| Linux | `libpdfium.so` |
-| macOS | `libpdfium.dylib` |
+For full release packages (archives, installers, bundled PDFium and licenses),
+use `cargo xtask dist` — see [Releasing](docs/RELEASING.md).
 
 ## Optional Linux Desktop Integration
 
-Linux release archives are portable by default. Desktop integration is opt-in.
+Linux release archives are portable by default; desktop integration is opt-in.
 
-Install launcher and icons:
-
-```bash
-./md-editor --install
-```
-
-This creates:
-
-```text
-~/.local/share/applications/md-editor.desktop
-```
-
-It also installs resized icons under `~/.local/share/icons/hicolor/` and refreshes
-desktop/icon caches when those tools are available.
-
-Remove launcher and icons:
+Install the launcher and icons:
 
 ```bash
-./md-editor --uninstall
+./md-editor --install-desktop
+```
+
+This creates `~/.local/share/applications/md-editor.desktop`, installs resized
+icons under `~/.local/share/icons/hicolor/`, and refreshes the desktop/icon
+caches when those tools are available.
+
+Remove the launcher and icons:
+
+```bash
+./md-editor --uninstall-desktop
 ```
 
 ## Project Structure
 
+MD Editor is a Cargo workspace. The engine crates are toolkit-agnostic; only the
+shell knows about the GUI toolkit (see [Architecture](docs/ARCHITECTURE.md)).
+
 ```text
 md-editor/
-+-- core/      vaults, indexing, search, PDF rendering, settings, tracker storage
-+-- native/    Iced desktop UI, editor, views, commands, interaction state
-+-- docs/      feature notes, launch checklist, architecture notes
-+-- images/    README screenshots and intro media
+├── kernel/   workspace model: panes, focus, commands, keymap (UI-free)
+├── editor/   text buffer, layout, undo, Markdown parse/style (UI-free)
+├── vault/    files, search index, annotations, tracker, links (UI-free)
+├── pdf/      tiles, render queue, PDFium wiring (UI-free)
+├── shell/    iced desktop app; builds the `md-editor` binary
+├── xtask/    release packaging (`cargo xtask dist`)
+├── docs/     architecture, user guide, ADRs, contributor docs
+└── images/   README screenshots and intro media
 ```
 
-Useful development commands:
+Useful development commands (or run `just check` for all of them):
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo test -p md-editor-native
+./scripts/architecture-check.sh
+./scripts/size-budget.sh
 ```
 
 ## Documentation
 
-- [V3 Design](docs/V3_DESIGN.md) covers the visual language and tokens.
-- [User guide](docs/V3_USER_GUIDE.md) covers vault setup, split research,
-  citations, recovery, and diagnostics.
-- [Keyboard shortcuts](docs/V3_SHORTCUTS.md) lists context rules and key bindings.
-- [V3 Releasing](docs/V3_RELEASING.md) covers release checks, smoke testing,
-  and PDFium packaging.
-- [Project architecture](docs/ARCHITECTURE_RULES.md) lists architecture rules and
-  coding standards.
+- [Architecture](docs/ARCHITECTURE.md) — crate graph, boundaries, and data flow.
+- [User Guide](docs/USER_GUIDE.md) — vaults, editing, PDFs, search, tracker.
+- [Keyboard Shortcuts](docs/SHORTCUTS.md) — every command and its binding.
+- [Design](docs/DESIGN.md) — the visual language and tokens.
+- [Releasing](docs/RELEASING.md) — packaging, smoke testing, and PDFium bundling.
+- [Architecture Rules](docs/ARCHITECTURE_RULES.md) and
+  [Coding Standards](docs/CODING_STANDARDS.md) — enforced boundaries and
+  conventions for contributors.
+- [Testing](docs/TESTING.md) — the test layers and the pre-handoff gate.
+- [Decision records](docs/adr/) — the ADR log.
 
 ## License
 

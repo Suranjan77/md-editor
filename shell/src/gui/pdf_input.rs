@@ -174,7 +174,7 @@ impl Shell {
             .chars
             .get(&selection.page)
             .map_or(&[][..], Vec::as_slice);
-        match md3_pdf::select::select(chars, selection.anchor, head) {
+        match md_pdf::select::select(chars, selection.anchor, head) {
             Some(text_selection) => {
                 selection.quads = text_selection.quads;
                 selection.text = text_selection.text;

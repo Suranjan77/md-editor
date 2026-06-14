@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Enforce v3 module-size ratchets from v3/budgets.toml.
+# Enforce module-size ratchets from budgets.toml: every workspace .rs file must
+# stay under its per-file ceiling (or the hard limit if unlisted).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-budget_file="v3/budgets.toml"
+budget_file="budgets.toml"
 hard_limit="$(sed -n 's/^hard_limit *= *\([0-9][0-9]*\).*/\1/p' "$budget_file")"
 if [[ -z "$hard_limit" ]]; then
     echo "error: missing hard_limit in $budget_file" >&2
@@ -26,13 +27,14 @@ done <"$budget_file"
 
 failures=0
 while IFS= read -r -d '' file; do
+    file="${file#./}" # normalise to match budgets.toml keys (no leading ./)
     lines="$(wc -l <"$file")"
     ceiling="${ceilings[$file]:-$hard_limit}"
     if (( lines > ceiling )); then
         printf 'error: %s has %d lines; ceiling is %d\n' "$file" "$lines" "$ceiling" >&2
         failures=$((failures + 1))
     fi
-done < <(find v3 -path 'v3/target' -prune -o -name '*.rs' -type f -print0)
+done < <(find . -path './target' -prune -o -name '*.rs' -type f -print0)
 
 for file in "${!ceilings[@]}"; do
     if [[ ! -f "$file" ]]; then
@@ -42,8 +44,8 @@ for file in "${!ceilings[@]}"; do
 done
 
 if (( failures > 0 )); then
-    echo "v3 size budget failed: $failures violation(s)" >&2
+    echo "size budget failed: $failures violation(s)" >&2
     exit 1
 fi
 
-echo "v3 size budget passed (hard limit: $hard_limit lines)"
+echo "size budget passed (hard limit: $hard_limit lines)"

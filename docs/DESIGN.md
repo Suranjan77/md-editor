@@ -1,9 +1,9 @@
-# V3 design system
+# Design System
 
 > Record of the 2026-06-14 design pass (user-directed). The app had drifted to a
 > green-tinted, undesigned look with single-character "icons". This is the
 > reference for the visual language going forward. Execution detail and the
-> append-only decision log live in `docs/V3_HANDOFF.md`.
+> append-only decision log live in `docs/development/HANDOFF.md`.
 
 ## Direction (user choices, 2026-06-14)
 
@@ -89,7 +89,7 @@ Golden draw-plan regenerated (`UPDATE_EXPECT=1`); `clippy -D warnings` clean;
 size budget green (`gui/mod.rs` trimmed back under its 1441 ratchet);
 `chrome` / `file_tree` / `discoverability` / `session_restore` suites pass.
 Live look was confirmed on the COSMIC workstation (see
-`docs/V3_GUI_TESTING.md` for why that check is local-only).
+`docs/GUI_TESTING.md` for why that check is local-only).
 
 ## Tracked follow-ups
 

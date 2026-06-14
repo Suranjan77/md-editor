@@ -1,5 +1,9 @@
 set shell := ["bash", "-cu"]
 
+# Run the app over a vault folder (current directory by default).
+run vault=".":
+    cargo run -- {{vault}}
+
 fmt:
     cargo fmt --all
 
@@ -12,13 +16,16 @@ lint:
 test:
     cargo test --workspace
 
+# Verify engine crates stay toolkit-free (ADR-0100).
 architecture:
     ./scripts/architecture-check.sh
 
-metrics:
-    ./scripts/architecture-metrics.sh
+# Enforce per-module line-count ratchets (budgets.toml).
+budget:
+    ./scripts/size-budget.sh
 
-benchmark:
-    ./scripts/refactor-benchmark.sh
+# Regenerate the keyboard-shortcuts reference from the command registry.
+shortcuts:
+    cargo run -q -p md-shell -- --dump-shortcuts > docs/SHORTCUTS.md
 
-check: architecture fmt-check lint test
+check: architecture budget fmt-check lint test

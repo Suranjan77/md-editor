@@ -13,7 +13,7 @@ and error tolerance. The spike has not been run.
 
 Proceed with the **in-house incremental block parser** direction (explicit block-state
 entry/exit for fences/math/tables, forward re-parse to convergence) because:
-1. The layout protocol (style/measure/paint, ADR-quality contract in `md3-editor`) is
+1. The layout protocol (style/measure/paint, ADR-quality contract in `md-editor`) is
    parser-agnostic — the style phase consumes "(line text, block state, conceal mode)"
    regardless of who computes block state.
 2. Inline extensions (wikilinks `[[..]]`, citations `@key`, `$math$`) are first-class
@@ -25,6 +25,6 @@ item 3). Switching costs are contained to the styler implementation.
 
 ## Consequences
 
-- `md3-editor` defines `Styler` as a trait; a tree-sitter-backed styler is a drop-in.
+- `md-editor` defines `Styler` as a trait; a tree-sitter-backed styler is a drop-in.
 - Conceal correctness does not depend on this decision (plan §3.2: "conceal works with
   either").

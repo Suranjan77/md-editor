@@ -1,4 +1,4 @@
-use md3_editor::style::SpanKind;
+use md_editor::style::SpanKind;
 
 use super::editor_canvas::span_text;
 use super::session::MdSession;
@@ -263,7 +263,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use cosmic_text::FontSystem;
-    use md3_editor::buffer::Command;
+    use md_editor::buffer::Command;
 
     use super::*;
     use crate::gui::shaped_measurer::ShapedMeasurer;

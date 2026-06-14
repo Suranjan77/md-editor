@@ -103,20 +103,20 @@ pub fn install_with_home(home: &Path) -> Result<(), DesktopError> {
 
     let desktop_content = format!(
         r#"[Desktop Entry]
-Name=MD Editor V3
-Comment=Native desktop markdown workspace (V3)
+Name=MD Editor
+Comment=Local-first Markdown and PDF workspace
 Exec={} %f
 Icon=md-editor
 Terminal=false
 Type=Application
 MimeType=text/markdown;application/pdf;
 Categories=Office;WordProcessor;Utility;
-StartupWMClass=md3-shell
+StartupWMClass=md-editor
 "#,
         desktop_exec_arg(exe_str)
     );
 
-    let desktop_file_path = app_dir.join("md3.desktop");
+    let desktop_file_path = app_dir.join("md-editor.desktop");
     io_result(
         "writing desktop entry",
         std::fs::write(desktop_file_path, desktop_content),
@@ -141,7 +141,7 @@ pub fn uninstall_with_home(home: &Path) -> Result<(), DesktopError> {
     let hicolor_dir = icons_dir.join("hicolor");
 
     // Remove desktop file
-    let desktop_file_path = app_dir.join("md3.desktop");
+    let desktop_file_path = app_dir.join("md-editor.desktop");
     if desktop_file_path.exists() {
         io_result(
             "removing desktop entry",
@@ -219,7 +219,7 @@ mod tests {
         install_with_home(test_home).expect("install should succeed");
 
         let local_share = test_home.join(".local").join("share");
-        let app_file = local_share.join("applications").join("md3.desktop");
+        let app_file = local_share.join("applications").join("md-editor.desktop");
         let primary_icon = local_share.join("icons").join("md-editor.png");
         let scalable_icon = local_share
             .join("icons")
@@ -282,7 +282,7 @@ mod tests {
         install_with_home(test_home).expect("second install should succeed");
 
         let local_share = test_home.join(".local").join("share");
-        let app_file = local_share.join("applications").join("md3.desktop");
+        let app_file = local_share.join("applications").join("md-editor.desktop");
         assert!(app_file.exists());
 
         let sizes = [16, 32, 48, 64, 128, 256, 512];

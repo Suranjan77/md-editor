@@ -1,9 +1,9 @@
-# V3 Handoff — execution state of docs/V3_GROUND_UP_PLAN.md
+# V3 Handoff — execution state of docs/GROUND_UP_PLAN.md
 
 > **Read this first when resuming v3 work.** Updated after every completed unit of work.
-> Sibling ledgers: `PLAN-NOTES.md` (v2 incremental plan), `docs/V3_GROUND_UP_PLAN.md` (the master plan).
+> Sibling ledgers: `PLAN-NOTES.md` (v2 incremental plan), `docs/GROUND_UP_PLAN.md` (the master plan).
 > **A user-directed design overhaul landed 2026-06-14** (neutral dark theme,
-> single teal accent, real icons, single theme) — see `docs/V3_DESIGN.md`.
+> single teal accent, real icons, single theme) — see `docs/DESIGN.md`.
 > Open follow-ups from it: remove the light-theme plumbing (cascades into the
 > `session_restore` theme test), icon-ify the Markdown formatting toolbar, and
 > the separately-requested **test-automation tiering** (move smoke coverage into
@@ -11,7 +11,7 @@
 > AccessKit). Phase 7 GUI smoke (items 27–37) was largely confirmed on COSMIC.
 > Course correction 6.0–6.6 and Typora-grade 7.0–7.6 are implemented. The §0.2
 > hard rules and §0.4 pitfalls register remain binding. COSMIC GUI tooling is
-> **machine-specific and local-only** — see `docs/V3_GUI_TESTING.md`.
+> **machine-specific and local-only** — see `docs/GUI_TESTING.md`.
 
 ## Ground rules for this execution
 
@@ -38,61 +38,61 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | v3 workspace scaffold | §5 M0 | ✅ | `v3/` — independent workspace, root excludes it; clippy denies unwrap/expect workspace-wide |
 | ADR-0100 toolkit decision | §3.5 | ✅ | `docs/adr/0100-v3-toolkit-iced-default.md` — iced by default, engines toolkit-agnostic; boundary enforced in architecture-check.sh (proven by injection) |
 | ADR-0101 parser decision | §3.2 | ✅ | `docs/adr/0101-v3-incremental-parser.md` — in-house incremental, re-openable; `Styler` trait is the seam |
-| Kernel: CommandRegistry + CommandBus | §3.1 | ✅ | `v3/kernel/src/command.rs` — duplicate/foreign-binding rejection, subsequence palette, FIFO bus |
-| Kernel: InputRouter (scoped keymap, conflict CI) | §3.1 | ✅ | `v3/kernel/src/input.rs` — chord parse/display, scope stack, innermost-wins, **Overlay = modal fence** (only Overlay+Global reachable under a modal), static conflict detection, user override API |
-| Kernel: PaneTree + tabs + DocumentStore | §3.1 | ✅ | `v3/kernel/src/pane.rs` — split tree, tab dedup per document, empty-pane collapse, doc dedup by path, `Layout` view for the shell |
-| Kernel: FocusModel (single focus owner) | §3.1 | ✅ | `v3/kernel/src/focus.rs` (invariant maintained by Workspace) |
-| Kernel: Workspace façade | §3.1 | ✅ | `v3/kernel/src/workspace.rs` — `scope_stack()` *derived* per call; `handle_key()` is the one keystroke entry point; doc GC on tab close |
-| **BUG-A regression suite** (keymap scoping + conflict enumeration) | §5 M1 gate | ✅ | `v3/kernel/tests/bug_a_keymap_scoping.rs` (7 tests incl. modal fence + the exact v2 split scenario) |
-| **BUG-C regression suite** (PDF standalone in a tab) | §5 M1 gate | ✅ | `v3/kernel/tests/bug_c_documents_are_peers.rs` (5 tests) |
-| Editor: height sum-tree (O(log n) offsets) | §3.2 | ✅ | `v3/editor/src/height_tree.rs` — implicit treap w/ subtree sums, deterministic priorities, differential-tested vs naive model (4k random ops) |
-| Editor: 3-phase layout protocol (style/measure/paint) | §3.2 | ✅ | `v3/editor/src/layout.rs` — `Styler`/`Measurer` traits, `Damage { repaint, shifted_from }`, offsets never cached per line, viewport-bounded paint |
+| Kernel: CommandRegistry + CommandBus | §3.1 | ✅ | `kernel/src/command.rs` — duplicate/foreign-binding rejection, subsequence palette, FIFO bus |
+| Kernel: InputRouter (scoped keymap, conflict CI) | §3.1 | ✅ | `kernel/src/input.rs` — chord parse/display, scope stack, innermost-wins, **Overlay = modal fence** (only Overlay+Global reachable under a modal), static conflict detection, user override API |
+| Kernel: PaneTree + tabs + DocumentStore | §3.1 | ✅ | `kernel/src/pane.rs` — split tree, tab dedup per document, empty-pane collapse, doc dedup by path, `Layout` view for the shell |
+| Kernel: FocusModel (single focus owner) | §3.1 | ✅ | `kernel/src/focus.rs` (invariant maintained by Workspace) |
+| Kernel: Workspace façade | §3.1 | ✅ | `kernel/src/workspace.rs` — `scope_stack()` *derived* per call; `handle_key()` is the one keystroke entry point; doc GC on tab close |
+| **BUG-A regression suite** (keymap scoping + conflict enumeration) | §5 M1 gate | ✅ | `kernel/tests/bug_a_keymap_scoping.rs` (7 tests incl. modal fence + the exact v2 split scenario) |
+| **BUG-C regression suite** (PDF standalone in a tab) | §5 M1 gate | ✅ | `kernel/tests/bug_c_documents_are_peers.rs` (5 tests) |
+| Editor: height sum-tree (O(log n) offsets) | §3.2 | ✅ | `editor/src/height_tree.rs` — implicit treap w/ subtree sums, deterministic priorities, differential-tested vs naive model (4k random ops) |
+| Editor: 3-phase layout protocol (style/measure/paint) | §3.2 | ✅ | `editor/src/layout.rs` — `Styler`/`Measurer` traits, `Damage { repaint, shifted_from }`, offsets never cached per line, viewport-bounded paint |
 | Editor: measured conceal contract | §3.2 / Phase 7.1 | ✅ | ADR-0105 retired reserved width: conceal changes styled display and remeasures through `set_conceal`; height shifts flow through `Damage` + `HeightTree`, with differential/storm BUG-B tests |
-| Editor: rope buffer + `Vec<Selection>` + branching undo | §3.2 | ✅ | `v3/editor/src/buffer.rs` (ropey, multi-cursor model day-one, grapheme-safe motion/deletion incl. emoji/CJK/CRLF) + `undo.rs` (`UndoTree` — editing after undo branches, never clears the future). Quality harness: `tests/buffer_undo_invariants.rs` (12 tests: 8-seed × 500-command storms w/ undo-to-root == identity, selections-in-bounds invariant, grapheme suites, multi-cursor edits, branch preservation) |
-| Shell: markdown surface is a real buffer | §5 M1 | ✅ | typing/motion/selection via raw-input fallthrough (case-preserved via `KeyEvent.text`); ctrl+z/ctrl+shift+z/ctrl+a are real buffer commands; **ctrl+s saves through `md3-vault::atomic_save`** (and re-syncs the FTS index); sessions keyed by `DocumentId` (split panes share state by construction); dirty dot in tab strip, Ln/Col in status bar; content loads from disk on open |
-| Shell: styled GUI (`gui` module) | §5 M1–M2 / Phase 7 | ✅ | `v3/shell/src/gui/` — Markdown uses shaped measure/paint/hit-testing through the engine's 3-phase layout; PDF is a peer surface; overlays share the single keystroke path; routing suites pin BUG-A/C windowlessly |
-| **BUG-B regression suite** (height change reflows; damage ≤ affected lines) | §5 M1 gate | ✅ | `v3/editor/tests/bug_b_layout_reflow.rs` (6 tests incl. "caret motion damages ≤ 2 lines" golden gate) |
-| Editor: rope buffer + multi-cursor + grapheme safety | §3.2 | ✅ | `v3/editor/src/buffer.rs` — ropey, `Vec<Selection>` model (sorted/merged/non-empty, boundary-snapped), `ChangedSpan` buffer→layout bridge, `LayoutEngine::splice` consumer |
-| Editor: undo tree (persistent-ready) | §3.2 | ✅ | `v3/editor/src/undo.rs` — branch-keeping tree, insert-run coalescing, save-point dirtiness, validated `UndoTreeSnapshot` for the sidecar |
-| Editor: buffer property harness | §3.2/§6 | ✅ | `v3/editor/tests/buffer_properties.rs` — undo-to-root identity, selection invariants, grapheme alignment (ZWJ/flag/CJK/CRLF), buffer↔layout lockstep; caught 2 real CRLF/cluster bugs pre-merge |
-| Editor: incremental block parser (ADR-0101) | §3.2 | ✅ | `v3/editor/src/parse.rs` — explicit entry/exit `BlockState` per line, forward reparse to convergence, returns invalidated range; differential-tested vs full reparse (2k random edits) |
-| Editor: inline spans + production styler | §3.2 / Phase 7.1 | ✅ | `v3/editor/src/style.rs` — `MarkdownStyler` removes concealed markers from measured display text, supports element-level partial reveal, and emits char-offset semantic spans for emphasis/code/math/links/wikilinks/tables |
-| Editor: `EditorDocument` session | §3.2 | ✅ | `v3/editor/src/document.rs` — buffer + parser + layout behind one `apply()`; fence-typing cascade restyles, caret conceal-follow, merged `Damage`; "caret motion ≤ 2 lines" asserted end-to-end |
-| Vault: typed errors + atomic save | §3.4 | ✅ | `v3/vault/` — `VaultError` (thiserror), temp+fsync+rename save |
-| Vault: FTS5 incremental index | §3.4 | ✅ | `v3/vault/src/index.rs` — `(mtime, size)` diff (unchanged vault re-reads nothing, test-pinned), targeted `sync_paths` for watcher batches, quoted-token FTS queries (operator injection inert), root-relative paths |
-| Vault: debounced fs watcher | §3.4 | ✅ | `v3/vault/src/watcher.rs` — `notify` + 500 ms quiet-window debounce thread, deduped batches; M2 "external edit converges < 2 s" gate test green |
-| Vault: link graph + rename repair | §3.4 | ✅ | `v3/vault/src/links.rs` — regex-free wikilink extraction (alias/anchor aware), bidirectional graph, broken-link query, `rewrite_links` as a pure transaction (caller persists via atomic save) |
-| PDF: tile cache + render queue (pure logic) | §3.3 | ✅ | `v3/pdf/src/tile.rs` — 1.4^n zoom buckets (never-upscale>1.4× proven by sweep test), byte-budget LRU w/ eviction reporting, cancellable queue |
-| PDF: continuous-scroll geometry (pure) | §3.3 | ✅ | `v3/pdf/src/scroll.rs` — `DocLayout`: centered page strip from page sizes, cumulative offsets, `page_at`/`visible_pages` (partition-point), `visible_tiles` returning bucket-addressed `PlacedTile`s with display rects (virtualization: only viewport-intersecting tiles; ≤1.4× magnification by construction); zoom rebuild + caller re-anchoring; 9 unit tests |
+| Editor: rope buffer + `Vec<Selection>` + branching undo | §3.2 | ✅ | `editor/src/buffer.rs` (ropey, multi-cursor model day-one, grapheme-safe motion/deletion incl. emoji/CJK/CRLF) + `undo.rs` (`UndoTree` — editing after undo branches, never clears the future). Quality harness: `tests/buffer_undo_invariants.rs` (12 tests: 8-seed × 500-command storms w/ undo-to-root == identity, selections-in-bounds invariant, grapheme suites, multi-cursor edits, branch preservation) |
+| Shell: markdown surface is a real buffer | §5 M1 | ✅ | typing/motion/selection via raw-input fallthrough (case-preserved via `KeyEvent.text`); ctrl+z/ctrl+shift+z/ctrl+a are real buffer commands; **ctrl+s saves through `md-vault::atomic_save`** (and re-syncs the FTS index); sessions keyed by `DocumentId` (split panes share state by construction); dirty dot in tab strip, Ln/Col in status bar; content loads from disk on open |
+| Shell: styled GUI (`gui` module) | §5 M1–M2 / Phase 7 | ✅ | `shell/src/gui/` — Markdown uses shaped measure/paint/hit-testing through the engine's 3-phase layout; PDF is a peer surface; overlays share the single keystroke path; routing suites pin BUG-A/C windowlessly |
+| **BUG-B regression suite** (height change reflows; damage ≤ affected lines) | §5 M1 gate | ✅ | `editor/tests/bug_b_layout_reflow.rs` (6 tests incl. "caret motion damages ≤ 2 lines" golden gate) |
+| Editor: rope buffer + multi-cursor + grapheme safety | §3.2 | ✅ | `editor/src/buffer.rs` — ropey, `Vec<Selection>` model (sorted/merged/non-empty, boundary-snapped), `ChangedSpan` buffer→layout bridge, `LayoutEngine::splice` consumer |
+| Editor: undo tree (persistent-ready) | §3.2 | ✅ | `editor/src/undo.rs` — branch-keeping tree, insert-run coalescing, save-point dirtiness, validated `UndoTreeSnapshot` for the sidecar |
+| Editor: buffer property harness | §3.2/§6 | ✅ | `editor/tests/buffer_properties.rs` — undo-to-root identity, selection invariants, grapheme alignment (ZWJ/flag/CJK/CRLF), buffer↔layout lockstep; caught 2 real CRLF/cluster bugs pre-merge |
+| Editor: incremental block parser (ADR-0101) | §3.2 | ✅ | `editor/src/parse.rs` — explicit entry/exit `BlockState` per line, forward reparse to convergence, returns invalidated range; differential-tested vs full reparse (2k random edits) |
+| Editor: inline spans + production styler | §3.2 / Phase 7.1 | ✅ | `editor/src/style.rs` — `MarkdownStyler` removes concealed markers from measured display text, supports element-level partial reveal, and emits char-offset semantic spans for emphasis/code/math/links/wikilinks/tables |
+| Editor: `EditorDocument` session | §3.2 | ✅ | `editor/src/document.rs` — buffer + parser + layout behind one `apply()`; fence-typing cascade restyles, caret conceal-follow, merged `Damage`; "caret motion ≤ 2 lines" asserted end-to-end |
+| Vault: typed errors + atomic save | §3.4 | ✅ | `vault/` — `VaultError` (thiserror), temp+fsync+rename save |
+| Vault: FTS5 incremental index | §3.4 | ✅ | `vault/src/index.rs` — `(mtime, size)` diff (unchanged vault re-reads nothing, test-pinned), targeted `sync_paths` for watcher batches, quoted-token FTS queries (operator injection inert), root-relative paths |
+| Vault: debounced fs watcher | §3.4 | ✅ | `vault/src/watcher.rs` — `notify` + 500 ms quiet-window debounce thread, deduped batches; M2 "external edit converges < 2 s" gate test green |
+| Vault: link graph + rename repair | §3.4 | ✅ | `vault/src/links.rs` — regex-free wikilink extraction (alias/anchor aware), bidirectional graph, broken-link query, `rewrite_links` as a pure transaction (caller persists via atomic save) |
+| PDF: tile cache + render queue (pure logic) | §3.3 | ✅ | `pdf/src/tile.rs` — 1.4^n zoom buckets (never-upscale>1.4× proven by sweep test), byte-budget LRU w/ eviction reporting, cancellable queue |
+| PDF: continuous-scroll geometry (pure) | §3.3 | ✅ | `pdf/src/scroll.rs` — `DocLayout`: centered page strip from page sizes, cumulative offsets, `page_at`/`visible_pages` (partition-point), `visible_tiles` returning bucket-addressed `PlacedTile`s with display rects (virtualization: only viewport-intersecting tiles; ≤1.4× magnification by construction); zoom rebuild + caller re-anchoring; 9 unit tests |
 | Shell: PDF reading UX (continuous scroll + tiles) | §3.3 / §5 M2 | ✅ | `gui/pdf_view.rs` + `PdfSession` v2 — page sheets + tiles painted on a canvas from `DocLayout` at real bounds; `ensure_tiles` drives the engine `RenderQueue`/`TileCache` (offscreen requests cancelled, evicted pixmaps dropped; synchronous render, worker thread deferred); wheel/pgup·pgdn/arrows/home/end scroll the strip, ←/→ jump pages, ctrl+g jumps, ctrl+z zoom re-anchors the current page across buckets; status pill `p. N/M · zoom%`. pdfium-gated suite `shell/tests/pdf_reading.rs` (4 tests over the multipage fixture) runs in CI |
-| PDF: pdfium wiring (ADR-0002 re-affirmed) | §3.3 | ✅ | `v3/pdf/src/render.rs` behind the `pdfium` cargo feature — tile render (full page at bucket scale, sliced to 512 px grid), text extraction, typed errors incl. corrupt-PDF fixture test; FFI serialized by an engine-level mutex |
-| Vault: PDF text → FTS bridge (`TextExtractor` seam) | §3.4 | ✅ | `SearchIndex::sync_with`/`sync_paths_with` take an optional extractor; PDFs share the `(mtime, size)` guard (no re-extraction, fake-extractor call-count tests); real-pdfium integration test in `v3/pdf/tests/fts_bridge.rs` (dev-dep only — production composition belongs to the shell) |
-| **Annotations v2** (hash keys + migrations + export) | §3.3 / §5 M2 gate | ✅ | `v3/vault/src/annotations.rs` — `AnnotationStore` keyed by document SHA-256 (`document_hash`, streamed); numbered transactional migrations (`migrations(component, version)` table, sidecar-shared, append-only ladder pinned by fingerprint test); quads+color+note+linked-note CRUD; JSON export/import (serde) + Markdown summary; last-seen-path table for orphan reports. **M2 gate test green:** `v3/vault/tests/annotations_survive_rename.rs` (rename+move across sessions; edited bytes = new identity, old annotations reachable, never silently dropped). Shell wiring (highlight UI, persistent sidecar path) is a later session |
-| PDF: text selection geometry (pure `select` + `page_chars`) | §3.3 | ✅ | `v3/pdf/src/select.rs` — line grouping by vertical overlap, caret positions from page points, per-line quads + text (synthetic-grid tests); `DocLayout::page_at_point`/`point_in_page` inverse hit-testing; `render.rs::page_chars` flips pdfium's bottom-left rects to top-left page points (fixture test drives the pure selector over real glyphs and cross-checks `extract_text`) |
-| **Shell: annotations v2 wiring** (persistent sidecar + selection + highlight UI) | §3.3–3.4 / §5 M2 | ✅ | sidecar at `<vault>/.md3/sidecar.db`, one SQLite file shared by `SearchIndex` + `AnnotationStore` (disjoint tables; in-memory index fallback for read-only vaults) — the FTS index now persists across runs (cold start re-reads nothing, test-pinned); `record_document` + streamed SHA-256 on every PDF open (works without pdfium); drag selection on the canvas (`PdfMouseDown/Dragged/Up` → engine `select()` over cached `page_chars`, page-point state so scroll/zoom never invalidates it); `pdf.highlight` (ctrl+h) persists quads, `pdf.annotation-note` (ctrl+n) edits via overlay, delete key removes the picked highlight, `pdf.annotations-export` (palette) writes `<stem>-annotations.md` through `atomic_save` + index re-sync; annotation/selection tints painted from page points each frame. Suite: `shell/tests/annotations_wiring.rs` (4 always-on + 2 pdfium end-to-end incl. reopen-reloads-from-hash) |
-| Vault: SessionStore + shared migrations runner | §3.4 / §5 M2 | ✅ | `v3/vault/src/migrations.rs` — the component-keyed ladder extracted from annotations (same `migrations` table, per-component versions); `v3/vault/src/session.rs` — single-row `session_state` holding the shell's opaque JSON snapshot (save/load/clear; cohabitation with annotations test-pinned) |
+| PDF: pdfium wiring (ADR-0002 re-affirmed) | §3.3 | ✅ | `pdf/src/render.rs` behind the `pdfium` cargo feature — tile render (full page at bucket scale, sliced to 512 px grid), text extraction, typed errors incl. corrupt-PDF fixture test; FFI serialized by an engine-level mutex |
+| Vault: PDF text → FTS bridge (`TextExtractor` seam) | §3.4 | ✅ | `SearchIndex::sync_with`/`sync_paths_with` take an optional extractor; PDFs share the `(mtime, size)` guard (no re-extraction, fake-extractor call-count tests); real-pdfium integration test in `pdf/tests/fts_bridge.rs` (dev-dep only — production composition belongs to the shell) |
+| **Annotations v2** (hash keys + migrations + export) | §3.3 / §5 M2 gate | ✅ | `vault/src/annotations.rs` — `AnnotationStore` keyed by document SHA-256 (`document_hash`, streamed); numbered transactional migrations (`migrations(component, version)` table, sidecar-shared, append-only ladder pinned by fingerprint test); quads+color+note+linked-note CRUD; JSON export/import (serde) + Markdown summary; last-seen-path table for orphan reports. **M2 gate test green:** `vault/tests/annotations_survive_rename.rs` (rename+move across sessions; edited bytes = new identity, old annotations reachable, never silently dropped). Shell wiring (highlight UI, persistent sidecar path) is a later session |
+| PDF: text selection geometry (pure `select` + `page_chars`) | §3.3 | ✅ | `pdf/src/select.rs` — line grouping by vertical overlap, caret positions from page points, per-line quads + text (synthetic-grid tests); `DocLayout::page_at_point`/`point_in_page` inverse hit-testing; `render.rs::page_chars` flips pdfium's bottom-left rects to top-left page points (fixture test drives the pure selector over real glyphs and cross-checks `extract_text`) |
+| **Shell: annotations v2 wiring** (persistent sidecar + selection + highlight UI) | §3.3–3.4 / §5 M2 | ✅ | sidecar at `<vault>/.md-editor/sidecar.db`, one SQLite file shared by `SearchIndex` + `AnnotationStore` (disjoint tables; in-memory index fallback for read-only vaults) — the FTS index now persists across runs (cold start re-reads nothing, test-pinned); `record_document` + streamed SHA-256 on every PDF open (works without pdfium); drag selection on the canvas (`PdfMouseDown/Dragged/Up` → engine `select()` over cached `page_chars`, page-point state so scroll/zoom never invalidates it); `pdf.highlight` (ctrl+h) persists quads, `pdf.annotation-note` (ctrl+n) edits via overlay, delete key removes the picked highlight, `pdf.annotations-export` (palette) writes `<stem>-annotations.md` through `atomic_save` + index re-sync; annotation/selection tints painted from page points each frame. Suite: `shell/tests/annotations_wiring.rs` (4 always-on + 2 pdfium end-to-end incl. reopen-reloads-from-hash) |
+| Vault: SessionStore + shared migrations runner | §3.4 / §5 M2 | ✅ | `vault/src/migrations.rs` — the component-keyed ladder extracted from annotations (same `migrations` table, per-component versions); `vault/src/session.rs` — single-row `session_state` holding the shell's opaque JSON snapshot (save/load/clear; cohabitation with annotations test-pinned) |
 | Kernel: restore primitives | §3.1 | ✅ | `PaneTree::split_with_ratio` (ratio clamped 0.05–0.95, NaN→0.5; `split` delegates at 0.5) + `collapse_empty_panes` (hollow splits don't outlive their content; last pane survives) |
 | **Shell: session restore** | §5 M2 | ✅ | `gui/snapshot.rs` — serde wire format (pane tree + per-path view state, all fields `#[serde(default)]` so restore degrades, never refuses); capture on open/close-tab/split/next-tab/tab-click/save/quit **and** on window close (`exit_on_close_request: false` → save → exit); restore in `Shell::new`: rebuild splits with saved ratios, skip vanished files, collapse hollow panes, reapply md caret+scroll / pdf zoom+scroll, refocus; **"resumed at p. N/M"** status when the focused doc is a PDF. Suite: `shell/tests/session_restore.rs` (5 always-on + pdfium "resumed at p. 3" E2E) |
-| **Shell: settings v1 — user keymap overrides** | §3.1 | ✅ | `shell/src/settings.rs` — `<vault>/.md3/keymap.json` (`{scope, chord, command}` rows; `command: null` unbinds); command names resolved against the registry (ids stay `'static`, typos warn); bad rows/corrupt file warn and skip, never block startup; applied in `main` before the GUI. 5 tests incl. override-beats-default and scope isolation |
-| Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `v3/shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/V3_SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
+| **Shell: settings v1 — user keymap overrides** | §3.1 | ✅ | `shell/src/settings.rs` — `<vault>/.md-editor/keymap.json` (`{scope, chord, command}` rows; `command: null` unbinds); command names resolved against the registry (ids stay `'static`, typos warn); bad rows/corrupt file warn and skip, never block startup; applied in `main` before the GUI. 5 tests incl. override-beats-default and scope isolation |
+| Shell: registry-generated keymap/palette dump | §3.1 | ✅ | `shell/` — startup conflict check exits non-zero; `--dump-shortcuts` generates `docs/SHORTCUTS.md`; `--demo` walks BUG-A/C on the live kernel |
 | **PDF selection/highlight paint fixes** (user-reported) | §3.3 | ✅ | (1) tints were invisible: iced_wgpu draws images after meshes *within a layer*, so same-frame `fill_rectangle` landed under the page tiles — `TintCanvas` now stacks above `PdfCanvas` (own layer, captures nothing); (2) quads landed on line 1: `select::lines()` any-overlap banding chained tightly-leaded loose boxes into one band — now requires >50% overlap of the smaller height (test-pinned); (3) hover I-beam over text / pointer over highlights via `mouse_interaction` (glyphs pre-load per visible page in `ensure_tiles`) |
-| PDF: `select::find` + `range_selection` (pure search) | §3.3 | ✅ | `v3/pdf/src/select.rs` — case-insensitive char-stream match returning index ranges; `range_selection` (extracted from `select`) turns any range into quads+text; synthetic-grid tests |
+| PDF: `select::find` + `range_selection` (pure search) | §3.3 | ✅ | `pdf/src/select.rs` — case-insensitive char-stream match returning index ranges; `range_selection` (extracted from `select`) turns any range into quads+text; synthetic-grid tests |
 | **Shell: PDF search overlay** (`pdf.find`) | §3.3 / §5 M2 | ✅ | `Overlay::PdfFind` — ctrl+f in pdf scope loads all pages' glyphs once, live-filters hits (`p. N · context` rows, capped 100), enter scrolls the match a third down the viewport and plants it as the live selection (tinted; `ctrl+h` chains). Suite: `shell/tests/pdf_find.rs` (2 always-on guard rails + pdfium e2e incl. case-insensitive needle + cross-page jump) |
 | **PDF selection robustness** (user-reported, same-line drags) | §3.3 | ✅ | `joins_line` is now *vertical-center containment*: the interim ≥50%-overlap rule split visual lines at pdfium's degenerate (zero-height) synthesized space boxes, after which `position()` resolved every same-row caret into the first segment — same-line drags drew nothing while multi-line worked. `position()` also breaks vertical ties by x (`(dy, dx)` key), so same-row bands (two-column layouts) resolve under the cursor. Both pinned by synthetic-grid tests |
-| PDF: outline extraction + section math | §3.3 | ✅ | `v3/pdf/src/outline.rs` (pure `OutlineEntry` + `section_at`, malformed-order tolerant) + `render.rs::outline()` (manual DFS over pdfium bookmarks w/ depth tags, cycle/size caps); fixture test over `multipage-outline.pdf` |
+| PDF: outline extraction + section math | §3.3 | ✅ | `pdf/src/outline.rs` (pure `OutlineEntry` + `section_at`, malformed-order tolerant) + `render.rs::outline()` (manual DFS over pdfium bookmarks w/ depth tags, cycle/size caps); fixture test over `multipage-outline.pdf` |
 | **Shell: TOC overlay + section tracking** (`pdf.toc`) | §3.3 / §5 M2 | ✅ | ctrl+t — `Overlay::PdfToc` lists the outline (depth-indented, filterable; `toc_matches` shared by display rows and confirm so the row shown is the row picked), enter jumps; status pill appends `· § section` via `PdfSession::current_section`. Suite: `shell/tests/pdf_toc.rs` |
 | **Shell: PDF back/forward jump history** | §3.3 | ✅ | alt+left / alt+right (`pdf.back`/`pdf.forward`; `Mods::ALT` added to the kernel) — jump-list grammar (new jump drops the forward branch, cap 64); positions stored in *points* (px ÷ zoom) so history survives zoom changes; recorded on go-to-page, TOC and find jumps. Covered in the pdf_toc e2e |
 | CI: v3 job in quality workflow | §6 | ✅ | `.github/workflows/quality.yml` `v3` job: fmt, clippy -D warnings, tests, demo, generated-doc freshness diff |
-| PDF geometry paint plans | Phase 0.1 | ✅ | `v3/shell/src/gui/paint.rs` — extracted `tint_plan` and `page_plan` to decouple geometry math from iced canvases; tested in `shell/tests/pdf_paint_plan.rs` |
-| Hostile glyph selection tests | Phase 0.2 | ✅ | `v3/pdf/tests/selection_real_glyphs.rs` — added selection tests with real-glyph boxes on tight-leading and two-column layouts; verified same-line drag tie-breakers |
-| Rotated pages selection audit | Phase 0.3 | ✅ | `v3/pdf/tests/selection_real_glyphs.rs` — verified selection bounds checks and whole-page drags for `/Rotate 90/180/270` |
-| PDF search eager load cap | Phase 0.5 | ✅ | `v3/shell/src/gui/mod.rs` — capped eager page load at 200 pages to guard against UI freeze; added scale guard tests in `shell/tests/pdf_find.rs` |
-| PDF internal-reference popup | Phase 1 | ✅ | Engine: `v3/pdf/src/select.rs`, `v3/pdf/src/render.rs` (page_links). Shell: `v3/shell/src/gui/session.rs` (link_at), `v3/shell/src/gui/pdf_view.rs` (load_page_links, RightClick), `v3/shell/src/gui/mod.rs` (PdfRightClick, pdf_mouse_down left-click navigation), `v3/shell/src/gui/overlay.rs` (Overlay::PdfLinkPreview); tested in `v3/shell/tests/pdf_links.rs` |
-| File browser panel | Phase 2 | ✅ | `v3/shell/src/gui/file_tree.rs` — derived file tree from flat list; registered `workspace.toggle-files` hotkey; toggles open/collapsed state and handles file clicks; tested in `v3/shell/tests/file_tree.rs` |
-| Theme tokens + branding | Phase 3 | ✅ | `v3/shell/src/gui/tokens.rs` — centralized v2 dark hex palette; updated editors/overlays/status/sidebar to read from tokens; wired application custom theme and window icon; desktop entry installer in `v3/shell/src/desktop.rs` |
-| Study Tracker panel | Phase 4 | ✅ | `v3/vault/src/tracker.rs` (SQLite store) and `v3/shell/src/gui/tracker_view.rs` (curriculum, activities, log, config tabs); tested in `v3/vault/tests/tracker_store.rs` and `v3/shell/tests/tracker_wiring.rs` |
-| **Overlay hit lists scroll** (user-reported: TOC panel unscrollable) | UX | ✅ | `gui/overlay.rs` — the 12-row display cap is gone; the full match set renders in a `scrollable` (capped 420 px) shared by every list overlay (palette/quick-open/search/pdf-find/toc); ↑/↓ clamp to the rows actually displayed and `snap_selected` keeps the row in view; vault search returns 50 hits. Suite: `shell/tests/overlay_list.rs` (4 tests). Stale `V3_SHORTCUTS.md` regenerated (toggle-files/toggle-tracker rows were missing) |
-| Whitespace-elastic `pdf.find` | P5 backlog №5 | ✅ | `v3/pdf/src/select.rs::find` — needle whitespace matches ≥0 stream whitespace (a dropped `\r\n` wrap is zero chars wide), so multi-word needles match across line wraps; 3 new synthetic tests pin elastic/wrap/punctuation semantics. The P6 known-limitation is closed |
+| PDF geometry paint plans | Phase 0.1 | ✅ | `shell/src/gui/paint.rs` — extracted `tint_plan` and `page_plan` to decouple geometry math from iced canvases; tested in `shell/tests/pdf_paint_plan.rs` |
+| Hostile glyph selection tests | Phase 0.2 | ✅ | `pdf/tests/selection_real_glyphs.rs` — added selection tests with real-glyph boxes on tight-leading and two-column layouts; verified same-line drag tie-breakers |
+| Rotated pages selection audit | Phase 0.3 | ✅ | `pdf/tests/selection_real_glyphs.rs` — verified selection bounds checks and whole-page drags for `/Rotate 90/180/270` |
+| PDF search eager load cap | Phase 0.5 | ✅ | `shell/src/gui/mod.rs` — capped eager page load at 200 pages to guard against UI freeze; added scale guard tests in `shell/tests/pdf_find.rs` |
+| PDF internal-reference popup | Phase 1 | ✅ | Engine: `pdf/src/select.rs`, `pdf/src/render.rs` (page_links). Shell: `shell/src/gui/session.rs` (link_at), `shell/src/gui/pdf_view.rs` (load_page_links, RightClick), `shell/src/gui/mod.rs` (PdfRightClick, pdf_mouse_down left-click navigation), `shell/src/gui/overlay.rs` (Overlay::PdfLinkPreview); tested in `shell/tests/pdf_links.rs` |
+| File browser panel | Phase 2 | ✅ | `shell/src/gui/file_tree.rs` — derived file tree from flat list; registered `workspace.toggle-files` hotkey; toggles open/collapsed state and handles file clicks; tested in `shell/tests/file_tree.rs` |
+| Theme tokens + branding | Phase 3 | ✅ | `shell/src/gui/tokens.rs` — centralized v2 dark hex palette; updated editors/overlays/status/sidebar to read from tokens; wired application custom theme and window icon; desktop entry installer in `shell/src/desktop.rs` |
+| Study Tracker panel | Phase 4 | ✅ | `vault/src/tracker.rs` (SQLite store) and `shell/src/gui/tracker_view.rs` (curriculum, activities, log, config tabs); tested in `vault/tests/tracker_store.rs` and `shell/tests/tracker_wiring.rs` |
+| **Overlay hit lists scroll** (user-reported: TOC panel unscrollable) | UX | ✅ | `gui/overlay.rs` — the 12-row display cap is gone; the full match set renders in a `scrollable` (capped 420 px) shared by every list overlay (palette/quick-open/search/pdf-find/toc); ↑/↓ clamp to the rows actually displayed and `snap_selected` keeps the row in view; vault search returns 50 hits. Suite: `shell/tests/overlay_list.rs` (4 tests). Stale `SHORTCUTS.md` regenerated (toggle-files/toggle-tracker rows were missing) |
+| Whitespace-elastic `pdf.find` | P5 backlog №5 | ✅ | `pdf/src/select.rs::find` — needle whitespace matches ≥0 stream whitespace (a dropped `\r\n` wrap is zero chars wide), so multi-word needles match across line wraps; 3 new synthetic tests pin elastic/wrap/punctuation semantics. The P6 known-limitation is closed |
 | **Backlinks panel** (`note.backlinks`) | P5 backlog №2 / §3.4 | ✅ | ctrl+shift+b on a focused note — `Overlay::Backlinks` lists referrers from `LinkGraph` (built fresh per call from the vault's notes), filterable, enter opens the referrer; md-scope chord is inert on PDFs (BUG-A discipline test-pinned). Suite: `shell/tests/backlinks.rs` (4 tests) |
 | **Annotation niceties** (copy/color/linked-note/orphans) | P5 backlog №3 | ✅ | `pdf.copy-selection` (ctrl+c, pdf scope → `iced::clipboard::write`); `pdf.highlight-color` cycles a 4-entry palette via new `AnnotationStore::set_color` path (`HIGHLIGHT_PALETTE`, entry 0 = the default); `pdf.annotation-link-note` creates `<stem>-notes.md` through `atomic_save` + index sync, records it via new `AnnotationStore::set_linked_note`, opens it; `pdf.annotations-orphans` lists known docs whose hash matches no vault file (read-only `Overlay::OrphanReport`). Suite: `shell/tests/annotation_niceties.rs` (5 always-on tests) |
 | **Async PDF worker** | P5 backlog №1 | ✅ | `gui/worker.rs` owns one FIFO worker thread for tile/glyph/link pdfium calls; shell subscription handshake installs its nonblocking submit handle, tracks in-flight work, routes results by absolute path, refreshes open find results incrementally, and keeps synchronous fallback for windowless tests. Production `pdf.find` queues every page instead of the 200-page stopgap. Suites: worker unit tests + `shell/tests/pdf_worker.rs` |
@@ -106,11 +106,11 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **UX overhaul Phase 5: Markdown find/replace bar** | UX Phase 5 | ✅ | Docked Find/Replace bar under the markdown editor toolbar supporting case-insensitive search, match counting, prev/next navigation, replacing individual matches, and transactional Replace All. Suite: `shell/tests/markdown_find_replace.rs` |
 | **UX overhaul Phase 6: Feedback, Polish & settings** | UX Phase 6 | ✅ | Toasts, confirm modals for unsaved changes/delete, light/dark tokens, and keymap settings UI landed. Theme is instance-local `Shell` state passed explicitly to views/canvases and persisted in session snapshots; `session_restore` proves shell isolation and round-trip. Suites: `shell/tests/chrome.rs`, `session_restore.rs`, `tracker_wiring.rs` |
 | **URI links open in browser** | P5 backlog №7 | ✅ | Added `open` dependency under ADR-0102, left-clicking a PDF external link opens it in browser asynchronously. Suite: `shell/tests/pdf_links.rs` |
-| **User-reported stabilization pass** | UX / renderer | ✅ | `docs/V3_STABILIZATION_2026-06-12.md` is historical context. Its defects were addressed by the stabilization work, Phase 6.3 goldens, and Phase 7 renderer/editor implementation. Remaining quality gate is real-vault manual smoke 27–37. |
-| **Iced async runtime** | ADR-0103 | ✅ | `md3-shell` enables iced `tokio` feature so toast timer tasks run inside a Tokio reactor; fixes production panic from `tokio::time::sleep`. |
+| **User-reported stabilization pass** | UX / renderer | ✅ | `docs/STABILIZATION_2026-06-12.md` is historical context. Its defects were addressed by the stabilization work, Phase 6.3 goldens, and Phase 7 renderer/editor implementation. Remaining quality gate is real-vault manual smoke 27–37. |
+| **Iced async runtime** | ADR-0103 | ✅ | `md-shell` enables iced `tokio` feature so toast timer tasks run inside a Tokio reactor; fixes production panic from `tokio::time::sleep`. |
 | **Course correction 6.0: green baseline** | Phase 6.0 | ✅ | Tracker manual-log success now queues one success toast and `tracker_wiring` asserts that channel. Full default + pdfium workspace gates green. |
-| **Course correction 6.1: v3 size budgets** | Phase 6.1 | ✅ | `v3/budgets.toml` + `scripts/v3-budget.sh`, wired into CI. Hard limit 700; six pre-existing oversized files ratcheted. Enforcement proven by temporary hard-limit injection. |
-| **Course correction 6.2: decomposition** | Phase 6.2 | ✅ | `gui/mod.rs` fell from 4,838 to **1,468**; `editor/src/buffer.rs` from 1,911 to **833**. Shell surface modules, `buffer/formatting.rs`, `buffer/edit_ops.rs`, and `buffer/typing.rs` keep extracted files ≤700 lines. Ratchets lowered in `v3/budgets.toml`; `scripts/v3-budget.sh` green. |
+| **Course correction 6.1: v3 size budgets** | Phase 6.1 | ✅ | `budgets.toml` + `scripts/size-budget.sh`, wired into CI. Hard limit 700; six pre-existing oversized files ratcheted. Enforcement proven by temporary hard-limit injection. |
+| **Course correction 6.2: decomposition** | Phase 6.2 | ✅ | `gui/mod.rs` fell from 4,838 to **1,468**; `editor/src/buffer.rs` from 1,911 to **833**. Shell surface modules, `buffer/formatting.rs`, `buffer/edit_ops.rs`, and `buffer/typing.rs` keep extracted files ≤700 lines. Ratchets lowered in `budgets.toml`; `scripts/size-budget.sh` green. |
 | **Phase 6.3 golden snapshots** | Phase 6.3 | ✅ | `editor_draw_plan.rs`, `paint.rs` — Paint geometry extracted; strict diff-based test verifies exact `PaintOp` stream against `golden.md` |
 | **ADR-0104 typora grade** | Phase 7.0 | ✅ | `docs/adr/0104-v3-typora-grade.md` — layout engine refactored for shaped lines via `Measurer` trait |
 | **Phase 7.1 hide/measured reveal** | Phase 7.1 | ✅ | `editor/src/document.rs`, `sync_conceal` — Conceal mode now true hide, layout stable invariant dropped |
@@ -119,8 +119,8 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **Phase 7.4 stable assets** | Phase 7.4 | 🔶 | `vault/src/asset_sizes.rs`, `gui/markdown_assets.rs`, `gui/worker.rs`, `gui/pdf_worker_events.rs` — sidecar dimensions, async image/math loading, cached first layout, remeasure only on changed dimensions. Store/worker/layout tests green; manual smoke item 32 pending. |
 | **Phase 7.5 interaction exactness** | Phase 7.5 | 🔶 | `shaped_measurer.rs`, `editor_canvas.rs`, `editor_hit_testing.rs`, `markdown_interactions.rs` — one shaped geometry path for paint/caret/selection/hit-test, full golden round-trip, clickable checkbox through registered command, ctrl+click URI/wikilink, ctrl-hover pointer+underline. Manual smoke item 33 pending. |
 | **Phase 7.6 refinements** | Phase 7.6 | 🔶 | Shaped CJK/emoji/bidi round trips, syntax highlighting, element-level reveal, alignment fixes, list/quote gutters, p95 guard, drag selection, copy/cut, motion polish, and automated legibility pass are implemented. Markdown uses 17/27 typography in a centered 840 px reading column; blockquotes have a measured hanging inset. Reduced motion persists. **GUI smoke (2026-06-14, COSMIC) directly confirmed items 27, 28, 30, 31, 32, 33, 34, 35, 37 PASS** (headings/prose, element-level reveal, table grid+source reveal, code/math+TeX reveal, image, checkbox toggle+undo & ctrl+click wikilink, 5k-line typing, selection+copy/cut/undo, centered column). 29 observed clean; 36 toggle works (persist-after-restart not re-run). |
-| **Design overhaul** (user-directed 2026-06-14) | UI | ✅ | `docs/V3_DESIGN.md`. Neutral GitHub-dark gray surfaces + single teal accent (was washed-sage + coral); headings near-white (`text_heading`, were `danger`); table `\|---\|` separator is one full-width rule (was per-cell floating dashes); vault header / brand title de-coraled; Light/Dark switcher removed (single dark theme; light *plumbing* teardown deferred — touches `session_restore`). Real canvas icons replace text stand-ins: file rows (`File`/`Pdf`/`Folder`), tree header (`NewNote`/`NewFolder`/`Sidebar`/`Refresh`), pane controls (`Split`/`SplitDown`/`Close`). Golden regenerated, clippy clean, budget green, chrome/file_tree/discoverability/session_restore pass. |
-| **V3 release packaging + portable mode** | Platform | ✅ | `v3/xtask` builds portable archives plus NSIS/AppImage/DMG, bundles pinned PDFium licenses, writes SHA-256 manifests; `.github/workflows/v3-release.yml` packages Windows x64, Linux x64, macOS Intel/Apple Silicon. `shell::paths` routes global state beside portable package (including AppImage/macOS layouts) and resolves packaged PDFium. Process/signing limits documented in `docs/V3_RELEASING.md`. |
+| **Design overhaul** (user-directed 2026-06-14) | UI | ✅ | `docs/DESIGN.md`. Neutral GitHub-dark gray surfaces + single teal accent (was washed-sage + coral); headings near-white (`text_heading`, were `danger`); table `\|---\|` separator is one full-width rule (was per-cell floating dashes); vault header / brand title de-coraled; Light/Dark switcher removed (single dark theme; light *plumbing* teardown deferred — touches `session_restore`). Real canvas icons replace text stand-ins: file rows (`File`/`Pdf`/`Folder`), tree header (`NewNote`/`NewFolder`/`Sidebar`/`Refresh`), pane controls (`Split`/`SplitDown`/`Close`). Golden regenerated, clippy clean, budget green, chrome/file_tree/discoverability/session_restore pass. |
+| **V3 release packaging + portable mode** | Platform | ✅ | `xtask` builds portable archives plus NSIS/AppImage/DMG, bundles pinned PDFium licenses, writes SHA-256 manifests; `.github/workflows/v3-release.yml` packages Windows x64, Linux x64, macOS Intel/Apple Silicon. `shell::paths` routes global state beside portable package (including AppImage/macOS layouts) and resolves packaged PDFium. Process/signing limits documented in `docs/RELEASING.md`. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
@@ -129,7 +129,7 @@ full gate was green in both feature configurations, kernel demo was green,
 and shortcuts were fresh. Each Phase 6.2 extraction then passed fmt, the
 relevant focused routing/editor suites, clippy `-D warnings` (both shell
 feature configurations for PDF-facing moves), and the v3 size budget. Full
-`md3-editor` suite after the buffer split: 48 unit tests plus all integration,
+`md-editor` suite after the buffer split: 48 unit tests plus all integration,
 property, undo-storm, BUG-B, and formatting suites green. Local shell tests
 used isolated `XDG_CONFIG_HOME` because tracker storage is app-global. A new
 full dual-configuration workspace gate is still required when 6.2 reaches its
@@ -184,14 +184,14 @@ size targets.
     board); ~~async tile worker~~ — done (see status board).
 14. **GUI/UX overhaul (user-ordered 2026-06-12):** the app must stop
     feeling terminal-like; v2's mouse-first GUI is the floor. Full
-    multi-phase program in `docs/V3_UX_OVERHAUL_PLAN.md` (menu chrome +
+    multi-phase program in `docs/UX_OVERHAUL_PLAN.md` (menu chrome +
     shortcuts help first). Phases 0–6 and the full editing-ergonomics bundle (P5.4)
     are complete (auto-pairs, smart lists, table cell nav, smart paste, and heading cycles).
 15. **Markdown live-preview quality:** stabilized against overlap and missing
     environment rendering, but heading scale, polished tables, interactive
     checkboxes, rich hit-testing, proportional-font shaping, and golden
     draw-command coverage remain. Historical detail in
-    `docs/V3_STABILIZATION_2026-06-12.md`; the work is now **specced
+    `docs/STABILIZATION_2026-06-12.md`; the work is now **specced
     step-by-step as impl-plan Phase 6.3, then Phase 7** — work from that
     spec, not from the report's loose list.
 16. ~~**Course correction (architect review, 2026-06-12):**~~ complete.
@@ -309,7 +309,7 @@ size targets.
   port: `editor.select-all` had no handler in `gui`, and `Character(" ")`
   normalized to `Key::Char(' ')` so `space` keymap bindings could never match.
 - 2026-06-11: annotations live in **vault** (plan §3.4 lists annotations as
-  vault-core), keyed by SHA-256 of the PDF bytes; `md3-vault` gains `sha2` +
+  vault-core), keyed by SHA-256 of the PDF bytes; `md-vault` gains `sha2` +
   `serde`/`serde_json` (plan-mandated JSON export/import — hand-rolled JSON
   parsing was the worse option). Migrations are a per-component ladder
   (`migrations(component, version)`) so the FTS index can adopt the same
@@ -318,7 +318,7 @@ size targets.
   document identity: old annotations stay reachable under the old hash
   (orphan-report material), re-binding across content edits is deliberately
   not guessed at.
-- 2026-06-11: the sidecar is **one** SQLite file, `<vault>/.md3/sidecar.db`,
+- 2026-06-11: the sidecar is **one** SQLite file, `<vault>/.md-editor/sidecar.db`,
   shared by the FTS index and the annotation store — their tables are
   disjoint and the migration ladder is component-keyed precisely so they can
   cohabit; the dot-directory is invisible to every vault walk (index,
@@ -331,7 +331,7 @@ size targets.
   the canvas projects quads per frame from `placed_pages` (same "stale
   viewport can under-render but never misdraw" property as tiles). The
   selection algorithm (line grouping, caret-between-glyphs, per-line union
-  quads) is a pure md3-pdf module so its semantics are pinned by
+  quads) is a pure md-pdf module so its semantics are pinned by
   synthetic-grid tests, not by what pdfium happens to return.
 - 2026-06-11: highlight interaction grammar: click picks the topmost
   (most-recent) annotation under the cursor; `ctrl+h` auto-picks the new
@@ -364,7 +364,7 @@ size targets.
   registry rather than minting new ids — `CommandId` stays `&'static str`,
   typos become warnings instead of dead bindings, and an override can only
   target a real command (palette/docs stay truthful).
-- 2026-06-11: continuous-scroll geometry (`DocLayout`) lives in **md3-pdf**,
+- 2026-06-11: continuous-scroll geometry (`DocLayout`) lives in **md-pdf**,
   not the shell — what's visible and which bucket-addressed tiles cover it is
   engine policy (mirrors the editor's layout-engine split); the shell only
   turns `PlacedTile`s into pixmaps and paint calls. `TILE_PX` moved to the
@@ -414,7 +414,7 @@ size targets.
 - 2026-06-12: pure paint plans (`tint_plan`, `page_plan`) decouple drawing coordinates from the toolkit canvas, making geometry assertions testable windowlessly.
 - 2026-06-12: rotated pages selection audit: verified that bounds checks and whole-page drags for `/Rotate 90/180/270` pages are fully correct, meaning pdfium's post-rotation width/height dimensions align correctly with the character coordinate space and geometry flips.
 - 2026-06-12: `pdf.find` cap: loading all glyphs synchronously can freeze large documents, so we cap eager load at 200 pages. This is a deliberate stopgap until the async tile/glyph worker is implemented (Phase 5.1).
-- 2026-06-12: `LinkBox` is moved to `select.rs` and exported unconditionally from the `md3-pdf` engine so the shell crate builds successfully without the `pdfium` feature configuration.
+- 2026-06-12: `LinkBox` is moved to `select.rs` and exported unconditionally from the `md-pdf` engine so the shell crate builds successfully without the `pdfium` feature configuration.
 - 2026-06-12: `PdfLinkPreview` overlay uses optional `input_mut()` returning `None` as it has no text input, and standardizes overlay input processing to prevent backspace/typing panics on non-input modals.
 - 2026-06-12: PDF left-click link navigation runs at the top of `pdf_mouse_down` and navigates immediately if clicked inside a link bounding box, preventing selection or highlight picking on the same click.
 - 2026-06-12: overlay hit lists render the *full* match set in one shared
@@ -428,7 +428,7 @@ size targets.
   selected row fully in view for any viewport ≥ one row tall.
 - 2026-06-12: GUI/UX direction (user, 2026-06-12): the app reads as a
   terminal-style keyboard tool; v2's mouse-first GUI is the bar. The
-  step-by-step program is `docs/V3_UX_OVERHAUL_PLAN.md` — next agents
+  step-by-step program is `docs/UX_OVERHAUL_PLAN.md` — next agents
   execute it phase by phase (menu chrome and a shortcuts/help
   surface first, since nothing is discoverable without knowing chords).
 - 2026-06-12: `find` whitespace elasticity allows the *empty* gap on
@@ -512,7 +512,7 @@ size targets.
   toast once and asserting `Shell::toasts()` in the test (Phase 6.0) — not
   by restoring the status write.
 - 2026-06-12: v3 adopts v2's size-ratchet practice (impl-plan Phase 6.1):
-  `v3/budgets.toml` + `scripts/v3-budget.sh` in CI; frozen ceilings
+  `budgets.toml` + `scripts/size-budget.sh` in CI; frozen ceilings
   `gui/mod.rs` 4 838, `editor/buffer.rs` 1 911, `tracker_view.rs` 1 218,
   `editor_canvas.rs` 755; everything else hard-capped at 700. Ceilings only
   go down.
@@ -578,7 +578,7 @@ size targets.
   path. Production still uses the application config database; tests no
   longer race through shared global state during the binary workspace gate.
 - 2026-06-13: ADR-0106 assigns fenced-code syntax tokenization to
-  `v3/editor` and theme-color mapping to shell. Tokens are incremental cached
+  `editor` and theme-color mapping to shell. Tokens are incremental cached
   document state and paint-only; renderer parsing and geometry changes are
   forbidden. Implementation remains a separate Phase 7.6 slice.
 - 2026-06-13: shaped caret geometry resolves logical clusters independently
@@ -688,13 +688,13 @@ size targets.
 - 2026-06-14: GUI smoke run (COSMIC workstation) confirmed the Phase 7
   Typora-grade items render and behave (see the Phase 7.6 status row). Method
   notes and the **machine-specific-tooling warning** are in
-  `docs/V3_GUI_TESTING.md`: iced exposes no AT-SPI tree, ydotool absolute
+  `docs/GUI_TESTING.md`: iced exposes no AT-SPI tree, ydotool absolute
   coords map `screen ≈ 1.92×`, so the smoke is screenshot+coordinate driven and
   **local-only** — the portable tiers are the windowless `Shell` message
   harness (behavior) and the golden draw-plan (pixel geometry), which run in CI.
 - 2026-06-14 (user-directed design overhaul): the app read green-tinted and
   "undesigned" with single-character icons. New visual language recorded in
-  `docs/V3_DESIGN.md`. Decisions: (a) surfaces are **neutral GitHub-dark gray**,
+  `docs/DESIGN.md`. Decisions: (a) surfaces are **neutral GitHub-dark gray**,
   teal is **accent-only** (links/active-tab/selection/focus), `danger` coral is
   **destructive/error-only**; (b) **headings are uncolored** (`text_heading`
   near-white) — they were painted with `tokens.danger`; (c) **single theme** —

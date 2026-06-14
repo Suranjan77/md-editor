@@ -5,7 +5,7 @@ use iced::widget::{
     Space, button, checkbox, column, container, row, scrollable, text, text_editor, text_input,
 };
 use iced::{Alignment, Background, Element, Fill, Length};
-use md3_vault::tracker::StudySession;
+use md_vault::tracker::StudySession;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

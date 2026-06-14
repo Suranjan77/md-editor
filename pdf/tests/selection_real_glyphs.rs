@@ -1,18 +1,20 @@
 #![cfg(feature = "pdfium")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use md3_pdf::CharBox;
-use md3_pdf::render::PdfRenderer;
-use md3_pdf::select::select;
+use md_pdf::CharBox;
+use md_pdf::render::PdfRenderer;
+use md_pdf::select::select;
 use std::path::{Path, PathBuf};
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests-fixtures/pdf")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests-fixtures/pdf")
 }
 
 fn renderer() -> Option<PdfRenderer> {
-    let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../core/pdfium");
-    PdfRenderer::new(Some(&local))
+    // Dev machines can point at a local libpdfium via PDFIUM_LIB_DIR; otherwise
+    // bind the system library, or skip (not fail) when neither is present.
+    let lib_dir = std::env::var_os("PDFIUM_LIB_DIR").map(PathBuf::from);
+    PdfRenderer::new(lib_dir.as_deref())
         .or_else(|_| PdfRenderer::new(None))
         .ok()
 }

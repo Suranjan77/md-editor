@@ -12,10 +12,10 @@ itself specifies the tie-breaker: **"Default if scores tie: stay on iced."**
 ## Decision
 
 Adopt the default: **iced** is the v3 shell toolkit. The real insurance policy from the
-plan is kept in full force: the editor engine (`md3-editor`) and the workspace kernel
-(`md3-kernel`) are **toolkit-agnostic by construction** — no iced types in their APIs;
+plan is kept in full force: the editor engine (`md-editor`) and the workspace kernel
+(`md-kernel`) are **toolkit-agnostic by construction** — no iced types in their APIs;
 the editor emits draw commands, the kernel consumes abstract `Chord`s and produces
-`CommandId`s. Only `md3-shell` may depend on a UI toolkit.
+`CommandId`s. Only `md-shell` may depend on a UI toolkit.
 
 ## Consequences
 

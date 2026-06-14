@@ -7,4 +7,4 @@ Terminal=false
 Type=Application
 MimeType=text/markdown;application/pdf;
 Categories=Office;WordProcessor;Utility;
-StartupWMClass=md3-shell
+StartupWMClass=md-editor

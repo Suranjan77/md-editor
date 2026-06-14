@@ -1,4 +1,4 @@
-//! Vault core for md-editor v3 (plan §3.4): typed errors, atomic saves,
+//! Vault core for MD Editor: typed errors, atomic saves,
 //! debounced fs watcher, FTS5 incremental index, link graph + rename
 //! repair, hash-keyed PDF annotations. No UI dependencies; everything is
 //! callable from tests.

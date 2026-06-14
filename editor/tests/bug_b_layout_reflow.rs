@@ -12,11 +12,11 @@
 //!    caret motion changes no heights at all, and damage is confined to the
 //!    two affected lines ("draw-diff ≤ 2 lines" golden gate).
 
-use md3_editor::height_tree::OutOfBounds;
-use md3_editor::layout::{Damage, LayoutEngine, LineMeasure, Measurer, StyledLine, Styler};
-use md3_editor::parse::BlockState;
-use md3_editor::style::MarkdownStyler;
-use md3_editor::syntax::{Lang, LexState};
+use md_editor::height_tree::OutOfBounds;
+use md_editor::layout::{Damage, LayoutEngine, LineMeasure, Measurer, StyledLine, Styler};
+use md_editor::parse::BlockState;
+use md_editor::style::MarkdownStyler;
+use md_editor::syntax::{Lang, LexState};
 
 const LINE_HEIGHT: f64 = 16.0;
 const WRAP_COLS: f64 = 20.0;
@@ -33,7 +33,7 @@ impl Measurer for CharGridMeasurer {
         let cols = wrap_width.floor() as usize;
         let rows = if chars == 0 { 1 } else { chars.div_ceil(cols) } as u32;
 
-        let scale = if let md3_editor::parse::LineKind::Heading { level: 1 } = line.kind {
+        let scale = if let md_editor::parse::LineKind::Heading { level: 1 } = line.kind {
             2.0
         } else {
             1.0

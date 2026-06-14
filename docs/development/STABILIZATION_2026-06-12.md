@@ -1,8 +1,8 @@
 # V3 Stabilization Report — 2026-06-12
 
 This report records fixes made after testing v3 against a real study vault.
-It supplements `V3_HANDOFF.md`; architecture remains governed by
-`V3_GROUND_UP_PLAN.md` and `V3_UX_OVERHAUL_PLAN.md`.
+It supplements `HANDOFF.md`; architecture remains governed by
+`GROUND_UP_PLAN.md` and `UX_OVERHAUL_PLAN.md`.
 
 ## User-reported problems addressed
 
@@ -32,11 +32,11 @@ It supplements `V3_HANDOFF.md`; architecture remains governed by
 
 Primary code:
 
-- `v3/shell/src/gui/editor_canvas.rs`
-- `v3/shell/src/gui/session.rs`
-- `v3/editor/src/layout.rs`
-- `v3/editor/src/document.rs`
-- `v3/editor/src/style.rs`
+- `shell/src/gui/editor_canvas.rs`
+- `shell/src/gui/session.rs`
+- `editor/src/layout.rs`
+- `editor/src/document.rs`
+- `editor/src/style.rs`
 
 Regression coverage:
 
@@ -63,17 +63,17 @@ Regression: `shell/tests/file_tree.rs::open_tree_is_populated_on_startup`.
 
 Primary code:
 
-- `v3/shell/src/gui/session.rs`
-- `v3/shell/src/gui/pdf_view.rs`
-- `v3/shell/src/gui/mod.rs`
-- `v3/pdf/src/render.rs`
+- `shell/src/gui/session.rs`
+- `shell/src/gui/pdf_view.rs`
+- `shell/src/gui/mod.rs`
+- `pdf/src/render.rs`
 
 ### Welcome-to-editor transition
 
 Opening or creating vault from welcome surface now transitions through same
 application flow instead of presenting welcome and editor as unrelated
 applications. Welcome behavior and recent-vault handling remain in
-`v3/shell/src/gui/welcome.rs` and `v3/shell/src/main.rs`.
+`shell/src/gui/welcome.rs` and `shell/src/main.rs`.
 
 ### Toast runtime panic
 
@@ -84,7 +84,7 @@ thread-pool executor, so toast tasks panicked with:
 there is no reactor running, must be called from the context of a Tokio 1.x runtime
 ```
 
-`md3-shell` now enables iced `tokio` feature, making iced executor own Tokio
+`md-shell` now enables iced `tokio` feature, making iced executor own Tokio
 runtime used by toast tasks. Decision recorded in ADR-0103.
 
 ## Verification
@@ -93,8 +93,8 @@ Run from `v3/`:
 
 - `cargo fmt --all -- --check` — pass.
 - `cargo clippy --workspace --all-targets -- -D warnings` — pass.
-- `cargo check -p md3-shell --features pdfium` — pass.
-- `cargo test -p md3-shell --lib` — 28 passed.
+- `cargo check -p md-shell --features pdfium` — pass.
+- `cargo test -p md-shell --lib` — 28 passed.
 - `cargo test --workspace` — all reached suites pass except
   `shell/tests/tracker_wiring.rs::tracker_manual_log_and_delete`.
 
@@ -111,7 +111,7 @@ else lands before the workspace is green and committed.
 ## Remaining markdown work
 
 > **This list is historical context, not a work queue.** It has been turned
-> into step-by-step specs as `V3_IMPLEMENTATION_PLAN.md` Phase 6.3 (golden
+> into step-by-step specs as `IMPLEMENTATION_PLAN.md` Phase 6.3 (golden
 > draw-plan snapshots) and **Phase 7 — Typora-grade live editor**
 > (user-ordered 2026-06-13: shaped text measurement, true conceal, block
 > rendering, stable assets, exact hit-testing). Work from that spec.
@@ -132,6 +132,6 @@ Current renderer is stabilized, not yet Obsidian/Typora-complete.
   and bidi layout remain open.
 
 Next renderer work should continue plan rule: parser semantics stay in
-`v3/editor/src/parse.rs`/`style.rs`; shell renderer only measures and paints
+`editor/src/parse.rs`/`style.rs`; shell renderer only measures and paints
 semantic spans. Variable-height content must update height tree before paint,
 and draw remains viewport-bounded.

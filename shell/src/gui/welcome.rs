@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Background, Border, Element, Fill, Task};
-use md3_kernel::{CommandId, CommandRegistry, Keymap};
+use md_kernel::{CommandId, CommandRegistry, Keymap};
 
 use super::{Message, Shell, tokens};
 
@@ -69,7 +69,7 @@ pub fn run_startup(
         StartupWelcome::update,
         StartupWelcome::view,
     )
-    .title("md3")
+    .title("MD Editor")
     .theme(StartupWelcome::theme)
     .subscription(StartupWelcome::subscription)
     .window(iced::window::Settings {

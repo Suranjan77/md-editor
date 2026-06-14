@@ -7,8 +7,8 @@
 
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Fill, Length, Task};
-use md3_kernel::CommandRegistry;
-use md3_vault::Hit;
+use md_kernel::CommandRegistry;
+use md_vault::Hit;
 
 use super::Message;
 use super::tokens;
@@ -18,7 +18,7 @@ use super::tokens;
 #[derive(Debug, Clone)]
 pub struct PdfFindHit {
     pub page: u32,
-    pub quads: Vec<md3_pdf::SelRect>,
+    pub quads: Vec<md_pdf::SelRect>,
     pub text: String,
     pub preview: String,
 }
@@ -79,7 +79,7 @@ pub enum Overlay {
     },
     Confirm {
         message: String,
-        on_confirm: md3_kernel::CommandId,
+        on_confirm: md_kernel::CommandId,
     },
     Settings {
         theme: String,
@@ -300,13 +300,11 @@ pub fn view<'a>(
         let delete_btn = button(text("Delete").size(13))
             .padding([6, 12])
             .style(button::primary)
-            .on_press(Message::RunCommand(md3_kernel::CommandId(
-                "overlay.confirm",
-            )));
+            .on_press(Message::RunCommand(md_kernel::CommandId("overlay.confirm")));
         let cancel_btn = button(text("Cancel").size(13))
             .padding([6, 12])
             .style(button::secondary)
-            .on_press(Message::RunCommand(md3_kernel::CommandId("overlay.close")));
+            .on_press(Message::RunCommand(md_kernel::CommandId("overlay.close")));
         let card = container(
             column![
                 text("Confirm Delete").size(16).color(tokens.danger),
@@ -337,13 +335,11 @@ pub fn view<'a>(
         let confirm_btn = button(text("Confirm").size(13))
             .padding([6, 12])
             .style(button::primary)
-            .on_press(Message::RunCommand(md3_kernel::CommandId(
-                "overlay.confirm",
-            )));
+            .on_press(Message::RunCommand(md_kernel::CommandId("overlay.confirm")));
         let cancel_btn = button(text("Cancel").size(13))
             .padding([6, 12])
             .style(button::secondary)
-            .on_press(Message::RunCommand(md3_kernel::CommandId("overlay.close")));
+            .on_press(Message::RunCommand(md_kernel::CommandId("overlay.close")));
         let card = container(
             column![
                 text("Confirm Action").size(16).color(tokens.danger),

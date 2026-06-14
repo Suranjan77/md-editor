@@ -7,9 +7,9 @@
 //! v3 contract (pillar 2, "documents are peers"): any document opens in any
 //! pane as a tab; split is an explicit layout choice, never a requirement.
 
-use md3_kernel::input::EditorKind;
-use md3_kernel::pane::PaneError;
-use md3_kernel::{SplitAxis, TabId, Workspace};
+use md_kernel::input::EditorKind;
+use md_kernel::pane::PaneError;
+use md_kernel::{SplitAxis, TabId, Workspace};
 
 fn ok<T>(r: Result<T, PaneError>) -> T {
     match r {

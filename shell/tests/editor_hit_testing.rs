@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used)]
 
-use md3_editor::buffer::Command;
-use md3_editor::layout::Measurer;
-use md3_shell::gui::session::MdSession;
-use md3_shell::gui::shaped_measurer::ShapedMeasurer;
+use md_editor::buffer::Command;
+use md_editor::layout::Measurer;
+use md_shell::gui::session::MdSession;
+use md_shell::gui::shaped_measurer::ShapedMeasurer;
 
 fn session(text: &str) -> MdSession {
     MdSession::new(

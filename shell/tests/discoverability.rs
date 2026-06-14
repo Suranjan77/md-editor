@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::overlay::{self, Overlay};
-use md3_shell::gui::welcome::welcome_rows;
-use md3_shell::gui::{Message, Shell};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::overlay::{self, Overlay};
+use md_shell::gui::welcome::welcome_rows;
+use md_shell::gui::{Message, Shell};
 
 fn shell(root: &Path) -> Shell {
     let registry = match default_registry() {

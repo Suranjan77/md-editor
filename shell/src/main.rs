@@ -1,11 +1,11 @@
-//! md3 shell. Startup builds the default registry and keymap; a binding
+//! md-editor shell. Startup builds the default registry and keymap; a binding
 //! conflict makes the process exit non-zero (plan §3.1: conflicts detected
 //! at startup). Modes:
 //!
 //! - default / `<vault-dir>`: the iced GUI (ADR-0100) over the given vault
 //!   (current directory if omitted).
 //! - `--dump-shortcuts` prints the shortcuts table *generated from the
-//!   command registry* — the single source of truth; docs/V3_SHORTCUTS.md is
+//!   command registry* — the single source of truth; docs/SHORTCUTS.md is
 //!   produced by this, never edited by hand.
 //! - `--palette <query>` exercises the registry-backed palette.
 //! - `--demo` walks the BUG-A/BUG-C scenario end to end on the real kernel,
@@ -13,21 +13,21 @@
 
 use std::process::ExitCode;
 
-use md3_kernel::defaults::default_registry;
-use md3_shell::{gui, headless};
+use md_kernel::defaults::default_registry;
+use md_shell::{gui, headless};
 
 fn main() -> ExitCode {
     let registry = match default_registry() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("md3: command registry is invalid: {e}");
+            eprintln!("md-editor: command registry is invalid: {e}");
             return ExitCode::FAILURE;
         }
     };
     let keymap = match registry.keymap() {
         Ok(k) => k,
         Err(e) => {
-            eprintln!("md3: keymap conflict: {e}");
+            eprintln!("md-editor: keymap conflict: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -44,12 +44,12 @@ fn main() -> ExitCode {
                 println!("not supported");
                 return ExitCode::SUCCESS;
             }
-            match md3_shell::desktop::install() {
+            match md_shell::desktop::install() {
                 Ok(()) => {
                     println!("Desktop entry and icons installed successfully.");
                 }
                 Err(e) => {
-                    eprintln!("md3: desktop installation failed: {e}");
+                    eprintln!("md-editor: desktop installation failed: {e}");
                     return ExitCode::FAILURE;
                 }
             }
@@ -59,19 +59,19 @@ fn main() -> ExitCode {
                 println!("not supported");
                 return ExitCode::SUCCESS;
             }
-            match md3_shell::desktop::uninstall() {
+            match md_shell::desktop::uninstall() {
                 Ok(()) => {
                     println!("Desktop entry and icons uninstalled successfully.");
                 }
                 Err(e) => {
-                    eprintln!("md3: desktop uninstallation failed: {e}");
+                    eprintln!("md-editor: desktop uninstallation failed: {e}");
                     return ExitCode::FAILURE;
                 }
             }
         }
         Some("--help") | Some("-h") => {
             println!(
-                "usage: md3-shell [<vault-dir> | --dump-shortcuts | --palette <query> | --demo | --install-desktop | --uninstall-desktop]"
+                "usage: md-editor [<vault-dir> | --dump-shortcuts | --palette <query> | --demo | --install-desktop | --uninstall-desktop]"
             );
         }
         first => {
@@ -84,20 +84,20 @@ fn main() -> ExitCode {
                 let message = requested
                     .map(|path| format!("Vault folder is unavailable: {}", path.display()));
                 if let Err(e) = gui::welcome::run_startup(registry, keymap, message) {
-                    eprintln!("md3: {e}");
+                    eprintln!("md-editor: {e}");
                     return ExitCode::FAILURE;
                 }
                 return ExitCode::SUCCESS;
             };
-            md3_shell::vault_picker::record_recent(&root);
+            md_shell::vault_picker::record_recent(&root);
             // User remaps (plan §3.1): bad rows warn, never block startup.
             let mut keymap = keymap;
-            let report = md3_shell::settings::apply_keymap_overrides(&root, &registry, &mut keymap);
+            let report = md_shell::settings::apply_keymap_overrides(&root, &registry, &mut keymap);
             for warning in &report.warnings {
-                eprintln!("md3: {warning}");
+                eprintln!("md-editor: {warning}");
             }
             if let Err(e) = gui::run(registry, keymap, root) {
-                eprintln!("md3: {e}");
+                eprintln!("md-editor: {e}");
                 return ExitCode::FAILURE;
             }
         }

@@ -47,13 +47,13 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
 
 impl Shell {
     pub(super) fn sidecar_path(&self) -> PathBuf {
-        self.vault_root.join(".md3/sidecar.db")
+        self.vault_root.join(".md-editor/sidecar.db")
     }
 
     pub(super) fn open_tracker_store(
         &self,
-    ) -> Result<md3_vault::tracker::TrackerStore, md3_vault::error::VaultError> {
-        md3_vault::tracker::TrackerStore::open(&self.tracker_db_path)
+    ) -> Result<md_vault::tracker::TrackerStore, md_vault::error::VaultError> {
+        md_vault::tracker::TrackerStore::open(&self.tracker_db_path)
     }
 
     pub(super) fn ensure_index(&mut self) {
@@ -94,16 +94,16 @@ impl Shell {
         }
         self.asset_sizes = self
             .open_sidecar_dir()
-            .and_then(|_| md3_vault::AssetSizeStore::open(&self.sidecar_path()))
+            .and_then(|_| md_vault::AssetSizeStore::open(&self.sidecar_path()))
             .ok();
     }
 
-    pub(super) fn open_sidecar_dir(&self) -> Result<(), md3_vault::VaultError> {
-        let dir = self.vault_root.join(".md3");
-        std::fs::create_dir_all(&dir).map_err(|error| md3_vault::VaultError::io(&dir, error))
+    pub(super) fn open_sidecar_dir(&self) -> Result<(), md_vault::VaultError> {
+        let dir = self.vault_root.join(".md-editor");
+        std::fs::create_dir_all(&dir).map_err(|error| md_vault::VaultError::io(&dir, error))
     }
 
-    pub(super) fn sync_index(&self, index: &mut SearchIndex) -> Result<(), md3_vault::VaultError> {
+    pub(super) fn sync_index(&self, index: &mut SearchIndex) -> Result<(), md_vault::VaultError> {
         #[cfg(feature = "pdfium")]
         {
             if let Some(renderer) = pdf_view::renderer() {
@@ -118,10 +118,10 @@ impl Shell {
 }
 
 #[cfg(feature = "pdfium")]
-struct PdfTextExtractor(&'static md3_pdf::render::PdfRenderer);
+struct PdfTextExtractor(&'static md_pdf::render::PdfRenderer);
 
 #[cfg(feature = "pdfium")]
-impl md3_vault::TextExtractor for PdfTextExtractor {
+impl md_vault::TextExtractor for PdfTextExtractor {
     fn extract(&self, abs_path: &Path) -> Option<String> {
         let page_count = self.0.page_count(abs_path).ok()?;
         let mut text = String::new();

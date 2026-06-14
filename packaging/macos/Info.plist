@@ -5,7 +5,7 @@
   <key>CFBundleDisplayName</key><string>MD Editor</string>
   <key>CFBundleExecutable</key><string>md-editor</string>
   <key>CFBundleIconFile</key><string>md-editor</string>
-  <key>CFBundleIdentifier</key><string>com.suranjan77.md-editor.v3</string>
+  <key>CFBundleIdentifier</key><string>com.suranjan77.md-editor</string>
   <key>CFBundleName</key><string>MD Editor</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>{{VERSION}}</string>

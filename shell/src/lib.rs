@@ -1,4 +1,4 @@
-//! md3 shell library (ADR-0100: the only v3 crate that may know about iced).
+//! md-editor shell library (ADR-0100: the only crate that may know about iced).
 //!
 //! Split out of the binary so the update loop is integration-testable without
 //! a window: tests construct [`gui::Shell`], feed it [`gui::Message`]s, and
@@ -10,7 +10,7 @@
 //!   through the tile renderer (behind the `pdfium` feature).
 //! - [`headless`] — the CLI modes CI runs (`--dump-shortcuts`, `--palette`,
 //!   `--demo`).
-//! - [`settings`] — user keymap overrides from `<vault>/.md3/keymap.json`
+//! - [`settings`] — user keymap overrides from `<vault>/.md-editor/keymap.json`
 //!   (plan §3.1), applied to the kernel keymap at startup.
 
 pub mod desktop;

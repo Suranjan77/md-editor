@@ -1,7 +1,11 @@
-# MD-Editor v3 workspace — see docs/V3_GROUND_UP_PLAN.md and docs/V3_HANDOFF.md.
-# Independent from the root (v2) workspace on purpose: v3 must never import v2.
+# MD Editor — a local-first Markdown + PDF workspace.
+# Architecture and contributor docs live in docs/ (see docs/ARCHITECTURE.md).
 [workspace]
 members = ["kernel", "editor", "vault", "pdf", "shell", "xtask"]
+# Exclude only the `xtask` packaging tool from the default set, so a bare
+# `cargo run` resolves to the single remaining binary (`md-editor`) while
+# `cargo build`/`cargo test` still cover every real crate.
+default-members = ["kernel", "editor", "vault", "pdf", "shell"]
 resolver = "2"
 
 [workspace.package]

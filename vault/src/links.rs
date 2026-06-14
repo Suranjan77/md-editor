@@ -1,8 +1,7 @@
-//! Link graph service (plan §3.4): wikilink extraction, backlinks/outlinks,
-//! broken-link queries, and rename repair. Mined from v2's
-//! `core/src/infrastructure/indexer.rs`, rebuilt without the regex
-//! dependency and with rename repair as a first-class, pure operation
-//! (the caller applies the rewritten contents via [`crate::atomic_save`]).
+//! Link graph service: wikilink extraction, backlinks/outlinks, broken-link
+//! queries, and rename repair. Implemented without a regex dependency, with
+//! rename repair as a first-class, pure operation (the caller applies the
+//! rewritten contents via [`crate::atomic_save`]).
 //!
 //! All paths are **relative to the vault root**.
 

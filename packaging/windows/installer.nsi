@@ -13,7 +13,7 @@ RequestExecutionLevel user
 Name "MD Editor"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\MD Editor"
-InstallDirRegKey HKCU "Software\MD Editor V3" "InstallDir"
+InstallDirRegKey HKCU "Software\MD Editor" "InstallDir"
 Page directory
 Page instfiles
 UninstPage uninstConfirm
@@ -30,16 +30,16 @@ Section "MD Editor"
   File /r "${SOURCE_DIR}\THIRD_PARTY_LICENSES\*"
   Delete "$INSTDIR\portable.flag"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\MD Editor V3" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\MD Editor V3" "DisplayName" "MD Editor"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\MD Editor V3" "DisplayVersion" "${APP_VERSION}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\MD Editor V3" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+  WriteRegStr HKCU "Software\MD Editor" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\MD Editor" "DisplayName" "MD Editor"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\MD Editor" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\MD Editor" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   CreateShortcut "$SMPROGRAMS\MD Editor.lnk" "$INSTDIR\md-editor.exe"
 SectionEnd
 
 Section "Uninstall"
   Delete "$SMPROGRAMS\MD Editor.lnk"
   RMDir /r "$INSTDIR"
-  DeleteRegKey HKCU "Software\MD Editor V3"
-  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\MD Editor V3"
+  DeleteRegKey HKCU "Software\MD Editor"
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\MD Editor"
 SectionEnd

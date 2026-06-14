@@ -1,4 +1,4 @@
-use md3_editor::{Buffer, Command, Selection};
+use md_editor::{Buffer, Command, Selection};
 
 #[test]
 fn test_formatting_bold_italic_code_wikilink() {

@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use md3_vault::{AnnotationStore, NewAnnotation, Quad, VaultError, document_hash};
+use md_vault::{AnnotationStore, NewAnnotation, Quad, VaultError, document_hash};
 
 fn ok<T>(r: Result<T, VaultError>) -> T {
     match r {

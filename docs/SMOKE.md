@@ -1,8 +1,8 @@
 GUI automation setup and COSMIC sandbox constraints:
-`docs/V3_GUI_TESTING.md`. Verify tools with
-`python3 scripts/v3-gui-probe.py check` from repository root.
+`docs/GUI_TESTING.md`. Verify tools with
+`python3 scripts/gui-probe.py check` from repository root.
 
-Run: cd v3 && cargo run -p md3-shell --features pdfium -- <a real vault with a real-world PDF>
+Run: cargo run -p md-shell --features pdfium -- <a real vault with a real-world PDF>
  1. Quick-open (ctrl+p) a .md file; type; undo (ctrl+z); redo; save (ctrl+s) — dirty dot clears.
  2. Split (ctrl+\), open a PDF in the right pane. Both panes render.
  3. ctrl+z in the PDF pane opens zoom input (NOT editor undo); ctrl+z in the md pane undoes (Bug A check).

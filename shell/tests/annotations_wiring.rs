@@ -8,11 +8,11 @@
 
 use std::path::{Path, PathBuf};
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::{Message, Shell};
-use md3_vault::{AnnotationStore, NewAnnotation, Quad, document_hash};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::{Message, Shell};
+use md_vault::{AnnotationStore, NewAnnotation, Quad, document_hash};
 use tempfile::TempDir;
 
 fn chord(s: &str) -> Chord {
@@ -57,7 +57,7 @@ fn open_via_quick_open(shell: &mut Shell, name: &str) {
 }
 
 fn sidecar(root: &Path) -> PathBuf {
-    root.join(".md3/sidecar.db")
+    root.join(".md-editor/sidecar.db")
 }
 
 /// A vault containing a file named `paper.pdf`. The bytes are an arbitrary
@@ -71,7 +71,7 @@ fn vault_with_pdf(real_fixture: bool) -> (TempDir, PathBuf) {
     let target = dir.path().join("paper.pdf");
     if real_fixture {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests-fixtures/pdf/multipage-outline.pdf");
+            .join("../tests-fixtures/pdf/multipage-outline.pdf");
         if let Err(e) = std::fs::copy(&fixture, &target) {
             panic!("copy fixture: {e}");
         }
@@ -132,8 +132,8 @@ fn export_command_writes_a_markdown_summary_into_the_vault() {
 
     // Seed an annotation as a previous session would have left it.
     {
-        if let Err(e) = std::fs::create_dir_all(dir.path().join(".md3")) {
-            panic!("mkdir .md3: {e}");
+        if let Err(e) = std::fs::create_dir_all(dir.path().join(".md-editor")) {
+            panic!("mkdir .md-editor: {e}");
         }
         let mut store = match AnnotationStore::open(&sidecar(dir.path())) {
             Ok(s) => s,
@@ -193,7 +193,7 @@ fn search_index_persists_in_the_sidecar_across_sessions() {
 
     // A fresh index on the same sidecar sees everything as unchanged —
     // the cross-run cold-start guarantee, now real in the shell.
-    let mut index = match md3_vault::SearchIndex::open(&sidecar(dir.path())) {
+    let mut index = match md_vault::SearchIndex::open(&sidecar(dir.path())) {
         Ok(i) => i,
         Err(e) => panic!("sidecar index: {e}"),
     };
@@ -246,7 +246,7 @@ fn shell_with_selection() -> Option<(TempDir, Shell)> {
     };
     let page = layout.placed_pages(session.scroll, viewport)[0];
     let zoom = layout.zoom();
-    let center = |c: &md3_pdf::CharBox| {
+    let center = |c: &md_pdf::CharBox| {
         (
             page.x + (c.x0 + c.x1) / 2.0 * zoom,
             page.y + (c.y0 + c.y1) / 2.0 * zoom,
@@ -269,7 +269,7 @@ fn shell_with_selection() -> Option<(TempDir, Shell)> {
 }
 
 #[cfg(feature = "pdfium")]
-fn pdf(shell: &Shell) -> &md3_shell::gui::session::PdfSession {
+fn pdf(shell: &Shell) -> &md_shell::gui::session::PdfSession {
     match shell.focused_pdf() {
         Some(s) => s,
         None => panic!("no focused pdf session"),

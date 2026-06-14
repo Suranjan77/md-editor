@@ -1,4 +1,4 @@
-//! Editor engine for md-editor v3 (plan §3.2) — toolkit-agnostic by
+//! Editor engine for MD Editor — toolkit-agnostic by
 //! construction (ADR-0100): nothing in this crate knows about iced.
 //!
 //! Text model: [`buffer::Buffer`] — ropey rope, `Vec<Selection>` multi-cursor

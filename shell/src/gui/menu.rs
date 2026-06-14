@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, mouse_area, row, stack, text};
 use iced::{Background, Border, Element, Fill, Padding};
-use md3_kernel::input::EditorKind;
-use md3_kernel::{CommandId, CommandRegistry};
+use md_kernel::input::EditorKind;
+use md_kernel::{CommandId, CommandRegistry};
 
 use super::{Message, tokens};
 

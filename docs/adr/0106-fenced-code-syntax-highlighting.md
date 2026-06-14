@@ -2,7 +2,7 @@
 
 - Status: accepted (2026-06-13)
 - Scope: v3 Markdown fenced-code highlighting.
-- Spec: `V3_IMPLEMENTATION_PLAN.md` Phase 7.6.
+- Spec: `development/IMPLEMENTATION_PLAN.md` Phase 7.6.
 
 ## Context
 

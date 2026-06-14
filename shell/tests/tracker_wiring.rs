@@ -2,11 +2,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::Chord;
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::tracker_view::{TrackerMessage, TrackerTab};
-use md3_shell::gui::{Message, Shell, ToastKind};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::Chord;
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::tracker_view::{TrackerMessage, TrackerTab};
+use md_shell::gui::{Message, Shell, ToastKind};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -37,7 +37,7 @@ fn new_shell(root: &Path) -> Shell {
         registry,
         keymap,
         root.to_path_buf(),
-        root.join(".md3/tracker.db"),
+        root.join(".md-editor/tracker.db"),
     )
 }
 

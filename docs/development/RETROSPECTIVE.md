@@ -1,6 +1,6 @@
 # V3 Ground-Up Rebuild — Retrospective (2026-06-10 → 2026-06-11)
 
-> Source material: `docs/V3_HANDOFF.md` (status board + decisions log), git history on
+> Source material: `docs/HANDOFF.md` (status board + decisions log), git history on
 > `pdf-improv`, and the working tree as of 2026-06-11.
 
 ## TL;DR

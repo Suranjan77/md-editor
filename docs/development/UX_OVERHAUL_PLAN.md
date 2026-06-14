@@ -1,7 +1,7 @@
 # V3 UX Overhaul Plan — from keyboard tool to GUI application
 
-> Status ledger: `docs/V3_HANDOFF.md` (update it after every unit of work).
-> Sibling plan: `docs/V3_IMPLEMENTATION_PLAN.md` (its §0 working rules, §0.4
+> Status ledger: `docs/HANDOFF.md` (update it after every unit of work).
+> Sibling plan: `docs/IMPLEMENTATION_PLAN.md` (its §0 working rules, §0.4
 > pitfalls register, and verification gate apply to **every** step here —
 > reread them first; they are not repeated in full).
 >
@@ -18,7 +18,7 @@ reader/editor". Concretely, with no chord knowledge a new user cannot:
 - see or navigate the vault (the file panel exists but starts closed, and
   nothing on screen says `ctrl+b`);
 - split the view, open the tracker, or open a PDF's TOC;
-- discover *any* shortcut from inside the app (`docs/V3_SHORTCUTS.md` is a
+- discover *any* shortcut from inside the app (`docs/SHORTCUTS.md` is a
   file in the repo, not a surface in the product);
 - do anything with the mouse beyond clicking tabs, tree rows, and overlay
   rows that are already on screen.
@@ -30,7 +30,7 @@ panels. **v2's GUI is the floor, not the ceiling** ("or better" — user).
 
 ## North star and acceptance bar
 
-**The no-keyboard test:** every item of `docs/V3_SMOKE.md` except literal
+**The no-keyboard test:** every item of `docs/SMOKE.md` except literal
 text entry can be completed with the mouse alone. When that's true, this
 plan is done. Each phase below adds its own mouse-driven smoke items as it
 lands.
@@ -41,7 +41,7 @@ lands.
    `Message::RunCommand(CommandId)`, whose handler is one line:
    `self.run_command(cmd)`. Every clickable element routes through it. If a
    click needs behavior no command has, *register a new command first*
-   (`v3/kernel/src/defaults.rs`) — the palette, the shortcuts doc, the help
+   (`kernel/src/defaults.rs`) — the palette, the shortcuts doc, the help
    overlay, and the keymap-override file must always tell the whole truth.
    Widgets still bind **no keys** (BUG-A discipline; pitfall P9).
 2. **The discoverability invariant (CI-enforced from Phase 1 on):** every
@@ -110,7 +110,7 @@ tested windowlessly; the view just renders it.
 ### 0.3 `help.shortcuts` — the app explains itself
 
 New command `help.shortcuts` ("Keyboard Shortcuts", category Help, chord
-`ctrl+/`; check `docs/V3_SHORTCUTS.md` for conflicts first, P9). Handler
+`ctrl+/`; check `docs/SHORTCUTS.md` for conflicts first, P9). Handler
 opens a new list overlay variant `Overlay::Help` whose rows come straight
 from `registry.specs()`: `title · category` left, chord right; typing
 filters (reuse the palette's subsequence matcher); **enter runs the
@@ -161,7 +161,7 @@ their context is clear, starting with the floating PDF control bar.
 
 Port v2's canvas-drawn icons (`native/src/views/icons.rs` — Folder, File,
 Search, Command, Split, ListTree, Clock, Chevrons, Trash, X, …) into
-`v3/shell/src/gui/icons.rs`. It is self-contained iced-canvas drawing, no
+`shell/src/gui/icons.rs`. It is self-contained iced-canvas drawing, no
 font/asset dependency; colors become token parameters. This is the one
 place straight porting (not redesign) is right.
 
@@ -229,7 +229,7 @@ back/forward · highlight · note · export annotations.
 
 ### 1.5 The discoverability invariant test (ground rule 2)
 
-`v3/shell/tests/mouse_coverage.rs`: every id in `registry.specs()` is in
+`shell/tests/mouse_coverage.rs`: every id in `registry.specs()` is in
 `menu_model` ∪ context-local controls ∪ `MOUSE_EXEMPT` (exempt: `overlay.close`,
 `overlay.confirm`, and nothing else without a written reason next to it).
 This is the test that keeps the GUI honest forever.
@@ -248,12 +248,12 @@ v2 reference: `native/src/views/sidebar.rs`, `modals.rs`, `welcome.rs`.
 New commands (Workspace scope, palette + menu + context-menu reachable):
 `file.new-note`, `file.new-folder`, `file.rename`, `file.delete`. Handlers
 prompt via new input overlays (`Overlay::NameInput { purpose, input }` —
-reuses the raw-input path), then go through **md3-vault**:
+reuses the raw-input path), then go through **md-vault**:
 
 - create: `atomic_save` an empty note + targeted `sync_paths`; open it.
 - rename/move: fs rename, then `LinkGraph::rename_file` + `rewrite_links`
   + `atomic_save` per referrer (the vault service exists and is tested —
-  `v3/vault/src/links.rs`; this finally wires link repair end to end),
+  `vault/src/links.rs`; this finally wires link repair end to end),
   re-sync index, update open sessions' `rel_path`/`DocumentId` mapping
   (decide: keep `DocumentId` stable across rename — pin in decision log).
 - delete: confirm modal first (Phase 6 modal or a minimal inline one),
@@ -282,7 +282,7 @@ Phase 4 panels — build it as a small reusable `gui/drag.rs` helper.
 
 ### 2.4 Vault picker / welcome window
 
-`md3-shell` with no/invalid vault arg currently exits(?) — give it v2's
+`md-shell` with no/invalid vault arg currently exits(?) — give it v2's
 welcome flow instead: recent-vaults list (stored via
 `directories::ProjectDirs` config, same crate the tracker already uses),
 "Open Vault…" (`rfd` file dialog — new dependency, record the decision; v2
@@ -314,7 +314,7 @@ The kernel already has `split_with_ratio` (clamped 0.05–0.95) and ratios
 render via `FillPortion`. Add a divider strip (6 px) between split children
 in `layout_view`; drag emits `Message::SplitRatioDragged { node_path, ratio }`.
 Kernel needs one new API: `PaneTree::set_ratio(path_or_id, f32)` — add it
-with unit tests in `v3/kernel` (find the split node; same clamps). Ratios
+with unit tests in `kernel` (find the split node; same clamps). Ratios
 already persist in snapshots (`split_with_ratio` restore path is live).
 Cursor: `ResizingHorizontally/Vertically` on hover.
 
@@ -356,7 +356,7 @@ toolbar — per pane, so split PDFs each get one): page `N / M` (click N →
 `pdf.go-to-page`), prev/next page, zoom −/%/+, **fit-width / fit-page**
 (new commands `pdf.fit-width`, `pdf.fit-page`; pure math from
 `DocLayout` page sizes ÷ viewport — add `DocLayout::zoom_for_fit_width
-(viewport_w)` etc. in `v3/pdf/src/scroll.rs` with unit tests), find, TOC,
+(viewport_w)` etc. in `pdf/src/scroll.rs` with unit tests), find, TOC,
 back/forward.
 
 Direction correction (user, 2026-06-12): controls render as a floating bar
@@ -396,7 +396,7 @@ it — pin the precedence in a test).
 
 The chrome makes render hitches *more* visible, and the find/TOC panels
 want glyphs eagerly. Do the worker as specced in
-`V3_IMPLEMENTATION_PLAN.md` Phase 5.1 (worker thread owning the pdfium
+`IMPLEMENTATION_PLAN.md` Phase 5.1 (worker thread owning the pdfium
 mutex side, results via `Task`/`Subscription`); removes the 200-page find
 cap. Respect P4 (one worker = the serialization).
 
@@ -413,7 +413,7 @@ status board.
 Buttons: bold, italic, inline code, heading cycle, bullet list, checkbox,
 wikilink. **These are engine commands first** (impl plan Phase 5.4
 "editing ergonomics bundle": each is a `Command` through the bus with
-undo-coalescing rules + property tests in `v3/editor`). The GUI buttons
+undo-coalescing rules + property tests in `editor`). The GUI buttons
 land *with* their commands, one or two at a time — do not build dead
 buttons ahead of the engine.
 
@@ -429,7 +429,7 @@ through the existing undo machinery. The PDF find overlay is unaffected.
 
 The parser already classifies heading lines (`LineKind` from
 `MarkdownStyler`) — expose `EditorDocument::headings() -> Vec<(level,
-text, line)>` (pure, tested in `v3/editor`), render as a docked panel,
+text, line)>` (pure, tested in `editor`), render as a docked panel,
 click moves the caret + scrolls. Shares the docked-panel scaffolding from
 4.2.
 
@@ -479,7 +479,7 @@ the *session* but a dirty buffer's content loss is silent), file delete
 ### 6.4 Settings UI (impl plan P5.6)
 
 A settings surface (overlay or tab): theme choice (dark/light), keymap
-override list rendered from `<vault>/.md3/keymap.json` with add/remove
+override list rendered from `<vault>/.md-editor/keymap.json` with add/remove
 (writes the same file `settings.rs` already parses; conflicts validated
 via the kernel's checker before save).
 
@@ -547,5 +547,5 @@ yes, `ws.open_overlay("menu")`) and pin it in the decision log.
 | ~~`pdf.highlight-color`~~ | already landed (palette-only, 2026-06-12) | | | 4.3 |
 | ~~`note.backlinks`~~ | already landed (ctrl+shift+b, md scope, 2026-06-12) — 5.4 only needs the *docked panel* form | | | 5.4 |
 
-(Verify every chord against `docs/V3_SHORTCUTS.md` at the time of adding —
+(Verify every chord against `docs/SHORTCUTS.md` at the time of adding —
 P9; the table above was checked against the doc as of 2026-06-12.)

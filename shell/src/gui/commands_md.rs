@@ -8,7 +8,7 @@ impl Shell {
         };
         let abs = root.join(&session.rel_path);
         let text = session.doc.buffer().text();
-        match md3_vault::atomic_save(&abs, text.as_bytes()) {
+        match md_vault::atomic_save(&abs, text.as_bytes()) {
             Ok(()) => {
                 session.doc.mark_saved();
                 let rel = session.rel_path.clone();
@@ -47,7 +47,7 @@ impl Shell {
     }
 
     pub(super) fn note_backlinks(&self, rel_path: &str) -> Vec<String> {
-        let mut graph = md3_vault::LinkGraph::new();
+        let mut graph = md_vault::LinkGraph::new();
         for rel in scan_vault(&self.vault_root) {
             if !rel.ends_with(".md") {
                 continue;
@@ -64,7 +64,7 @@ impl Shell {
             .collect()
     }
 
-    pub(super) fn search_vault(&mut self, query: &str) -> Vec<md3_vault::Hit> {
+    pub(super) fn search_vault(&mut self, query: &str) -> Vec<md_vault::Hit> {
         let Some(index) = self.index.as_ref() else {
             return Vec::new();
         };
@@ -82,7 +82,7 @@ impl Shell {
                 }
             }
             "note.backlinks" => {
-                let Some((path, md3_kernel::input::EditorKind::Markdown)) = self.focused_doc_info()
+                let Some((path, md_kernel::input::EditorKind::Markdown)) = self.focused_doc_info()
                 else {
                     self.status = "backlinks: focus a note".to_string();
                     return Some(Task::none());
@@ -100,17 +100,17 @@ impl Shell {
             }
             "editor.undo" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::Undo);
+                    s.apply(md_editor::buffer::Command::Undo);
                 }
             }
             "editor.redo" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::Redo);
+                    s.apply(md_editor::buffer::Command::Redo);
                 }
             }
             "editor.select-all" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::SelectAll);
+                    s.apply(md_editor::buffer::Command::SelectAll);
                 }
             }
             "editor.copy" => {
@@ -136,7 +136,7 @@ impl Shell {
                     .filter(|t| !t.is_empty());
                 if let Some(text) = text {
                     if let Some(s) = self.focused_md_mut() {
-                        s.apply(md3_editor::buffer::Command::DeleteBackward);
+                        s.apply(md_editor::buffer::Command::DeleteBackward);
                     }
                     self.status = format!("{} chars cut", text.chars().count());
                     return Some(iced::clipboard::write(text));
@@ -146,67 +146,67 @@ impl Shell {
             }
             "editor.toggle-bold" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::ToggleBold);
+                    s.apply(md_editor::buffer::Command::ToggleBold);
                 }
             }
             "editor.toggle-italic" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::ToggleItalic);
+                    s.apply(md_editor::buffer::Command::ToggleItalic);
                 }
             }
             "editor.toggle-code" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::ToggleCode);
+                    s.apply(md_editor::buffer::Command::ToggleCode);
                 }
             }
             "editor.heading-cycle" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::HeadingCycle);
+                    s.apply(md_editor::buffer::Command::HeadingCycle);
                 }
             }
             "editor.heading-1" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::SetHeading(1));
+                    s.apply(md_editor::buffer::Command::SetHeading(1));
                 }
             }
             "editor.heading-2" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::SetHeading(2));
+                    s.apply(md_editor::buffer::Command::SetHeading(2));
                 }
             }
             "editor.heading-3" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::SetHeading(3));
+                    s.apply(md_editor::buffer::Command::SetHeading(3));
                 }
             }
             "editor.heading-4" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::SetHeading(4));
+                    s.apply(md_editor::buffer::Command::SetHeading(4));
                 }
             }
             "editor.heading-5" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::SetHeading(5));
+                    s.apply(md_editor::buffer::Command::SetHeading(5));
                 }
             }
             "editor.heading-6" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::SetHeading(6));
+                    s.apply(md_editor::buffer::Command::SetHeading(6));
                 }
             }
             "editor.toggle-bullet" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::ToggleBullet);
+                    s.apply(md_editor::buffer::Command::ToggleBullet);
                 }
             }
             "editor.toggle-checkbox" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::ToggleCheckbox);
+                    s.apply(md_editor::buffer::Command::ToggleCheckbox);
                 }
             }
             "editor.toggle-wikilink" => {
                 if let Some(s) = self.focused_md_mut() {
-                    s.apply(md3_editor::buffer::Command::ToggleWikilink);
+                    s.apply(md_editor::buffer::Command::ToggleWikilink);
                 }
             }
             "editor.save" => return Some(self.save_focused()),
@@ -232,7 +232,7 @@ impl Shell {
                 }
                 if let Some(session) = self.focused_md_mut() {
                     session.apply(Command::SetSelections(vec![
-                        md3_editor::buffer::Selection::new(anchor, head),
+                        md_editor::buffer::Selection::new(anchor, head),
                     ]));
                 }
                 Task::none()
@@ -276,7 +276,7 @@ impl Shell {
                             .split('#')
                             .next()
                             .unwrap_or_default();
-                        let path = md3_vault::resolve_target(target)
+                        let path = md_vault::resolve_target(target)
                             .to_string_lossy()
                             .to_string();
                         self.open_document(&path);

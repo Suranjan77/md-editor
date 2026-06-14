@@ -14,7 +14,7 @@
 //! Plus the v3-specific bridge property: feeding every [`ChangedSpan`] to a
 //! [`LayoutEngine`] keeps layout and buffer in perfect line-level agreement.
 
-use md3_editor::{
+use md_editor::{
     BlockState, Buffer, Command, ConcealMode, LayoutEngine, LineMeasure, Measurer, Movement,
     Selection, StyledLine, Styler,
 };
@@ -249,7 +249,7 @@ impl Measurer for CountMeasurer {
 }
 
 /// Drive a buffer and a layout engine through random edits, syncing layout
-/// only via [`md3_editor::ChangedSpan`]. They must never disagree on line
+/// only via [`md_editor::ChangedSpan`]. They must never disagree on line
 /// count — the exact failure mode behind v2's BUG-B family.
 #[test]
 fn changed_spans_keep_layout_in_lockstep_with_buffer() {

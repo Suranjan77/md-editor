@@ -7,10 +7,10 @@
 
 use std::path::Path;
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::{Message, Shell};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::{Message, Shell};
 use tempfile::TempDir;
 
 fn chord(s: &str) -> Chord {
@@ -39,8 +39,8 @@ fn type_text(shell: &mut Shell, text: &str) {
 /// Vault with the multipage fixture copied in; the shell has it open and
 /// focused. Returns `None` (skip) when pdfium isn't available.
 fn shell_with_fixture() -> Option<(TempDir, Shell)> {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests-fixtures/pdf/multipage-outline.pdf");
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests-fixtures/pdf/multipage-outline.pdf");
     let dir = match TempDir::new() {
         Ok(d) => d,
         Err(e) => panic!("tempdir: {e}"),
@@ -70,7 +70,7 @@ fn shell_with_fixture() -> Option<(TempDir, Shell)> {
     Some((dir, shell))
 }
 
-fn pdf(shell: &Shell) -> &md3_shell::gui::session::PdfSession {
+fn pdf(shell: &Shell) -> &md_shell::gui::session::PdfSession {
     match shell.focused_pdf() {
         Some(s) => s,
         None => panic!("no focused pdf session"),
@@ -171,7 +171,7 @@ fn go_to_page_overlay_jumps_and_zoom_overlay_re_anchors() {
         session
             .tiles
             .keys()
-            .any(|k| k.bucket == md3_pdf::zoom_bucket(1.5)),
+            .any(|k| k.bucket == md_pdf::zoom_bucket(1.5)),
         "tiles rendered in the new zoom bucket"
     );
     let status = shell.status();

@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use md3_kernel::defaults::default_registry;
-use md3_shell::gui::{Message, Shell};
+use md_kernel::defaults::default_registry;
+use md_shell::gui::{Message, Shell};
 
 fn shell(root: &Path) -> Shell {
     unsafe {

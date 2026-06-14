@@ -15,9 +15,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use cosmic_text::FontSystem;
-use md3_editor::buffer::{Command, Movement};
-use md3_shell::gui::session::MdSession;
-use md3_shell::gui::shaped_measurer::ShapedMeasurer;
+use md_editor::buffer::{Command, Movement};
+use md_shell::gui::session::MdSession;
+use md_shell::gui::shaped_measurer::ShapedMeasurer;
 
 fn large_document(lines: usize) -> String {
     let mut text = String::with_capacity(lines * 48);

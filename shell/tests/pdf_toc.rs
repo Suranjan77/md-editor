@@ -4,12 +4,12 @@
 
 use std::path::Path;
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
 #[cfg(feature = "pdfium")]
-use md3_shell::gui::overlay::Overlay;
-use md3_shell::gui::{Message, Shell};
+use md_shell::gui::overlay::Overlay;
+use md_shell::gui::{Message, Shell};
 use tempfile::TempDir;
 
 fn chord(s: &str) -> Chord {
@@ -61,7 +61,7 @@ fn vault(real_fixture: bool) -> TempDir {
     let target = dir.path().join("paper.pdf");
     if real_fixture {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests-fixtures/pdf/multipage-outline.pdf");
+            .join("../tests-fixtures/pdf/multipage-outline.pdf");
         if let Err(e) = std::fs::copy(&fixture, &target) {
             panic!("copy fixture: {e}");
         }

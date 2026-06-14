@@ -1,6 +1,6 @@
 use iced::widget::canvas;
 use iced::{Point, Size};
-use md3_editor::layout::StyledLine;
+use md_editor::layout::StyledLine;
 
 use super::{content_left, content_width, palette};
 use crate::gui::shaped_measurer::ShapedMeasurer;

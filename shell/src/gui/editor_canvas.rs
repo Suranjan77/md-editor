@@ -14,10 +14,10 @@ pub(crate) use geometry::{content_left, content_width, wrap_columns};
 mod selection;
 use iced::widget::canvas;
 use iced::{Color, Font, Point, Rectangle, Size, mouse};
-use md3_editor::layout::{LineMeasure, Measurer, StyledLine};
-use md3_editor::parse::LineKind;
-use md3_editor::style::SpanKind;
-use md3_kernel::pane::TabId;
+use md_editor::layout::{LineMeasure, Measurer, StyledLine};
+use md_editor::parse::LineKind;
+use md_editor::style::SpanKind;
+use md_kernel::pane::TabId;
 use selection::paint_selection;
 
 pub(crate) const LINE_HEIGHT: f32 = 27.0;
@@ -224,7 +224,7 @@ impl EditorCanvas<'_> {
             .unwrap_or_else(|| self.session.doc.line_count().saturating_sub(1));
         let line_top = self.session.doc.layout().offset_of(line).unwrap_or(0.0) as f32;
         let styled = self.session.doc.styled_line(line).unwrap_or_else(|| {
-            md3_editor::layout::StyledLine::plain("", md3_editor::layout::ConcealMode::Concealed)
+            md_editor::layout::StyledLine::plain("", md_editor::layout::ConcealMode::Concealed)
         });
         let local_x = pos.x - content_left(bounds.width);
         let local_y = y - line_top;

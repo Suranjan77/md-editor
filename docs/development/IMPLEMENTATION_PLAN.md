@@ -3,9 +3,9 @@
 > Audience: an agent (or human) who has **not** read the rest of this repo.
 > Follow phases in order. Phase 0 exists because completed features kept
 > shipping with paint-level bugs the test suite could not see; do not skip it.
-> Companion documents: `docs/V3_HANDOFF.md` (execution ledger — update it
-> after every phase), `docs/V3_GROUND_UP_PLAN.md` (the master plan, cited as
-> "plan §…"), `docs/V3_SHORTCUTS.md` (generated — never edit by hand).
+> Companion documents: `docs/HANDOFF.md` (execution ledger — update it
+> after every phase), `docs/GROUND_UP_PLAN.md` (the master plan, cited as
+> "plan §…"), `docs/SHORTCUTS.md` (generated — never edit by hand).
 >
 > **Current position (2026-06-13):** Phases 0–5, UX phases 0–6, course
 > correction 6.0–6.6, and Typora-grade phases 7.0–7.6 are implemented.
@@ -41,13 +41,13 @@ shell knows file formats and iced.
   `Result<_, String>` is banned in v3 crates — use `thiserror` enums.
 - Every keystroke enters through `Shell::on_key` → `Workspace::handle_key`.
   **Never** give a widget its own key binding (that is v2's Bug A).
-- Every user action is a registered command (`v3/kernel/src/defaults.rs`).
+- Every user action is a registered command (`kernel/src/defaults.rs`).
   New command = new `spec(...)` entry there + handler arm in
   `gui/mod.rs::run_command` + regenerate the shortcuts doc (see gate below).
 - New SQLite tables go through `vault::migrations` with a **new** component
   name or a new numbered step. Never edit an existing migration (a
   fingerprint test will fail if you do).
-- The decision log in `V3_HANDOFF.md` is append-only, newest last.
+- The decision log in `HANDOFF.md` is append-only, newest last.
 
 The following rules were added 2026-06-12 after a course-correction review
 (see Phase 6). Each one exists because it was violated; none is optional.
@@ -100,12 +100,12 @@ instruction — sprawl is how plans stop being followed.
 
 | Authority | Document |
 |---|---|
-| Product bar, architecture, quality gates | `V3_GROUND_UP_PLAN.md` |
-| Working rules + step-by-step next work | `V3_IMPLEMENTATION_PLAN.md` (this file) |
-| UX direction and chrome phases | `V3_UX_OVERHAUL_PLAN.md` |
-| Execution state (status board, decision log) | `V3_HANDOFF.md` |
+| Product bar, architecture, quality gates | `GROUND_UP_PLAN.md` |
+| Working rules + step-by-step next work | `IMPLEMENTATION_PLAN.md` (this file) |
+| UX direction and chrome phases | `UX_OVERHAUL_PLAN.md` |
+| Execution state (status board, decision log) | `HANDOFF.md` |
 | Dated reports (e.g. `V3_STABILIZATION_*.md`) | historical record only — never work from them directly |
-| `V3_SHORTCUTS.md` | generated — never hand-edit |
+| `SHORTCUTS.md` | generated — never hand-edit |
 
 ### 0.3 The verification gate (run after every unit of work)
 
@@ -113,20 +113,20 @@ instruction — sprawl is how plans stop being followed.
 cd v3
 cargo fmt --all                                            # then commit no diff
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --workspace --all-targets --features md3-shell/pdfium -- -D warnings
+cargo clippy --workspace --all-targets --features md-shell/pdfium -- -D warnings
 cargo test  --workspace
-cargo test  --workspace --features md3-shell/pdfium
-cargo run -p md3-shell -- --demo                           # must end all-ok
-cargo run -q -p md3-shell -- --dump-shortcuts > ../docs/V3_SHORTCUTS.md
-git diff --exit-code ../docs/V3_SHORTCUTS.md               # fresh ⇒ no diff (commit it if you added commands)
+cargo test  --workspace --features md-shell/pdfium
+cargo run -p md-shell -- --demo                           # must end all-ok
+cargo run -q -p md-shell -- --dump-shortcuts > ../docs/SHORTCUTS.md
+git diff --exit-code ../docs/SHORTCUTS.md               # fresh ⇒ no diff (commit it if you added commands)
 ```
 
 pdfium-gated tests must **skip, not fail** when `libpdfium` is absent
 (pattern: `let Some(renderer) = renderer() else { eprintln!("skipping…"); return; }`).
 
 A task is *done* when: the gate passes, new behavior has tests at the lowest
-layer that can express it, the manual smoke checklist (`docs/V3_SMOKE.md`,
-created in Phase 0) passes for touched surfaces, and `V3_HANDOFF.md` has a
+layer that can express it, the manual smoke checklist (`docs/SMOKE.md`,
+created in Phase 0) passes for touched surfaces, and `HANDOFF.md` has a
 status-board row + decision-log entries for any non-obvious choice.
 
 ### 0.4 Pitfalls register — bugs this codebase already shipped. Reread the relevant entry before touching that area.
@@ -141,7 +141,7 @@ status-board row + decision-log entries for any non-obvious choice.
 | P6 | pdfium text | `\r\n` come back as control chars and are dropped by `page_chars`, so multi-word search can't match across a line wrap. | Known limitation; don't "fix" it ad hoc — whitespace-elastic matching is a pure `select::find` change with tests. |
 | P7 | status line | Closed in UX Phase 0.4: command messages and caret/page position are separate fields. | `sync_status()` writes only the position segment; handlers write only the message segment. Never merge them again. |
 | P8 | borrows | `self.focused_pdf_mut()` borrows all of `self`; touching `self.status`/`self.vault_root` while it lives won't compile. | Clone `let root = self.vault_root.clone();` *before* taking the session; write `self.status` *after* the last session use. |
-| P9 | keymap | A chord claimed by any reachable scope never falls through to raw input. Raw-input matches in `pdf_raw_input`/`editor_raw_input` ignore modifiers. | Check `docs/V3_SHORTCUTS.md` before picking a chord. Bind in the narrowest scope that works. Overlay scope is a modal fence — while an overlay is open only Overlay+Global resolve. |
+| P9 | keymap | A chord claimed by any reachable scope never falls through to raw input. Raw-input matches in `pdf_raw_input`/`editor_raw_input` ignore modifiers. | Check `docs/SHORTCUTS.md` before picking a chord. Bind in the narrowest scope that works. Overlay scope is a modal fence — while an overlay is open only Overlay+Global resolve. |
 | P10 | tests vs paint | The windowless suites drive `Shell::update` and never call `draw()`. They **cannot see paint bugs** (P1 was invisible to 200 green tests). | Paint geometry must live in pure "paint plan" functions (Phase 0.1) with unit tests; toolkit-level effects are covered by the manual smoke checklist only. |
 | P11 | fixtures | The generated fixtures are *friendly* (uniform boxes, generous leading) — they missed P3 entirely. | Hostile fixtures exist after Phase 0.2 (`tight-leading.pdf`, `two-column.pdf`). Run selection/search tests against them, not just `single-page.pdf`. |
 | P12 | feature configs | Code/tests gated on `pdfium` rot silently in the other config. | Always run the gate's two clippy + two test invocations. Imports used only by gated tests need `#[cfg(feature = "pdfium")]`. |
@@ -160,8 +160,8 @@ green. Each sub-phase converts one class of invisible bug into a visible one.
 **Goal:** the geometry that `draw()` paints becomes a pure function with unit
 tests, so "state says selected but nothing would draw" fails in CI.
 
-Files: `v3/shell/src/gui/pdf_view.rs`, new `v3/shell/src/gui/paint.rs`,
-new test `v3/shell/tests/pdf_paint_plan.rs`.
+Files: `shell/src/gui/pdf_view.rs`, new `shell/src/gui/paint.rs`,
+new test `shell/tests/pdf_paint_plan.rs`.
 
 1. In `gui/paint.rs` define toolkit-free types:
    ```rust
@@ -195,7 +195,7 @@ plan, and the four tests above are green.
 ### 0.2 Hostile glyph fixtures + real-glyph selection tests
 
 Files: `scripts/gen-fixtures.py`, `tests-fixtures/pdf/README.md`,
-new test `v3/pdf/tests/selection_real_glyphs.rs`.
+new test `pdf/tests/selection_real_glyphs.rs`.
 
 1. In `gen-fixtures.py` add (copy the style of `fixture_single_page`):
    - `tight-leading.pdf` — one page, 6 lines, font size 12 with **leading 12**
@@ -205,7 +205,7 @@ new test `v3/pdf/tests/selection_real_glyphs.rs`.
    Regenerate (`python3 scripts/gen-fixtures.py`), update the README table,
    commit the new PDFs.
 2. Tests (pdfium-gated, copy the `renderer()` helper from
-   `v3/pdf/tests/fts_bridge.rs`): for each of `single-page.pdf`,
+   `pdf/tests/fts_bridge.rs`): for each of `single-page.pdf`,
    `tight-leading.pdf`, `two-column.pdf`:
    - `page_chars` non-empty; every box satisfies `x0<x1`, `y0<=y1` and is
      within page bounds ±1pt.
@@ -224,8 +224,8 @@ then restore) and passes on the current one.
 
 ### 0.3 Rotated-pages audit
 
-File: `v3/pdf/tests/selection_real_glyphs.rs` (extend), possibly
-`v3/pdf/src/render.rs`.
+File: `pdf/tests/selection_real_glyphs.rs` (extend), possibly
+`pdf/src/render.rs`.
 
 `page_chars` flips y with `page.height()`. For `/Rotate 90/270` pdfium
 reports post-rotation dimensions, but glyph boxes may not match the flip.
@@ -237,14 +237,14 @@ reports post-rotation dimensions, but glyph boxes may not match the flip.
    use the same source, so selection and paint stay aligned).
 3. If green: record in the handoff decision log that rotation is covered.
 
-### 0.4 Manual smoke checklist (`docs/V3_SMOKE.md`)
+### 0.4 Manual smoke checklist (`docs/SMOKE.md`)
 
 Toolkit-level bugs (P1) are invisible to every automated layer we have.
-Create `docs/V3_SMOKE.md` with this exact list; run it (~5 min) whenever a
+Create `docs/SMOKE.md` with this exact list; run it (~5 min) whenever a
 GUI surface changes, and extend it with every new feature:
 
 ```
-Run: cd v3 && cargo run -p md3-shell --features pdfium -- <a real vault with a real-world PDF>
+Run: cd v3 && cargo run -p md-shell --features pdfium -- <a real vault with a real-world PDF>
  1. Quick-open (ctrl+p) a .md file; type; undo (ctrl+z); redo; save (ctrl+s) — dirty dot clears.
  2. Split (ctrl+\), open a PDF in the right pane. Both panes render.
  3. ctrl+z in the PDF pane opens zoom input (NOT editor undo); ctrl+z in the md pane undoes (Bug A check).
@@ -265,7 +265,7 @@ Each phase below appends its own lines to this file.
 
 ### 0.5 `pdf.find` scale guard
 
-File: `v3/shell/src/gui/mod.rs::open_pdf_find`.
+File: `shell/src/gui/mod.rs::open_pdf_find`.
 
 Loading glyphs for *every* page is synchronous; a 500-page document would
 freeze the UI for seconds. Until the async worker (Phase 5.1) exists:
@@ -293,9 +293,9 @@ destination y-extraction incl. `PdfDestinationViewSettings`),
 `native/src/features/pdf/update.rs` (`LinkPreviewResult`, `CloseLinkPreview`).
 Fixture: `tests-fixtures/pdf/internal-links.pdf` (page 1 has a /Link → page 2).
 
-### 1.1 Engine: link extraction (`v3/pdf`)
+### 1.1 Engine: link extraction (`pdf`)
 
-1. In `v3/pdf/src/select.rs` *nothing changes.* Add to `v3/pdf/src/render.rs`:
+1. In `pdf/src/select.rs` *nothing changes.* Add to `pdf/src/render.rs`:
    ```rust
    /// One link annotation on a page; rect in page points, top-left origin.
    #[derive(Debug, Clone, PartialEq)]
@@ -325,9 +325,9 @@ Fixture: `tests-fixtures/pdf/internal-links.pdf` (page 1 has a /Link → page 2)
 
 ### 1.2 Shell: state + hit test
 
-Files: `v3/shell/src/gui/session.rs`, `pdf_view.rs`, `mod.rs`, `overlay.rs`.
+Files: `shell/src/gui/session.rs`, `pdf_view.rs`, `mod.rs`, `overlay.rs`.
 
-1. `PdfSession` gains `pub links: HashMap<u32, Vec<md3_pdf::LinkBox>>`
+1. `PdfSession` gains `pub links: HashMap<u32, Vec<md_pdf::LinkBox>>`
    (mirror of `chars` — same population pattern). In
    `pdf_view::ensure_tiles`, where chars are loaded per visible page, also
    load links (`load_page_links`, idempotent, gated like `load_page_chars`).
@@ -374,10 +374,10 @@ Files: `v3/shell/src/gui/session.rs`, `pdf_view.rs`, `mod.rs`, `overlay.rs`.
 4. `esc` already routes to `overlay.close` (modal fence). Enter
    (`overlay.confirm`) should **navigate**: `record_jump` + `go_to_page` like
    1.2.5, then close — "peek, then commit".
-5. Append to `V3_SMOKE.md`:
+5. Append to `SMOKE.md`:
    `15. internal-links.pdf: right-click the link → popup shows page 2; esc closes; left-click navigates; alt+left returns.`
 
-### 1.4 Tests (`v3/shell/tests/pdf_links.rs`, copy the harness from `pdf_toc.rs`)
+### 1.4 Tests (`shell/tests/pdf_links.rs`, copy the harness from `pdf_toc.rs`)
 
 - Always-on: `right_click_on_nothing_is_inert` (fake pdf; PdfRightClick →
   no overlay, no panic).
@@ -409,7 +409,7 @@ flat path list — reuse that idea).
    paths and skips dotted entries. Derive the tree *in the view* from this
    flat list (v2's approach, ~60 lines): immediate children of a prefix =
    unique first segments; dirs sort before files, case-insensitive.
-   Implement as a pure function in a new `v3/shell/src/gui/file_tree.rs`:
+   Implement as a pure function in a new `shell/src/gui/file_tree.rs`:
    ```rust
    pub struct TreeRow { pub label: String, pub rel_path: String, pub is_dir: bool, pub depth: u16 }
    /// Flatten the visible portion of the tree given the expanded set.
@@ -425,7 +425,7 @@ flat path list — reuse that idea).
 
 1. `defaults.rs`: `spec("workspace.toggle-files", "Toggle File Panel",
    "Workspace", vec![bind(workspace_scope, Chord::ctrl('b'), …)])` — check
-   `V3_SHORTCUTS.md` first; as of writing `ctrl+b` is free. Scope: the same
+   `SHORTCUTS.md` first; as of writing `ctrl+b` is free. Scope: the same
    scope `workspace.split-right` uses (panel is workspace chrome, must work
    from md *and* pdf focus — verify which scope that binding uses and match it).
 2. Messages: `TreeFileClicked(String)`, `TreeDirToggled(String)`.
@@ -453,7 +453,7 @@ tab's `rel_path`).
 (`#[serde(default)]` keeps old snapshots loadable — restore must degrade,
 never refuse). Capture/restore alongside the existing fields.
 
-### 2.5 Tests (`v3/shell/tests/file_tree.rs`)
+### 2.5 Tests (`shell/tests/file_tree.rs`)
 
 - Pure: `visible_rows` cases (see 2.1).
 - Windowless: `ctrl_b_toggles_and_persists` (toggle, drop shell, new shell →
@@ -469,7 +469,7 @@ never refuse). Capture/restore alongside the existing fields.
 
 ### 3.1 Token system (plan M2 "theme system on tokens")
 
-1. New `v3/shell/src/gui/tokens.rs`:
+1. New `shell/src/gui/tokens.rs`:
    ```rust
    pub struct Tokens {
        pub bg_primary: Color, pub bg_secondary: Color, pub bg_tertiary: Color,
@@ -493,7 +493,7 @@ never refuse). Capture/restore alongside the existing fields.
 2. Migrate consumers: `editor_canvas.rs::palette` (BG/TEXT/MARKER/HEADING…)
    becomes thin aliases reading `tokens::dark()` so call sites stay valid;
    overlay card colors, tab strip, status bar, file panel likewise. Grep for
-   `Color::from_rgb` in `v3/shell/src` — after this phase the only literals
+   `Color::from_rgb` in `shell/src` — after this phase the only literals
    left should be in `tokens.rs`.
 3. `Shell::theme` builds `iced::Theme::custom` from the tokens (background =
    bg_primary, text = text_primary, primary = accent) so stock widgets match.
@@ -506,14 +506,14 @@ never refuse). Capture/restore alongside the existing fields.
 
 1. Icon: in `run()` (`gui/mod.rs`), window settings gain
    `icon: iced::window::icon::from_file_data(include_bytes!("../../../../md-editor.png"), None).ok()`
-   (path from `v3/shell/src/gui/` to the repo root — verify with
+   (path from `shell/src/gui/` to the repo root — verify with
    `include_bytes!` compile error if wrong; the file is `md-editor.png` at
    repo root). Requires iced's `image` feature — already enabled.
 2. Desktop entry installer: port `native/src/platform/desktop_integration.rs`
-   to `v3/shell/src/desktop.rs`. Keep its structure: functions take the home
+   to `shell/src/desktop.rs`. Keep its structure: functions take the home
    dir as a parameter (`install_with_home(home: &Path)`) so tests run against
    a tempdir; embed the icon with `include_bytes!`; write
-   `~/.local/share/applications/md3.desktop` (Exec=md3-shell %f, Icon=md-editor)
+   `~/.local/share/applications/md-editor.desktop` (Exec=md-shell %f, Icon=md-editor)
    and the hicolor icon. CLI: `--install-desktop` / `--uninstall-desktop` in
    `main.rs` next to `--demo`. Linux-only: on other OSes print "not supported"
    and exit 0. Typed errors (no `String`).
@@ -536,7 +536,7 @@ activity_type, phase, notes }`) and a KV store (`TrackerKv`) — see
 **Before implementing, ask the user (do not guess):**
 1. Which v2 tracker views are load-bearing: the session log + add/edit form?
    the phase/project board? gates? the reading list? all four?
-2. Should the config stay a user-editable JSON (and where — `<vault>/.md3/tracker.json`?),
+2. Should the config stay a user-editable JSON (and where — `<vault>/.md-editor/tracker.json`?),
    or become UI-managed?
 3. Is the tracker per-vault or global (v2 was app-global)?
 4. Open as a *document tab* (a peer pane, like the plan's tracker-as-engine
@@ -582,7 +582,7 @@ into the handoff before starting one.
    `linked_note`, open it), orphan report (palette command listing
    `known_documents` rows whose hash no longer matches any vault file).
 4. ✅ **Editing ergonomics bundle** (plan §3.2/M3) — engine-side, one PR each,
-   all property-tested in `v3/editor`: auto-pairs; smart list continuation +
+   all property-tested in `editor`: auto-pairs; smart list continuation +
    renumbering; checkbox toggle (`ctrl+enter`); table cell `tab` navigation +
    reflow; smart paste (URL over selection → link); heading cycle
    (`ctrl+1..6`). Every one is a `Command` through the bus, undo-coalescing
@@ -624,7 +624,7 @@ other unit of work. Sub-phases are sized for one session each.
 
 1. **Fix the red tracker test** — the decision is made, do not re-litigate:
    transient command outcomes are **toasts** (P14;
-   `V3_UX_OVERHAUL_PLAN.md` §6.1). `gui/mod.rs:1311` still writes
+   `UX_OVERHAUL_PLAN.md` §6.1). `gui/mod.rs:1311` still writes
    `self.status = "tracker: session logged manually"` while the path the test
    exercises reports via toast; unify them:
    - the manual-log handler reports exactly once, via
@@ -646,10 +646,10 @@ handoff snapshot re-taken from the commit.
 
 Port v2's ratchet idea (`scripts/check-budget.sh` + `budgets.toml`) to v3:
 
-1. `v3/budgets.toml` — `[file_budgets]` mapping the frozen files (§0.2) to
+1. `budgets.toml` — `[file_budgets]` mapping the frozen files (§0.2) to
    their current line counts; a global `hard_limit = 700` for everything
    else.
-2. `scripts/v3-budget.sh` — fails when an unlisted `v3/**/*.rs` file exceeds
+2. `scripts/size-budget.sh` — fails when an unlisted `v3/**/*.rs` file exceeds
    the hard limit or a listed file exceeds its ceiling; prints the offender.
    When you shrink a frozen file, lower its ceiling in the same PR.
 3. Wire into the `v3` job in `.github/workflows/quality.yml` next to the
@@ -689,7 +689,7 @@ Rules of engagement:
   No behavior edits in a move commit — if you spot a bug while moving, note
   it in the handoff and fix it in a separate commit after the move lands.
 - One extraction = one commit; the routing suites must be green after each;
-  lower the `mod.rs` ceiling in `v3/budgets.toml` in the same commit.
+  lower the `mod.rs` ceiling in `budgets.toml` in the same commit.
 - Same treatment for `editor/src/buffer.rs` (1 911): the ergonomics
   operations (auto-pairs, list continuation/renumbering, table nav, heading
   set/cycle) move to `editor/src/edit_ops.rs` built on the buffer's public
@@ -709,12 +709,12 @@ it paints (P10). Mirror PDF Phase 0.1 — pure plans, then a golden corpus:
    placement: kind/rect). `paint_line`/`paint_block_asset`/
    `paint_inline_preview` become iteration over ops. This also starts paying
    the 755-line budget down.
-2. Fixture document (checked in under `v3/shell/tests/fixtures/golden.md`):
+2. Fixture document (checked in under `shell/tests/fixtures/golden.md`):
    h1–h3 headings, plain + wrapped paragraph, bullet list with checkbox,
    table, fenced code, inline math, multi-line display math, an image
    reference, a wikilink — plus the caret parked on a styled line so one line
    is in revealed state.
-3. `v3/shell/tests/editor_draw_plan.rs`: render the plan for the whole
+3. `shell/tests/editor_draw_plan.rs`: render the plan for the whole
    fixture at a fixed wrap width, serialize ops line-by-line to text, compare
    against a checked-in snapshot file with plain `assert_eq!` (no `insta` —
    matches the repo's self-verifying-suite philosophy). A renderer change ⇒
@@ -810,7 +810,7 @@ spike resolves it to accepted with measured numbers.
    grapheme-cluster and IME behavior. Default if tied: (a), because the
    measurer must be constructible without an iced renderer in windowless
    tests.
-2. `ShapedMeasurer` in `v3/shell/src/gui/` implements the engine's
+2. `ShapedMeasurer` in `shell/src/gui/` implements the engine's
    `Measurer` trait: visual rows + per-row heights from shaped runs, plus
    `caret_to_point` / `point_to_caret` on the same shaped layout, exposed
    for paint plans and hit-testing.
@@ -838,7 +838,7 @@ ADR-0105 (accepted — the direction is user-ordered) retires reserved-width:
    conceal transition goes through remeasure *before* paint (debug-assert
    in `set_conceal` / `EditorDocument::apply`, the same place the old
    assert lived).
-3. **BUG-B gate v2** (update `v3/editor/tests/bug_b_layout_reflow.rs`): the
+3. **BUG-B gate v2** (update `editor/tests/bug_b_layout_reflow.rs`): the
    contract was never "geometry must not change" — it is "offsets are never
    stale, content never overlaps". Assert: (a) styled-damage from a caret
    move ≤ 2 lines, plus a correct `shifted_from`; (b) after any transition,
@@ -902,7 +902,7 @@ nearest source char (hit-test through the shaped layout).
 
 ### 7.5 Interaction exactness (implemented; manual smoke pending)
 
-1. Round-trip property test (`v3/shell/tests/editor_hit_testing.rs`): for
+1. Round-trip property test (`shell/tests/editor_hit_testing.rs`): for
    every char of the golden fixture, in concealed *and* revealed states:
    plan-position → hit-test → same char. One shared geometry path is what
    makes this pass; if it fails, fix the divergence, never add a fudge
@@ -936,7 +936,7 @@ nearest source char (hit-test through the shaped layout).
   retaining stale pre-reflow geometry would violate the one-current-layout
   contract; only glyph alpha transitions.
 - ~~Fenced-code syntax highlighting~~ done per ADR-0106. Incremental lexer
-  state and semantic roles live in `v3/editor`; shell maps roles to theme
+  state and semantic roles live in `editor`; shell maps roles to theme
   colors and never parses syntax in the paint path. Geometry-invariance,
   convergence, known-language paint, and unknown-language fallback are
   test-pinned.
@@ -964,7 +964,7 @@ nearest source char (hit-test through the shaped layout).
 ### Typora-parity acceptance checklist
 
 Run after each sub-phase; all must hold by the end of 7.6. Append these to
-`docs/V3_SMOKE.md` as their sub-phases land:
+`docs/SMOKE.md` as their sub-phases land:
 
 ```
 27. Open a real note: headings are visibly larger, prose is proportional, no gaps where ** or # hide.
@@ -983,23 +983,23 @@ Run after each sub-phase; all must hold by the end of 7.6. Append these to
 ## Appendix A — Test harness recipes
 
 **Windowless shell test** (the standard pattern — copy from
-`v3/shell/tests/pdf_toc.rs`): build `Shell::new(default_registry()?,
+`shell/tests/pdf_toc.rs`): build `Shell::new(default_registry()?,
 registry.keymap()?, tempdir)`, drive with `shell.update(Message::Key(...))`
 via the `press`/`type_text` helpers, assert on `shell.status()`,
 `shell.overlay()`, `shell.focused_pdf()`, `shell.workspace()`. Fixtures are
 copied into the tempdir vault. pdfium tests skip when the library is absent.
 
 **Engine geometry test:** synthetic `CharBox` grids via the `line_of` helper
-in `v3/pdf/src/select.rs::tests` — pin semantics there first, then confirm
+in `pdf/src/select.rs::tests` — pin semantics there first, then confirm
 against real fixtures (Phase 0.2 suite).
 
-**Sidecar test:** open stores on `<tempdir>/.md3/sidecar.db`; components
+**Sidecar test:** open stores on `<tempdir>/.md-editor/sidecar.db`; components
 cohabit (annotations + sessions + index); never share a connection across
 threads.
 
 ## Appendix B — Updating the ledger
 
-After each phase: add a status-board row to `V3_HANDOFF.md` (file paths +
+After each phase: add a status-board row to `HANDOFF.md` (file paths +
 test names in the "Where" column), append decision-log entries (dated,
 newest last) for anything a future agent would otherwise re-litigate, and
 refresh the verification snapshot (test counts from the gate run).

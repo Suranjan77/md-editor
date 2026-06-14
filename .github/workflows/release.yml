@@ -1,9 +1,9 @@
-name: V3 release packages
+name: Release packages
 
 on:
   push:
     tags:
-      - "v3.*"
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -52,7 +52,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' v3/Cargo.toml)"
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
           test -n "$version"
           case "$version" in
             *-dev)
@@ -65,7 +65,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' v3/Cargo.toml)"
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
           test "${GITHUB_REF_NAME}" = "v${version}"
 
       - name: Install Linux build dependencies
@@ -110,20 +110,19 @@ jobs:
           grep -q "BUILD=7869" "$RUNNER_TEMP/pdfium/VERSION"
 
       - name: Build release packages
-        working-directory: v3
         run: cargo xtask dist
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: md-editor-v3-${{ matrix.artifact }}
+          name: md-editor-${{ matrix.artifact }}
           path: |
-            v3/dist/*.zip
-            v3/dist/*.tar.gz
-            v3/dist/*.exe
-            v3/dist/*.AppImage
-            v3/dist/*.dmg
-            v3/dist/SHA256SUMS
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.dmg
+            dist/SHA256SUMS
           if-no-files-found: error
 
   publish:
@@ -138,7 +137,7 @@ jobs:
       - name: Download packages
         uses: actions/download-artifact@v4
         with:
-          pattern: md-editor-v3-*
+          pattern: md-editor-*
           path: artifacts
 
       - name: Create combined checksums

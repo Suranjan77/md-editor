@@ -1,4 +1,4 @@
-# V3 GUI testing on COSMIC
+# GUI testing on COSMIC
 
 > ⚠️ **This tooling is specific to this one workstation. It is NOT portable.**
 > Dogtail, ydotool, OpenCV, `cosmic-screenshot`, and the live COSMIC/Wayland
@@ -9,13 +9,13 @@
 > compositor, nothing more.
 >
 > **The portable test tiers (run everywhere, including CI) are:**
-> 1. **Behavior** — the windowless shell harness in `v3/shell/tests/*` drives the
+> 1. **Behavior** — the windowless shell harness in `shell/tests/*` drives the
 >    real `gui::Shell` with semantic messages
 >    (`Shell::new(...); shell.update(Message::TreeFileClicked(...))`,
 >    `RunCommand`, `Key`, `PaneCommand`, …). This is the equivalent of a
 >    DOM-level UI test and is where behavior coverage belongs.
 > 2. **Pixel geometry** — the golden draw-plan snapshot
->    (`v3/shell/tests/editor_draw_plan.rs` vs `fixtures/golden.plan.txt`) asserts
+>    (`shell/tests/editor_draw_plan.rs` vs `fixtures/golden.plan.txt`) asserts
 >    the exact `PaintOp` stream. Regenerate with `UPDATE_EXPECT=1 cargo test`.
 >
 > Reach for the COSMIC tooling below only for things those two tiers cannot
@@ -32,7 +32,7 @@ Desktop accessibility is enabled. `ydotool.service` is enabled and active.
 
 ### Practical gotchas found while driving the smoke (2026-06-14)
 
-- **iced exposes no AT-SPI tree** — `v3-gui-probe.py tree` finds no app nodes,
+- **iced exposes no AT-SPI tree** — `gui-probe.py tree` finds no app nodes,
   so Dogtail cannot address the editor; you fall back to screenshots + OpenCV +
   blind coordinate clicks for almost everything. (Enabling iced's AccessKit
   feature would let Dogtail drive named *chrome*; the editor canvas would stay
@@ -67,9 +67,9 @@ Accessibility changes are most reliable after restarting the app under test.
 From repository root:
 
 ```bash
-python3 scripts/v3-gui-probe.py check
-python3 scripts/v3-gui-probe.py tree
-python3 scripts/v3-gui-probe.py tree --app 'MD Editor' --depth 5
+python3 scripts/gui-probe.py check
+python3 scripts/gui-probe.py tree
+python3 scripts/gui-probe.py tree --app 'MD Editor' --depth 5
 ```
 
 Run these host-side. `check` verifies packages, accessibility setting,
@@ -88,22 +88,21 @@ unless a plan explicitly asks for committed visual evidence.
 
 ## Recommended smoke workflow
 
-1. Build v3 shell with PDF support.
+1. Build the shell with PDF support.
 2. Create isolated vault and config directories under `/tmp`.
 3. Launch shell in live COSMIC session with isolated `XDG_CONFIG_HOME`.
 4. Use Dogtail tree dump to locate accessible chrome.
 5. Use ydotool for canvas interactions Dogtail cannot address.
 6. Capture before/after screenshots and inspect with OpenCV.
-7. Record only observed results in `docs/V3_SMOKE.md`; never infer manual pass
+7. Record only observed results in `docs/SMOKE.md`; never infer manual pass
    from unit tests.
 
 Example launch:
 
 ```bash
-cd v3
-cargo build -p md3-shell --features pdfium
-XDG_CONFIG_HOME=/tmp/md3-gui-config \
-  target/debug/md3-shell /tmp/md3-gui-vault
+cargo build -p md-shell --features pdfium
+XDG_CONFIG_HOME=/tmp/md-editor-gui-config \
+  target/debug/md-editor /tmp/md-editor-gui-vault
 ```
 
 Before handoff after code changes, still run project-required fmt, clippy, and

@@ -3,8 +3,8 @@
 //! and the undo-tree guarantee that distinguishes v3 from v2 — editing after
 //! undo never destroys history.
 
-use md3_editor::Selection;
-use md3_editor::buffer::{Buffer, Command, Movement};
+use md_editor::Selection;
+use md_editor::buffer::{Buffer, Command, Movement};
 
 fn insert(buffer: &mut Buffer, text: &str) -> bool {
     buffer.apply(Command::Insert(text.to_string())).text_changed

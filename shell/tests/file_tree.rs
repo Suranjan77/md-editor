@@ -4,11 +4,11 @@
 
 use std::path::Path;
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, EditorKind, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::overlay::{NamePurpose, Overlay};
-use md3_shell::gui::{Message, Shell};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, EditorKind, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::overlay::{NamePurpose, Overlay};
+use md_shell::gui::{Message, Shell};
 use tempfile::TempDir;
 
 fn chord(s: &str) -> Chord {
@@ -26,7 +26,7 @@ fn press(shell: &mut Shell, s: &str) {
 }
 
 fn run(shell: &mut Shell, id: &'static str) {
-    let _ = shell.update(Message::RunCommand(md3_kernel::CommandId(id)));
+    let _ = shell.update(Message::RunCommand(md_kernel::CommandId(id)));
 }
 
 fn type_text(shell: &mut Shell, text: &str) {
@@ -224,7 +224,7 @@ fn context_menu_routes_commands_and_sidebar_width_persists() {
         rel_path: "alpha.md".to_string(),
         is_dir: false,
     });
-    let _ = shell.update(Message::TreeContextCommand(md3_kernel::CommandId(
+    let _ = shell.update(Message::TreeContextCommand(md_kernel::CommandId(
         "file.new-note",
     )));
     assert!(matches!(

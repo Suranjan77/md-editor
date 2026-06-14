@@ -1,16 +1,16 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use md3_editor::buffer::Command;
-use md3_shell::gui::paint::{FontRole, PaintOp, line_plan};
-use md3_shell::gui::session::MdSession;
+use md_editor::buffer::Command;
+use md_shell::gui::paint::{FontRole, PaintOp, line_plan};
+use md_shell::gui::session::MdSession;
 use std::fs;
 
 fn session(text: &str) -> MdSession {
     MdSession::new(
         "test.md",
         text,
-        md3_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
+        md_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
             std::sync::Mutex::new(cosmic_text::FontSystem::new()),
         )),
     )
@@ -19,7 +19,7 @@ fn session(text: &str) -> MdSession {
 #[test]
 fn golden_draw_plan_matches_snapshot() {
     let golden_md = fs::read_to_string("tests/fixtures/golden.md").unwrap();
-    let measurer = md3_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
+    let measurer = md_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
         std::sync::Mutex::new(cosmic_text::FontSystem::new()),
     ));
     let mut session = MdSession::new("golden.md", &golden_md, measurer);
@@ -147,7 +147,7 @@ fn blockquote_bar_and_text_share_the_reading_column() {
     let bar_x = ops.iter().find_map(|op| match op {
         PaintOp::FillRect {
             rect,
-            role: md3_shell::gui::paint::PaintRole::Quote,
+            role: md_shell::gui::paint::PaintRole::Quote,
         } => Some(rect.x),
         _ => None,
     });
@@ -203,12 +203,12 @@ fn table_cell_text_stays_within_its_cell_box() {
 /// highlighted code line must equal the same code measured as plain content.
 #[test]
 fn syntax_highlighting_is_geometry_invariant() {
-    use md3_editor::layout::{ConcealMode, Measurer, Styler};
-    use md3_editor::parse::BlockState;
-    use md3_editor::style::{MarkdownStyler, SpanKind};
-    use md3_editor::syntax::{Lang, LexState};
+    use md_editor::layout::{ConcealMode, Measurer, Styler};
+    use md_editor::parse::BlockState;
+    use md_editor::style::{MarkdownStyler, SpanKind};
+    use md_editor::syntax::{Lang, LexState};
 
-    let measurer = md3_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
+    let measurer = md_shell::gui::shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
         std::sync::Mutex::new(cosmic_text::FontSystem::new()),
     ));
     let code = "fn main() { let x = 42; /* note */ }";
@@ -258,7 +258,7 @@ fn syntax_highlighting_is_geometry_invariant() {
 /// falls back to the single plain `Code` role (no `Syntax` ops).
 #[test]
 fn known_language_paints_syntax_roles_unknown_falls_back() {
-    use md3_shell::gui::paint::PaintRole;
+    use md_shell::gui::paint::PaintRole;
 
     let rust = session("intro\n```rust\nlet x = 1;\n```\n");
     let plain = session("intro\n```text\nlet x = 1;\n```\n");
@@ -307,7 +307,7 @@ fn known_language_paints_syntax_roles_unknown_falls_back() {
 /// styling/measure, off the viewport paint path).
 #[test]
 fn tokens_are_precomputed_before_paint() {
-    use md3_editor::style::SpanKind;
+    use md_editor::style::SpanKind;
 
     let rust = session("intro\n```rust\nlet x = 1;\n```\n");
     let styled = rust.doc.styled_line(2).unwrap();

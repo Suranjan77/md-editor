@@ -8,12 +8,12 @@
 
 use std::path::Path;
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
 #[cfg(feature = "pdfium")]
-use md3_shell::gui::overlay::Overlay;
-use md3_shell::gui::{Message, Shell};
+use md_shell::gui::overlay::Overlay;
+use md_shell::gui::{Message, Shell};
 use tempfile::TempDir;
 
 fn chord(s: &str) -> Chord {
@@ -67,7 +67,7 @@ fn vault(real_fixture: bool) -> TempDir {
     let target = dir.path().join("paper.pdf");
     if real_fixture {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests-fixtures/pdf/multipage-outline.pdf");
+            .join("../tests-fixtures/pdf/multipage-outline.pdf");
         if let Err(e) = std::fs::copy(&fixture, &target) {
             panic!("copy fixture: {e}");
         }
@@ -203,7 +203,7 @@ fn pdf_find_scale_guard_always_on() {
     let mut shell = new_shell(dir.path());
     open_via_quick_open(&mut shell, "paper.pdf");
 
-    let fake_layout = md3_pdf::DocLayout::new(vec![(612.0, 792.0); 500], 1.0, 16.0);
+    let fake_layout = md_pdf::DocLayout::new(vec![(612.0, 792.0); 500], 1.0, 16.0);
     shell.inject_pdf_session_layout(fake_layout);
 
     press(&mut shell, "ctrl+f");
@@ -211,7 +211,7 @@ fn pdf_find_scale_guard_always_on() {
     assert!(
         matches!(
             shell.overlay(),
-            Some(md3_shell::gui::overlay::Overlay::PdfFind { .. })
+            Some(md_shell::gui::overlay::Overlay::PdfFind { .. })
         ),
         "find overlay should open"
     );
@@ -229,7 +229,7 @@ fn pdf_find_scale_guard_not_triggered_under_cap() {
     let mut shell = new_shell(dir.path());
     open_via_quick_open(&mut shell, "paper.pdf");
 
-    let fake_layout = md3_pdf::DocLayout::new(vec![(612.0, 792.0); 150], 1.0, 16.0);
+    let fake_layout = md_pdf::DocLayout::new(vec![(612.0, 792.0); 150], 1.0, 16.0);
     shell.inject_pdf_session_layout(fake_layout);
 
     press(&mut shell, "ctrl+f");
@@ -237,7 +237,7 @@ fn pdf_find_scale_guard_not_triggered_under_cap() {
     assert!(
         matches!(
             shell.overlay(),
-            Some(md3_shell::gui::overlay::Overlay::PdfFind { .. })
+            Some(md_shell::gui::overlay::Overlay::PdfFind { .. })
         ),
         "find overlay should open"
     );

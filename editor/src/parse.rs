@@ -6,9 +6,8 @@
 //! ``` fence therefore invalidates exactly the lines whose meaning changed,
 //! and the parser reports that range so styling can follow.
 //!
-//! v2's parser (`native/src/editor/parser/block.rs`) re-highlighted the
-//! whole document with implicit `bool` state and theme-coupled output; the
-//! classification rules below are mined from it, the architecture is not.
+//! Classification is range-scoped and free of implicit global state, so styling
+//! follows only the spans the parser reports as changed.
 
 use std::ops::Range;
 

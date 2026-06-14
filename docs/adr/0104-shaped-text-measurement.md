@@ -4,7 +4,7 @@
   Typora-grade editing); the *mechanism* is resolved by the Phase 7.0 spike,
   which updates this ADR to accepted with measured numbers.
 - Scope: v3 markdown renderer (`v3/shell` measurer; engine seams unchanged).
-- Spec: `V3_IMPLEMENTATION_PLAN.md` Phase 7.0.
+- Spec: `development/IMPLEMENTATION_PLAN.md` Phase 7.0.
 
 ## Context
 

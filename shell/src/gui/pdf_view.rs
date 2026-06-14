@@ -9,8 +9,8 @@ use std::path::Path;
 
 use iced::widget::{button, canvas, column, container, row, stack, text};
 use iced::{Background, Border, Element, Fill, Padding, Point, Rectangle, Size, mouse};
-use md3_kernel::CommandId;
-use md3_kernel::pane::TabId;
+use md_kernel::CommandId;
+use md_kernel::pane::TabId;
 
 use super::Message;
 use super::icons::{self, Icon};
@@ -22,18 +22,14 @@ use super::tokens;
 use super::worker::{PdfJob, WorkerHandle};
 
 #[cfg(feature = "pdfium")]
-pub fn renderer() -> Option<&'static md3_pdf::render::PdfRenderer> {
-    use md3_pdf::render::PdfRenderer;
+pub fn renderer() -> Option<&'static md_pdf::render::PdfRenderer> {
+    use md_pdf::render::PdfRenderer;
     static RENDERER: std::sync::OnceLock<Option<PdfRenderer>> = std::sync::OnceLock::new();
     RENDERER
         .get_or_init(|| {
             crate::paths::pdfium_dirs()
                 .into_iter()
                 .find_map(|dir| PdfRenderer::new(Some(&dir)).ok())
-                .or_else(|| {
-                    let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../core/pdfium");
-                    PdfRenderer::new(Some(&local)).ok()
-                })
                 .or_else(|| PdfRenderer::new(None).ok())
         })
         .as_ref()
@@ -69,7 +65,7 @@ pub fn load_geometry(session: &mut PdfSession, abs_path: &Path) {
                 }
             }
         }
-        session.layout = Some(md3_pdf::DocLayout::new(sizes, session.zoom, PAGE_GAP));
+        session.layout = Some(md_pdf::DocLayout::new(sizes, session.zoom, PAGE_GAP));
         session.outline = renderer.outline(abs_path).unwrap_or_default();
         session.status = String::new();
     }
@@ -93,7 +89,7 @@ pub fn ensure_tiles(session: &mut PdfSession, abs_path: &Path, worker: Option<&W
             return;
         };
         let placed = layout.visible_tiles(session.scroll, session.viewport);
-        let visible: std::collections::HashSet<md3_pdf::TileKey> =
+        let visible: std::collections::HashSet<md_pdf::TileKey> =
             placed.iter().map(|t| t.key).collect();
         // Glyph geometry for the visible pages, so hovering shows the text
         // cursor before any click and a drag never starts against an

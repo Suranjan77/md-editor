@@ -4,11 +4,11 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::worker::{self, PdfJob, PdfJobOutput};
-use md3_shell::gui::{Message, Shell};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::worker::{self, PdfJob, PdfJobOutput};
+use md_shell::gui::{Message, Shell};
 
 fn shell(root: &Path) -> Shell {
     let registry = match default_registry() {
@@ -55,7 +55,7 @@ fn worker_handshake_schedules_visible_pdf_work_and_applies_results() {
     press(&mut shell, "ctrl+p");
     type_text(&mut shell, "paper.pdf");
     press(&mut shell, "enter");
-    shell.inject_pdf_session_layout(md3_pdf::DocLayout::new(vec![(612.0, 792.0)], 1.0, 16.0));
+    shell.inject_pdf_session_layout(md_pdf::DocLayout::new(vec![(612.0, 792.0)], 1.0, 16.0));
 
     let (tx, rx) = mpsc::channel();
     let handle = worker::spawn(

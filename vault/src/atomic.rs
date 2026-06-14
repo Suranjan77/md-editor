@@ -18,7 +18,7 @@ pub fn atomic_save(path: &Path, contents: &[u8]) -> Result<(), VaultError> {
         .ok_or_else(|| VaultError::NotADirectory(path.to_path_buf()))?
         .to_string_lossy();
     // Same-directory temp file so the rename cannot cross filesystems.
-    let tmp_path = dir.join(format!(".{file_name}.md3-tmp"));
+    let tmp_path = dir.join(format!(".{file_name}.md-editor-tmp"));
 
     let mut tmp = fs::File::create(&tmp_path).map_err(|e| VaultError::io(&tmp_path, e))?;
     tmp.write_all(contents)
@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn save_into_missing_directory_is_a_typed_error() {
-        let err = atomic_save(Path::new("/nonexistent-md3/dir/note.md"), b"x");
+        let err = atomic_save(Path::new("/nonexistent/dir/note.md"), b"x");
         assert!(matches!(err, Err(VaultError::Io { .. })));
     }
 }

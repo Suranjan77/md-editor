@@ -4,8 +4,8 @@ use crate::gui::editor_canvas::VisualMetrics;
 use cosmic_text::{
     Attrs, Buffer, Cursor, Family, FontSystem, LayoutRun, Metrics, Shaping, Style, Weight,
 };
-use md3_editor::layout::{LineMeasure, Measurer, StyledLine};
-use md3_editor::style::SpanKind;
+use md_editor::layout::{LineMeasure, Measurer, StyledLine};
+use md_editor::style::SpanKind;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone)]
@@ -27,7 +27,7 @@ impl ShapedMeasurer {
     }
 
     pub fn line_metrics(&self, line: &StyledLine) -> (Metrics, f32, f32) {
-        use md3_editor::parse::LineKind;
+        use md_editor::parse::LineKind;
         let base_size = self.default_font_size;
         let base_lh = self.default_line_height; // 24.0
 
@@ -66,7 +66,7 @@ impl ShapedMeasurer {
         // it bold here too, or the measured glyph advances (and the end-of-line
         // caret) fall short of the wider painted glyphs — visible as the caret
         // sitting before the last heading character.
-        let heading_text = matches!(line.kind, md3_editor::parse::LineKind::Heading { .. });
+        let heading_text = matches!(line.kind, md_editor::parse::LineKind::Heading { .. });
         let chars = line.display.chars().collect::<Vec<_>>();
         let mut rich = line
             .spans
@@ -103,7 +103,7 @@ impl ShapedMeasurer {
             wrap_width,
         );
 
-        if !matches!(line.conceal, md3_editor::layout::ConcealMode::Revealed) {
+        if !matches!(line.conceal, md_editor::layout::ConcealMode::Revealed) {
             let spacings = self.inline_math_spacings(line, &buffer, wrap_width);
             let mut changed = false;
             for ((_, attrs), spacing) in rich.iter_mut().zip(spacings) {
@@ -206,7 +206,7 @@ impl Measurer for ShapedMeasurer {
 
         // Add paragraph spacing rhythm
         height += pad_top + pad_bot;
-        if line.conceal == md3_editor::layout::ConcealMode::Concealed {
+        if line.conceal == md_editor::layout::ConcealMode::Concealed {
             height = height.max(self.asset_height(line, wrap_width as f32));
         }
 
@@ -344,8 +344,8 @@ pub(crate) const LIST_INDENT: f32 = 24.0;
 pub(crate) const QUOTE_INDENT: f32 = 22.0;
 
 pub(crate) fn line_indent(line: &StyledLine) -> f32 {
-    use md3_editor::layout::ConcealMode;
-    use md3_editor::parse::LineKind;
+    use md_editor::layout::ConcealMode;
+    use md_editor::parse::LineKind;
     if !matches!(line.conceal, ConcealMode::Revealed) {
         match line.kind {
             LineKind::Bullet { .. } | LineKind::Ordered => LIST_INDENT,

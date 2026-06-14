@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
-use md3_kernel::CommandId;
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::EditorKind;
-use md3_shell::gui::menu;
+use md_kernel::CommandId;
+use md_kernel::defaults::default_registry;
+use md_kernel::input::EditorKind;
+use md_shell::gui::menu;
 
 const MOUSE_EXEMPT: [CommandId; 11] = [
     CommandId("overlay.close"),

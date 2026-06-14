@@ -5,10 +5,10 @@
 
 use std::path::Path;
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::{Message, Shell};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::{Message, Shell};
 use tempfile::TempDir;
 
 fn chord(s: &str) -> Chord {
@@ -135,10 +135,10 @@ fn split_ratio_round_trips() {
 
     let second = new_shell(dir.path());
     match second.workspace().panes.layout() {
-        md3_kernel::pane::Layout::Split { ratio, .. } => {
+        md_kernel::pane::Layout::Split { ratio, .. } => {
             assert!((ratio - 0.5).abs() < f32::EPSILON);
         }
-        md3_kernel::pane::Layout::Pane(_) => panic!("expected a restored split"),
+        md_kernel::pane::Layout::Pane(_) => panic!("expected a restored split"),
     }
 }
 
@@ -154,7 +154,7 @@ fn reduce_motion_setting_round_trips() {
     let mut second = new_shell(dir.path());
     press(&mut second, "ctrl+,");
     match second.overlay() {
-        Some(md3_shell::gui::overlay::Overlay::Settings { reduce_motion, .. }) => {
+        Some(md_shell::gui::overlay::Overlay::Settings { reduce_motion, .. }) => {
             assert!(*reduce_motion);
         }
         _ => panic!("settings overlay missing"),
@@ -185,7 +185,7 @@ fn theme_is_instance_local_and_round_trips() {
     assert_eq!(restored.theme_name(), "light");
     assert_eq!(
         restored.theme_tokens().bg_primary,
-        md3_shell::gui::tokens::light().bg_primary
+        md_shell::gui::tokens::light().bg_primary
     );
 }
 
@@ -268,8 +268,8 @@ fn closing_a_tab_persists_without_quitting() {
 #[test]
 fn pdf_scroll_and_zoom_resume_at_page_n() {
     let dir = vault();
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests-fixtures/pdf/multipage-outline.pdf");
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests-fixtures/pdf/multipage-outline.pdf");
     if let Err(e) = std::fs::copy(&fixture, dir.path().join("paper.pdf")) {
         panic!("copy fixture: {e}");
     }

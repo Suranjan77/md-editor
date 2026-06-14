@@ -1,9 +1,9 @@
 use std::path::Path;
 use tempfile::TempDir;
 
-use md3_kernel::CommandId;
-use md3_kernel::defaults::default_registry;
-use md3_shell::gui::{Message, Shell};
+use md_kernel::CommandId;
+use md_kernel::defaults::default_registry;
+use md_shell::gui::{Message, Shell};
 
 fn new_shell(root: &Path) -> Shell {
     let registry = match default_registry() {

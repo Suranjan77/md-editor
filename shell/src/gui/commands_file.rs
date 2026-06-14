@@ -1,5 +1,5 @@
 use super::*;
-use md3_vault::{LinkGraph, atomic_save, rewrite_links};
+use md_vault::{LinkGraph, atomic_save, rewrite_links};
 
 fn safe_relative(input: &str) -> Option<PathBuf> {
     let path = PathBuf::from(input.trim());
@@ -391,7 +391,7 @@ impl Shell {
             }
             EditorKind::Pdf => {
                 self.ensure_annotations();
-                let hash = md3_vault::document_hash(&abs).ok();
+                let hash = md_vault::document_hash(&abs).ok();
                 if let (Some(store), Some(hash)) = (self.annotations.as_mut(), &hash) {
                     let _ = store.record_document(hash, rel);
                 }
@@ -482,9 +482,9 @@ impl Shell {
             "workspace.split-right" | "workspace.split-down" => {
                 let focused = self.focused_doc_info();
                 let axis = if cmd == "workspace.split-down" {
-                    md3_kernel::SplitAxis::Vertical
+                    md_kernel::SplitAxis::Vertical
                 } else {
-                    md3_kernel::SplitAxis::Horizontal
+                    md_kernel::SplitAxis::Horizontal
                 };
                 match focused {
                     Some((path, kind)) => {

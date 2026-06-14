@@ -1,7 +1,7 @@
 use iced::mouse;
 use iced::widget::canvas;
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme};
-use md3_kernel::pane::{SplitAxis, SplitPath};
+use md_kernel::pane::{SplitAxis, SplitPath};
 
 use super::Message;
 

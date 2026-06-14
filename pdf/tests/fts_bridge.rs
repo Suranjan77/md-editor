@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use md3_pdf::render::PdfRenderer;
-use md3_vault::{SearchIndex, TextExtractor};
+use md_pdf::render::PdfRenderer;
+use md_vault::{SearchIndex, TextExtractor};
 
 /// The production-shaped adapter: all pages concatenated; any failure
 /// (corrupt file, unreadable page) yields `None` so the index records the
@@ -29,12 +29,14 @@ impl TextExtractor for PdfiumExtractor {
 }
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests-fixtures/pdf")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests-fixtures/pdf")
 }
 
 fn extractor() -> Option<PdfiumExtractor> {
-    let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../core/pdfium");
-    PdfRenderer::new(Some(&local))
+    // Dev machines can point at a local libpdfium via PDFIUM_LIB_DIR; otherwise
+    // bind the system library, or skip (not fail) when neither is present.
+    let lib_dir = std::env::var_os("PDFIUM_LIB_DIR").map(PathBuf::from);
+    PdfRenderer::new(lib_dir.as_deref())
         .or_else(|_| PdfRenderer::new(None))
         .ok()
         .map(|renderer| PdfiumExtractor { renderer })

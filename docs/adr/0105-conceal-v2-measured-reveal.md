@@ -2,8 +2,8 @@
 
 - Status: accepted (2026-06-13)
 - Scope: v3 editor engine conceal contract + shell renderer.
-- Spec: `V3_IMPLEMENTATION_PLAN.md` Phase 7.1. Supersedes the reserved-width
-  strategy in `V3_GROUND_UP_PLAN.md` §3.2 (note added there).
+- Spec: `development/IMPLEMENTATION_PLAN.md` Phase 7.1. Supersedes the reserved-width
+  strategy in `development/GROUND_UP_PLAN.md` §3.2 (note added there).
 
 ## Context
 

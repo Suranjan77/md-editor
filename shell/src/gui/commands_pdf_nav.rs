@@ -115,8 +115,8 @@ impl Shell {
             let Some(chars) = session.chars.get(&page_index) else {
                 continue;
             };
-            for range in md3_pdf::select::find(chars, query) {
-                let Some(selection) = md3_pdf::select::range_selection(chars, range.clone()) else {
+            for range in md_pdf::select::find(chars, query) {
+                let Some(selection) = md_pdf::select::range_selection(chars, range.clone()) else {
                     continue;
                 };
                 let context = range.start.saturating_sub(12)..(range.end + 28).min(chars.len());

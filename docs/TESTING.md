@@ -1,57 +1,74 @@
 # Testing
 
-> **Scope: v2 suites.** v3's test pyramid is defined in
-> `V3_GROUND_UP_PLAN.md` §6 (property/differential harnesses, named BUG-A/B/C
-> regression suites, golden draw-plan snapshots) and enforced by the
-> verification gate in `V3_IMPLEMENTATION_PLAN.md` §0.3.
+The engines are designed to be tested headlessly — without a window, GPU, or
+compositor — so the bulk of the suite runs everywhere, including CI. The only
+local-only tier is the optional GUI smoke ([GUI_TESTING.md](GUI_TESTING.md)).
 
-## Test pyramid
+## Test layers
 
 | Layer | Where | Run with |
 |---|---|---|
-| Unit tests | `#[cfg(test)]` beside the code they test | `cargo test --workspace` |
-| Integration tests | `core/tests/`, `native/tests/` | `cargo test --workspace` |
-| Characterization tests | `native/src/app/characterization_tests.rs` | `cargo test -p md-editor-native characterization` |
-| Scale/combinatoric tests | `*_scale_tests` modules (ex-`massive_tests.rs`) in `core/src/{file_index,config,tracker,vault}.rs` | `cargo test -p md-editor-core scale` |
-| Renderer golden tests | planned (Phase 4: draw-command snapshots via `insta`) | — |
-| PDF fixture tests | planned (Phase 5) against `tests-fixtures/pdf/` | — |
+| Unit tests | `#[cfg(test)]` beside the code | `cargo test --workspace` |
+| Engine integration tests | `kernel/tests/`, `editor/tests/`, `vault/tests/`, `pdf/tests/` | `cargo test --workspace` |
+| Regression suites (BUG-A/B/C) | `kernel/tests/bug_a_*`, `editor/tests/bug_b_*`, `kernel/tests/bug_c_*` | `cargo test --workspace` |
+| Shell behavior tests | `shell/tests/*` — drive the real `gui::Shell` with semantic messages | `cargo test -p md-shell` |
+| Golden draw-plan snapshot | `shell/tests/editor_draw_plan.rs` vs its fixture | `cargo test -p md-shell` (regenerate with `UPDATE_EXPECT=1`) |
+| PDF rasterization tests | `pdf/tests/*`, `--features pdfium` | `cargo test -p md-pdf --features pdfium` |
 
-## Characterization tests
+### Regression suites
 
-They freeze the **current** behavior of the root reducer — current behavior is
-correct *by definition* for refactor phases (2–3). If a change breaks one:
+`BUG-A` (stolen shortcuts), `BUG-B` (layout reflow on reveal), and `BUG-C`
+(documents forced into split view) are named suites that pin specific historical
+bugs as unrepresentable. The kernel demo walks the same scenarios on the live
+kernel:
 
-- refactor commits must adapt mechanically (e.g. message wrapping) with values
-  unchanged, or
-- a deliberate behavior change must say so in the commit body.
+```bash
+cargo run -p md-shell -- --demo
+```
 
-They use plain asserts, not `insta`, so the suite self-verifies with no
-snapshot-accept round.
+### Shell behavior tests
+
+`md-shell` is exercised through its real update loop: tests construct
+`Shell::new(...)` and feed semantic messages (`RunCommand`, `Key`,
+`PaneCommand`, `TreeFileClicked`, …) over a throwaway vault directory — the
+equivalent of a DOM-level UI test, and where behavior coverage belongs.
+
+## PDF tests and PDFium
+
+The pure tile/cache/queue logic in `md-pdf` tests without any native library.
+Tests that need real rasterization are gated behind the `pdfium` feature and
+**skip** (rather than fail) when no `libpdfium` is available, so the default
+suite stays green on any machine. To run them locally, place a `libpdfium`
+shared library where the loader can find it (next to `target/debug/`, or point
+`PDFIUM_LIB_DIR` at its directory):
+
+```bash
+cargo test -p md-pdf --features pdfium
+cargo test -p md-shell --features pdfium
+```
 
 ## Fixtures
 
-- `tests-fixtures/pdf/` — generated corpus; see its README. Regenerate with
-  `python3 scripts/gen-fixtures.py` (add `--large` for the 500-page CI doc,
-  which is gitignored).
-- `tests-fixtures/markdown/` — planned (Phase 4 parser conformance suite).
+- `tests-fixtures/pdf/` — a small, committed, license-clean PDF corpus; see its
+  [README](../tests-fixtures/pdf/README.md). Regenerate deterministically with
+  `python3 scripts/gen-fixtures.py` (add `--large` for the 500-page stress
+  document, which is gitignored and generated in CI).
 
 ## Conventions
 
-- Tests needing a real filesystem use unique tempdirs under `target/` and clean
-  up after themselves (see `unique_temp_dir` helpers).
-- Tests are exempt from the unwrap budget; production code is not
-  (`scripts/unwrap-budget.sh`).
-- `native` is a binary-only crate: external integration tests cannot import its
-  modules. `native/tests/smoke.rs` builds the binary via `CARGO_BIN_EXE`; real
-  logic tests live in-crate.
+- Tests needing a real filesystem use unique tempdirs (e.g. via `tempfile`) and
+  clean up after themselves.
+- Tests are exempt from the `unwrap`/`expect` ban via a file-level
+  `#![allow(...)]`; production code is not.
 
-## Full pre-handoff suite
+## Full pre-handoff gate
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/architecture-check.sh
-./scripts/check-budget.sh
-./scripts/unwrap-budget.sh
+./scripts/size-budget.sh
 ```
+
+Or, with [`just`](../justfile): `just check`.

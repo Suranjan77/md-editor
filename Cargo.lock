@@ -2262,7 +2262,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "md3-editor"
+name = "md-editor"
 version = "3.0.0-dev"
 dependencies = [
  "ropey",
@@ -2271,24 +2271,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "md3-kernel"
+name = "md-kernel"
 version = "3.0.0-dev"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "md3-pdf"
+name = "md-pdf"
 version = "3.0.0-dev"
 dependencies = [
- "md3-vault",
+ "md-vault",
  "pdfium-render",
  "tempfile",
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "md3-shell"
+name = "md-shell"
 version = "3.0.0-dev"
 dependencies = [
  "chrono",
@@ -2296,10 +2296,10 @@ dependencies = [
  "directories",
  "iced",
  "image",
- "md3-editor",
- "md3-kernel",
- "md3-pdf",
- "md3-vault",
+ "md-editor",
+ "md-kernel",
+ "md-pdf",
+ "md-vault",
  "open",
  "ratex-layout",
  "ratex-parser",
@@ -2315,7 +2315,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "md3-vault"
+name = "md-vault"
 version = "3.0.0-dev"
 dependencies = [
  "directories",
@@ -2329,7 +2329,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "md3-xtask"
+name = "md-xtask"
 version = "3.0.0-dev"
 dependencies = [
  "sha2",

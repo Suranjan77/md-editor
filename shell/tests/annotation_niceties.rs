@@ -6,12 +6,12 @@
 
 use std::path::Path;
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, Key, Mods};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::overlay::Overlay;
-use md3_shell::gui::session::PdfSelection;
-use md3_shell::gui::{Message, Shell};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, Key, Mods};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::overlay::Overlay;
+use md_shell::gui::session::PdfSelection;
+use md_shell::gui::{Message, Shell};
 use tempfile::TempDir;
 
 fn chord(s: &str) -> Chord {
@@ -83,7 +83,7 @@ fn highlight_injected_selection(shell: &mut Shell) {
             session.selection = Some(PdfSelection {
                 page: 0,
                 anchor: (10.0, 10.0),
-                quads: vec![md3_pdf::SelRect {
+                quads: vec![md_pdf::SelRect {
                     x0: 10.0,
                     y0: 10.0,
                     x1: 90.0,

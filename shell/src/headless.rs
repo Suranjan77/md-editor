@@ -1,20 +1,20 @@
 //! Headless CLI modes — what CI runs. Real guarantees live here:
 //!
 //! - `dump_shortcuts` prints the shortcuts table *generated from the command
-//!   registry* — the single source of truth; docs/V3_SHORTCUTS.md is produced
+//!   registry* — the single source of truth; docs/SHORTCUTS.md is produced
 //!   by this, never edited by hand.
 //! - `palette` exercises the registry-backed palette query.
 //! - `demo` walks the BUG-A/BUG-C scenario end to end on the real kernel.
 
 use std::process::ExitCode;
 
-use md3_kernel::input::{Chord, EditorKind};
-use md3_kernel::{CommandRegistry, Keymap, SplitAxis, Workspace};
+use md_kernel::input::{Chord, EditorKind};
+use md_kernel::{CommandRegistry, Keymap, SplitAxis, Workspace};
 
 pub fn dump_shortcuts(registry: &CommandRegistry) {
-    println!("# Shortcuts (v3)");
+    println!("# Keyboard Shortcuts");
     println!();
-    println!("Generated from the command registry by `md3-shell --dump-shortcuts`.");
+    println!("Generated from the command registry by `md-editor --dump-shortcuts`.");
     println!("Do not edit by hand — change `kernel/src/defaults.rs` instead.");
     println!();
     println!("| Command | Title | Category | Scope | Chord |");
@@ -41,7 +41,7 @@ pub fn palette(registry: &CommandRegistry, query: &str) {
     }
 }
 
-/// Walk the v2 bug scenarios on the live kernel; non-zero exit if any
+/// Walk the regression scenarios on the live kernel; non-zero exit if any
 /// expectation fails. A smoke check, not a substitute for the test suites.
 pub fn demo(keymap: &Keymap) -> ExitCode {
     let mut ws = Workspace::new();

@@ -8,7 +8,7 @@ on:
 
 jobs:
   architecture:
-    name: Architecture boundaries
+    name: Architecture and budgets
     runs-on: ubuntu-latest
 
     steps:
@@ -22,17 +22,11 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Check architecture boundaries
+      - name: Check architecture boundaries (ADR-0100)
         run: ./scripts/architecture-check.sh
 
-      - name: Report architecture metrics
-        run: ./scripts/architecture-metrics.sh
-
-      - name: Check budget
-        run: ./scripts/check-budget.sh
-
-      - name: Check unwrap budget
-        run: ./scripts/unwrap-budget.sh
+      - name: Check module size budgets
+        run: ./scripts/size-budget.sh
 
   rust:
     name: Format, lint, test
@@ -61,53 +55,20 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Run tests
-        run: cargo test --workspace
-
-  v3:
-    name: v3 workspace (kernel/editor/vault/pdf/shell)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install stable Rust
-        run: |
-          rustup update stable
-          rustup default stable
-          rustup component add rustfmt clippy
-          rustc --version
-
-      - name: Check formatting
-        working-directory: v3
-        run: cargo fmt --all -- --check
-
-      - name: Check v3 size budgets
-        run: ./scripts/v3-budget.sh
-
-      - name: Run clippy
-        working-directory: v3
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
       - name: Run tests (includes BUG-A/B/C regression suites)
-        working-directory: v3
         run: cargo test --workspace
 
       - name: Run pdfium-wired tests (repo-local libpdfium)
-        working-directory: v3
         run: |
-          cargo clippy -p md3-pdf --all-targets --features pdfium -- -D warnings
-          cargo test -p md3-pdf --features pdfium
-          cargo clippy -p md3-shell --all-targets --features pdfium -- -D warnings
-          cargo test -p md3-shell --features pdfium
+          cargo clippy -p md-pdf --all-targets --features pdfium -- -D warnings
+          cargo test -p md-pdf --features pdfium
+          cargo clippy -p md-shell --all-targets --features pdfium -- -D warnings
+          cargo test -p md-shell --features pdfium
 
-      - name: Kernel demo walks the v2 bug scenarios
-        working-directory: v3
-        run: cargo run -p md3-shell -- --demo
+      - name: Kernel demo walks the regression scenarios
+        run: cargo run -p md-shell -- --demo
 
       - name: Generated shortcuts doc is up to date
-        working-directory: v3
         run: |
-          cargo run -q -p md3-shell -- --dump-shortcuts > /tmp/shortcuts.md
-          diff -u ../docs/V3_SHORTCUTS.md /tmp/shortcuts.md
+          cargo run -q -p md-shell -- --dump-shortcuts > /tmp/shortcuts.md
+          diff -u docs/SHORTCUTS.md /tmp/shortcuts.md

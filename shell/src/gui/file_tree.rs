@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use iced::widget::{button, column, container, mouse_area, text};
 use iced::{Background, Border, Element, Fill, Padding};
-use md3_kernel::CommandId;
+use md_kernel::CommandId;
 
 use super::{Message, tokens};
 
@@ -177,7 +177,7 @@ mod tests {
         let files = vec![
             "README.md".to_string(),
             "docs/PLAN.md".to_string(),
-            "docs/V3.md".to_string(),
+            "docs/USAGE.md".to_string(),
             "src/main.rs".to_string(),
             "docs/img/logo.png".to_string(),
         ];
@@ -234,8 +234,8 @@ mod tests {
                     depth: 1
                 },
                 TreeRow {
-                    label: "V3.md".to_string(),
-                    rel_path: "docs/V3.md".to_string(),
+                    label: "USAGE.md".to_string(),
+                    rel_path: "docs/USAGE.md".to_string(),
                     is_dir: false,
                     depth: 1
                 },
@@ -285,8 +285,8 @@ mod tests {
                     depth: 1
                 },
                 TreeRow {
-                    label: "V3.md".to_string(),
-                    rel_path: "docs/V3.md".to_string(),
+                    label: "USAGE.md".to_string(),
+                    rel_path: "docs/USAGE.md".to_string(),
                     is_dir: false,
                     depth: 1
                 },

@@ -2,7 +2,7 @@
 //! a real window. Structure of every frame:
 //!
 //! - **Input:** one `iced::keyboard::listen()` subscription feeds
-//!   [`keys::normalize`] → [`md3_kernel::Workspace::handle_key`]. That is the
+//!   [`keys::normalize`] → [`md_kernel::Workspace::handle_key`]. That is the
 //!   *only* keyboard path — widgets bind nothing (BUG-A discipline). Chords
 //!   no command claims fall through as raw text to the focused surface.
 //! - **State:** kernel `Workspace` owns identity/layout/focus; [`session`]
@@ -50,11 +50,11 @@ use std::path::{Path, PathBuf};
 
 use iced::widget::{button, canvas, column, container, mouse_area, row, stack, text};
 use iced::{Element, Fill, Subscription, Task};
-use md3_editor::buffer::{Command, Movement, Selection};
-use md3_kernel::input::{Chord, EditorKind, Key};
-use md3_kernel::pane::{DocumentId, Layout, Pane, PaneId, SplitPath, TabId};
-use md3_kernel::{CommandId, CommandRegistry, Keymap, SplitAxis, Workspace};
-use md3_vault::{AnnotationStore, AssetSizeStore, SearchIndex, SessionStore};
+use md_editor::buffer::{Command, Movement, Selection};
+use md_kernel::input::{Chord, EditorKind, Key};
+use md_kernel::pane::{DocumentId, Layout, Pane, PaneId, SplitPath, TabId};
+use md_kernel::{CommandId, CommandRegistry, Keymap, SplitAxis, Workspace};
+use md_vault::{AnnotationStore, AssetSizeStore, SearchIndex, SessionStore};
 
 use chrome_panels::find_all_matches;
 use editor_canvas::EditorCanvas;
@@ -72,7 +72,7 @@ pub fn run(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> ic
         Shell::update,
         Shell::view,
     )
-    .title("md3")
+    .title("MD Editor")
     .subscription(Shell::subscription)
     .theme(Shell::theme)
     .window(iced::window::Settings {
@@ -293,7 +293,7 @@ pub struct Shell {
     tracker_open: bool,
     tracker_running: bool,
     tracker_started_at: Option<std::time::Instant>,
-    tracker_sessions: Vec<md3_vault::tracker::StudySession>,
+    tracker_sessions: Vec<md_vault::tracker::StudySession>,
     tracker_kv: std::collections::HashMap<String, String>,
     tracker_active_tab: tracker_view::TrackerTab,
     tracker_config_json: iced::widget::text_editor::Content,
@@ -331,7 +331,7 @@ impl Shell {
         let mut tracker_config_json =
             iced::widget::text_editor::Content::with_text(&tracker_view::default_config_json());
 
-        if let Ok(store) = md3_vault::tracker::TrackerStore::open(&tracker_db_path) {
+        if let Ok(store) = md_vault::tracker::TrackerStore::open(&tracker_db_path) {
             if let Ok(sessions) = store.get_sessions() {
                 tracker_sessions = sessions;
             }
@@ -476,7 +476,7 @@ impl Shell {
         self.sessions.pdf.get_mut(&doc)
     }
 
-    pub fn inject_pdf_session_layout(&mut self, layout: md3_pdf::DocLayout) {
+    pub fn inject_pdf_session_layout(&mut self, layout: md_pdf::DocLayout) {
         let tab = self.ws.focused_tab();
         let doc = tab.and_then(|t| self.tab_document(t));
         if let Some(doc) = doc
@@ -678,7 +678,7 @@ impl Shell {
                                 let hours = (elapsed.as_secs_f32() / 3600.0).max(0.01);
                                 let date =
                                     chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-                                let session = md3_vault::tracker::StudySession {
+                                let session = md_vault::tracker::StudySession {
                                     id: 0,
                                     date,
                                     hours,
@@ -790,7 +790,7 @@ impl Shell {
                         let notes = (!self.tracker_manual_notes.trim().is_empty())
                             .then(|| self.tracker_manual_notes.trim().to_string());
 
-                        let session = md3_vault::tracker::StudySession {
+                        let session = md_vault::tracker::StudySession {
                             id: 0,
                             date,
                             hours,

@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use md3_kernel::CommandId;
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Chord, EditorKind};
-use md3_kernel::pane::{Layout, SplitAxis};
-use md3_shell::gui::keys::KeyEvent;
-use md3_shell::gui::menu::{self, MenuId};
-use md3_shell::gui::{Message, Shell};
+use md_kernel::CommandId;
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Chord, EditorKind};
+use md_kernel::pane::{Layout, SplitAxis};
+use md_shell::gui::keys::KeyEvent;
+use md_shell::gui::menu::{self, MenuId};
+use md_shell::gui::{Message, Shell};
 
 fn shell(root: &Path) -> Shell {
     let registry = match default_registry() {
@@ -70,7 +70,7 @@ fn zoom_commands_change_pdf_zoom_without_an_overlay() {
     }
     let mut shell = shell(dir.path());
     let _ = shell.update(Message::TreeFileClicked("paper.pdf".to_string()));
-    shell.inject_pdf_session_layout(md3_pdf::DocLayout::new(vec![(612.0, 792.0)], 1.0, 16.0));
+    shell.inject_pdf_session_layout(md_pdf::DocLayout::new(vec![(612.0, 792.0)], 1.0, 16.0));
 
     let _ = shell.update(Message::RunCommand(CommandId("pdf.zoom-in")));
     assert_eq!(shell.focused_pdf().map(|session| session.zoom), Some(1.25));
@@ -94,7 +94,7 @@ fn floating_pdf_controls_target_their_tab() {
         .workspace()
         .focused_tab()
         .unwrap_or_else(|| panic!("pdf tab"));
-    shell.inject_pdf_session_layout(md3_pdf::DocLayout::new(vec![(612.0, 792.0); 3], 1.0, 16.0));
+    shell.inject_pdf_session_layout(md_pdf::DocLayout::new(vec![(612.0, 792.0); 3], 1.0, 16.0));
 
     let _ = shell.update(Message::PdfCommand {
         tab,

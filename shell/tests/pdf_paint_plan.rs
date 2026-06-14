@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use md3_pdf::DocLayout;
-use md3_pdf::select::SelRect;
-use md3_shell::gui::paint::{Tint, page_plan, tint_plan};
-use md3_shell::gui::session::{PdfSelection, PdfSession};
-use md3_vault::{Annotation, Quad};
+use md_pdf::DocLayout;
+use md_pdf::select::SelRect;
+use md_shell::gui::paint::{Tint, page_plan, tint_plan};
+use md_shell::gui::session::{PdfSelection, PdfSession};
+use md_vault::{Annotation, Quad};
 
 fn setup_session() -> PdfSession {
     let mut session = PdfSession::new("test.pdf");

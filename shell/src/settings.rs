@@ -3,7 +3,7 @@
 //! it exposes `Keymap::apply_override`/`remove`; this module owns the file
 //! format and applies it at startup.
 //!
-//! `<vault>/.md3/keymap.json`:
+//! `<vault>/.md-editor/keymap.json`:
 //!
 //! ```json
 //! {
@@ -21,8 +21,8 @@
 
 use std::path::Path;
 
-use md3_kernel::input::{Binding, Chord, EditorKind, Keymap, Scope};
-use md3_kernel::{CommandId, CommandRegistry};
+use md_kernel::input::{Binding, Chord, EditorKind, Keymap, Scope};
+use md_kernel::{CommandId, CommandRegistry};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,13 +49,13 @@ pub struct OverrideReport {
     pub warnings: Vec<String>,
 }
 
-/// Load `<root>/.md3/keymap.json` (if present) and apply it to `keymap`.
+/// Load `<root>/.md-editor/keymap.json` (if present) and apply it to `keymap`.
 pub fn apply_keymap_overrides(
     root: &Path,
     registry: &CommandRegistry,
     keymap: &mut Keymap,
 ) -> OverrideReport {
-    let path = root.join(".md3/keymap.json");
+    let path = root.join(".md-editor/keymap.json");
     let mut report = OverrideReport::default();
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -127,7 +127,7 @@ fn parse_scope(s: &str) -> Option<Scope> {
 }
 
 pub fn read_keymap_overrides(root: &Path) -> Result<KeymapFile, String> {
-    let path = root.join(".md3/keymap.json");
+    let path = root.join(".md-editor/keymap.json");
     if !path.exists() {
         return Ok(KeymapFile {
             bindings: Vec::new(),
@@ -138,9 +138,9 @@ pub fn read_keymap_overrides(root: &Path) -> Result<KeymapFile, String> {
 }
 
 pub fn save_keymap_overrides(root: &Path, file: &KeymapFile) -> Result<(), String> {
-    let dir = root.join(".md3");
+    let dir = root.join(".md-editor");
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        return Err(format!("failed to create .md3 dir: {e}"));
+        return Err(format!("failed to create .md-editor dir: {e}"));
     }
     let path = dir.join("keymap.json");
     let json = serde_json::to_string_pretty(file).map_err(|e| format!("serialize failed: {e}"))?;
@@ -175,7 +175,7 @@ pub fn validate_overrides(registry: &CommandRegistry, file: &KeymapFile) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use md3_kernel::defaults::default_registry;
+    use md_kernel::defaults::default_registry;
 
     fn setup() -> (tempfile::TempDir, CommandRegistry, Keymap) {
         let dir = match tempfile::tempdir() {
@@ -194,7 +194,7 @@ mod tests {
     }
 
     fn write_overrides(root: &Path, json: &str) {
-        let dir = root.join(".md3");
+        let dir = root.join(".md-editor");
         if let Err(e) = std::fs::create_dir_all(&dir) {
             panic!("mkdir: {e}");
         }

@@ -1,6 +1,6 @@
-use md3_editor::layout::{ConcealMode, Measurer, StyledLine};
-use md3_editor::parse::LineKind;
-use md3_editor::style::{Span, SpanKind};
+use md_editor::layout::{ConcealMode, Measurer, StyledLine};
+use md_editor::parse::LineKind;
+use md_editor::style::{Span, SpanKind};
 
 use super::{
     LINE_HEIGHT, MAX_READING_WIDTH, MIN_PAGE_MARGIN, MonoMeasurer, content_left, content_width,

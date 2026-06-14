@@ -1,5 +1,5 @@
 use super::*;
-use md3_vault::{NewAnnotation, Quad};
+use md_vault::{NewAnnotation, Quad};
 
 /// Highlight color cycle (`pdf.highlight-color`); new annotations start at
 /// the first entry. Stored per annotation (`#rrggbb`, schema column).
@@ -79,7 +79,7 @@ impl Shell {
             Err(error) => return self.error(format!("export failed: {error}")),
         };
         let abs = root.join(&rel);
-        match md3_vault::atomic_save(&abs, markdown.as_bytes()) {
+        match md_vault::atomic_save(&abs, markdown.as_bytes()) {
             Ok(()) => {
                 if let Some(index) = self.index.as_mut() {
                     let _ = index.sync_paths(&root, &[abs]);
@@ -141,7 +141,7 @@ impl Shell {
         let abs = root.join(&rel);
         if !abs.exists() {
             let seed = format!("# Notes — {}\n", session.rel_path);
-            if let Err(error) = md3_vault::atomic_save(&abs, seed.as_bytes()) {
+            if let Err(error) = md_vault::atomic_save(&abs, seed.as_bytes()) {
                 self.status = format!("linked note failed: {error}");
                 return;
             }
@@ -175,7 +175,7 @@ impl Shell {
         let live: std::collections::HashSet<String> = scan_vault(&self.vault_root)
             .iter()
             .filter(|rel| rel.ends_with(".pdf"))
-            .filter_map(|rel| md3_vault::document_hash(&self.vault_root.join(rel)).ok())
+            .filter_map(|rel| md_vault::document_hash(&self.vault_root.join(rel)).ok())
             .collect();
         let rows: Vec<(String, String)> = known
             .iter()

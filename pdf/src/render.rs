@@ -493,23 +493,23 @@ mod tests {
     use super::*;
     use crate::tile::zoom_bucket;
 
-    /// Fixture corpus from the v2 quarry (plan M0 "port fixtures").
+    /// Shared PDF fixture corpus (see tests-fixtures/pdf/README.md).
     fn fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests-fixtures/pdf")
+            .join("../tests-fixtures/pdf")
             .join(name)
     }
 
     fn renderer() -> Option<&'static PdfRenderer> {
-        // One shared binding (re-binding per test is wasted work).
-        // Prefer the repo-local library; fall back to system. Skip (not
-        // fail) when neither exists so the suite stays green on machines
-        // without pdfium.
+        // One shared binding (re-binding per test is wasted work). Dev machines
+        // can point at a local libpdfium via PDFIUM_LIB_DIR; otherwise bind the
+        // system library, or skip (not fail) when neither exists so the suite
+        // stays green on machines without pdfium.
         static RENDERER: std::sync::OnceLock<Option<PdfRenderer>> = std::sync::OnceLock::new();
         RENDERER
             .get_or_init(|| {
-                let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../core/pdfium");
-                PdfRenderer::new(Some(&local))
+                let lib_dir = std::env::var_os("PDFIUM_LIB_DIR").map(PathBuf::from);
+                PdfRenderer::new(lib_dir.as_deref())
                     .or_else(|_| PdfRenderer::new(None))
                     .ok()
             })

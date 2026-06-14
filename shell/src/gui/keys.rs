@@ -4,7 +4,7 @@
 //! which the app routes through `Workspace::handle_key` — the single
 //! keystroke entry point (BUG-A discipline).
 
-use md3_kernel::input::{Chord, Key, Mods};
+use md_kernel::input::{Chord, Key, Mods};
 
 /// A normalized keystroke: the chord for the keymap, plus whatever text the
 /// key would insert if no command claims it.

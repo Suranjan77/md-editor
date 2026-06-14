@@ -21,7 +21,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-use md3_pdf::TileKey;
+use md_pdf::TileKey;
 
 /// A request the update loop hands to the worker thread.
 #[derive(Debug, Clone)]
@@ -68,12 +68,12 @@ pub enum PdfJobOutput {
     PageGlyphs {
         path: PathBuf,
         page: u32,
-        chars: Vec<md3_pdf::CharBox>,
+        chars: Vec<md_pdf::CharBox>,
     },
     PageLinks {
         path: PathBuf,
         page: u32,
-        links: Vec<md3_pdf::LinkBox>,
+        links: Vec<md_pdf::LinkBox>,
     },
     MarkdownAsset {
         document: PathBuf,

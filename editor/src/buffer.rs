@@ -1,6 +1,5 @@
-//! Rope-backed text buffer (plan §3.2): ropey + transactional commands —
-//! v2's proven discipline (`native/src/editor/buffer/` is the quarry) —
-//! rebuilt on the v3 invariants:
+//! Rope-backed text buffer: ropey + transactional commands, built on these
+//! invariants:
 //!
 //! - **Multi-cursor from day one:** the selection model is `Vec<Selection>`,
 //!   kept sorted, merged, and non-empty. A single caret is the trivial case.

@@ -8,9 +8,9 @@
 //! overlays fence off inner scopes, and conflicts fail statically — this file
 //! IS the "conflict CI" from plan §3.1.
 
-use md3_kernel::defaults::default_registry;
-use md3_kernel::input::{Binding, Chord, EditorKind, Key, Mods, Scope};
-use md3_kernel::{CommandId, Keymap, KeymapError, SplitAxis, Workspace};
+use md_kernel::defaults::default_registry;
+use md_kernel::input::{Binding, Chord, EditorKind, Key, Mods, Scope};
+use md_kernel::{CommandId, Keymap, KeymapError, SplitAxis, Workspace};
 
 fn setup() -> (Workspace, Keymap) {
     let reg = match default_registry() {

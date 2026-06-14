@@ -1,6 +1,6 @@
-//! Integration tests for TrackerStore in md3-vault.
+//! Integration tests for TrackerStore in md-vault.
 
-use md3_vault::tracker::{StudySession, TrackerStore};
+use md_vault::tracker::{StudySession, TrackerStore};
 
 #[test]
 #[allow(clippy::unwrap_used)]

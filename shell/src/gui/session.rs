@@ -4,10 +4,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use md3_editor::buffer::Command;
-use md3_editor::document::EditorDocument;
-use md3_editor::layout::{Damage, Measurer};
-use md3_kernel::pane::DocumentId;
+use md_editor::buffer::Command;
+use md_editor::document::EditorDocument;
+use md_editor::layout::{Damage, Measurer};
+use md_kernel::pane::DocumentId;
 
 use super::editor_canvas::LINE_HEIGHT;
 use super::markdown_assets::table_cells;
@@ -126,9 +126,9 @@ impl MdSession {
         for (cell_index, cell) in cells.iter().enumerate() {
             let width = widths.get(cell_index).copied().unwrap_or(0.0) + 16.0;
             if x <= left + width || cell_index + 1 == cells.len() {
-                let styled = md3_editor::layout::StyledLine::plain(
+                let styled = md_editor::layout::StyledLine::plain(
                     cell.text.trim(),
-                    md3_editor::layout::ConcealMode::Concealed,
+                    md_editor::layout::ConcealMode::Concealed,
                 );
                 let display_col = self.measurer.hit_test(
                     &styled,
@@ -156,7 +156,7 @@ impl MdSession {
                 line += 1;
                 continue;
             };
-            if !matches!(styled.kind, md3_editor::parse::LineKind::MathOpen) {
+            if !matches!(styled.kind, md_editor::parse::LineKind::MathOpen) {
                 line += 1;
                 continue;
             }
@@ -169,12 +169,12 @@ impl MdSession {
                     break;
                 };
                 match styled.kind {
-                    md3_editor::parse::LineKind::MathContent => {
+                    md_editor::parse::LineKind::MathContent => {
                         content.push(styled.display);
                         content_lines.push(cursor);
                         covered.insert(cursor);
                     }
-                    md3_editor::parse::LineKind::MathClose => break,
+                    md_editor::parse::LineKind::MathClose => break,
                     _ => break,
                 }
                 cursor += 1;
@@ -205,15 +205,12 @@ impl MdSession {
 
         for index in 0..self.doc.line_count() {
             let styled = self.doc.styled_line(index).unwrap_or_else(|| {
-                md3_editor::layout::StyledLine::plain(
-                    "",
-                    md3_editor::layout::ConcealMode::Concealed,
-                )
+                md_editor::layout::StyledLine::plain("", md_editor::layout::ConcealMode::Concealed)
             });
             let kind = styled.kind;
             if matches!(
                 kind,
-                md3_editor::parse::LineKind::TableRow | md3_editor::parse::LineKind::TableSep
+                md_editor::parse::LineKind::TableRow | md_editor::parse::LineKind::TableSep
             ) {
                 if !in_table {
                     in_table = true;
@@ -233,9 +230,9 @@ impl MdSession {
                     if cell_text.is_empty() || cell_text.chars().all(|c| c == '-' || c == ':') {
                         continue; // table sep
                     }
-                    let cell_styled = md3_editor::layout::StyledLine::plain(
+                    let cell_styled = md_editor::layout::StyledLine::plain(
                         cell_text,
-                        md3_editor::layout::ConcealMode::Concealed,
+                        md_editor::layout::ConcealMode::Concealed,
                     );
                     let buffer = self.measurer.create_buffer(&cell_styled, 10000.0);
                     let width = buffer
@@ -292,7 +289,7 @@ pub struct PdfSelection {
     pub page: u32,
     /// Where the drag started, page points.
     pub anchor: (f32, f32),
-    pub quads: Vec<md3_pdf::SelRect>,
+    pub quads: Vec<md_pdf::SelRect>,
     pub text: String,
 }
 
@@ -300,7 +297,7 @@ pub struct PdfSession {
     pub rel_path: String,
     /// Continuous-scroll geometry; `None` until page sizes load (no pdfium,
     /// or the file failed to open) — the placeholder view shows `status`.
-    pub layout: Option<md3_pdf::DocLayout>,
+    pub layout: Option<md_pdf::DocLayout>,
     pub scroll: f32,
     pub zoom: f32,
     pub fit_mode: Option<PdfFitMode>,
@@ -308,13 +305,13 @@ pub struct PdfSession {
     pub viewport: (f32, f32),
     /// Rendered tile pixmaps, owned here; the engine cache owns the budget
     /// accounting and tells us what to drop.
-    pub tiles: HashMap<md3_pdf::TileKey, iced::widget::image::Handle>,
-    pub cache: md3_pdf::TileCache,
-    pub queue: md3_pdf::RenderQueue,
+    pub tiles: HashMap<md_pdf::TileKey, iced::widget::image::Handle>,
+    pub cache: md_pdf::TileCache,
+    pub queue: md_pdf::RenderQueue,
     /// Tiles handed to the async worker and not yet returned — never
     /// re-scheduled while here (the worker cannot cancel in-flight work;
     /// stale results land in the LRU cache harmlessly).
-    pub tiles_in_flight: std::collections::HashSet<md3_pdf::TileKey>,
+    pub tiles_in_flight: std::collections::HashSet<md_pdf::TileKey>,
     /// Pages whose glyph/link loads are at the worker; absence from the map
     /// + absence here = not yet requested.
     pub chars_pending: std::collections::HashSet<u32>,
@@ -325,14 +322,14 @@ pub struct PdfSession {
     pub doc_hash: Option<String>,
     /// Glyph geometry per page, loaded on first selection touch. Empty vec
     /// = page has no selectable text (or no pdfium).
-    pub chars: HashMap<u32, Vec<md3_pdf::CharBox>>,
-    pub links: HashMap<u32, Vec<md3_pdf::LinkBox>>,
+    pub chars: HashMap<u32, Vec<md_pdf::CharBox>>,
+    pub links: HashMap<u32, Vec<md_pdf::LinkBox>>,
     pub selection: Option<PdfSelection>,
     /// Flattened bookmark tree (empty: none, or no pdfium); loaded with the
     /// page geometry on open.
-    pub outline: Vec<md3_pdf::OutlineEntry>,
+    pub outline: Vec<md_pdf::OutlineEntry>,
     /// This document's stored annotations, refreshed after every mutation.
-    pub annotations: Vec<md3_vault::Annotation>,
+    pub annotations: Vec<md_vault::Annotation>,
     /// Annotation picked by clicking one of its quads; note edits and
     /// deletion target it.
     pub selected_annotation: Option<i64>,
@@ -356,8 +353,8 @@ impl PdfSession {
             fit_mode: None,
             viewport: (1000.0, 750.0),
             tiles: HashMap::new(),
-            cache: md3_pdf::TileCache::new(TILE_BUDGET),
-            queue: md3_pdf::RenderQueue::new(),
+            cache: md_pdf::TileCache::new(TILE_BUDGET),
+            queue: md_pdf::RenderQueue::new(),
             tiles_in_flight: std::collections::HashSet::new(),
             chars_pending: std::collections::HashSet::new(),
             links_pending: std::collections::HashSet::new(),
@@ -420,17 +417,17 @@ impl PdfSession {
     /// Title of the outline section the viewport is in, for the status
     /// pill. `None` without an outline or above the first section.
     pub fn current_section(&self) -> Option<&str> {
-        let i = md3_pdf::section_at(&self.outline, self.current_page() as u32)?;
+        let i = md_pdf::section_at(&self.outline, self.current_page() as u32)?;
         Some(self.outline[i].title.as_str())
     }
 
     /// Return the index of the outline section the viewport is currently viewing.
     pub fn current_section_index(&self) -> Option<usize> {
-        md3_pdf::section_at(&self.outline, self.current_page() as u32)
+        md_pdf::section_at(&self.outline, self.current_page() as u32)
     }
 
     /// Extract highlight text for a given annotation by checking which character boxes' centers lie within the annotation's quads.
-    pub fn annotation_text(&self, a: &md3_vault::Annotation) -> String {
+    pub fn annotation_text(&self, a: &md_vault::Annotation) -> String {
         let Some(chars) = self.chars.get(&a.page) else {
             return String::new();
         };
@@ -453,7 +450,7 @@ impl PdfSession {
 
     /// The stored annotation whose quads contain the page point, topmost
     /// (most recent) first.
-    pub fn annotation_at(&self, page: u32, pt: (f32, f32)) -> Option<&md3_vault::Annotation> {
+    pub fn annotation_at(&self, page: u32, pt: (f32, f32)) -> Option<&md_vault::Annotation> {
         self.annotations.iter().rev().find(|a| {
             a.page == page
                 && a.quads.iter().any(|q| {
@@ -466,13 +463,13 @@ impl PdfSession {
     }
 
     /// Find link at the given point, topmost-last.
-    pub fn link_at(&self, page: u32, pt: (f32, f32)) -> Option<&md3_pdf::LinkBox> {
+    pub fn link_at(&self, page: u32, pt: (f32, f32)) -> Option<&md_pdf::LinkBox> {
         self.links.get(&page)?.iter().rev().find(|l| {
             pt.0 >= l.rect.x0 && pt.0 <= l.rect.x1 && pt.1 >= l.rect.y0 && pt.1 <= l.rect.y1
         })
     }
 
-    pub fn selected_annotation(&self) -> Option<&md3_vault::Annotation> {
+    pub fn selected_annotation(&self) -> Option<&md_vault::Annotation> {
         let id = self.selected_annotation?;
         self.annotations.iter().find(|a| a.id == id)
     }
@@ -489,7 +486,7 @@ impl PdfSession {
     pub fn page_count(&self) -> usize {
         self.layout
             .as_ref()
-            .map_or(0, md3_pdf::DocLayout::page_count)
+            .map_or(0, md_pdf::DocLayout::page_count)
     }
 
     pub fn scroll_by(&mut self, dy: f32) {
@@ -569,7 +566,7 @@ pub struct Sessions {
 
 impl Sessions {
     /// Drop sessions whose documents the kernel no longer knows.
-    pub fn gc(&mut self, docs: &md3_kernel::pane::DocumentStore) {
+    pub fn gc(&mut self, docs: &md_kernel::pane::DocumentStore) {
         self.md.retain(|id, _| docs.get(*id).is_some());
         self.pdf.retain(|id, _| docs.get(*id).is_some());
     }
@@ -582,7 +579,7 @@ mod tests {
     #[test]
     fn fit_width_tracks_viewport_resize_until_manual_zoom() {
         let mut session = PdfSession::new("paper.pdf");
-        session.layout = Some(md3_pdf::DocLayout::new(vec![(600.0, 800.0)], 1.0, 16.0));
+        session.layout = Some(md_pdf::DocLayout::new(vec![(600.0, 800.0)], 1.0, 16.0));
         session.set_viewport((632.0, 700.0));
         session.set_fit_mode(PdfFitMode::Width);
         assert!((session.zoom - 1.0).abs() < 0.001);
@@ -599,7 +596,7 @@ mod tests {
     #[test]
     fn fit_page_uses_both_resized_dimensions() {
         let mut session = PdfSession::new("paper.pdf");
-        session.layout = Some(md3_pdf::DocLayout::new(vec![(600.0, 800.0)], 1.0, 16.0));
+        session.layout = Some(md_pdf::DocLayout::new(vec![(600.0, 800.0)], 1.0, 16.0));
         session.set_viewport((632.0, 432.0));
         session.set_fit_mode(PdfFitMode::Page);
         assert!((session.zoom - 0.5).abs() < 0.001);

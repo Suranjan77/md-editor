@@ -1,5 +1,5 @@
 use super::session::PdfSession;
-use md3_pdf::TileKey;
+use md_pdf::TileKey;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RectPx {
@@ -98,10 +98,10 @@ pub fn page_plan(
 }
 
 use super::session::MdSession;
-use md3_editor::layout::{ConcealMode, StyledLine};
-use md3_editor::parse::LineKind;
-use md3_editor::style::SpanKind;
-use md3_editor::syntax::SyntaxRole;
+use md_editor::layout::{ConcealMode, StyledLine};
+use md_editor::parse::LineKind;
+use md_editor::style::SpanKind;
+use md_editor::syntax::SyntaxRole;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaintRole {
@@ -167,7 +167,7 @@ fn marker_is_concealed(kind: &SpanKind, styled: &StyledLine) -> bool {
         && styled.conceal == ConcealMode::Concealed
         && !matches!(
             styled.kind,
-            md3_editor::parse::LineKind::TableRow | md3_editor::parse::LineKind::TableSep
+            md_editor::parse::LineKind::TableRow | md_editor::parse::LineKind::TableSep
         )
 }
 
@@ -204,7 +204,7 @@ fn span_style(kind: &SpanKind, styled: &StyledLine) -> (PaintRole, FontRole) {
         SpanKind::FrontMatter => (PaintRole::Marker, FontRole::Mono),
         SpanKind::QuoteText => (PaintRole::Quote, FontRole::SansItalic),
         SpanKind::Text => {
-            if matches!(styled.kind, md3_editor::parse::LineKind::Heading { .. }) {
+            if matches!(styled.kind, md_editor::parse::LineKind::Heading { .. }) {
                 (PaintRole::Heading, FontRole::SansBold)
             } else {
                 (PaintRole::Text, FontRole::Sans)
@@ -399,7 +399,7 @@ pub fn line_plan(
             let cell_text = cell.trim();
             if !cell_text.is_empty() {
                 let cell_styled =
-                    md3_editor::layout::StyledLine::plain(cell_text, ConcealMode::Concealed);
+                    md_editor::layout::StyledLine::plain(cell_text, ConcealMode::Concealed);
                 let cell_buffer = session.measurer.create_buffer(&cell_styled, w);
                 for run in cell_buffer.layout_runs() {
                     for glyph in run.glyphs.iter() {
