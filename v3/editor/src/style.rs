@@ -1,10 +1,9 @@
 //! Phase-1 styling: inline span parsing and the production [`MarkdownStyler`].
 //!
-//! The conceal strategy is **reserved width** (plan §3.2): the display
-//! string is always the full source text — markers included — and conceal
-//! only flips how marker spans are *painted* (hidden vs muted). Measured
-//! geometry is therefore identical in both modes, which is what makes
-//! `Styler::layout_stable()` true by construction instead of by hope.
+//! Conceal is a style input (ADR-0105): hidden marker characters are removed
+//! from `display`, so measure and paint consume identical visible text.
+//! Revealing source markers can change wrapping or height; layout owns that
+//! reflow through its normal damage path.
 //!
 //! Span ranges are **char offsets** into the display string, matching the
 //! buffer's offset space.
@@ -21,8 +20,7 @@ use crate::syntax::{Lang, LexState, SyntaxRole, lex_line};
 pub enum SpanKind {
     Text,
     /// Syntax characters (`**`, `` ` ``, `[[`, heading `#`s, …). Painted
-    /// muted when the line is revealed, invisible when concealed — but
-    /// always measured (reserved width).
+    /// muted when revealed and absent from concealed display text.
     Marker,
     Bold,
     Italic,
@@ -83,27 +81,32 @@ impl Styler for MarkdownStyler {
         }
 
         let mut display = text.to_string();
+        let mut out_conceal = conceal.clone();
 
-        if conceal == ConcealMode::Concealed {
-            // Drop marker spans and adjust remaining span offsets
+        // `Revealed` keeps the full source verbatim. `Concealed` and `Partial`
+        // both hide markers — `Partial` simply spares the markers that fall
+        // inside the revealed source range (the inline element under the
+        // caret). The kept markers tile a contiguous display block, recorded
+        // back as `Partial(display_range)` so paint/measure can ask
+        // `reveals_at` in display space.
+        if let ConcealMode::Concealed | ConcealMode::Partial(_) = &conceal {
+            let reveal: Range<usize> = match &conceal {
+                ConcealMode::Partial(range) => range.clone(),
+                _ => 0..0,
+            };
             let mut new_spans = Vec::new();
             let mut new_display = String::new();
             let chars: Vec<char> = text.chars().collect();
 
-            // Build a list of ranges that we KEEP.
-            // A character is kept if it is not inside any SpanKind::Marker.
-            let mut keep = vec![true; chars.len()];
-
-            // Some markers shouldn't be concealed in block contexts like tables, wait, marker_is_concealed handled this!
-            // Let's see what marker_is_concealed did.
-            // "Pipes are markers (never concealed by the shell — tables keep their structure visible)"
+            // A char is kept unless it is a hidden marker. Pipes in tables are
+            // markers but stay visible (tables keep their structure).
             let hide_markers = !matches!(kind, LineKind::TableRow | LineKind::TableSep);
-
+            let mut keep = vec![true; chars.len()];
             if hide_markers {
                 for span in &spans {
                     if span.kind == SpanKind::Marker {
                         for i in span.range.clone() {
-                            if i < keep.len() {
+                            if i < keep.len() && !reveal.contains(&i) {
                                 keep[i] = false;
                             }
                         }
@@ -123,7 +126,11 @@ impl Styler for MarkdownStyler {
             old_to_new[chars.len()] = current;
 
             for span in spans {
-                if span.kind != SpanKind::Marker || !hide_markers {
+                // Keep a marker span when it survives (table pipe, or a
+                // revealed element's marker); always keep content spans.
+                let revealed_marker =
+                    span.kind == SpanKind::Marker && reveal.contains(&span.range.start);
+                if span.kind != SpanKind::Marker || !hide_markers || revealed_marker {
                     let start = old_to_new[span.range.start.min(chars.len())];
                     let end = old_to_new[span.range.end.min(chars.len())];
                     if start < end {
@@ -131,13 +138,19 @@ impl Styler for MarkdownStyler {
                     }
                 }
             }
+
+            if let ConcealMode::Partial(range) = &conceal {
+                let start = old_to_new[range.start.min(chars.len())];
+                let end = old_to_new[range.end.min(chars.len())];
+                out_conceal = ConcealMode::Partial(start..end);
+            }
             display = new_display;
             spans = new_spans;
         }
 
         StyledLine {
             display,
-            conceal,
+            conceal: out_conceal,
             kind,
             spans,
         }
@@ -197,7 +210,7 @@ pub fn line_spans(text: &str, kind: &LineKind) -> Vec<Span> {
         LineKind::Rule => spans.push(Span::new(0..n, SpanKind::Marker)),
         LineKind::Heading { level } => {
             let lead = leading_ws(&chars);
-            // `#…# ` prefix (marker includes the space — reserved width).
+            // `#…# ` prefix (marker includes the following space).
             let prefix = (lead + *level as usize + 1).min(n);
             spans.push(Span::new(lead..prefix, SpanKind::Marker));
             parse_inline(&chars, prefix, n, &mut spans);
@@ -442,7 +455,7 @@ mod tests {
             .collect()
     }
 
-    /// Spans must tile the line: reconstruction == source (reserved width).
+    /// Revealed spans must tile the source line exactly.
     fn assert_tiles(text: &str) {
         let joined: String = spans(text).iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(joined, text, "spans must cover the full source text");
@@ -616,7 +629,7 @@ mod tests {
             &fence(Lang::Rust, LexState::Normal),
             ConcealMode::Concealed,
         );
-        // Spans must still tile the full line (reserved-width invariant).
+        // Revealed spans still tile the full source line.
         let joined: String = styled
             .spans
             .iter()

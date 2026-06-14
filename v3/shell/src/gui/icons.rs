@@ -4,6 +4,7 @@ use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     Back,
+    Close,
     Command,
     File,
     Find,
@@ -13,11 +14,16 @@ pub enum Icon {
     Forward,
     Help,
     ListTree,
+    NewFolder,
+    NewNote,
+    Pdf,
     Redo,
+    Refresh,
     Save,
     Search,
     Sidebar,
     Split,
+    SplitDown,
     Tracker,
     Undo,
     ZoomIn,
@@ -119,6 +125,21 @@ impl<Message> canvas::Program<Message> for IconCanvas {
                 );
                 line(&mut frame, p(12.0, 5.0), p(12.0, 19.0), stroke);
             }
+            Icon::SplitDown => {
+                frame.stroke(
+                    &canvas::Path::rounded_rectangle(
+                        p(4.0, 5.0),
+                        iced::Size::new(16.0 * scale, 14.0 * scale),
+                        (2.0 * scale).into(),
+                    ),
+                    stroke,
+                );
+                line(&mut frame, p(4.0, 12.0), p(20.0, 12.0), stroke);
+            }
+            Icon::Close => {
+                line(&mut frame, p(6.0, 6.0), p(18.0, 18.0), stroke);
+                line(&mut frame, p(18.0, 6.0), p(6.0, 18.0), stroke);
+            }
             Icon::Tracker => {
                 frame.stroke(&canvas::Path::circle(p(12.0, 12.0), 8.0 * scale), stroke);
                 line(&mut frame, p(12.0, 8.0), p(12.0, 12.0), stroke);
@@ -218,6 +239,60 @@ impl<Message> canvas::Program<Message> for IconCanvas {
                 line(&mut frame, p(4.0, 20.0), p(7.0, 20.0), stroke);
                 line(&mut frame, p(17.0, 20.0), p(20.0, 20.0), stroke);
                 line(&mut frame, p(20.0, 20.0), p(20.0, 17.0), stroke);
+            }
+            Icon::Pdf => {
+                let path = canvas::Path::new(|path| {
+                    path.move_to(p(6.0, 3.0));
+                    path.line_to(p(15.0, 3.0));
+                    path.line_to(p(19.0, 7.0));
+                    path.line_to(p(19.0, 21.0));
+                    path.line_to(p(6.0, 21.0));
+                    path.close();
+                });
+                frame.stroke(&path, stroke);
+                line(&mut frame, p(9.0, 12.0), p(16.0, 12.0), stroke);
+                line(&mut frame, p(9.0, 15.5), p(16.0, 15.5), stroke);
+                line(&mut frame, p(9.0, 18.5), p(13.0, 18.5), stroke);
+            }
+            Icon::NewNote => {
+                let path = canvas::Path::new(|path| {
+                    path.move_to(p(5.0, 3.0));
+                    path.line_to(p(12.0, 3.0));
+                    path.line_to(p(15.0, 6.0));
+                    path.line_to(p(15.0, 18.0));
+                    path.line_to(p(5.0, 18.0));
+                    path.close();
+                });
+                frame.stroke(&path, stroke);
+                line(&mut frame, p(18.0, 15.0), p(18.0, 23.0), stroke);
+                line(&mut frame, p(14.0, 19.0), p(22.0, 19.0), stroke);
+            }
+            Icon::NewFolder => {
+                let path = canvas::Path::new(|path| {
+                    path.move_to(p(3.0, 6.0));
+                    path.line_to(p(8.0, 6.0));
+                    path.line_to(p(10.0, 8.0));
+                    path.line_to(p(16.0, 8.0));
+                    path.line_to(p(16.0, 16.0));
+                    path.line_to(p(3.0, 16.0));
+                    path.close();
+                });
+                frame.stroke(&path, stroke);
+                line(&mut frame, p(19.0, 14.0), p(19.0, 22.0), stroke);
+                line(&mut frame, p(15.0, 18.0), p(23.0, 18.0), stroke);
+            }
+            Icon::Refresh => {
+                frame.stroke(
+                    &canvas::Path::new(|path| {
+                        path.move_to(p(19.0, 6.0));
+                        path.quadratic_curve_to(p(20.0, 14.0), p(13.0, 18.0));
+                        path.quadratic_curve_to(p(5.0, 21.0), p(4.0, 12.0));
+                        path.quadratic_curve_to(p(4.0, 4.0), p(13.0, 4.0));
+                    }),
+                    stroke,
+                );
+                line(&mut frame, p(19.0, 6.0), p(13.5, 6.5), stroke);
+                line(&mut frame, p(19.0, 6.0), p(18.5, 11.5), stroke);
             }
         }
         vec![frame.into_geometry()]

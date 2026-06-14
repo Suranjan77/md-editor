@@ -19,6 +19,8 @@ pub struct MdSession {
     /// Vault-relative path (the kernel document path).
     pub rel_path: String,
     pub scroll: f32,
+    pub(super) scroll_animation: Option<super::motion::ScrollAnimation>,
+    pub(super) caret_moved_at: std::time::Instant,
     /// Last viewport height a canvas event reported; used to keep the caret
     /// visible after edits. Refined on every mouse interaction.
     pub viewport_h: f32,
@@ -41,6 +43,8 @@ impl MdSession {
             measurer,
             rel_path: rel_path.to_string(),
             scroll: 0.0,
+            scroll_animation: None,
+            caret_moved_at: std::time::Instant::now(),
             viewport_h: 600.0,
             outline_open: false,
             outline_width: 250.0,
@@ -59,12 +63,16 @@ impl MdSession {
 
     /// Apply an editor command and keep the caret on screen.
     pub fn apply(&mut self, command: Command) -> Damage {
-        let (_, damage) = self.doc.apply(command);
+        let (result, damage) = self.doc.apply(command);
+        if result.selection_changed {
+            self.caret_moved_at = std::time::Instant::now();
+        }
         self.scroll_caret_into_view();
         damage
     }
 
     pub fn scroll_caret_into_view(&mut self) {
+        self.scroll_animation = None;
         let head = self.doc.buffer().primary().head;
         let (line, _) = self.doc.buffer().offset_to_line_col(head);
         let Ok(top) = self.doc.layout().offset_of(line) else {
@@ -86,13 +94,15 @@ impl MdSession {
     }
 
     pub fn scroll_by(&mut self, dy: f32) {
+        self.scroll_animation = None;
         self.scroll += dy;
         self.clamp_scroll();
     }
 
     pub fn set_viewport(&mut self, width: f32, height: f32) {
         self.viewport_h = height.max(LINE_HEIGHT);
-        self.doc.set_wrap_width((width - 32.0).max(10.0) as f64);
+        self.doc
+            .set_wrap_width(f64::from(super::editor_canvas::content_width(width)));
         self.scroll_caret_into_view();
     }
 

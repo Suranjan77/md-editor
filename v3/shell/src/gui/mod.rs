@@ -27,6 +27,7 @@ mod input;
 pub mod keys;
 mod markdown_assets;
 pub mod menu;
+mod motion;
 pub mod overlay;
 pub mod paint;
 mod pdf_input;
@@ -41,6 +42,7 @@ mod stores;
 mod toast;
 pub mod tokens;
 pub mod tracker_view;
+mod tracker_widgets;
 pub mod welcome;
 pub mod worker;
 
@@ -55,22 +57,14 @@ use md3_kernel::{CommandId, CommandRegistry, Keymap, SplitAxis, Workspace};
 use md3_vault::{AnnotationStore, AssetSizeStore, SearchIndex, SessionStore};
 
 use chrome_panels::find_all_matches;
-use editor_canvas::{EditorCanvas, palette as colors};
+use editor_canvas::EditorCanvas;
 use overlay::{NamePurpose, Overlay, PdfFindHit};
 use session::{MdSession, PdfSelection, PdfSession, Sessions};
 use snapshot::{NodeSnapshot, SessionSnapshot, TabSnapshot, ViewSnapshot};
+use stores::{refresh_annotations, scan_vault};
+use toast::PdfContextMenuState;
 
-/// Highlight color cycle (`pdf.highlight-color`); new annotations start at
-/// the first entry. Stored per annotation (`#rrggbb`, schema column).
-const HIGHLIGHT_PALETTE: [&str; 4] = ["#ffd866", "#a9dc76", "#78dce8", "#ab9df2"];
-
-/// Default highlight color for new annotations.
-const HIGHLIGHT_COLOR: &str = HIGHLIGHT_PALETTE[0];
-
-const BOLD: iced::Font = iced::Font {
-    weight: iced::font::Weight::Bold,
-    ..iced::Font::DEFAULT
-};
+pub use toast::{Toast, ToastKind};
 
 pub fn run(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> iced::Result {
     iced::application(
@@ -115,6 +109,12 @@ pub enum Message {
         viewport_h: f32,
         checkbox: bool,
         ctrl: bool,
+    },
+    /// A left-drag in the editor: select source offsets `anchor`→`head`.
+    EditorDragSelect {
+        tab: TabId,
+        anchor: usize,
+        head: usize,
     },
     EditorScrolled {
         tab: TabId,
@@ -245,6 +245,7 @@ pub enum Message {
     DismissToast(usize),
     CloseToastClicked(usize),
     SettingsThemeChanged(String),
+    SettingsReduceMotionChanged(bool),
     SettingsScopeChanged(usize, String),
     SettingsChordChanged(usize, String),
     SettingsCommandChanged(usize, String),
@@ -252,26 +253,7 @@ pub enum Message {
     SettingsRemoveRow(usize),
     SettingsSave,
     SettingsCancel,
-}
-
-#[derive(Debug, Clone)]
-pub struct Toast {
-    pub id: usize,
-    pub kind: ToastKind,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToastKind {
-    Info,
-    Success,
-    Error,
-    Warning,
-}
-
-pub struct PdfContextMenuState {
-    pub tab: TabId,
-    pub abs_pos: (f32, f32),
+    AnimationTick(std::time::Instant),
 }
 
 pub struct Shell {
@@ -322,6 +304,7 @@ pub struct Shell {
     toasts: Vec<Toast>,
     next_toast_id: usize,
     theme_name: String,
+    reduce_motion: bool,
 }
 
 impl Shell {
@@ -405,6 +388,7 @@ impl Shell {
             toasts: Vec::new(),
             next_toast_id: 0,
             theme_name: "dark".to_string(),
+            reduce_motion: false,
         };
         shell.restore_session();
         if shell.tree_open {
@@ -463,6 +447,14 @@ impl Shell {
         self.tree_width
     }
 
+    pub fn theme_name(&self) -> &str {
+        &self.theme_name
+    }
+
+    pub fn theme_tokens(&self) -> &'static tokens::Tokens {
+        self.tokens()
+    }
+
     /// The focused tab's markdown session, if it is one.
     pub fn focused_md(&self) -> Option<&MdSession> {
         let tab = self.ws.focused_tab()?;
@@ -497,7 +489,7 @@ impl Shell {
     }
 
     pub(crate) fn subscription(&self) -> Subscription<Message> {
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             iced::keyboard::listen().map(|event| match keys::normalize(&event) {
                 Some(ev) => Message::Key(ev),
                 None => Message::Ignored,
@@ -505,6 +497,9 @@ impl Shell {
             iced::window::close_requests().map(|_| Message::WindowCloseRequested),
             Subscription::run(worker::subscribe),
         ];
+        if let Some(subscription) = self.motion_subscription() {
+            subscriptions.push(subscription);
+        }
         Subscription::batch(subscriptions)
     }
 
@@ -513,6 +508,7 @@ impl Shell {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SettingsThemeChanged(_)
+            | Message::SettingsReduceMotionChanged(_)
             | Message::SettingsScopeChanged(..)
             | Message::SettingsChordChanged(..)
             | Message::SettingsCommandChanged(..)
@@ -520,6 +516,7 @@ impl Shell {
             | Message::SettingsRemoveRow(_)
             | Message::SettingsSave
             | Message::SettingsCancel => self.handle_settings_message(message),
+            Message::AnimationTick(now) => self.advance_motion(now),
             Message::TreeFileClicked(_)
             | Message::TreeDirToggled(_)
             | Message::TreeContextRequested { .. }
@@ -530,6 +527,7 @@ impl Shell {
             | Message::TreeResized(_)
             | Message::TreeResizeFinished => self.handle_tree_message(message),
             Message::EditorClicked { .. }
+            | Message::EditorDragSelect { .. }
             | Message::EditorScrolled { .. }
             | Message::EditorViewportChanged { .. }
             | Message::MdJumpToLine { .. }
@@ -869,6 +867,7 @@ impl Shell {
                 );
                 self.open_overlay(Overlay::Settings {
                     theme: self.theme_name.clone(),
+                    reduce_motion: self.reduce_motion,
                     keymap: overrides,
                     error: None,
                 });
@@ -1191,6 +1190,7 @@ impl Shell {
     // --------------------------------------------------------------- view --
 
     pub(crate) fn view(&self) -> Element<'_, Message> {
+        let tokens = self.tokens();
         let workspace = self.layout_view(&self.ws.panes.layout());
         let focused_kind = self.ws.focused_editor_kind();
         let mut row_children = Vec::new();
@@ -1209,19 +1209,19 @@ impl Shell {
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or_else(|| self.vault_root.display().to_string());
-            let header_button = |label: &'static str, command| {
-                button(text(label).size(14))
-                    .padding([3, 6])
+            let header_icon = |icon, command| {
+                button(icons::view(icon, tokens.text_secondary, 15.0))
+                    .padding([4, 5])
                     .style(button::text)
                     .on_press(Message::RunCommand(command))
             };
             let header = row![
-                text(vault_name).size(13).color(colors::heading()),
+                text(vault_name).size(13).color(tokens.text_secondary),
                 iced::widget::Space::new().width(Fill),
-                header_button("+N", CommandId("file.new-note")),
-                header_button("+F", CommandId("file.new-folder")),
-                header_button("−", CommandId("workspace.collapse-files")),
-                header_button("↻", CommandId("workspace.refresh-files")),
+                header_icon(icons::Icon::NewNote, CommandId("file.new-note")),
+                header_icon(icons::Icon::NewFolder, CommandId("file.new-folder")),
+                header_icon(icons::Icon::Sidebar, CommandId("workspace.collapse-files")),
+                header_icon(icons::Icon::Refresh, CommandId("workspace.refresh-files")),
             ]
             .spacing(2)
             .align_y(iced::Alignment::Center);
@@ -1229,45 +1229,45 @@ impl Shell {
             let mut col = column![header].spacing(2);
             for row in rows {
                 let indent = row.depth as f32 * 14.0;
-                let marker = if row.is_dir {
-                    if self.tree_expanded.contains(&row.rel_path) {
-                        "▾ "
-                    } else {
-                        "▸ "
-                    }
+                let expanded = row.is_dir && self.tree_expanded.contains(&row.rel_path);
+                let chevron = if row.is_dir {
+                    if expanded { "▾" } else { "▸" }
                 } else {
-                    "  "
+                    ""
                 };
-
                 let is_active = focused_path.is_some_and(|p| p == row.rel_path);
                 let text_color = if is_active {
-                    tokens::dark().accent
+                    tokens.accent
                 } else {
-                    colors::text()
+                    tokens.text_primary
                 };
-
-                let kind = if row.is_dir {
-                    ""
+                let type_icon = if row.is_dir {
+                    icons::Icon::Folder
                 } else if row.rel_path.ends_with(".pdf") {
-                    "PDF "
+                    icons::Icon::Pdf
                 } else {
-                    "MD "
+                    icons::Icon::File
                 };
                 let dirty = self.sessions.md.values().any(|session| {
                     session.rel_path == row.rel_path && session.doc.buffer().is_dirty()
                 });
                 let content = row![
                     iced::widget::Space::new().width(indent),
-                    text(format!(
-                        "{marker}{kind}{}{}",
-                        row.label,
-                        if dirty { " ●" } else { "" }
-                    ))
+                    text(chevron)
+                        .size(11)
+                        .color(tokens.text_muted)
+                        .width(iced::Length::Fixed(12.0)),
+                    icons::view(type_icon, text_color, 15.0),
+                    text(if dirty {
+                        format!("{} ●", row.label)
+                    } else {
+                        row.label.clone()
+                    })
                     .size(13)
                     .color(text_color)
                 ]
                 .align_y(iced::Alignment::Center)
-                .spacing(4);
+                .spacing(5);
 
                 let msg = if row.is_dir {
                     Message::TreeDirToggled(row.rel_path.clone())
@@ -1283,7 +1283,7 @@ impl Shell {
                             matches!(status, button::Status::Hovered | button::Status::Pressed);
                         button::Style {
                             background: hovered
-                                .then_some(iced::Background::Color(tokens::dark().bg_tertiary)),
+                                .then_some(iced::Background::Color(tokens.bg_tertiary)),
                             text_color,
                             ..button::Style::default()
                         }
@@ -1297,8 +1297,8 @@ impl Shell {
                 col = col.push(item);
             }
 
-            let sidebar_bg = tokens::dark().bg_secondary;
-            let border_color = tokens::dark().border;
+            let sidebar_bg = tokens.bg_secondary;
+            let border_color = tokens.border;
 
             let panel = container(iced::widget::scrollable(col))
                 .width(self.tree_width)
@@ -1318,8 +1318,8 @@ impl Shell {
                 container(iced::widget::Space::new())
                     .width(6)
                     .height(Fill)
-                    .style(|_| container::Style {
-                        background: Some(iced::Background::Color(tokens::dark().border_subtle)),
+                    .style(move |_| container::Style {
+                        background: Some(iced::Background::Color(tokens.border_subtle)),
                         ..container::Style::default()
                     }),
             )
@@ -1332,13 +1332,18 @@ impl Shell {
         if let Some(tab) = self.ws.focused_tab() {
             if let Some(session) = self.focused_pdf() {
                 if session.toc_open {
-                    row_children.push(drag::panel_resizer(drag::PanelKind::Toc, session.toc_width));
+                    row_children.push(drag::panel_resizer(
+                        drag::PanelKind::Toc,
+                        session.toc_width,
+                        tokens,
+                    ));
                     row_children.push(self.view_pdf_toc_panel(session, tab));
                 }
                 if session.annotations_open {
                     row_children.push(drag::panel_resizer(
                         drag::PanelKind::Annotations,
                         session.annotations_width,
+                        tokens,
                     ));
                     row_children.push(self.view_pdf_annotations_panel(session, tab));
                 }
@@ -1348,6 +1353,7 @@ impl Shell {
                 row_children.push(drag::panel_resizer(
                     drag::PanelKind::Outline,
                     session.outline_width,
+                    tokens,
                 ));
                 row_children.push(self.view_md_outline_panel(session, tab));
             }
@@ -1355,6 +1361,7 @@ impl Shell {
 
         if self.tracker_open {
             let tracker_panel = tracker_view::view(
+                tokens,
                 self.tracker_open,
                 self.tracker_running,
                 &self.tracker_sessions,
@@ -1372,11 +1379,11 @@ impl Shell {
 
         let status = container(
             row![
-                text(self.status.clone()).size(13).color(colors::marker()),
+                text(self.status.clone()).size(13).color(tokens.text_muted),
                 iced::widget::Space::new().width(Fill),
                 text(self.position_status.clone())
                     .size(13)
-                    .color(colors::marker())
+                    .color(tokens.text_muted)
             ]
             .width(Fill),
         )
@@ -1384,12 +1391,16 @@ impl Shell {
         .width(Fill);
 
         let base = column![
-            menu::bar(self.open_menu),
+            menu::bar(self.open_menu, tokens),
             container(workspace_content).height(Fill),
             status
         ];
         let mut final_view: Element<'_, Message> = if let Some(overlay) = &self.overlay {
-            stack![base, overlay::view(overlay, &self.registry, &self.files)].into()
+            stack![
+                base,
+                overlay::view(overlay, &self.registry, &self.files, tokens)
+            ]
+            .into()
         } else if let Some(ctx) = &self.pdf_context_menu {
             stack![base, self.view_pdf_context_menu(ctx)].into()
         } else if self.tree_resizing {
@@ -1402,14 +1413,22 @@ impl Shell {
             .on_release(Message::TreeResizeFinished);
             stack![base, drag_layer].into()
         } else if let Some((_, is_dir)) = self.tree_context.as_ref() {
-            stack![base, file_tree::context_popover(self.tree_width, *is_dir)].into()
+            stack![
+                base,
+                file_tree::context_popover(self.tree_width, *is_dir, tokens)
+            ]
+            .into()
         } else if let Some(open_menu) = self.open_menu {
             let model = menu::menu_model(
                 &self.registry,
                 focused_kind,
                 self.ws.focused_tab().is_some(),
             );
-            stack![base, menu::popover(open_menu, model, &self.registry)].into()
+            stack![
+                base,
+                menu::popover(open_menu, model, &self.registry, tokens)
+            ]
+            .into()
         } else {
             base.into()
         };
@@ -1418,62 +1437,5 @@ impl Shell {
             final_view = stack![final_view, self.view_toasts()].into();
         }
         final_view
-    }
-}
-
-/// Re-read a document's annotations from the store into its session — the
-/// canvas paints only from the session cache, so every mutation refreshes.
-fn refresh_annotations(store: &AnnotationStore, session: &mut PdfSession) {
-    if let Some(hash) = &session.doc_hash {
-        session.annotations = store.annotations_for(hash).unwrap_or_default();
-    }
-    // A removed/missing id must not linger as a phantom pick.
-    if let Some(id) = session.selected_annotation
-        && !session.annotations.iter().any(|a| a.id == id)
-    {
-        session.selected_annotation = None;
-    }
-}
-
-fn safe_relative(input: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(input.trim());
-    if path.as_os_str().is_empty() || path.is_absolute() {
-        return None;
-    }
-    path.components()
-        .all(|component| matches!(component, std::path::Component::Normal(_)))
-        .then_some(path)
-}
-
-/// Vault tree scan: directories plus `.md` and `.pdf` files, vault-relative,
-/// sorted; directories carry a trailing slash so empty folders stay visible.
-/// Dot-directories are skipped (mirrors the index walk).
-fn scan_vault(root: &Path) -> Vec<String> {
-    let mut out = Vec::new();
-    walk(root, root, &mut out);
-    out.sort();
-    out
-}
-
-fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with('.') {
-            continue;
-        }
-        if path.is_dir() {
-            if let Ok(rel) = path.strip_prefix(root) {
-                out.push(format!("{}/", rel.to_string_lossy()));
-            }
-            walk(root, &path, out);
-        } else if path.extension().is_some_and(|e| e == "md" || e == "pdf")
-            && let Ok(rel) = path.strip_prefix(root)
-        {
-            out.push(rel.to_string_lossy().to_string());
-        }
     }
 }

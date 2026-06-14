@@ -2,10 +2,16 @@
 
 > **Read this first when resuming v3 work.** Updated after every completed unit of work.
 > Sibling ledgers: `PLAN-NOTES.md` (v2 incremental plan), `docs/V3_GROUND_UP_PLAN.md` (the master plan).
-> **Next work is `docs/V3_IMPLEMENTATION_PLAN.md` Phase 7.6**, one
-> refinement at a time. Course correction 6.0–6.3 and Typora-grade 7.0–7.5
-> are implemented; manual smoke items 27–33 still gate full acceptance of
-> 7.3–7.5. The §0.2 hard rules and §0.4 pitfalls register remain binding.
+> **A user-directed design overhaul landed 2026-06-14** (neutral dark theme,
+> single teal accent, real icons, single theme) — see `docs/V3_DESIGN.md`.
+> Open follow-ups from it: remove the light-theme plumbing (cascades into the
+> `session_restore` theme test), icon-ify the Markdown formatting toolbar, and
+> the separately-requested **test-automation tiering** (move smoke coverage into
+> the windowless `Shell` harness / golden draw-plan; optionally wire iced
+> AccessKit). Phase 7 GUI smoke (items 27–37) was largely confirmed on COSMIC.
+> Course correction 6.0–6.6 and Typora-grade 7.0–7.6 are implemented. The §0.2
+> hard rules and §0.4 pitfalls register remain binding. COSMIC GUI tooling is
+> **machine-specific and local-only** — see `docs/V3_GUI_TESTING.md`.
 
 ## Ground rules for this execution
 
@@ -41,16 +47,16 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **BUG-C regression suite** (PDF standalone in a tab) | §5 M1 gate | ✅ | `v3/kernel/tests/bug_c_documents_are_peers.rs` (5 tests) |
 | Editor: height sum-tree (O(log n) offsets) | §3.2 | ✅ | `v3/editor/src/height_tree.rs` — implicit treap w/ subtree sums, deterministic priorities, differential-tested vs naive model (4k random ops) |
 | Editor: 3-phase layout protocol (style/measure/paint) | §3.2 | ✅ | `v3/editor/src/layout.rs` — `Styler`/`Measurer` traits, `Damage { repaint, shifted_from }`, offsets never cached per line, viewport-bounded paint |
-| Editor: layout-stable conceal contract | §3.2 | ✅ | `Styler::layout_stable()` + debug assert in `set_conceal`; reserved-width strategy demonstrated in tests |
+| Editor: measured conceal contract | §3.2 / Phase 7.1 | ✅ | ADR-0105 retired reserved width: conceal changes styled display and remeasures through `set_conceal`; height shifts flow through `Damage` + `HeightTree`, with differential/storm BUG-B tests |
 | Editor: rope buffer + `Vec<Selection>` + branching undo | §3.2 | ✅ | `v3/editor/src/buffer.rs` (ropey, multi-cursor model day-one, grapheme-safe motion/deletion incl. emoji/CJK/CRLF) + `undo.rs` (`UndoTree` — editing after undo branches, never clears the future). Quality harness: `tests/buffer_undo_invariants.rs` (12 tests: 8-seed × 500-command storms w/ undo-to-root == identity, selections-in-bounds invariant, grapheme suites, multi-cursor edits, branch preservation) |
 | Shell: markdown surface is a real buffer | §5 M1 | ✅ | typing/motion/selection via raw-input fallthrough (case-preserved via `KeyEvent.text`); ctrl+z/ctrl+shift+z/ctrl+a are real buffer commands; **ctrl+s saves through `md3-vault::atomic_save`** (and re-syncs the FTS index); sessions keyed by `DocumentId` (split panes share state by construction); dirty dot in tab strip, Ln/Col in status bar; content loads from disk on open |
-| Shell: styled GUI (`gui` module) | §5 M1–M2 | ✅ | `v3/shell/src/gui/` — markdown paints through the engine's 3-phase layout on an iced canvas (`EditorCanvas` + `MonoMeasurer` grid; concealed markers keep reserved width, BUG-B end to end); PDF pane renders real pages behind the `pdfium` feature (placeholder otherwise); quick-open/palette/search/find/zoom/page overlays fed by the same single keystroke path; vault-rooted (`md3-shell <dir>`); FTS search composes the `TextExtractor` seam in the shell, as planned. Routing suite (15 tests) drives `gui::Shell::update` over a tempdir vault — BUG-A/C pinned at the shell layer, windowlessly |
+| Shell: styled GUI (`gui` module) | §5 M1–M2 / Phase 7 | ✅ | `v3/shell/src/gui/` — Markdown uses shaped measure/paint/hit-testing through the engine's 3-phase layout; PDF is a peer surface; overlays share the single keystroke path; routing suites pin BUG-A/C windowlessly |
 | **BUG-B regression suite** (height change reflows; damage ≤ affected lines) | §5 M1 gate | ✅ | `v3/editor/tests/bug_b_layout_reflow.rs` (6 tests incl. "caret motion damages ≤ 2 lines" golden gate) |
 | Editor: rope buffer + multi-cursor + grapheme safety | §3.2 | ✅ | `v3/editor/src/buffer.rs` — ropey, `Vec<Selection>` model (sorted/merged/non-empty, boundary-snapped), `ChangedSpan` buffer→layout bridge, `LayoutEngine::splice` consumer |
 | Editor: undo tree (persistent-ready) | §3.2 | ✅ | `v3/editor/src/undo.rs` — branch-keeping tree, insert-run coalescing, save-point dirtiness, validated `UndoTreeSnapshot` for the sidecar |
 | Editor: buffer property harness | §3.2/§6 | ✅ | `v3/editor/tests/buffer_properties.rs` — undo-to-root identity, selection invariants, grapheme alignment (ZWJ/flag/CJK/CRLF), buffer↔layout lockstep; caught 2 real CRLF/cluster bugs pre-merge |
 | Editor: incremental block parser (ADR-0101) | §3.2 | ✅ | `v3/editor/src/parse.rs` — explicit entry/exit `BlockState` per line, forward reparse to convergence, returns invalidated range; differential-tested vs full reparse (2k random edits) |
-| Editor: inline spans + production styler | §3.2 | ✅ | `v3/editor/src/style.rs` — `MarkdownStyler` (reserved-width conceal, `layout_stable() == true` by construction), char-offset `Span`s (emphasis/code/math/links/wikilinks/tables), spans always tile the source line |
+| Editor: inline spans + production styler | §3.2 / Phase 7.1 | ✅ | `v3/editor/src/style.rs` — `MarkdownStyler` removes concealed markers from measured display text, supports element-level partial reveal, and emits char-offset semantic spans for emphasis/code/math/links/wikilinks/tables |
 | Editor: `EditorDocument` session | §3.2 | ✅ | `v3/editor/src/document.rs` — buffer + parser + layout behind one `apply()`; fence-typing cascade restyles, caret conceal-follow, merged `Damage`; "caret motion ≤ 2 lines" asserted end-to-end |
 | Vault: typed errors + atomic save | §3.4 | ✅ | `v3/vault/` — `VaultError` (thiserror), temp+fsync+rename save |
 | Vault: FTS5 incremental index | §3.4 | ✅ | `v3/vault/src/index.rs` — `(mtime, size)` diff (unchanged vault re-reads nothing, test-pinned), targeted `sync_paths` for watcher batches, quoted-token FTS queries (operator injection inert), root-relative paths |
@@ -98,13 +104,13 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **UX overhaul Phase 5: Markdown formatting toolbar** | UX Phase 5 | ✅ | Markdown formatting toolbar with bold, italic, inline code, heading cycle, bullet list, checkbox, and wikilink toggle commands fully implemented in the editor engine and wired to the GUI panel toolbar. Suite: `editor/tests/formatting.rs` |
 | **UX overhaul Phase 5: Markdown outline panel** | UX Phase 5 | ✅ | Resizable docked Outline panel listing depth-indented headings extracted from the Markdown document, highlighting active heading, and jumping to heading on click. Suite: `shell/tests/markdown_outline.rs` |
 | **UX overhaul Phase 5: Markdown find/replace bar** | UX Phase 5 | ✅ | Docked Find/Replace bar under the markdown editor toolbar supporting case-insensitive search, match counting, prev/next navigation, replacing individual matches, and transactional Replace All. Suite: `shell/tests/markdown_find_replace.rs` |
-| **UX overhaul Phase 6: Feedback, Polish & settings** | UX Phase 6 | 🔶 | Toasts, confirm modals for unsaved changes/delete, light/dark tokens, and keymap settings UI landed. Tracker manual-log feedback is fixed and `tracker_wiring` is green; phase remains partial because light theme is a global atomic (`tokens::set_light_theme` — scheduled debt, Phase 6.6). Suites: `shell/tests/chrome.rs`, `session_restore.rs`, `tracker_wiring.rs` |
+| **UX overhaul Phase 6: Feedback, Polish & settings** | UX Phase 6 | ✅ | Toasts, confirm modals for unsaved changes/delete, light/dark tokens, and keymap settings UI landed. Theme is instance-local `Shell` state passed explicitly to views/canvases and persisted in session snapshots; `session_restore` proves shell isolation and round-trip. Suites: `shell/tests/chrome.rs`, `session_restore.rs`, `tracker_wiring.rs` |
 | **URI links open in browser** | P5 backlog №7 | ✅ | Added `open` dependency under ADR-0102, left-clicking a PDF external link opens it in browser asynchronously. Suite: `shell/tests/pdf_links.rs` |
-| **User-reported stabilization pass** | UX / renderer | 🔶 | `docs/V3_STABILIZATION_2026-06-12.md` — startup file-tree population, markdown wrap and measure-before-paint asset geometry, inline math flow, larger typography/rhythm, transparent display math, consolidated multi-line LaTeX environments, PDF resize-fit/reference crop, welcome transition, and toast runtime fix. Core defects addressed; Typora/Obsidian-level markdown polish remains open (specced as impl-plan Phase 6.3 + Phase 7). |
+| **User-reported stabilization pass** | UX / renderer | ✅ | `docs/V3_STABILIZATION_2026-06-12.md` is historical context. Its defects were addressed by the stabilization work, Phase 6.3 goldens, and Phase 7 renderer/editor implementation. Remaining quality gate is real-vault manual smoke 27–37. |
 | **Iced async runtime** | ADR-0103 | ✅ | `md3-shell` enables iced `tokio` feature so toast timer tasks run inside a Tokio reactor; fixes production panic from `tokio::time::sleep`. |
 | **Course correction 6.0: green baseline** | Phase 6.0 | ✅ | Tracker manual-log success now queues one success toast and `tracker_wiring` asserts that channel. Full default + pdfium workspace gates green. |
 | **Course correction 6.1: v3 size budgets** | Phase 6.1 | ✅ | `v3/budgets.toml` + `scripts/v3-budget.sh`, wired into CI. Hard limit 700; six pre-existing oversized files ratcheted. Enforcement proven by temporary hard-limit injection. |
-| **Course correction 6.2: decomposition** | Phase 6.2 | ✅ | `gui/mod.rs` fell from 4,838 to **1,479**; `editor/src/buffer.rs` from 1,911 to **833**. Shell surface modules, `buffer/formatting.rs`, `buffer/edit_ops.rs`, and `buffer/typing.rs` keep extracted files ≤700 lines. Ratchets lowered in `v3/budgets.toml`; `scripts/v3-budget.sh` green. |
+| **Course correction 6.2: decomposition** | Phase 6.2 | ✅ | `gui/mod.rs` fell from 4,838 to **1,468**; `editor/src/buffer.rs` from 1,911 to **833**. Shell surface modules, `buffer/formatting.rs`, `buffer/edit_ops.rs`, and `buffer/typing.rs` keep extracted files ≤700 lines. Ratchets lowered in `v3/budgets.toml`; `scripts/v3-budget.sh` green. |
 | **Phase 6.3 golden snapshots** | Phase 6.3 | ✅ | `editor_draw_plan.rs`, `paint.rs` — Paint geometry extracted; strict diff-based test verifies exact `PaintOp` stream against `golden.md` |
 | **ADR-0104 typora grade** | Phase 7.0 | ✅ | `docs/adr/0104-v3-typora-grade.md` — layout engine refactored for shaped lines via `Measurer` trait |
 | **Phase 7.1 hide/measured reveal** | Phase 7.1 | ✅ | `editor/src/document.rs`, `sync_conceal` — Conceal mode now true hide, layout stable invariant dropped |
@@ -112,7 +118,8 @@ especially the three named regression suites (BUG-A/B/C) that M1's gate requires
 | **Phase 7.3 blocks render as units** | Phase 7.3 | 🔶 | `paint.rs`, `editor/src/document.rs`, `session.rs` — measured table grid, fenced-code panel, unified block reveal, source/display offset mapping, shaped table hit-testing. Golden draw plan and BUG-B suites green; manual smoke items 30–31 pending. |
 | **Phase 7.4 stable assets** | Phase 7.4 | 🔶 | `vault/src/asset_sizes.rs`, `gui/markdown_assets.rs`, `gui/worker.rs`, `gui/pdf_worker_events.rs` — sidecar dimensions, async image/math loading, cached first layout, remeasure only on changed dimensions. Store/worker/layout tests green; manual smoke item 32 pending. |
 | **Phase 7.5 interaction exactness** | Phase 7.5 | 🔶 | `shaped_measurer.rs`, `editor_canvas.rs`, `editor_hit_testing.rs`, `markdown_interactions.rs` — one shaped geometry path for paint/caret/selection/hit-test, full golden round-trip, clickable checkbox through registered command, ctrl+click URI/wikilink, ctrl-hover pointer+underline. Manual smoke item 33 pending. |
-| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | CJK, emoji, and mixed-direction bidi shaped round-trip properties landed in `editor_hit_testing.rs`; caret geometry now follows bidi levels and ignores zero-width duplicate glyph records. ADR-0106 fixes fenced-code syntax ownership. **Inline-math vertical alignment fixed** (`paint.rs` — centered on the text row, not a `line_height`-tall box; golden re-pinned). **Table-cell text vertical overflow fixed** (`paint.rs` — centered in the cell box instead of overflowing into the next row; guard `table_cell_text_stays_within_its_cell_box`). **p95 keypress→layout CI bench landed** (`shell/tests/keypress_bench.rs` — 5k-line doc, p95 < 16ms, ~0.4ms locally). **Fenced-code syntax highlighting implemented** (ADR-0106): `editor/src/syntax.rs` stateful Rust tokenizer (semantic roles, no colors); `Lang`/`LexState` threaded through `BlockState::Fence` (lang constant within a fence; block-comment `lex` cascades via the existing convergence rule); styler splits `CodeContent` into role-tagged `CodeToken` sub-spans (unknown lang → single-span fallback); measurer shapes tokens with identical mono attrs and shell maps roles→colors in `editor_canvas/palette.rs` — golden re-pinned with byte-identical glyph geometry. Remaining: element-level reveal, optional motion. |
+| **Phase 7.6 refinements** | Phase 7.6 | 🔶 | Shaped CJK/emoji/bidi round trips, syntax highlighting, element-level reveal, alignment fixes, list/quote gutters, p95 guard, drag selection, copy/cut, motion polish, and automated legibility pass are implemented. Markdown uses 17/27 typography in a centered 840 px reading column; blockquotes have a measured hanging inset. Reduced motion persists. **GUI smoke (2026-06-14, COSMIC) directly confirmed items 27, 28, 30, 31, 32, 33, 34, 35, 37 PASS** (headings/prose, element-level reveal, table grid+source reveal, code/math+TeX reveal, image, checkbox toggle+undo & ctrl+click wikilink, 5k-line typing, selection+copy/cut/undo, centered column). 29 observed clean; 36 toggle works (persist-after-restart not re-run). |
+| **Design overhaul** (user-directed 2026-06-14) | UI | ✅ | `docs/V3_DESIGN.md`. Neutral GitHub-dark gray surfaces + single teal accent (was washed-sage + coral); headings near-white (`text_heading`, were `danger`); table `\|---\|` separator is one full-width rule (was per-cell floating dashes); vault header / brand title de-coraled; Light/Dark switcher removed (single dark theme; light *plumbing* teardown deferred — touches `session_restore`). Real canvas icons replace text stand-ins: file rows (`File`/`Pdf`/`Folder`), tree header (`NewNote`/`NewFolder`/`Sidebar`/`Refresh`), pane controls (`Split`/`SplitDown`/`Close`). Golden regenerated, clippy clean, budget green, chrome/file_tree/discoverability/session_restore pass. |
 
 Statuses: ✅ done · 🔶 partial · ⬜ not started · ❌ blocked
 
@@ -199,7 +206,7 @@ size targets.
     motion/refinements), governed by ADR-0104 (proposed, spike resolves)
     and ADR-0105 (accepted). Supersedes impl-plan 6.4/6.5.
 18. ~~**Course correction Phase 6 execution (2026-06-13):**~~ complete.
-    `gui/mod.rs` is 1,479 lines and `editor/src/buffer.rs` is 833; Phase 6.3
+    `gui/mod.rs` is 1,468 lines and `editor/src/buffer.rs` is 833; Phase 6.3
     goldens are green.
 
 ## Decisions made during execution
@@ -651,3 +658,53 @@ size targets.
   changed), plus a measure-equality test (highlighted vs plain), a
   known-vs-unknown-language paint test, and a tokens-precomputed-before-paint
   test. Tokenization runs in the editor (style/measure), never in `line_plan`.
+- 2026-06-13: Markdown canvas drag selection now uses the shaped hit-test
+  path for forward, reverse, and cross-line ranges. `editor.copy` preserves
+  selection; `editor.cut` deletes through the buffer command path and remains
+  undoable. Windowless tests cover selection plus copy/cut/undo.
+- 2026-06-13: Phase 7.6 motion polish keeps one authoritative layout.
+  Markdown scroll interpolates only the viewport offset (120 ms ease-out);
+  caret and newly revealed marker glyphs fade in over 90 ms against current
+  geometry. Old pre-reflow draw plans are never retained or blended. A
+  persisted `reduce_motion` shell setting disables transitions, finishes any
+  pending scroll immediately, and suppresses animation subscriptions.
+- 2026-06-13: Markdown reading geometry is one shared centered content box:
+  maximum 840 px, minimum 28 px pane margins. `content_width` feeds document
+  measurement; `content_left` feeds paint, caret, selection, links, mouse
+  hit-testing, tables, and assets. Body typography is 17 px on 27 px; quotes
+  use a 22 px measured inset plus a painted 3 px bar. Wide-pane and quote
+  geometry tests pin the contract; golden draw plan includes a quote.
+- 2026-06-13: Theme choice is instance-local `Shell` state. Mutable global
+  theme state (`USE_LIGHT_THEME` / `set_light_theme`) was deleted; widgets,
+  Markdown/PDF canvases, tracker views, overlays, and drag chrome receive
+  immutable token references. `session_restore` proves two concurrent shells
+  keep independent themes and the selected theme persists across restart.
+  Supporting extraction lowered ratchets to `gui/mod.rs` 1,441,
+  `tracker_view.rs` 1,204, and `editor_canvas.rs` 618.
+- 2026-06-13: Post-Phase-7.6 local gate is green: fmt check, clippy
+  `-D warnings`, full default-feature workspace tests, size budget, and
+  `git diff --check`. Remaining acceptance work is manual smoke 27–37.
+- 2026-06-14: GUI smoke run (COSMIC workstation) confirmed the Phase 7
+  Typora-grade items render and behave (see the Phase 7.6 status row). Method
+  notes and the **machine-specific-tooling warning** are in
+  `docs/V3_GUI_TESTING.md`: iced exposes no AT-SPI tree, ydotool absolute
+  coords map `screen ≈ 1.92×`, so the smoke is screenshot+coordinate driven and
+  **local-only** — the portable tiers are the windowless `Shell` message
+  harness (behavior) and the golden draw-plan (pixel geometry), which run in CI.
+- 2026-06-14 (user-directed design overhaul): the app read green-tinted and
+  "undesigned" with single-character icons. New visual language recorded in
+  `docs/V3_DESIGN.md`. Decisions: (a) surfaces are **neutral GitHub-dark gray**,
+  teal is **accent-only** (links/active-tab/selection/focus), `danger` coral is
+  **destructive/error-only**; (b) **headings are uncolored** (`text_heading`
+  near-white) — they were painted with `tokens.danger`; (c) **single theme** —
+  the Light/Dark switcher is removed and dark is the only reachable theme, but
+  `LIGHT_TOKENS`/`theme_name`/`SettingsThemeChanged` plumbing is kept for now
+  because removing it cascades into the `session_restore` theme round-trip test
+  (tracked follow-up); (d) chrome uses the **existing canvas icon system**
+  (`gui/icons.rs`), not a font/emoji — extended with `NewNote`, `NewFolder`,
+  `Pdf`, `Refresh`, `SplitDown`, `Close`; file-type prefixes (`MD`/`PDF`), tree
+  header (`+N`/`+F`/`−`/`↻`) and pane controls (`⇥`/`⇩`/`×`) are now real icons;
+  (e) the table `|---|` separator paints **one full-width rule** instead of a
+  per-cell dash (paint-only; a height collapse was rejected as it would squish
+  the source-revealed row). Golden regenerated; clippy/budget/chrome/file_tree/
+  session_restore green.

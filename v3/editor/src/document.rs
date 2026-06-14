@@ -13,7 +13,7 @@
 use crate::buffer::{ApplyResult, Buffer, Command};
 use crate::layout::{ConcealMode, Damage, LayoutEngine, Measurer, StyledLine, Styler};
 use crate::parse::{BlockState, IncrementalParser, LineKind};
-use crate::style::MarkdownStyler;
+use crate::style::{MarkdownStyler, SpanKind, line_spans};
 
 pub struct EditorDocument<M> {
     buffer: Buffer,
@@ -70,13 +70,13 @@ impl<M: Measurer> EditorDocument<M> {
     }
 
     /// Style a line for painting (pure; spans + conceal mode included).
+    /// The conceal mode is derived from the live caret position so paint and
+    /// the layout engine's measured form (set in [`Self::sync_conceal`]) agree.
     pub fn styled_line(&self, index: usize) -> Option<StyledLine> {
         let block = self.parser.line(index)?.entry.clone();
-        let conceal = if self.revealed.as_ref().is_some_and(|r| r.contains(&index)) {
-            ConcealMode::Revealed
-        } else {
-            ConcealMode::Concealed
-        };
+        let (caret_line, caret_col) = self.buffer.offset_to_line_col(self.buffer.primary().head);
+        let reveal_lines = self.reveal_range(caret_line);
+        let conceal = self.conceal_at(index, caret_line, caret_col, &reveal_lines);
         Some(MarkdownStyler.style(&self.buffer.line_text(index), &block, conceal))
     }
 
@@ -86,6 +86,13 @@ impl<M: Measurer> EditorDocument<M> {
         let Some(styled) = self.styled_line(line) else {
             return display_col.min(source.chars().count());
         };
+        // Clicking at/after the visual end of a line lands the caret at the
+        // true source end. Trailing concealed markers (a closing `**`, `` ` ``,
+        // `$`) belong to the line end, so without this the caret would settle
+        // *before* them — the "cursor a few letters short of the end" bug.
+        if display_col >= styled.display.chars().count() {
+            return source.chars().count();
+        }
         subsequence_offset(&source, &styled.display, display_col)
     }
 
@@ -141,16 +148,17 @@ impl<M: Measurer> EditorDocument<M> {
     }
 
     /// Reveal the primary caret's block, conceal the previously revealed one.
+    /// The caret's own line always re-syncs (its *element*-level reveal can
+    /// change while the line range stays the same — caret moving from a bold
+    /// word into an inline `$math$` on the same line).
     fn sync_conceal(&mut self) -> Damage {
-        let (line, _) = self.buffer.offset_to_line_col(self.buffer.primary().head);
-        let new_range = self.reveal_range(line);
-        if self.revealed.as_ref() == Some(&new_range) {
-            return Damage::none();
-        }
+        let (caret_line, caret_col) = self.buffer.offset_to_line_col(self.buffer.primary().head);
+        let new_range = self.reveal_range(caret_line);
         let old_range = self.revealed.clone();
         self.revealed = Some(new_range.clone());
         let mut damage = Damage::none();
 
+        // Conceal lines that left the reveal set.
         if let Some(old) = &old_range {
             for i in old.clone() {
                 if i < self.layout.line_count()
@@ -162,17 +170,64 @@ impl<M: Measurer> EditorDocument<M> {
             }
         }
 
-        for i in new_range {
-            let was_revealed = old_range.as_ref().is_some_and(|r| r.contains(&i));
-            if !was_revealed
-                && i < self.layout.line_count()
-                && let Ok(d) = self.layout.set_conceal(i, ConcealMode::Revealed)
-            {
-                damage = damage.merge(d);
+        // (Re)style every line in the reveal set; `set_conceal` no-ops the
+        // unchanged ones, so damage stays confined to what actually moved.
+        for i in new_range.clone() {
+            if i < self.layout.line_count() {
+                let mode = self.conceal_at(i, caret_line, caret_col, &new_range);
+                if let Ok(d) = self.layout.set_conceal(i, mode) {
+                    damage = damage.merge(d);
+                }
             }
         }
 
         damage
+    }
+
+    /// Conceal mode for line `index` given where the caret is. Lines outside
+    /// the reveal set are concealed; a multi-line (block) reveal shows every
+    /// line's source; a single paragraph under the caret gets **element-level**
+    /// reveal — only the inline element the caret sits in shows its markers.
+    fn conceal_at(
+        &self,
+        index: usize,
+        caret_line: usize,
+        caret_col: usize,
+        reveal_lines: &std::ops::Range<usize>,
+    ) -> ConcealMode {
+        if !reveal_lines.contains(&index) {
+            return ConcealMode::Concealed;
+        }
+        let is_paragraph = self
+            .parser
+            .line(index)
+            .is_some_and(|l| matches!(l.kind, LineKind::Paragraph));
+        // Element-level reveal applies only to a lone paragraph under the
+        // caret. Block constructs (tables, fences, math, front-matter) and
+        // multi-line reveals show their whole source as before.
+        if reveal_lines.len() != 1 || index != caret_line || !is_paragraph {
+            return ConcealMode::Revealed;
+        }
+        let text = self.buffer.line_text(index);
+        let kind = self
+            .parser
+            .line(index)
+            .map(|l| l.kind.clone())
+            .unwrap_or(LineKind::Paragraph);
+        let spans = line_spans(&text, &kind);
+        // A paragraph carrying a block asset (image) reveals whole-line: the
+        // asset is centered block geometry, not an inline element.
+        if spans
+            .iter()
+            .any(|s| matches!(s.kind, SpanKind::Image { .. }))
+        {
+            return ConcealMode::Revealed;
+        }
+        match element_reveal_range(&spans, caret_col) {
+            Some(range) => ConcealMode::Partial(range),
+            // Caret in plain text: nothing to reveal, the line stays concealed.
+            None => ConcealMode::Concealed,
+        }
     }
 
     pub fn reveal_range(&self, line: usize) -> std::ops::Range<usize> {
@@ -263,6 +318,36 @@ impl<M: Measurer> EditorDocument<M> {
         }
         out
     }
+}
+
+/// The source char range of the inline element the caret sits in, or `None`
+/// if the caret is in plain text. An "element" is a maximal run of consecutive
+/// non-[`SpanKind::Text`] spans (a marker/content/marker trio like `**bold**`,
+/// `$math$`, `` `code` ``, `[link](url)`), so the returned range spans the
+/// element's content *and* its surrounding markers. Boundaries are inclusive —
+/// a caret resting just before/after an element reveals it (Typora's feel).
+fn element_reveal_range(
+    spans: &[crate::style::Span],
+    caret_col: usize,
+) -> Option<std::ops::Range<usize>> {
+    let mut i = 0;
+    while i < spans.len() {
+        if matches!(spans[i].kind, SpanKind::Text) {
+            i += 1;
+            continue;
+        }
+        let start = spans[i].range.start;
+        let mut j = i;
+        while j < spans.len() && !matches!(spans[j].kind, SpanKind::Text) {
+            j += 1;
+        }
+        let end = spans[j - 1].range.end;
+        if (start..=end).contains(&caret_col) {
+            return Some(start..end);
+        }
+        i = j;
+    }
+    None
 }
 
 fn subsequence_offset(source: &str, display: &str, display_col: usize) -> usize {
@@ -359,7 +444,7 @@ mod tests {
         });
         assert!(
             damage.shifted_from.is_none(),
-            "conceal flip must not shift geometry (reserved width)"
+            "this unwrapped fixture keeps equal line heights"
         );
         assert!(
             damage.repaint.len() <= 2,
@@ -372,18 +457,80 @@ mod tests {
     fn revealed_line_follows_the_caret() {
         let mut d = doc("**a**\n**b**");
         d.apply(Command::SetCursor { line: 0, col: 0 });
+        // Element-level reveal: the caret sits in the bold element (which is
+        // the whole line here), so its markers show and the line is revealed.
         match d.styled_line(0) {
-            Some(s) => assert_eq!(s.conceal, ConcealMode::Revealed),
+            Some(s) => {
+                assert!(matches!(s.conceal, ConcealMode::Partial(_)));
+                assert_eq!(s.display, "**a**");
+            }
             None => panic!("line 0 missing"),
         }
         d.apply(Command::SetCursor { line: 1, col: 0 });
         match (d.styled_line(0), d.styled_line(1)) {
             (Some(a), Some(b)) => {
                 assert_eq!(a.conceal, ConcealMode::Concealed);
-                assert_eq!(b.conceal, ConcealMode::Revealed);
+                assert_eq!(a.display, "a");
+                assert!(matches!(b.conceal, ConcealMode::Partial(_)));
+                assert_eq!(b.display, "**b**");
             }
             _ => panic!("lines missing"),
         }
+    }
+
+    #[test]
+    fn only_the_element_under_the_caret_reveals() {
+        // The reported bug: inline math and bold on one line. Clicking into
+        // the math must reveal *only* the math, leaving the bold rendered.
+        let mut d = doc("see $x^2$ and **bold** here");
+        // Caret inside the inline math ("$x^2$" is source 4..9).
+        d.apply(Command::SetCursor { line: 0, col: 6 });
+        let display = match d.styled_line(0) {
+            Some(s) => s.display,
+            None => panic!("line 0 missing"),
+        };
+        // Math markers revealed (source shown), bold markers still concealed.
+        assert!(display.contains("$x^2$"), "math source shown: {display}");
+        assert!(
+            !display.contains("**bold**"),
+            "bold stays concealed: {display}"
+        );
+        assert!(display.contains("bold"));
+
+        // Move the caret into the bold word: now bold reveals, math conceals.
+        let bold_col = match d.buffer().text().find("bold") {
+            Some(c) => c,
+            None => panic!("no bold"),
+        };
+        d.apply(Command::SetCursor {
+            line: 0,
+            col: bold_col + 1,
+        });
+        let display = match d.styled_line(0) {
+            Some(s) => s.display,
+            None => panic!("line 0 missing"),
+        };
+        assert!(display.contains("**bold**"), "bold source shown: {display}");
+        assert!(
+            !display.contains("$x^2$"),
+            "math stays concealed: {display}"
+        );
+    }
+
+    #[test]
+    fn click_at_line_end_maps_past_trailing_markers() {
+        // "text **bold**" conceals to "text bold" (9 display chars). A click at
+        // the visual end must land at the true source end (13), not before the
+        // closing `**` (11) — the "caret a few letters short" bug.
+        let d = doc("text **bold**");
+        let display_len = match d.styled_line(0) {
+            Some(s) => s.display.chars().count(),
+            None => panic!("line 0 missing"),
+        };
+        assert_eq!(display_len, 9);
+        assert_eq!(d.display_col_to_source(0, 9), 13);
+        // A click well past the end clamps to the same true end.
+        assert_eq!(d.display_col_to_source(0, 99), 13);
     }
 
     #[test]

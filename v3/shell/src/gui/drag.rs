@@ -1,6 +1,6 @@
 use iced::mouse;
 use iced::widget::canvas;
-use iced::{Element, Length, Point, Rectangle, Renderer, Theme};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme};
 use md3_kernel::pane::{SplitAxis, SplitPath};
 
 use super::Message;
@@ -17,13 +17,20 @@ struct Divider {
     path: SplitPath,
     axis: SplitAxis,
     initial_ratio: f32,
+    color: Color,
 }
 
-pub fn divider(path: SplitPath, axis: SplitAxis, ratio: f32) -> Element<'static, Message> {
+pub fn divider(
+    path: SplitPath,
+    axis: SplitAxis,
+    ratio: f32,
+    tokens: &super::tokens::Tokens,
+) -> Element<'static, Message> {
     let canvas = canvas(Divider {
         path,
         axis,
         initial_ratio: ratio,
+        color: tokens.border,
     });
     match axis {
         SplitAxis::Horizontal => canvas.width(6).height(Length::Fill).into(),
@@ -82,7 +89,7 @@ impl canvas::Program<Message> for Divider {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), super::tokens::dark().border);
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), self.color);
         vec![frame.into_geometry()]
     }
 
@@ -112,6 +119,7 @@ pub enum PanelKind {
 pub struct PanelResizer {
     kind: PanelKind,
     initial_width: f32,
+    color: Color,
 }
 
 #[derive(Debug, Default)]
@@ -119,10 +127,15 @@ pub struct PanelResizerState {
     start: Option<(Point, f32)>,
 }
 
-pub fn panel_resizer(kind: PanelKind, initial_width: f32) -> Element<'static, Message> {
+pub fn panel_resizer(
+    kind: PanelKind,
+    initial_width: f32,
+    tokens: &super::tokens::Tokens,
+) -> Element<'static, Message> {
     canvas(PanelResizer {
         kind,
         initial_width,
+        color: tokens.border,
     })
     .width(6)
     .height(Length::Fill)
@@ -178,7 +191,7 @@ impl canvas::Program<Message> for PanelResizer {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), super::tokens::dark().border);
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), self.color);
         vec![frame.into_geometry()]
     }
 

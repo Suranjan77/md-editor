@@ -113,6 +113,37 @@ impl Shell {
                     s.apply(md3_editor::buffer::Command::SelectAll);
                 }
             }
+            "editor.copy" => {
+                let text = self
+                    .focused_md_mut()
+                    .and_then(|s| s.doc.buffer().selected_text())
+                    .filter(|t| !t.is_empty());
+                return match text {
+                    Some(text) => {
+                        self.status = format!("{} chars copied", text.chars().count());
+                        Some(iced::clipboard::write(text))
+                    }
+                    None => {
+                        self.status = "nothing selected".to_string();
+                        Some(Task::none())
+                    }
+                };
+            }
+            "editor.cut" => {
+                let text = self
+                    .focused_md_mut()
+                    .and_then(|s| s.doc.buffer().selected_text())
+                    .filter(|t| !t.is_empty());
+                if let Some(text) = text {
+                    if let Some(s) = self.focused_md_mut() {
+                        s.apply(md3_editor::buffer::Command::DeleteBackward);
+                    }
+                    self.status = format!("{} chars cut", text.chars().count());
+                    return Some(iced::clipboard::write(text));
+                }
+                self.status = "nothing selected".to_string();
+                return Some(Task::none());
+            }
             "editor.toggle-bold" => {
                 if let Some(s) = self.focused_md_mut() {
                     s.apply(md3_editor::buffer::Command::ToggleBold);
@@ -195,6 +226,17 @@ impl Shell {
 impl Shell {
     pub(super) fn handle_md_message(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::EditorDragSelect { tab, anchor, head } => {
+                if let Err(e) = self.ws.focus_tab(tab) {
+                    self.status = e.to_string();
+                }
+                if let Some(session) = self.focused_md_mut() {
+                    session.apply(Command::SetSelections(vec![
+                        md3_editor::buffer::Selection::new(anchor, head),
+                    ]));
+                }
+                Task::none()
+            }
             Message::EditorClicked {
                 tab,
                 line,
@@ -249,10 +291,11 @@ impl Shell {
                 dy,
                 viewport_h,
             } => {
+                let reduce_motion = self.reduce_motion;
                 let doc = self.tab_document(tab);
                 if let Some(session) = doc.and_then(|d| self.sessions.md.get_mut(&d)) {
                     session.viewport_h = viewport_h;
-                    session.scroll_by(dy);
+                    session.scroll_by_animated(dy, reduce_motion);
                 }
                 Task::none()
             }

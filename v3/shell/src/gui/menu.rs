@@ -94,6 +94,8 @@ pub fn menu_model(
             &[
                 (CommandId("editor.undo"), markdown),
                 (CommandId("editor.redo"), markdown),
+                (CommandId("editor.copy"), markdown),
+                (CommandId("editor.cut"), markdown),
                 (CommandId("editor.select-all"), markdown),
                 (CommandId("editor.find"), markdown),
                 (CommandId("editor.toggle-bold"), markdown),
@@ -153,7 +155,7 @@ pub fn menu_model(
     ]
 }
 
-pub fn bar(open: Option<MenuId>) -> Element<'static, Message> {
+pub fn bar(open: Option<MenuId>, tokens: &'static tokens::Tokens) -> Element<'static, Message> {
     let mut content = row![].spacing(1).padding([2, 6]);
     for id in MenuId::ALL {
         let active = open == Some(id);
@@ -173,10 +175,10 @@ pub fn bar(open: Option<MenuId>) -> Element<'static, Message> {
     container(content)
         .width(Fill)
         .height(30)
-        .style(|_| container::Style {
-            background: Some(Background::Color(tokens::dark().bg_secondary)),
+        .style(move |_| container::Style {
+            background: Some(Background::Color(tokens.bg_secondary)),
             border: Border {
-                color: tokens::dark().border_subtle,
+                color: tokens.border_subtle,
                 width: 0.0,
                 radius: 0.0.into(),
             },
@@ -189,6 +191,7 @@ pub fn popover<'a>(
     open: MenuId,
     model: Vec<MenuGroup>,
     registry: &'a CommandRegistry,
+    tokens: &'static tokens::Tokens,
 ) -> Element<'a, Message> {
     let backdrop = container(
         mouse_area(
@@ -218,15 +221,15 @@ pub fn popover<'a>(
                 .map(|binding| binding.chord.to_string())
                 .unwrap_or_default();
             let color = if item.enabled {
-                tokens::dark().text_primary
+                tokens.text_primary
             } else {
-                tokens::dark().text_muted
+                tokens.text_muted
             };
             let mut control = button(
                 row![
                     text(spec.title).size(13).color(color),
                     iced::widget::Space::new().width(Fill),
-                    text(chord).size(12).color(tokens::dark().text_muted)
+                    text(chord).size(12).color(tokens.text_muted)
                 ]
                 .width(Fill),
             )
@@ -239,10 +242,10 @@ pub fn popover<'a>(
             items = items.push(control);
         }
     }
-    let card = container(items).style(|_| container::Style {
-        background: Some(Background::Color(tokens::dark().bg_secondary)),
+    let card = container(items).style(move |_| container::Style {
+        background: Some(Background::Color(tokens.bg_secondary)),
         border: Border {
-            color: tokens::dark().border,
+            color: tokens.border,
             width: 1.0,
             radius: 5.0.into(),
         },

@@ -1,5 +1,10 @@
 use super::*;
-use iced::widget::{column, row};
+use iced::widget::{column, row, stack};
+
+pub(super) const BOLD: iced::Font = iced::Font {
+    weight: iced::font::Weight::Bold,
+    ..iced::Font::DEFAULT
+};
 
 impl Shell {
     pub(super) fn layout_view<'a>(&'a self, node: &Layout<'a>) -> Element<'a, Message> {
@@ -29,7 +34,7 @@ impl Shell {
                 let b = container(self.layout_view_at(second, second_path))
                     .width(Fill)
                     .height(Fill);
-                let divider = drag::divider(path, *axis, *ratio);
+                let divider = drag::divider(path, *axis, *ratio, self.tokens());
                 let (pa, pb) = (
                     ((ratio * 1000.0) as u16).max(1),
                     (((1.0 - ratio) * 1000.0) as u16).max(1),
@@ -55,6 +60,7 @@ impl Shell {
     }
 
     pub(super) fn pane_view<'a>(&'a self, pane: &Pane) -> Element<'a, Message> {
+        let tokens = self.tokens();
         let focused_tab = self.ws.focused_tab();
         let pane_focused = self.ws.focused_pane() == Some(pane.id);
 
@@ -107,14 +113,25 @@ impl Shell {
                 .style(button::text)
                 .on_press(Message::RunCommand(CommandId("file.quick-open"))),
         );
-        let tabs = iced::widget::scrollable(tabs).direction(
-            iced::widget::scrollable::Direction::Horizontal(
-                iced::widget::scrollable::Scrollbar::default(),
-            ),
-        );
-        let pane_action = |label, command| {
-            button(text(label).size(13))
-                .padding([3, 6])
+        // Tabs scroll horizontally on overflow, but the default scrollbar is a
+        // fat, distracting rail; use a thin one and fade the track so the strip
+        // reads as tabs, not a scroll region.
+        let tabs = iced::widget::scrollable(tabs)
+            .direction(iced::widget::scrollable::Direction::Horizontal(
+                iced::widget::scrollable::Scrollbar::new()
+                    .width(3.0)
+                    .scroller_width(3.0)
+                    .margin(0.0),
+            ))
+            .style(|theme: &iced::Theme, status| {
+                let mut style = iced::widget::scrollable::default(theme, status);
+                style.horizontal_rail.background = None;
+                style.horizontal_rail.border = iced::Border::default();
+                style
+            });
+        let pane_action = |icon, command| {
+            button(super::icons::view(icon, tokens.text_secondary, 15.0))
+                .padding([4, 6])
                 .style(button::text)
                 .on_press(Message::PaneCommand {
                     pane: pane.id,
@@ -123,9 +140,15 @@ impl Shell {
         };
         let strip = row![
             container(tabs).width(Fill),
-            pane_action("⇥", CommandId("workspace.split-right")),
-            pane_action("⇩", CommandId("workspace.split-down")),
-            pane_action("×", CommandId("workspace.close-pane")),
+            pane_action(
+                super::icons::Icon::Split,
+                CommandId("workspace.split-right")
+            ),
+            pane_action(
+                super::icons::Icon::SplitDown,
+                CommandId("workspace.split-down")
+            ),
+            pane_action(super::icons::Icon::Close, CommandId("workspace.close-pane")),
         ]
         .spacing(2)
         .padding(2)
@@ -134,10 +157,10 @@ impl Shell {
         let content: Element<'_, Message> = match pane.active_tab() {
             None => {
                 let mut welcome = column![
-                    text("MD Editor").size(24).color(colors::heading()),
+                    text("MD Editor").size(24).color(tokens.accent),
                     text("Open a note or browse the vault to begin.")
                         .size(14)
-                        .color(colors::marker())
+                        .color(tokens.text_muted)
                 ]
                 .spacing(10)
                 .width(320);
@@ -148,7 +171,7 @@ impl Shell {
                             row![
                                 text(item.label).size(14),
                                 iced::widget::Space::new().width(Fill),
-                                text(chord).size(12).color(colors::marker())
+                                text(chord).size(12).color(tokens.text_muted)
                             ]
                             .width(Fill),
                         )
@@ -164,85 +187,37 @@ impl Shell {
                 match tab.editor {
                     EditorKind::Markdown => match self.sessions.md.get(&tab.document) {
                         Some(session) => {
-                            let toolbar = row![
-                                button(text("B").font(BOLD).size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId("editor.toggle-bold"))),
-                                button(text("I").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.toggle-italic"
-                                    ))),
-                                button(text("Code").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId("editor.toggle-code"))),
-                                button(text("H").font(BOLD).size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.heading-cycle"
-                                    ))),
-                                button(text("List").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.toggle-bullet"
-                                    ))),
-                                button(text("Todo").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.toggle-checkbox"
-                                    ))),
-                                button(text("Link").size(12))
-                                    .padding([3, 8])
-                                    .style(button::text)
-                                    .on_press(Message::RunCommand(CommandId(
-                                        "editor.toggle-wikilink"
-                                    ))),
-                            ]
-                            .spacing(2)
-                            .padding(2)
-                            .align_y(iced::Alignment::Center);
-
-                            let toolbar_container =
-                                container(toolbar).width(Fill).style(|_| container::Style {
-                                    background: Some(iced::Background::Color(
-                                        tokens::dark().bg_secondary,
-                                    )),
-                                    border: iced::Border {
-                                        color: tokens::dark().border_subtle,
-                                        width: 1.0,
-                                        radius: 0.0.into(),
-                                    },
-                                    ..container::Style::default()
-                                });
-
                             let editor = canvas(EditorCanvas {
                                 tab: tab.id,
                                 session,
+                                tokens,
                                 focused,
+                                reduce_motion: self.reduce_motion,
                             })
                             .width(Fill)
                             .height(Fill);
 
-                            let mut view_col = column![toolbar_container];
+                            // Formatting controls float at the bottom of the
+                            // editor (mirrors the PDF reader bar) instead of a
+                            // permanent top toolbar that crowds the page.
+                            let editor_stack = stack![editor, floating_format_bar(tokens)]
+                                .width(Fill)
+                                .height(Fill);
+
+                            let mut view_col = column![];
                             if session.find_open {
                                 view_col =
                                     view_col.push(self.view_md_find_replace_bar(session, tab.id));
                             }
-                            view_col.push(editor).into()
+                            view_col.push(editor_stack).into()
                         }
-                        None => missing_session(),
+                        None => missing_session(tokens),
                     },
                     EditorKind::Pdf => match self.sessions.pdf.get(&tab.document) {
-                        Some(session) => pdf_view::view(session, tab.id),
-                        None => missing_session(),
+                        Some(session) => pdf_view::view(session, tab.id, tokens),
+                        None => missing_session(tokens),
                     },
-                    _ => container(text("unsupported editor kind").color(colors::marker()))
+                    _ => container(text("unsupported editor kind").color(tokens.text_muted))
                         .center(Fill)
                         .into(),
                 }
@@ -250,9 +225,9 @@ impl Shell {
         };
 
         let border_color = if pane_focused {
-            tokens::dark().accent
+            tokens.accent
         } else {
-            tokens::dark().border
+            tokens.border
         };
         container(column![strip, container(content).height(Fill)])
             .style(move |_| container::Style {
@@ -269,8 +244,58 @@ impl Shell {
     }
 }
 
-pub(super) fn missing_session<'a>() -> Element<'a, Message> {
-    container(text("document failed to load").color(colors::marker()))
+pub(super) fn missing_session<'a>(tokens: &'static tokens::Tokens) -> Element<'a, Message> {
+    container(text("document failed to load").color(tokens.text_muted))
         .center(Fill)
+        .into()
+}
+
+/// The bottom-floating Markdown formatting bar — same rounded, centered chrome
+/// as the PDF reader's control bar, overlaid on the editor canvas.
+fn floating_format_bar<'a>(tokens: &'static tokens::Tokens) -> Element<'a, Message> {
+    let action = |label: &'a str, bold: bool, command: &'static str| {
+        let mut t = text(label).size(13);
+        if bold {
+            t = t.font(BOLD);
+        }
+        button(t)
+            .padding([5, 9])
+            .style(button::text)
+            .on_press(Message::RunCommand(CommandId(command)))
+    };
+    let bar = container(
+        row![
+            action("B", true, "editor.toggle-bold"),
+            action("I", false, "editor.toggle-italic"),
+            action("Code", false, "editor.toggle-code"),
+            action("H", true, "editor.heading-cycle"),
+            action("List", false, "editor.toggle-bullet"),
+            action("Todo", false, "editor.toggle-checkbox"),
+            action("Link", false, "editor.toggle-wikilink"),
+        ]
+        .spacing(2)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding(4)
+    .style(move |_| container::Style {
+        background: Some(iced::Background::Color(tokens.bg_secondary)),
+        border: iced::Border {
+            color: tokens.border,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..container::Style::default()
+    });
+    container(bar)
+        .width(Fill)
+        .height(Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: 14.0,
+            left: 0.0,
+        })
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Bottom)
         .into()
 }

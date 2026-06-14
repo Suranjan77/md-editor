@@ -21,8 +21,8 @@ impl ShapedMeasurer {
         Self {
             font_system,
             metrics: Arc::new(RwLock::new(VisualMetrics::default())),
-            default_font_size: 16.0,
-            default_line_height: 24.0,
+            default_font_size: 17.0,
+            default_line_height: 27.0,
         }
     }
 
@@ -43,19 +43,30 @@ impl ShapedMeasurer {
             },
             LineKind::Blank => (Metrics::new(base_size, base_lh), 0.0, 0.0),
             LineKind::Rule => (Metrics::new(base_size, base_lh), 16.0, 16.0),
-            LineKind::Quote => (Metrics::new(base_size, base_lh), 4.0, 4.0),
+            LineKind::Quote => (Metrics::new(base_size, base_lh), 5.0, 7.0),
             LineKind::Bullet { .. } | LineKind::Ordered => {
                 (Metrics::new(base_size, base_lh), 2.0, 2.0)
             }
             LineKind::CodeContent => (Metrics::new(base_size * 0.9, base_lh * 0.9), 0.0, 0.0),
-            _ => (Metrics::new(base_size, base_lh), 4.0, 8.0), // paragraph spacing
+            _ => (Metrics::new(base_size, base_lh), 5.0, 10.0), // paragraph spacing
         }
     }
 
     pub fn create_buffer(&self, line: &StyledLine, wrap_width: f32) -> Buffer {
+        // List markers live in a left gutter; the item text is inset by the
+        // same amount it is painted (`line_plan`). Folding the indent into the
+        // wrap width here means measure, paint, caret and hit-test all wrap at
+        // the identical column — a wrapped item can't paint past its measured
+        // height (the "checkbox line drawn over the line below" bug).
+        let wrap_width = (wrap_width - line_indent(line)).max(1.0);
         let mut fs = self.font_system.lock().unwrap_or_else(|e| e.into_inner());
         let (metrics, _, _) = self.line_metrics(line);
         let default_attrs = Attrs::new().family(Family::SansSerif);
+        // Headings paint their prose in bold (`span_style` → `SansBold`); shape
+        // it bold here too, or the measured glyph advances (and the end-of-line
+        // caret) fall short of the wider painted glyphs — visible as the caret
+        // sitting before the last heading character.
+        let heading_text = matches!(line.kind, md3_editor::parse::LineKind::Heading { .. });
         let chars = line.display.chars().collect::<Vec<_>>();
         let mut rich = line
             .spans
@@ -77,6 +88,7 @@ impl ShapedMeasurer {
                     | SpanKind::MathContent
                     | SpanKind::Marker
                     | SpanKind::FrontMatter => default_attrs.clone().family(Family::Monospace),
+                    SpanKind::Text if heading_text => default_attrs.clone().weight(Weight::BOLD),
                     _ => default_attrs.clone(),
                 };
                 (text, attrs)
@@ -91,7 +103,7 @@ impl ShapedMeasurer {
             wrap_width,
         );
 
-        if line.conceal == md3_editor::layout::ConcealMode::Concealed {
+        if !matches!(line.conceal, md3_editor::layout::ConcealMode::Revealed) {
             let spacings = self.inline_math_spacings(line, &buffer, wrap_width);
             let mut changed = false;
             for ((_, attrs), spacing) in rich.iter_mut().zip(spacings) {
@@ -123,12 +135,13 @@ impl ShapedMeasurer {
     ) -> (f32, f32, f32) {
         let buffer = self.create_buffer(line, wrap_width);
         let (_, pad_top, _) = self.line_metrics(line);
+        let indent = line_indent(line);
         let byte_index = char_to_byte(&line.display, char_index);
-        let mut last = (0.0, pad_top, self.default_line_height);
+        let mut last = (indent, pad_top, self.default_line_height);
         for run in buffer.layout_runs() {
-            last = (run.line_w, pad_top + run.line_top, run.line_height);
+            last = (indent + run.line_w, pad_top + run.line_top, run.line_height);
             if let Some(x) = run_caret_x(&run, byte_index) {
-                return (x, pad_top + run.line_top, run.line_height);
+                return (indent + x, pad_top + run.line_top, run.line_height);
             }
         }
         (last.0, last.1, last.2)
@@ -143,13 +156,14 @@ impl ShapedMeasurer {
     ) -> Vec<(f32, f32, f32, f32)> {
         let buffer = self.create_buffer(line, wrap_width);
         let (_, pad_top, _) = self.line_metrics(line);
+        let indent = line_indent(line);
         let start = Cursor::new(0, char_to_byte(&line.display, start));
         let end = Cursor::new(0, char_to_byte(&line.display, end));
         buffer
             .layout_runs()
             .filter_map(|run| {
                 run.highlight(start, end)
-                    .map(|(x, width)| (x, pad_top + run.line_top, width, run.line_height))
+                    .map(|(x, width)| (indent + x, pad_top + run.line_top, width, run.line_height))
             })
             .collect()
     }
@@ -206,7 +220,7 @@ impl Measurer for ShapedMeasurer {
         let (_, pad_top, _) = self.line_metrics(line);
         let buffer = self.create_buffer(line, wrap_width as f32);
 
-        if let Some(cursor) = buffer.hit(x as f32, (y as f32) - pad_top) {
+        if let Some(cursor) = buffer.hit((x as f32) - line_indent(line), (y as f32) - pad_top) {
             let char_indices: Vec<usize> = line.display.char_indices().map(|(b, _)| b).collect();
             let mut byte_to_char = vec![0; line.display.len() + 1];
             for (c_idx, &b_idx) in char_indices.iter().enumerate() {
@@ -234,7 +248,11 @@ impl ShapedMeasurer {
         line.spans
             .iter()
             .map(|span| {
-                if !matches!(span.kind, SpanKind::Math) {
+                // Only math rendered as an asset needs its source text
+                // letter-spaced to the asset width; a revealed inline `$math$`
+                // shows its source verbatim, so leave its glyphs alone.
+                if !matches!(span.kind, SpanKind::Math) || line.conceal.reveals_at(span.range.start)
+                {
                     return None;
                 }
                 let chars = line.display.chars().collect::<Vec<_>>();
@@ -317,6 +335,26 @@ fn build_buffer(
     buffer.set_size(fs, Some(wrap_width), None);
     buffer.shape_until_scroll(fs, false);
     buffer
+}
+
+/// Width of left decoration gutter. Concealed list markers and blockquote bars
+/// live here; text is inset by same amount in measure, paint, caret, selection,
+/// and hit-testing.
+pub(crate) const LIST_INDENT: f32 = 24.0;
+pub(crate) const QUOTE_INDENT: f32 = 22.0;
+
+pub(crate) fn line_indent(line: &StyledLine) -> f32 {
+    use md3_editor::layout::ConcealMode;
+    use md3_editor::parse::LineKind;
+    if !matches!(line.conceal, ConcealMode::Revealed) {
+        match line.kind {
+            LineKind::Bullet { .. } | LineKind::Ordered => LIST_INDENT,
+            LineKind::Quote => QUOTE_INDENT,
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    }
 }
 
 fn char_to_byte(text: &str, char_index: usize) -> usize {

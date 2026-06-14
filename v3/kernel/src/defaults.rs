@@ -190,6 +190,18 @@ pub fn default_registry() -> Result<CommandRegistry, RegistryError> {
             vec![bind(md, Chord::ctrl('a'), CommandId("editor.select-all"))],
         ),
         spec(
+            "editor.copy",
+            "Copy",
+            "Editor",
+            vec![bind(md, Chord::ctrl('c'), CommandId("editor.copy"))],
+        ),
+        spec(
+            "editor.cut",
+            "Cut",
+            "Editor",
+            vec![bind(md, Chord::ctrl('x'), CommandId("editor.cut"))],
+        ),
+        spec(
             "note.backlinks",
             "Backlinks",
             "Editor",

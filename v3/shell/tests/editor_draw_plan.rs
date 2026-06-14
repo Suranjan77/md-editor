@@ -24,16 +24,26 @@ fn golden_draw_plan_matches_snapshot() {
     ));
     let mut session = MdSession::new("golden.md", &golden_md, measurer);
 
-    // Park the caret on the line with "revealed"
+    // Park the caret *inside* the italic word on the "revealed" line so the
+    // snapshot exercises element-level reveal (only that element shows its
+    // `*` markers; the rest of the line stays concealed).
     let buffer = session.doc.buffer();
     let line_idx = buffer
         .text()
         .lines()
         .position(|l| l.contains("revealed"))
         .unwrap();
+    let col = buffer
+        .text()
+        .lines()
+        .nth(line_idx)
+        .unwrap()
+        .find("revealed")
+        .unwrap()
+        + 1;
     session.doc.apply(Command::SetCursor {
         line: line_idx,
-        col: 0,
+        col,
     });
 
     // Add dummy math/image sizes to measurer so they show up in the plan
@@ -125,6 +135,29 @@ fn prose_paints_with_same_sans_family_used_for_measurement() {
     assert!(fonts.contains(&&FontRole::Sans));
     assert!(fonts.contains(&&FontRole::SansBold));
     assert!(fonts.contains(&&FontRole::SansItalic));
+}
+
+#[test]
+fn blockquote_bar_and_text_share_the_reading_column() {
+    let mut session = session("intro\n> quoted text");
+    session.doc.apply(Command::SetCursor { line: 0, col: 0 });
+    let styled = session.doc.styled_line(1).unwrap();
+    let ops = line_plan(1, &styled, 0.0, 40.0, 1200.0, &session);
+
+    let bar_x = ops.iter().find_map(|op| match op {
+        PaintOp::FillRect {
+            rect,
+            role: md3_shell::gui::paint::PaintRole::Quote,
+        } => Some(rect.x),
+        _ => None,
+    });
+    let text_x = ops.iter().find_map(|op| match op {
+        PaintOp::Text { x, content, .. } if content.contains("quoted") => Some(*x),
+        _ => None,
+    });
+
+    assert_eq!(bar_x, Some(184.0));
+    assert!(text_x.is_some_and(|x| x >= 202.0));
 }
 
 #[test]

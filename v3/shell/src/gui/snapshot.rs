@@ -25,6 +25,8 @@ pub struct SessionSnapshot {
     pub tracker_active_tab: Option<String>,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default)]
+    pub reduce_motion: bool,
 }
 
 fn default_tree_width() -> f32 {

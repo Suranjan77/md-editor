@@ -5,21 +5,26 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use super::paint::{AssetKind, FontRole, PaintOp, PaintRole};
+use super::tokens::Tokens;
 use super::{Message, session::MdSession};
 
+mod geometry;
 pub mod palette;
+pub(crate) use geometry::{content_left, content_width, wrap_columns};
+mod selection;
 use iced::widget::canvas;
 use iced::{Color, Font, Point, Rectangle, Size, mouse};
 use md3_editor::layout::{LineMeasure, Measurer, StyledLine};
 use md3_editor::parse::LineKind;
 use md3_editor::style::SpanKind;
 use md3_kernel::pane::TabId;
+use selection::paint_selection;
 
-pub(crate) const LINE_HEIGHT: f32 = 24.0;
-/// Advance of one column in the imposed grid. Self-consistent (caret, click,
-/// paint all use it); CJK/emoji double-width handling is an M3 concern.
+pub(crate) const LINE_HEIGHT: f32 = 27.0;
+/// Advance used only by the deterministic engine test measurer.
 pub(crate) const CHAR_WIDTH: f32 = 10.0;
-pub(crate) const PAD: f32 = 16.0;
+pub(crate) const MIN_PAGE_MARGIN: f32 = 28.0;
+pub(crate) const MAX_READING_WIDTH: f32 = 840.0;
 
 #[derive(Default, Clone)]
 pub struct VisualMetrics {
@@ -193,12 +198,52 @@ pub(crate) fn span_text(chars: &[char], range: std::ops::Range<usize>) -> String
 pub struct CanvasState {
     viewport: Option<Size>,
     modifiers: iced::keyboard::Modifiers,
+    /// Source offset where a left-drag began; `Some` while a drag is in
+    /// progress so cursor motion extends the selection from it.
+    drag_anchor: Option<usize>,
 }
 
 pub struct EditorCanvas<'a> {
     pub tab: TabId,
     pub session: &'a MdSession,
+    pub tokens: &'static Tokens,
     pub focused: bool,
+    pub reduce_motion: bool,
+}
+
+impl EditorCanvas<'_> {
+    /// Resolve a canvas position to a (line, source col) caret target plus
+    /// whether it landed on a checkbox box. Shared by click and drag.
+    fn hit_line_col(&self, bounds: Rectangle, pos: Point) -> (usize, usize, bool) {
+        let y = pos.y + self.session.scroll;
+        let line = self
+            .session
+            .doc
+            .layout()
+            .line_at(f64::from(y))
+            .unwrap_or_else(|| self.session.doc.line_count().saturating_sub(1));
+        let line_top = self.session.doc.layout().offset_of(line).unwrap_or(0.0) as f32;
+        let styled = self.session.doc.styled_line(line).unwrap_or_else(|| {
+            md3_editor::layout::StyledLine::plain("", md3_editor::layout::ConcealMode::Concealed)
+        });
+        let local_x = pos.x - content_left(bounds.width);
+        let local_y = y - line_top;
+        let col = self
+            .session
+            .table_hit_test(line, local_x, local_y)
+            .unwrap_or_else(|| {
+                let display_col = self.session.measurer.hit_test(
+                    &styled,
+                    f64::from(content_width(bounds.width)),
+                    f64::from(local_x),
+                    f64::from(local_y),
+                );
+                self.session.doc.display_col_to_source(line, display_col)
+            });
+        let checkbox =
+            matches!(styled.kind, LineKind::Bullet { checkbox: Some(_) }) && local_x <= 16.0;
+        (line, col, checkbox)
+    }
 }
 
 impl canvas::Program<Message> for EditorCanvas<'_> {
@@ -227,45 +272,34 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
             }
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let pos = cursor.position_in(bounds)?;
-                let y = pos.y + self.session.scroll;
-                let line = self
-                    .session
-                    .doc
-                    .layout()
-                    .line_at(f64::from(y))
-                    .unwrap_or_else(|| self.session.doc.line_count().saturating_sub(1));
-                let line_top = self.session.doc.layout().offset_of(line).unwrap_or(0.0) as f32;
-
-                let styled = self.session.doc.styled_line(line).unwrap_or_else(|| {
-                    md3_editor::layout::StyledLine::plain(
-                        "",
-                        md3_editor::layout::ConcealMode::Concealed,
-                    )
-                });
-                let local_x = pos.x - PAD;
-                let local_y = y - line_top;
-                let col = self
-                    .session
-                    .table_hit_test(line, local_x, local_y)
-                    .unwrap_or_else(|| {
-                        let display_col = self.session.measurer.hit_test(
-                            &styled,
-                            f64::from(content_width(bounds.width)),
-                            f64::from(local_x),
-                            f64::from(local_y),
-                        );
-                        self.session.doc.display_col_to_source(line, display_col)
-                    });
-
+                let (line, col, checkbox) = self.hit_line_col(bounds, pos);
+                state.drag_anchor = Some(self.session.doc.buffer().line_col_to_offset(line, col));
                 Some(canvas::Action::publish(Message::EditorClicked {
                     tab: self.tab,
                     line,
                     col,
                     viewport_h: bounds.height,
-                    checkbox: matches!(styled.kind, LineKind::Bullet { checkbox: Some(_) })
-                        && local_x <= 16.0,
+                    checkbox,
                     ctrl: state.modifiers.control(),
                 }))
+            }
+            iced::Event::Mouse(mouse::Event::CursorMoved { .. }) if state.drag_anchor.is_some() => {
+                let anchor = state.drag_anchor?;
+                let pos = cursor.position_in(bounds)?;
+                let (line, col, _) = self.hit_line_col(bounds, pos);
+                let head = self.session.doc.buffer().line_col_to_offset(line, col);
+                // No drag distance yet → leave the plain caret in place.
+                (anchor != head).then(|| {
+                    canvas::Action::publish(Message::EditorDragSelect {
+                        tab: self.tab,
+                        anchor,
+                        head,
+                    })
+                })
+            }
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                state.drag_anchor = None;
+                None
             }
             iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 cursor.position_in(bounds)?;
@@ -292,7 +326,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
         cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), palette::bg());
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), palette::bg(self.tokens));
 
         let doc = &self.session.doc;
         let scroll = f64::from(self.session.scroll);
@@ -311,7 +345,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                 let display_col = self.session.measurer.hit_test(
                     &styled,
                     f64::from(content_width(bounds.width)),
-                    f64::from(pos.x - PAD),
+                    f64::from(pos.x - content_left(bounds.width)),
                     f64::from(absolute_y - top),
                 );
                 let span = styled.spans.iter().find(|span| {
@@ -365,6 +399,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                         c1,
                         y,
                         bounds.width,
+                        self.tokens,
                     );
                 }
             }
@@ -376,16 +411,25 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                 y,
                 line_height,
                 bounds.width,
-                self.session,
+                LinePaintContext {
+                    session: self.session,
+                    tokens: self.tokens,
+                    reveal_opacity: if index == caret_line {
+                        self.session
+                            .caret_opacity(std::time::Instant::now(), self.reduce_motion)
+                    } else {
+                        1.0
+                    },
+                },
             );
             if let Some((hovered_line, rects)) = &hovered_link
                 && *hovered_line == index
             {
                 for (x, top, width, height) in rects {
                     frame.fill_rectangle(
-                        Point::new(PAD + *x, y + *top + *height - 1.0),
+                        Point::new(content_left(bounds.width) + *x, y + *top + *height - 1.0),
                         Size::new(*width, 1.0),
-                        palette::link(),
+                        palette::link(self.tokens),
                     );
                 }
             }
@@ -398,10 +442,14 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                     content_width(bounds.width),
                     display_col,
                 );
+                let mut caret_color = palette::caret(self.tokens);
+                caret_color.a *= self
+                    .session
+                    .caret_opacity(std::time::Instant::now(), self.reduce_motion);
                 frame.fill_rectangle(
-                    Point::new(PAD + x, y + caret_y + 2.0),
+                    Point::new(content_left(bounds.width) + x, y + caret_y + 2.0),
                     Size::new(1.5, (caret_h - 4.0).max(1.0)),
-                    palette::caret(),
+                    caret_color,
                 );
             }
         }
@@ -425,7 +473,9 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
         let Some(styled) = self.session.doc.styled_line(line) else {
             return mouse::Interaction::Text;
         };
-        if matches!(styled.kind, LineKind::Bullet { checkbox: Some(_) }) && pos.x - PAD <= 16.0 {
+        if matches!(styled.kind, LineKind::Bullet { checkbox: Some(_) })
+            && pos.x - content_left(bounds.width) <= 16.0
+        {
             return mouse::Interaction::Pointer;
         }
         if state.modifiers.control() {
@@ -433,7 +483,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
             let display_col = self.session.measurer.hit_test(
                 &styled,
                 f64::from(content_width(bounds.width)),
-                f64::from(pos.x - PAD),
+                f64::from(pos.x - content_left(bounds.width)),
                 f64::from(y - line_top),
             );
             if styled.spans.iter().any(|span| {
@@ -447,9 +497,8 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
     }
 }
 
-/// Paint one styled line at vertical offset `y`. Span ranges are char
-/// offsets into `display`; x advances column-by-column so concealed markers
-/// keep their reserved width without being drawn.
+/// Paint one styled line at vertical offset `y`. Span ranges are char offsets
+/// into the already-concealed `display`; shaping owns all horizontal geometry.
 fn paint_line(
     frame: &mut canvas::Frame,
     index: usize,
@@ -457,9 +506,9 @@ fn paint_line(
     y: f32,
     line_height: f32,
     width: f32,
-    session: &MdSession,
+    context: LinePaintContext<'_>,
 ) {
-    let ops = super::paint::line_plan(index, styled, y, line_height, width, session);
+    let ops = super::paint::line_plan(index, styled, y, line_height, width, context.session);
     for op in ops {
         match op {
             PaintOp::Text {
@@ -470,7 +519,10 @@ fn paint_line(
                 role,
                 font,
             } => {
-                let color = paint_role_color(&role);
+                let mut color = paint_role_color(context.tokens, &role);
+                if matches!(role, PaintRole::Marker) {
+                    color.a *= context.reveal_opacity;
+                }
                 let font = font_role_font(&font);
                 frame.fill_text(canvas::Text {
                     content,
@@ -486,7 +538,7 @@ fn paint_line(
                 frame.fill_rectangle(
                     Point::new(rect.x, rect.y),
                     Size::new(rect.w, rect.h),
-                    paint_role_color(&role),
+                    paint_role_color(context.tokens, &role),
                 );
             }
             PaintOp::StrokeRect {
@@ -498,16 +550,22 @@ fn paint_line(
                     Point::new(rect.x, rect.y),
                     Size::new(rect.w, rect.h),
                     canvas::Stroke::default()
-                        .with_color(paint_role_color(&role))
+                        .with_color(paint_role_color(context.tokens, &role))
                         .with_width(thickness),
                 );
             }
             PaintOp::Asset { kind, rect } => {
                 let handle = match kind {
-                    AssetKind::Image(url) => {
-                        session.image_cache.get(&url).map(|(h, _, _)| h.clone())
-                    }
-                    AssetKind::Math(tex) => session.math_cache.get(&tex).map(|(h, _, _)| h.clone()),
+                    AssetKind::Image(url) => context
+                        .session
+                        .image_cache
+                        .get(&url)
+                        .map(|(h, _, _)| h.clone()),
+                    AssetKind::Math(tex) => context
+                        .session
+                        .math_cache
+                        .get(&tex)
+                        .map(|(h, _, _)| h.clone()),
                 };
                 if let Some(handle) = handle {
                     frame.draw_image(
@@ -520,19 +578,25 @@ fn paint_line(
     }
 }
 
-fn paint_role_color(role: &PaintRole) -> Color {
+struct LinePaintContext<'a> {
+    session: &'a MdSession,
+    tokens: &'a Tokens,
+    reveal_opacity: f32,
+}
+
+fn paint_role_color(tokens: &Tokens, role: &PaintRole) -> Color {
     match role {
-        PaintRole::Text => palette::text(),
-        PaintRole::Marker => palette::marker(),
-        PaintRole::Heading => palette::heading(),
-        PaintRole::Code => palette::code(),
-        PaintRole::Math => palette::math(),
-        PaintRole::Link => palette::link(),
-        PaintRole::WikiLink => palette::wikilink(),
-        PaintRole::Quote => palette::quote(),
-        PaintRole::Caret => palette::caret(),
-        PaintRole::CodeBg => palette::code_bg(),
-        PaintRole::Syntax(syntax_role) => palette::syntax(*syntax_role),
+        PaintRole::Text => palette::text(tokens),
+        PaintRole::Marker => palette::marker(tokens),
+        PaintRole::Heading => palette::heading(tokens),
+        PaintRole::Code => palette::code(tokens),
+        PaintRole::Math => palette::math(tokens),
+        PaintRole::Link => palette::link(tokens),
+        PaintRole::WikiLink => palette::wikilink(tokens),
+        PaintRole::Quote => palette::quote(tokens),
+        PaintRole::Caret => palette::caret(tokens),
+        PaintRole::CodeBg => palette::code_bg(tokens),
+        PaintRole::Syntax(syntax_role) => palette::syntax(tokens, *syntax_role),
     }
 }
 
@@ -550,88 +614,5 @@ fn font_role_font(role: &FontRole) -> Font {
         FontRole::Mono => Font::MONOSPACE,
     }
 }
-fn paint_selection(
-    frame: &mut canvas::Frame,
-    measurer: &super::shaped_measurer::ShapedMeasurer,
-    styled: &StyledLine,
-    start: usize,
-    end: usize,
-    y: f32,
-    width: f32,
-) {
-    for (x, top, rect_width, height) in
-        measurer.selection_rects(styled, content_width(width), start, end)
-    {
-        frame.fill_rectangle(
-            Point::new(PAD + x, y + top),
-            Size::new(rect_width, height),
-            palette::selection(),
-        );
-    }
-}
-
-pub(crate) fn content_width(viewport_width: f32) -> f32 {
-    (viewport_width - PAD * 2.0).max(CHAR_WIDTH)
-}
-
-pub(crate) fn wrap_columns(wrap_width: f32) -> usize {
-    (wrap_width / CHAR_WIDTH).floor().max(1.0) as usize
-}
-
 #[cfg(test)]
-mod tests {
-    use md3_editor::layout::{ConcealMode, Measurer, StyledLine};
-    use md3_editor::parse::LineKind;
-    use md3_editor::style::{Span, SpanKind};
-
-    use super::{LINE_HEIGHT, MonoMeasurer};
-
-    #[test]
-    fn image_height_comes_from_rendered_asset() {
-        let measurer = MonoMeasurer::default();
-        measurer.set_image_size("plot.png".to_string(), 400.0, 300.0);
-        let line = StyledLine {
-            display: "![plot](plot.png)".to_string(),
-            conceal: ConcealMode::Concealed,
-            kind: LineKind::Paragraph,
-            spans: vec![Span {
-                range: 0..17,
-                kind: SpanKind::Image {
-                    url: "plot.png".to_string(),
-                },
-            }],
-        };
-
-        let measured = measurer.measure(&line, 800.0);
-        assert!(measured.height > f64::from(LINE_HEIGHT * 10.0));
-    }
-
-    #[test]
-    fn inline_math_stays_on_text_row_when_it_fits() {
-        let measurer = MonoMeasurer::default();
-        measurer.set_math_size("x^2".to_string(), 40.0, 24.0);
-        let line = StyledLine {
-            display: "value $x^2$ here".to_string(),
-            conceal: ConcealMode::Concealed,
-            kind: LineKind::Paragraph,
-            spans: vec![
-                Span {
-                    range: 0..6,
-                    kind: SpanKind::Text,
-                },
-                Span {
-                    range: 6..11,
-                    kind: SpanKind::Math,
-                },
-                Span {
-                    range: 11..16,
-                    kind: SpanKind::Text,
-                },
-            ],
-        };
-
-        let measured = measurer.measure(&line, 800.0);
-        assert_eq!(measured.rows, 1);
-        assert_eq!(measured.height, f64::from(LINE_HEIGHT + 6.0));
-    }
-}
+mod tests;
