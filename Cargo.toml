@@ -1,10 +1,14 @@
+# MD-Editor v3 workspace — see docs/V3_GROUND_UP_PLAN.md and docs/V3_HANDOFF.md.
+# Independent from the root (v2) workspace on purpose: v3 must never import v2.
 [workspace]
-members = ["core", "native"]
-# v3 is an independent workspace (see docs/V3_GROUND_UP_PLAN.md / docs/V3_HANDOFF.md).
-exclude = ["v3"]
+members = ["kernel", "editor", "vault", "pdf", "shell", "xtask"]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0"
+version = "3.0.0-dev"
 edition = "2024"
 license = "MIT"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

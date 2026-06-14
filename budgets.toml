@@ -1,30 +1,12 @@
-# Ratchet budgets: numbers may only go DOWN (toward the targets in
-# docs/CODING_STANDARDS.md: soft 400 / hard 700 lines per module).
-# Checked by scripts/check-budget.sh and scripts/unwrap-budget.sh in CI.
-# When you shrink a file below its ceiling, lower the ceiling in the same PR.
+# Ratchet budgets for v3 Rust modules. Ceilings may only decrease.
 
 [ratchets]
-# unwrap()/expect( occurrences in production code (see scripts/unwrap-budget.sh)
-unwrap_ceiling = 8
-# Color::from_rgb* literals outside native/src/design (see scripts/check-budget.sh).
-# Target is 0 once UXA.T2 design tokens land; ratchet down per migrated view.
-raw_color_ceiling = 107
+hard_limit = 700
 
-# Per-file line-count ceilings, captured 2026-06-10. Note: core/src/vault.rs
-# includes relocated scale tests from massive_tests.rs (Phase 0).
 [file_budgets]
-"native/src/app/update.rs" = 2438
-"native/src/app/view.rs" = 1131
-"native/src/app/effects.rs" = 934
-"native/src/app/model.rs" = 503
-"native/src/editor/renderer/widget.rs" = 2264
-"native/src/editor/highlight.rs" = 2322
-"native/src/views/tracker.rs" = 1176
-"native/src/views/pdf_annotations.rs" = 1098
-"native/src/views/interactive_pdf.rs" = 961
-"native/src/views/pdf_viewer.rs" = 952
-"native/src/features/pdf/update.rs" = 1873
-"native/src/app_shell.rs" = 671
-"core/src/vault.rs" = 821
-"core/src/state.rs" = 373
-"core/src/vault/search.rs" = 741
+"v3/shell/src/gui/mod.rs" = 1441
+"v3/editor/src/buffer.rs" = 833
+"v3/shell/src/gui/tracker_view.rs" = 1204
+"v3/shell/src/gui/editor_canvas.rs" = 618
+"v3/kernel/src/pane.rs" = 725
+"v3/pdf/src/render.rs" = 704
