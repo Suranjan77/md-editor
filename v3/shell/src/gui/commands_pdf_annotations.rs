@@ -1,6 +1,13 @@
 use super::*;
 use md3_vault::{NewAnnotation, Quad};
 
+/// Highlight color cycle (`pdf.highlight-color`); new annotations start at
+/// the first entry. Stored per annotation (`#rrggbb`, schema column).
+const HIGHLIGHT_PALETTE: [&str; 4] = ["#ffd866", "#a9dc76", "#78dce8", "#ab9df2"];
+
+/// Default highlight color for new annotations.
+const HIGHLIGHT_COLOR: &str = HIGHLIGHT_PALETTE[0];
+
 impl Shell {
     pub(super) fn highlight_selection(&mut self) {
         self.ensure_annotations();

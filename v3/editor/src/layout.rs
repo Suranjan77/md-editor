@@ -11,10 +11,9 @@
 //!   construction (O(log n), not O(n)).
 //! - Every mutation returns a [`Damage`] report; the paint phase repaints
 //!   exactly `repaint` plus everything below `shifted_from` (a scroll-blit).
-//! - Conceal is **layout-stable by design**: a [`Styler`] that reports
-//!   `layout_stable() == true` guarantees concealed and revealed forms
-//!   measure identically (reserved-width strategy), so caret motion produces
-//!   damage confined to the two affected lines — the M1 golden gate.
+//! - Conceal is a style-and-measure input. Entering or leaving markup
+//!   remeasures affected lines before paint; height changes flow through the
+//!   same [`Damage`] and [`HeightTree`] path as edits, so offsets never stale.
 
 use std::ops::Range;
 
@@ -22,17 +21,41 @@ use crate::height_tree::{HeightTree, OutOfBounds};
 use crate::parse::{BlockState, LineKind};
 use crate::style::Span;
 
-/// Conceal state of a line. `Concealed` = cursor elsewhere, syntax markers
-/// hidden; `Revealed` = cursor on the line, markers visible (muted).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Conceal state of a line.
+///
+/// - `Concealed` = caret elsewhere, every syntax marker hidden;
+/// - `Revealed` = the whole line shows its source (caret on a block construct,
+///   or whole-line reveal);
+/// - `Partial(range)` = **element-level reveal** (Typora behavior): only the
+///   inline element under the caret shows its markers/source; the rest of the
+///   line stays concealed. The range is in **display char offsets** of the
+///   styled line (the markers it keeps tile a contiguous block), so paint,
+///   measure and hit-test all read it in the same coordinate space they
+///   already use.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConcealMode {
     Concealed,
     Revealed,
+    Partial(Range<usize>),
 }
 
-/// Phase-1 output: what a line will look like. `display` is what gets
-/// measured — always the full source text under the reserved-width conceal
-/// strategy; `spans` carry paint semantics ([`crate::style::SpanKind`]).
+impl ConcealMode {
+    /// Does the element covering display char `col` render as source
+    /// (markers visible, inline assets suppressed) rather than concealed?
+    /// `Concealed` reveals nothing, `Revealed` reveals everything, `Partial`
+    /// reveals only its range.
+    pub fn reveals_at(&self, col: usize) -> bool {
+        match self {
+            ConcealMode::Concealed => false,
+            ConcealMode::Revealed => true,
+            ConcealMode::Partial(range) => range.contains(&col),
+        }
+    }
+}
+
+/// Phase-1 output: what a line will look like. `display` is exactly what gets
+/// measured and painted; concealed markers are absent. `spans` carry paint
+/// semantics ([`crate::style::SpanKind`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StyledLine {
     pub display: String,
@@ -81,7 +104,7 @@ pub struct Damage {
     pub repaint: Range<usize>,
     /// First line whose vertical offset moved (everything from it downward
     /// re-positions; cheap as a blit). `None` = no geometry shift — the
-    /// layout-stable case.
+    /// no geometry shift.
     pub shifted_from: Option<usize>,
 }
 
@@ -165,7 +188,7 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
                 let record = &self.lines[i];
                 let styled = self
                     .styler
-                    .style(&record.text, &record.block, record.conceal);
+                    .style(&record.text, &record.block, record.conceal.clone());
                 self.measurer.measure(&styled, self.wrap_width)
             };
             if measure != self.lines[i].measure {
@@ -243,12 +266,12 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         let conceal = self
             .lines
             .get(index)
-            .map(|l| l.conceal)
+            .map(|l| l.conceal.clone())
             .ok_or(OutOfBounds {
                 index,
                 len: self.lines.len(),
             })?;
-        let measure = self.style_measure(text, &block, conceal);
+        let measure = self.style_measure(text, &block, conceal.clone());
         self.apply_measure(index, text.to_string(), block, conceal, measure)
     }
 
@@ -329,7 +352,7 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
     /// Flip a line's conceal mode (caret entered/left it).
     pub fn set_conceal(&mut self, index: usize, mode: ConcealMode) -> Result<Damage, OutOfBounds> {
         let (text, block, old_conceal) = match self.lines.get(index) {
-            Some(l) => (l.text.clone(), l.block.clone(), l.conceal),
+            Some(l) => (l.text.clone(), l.block.clone(), l.conceal.clone()),
             None => {
                 return Err(OutOfBounds {
                     index,
@@ -340,7 +363,7 @@ impl<S: Styler, M: Measurer> LayoutEngine<S, M> {
         if old_conceal == mode {
             return Ok(Damage::none());
         }
-        let measure = self.style_measure(&text, &block, mode);
+        let measure = self.style_measure(&text, &block, mode.clone());
         self.apply_measure(index, text, block, mode, measure)
     }
 

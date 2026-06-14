@@ -1,6 +1,16 @@
 use super::*;
 use md3_vault::{LinkGraph, atomic_save, rewrite_links};
 
+fn safe_relative(input: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(input.trim());
+    if path.as_os_str().is_empty() || path.is_absolute() {
+        return None;
+    }
+    path.components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+        .then_some(path)
+}
+
 impl Shell {
     pub(super) fn is_tab_dirty(&self, tab: TabId) -> bool {
         let Some((_, tab)) = self.ws.panes.find_tab(tab) else {

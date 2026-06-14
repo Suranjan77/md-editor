@@ -32,6 +32,8 @@ Do not edit by hand — change `kernel/src/defaults.rs` instead.
 | `editor.save` | Save | Editor | Editor(Markdown) | `ctrl+s` |
 | `editor.find` | Find in Note | Editor | Editor(Markdown) | `ctrl+f` |
 | `editor.select-all` | Select All | Editor | Editor(Markdown) | `ctrl+a` |
+| `editor.copy` | Copy | Editor | Editor(Markdown) | `ctrl+c` |
+| `editor.cut` | Cut | Editor | Editor(Markdown) | `ctrl+x` |
 | `note.backlinks` | Backlinks | Editor | Editor(Markdown) | `ctrl+shift+b` |
 | `note.outline-panel` | Outline Panel | Editor | — | — |
 | `editor.toggle-bold` | Bold | Editor | — | — |

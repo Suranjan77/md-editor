@@ -158,7 +158,9 @@ pub enum PaintOp {
     },
 }
 
-use super::editor_canvas::{PAD, block_asset_size, content_width, inline_math_size, span_text};
+use super::editor_canvas::{
+    block_asset_size, content_left, content_width, inline_math_size, span_text,
+};
 
 fn marker_is_concealed(kind: &SpanKind, styled: &StyledLine) -> bool {
     matches!(kind, SpanKind::Marker)
@@ -167,6 +169,25 @@ fn marker_is_concealed(kind: &SpanKind, styled: &StyledLine) -> bool {
             styled.kind,
             md3_editor::parse::LineKind::TableRow | md3_editor::parse::LineKind::TableSep
         )
+}
+
+/// The gutter glyph for a concealed list line: a bullet dot for an unordered
+/// item, the source ordinal (`1.`, `2.`, …) for an ordered one. Checkbox items
+/// draw their box in the decoration block, so they get no text marker here.
+fn list_gutter_marker(kind: &LineKind, index: usize, session: &MdSession) -> Option<String> {
+    match kind {
+        LineKind::Bullet { checkbox: None } => Some("•".to_string()),
+        LineKind::Ordered => {
+            let text = session.doc.buffer().line_text(index);
+            let digits: String = text
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            (!digits.is_empty()).then(|| format!("{digits}."))
+        }
+        _ => None,
+    }
 }
 
 fn span_style(kind: &SpanKind, styled: &StyledLine) -> (PaintRole, FontRole) {
@@ -201,13 +222,14 @@ pub fn line_plan(
     session: &MdSession,
 ) -> Vec<PaintOp> {
     let mut ops = Vec::new();
+    let left = content_left(width);
 
     // Block decoration
     match styled.kind {
         LineKind::Rule if styled.conceal == ConcealMode::Concealed => {
             ops.push(PaintOp::FillRect {
                 rect: RectPx {
-                    x: PAD,
+                    x: left,
                     y: y + line_height / 2.0,
                     w: content_width(width),
                     h: 1.0,
@@ -220,7 +242,7 @@ pub fn line_plan(
         } if styled.conceal == ConcealMode::Concealed => {
             ops.push(PaintOp::StrokeRect {
                 rect: RectPx {
-                    x: PAD,
+                    x: left,
                     y: y + 5.0,
                     w: 12.0,
                     h: 12.0,
@@ -231,7 +253,7 @@ pub fn line_plan(
             if checked {
                 ops.push(PaintOp::Text {
                     content: "✓".to_string(),
-                    x: PAD + 1.0,
+                    x: left + 1.0,
                     y: y + 1.0,
                     size: 14.0,
                     role: PaintRole::Caret,
@@ -242,12 +264,23 @@ pub fn line_plan(
         LineKind::CodeContent => {
             ops.push(PaintOp::FillRect {
                 rect: RectPx {
-                    x: 4.0,
+                    x: left - 12.0,
                     y,
-                    w: (width - 8.0).max(0.0),
+                    w: content_width(width) + 24.0,
                     h: line_height,
                 },
                 role: PaintRole::CodeBg,
+            });
+        }
+        LineKind::Quote if styled.conceal == ConcealMode::Concealed => {
+            ops.push(PaintOp::FillRect {
+                rect: RectPx {
+                    x: left + 4.0,
+                    y: y + 4.0,
+                    w: 3.0,
+                    h: (line_height - 8.0).max(1.0),
+                },
+                role: PaintRole::Quote,
             });
         }
         _ => {}
@@ -263,7 +296,7 @@ pub fn line_plan(
                 ops.push(PaintOp::Asset {
                     kind: AssetKind::Math(tex.to_string()),
                     rect: RectPx {
-                        x: PAD + (available_w - draw_w).max(0.0) / 2.0,
+                        x: left + (available_w - draw_w).max(0.0) / 2.0,
                         y: y + (line_height - draw_h).max(0.0) / 2.0,
                         w: draw_w,
                         h: draw_h,
@@ -298,7 +331,7 @@ pub fn line_plan(
                 ops.push(PaintOp::Asset {
                     kind,
                     rect: RectPx {
-                        x: PAD + (available_w - draw_w).max(0.0) / 2.0,
+                        x: left + (available_w - draw_w).max(0.0) / 2.0,
                         y: y + (line_height - draw_h).max(0.0) / 2.0,
                         w: draw_w,
                         h: draw_h,
@@ -326,65 +359,94 @@ pub fn line_plan(
             cells.len()
         };
 
-        let mut current_x = PAD;
+        // The `|---|` separator carries no content — it defines column
+        // alignment. Painting a dash per cell reads as "floating dashes" in
+        // the gap between header and body; render one continuous header rule
+        // spanning the whole table instead. (A height collapse would be the
+        // fuller fix but must not squish the source-revealed row, so it stays
+        // measure-phase work for later.)
+        if is_sep {
+            let total_w: f32 = (0..cell_count)
+                .map(|i| *widths.get(i).unwrap_or(&0.0) + 16.0)
+                .sum();
+            ops.push(PaintOp::FillRect {
+                rect: RectPx {
+                    x: left,
+                    y: y + line_height / 2.0,
+                    w: total_w,
+                    h: 1.0,
+                },
+                role: PaintRole::Marker,
+            });
+            return ops;
+        }
+
+        let mut current_x = left;
 
         for (i, cell) in cells.iter().take(cell_count).enumerate() {
             let w = *widths.get(i).unwrap_or(&0.0) + 16.0; // 16px padding
 
-            if is_sep {
-                ops.push(PaintOp::FillRect {
-                    rect: RectPx {
-                        x: current_x,
-                        y: y + line_height / 2.0,
-                        w: w - 8.0,
-                        h: 1.0,
-                    },
-                    role: PaintRole::Marker,
-                });
-            } else {
-                ops.push(PaintOp::StrokeRect {
-                    rect: RectPx {
-                        x: current_x,
-                        y,
-                        w,
-                        h: line_height,
-                    },
-                    role: PaintRole::Marker,
-                    thickness: 1.0,
-                });
-                let cell_text = cell.trim();
-                if !cell_text.is_empty() {
-                    let cell_styled =
-                        md3_editor::layout::StyledLine::plain(cell_text, ConcealMode::Concealed);
-                    let cell_buffer = session.measurer.create_buffer(&cell_styled, w);
-                    for run in cell_buffer.layout_runs() {
-                        for glyph in run.glyphs.iter() {
-                            ops.push(PaintOp::Text {
-                                content: cell_text[glyph.start..glyph.end].to_string(),
-                                x: current_x + 8.0 + glyph.x, // padding
-                                // Center the cell's text line within the full
-                                // cell box and use the same `line_y - font_size`
-                                // top reference prose uses. The old `line_y`
-                                // (baseline) as top placed text ~font_size too
-                                // low, overflowing the cell into the next row.
-                                y: y + (line_height - metrics.line_height) / 2.0 + run.line_y
-                                    - metrics.font_size
-                                    + glyph.y,
-                                size: metrics.font_size,
-                                role: PaintRole::Text,
-                                font: FontRole::Sans,
-                            });
-                        }
+            ops.push(PaintOp::StrokeRect {
+                rect: RectPx {
+                    x: current_x,
+                    y,
+                    w,
+                    h: line_height,
+                },
+                role: PaintRole::Marker,
+                thickness: 1.0,
+            });
+            let cell_text = cell.trim();
+            if !cell_text.is_empty() {
+                let cell_styled =
+                    md3_editor::layout::StyledLine::plain(cell_text, ConcealMode::Concealed);
+                let cell_buffer = session.measurer.create_buffer(&cell_styled, w);
+                for run in cell_buffer.layout_runs() {
+                    for glyph in run.glyphs.iter() {
+                        ops.push(PaintOp::Text {
+                            content: cell_text[glyph.start..glyph.end].to_string(),
+                            x: current_x + 8.0 + glyph.x, // padding
+                            // Center the cell's text line within the full
+                            // cell box and use the same `line_y - font_size`
+                            // top reference prose uses. The old `line_y`
+                            // (baseline) as top placed text ~font_size too
+                            // low, overflowing the cell into the next row.
+                            y: y + (line_height - metrics.line_height) / 2.0 + run.line_y
+                                - metrics.font_size
+                                + glyph.y,
+                            size: metrics.font_size,
+                            role: PaintRole::Text,
+                            font: FontRole::Sans,
+                        });
                     }
                 }
             }
-
             current_x += w;
         }
+
         return ops;
     }
 
     let buffer = session.measurer.create_buffer(styled, content_width(width));
+    // List item text is inset past its gutter marker (e.g. a checkbox box);
+    // the measurer wraps at the same reduced width, so geometry stays exact.
+    let indent = super::shaped_measurer::line_indent(styled);
+
+    // Bullet dot / ordinal number in the gutter, vertically aligned to the
+    // first text row (the checkbox box is drawn in the decoration block above).
+    if indent > 0.0
+        && let Some(marker) = list_gutter_marker(&styled.kind, index, session)
+        && let Some(run) = buffer.layout_runs().next()
+    {
+        ops.push(PaintOp::Text {
+            content: marker,
+            x: left + 2.0,
+            y: y + pad_top + run.line_y - metrics.font_size,
+            size: metrics.font_size,
+            role: PaintRole::Marker,
+            font: FontRole::Sans,
+        });
+    }
 
     let char_indices: Vec<usize> = styled.display.char_indices().map(|(b, _)| b).collect();
     let mut byte_to_char = vec![0; styled.display.len() + 1];
@@ -421,7 +483,7 @@ pub fn line_plan(
                     chunk_end_idx += 1;
                 }
 
-                if matches!(span.kind, SpanKind::Math) && styled.conceal == ConcealMode::Concealed {
+                if matches!(span.kind, SpanKind::Math) && !styled.conceal.reveals_at(start_char) {
                     let tex = span_text(&chars, span.range.clone());
                     if painted_inline_math.insert(span.range.clone())
                         && let Some((_, asset_w, asset_h)) = session.math_cache.get(&tex)
@@ -437,7 +499,7 @@ pub fn line_plan(
                         ops.push(PaintOp::Asset {
                             kind: AssetKind::Math(tex.clone()),
                             rect: RectPx {
-                                x: PAD + start_glyph.x,
+                                x: left + indent + start_glyph.x,
                                 y: y + pad_top + run.line_y - metrics.font_size
                                     + (metrics.font_size - draw_h) / 2.0,
                                 w: draw_w,
@@ -451,7 +513,7 @@ pub fn line_plan(
                     let (role, font) = span_style(&span.kind, styled);
                     ops.push(PaintOp::Text {
                         content: chunk_text.to_string(),
-                        x: PAD + start_glyph.x,
+                        x: left + indent + start_glyph.x,
                         y: y + pad_top + run.line_y - metrics.font_size,
                         size: metrics.font_size,
                         role,

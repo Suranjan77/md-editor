@@ -73,6 +73,7 @@ impl Shell {
                 tracker_view::TrackerTab::Config => "Config".to_string(),
             }),
             theme: self.theme_name.clone(),
+            reduce_motion: self.reduce_motion,
         }
     }
 
@@ -188,7 +189,7 @@ impl Shell {
         self.tree_expanded = snap.tree_expanded.into_iter().collect();
         self.tracker_open = snap.tracker_open;
         self.theme_name = snap.theme;
-        tokens::set_light_theme(self.theme_name == "light");
+        self.reduce_motion = snap.reduce_motion;
         if let Some(tab_str) = snap.tracker_active_tab {
             self.tracker_active_tab = match tab_str.as_str() {
                 "Dashboard" => tracker_view::TrackerTab::Dashboard,

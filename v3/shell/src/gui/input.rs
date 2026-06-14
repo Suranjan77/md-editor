@@ -22,6 +22,7 @@ impl Shell {
     }
 
     fn editor_raw_input(&mut self, event: &keys::KeyEvent) {
+        let reduce_motion = self.reduce_motion;
         let Some(session) = self.focused_md_mut() else {
             return;
         };
@@ -60,7 +61,7 @@ impl Shell {
                     }),
                     Key::PageUp | Key::PageDown => {
                         let direction = if key == Key::PageUp { -0.9 } else { 0.9 };
-                        session.scroll_by(session.viewport_h * direction);
+                        session.scroll_by_animated(session.viewport_h * direction, reduce_motion);
                         None
                     }
                     _ => event.text.clone().map(Command::Insert),

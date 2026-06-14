@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::tokens;
+use super::tracker_widgets::{kpi_card, panel_style};
 use crate::gui::Message;
 
 const BOLD: iced::Font = iced::Font {
@@ -285,31 +286,10 @@ fn default_config() -> TrackerConfig {
     }
 }
 
-fn kpi_card<'a>(title: &'static str, value: String, sub: &'static str) -> Element<'a, Message> {
-    let t = tokens::dark();
-    container(
-        column![
-            text(title).size(9).color(t.text_muted).font(BOLD),
-            text(value).size(16).color(t.accent).font(BOLD),
-            text(sub).size(8).color(t.text_muted),
-        ]
-        .spacing(2),
-    )
-    .padding(8)
-    .width(Length::FillPortion(1))
-    .style(move |_| container::Style {
-        background: Some(Background::Color(t.bg_secondary)),
-        border: iced::Border {
-            color: t.border_subtle,
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message> {
+fn activity_chart<'a>(
+    t: &'static tokens::Tokens,
+    sessions: &[StudySession],
+) -> Element<'a, Message> {
     let today = chrono::Local::now().date_naive();
     let mut days = Vec::new();
 
@@ -330,7 +310,6 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message> {
         .align_y(Alignment::End)
         .height(Length::Fixed(80.0));
 
-    let t = tokens::dark();
     for (day, hours) in days {
         let bar_height = ((hours / max_hours) * 60.0).max(4.0);
         let is_today = day == today;
@@ -398,8 +377,10 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message> {
     .into()
 }
 
-fn curriculum_panel<'a>(phases: Vec<PhaseConfig>) -> Element<'a, Message> {
-    let t = tokens::dark();
+fn curriculum_panel<'a>(
+    t: &'static tokens::Tokens,
+    phases: Vec<PhaseConfig>,
+) -> Element<'a, Message> {
     let mut phase_list = column![].spacing(6);
     for phase in phases {
         phase_list = phase_list.push(
@@ -443,16 +424,16 @@ fn curriculum_panel<'a>(phases: Vec<PhaseConfig>) -> Element<'a, Message> {
     )
     .padding(8)
     .width(Length::Fill)
-    .style(move |_| panel_style())
+    .style(move |_| panel_style(t))
     .into()
 }
 
 fn milestones_panel<'a>(
+    t: &'static tokens::Tokens,
     project_count: usize,
     gate_count: usize,
     reading_sections: Vec<ReadingSectionConfig>,
 ) -> Element<'a, Message> {
-    let t = tokens::dark();
     let reading =
         reading_sections
             .into_iter()
@@ -478,8 +459,8 @@ fn milestones_panel<'a>(
         column![
             text("Milestones").size(12).color(t.text_primary).font(BOLD),
             row![
-                kpi_card("PROJECTS", project_count.to_string(), "Milestones"),
-                kpi_card("GATES", gate_count.to_string(), "Checkpoints"),
+                kpi_card(t, "PROJECTS", project_count.to_string(), "Milestones"),
+                kpi_card(t, "GATES", gate_count.to_string(), "Checkpoints"),
             ]
             .spacing(6),
             text("Reading Tracks")
@@ -492,25 +473,13 @@ fn milestones_panel<'a>(
     )
     .padding(8)
     .width(Length::Fill)
-    .style(move |_| panel_style())
+    .style(move |_| panel_style(t))
     .into()
-}
-
-fn panel_style() -> container::Style {
-    let t = tokens::dark();
-    container::Style {
-        background: Some(Background::Color(t.bg_primary)),
-        border: iced::Border {
-            color: t.border,
-            width: 1.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
+    t: &'static tokens::Tokens,
     visible: bool,
     running: bool,
     sessions: &'a [StudySession],
@@ -528,7 +497,6 @@ pub fn view<'a>(
             .into();
     }
 
-    let t = tokens::dark();
     let title = row![
         text("Study Tracker").size(16).color(t.accent).font(BOLD),
         Space::new().width(Length::Fill),
@@ -549,9 +517,9 @@ pub fn view<'a>(
     let tracker_config = config_or_default(&config_text);
 
     let kpis = row![
-        kpi_card("TOTAL", format!("{:.1}h", total_hours), "Accumulated"),
-        kpi_card("COUNT", format!("{}", session_count), "Sessions"),
-        kpi_card("AVG", format!("{:.1}h", avg_hours), "Hours"),
+        kpi_card(t, "TOTAL", format!("{:.1}h", total_hours), "Accumulated"),
+        kpi_card(t, "COUNT", format!("{}", session_count), "Sessions"),
+        kpi_card(t, "AVG", format!("{:.1}h", avg_hours), "Hours"),
     ]
     .spacing(4)
     .width(Length::Fill);
@@ -621,12 +589,12 @@ pub fn view<'a>(
 
     let tab_bar = scrollable(
         row![
-            tab_button("Dashboard", TrackerTab::Dashboard, active_tab),
-            tab_button("Log", TrackerTab::Log, active_tab),
-            tab_button("Projects", TrackerTab::Projects, active_tab),
-            tab_button("Gates", TrackerTab::Gates, active_tab),
-            tab_button("Reading", TrackerTab::Reading, active_tab),
-            tab_button("Config", TrackerTab::Config, active_tab),
+            tab_button(t, "Dashboard", TrackerTab::Dashboard, active_tab),
+            tab_button(t, "Log", TrackerTab::Log, active_tab),
+            tab_button(t, "Projects", TrackerTab::Projects, active_tab),
+            tab_button(t, "Gates", TrackerTab::Gates, active_tab),
+            tab_button(t, "Reading", TrackerTab::Reading, active_tab),
+            tab_button(t, "Config", TrackerTab::Config, active_tab),
         ]
         .spacing(4),
     )
@@ -635,12 +603,14 @@ pub fn view<'a>(
     ));
 
     let body = match active_tab {
-        TrackerTab::Dashboard => dashboard_body(sessions, running_status, controls, tracker_config),
-        TrackerTab::Log => log_body(sessions, manual_date, manual_hours, manual_notes),
-        TrackerTab::Projects => projects_body(kv, tracker_config.projects),
-        TrackerTab::Gates => gates_body(kv, tracker_config.gates),
-        TrackerTab::Reading => reading_body(kv, tracker_config.reading),
-        TrackerTab::Config => config_body(config_json),
+        TrackerTab::Dashboard => {
+            dashboard_body(t, sessions, running_status, controls, tracker_config)
+        }
+        TrackerTab::Log => log_body(t, sessions, manual_date, manual_hours, manual_notes),
+        TrackerTab::Projects => projects_body(t, kv, tracker_config.projects),
+        TrackerTab::Gates => gates_body(t, kv, tracker_config.gates),
+        TrackerTab::Reading => reading_body(t, kv, tracker_config.reading),
+        TrackerTab::Config => config_body(t, config_json),
     };
 
     let dashboard = column![title, tab_bar, kpis, body,].spacing(10).padding(10);
@@ -661,11 +631,11 @@ pub fn view<'a>(
 }
 
 fn tab_button<'a>(
+    t: &'static tokens::Tokens,
     label: &'static str,
     tab: TrackerTab,
     active: TrackerTab,
 ) -> Element<'a, Message> {
-    let t = tokens::dark();
     button(
         text(label)
             .size(11)
@@ -683,13 +653,13 @@ fn tab_button<'a>(
 }
 
 fn dashboard_body<'a>(
+    t: &'static tokens::Tokens,
     sessions: &'a [StudySession],
     running_status: Element<'a, Message>,
     controls: iced::widget::Row<'a, Message>,
     config: TrackerConfig,
 ) -> Element<'a, Message> {
-    let t = tokens::dark();
-    let sessions_list = sessions_list(sessions);
+    let sessions_list = sessions_list(t, sessions);
     let project_count = config.projects.len();
     let gate_count = config.gates.len();
 
@@ -697,9 +667,9 @@ fn dashboard_body<'a>(
         column![
             controls,
             running_status,
-            activity_chart(sessions),
-            curriculum_panel(config.phases),
-            milestones_panel(project_count, gate_count, config.reading),
+            activity_chart(t, sessions),
+            curriculum_panel(t, config.phases),
+            milestones_panel(t, project_count, gate_count, config.reading),
             text("Recent Sessions")
                 .size(12)
                 .color(t.text_primary)
@@ -713,12 +683,12 @@ fn dashboard_body<'a>(
 }
 
 fn log_body<'a>(
+    t: &'static tokens::Tokens,
     sessions: &'a [StudySession],
     manual_date: &'a str,
     manual_hours: &'a str,
     manual_notes: &'a str,
 ) -> Element<'a, Message> {
-    let t = tokens::dark();
     container(
         column![
             text("Session Log")
@@ -750,18 +720,20 @@ fn log_body<'a>(
                     .width(Length::Fill),
             ]
             .spacing(6),
-            sessions_list(sessions),
+            sessions_list(t, sessions),
         ]
         .spacing(10),
     )
     .padding(6)
     .height(Fill)
-    .style(move |_| panel_style())
+    .style(move |_| panel_style(t))
     .into()
 }
 
-fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message> {
-    let t = tokens::dark();
+fn sessions_list<'a>(
+    t: &'static tokens::Tokens,
+    sessions: &'a [StudySession],
+) -> Element<'a, Message> {
     if sessions.is_empty() {
         return container(
             text("No sessions yet. Start studying!")
@@ -823,10 +795,10 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message> {
 }
 
 fn projects_body<'a>(
+    t: &'static tokens::Tokens,
     kv: &'a HashMap<String, String>,
     projects: Vec<ProjectConfig>,
 ) -> Element<'a, Message> {
-    let t = tokens::dark();
     let complete = projects
         .iter()
         .filter(|project| {
@@ -845,6 +817,7 @@ fn projects_body<'a>(
         .count();
 
     let mut col = column![section_summary(
+        t,
         "Project Milestones",
         format!(
             "{} items - {} done - {} active",
@@ -867,7 +840,7 @@ fn projects_body<'a>(
         list = list.push(
             container(
                 row![
-                    status_dot(status),
+                    status_dot(t, status),
                     column![
                         text(format!("{} - {}", project.id, project.name))
                             .size(11)
@@ -883,9 +856,9 @@ fn projects_body<'a>(
                     ]
                     .width(Length::Fill),
                     row![
-                        status_button(project_id.clone(), "not_started", "Todo", status),
-                        status_button(project_id.clone(), "in_progress", "Doing", status),
-                        status_button(project_id, "complete", "Done", status),
+                        status_button(t, project_id.clone(), "not_started", "Todo", status),
+                        status_button(t, project_id.clone(), "in_progress", "Doing", status),
+                        status_button(t, project_id, "complete", "Done", status),
                     ]
                     .spacing(2)
                 ]
@@ -893,7 +866,7 @@ fn projects_body<'a>(
                 .align_y(Alignment::Center),
             )
             .padding(6)
-            .style(move |_| panel_style()),
+            .style(move |_| panel_style(t)),
         );
     }
     col = col.push(scrollable(list).height(Fill));
@@ -901,12 +874,12 @@ fn projects_body<'a>(
 }
 
 fn status_button<'a>(
+    t: &'static tokens::Tokens,
     id: String,
     value: &'static str,
     label: &'static str,
     current: &str,
 ) -> Element<'a, Message> {
-    let t = tokens::dark();
     let active = current == value;
     button(
         text(label)
@@ -934,7 +907,11 @@ fn status_label(status: &str) -> &'static str {
     }
 }
 
-fn gates_body<'a>(kv: &'a HashMap<String, String>, gates: Vec<GateConfig>) -> Element<'a, Message> {
+fn gates_body<'a>(
+    t: &'static tokens::Tokens,
+    kv: &'a HashMap<String, String>,
+    gates: Vec<GateConfig>,
+) -> Element<'a, Message> {
     let total_items = gates.iter().map(|gate| gate.items.len()).sum::<usize>();
     let completed_items = gates
         .iter()
@@ -952,6 +929,7 @@ fn gates_body<'a>(kv: &'a HashMap<String, String>, gates: Vec<GateConfig>) -> El
         .sum::<usize>();
 
     let mut grid = column![section_summary(
+        t,
         "Gate Checkpoints",
         format!("{} gates configured", gates.len()),
         completed_items,
@@ -959,7 +937,6 @@ fn gates_body<'a>(kv: &'a HashMap<String, String>, gates: Vec<GateConfig>) -> El
     )]
     .spacing(8);
 
-    let t = tokens::dark();
     let mut list = column![].spacing(6);
     for gate in gates {
         let completed = gate
@@ -974,7 +951,7 @@ fn gates_body<'a>(kv: &'a HashMap<String, String>, gates: Vec<GateConfig>) -> El
             .count();
         let mut item_col = column![
             text(gate.title).size(12).color(t.text_primary).font(BOLD),
-            progress_bar(completed, gate.items.len())
+            progress_bar(t, completed, gate.items.len())
         ]
         .spacing(6);
         for (idx, item) in gate.items.into_iter().enumerate() {
@@ -992,13 +969,18 @@ fn gates_body<'a>(kv: &'a HashMap<String, String>, gates: Vec<GateConfig>) -> El
                     .size(13),
             );
         }
-        list = list.push(container(item_col).padding(8).style(move |_| panel_style()));
+        list = list.push(
+            container(item_col)
+                .padding(8)
+                .style(move |_| panel_style(t)),
+        );
     }
     grid = grid.push(scrollable(list).height(Fill));
     grid.into()
 }
 
 fn reading_body<'a>(
+    t: &'static tokens::Tokens,
     kv: &'a HashMap<String, String>,
     sections: Vec<ReadingSectionConfig>,
 ) -> Element<'a, Message> {
@@ -1024,6 +1006,7 @@ fn reading_body<'a>(
         .sum::<usize>();
 
     let mut grid = column![section_summary(
+        t,
         "Reading Queue",
         format!("{} sections configured", sections.len()),
         completed_items,
@@ -1031,7 +1014,6 @@ fn reading_body<'a>(
     )]
     .spacing(8);
 
-    let t = tokens::dark();
     let mut list = column![].spacing(6);
     for section in sections {
         let key_section = section.section.replace(' ', "");
@@ -1050,7 +1032,7 @@ fn reading_body<'a>(
                 .size(12)
                 .color(t.text_primary)
                 .font(BOLD),
-            progress_bar(completed, section.items.len())
+            progress_bar(t, completed, section.items.len())
         ]
         .spacing(6);
         for (idx, item) in section.items.into_iter().enumerate() {
@@ -1069,14 +1051,20 @@ fn reading_body<'a>(
                     .size(13),
             );
         }
-        list = list.push(container(item_col).padding(8).style(move |_| panel_style()));
+        list = list.push(
+            container(item_col)
+                .padding(8)
+                .style(move |_| panel_style(t)),
+        );
     }
     grid = grid.push(scrollable(list).height(Fill));
     grid.into()
 }
 
-fn config_body<'a>(config_json: &'a text_editor::Content) -> Element<'a, Message> {
-    let t = tokens::dark();
+fn config_body<'a>(
+    t: &'static tokens::Tokens,
+    config_json: &'a text_editor::Content,
+) -> Element<'a, Message> {
     container(
         column![
             text("Tracker Configuration")
@@ -1103,17 +1091,17 @@ fn config_body<'a>(config_json: &'a text_editor::Content) -> Element<'a, Message
     )
     .padding(8)
     .height(Fill)
-    .style(move |_| panel_style())
+    .style(move |_| panel_style(t))
     .into()
 }
 
 fn section_summary<'a>(
+    t: &'static tokens::Tokens,
     title: &'static str,
     subtitle: String,
     done: usize,
     total: usize,
 ) -> Element<'a, Message> {
-    let t = tokens::dark();
     container(
         column![
             row![
@@ -1129,17 +1117,16 @@ fn section_summary<'a>(
                     .font(BOLD),
             ]
             .align_y(Alignment::Center),
-            progress_bar(done, total),
+            progress_bar(t, done, total),
         ]
         .spacing(6),
     )
     .padding(8)
-    .style(move |_| panel_style())
+    .style(move |_| panel_style(t))
     .into()
 }
 
-fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message> {
-    let t = tokens::dark();
+fn progress_bar<'a>(t: &'static tokens::Tokens, done: usize, total: usize) -> Element<'a, Message> {
     let ratio = if total == 0 {
         0.0
     } else {
@@ -1195,8 +1182,7 @@ fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message> {
     .into()
 }
 
-fn status_dot<'a>(status: &str) -> Element<'a, Message> {
-    let t = tokens::dark();
+fn status_dot<'a>(t: &'static tokens::Tokens, status: &str) -> Element<'a, Message> {
     let color = match status {
         "complete" => t.success,
         "in_progress" => t.accent,

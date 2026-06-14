@@ -88,7 +88,11 @@ fn append_level(
     }
 }
 
-pub fn context_popover(tree_width: f32, is_dir: bool) -> Element<'static, Message> {
+pub fn context_popover(
+    tree_width: f32,
+    is_dir: bool,
+    tokens: &'static tokens::Tokens,
+) -> Element<'static, Message> {
     let backdrop = mouse_area(
         container(iced::widget::Space::new())
             .width(Fill)
@@ -124,10 +128,10 @@ pub fn context_popover(tree_width: f32, is_dir: bool) -> Element<'static, Messag
                 .on_press(Message::TreeContextCommand(command)),
         );
     }
-    let card = container(items).style(|_| container::Style {
-        background: Some(Background::Color(tokens::dark().bg_secondary)),
+    let card = container(items).style(move |_| container::Style {
+        background: Some(Background::Color(tokens.bg_secondary)),
         border: Border {
-            color: tokens::dark().border,
+            color: tokens.border,
             width: 1.0,
             radius: 5.0.into(),
         },

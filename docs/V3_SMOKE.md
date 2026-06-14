@@ -1,3 +1,7 @@
+GUI automation setup and COSMIC sandbox constraints:
+`docs/V3_GUI_TESTING.md`. Verify tools with
+`python3 scripts/v3-gui-probe.py check` from repository root.
+
 Run: cd v3 && cargo run -p md3-shell --features pdfium -- <a real vault with a real-world PDF>
  1. Quick-open (ctrl+p) a .md file; type; undo (ctrl+z); redo; save (ctrl+s) — dirty dot clears.
  2. Split (ctrl+\), open a PDF in the right pane. Both panes render.
@@ -32,3 +36,7 @@ Run: cd v3 && cargo run -p md3-shell --features pdfium -- <a real vault with a r
  31. Fenced code shows as a mono block; display math renders; click into math: TeX source appears in place.
  32. Reopen a document with images: layout is identical immediately; no pop when assets load.
  33. Click a checkbox: it toggles and undo restores it. Ctrl+click a wikilink opens the note; ctrl+click a URI opens the browser.
+ 34. Type fast in a 5k-line document: zero perceptible lag; undo always undoes.
+ 35. Drag-select forward and backward across Markdown lines; selection tint tracks the pointer. ctrl+c copies; ctrl+x cuts; ctrl+z restores the cut.
+ 36. Scroll a long Markdown note: wheel/page motion eases briefly. Move into markup: caret and revealed markers fade in. Enable Settings → Reduced motion: both become immediate and remain disabled after restart.
+ 37. Widen a Markdown pane past 1200 px: prose stays centered in a readable column; 17 px body text, heading hierarchy, and blockquote bar remain clear.

@@ -9,6 +9,16 @@ impl Shell {
                 }
                 Task::none()
             }
+            Message::SettingsReduceMotionChanged(reduce_motion) => {
+                if let Some(Overlay::Settings {
+                    reduce_motion: setting,
+                    ..
+                }) = &mut self.overlay
+                {
+                    *setting = reduce_motion;
+                }
+                Task::none()
+            }
             Message::SettingsScopeChanged(idx, val) => {
                 if let Some(Overlay::Settings { keymap, .. }) = &mut self.overlay
                     && let Some(row) = keymap.bindings.get_mut(idx)
@@ -58,6 +68,7 @@ impl Shell {
             Message::SettingsSave => {
                 if let Some(Overlay::Settings {
                     theme,
+                    reduce_motion,
                     keymap,
                     error: _,
                 }) = self.overlay.clone()
@@ -75,7 +86,12 @@ impl Shell {
                                 }
                             } else {
                                 self.theme_name = theme;
-                                tokens::set_light_theme(self.theme_name == "light");
+                                self.reduce_motion = reduce_motion;
+                                if self.reduce_motion {
+                                    for session in self.sessions.md.values_mut() {
+                                        session.finish_motion();
+                                    }
+                                }
                                 self.reload_keymap();
                                 self.close_overlay();
                                 self.save_session();

@@ -3,60 +3,59 @@
 //! roles, never colors — ADR-0100/0106) to concrete theme [`Color`]s, so a
 //! theme change never re-tokenizes or re-measures anything.
 
-use crate::gui::tokens;
+use crate::gui::tokens::Tokens;
 use iced::Color;
 
-pub fn bg() -> Color {
-    tokens::dark().bg_secondary
+pub fn bg(tokens: &Tokens) -> Color {
+    tokens.bg_secondary
 }
-pub fn text() -> Color {
-    tokens::dark().text_primary
+pub fn text(tokens: &Tokens) -> Color {
+    tokens.text_primary
 }
-pub fn marker() -> Color {
-    tokens::dark().text_muted
+pub fn marker(tokens: &Tokens) -> Color {
+    tokens.text_muted
 }
-pub fn heading() -> Color {
-    tokens::dark().danger
+pub fn heading(tokens: &Tokens) -> Color {
+    tokens.text_heading
 }
-pub fn code() -> Color {
-    tokens::dark().success
+pub fn code(tokens: &Tokens) -> Color {
+    tokens.success
 }
-pub fn math() -> Color {
-    tokens::dark().warning
+pub fn math(tokens: &Tokens) -> Color {
+    tokens.warning
 }
-pub fn link() -> Color {
-    tokens::dark().accent
+pub fn link(tokens: &Tokens) -> Color {
+    tokens.accent
 }
-pub fn wikilink() -> Color {
-    tokens::dark().accent_secondary
+pub fn wikilink(tokens: &Tokens) -> Color {
+    tokens.accent_secondary
 }
-pub fn quote() -> Color {
-    tokens::dark().accent
+pub fn quote(tokens: &Tokens) -> Color {
+    tokens.accent
 }
-pub fn caret() -> Color {
-    tokens::dark().accent
+pub fn caret(tokens: &Tokens) -> Color {
+    tokens.accent
 }
-pub fn selection() -> Color {
-    tokens::dark().sel_tint
+pub fn selection(tokens: &Tokens) -> Color {
+    tokens.sel_tint
 }
-pub fn code_bg() -> Color {
-    let mut color = tokens::dark().bg_tertiary;
+pub fn code_bg(tokens: &Tokens) -> Color {
+    let mut color = tokens.bg_tertiary;
     color.a = 0.72;
     color
 }
 /// Map a semantic syntax role (ADR-0106) to a theme color. Roles, not
 /// colors, cross the editor→shell boundary; this is the only place that
 /// decides how a token looks.
-pub fn syntax(role: md3_editor::syntax::SyntaxRole) -> Color {
+pub fn syntax(tokens: &Tokens, role: md3_editor::syntax::SyntaxRole) -> Color {
     use md3_editor::syntax::SyntaxRole::*;
-    let t = tokens::dark();
     match role {
-        Comment => t.text_muted,
-        Keyword => t.danger,
-        String => t.success,
-        Number => t.warning,
-        Type => t.accent_secondary,
-        Function => t.accent,
-        Operator | Punctuation => t.text_secondary,
+        Comment => tokens.text_muted,
+        Keyword => tokens.danger,
+        String => tokens.success,
+        Number => tokens.warning,
+        Type => tokens.accent_secondary,
+        Function => tokens.accent,
+        Operator | Punctuation => tokens.text_secondary,
     }
 }

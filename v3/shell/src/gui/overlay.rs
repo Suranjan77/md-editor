@@ -11,7 +11,6 @@ use md3_kernel::CommandRegistry;
 use md3_vault::Hit;
 
 use super::Message;
-use super::editor_canvas::palette as colors;
 use super::tokens;
 
 /// One `pdf.find` match: where it lives (page points, ready to tint) and
@@ -84,6 +83,7 @@ pub enum Overlay {
     },
     Settings {
         theme: String,
+        reduce_motion: bool,
         keymap: crate::settings::KeymapFile,
         error: Option<String>,
     },
@@ -288,6 +288,7 @@ pub fn view<'a>(
     overlay: &'a Overlay,
     registry: &'a CommandRegistry,
     files: &'a [String],
+    tokens: &'static tokens::Tokens,
 ) -> Element<'a, Message> {
     if let Overlay::ConfirmDelete { target, is_dir } = overlay {
         let kind = if *is_dir { "folder" } else { "file" };
@@ -308,22 +309,22 @@ pub fn view<'a>(
             .on_press(Message::RunCommand(md3_kernel::CommandId("overlay.close")));
         let card = container(
             column![
-                text("Confirm Delete").size(16).color(colors::heading()),
+                text("Confirm Delete").size(16).color(tokens.danger),
                 text(format!("Delete {kind} `{target}`?")).size(14),
-                text(detail).size(12).color(colors::marker()),
+                text(detail).size(12).color(tokens.text_muted),
                 row![delete_btn, cancel_btn].spacing(10),
                 text("Enter confirms · Esc cancels")
                     .size(11)
-                    .color(colors::marker()),
+                    .color(tokens.text_muted),
             ]
             .spacing(12)
             .padding(16),
         )
         .width(520)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(tokens::dark().bg_secondary)),
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(tokens.bg_secondary)),
             border: iced::Border {
-                color: tokens::dark().border,
+                color: tokens.border,
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -345,21 +346,21 @@ pub fn view<'a>(
             .on_press(Message::RunCommand(md3_kernel::CommandId("overlay.close")));
         let card = container(
             column![
-                text("Confirm Action").size(16).color(colors::heading()),
+                text("Confirm Action").size(16).color(tokens.danger),
                 text(message.clone()).size(14),
                 row![confirm_btn, cancel_btn].spacing(10),
                 text("Enter confirms · Esc cancels")
                     .size(11)
-                    .color(colors::marker()),
+                    .color(tokens.text_muted),
             ]
             .spacing(12)
             .padding(16),
         )
         .width(520)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(tokens::dark().bg_secondary)),
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(tokens.bg_secondary)),
             border: iced::Border {
-                color: tokens::dark().border,
+                color: tokens.border,
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -369,12 +370,13 @@ pub fn view<'a>(
     }
 
     if let Overlay::Settings {
-        theme,
+        reduce_motion,
         keymap,
         error,
+        ..
     } = overlay
     {
-        return view_settings(theme, keymap, error);
+        return view_settings(*reduce_motion, keymap, error, tokens);
     }
 
     if let Overlay::PdfLinkPreview {
@@ -386,23 +388,23 @@ pub fn view<'a>(
                 row![
                     text(format!("Reference — p. {}", dest_page + 1))
                         .size(13)
-                        .color(colors::marker()),
+                        .color(tokens.text_muted),
                 ],
                 iced::widget::image(image.clone()).width(540),
                 row![
                     text("esc closes · enter navigates")
                         .size(12)
-                        .color(colors::marker()),
+                        .color(tokens.text_muted),
                 ],
             ]
             .spacing(10)
             .padding(14),
         )
         .width(560)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(tokens::dark().bg_secondary)),
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(tokens.bg_secondary)),
             border: iced::Border {
-                color: tokens::dark().border,
+                color: tokens.border,
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -427,8 +429,8 @@ pub fn view<'a>(
     let input_line = {
         let shown = format!("{}▏", overlay.input());
         row![
-            text(overlay.title()).size(13).color(colors::marker()),
-            text(shown).size(15).color(colors::text()),
+            text(overlay.title()).size(13).color(tokens.text_muted),
+            text(shown).size(15).color(tokens.text_primary),
         ]
         .spacing(12)
     };
@@ -440,11 +442,11 @@ pub fn view<'a>(
             text(format!("{marker}{title}"))
                 .size(14)
                 .color(if i == selected {
-                    colors::heading()
+                    tokens.danger
                 } else {
-                    colors::text()
+                    tokens.text_primary
                 }),
-            text(detail.clone()).size(12).color(colors::marker()),
+            text(detail.clone()).size(12).color(tokens.text_muted),
         ]
         .spacing(10);
         list = list.push(iced::widget::mouse_area(line).on_press(Message::OverlayPick(i)));
@@ -457,10 +459,10 @@ pub fn view<'a>(
 
     let card = container(column![input_line, list].spacing(10).padding(14))
         .width(560)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(tokens::dark().bg_secondary)),
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(tokens.bg_secondary)),
             border: iced::Border {
-                color: tokens::dark().border,
+                color: tokens.border,
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -506,36 +508,26 @@ pub fn toc_matches<'a>(entries: &'a [(String, u32)], input: &str) -> Vec<&'a (St
 }
 
 fn view_settings<'a>(
-    theme: &'a str,
+    reduce_motion: bool,
     keymap: &'a crate::settings::KeymapFile,
     error: &'a Option<String>,
+    tokens: &'static tokens::Tokens,
 ) -> Element<'a, Message> {
     use iced::widget::{button, text_input};
 
-    let theme_row = row![
-        text("Theme:").size(14).color(colors::text()),
-        button(text("Dark").size(13))
+    let motion_row = row![
+        text("Motion:").size(14).color(tokens.text_primary),
+        button(text(if reduce_motion { "Reduced" } else { "Smooth" }))
             .padding([4, 10])
-            .style(move |theme_style, status| {
-                let active = theme == "dark";
-                if active {
-                    button::primary(theme_style, status)
-                } else {
-                    button::secondary(theme_style, status)
-                }
+            .style(if reduce_motion {
+                button::secondary
+            } else {
+                button::primary
             })
-            .on_press(Message::SettingsThemeChanged("dark".to_string())),
-        button(text("Light").size(13))
-            .padding([4, 10])
-            .style(move |theme_style, status| {
-                let active = theme == "light";
-                if active {
-                    button::primary(theme_style, status)
-                } else {
-                    button::secondary(theme_style, status)
-                }
-            })
-            .on_press(Message::SettingsThemeChanged("light".to_string())),
+            .on_press(Message::SettingsReduceMotionChanged(!reduce_motion)),
+        text("Disables caret fades and smooth scrolling")
+            .size(12)
+            .color(tokens.text_muted),
     ]
     .spacing(12)
     .align_y(iced::Alignment::Center);
@@ -546,15 +538,15 @@ fn view_settings<'a>(
         row![
             text("Scope")
                 .size(12)
-                .color(colors::marker())
+                .color(tokens.text_muted)
                 .width(Length::FillPortion(1)),
             text("Chord")
                 .size(12)
-                .color(colors::marker())
+                .color(tokens.text_muted)
                 .width(Length::FillPortion(1)),
             text("Command")
                 .size(12)
-                .color(colors::marker())
+                .color(tokens.text_muted)
                 .width(Length::FillPortion(2)),
             iced::widget::Space::new().width(40),
         ]
@@ -613,14 +605,16 @@ fn view_settings<'a>(
     .spacing(12);
 
     if let Some(err) = error {
-        actions = actions.push(text(err.clone()).size(13).color(tokens::dark().danger));
+        actions = actions.push(text(err.clone()).size(13).color(tokens.danger));
     }
 
     let card = container(
         column![
-            text("User Settings").size(18).color(colors::heading()),
-            theme_row,
-            text("Keymap Overrides").size(14).color(colors::heading()),
+            text("User Settings").size(18).color(tokens.text_heading),
+            motion_row,
+            text("Keymap Overrides")
+                .size(14)
+                .color(tokens.text_secondary),
             scrollable(bindings_col).height(240),
             add_btn,
             actions,
@@ -629,10 +623,10 @@ fn view_settings<'a>(
         .padding(18),
     )
     .width(620)
-    .style(|_| container::Style {
-        background: Some(iced::Background::Color(tokens::dark().bg_secondary)),
+    .style(move |_| container::Style {
+        background: Some(iced::Background::Color(tokens.bg_secondary)),
         border: iced::Border {
-            color: tokens::dark().border,
+            color: tokens.border,
             width: 1.0,
             radius: 8.0.into(),
         },

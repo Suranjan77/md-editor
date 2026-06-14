@@ -8,12 +8,11 @@
 > "plan §…"), `docs/V3_SHORTCUTS.md` (generated — never edit by hand).
 >
 > **Current position (2026-06-13):** Phases 0–5, UX phases 0–6, course
-> correction 6.0–6.3, and Typora-grade phases 7.0–7.5 are implemented.
-> `gui/mod.rs` is 1,479 lines (from 4,838), `editor/src/buffer.rs` is 833
+> correction 6.0–6.6, and Typora-grade phases 7.0–7.6 are implemented.
+> `gui/mod.rs` is 1,441 lines (from 4,838), `editor/src/buffer.rs` is 833
 > (from 1,911), and every extracted module is within the 700-line hard
-> limit. Dual-feature automated gates are green. Manual smoke items 27–33
-> remain before 7.3–7.5 can be called fully accepted. Next code work is the
-> Phase 7.6 refinement backlog, one item at a time.
+> limit. Automated gates are green. Remaining acceptance work is the
+> real-vault manual smoke checklist, items 27–37.
 
 ---
 
@@ -85,9 +84,8 @@ The following rules were added 2026-06-12 after a course-correction review
   ADR-0102 was written after the `open` crate had already shipped — do not
   repeat that ordering. `static`/atomic globals for app state are banned;
   state belongs on `Shell` (persisted via the snapshot when it should
-  survive a restart). The light-theme atomic in `gui/tokens.rs`
-  (`set_light_theme`) is grandfathered debt scheduled for removal in
-  Phase 6.6 — do not copy the pattern.
+  survive a restart). The former light-theme atomic was removed in Phase
+  6.6; do not reintroduce that pattern.
 - **The handoff stays truthful.** A status-board ✅ means: gate green, every
   suite named explicitly (never "etc."), smoke items run. Known quality gaps
   make the row 🔶 with the gap stated in the row. The verification snapshot
@@ -741,12 +739,13 @@ Superseded 2026-06-13 by **Phase 7.5**: the round-trip property test is
 specified there, against the shaped layout that paint and hit-testing will
 share. "Approximate" still ends — it ends on the right substrate.
 
-### 6.6 Non-renderer polish backlog (renderer items moved to Phase 7)
+### 6.6 Non-renderer polish ✅
 
-- **Theme state off the global atomic:** theme choice becomes a `Shell`
-  field persisted in the snapshot; `tokens::set_light_theme` and the
-  `USE_LIGHT_THEME` static are deleted; views receive tokens. (Debt from UX
-  Phase 6 — grandfathered, not endorsed.)
+- ~~**Theme state off the global atomic**~~ done (2026-06-13). Theme choice
+  is a `Shell` field persisted in the snapshot; views and canvases receive
+  immutable token references. `tokens::set_light_theme` and
+  `USE_LIGHT_THEME` are deleted. `session_restore` proves two shells can
+  hold different themes concurrently and the chosen theme round-trips.
 - Moved to Phase 7: tables as measured cells (7.3), list hanging indent
   (7.2), interactive checkboxes (7.5), async assets (7.4), proportional
   font (7.0 — now mandatory, not a spike option), CJK/emoji/bidi (7.6),
@@ -916,14 +915,31 @@ nearest source char (hit-test through the shaped layout).
    Typora's rule; pin it in a test. Hover: I-beam over text, pointer +
    underline over links with ctrl held.
 
-### 7.6 Smoothness & refinement backlog (after 7.0–7.5, one at a time)
+### 7.6 Smoothness & refinements ✅
 
-- Element-level reveal granularity (the full Typora behavior).
-- Conceal cross-fade and caret/scroll motion polish — subtle, fast,
-  disableable (`reduce-motion`; master plan pillar 6).
-- ~~Syntax-highlighting ADR~~ done in ADR-0106; implementation remains a
-  separate slice. Tokenization belongs to `v3/editor`; shell maps semantic
-  roles to theme colors and never parses syntax in the paint path.
+- ~~Element-level reveal granularity (the full Typora behavior)~~ done
+  (2026-06-13). `ConcealMode::Partial(display_range)` + `reveals_at(col)` are
+  the finer style key the 7.1 note anticipated. `EditorDocument::conceal_at`
+  reveals only the inline element the caret sits in for a lone paragraph
+  (clicking an inline `$math$` no longer un-renders an adjacent `**bold**`);
+  block constructs and image-bearing paragraphs keep whole-line reveal. The
+  styler keeps a marker only when it falls inside the revealed range; paint and
+  the measurer ask `reveals_at` per element instead of `== Concealed`. Also
+  fixed the trailing-marker caret-placement bug (`display_col_to_source` snaps
+  a click at the visual line end to the true source end). Pinned in
+  `editor::document` tests + the re-pinned golden draw plan.
+- ~~Conceal/caret/scroll motion polish~~ done (2026-06-13). Markdown wheel
+  and page scrolling ease over 120 ms; caret and newly revealed marker glyphs
+  fade in over 90 ms. Motion ticks exist only while a transition is active.
+  Persisted `reduce_motion` shell state disables both and snaps any pending
+  scroll to its target. Full old/new layout blending is deliberately excluded:
+  retaining stale pre-reflow geometry would violate the one-current-layout
+  contract; only glyph alpha transitions.
+- ~~Fenced-code syntax highlighting~~ done per ADR-0106. Incremental lexer
+  state and semantic roles live in `v3/editor`; shell maps roles to theme
+  colors and never parses syntax in the paint path. Geometry-invariance,
+  convergence, known-language paint, and unknown-language fallback are
+  test-pinned.
 - ~~CJK/emoji and mixed-direction bidi round-trip properties on shaped
   runs~~ done in `editor_hit_testing.rs`.
 - ~~p95 keypress→frame bench in CI (master plan §6's promise, finally
@@ -932,6 +948,18 @@ nearest source char (hit-test through the shaped layout).
   document (incremental parse + restyle + shaped remeasure of the touched
   range), asserts p95 < 16ms. Runs in the existing `cargo test --workspace`
   CI step; ~0.4ms locally, generous margin against shared-runner variance.
+- ~~Baseline mouse selection and clipboard editing~~ done. Markdown canvas
+  drag-selects through shaped hit-testing in either direction and across
+  lines; `ctrl+c` preserves selection, `ctrl+x` deletes through
+  `EditorCommand` and remains undoable. Windowless shell regressions cover
+  forward/reverse multi-line selection plus copy/cut/undo.
+- ~~Broad legibility pass~~ done (automated slice, 2026-06-13). Prose is
+  17 px on a 27 px baseline; Markdown uses a centered reading column capped at
+  840 px with 28 px minimum margins instead of stretching across wide panes.
+  Blockquotes gain a quiet bar and 22 px hanging inset. Measure, paint, caret,
+  selection, hit-test, tables, and assets share the same content bounds.
+  Wide-pane centering and quote geometry are test-pinned; golden regenerated.
+  Real-vault visual review remains in smoke item 27.
 
 ### Typora-parity acceptance checklist
 
@@ -947,6 +975,9 @@ Run after each sub-phase; all must hold by the end of 7.6. Append these to
 32. Reopen a document with images: layout is identical instantly (no pop when assets load).
 33. Click a checkbox: it toggles (undo undoes it). Ctrl+click a wikilink: the note opens.
 34. Type fast in a 5k-line document: zero perceptible lag, undo always undoes.
+35. Drag-select Markdown forward and backward across lines; ctrl+c copies; ctrl+x cuts; ctrl+z restores.
+36. Toggle Reduced motion in Settings; Markdown scroll/reveal motion becomes immediate and stays disabled after restart.
+37. Widen the Markdown pane past 1200 px: prose remains centered in a readable column; headings and quotes retain clear hierarchy.
 ```
 
 ## Appendix A — Test harness recipes

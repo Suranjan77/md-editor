@@ -12,7 +12,7 @@ impl Shell {
         )
         .on_press(Message::PdfContextMenuClosed);
 
-        let tokens = tokens::dark();
+        let tokens = self.tokens();
         let items = iced::widget::column![
             button(text("Copy").size(13))
                 .width(150)

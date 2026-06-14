@@ -1,3 +1,4 @@
+use super::chrome::BOLD;
 use super::*;
 use iced::widget::text_input;
 
@@ -7,7 +8,7 @@ impl Shell {
         session: &PdfSession,
         tab: TabId,
     ) -> Element<'_, Message> {
-        let tokens = tokens::dark();
+        let tokens = self.tokens();
         let title = iced::widget::row![
             text("Table of Contents")
                 .size(14)
@@ -98,7 +99,7 @@ impl Shell {
         session: &MdSession,
         tab: TabId,
     ) -> Element<'_, Message> {
-        let tokens = tokens::dark();
+        let tokens = self.tokens();
         let title = iced::widget::row![
             text("Outline")
                 .size(14)
@@ -189,7 +190,7 @@ impl Shell {
         session: &MdSession,
         tab: TabId,
     ) -> Element<'_, Message> {
-        let tokens = tokens::dark();
+        let tokens = self.tokens();
         let text_value = session.doc.buffer().text();
         let matches = find_all_matches(&text_value, &session.find_query);
         let primary = session.doc.buffer().primary();
@@ -264,7 +265,7 @@ impl Shell {
         session: &PdfSession,
         tab: TabId,
     ) -> Element<'_, Message> {
-        let tokens = tokens::dark();
+        let tokens = self.tokens();
         let title = iced::widget::row![
             text("Annotations")
                 .size(14)
@@ -291,7 +292,7 @@ impl Shell {
             } else {
                 text_value
             };
-            let swatch_color = pdf_view::quad_color(&annotation.color, 1.0);
+            let swatch_color = pdf_view::quad_color(&annotation.color, 1.0, tokens);
             let swatch = button(
                 container(iced::widget::Space::new())
                     .width(12)

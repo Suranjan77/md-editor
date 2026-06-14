@@ -143,6 +143,53 @@ fn split_ratio_round_trips() {
 }
 
 #[test]
+fn reduce_motion_setting_round_trips() {
+    let dir = vault();
+    let mut first = new_shell(dir.path());
+    press(&mut first, "ctrl+,");
+    let _ = first.update(Message::SettingsReduceMotionChanged(true));
+    let _ = first.update(Message::SettingsSave);
+    drop(first);
+
+    let mut second = new_shell(dir.path());
+    press(&mut second, "ctrl+,");
+    match second.overlay() {
+        Some(md3_shell::gui::overlay::Overlay::Settings { reduce_motion, .. }) => {
+            assert!(*reduce_motion);
+        }
+        _ => panic!("settings overlay missing"),
+    }
+}
+
+#[test]
+fn theme_is_instance_local_and_round_trips() {
+    let light_dir = vault();
+    let dark_dir = vault();
+    let mut light = new_shell(light_dir.path());
+    let dark = new_shell(dark_dir.path());
+
+    press(&mut light, "ctrl+,");
+    let _ = light.update(Message::SettingsThemeChanged("light".to_string()));
+    let _ = light.update(Message::SettingsSave);
+
+    assert_eq!(light.theme_name(), "light");
+    assert_eq!(dark.theme_name(), "dark");
+    assert_ne!(
+        light.theme_tokens().bg_primary,
+        dark.theme_tokens().bg_primary,
+        "one shell's theme must not mutate another shell"
+    );
+    drop(light);
+
+    let restored = new_shell(light_dir.path());
+    assert_eq!(restored.theme_name(), "light");
+    assert_eq!(
+        restored.theme_tokens().bg_primary,
+        md3_shell::gui::tokens::light().bg_primary
+    );
+}
+
+#[test]
 fn vanished_files_are_skipped_and_hollow_splits_collapse() {
     let dir = vault();
     let mut first = new_shell(dir.path());

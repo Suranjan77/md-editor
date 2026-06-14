@@ -4,6 +4,8 @@
 
 This is a **bold** and *italic* plain paragraph that is long enough to wrap across multiple lines on a narrow screen, demonstrating the layout engine's line-breaking capabilities and the measurer's column math.
 
+> A readable blockquote uses a quiet bar and inset text.
+
 - [ ] Unchecked item
 - [x] Checked item with `code`
 

@@ -13,7 +13,6 @@ use md3_kernel::CommandId;
 use md3_kernel::pane::TabId;
 
 use super::Message;
-use super::editor_canvas::palette as colors;
 use super::icons::{self, Icon};
 use super::paint::{self, Tint};
 #[cfg(feature = "pdfium")]
@@ -239,7 +238,7 @@ pub fn load_page_links(session: &mut PdfSession, abs_path: &Path, page: u32) {
 
 /// `#rrggbb` → iced color with the given alpha; highlights fall back to the
 /// default highlight yellow on malformed input.
-pub(crate) fn quad_color(hex: &str, alpha: f32) -> iced::Color {
+pub(crate) fn quad_color(hex: &str, alpha: f32, tokens: &tokens::Tokens) -> iced::Color {
     let parsed = hex
         .strip_prefix('#')
         .filter(|h| h.len() == 6)
@@ -247,7 +246,7 @@ pub(crate) fn quad_color(hex: &str, alpha: f32) -> iced::Color {
     match parsed {
         Some(rgb) => iced::Color::from_rgba8((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, alpha),
         None => {
-            let c = tokens::dark().highlight_default;
+            let c = tokens.highlight_default;
             iced::Color {
                 r: c.r,
                 g: c.g,
@@ -258,7 +257,11 @@ pub(crate) fn quad_color(hex: &str, alpha: f32) -> iced::Color {
     }
 }
 
-pub fn view(session: &PdfSession, tab: TabId) -> Element<'_, Message> {
+pub fn view<'a>(
+    session: &'a PdfSession,
+    tab: TabId,
+    tokens: &'static tokens::Tokens,
+) -> Element<'a, Message> {
     if session.layout.is_none() {
         return placeholder(session);
     }
@@ -271,7 +274,7 @@ pub fn view(session: &PdfSession, tab: TabId) -> Element<'_, Message> {
     let pages = format!("{}/{}", session.current_page() + 1, session.page_count());
     let zoom = format!("{:.0}%", session.zoom * 100.0);
     let control = |icon, command| {
-        button(icons::view(icon, tokens::dark().text_primary, 16.0))
+        button(icons::view(icon, tokens.text_primary, 16.0))
             .padding(7)
             .style(button::text)
             .on_press(Message::PdfCommand { tab, command })
@@ -305,10 +308,10 @@ pub fn view(session: &PdfSession, tab: TabId) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center),
     )
     .padding(5)
-    .style(|_| container::Style {
-        background: Some(Background::Color(tokens::dark().bg_secondary)),
+    .style(move |_| container::Style {
+        background: Some(Background::Color(tokens.bg_secondary)),
         border: Border {
-            color: tokens::dark().border,
+            color: tokens.border,
             width: 1.0,
             radius: 8.0.into(),
         },
@@ -326,8 +329,16 @@ pub fn view(session: &PdfSession, tab: TabId) -> Element<'_, Message> {
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Bottom);
     stack![
-        canvas(PdfCanvas { tab, session }).width(Fill).height(Fill),
-        canvas(TintCanvas { session }).width(Fill).height(Fill),
+        canvas(PdfCanvas {
+            tab,
+            session,
+            tokens
+        })
+        .width(Fill)
+        .height(Fill),
+        canvas(TintCanvas { session, tokens })
+            .width(Fill)
+            .height(Fill),
         positioned,
     ]
     .width(Fill)
@@ -354,6 +365,7 @@ fn placeholder(session: &PdfSession) -> Element<'_, Message> {
 struct PdfCanvas<'a> {
     tab: TabId,
     session: &'a PdfSession,
+    tokens: &'static tokens::Tokens,
 }
 
 /// Per-widget drag tracking: cursor moves only become messages between a
@@ -444,7 +456,7 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), colors::bg());
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), self.tokens.bg_secondary);
         let viewport = (bounds.width, bounds.height);
 
         let (sheets, tiles) = paint::page_plan(self.session, viewport);
@@ -514,6 +526,7 @@ impl canvas::Program<Message> for PdfCanvas<'_> {
 /// translucent quads composite *over* the tile images; it handles no events.
 struct TintCanvas<'a> {
     session: &'a PdfSession,
+    tokens: &'static tokens::Tokens,
 }
 
 impl canvas::Program<Message> for TintCanvas<'_> {
@@ -533,9 +546,9 @@ impl canvas::Program<Message> for TintCanvas<'_> {
         for op in ops {
             let color = match &op.tint {
                 Tint::Annotation { color, picked } => {
-                    quad_color(color, if *picked { 0.55 } else { 0.35 })
+                    quad_color(color, if *picked { 0.55 } else { 0.35 }, self.tokens)
                 }
-                Tint::Selection => tokens::dark().sel_tint,
+                Tint::Selection => self.tokens.sel_tint,
             };
             frame.fill_rectangle(
                 Point::new(op.rect.x, op.rect.y),

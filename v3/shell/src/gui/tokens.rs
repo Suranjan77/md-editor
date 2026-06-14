@@ -1,6 +1,5 @@
 use iced::Color;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Tokens {
@@ -13,6 +12,7 @@ pub struct Tokens {
     pub text_primary: Color,
     pub text_secondary: Color,
     pub text_muted: Color,
+    pub text_heading: Color,
     pub accent: Color,
     pub accent_secondary: Color,
     pub danger: Color,
@@ -42,77 +42,77 @@ const fn hex_color_alpha(hex: u32, alpha: f32) -> Color {
     )
 }
 
+// Neutral dark-gray system (GitHub-dark-like) with teal reserved purely as the
+// accent. Surfaces are neutral gray — no green tint — so the app reads
+// professional; teal appears only on links, active tab, focus, selection.
+// Headings are near-white weight, not a color (the coral borrow is gone).
 pub static DARK_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
-    bg_primary: hex_color(0x0d0e10),
-    bg_secondary: hex_color(0x181a1d),
-    bg_tertiary: hex_color(0x23262b),
-    bg_surface: hex_color(0x334b47),
-    border: hex_color(0x45484e),
-    border_subtle: hex_color(0x1d2024),
-    text_primary: hex_color(0xe3e5ed),
-    text_secondary: hex_color(0xa9abb2),
-    text_muted: hex_color(0x9d9ea3),
-    accent: hex_color(0xb1ccc6),
-    accent_secondary: hex_color(0xcde8e2),
-    danger: hex_color(0xee7d77),
-    success: hex_color(0xd9f2d2),
-    warning: hex_color(0xbfdad4),
-    sel_tint: hex_color_alpha(0xb1ccc6, 0.30),
+    bg_primary: hex_color(0x0d1117),
+    bg_secondary: hex_color(0x161b22),
+    bg_tertiary: hex_color(0x1f242c),
+    bg_surface: hex_color(0x1a1f27),
+    border: hex_color(0x2d333b),
+    border_subtle: hex_color(0x21262d),
+    text_primary: hex_color(0xe6edf3),
+    text_secondary: hex_color(0x9aa4af),
+    text_muted: hex_color(0x6e7681),
+    text_heading: hex_color(0xf0f4f8),
+    accent: hex_color(0x4fd1b5),
+    accent_secondary: hex_color(0x7ee3cd),
+    danger: hex_color(0xef7a72),
+    success: hex_color(0x5cd6a0),
+    warning: hex_color(0xe0b95e),
+    sel_tint: hex_color_alpha(0x4fd1b5, 0.18),
     highlight_default: hex_color(0xffd866),
-    bg_hover: hex_color(0x2d3139),
-    bg_pressed: hex_color(0x3e444f),
-    focus_ring: hex_color(0xb1ccc6),
+    bg_hover: hex_color(0x21262d),
+    bg_pressed: hex_color(0x2d333b),
+    focus_ring: hex_color(0x4fd1b5),
 });
 
 pub static LIGHT_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
-    bg_primary: hex_color(0xf5f6f8),
-    bg_secondary: hex_color(0xeaecef),
-    bg_tertiary: hex_color(0xdbe0e5),
-    bg_surface: hex_color(0xdde8e5),
-    border: hex_color(0xb0b5be),
-    border_subtle: hex_color(0xd2d6dc),
-    text_primary: hex_color(0x1a1c1e),
-    text_secondary: hex_color(0x4a4d53),
-    text_muted: hex_color(0x70757f),
-    accent: hex_color(0x3f6a62),
-    accent_secondary: hex_color(0x56827a),
-    danger: hex_color(0xd32f2f),
-    success: hex_color(0x2e7d32),
-    warning: hex_color(0xed6c02),
-    sel_tint: hex_color_alpha(0x3f6a62, 0.20),
-    highlight_default: hex_color(0xffeb3b),
-    bg_hover: hex_color(0xe0e4e8),
-    bg_pressed: hex_color(0xd0d6de),
-    focus_ring: hex_color(0x3f6a62),
+    bg_primary: hex_color(0xfbfcfd),
+    bg_secondary: hex_color(0xf0f2f5),
+    bg_tertiary: hex_color(0xe4e8ec),
+    bg_surface: hex_color(0xeceef1),
+    border: hex_color(0xc8cdd4),
+    border_subtle: hex_color(0xdde1e6),
+    text_primary: hex_color(0x1c2027),
+    text_secondary: hex_color(0x4a515b),
+    text_muted: hex_color(0x717a85),
+    text_heading: hex_color(0x0d1117),
+    accent: hex_color(0x12937c),
+    accent_secondary: hex_color(0x0f7a67),
+    danger: hex_color(0xcf4b43),
+    success: hex_color(0x1f9d63),
+    warning: hex_color(0xb07d22),
+    sel_tint: hex_color_alpha(0x12937c, 0.14),
+    highlight_default: hex_color(0xffe08a),
+    bg_hover: hex_color(0xe7eaee),
+    bg_pressed: hex_color(0xd8dde3),
+    focus_ring: hex_color(0x12937c),
 });
 
-static USE_LIGHT_THEME: AtomicBool = AtomicBool::new(false);
-
-pub fn set_light_theme(light: bool) {
-    USE_LIGHT_THEME.store(light, Ordering::Relaxed);
-}
-
-pub fn active() -> &'static Tokens {
-    if USE_LIGHT_THEME.load(Ordering::Relaxed) {
-        &LIGHT_TOKENS
-    } else {
-        &DARK_TOKENS
-    }
-}
-
 pub fn dark() -> &'static Tokens {
-    active()
+    &DARK_TOKENS
 }
 
 pub fn light() -> &'static Tokens {
     &LIGHT_TOKENS
 }
 
+pub fn for_name(name: &str) -> &'static Tokens {
+    if name == "light" { light() } else { dark() }
+}
+
 impl super::Shell {
+    pub(crate) fn tokens(&self) -> &'static Tokens {
+        for_name(&self.theme_name)
+    }
+
     pub(crate) fn theme(&self) -> iced::Theme {
-        let tokens = dark();
+        let tokens = self.tokens();
         iced::Theme::custom_with_fn(
-            "MD Editor Dark".to_string(),
+            format!("MD Editor {}", self.theme_name),
             iced::theme::Palette {
                 background: tokens.bg_primary,
                 text: tokens.text_primary,
