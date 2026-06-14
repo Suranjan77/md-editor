@@ -27,10 +27,14 @@ pub fn renderer() -> Option<&'static md3_pdf::render::PdfRenderer> {
     static RENDERER: std::sync::OnceLock<Option<PdfRenderer>> = std::sync::OnceLock::new();
     RENDERER
         .get_or_init(|| {
-            let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../core/pdfium");
-            PdfRenderer::new(Some(&local))
-                .or_else(|_| PdfRenderer::new(None))
-                .ok()
+            crate::paths::pdfium_dirs()
+                .into_iter()
+                .find_map(|dir| PdfRenderer::new(Some(&dir)).ok())
+                .or_else(|| {
+                    let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../core/pdfium");
+                    PdfRenderer::new(Some(&local)).ok()
+                })
+                .or_else(|| PdfRenderer::new(None).ok())
         })
         .as_ref()
 }

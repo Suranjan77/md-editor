@@ -309,9 +309,7 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> Shell {
-        let tracker_db_path = directories::ProjectDirs::from("com", "Suranjan77", "md-editor")
-            .map(|project| project.config_dir().join("tracker.db"))
-            .unwrap_or_else(|| PathBuf::from("tracker.db"));
+        let tracker_db_path = crate::paths::config_file("tracker.db");
         Self::new_with_tracker_db(registry, keymap, vault_root, tracker_db_path)
     }
 

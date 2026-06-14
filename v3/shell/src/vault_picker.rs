@@ -10,15 +10,12 @@ struct VaultHistory {
     recent: Vec<PathBuf>,
 }
 
-fn history_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("com", "Suranjan77", "md-editor")
-        .map(|dirs| dirs.config_dir().join("recent-vaults.json"))
+fn history_path() -> PathBuf {
+    crate::paths::config_file("recent-vaults.json")
 }
 
 pub fn recent_vaults() -> Vec<PathBuf> {
-    let Some(path) = history_path() else {
-        return Vec::new();
-    };
+    let path = history_path();
     let Ok(json) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -34,9 +31,7 @@ pub fn recent_vaults() -> Vec<PathBuf> {
 }
 
 pub fn record_recent(vault_path: &Path) {
-    let Some(path) = history_path() else {
-        return;
-    };
+    let path = history_path();
     let canonical = vault_path
         .canonicalize()
         .unwrap_or_else(|_| vault_path.to_path_buf());
