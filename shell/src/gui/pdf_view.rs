@@ -45,7 +45,7 @@ pub fn load_geometry(session: &mut PdfSession, abs_path: &Path) {
     #[cfg(feature = "pdfium")]
     {
         let Some(renderer) = renderer() else {
-            session.status = "libpdfium not found — placeholder view".to_string();
+            session.status = "libpdfium not found; set PDFIUM_LIB_DIR to its directory".to_string();
             return;
         };
         let count = match renderer.page_count(abs_path) {

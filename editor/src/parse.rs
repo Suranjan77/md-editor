@@ -41,7 +41,11 @@ pub enum BlockState {
         lex: LexState,
     },
     /// Inside a `$$ … $$` display-math block.
-    Math,
+    ///
+    /// The first content line owns the consolidated rendered asset. Tracking
+    /// that transition lets layout collapse later concealed source lines
+    /// without relying on their text being unique.
+    Math { first_content: bool },
     /// Inside the YAML front-matter block (only enterable from line 0).
     FrontMatter,
 }
@@ -69,6 +73,7 @@ pub enum LineKind {
     MathClose,
     /// Single-line `$$ … $$`.
     MathLine,
+    MathContentStart,
     MathContent,
     FrontMatterDelim,
     FrontMatterContent,
@@ -108,11 +113,23 @@ pub fn classify(text: &str, entry: &BlockState) -> (LineKind, BlockState) {
                 )
             }
         }
-        BlockState::Math => {
+        BlockState::Math { first_content } => {
             if trimmed.starts_with("$$") {
                 (LineKind::MathClose, BlockState::Normal)
+            } else if *first_content {
+                (
+                    LineKind::MathContentStart,
+                    BlockState::Math {
+                        first_content: false,
+                    },
+                )
             } else {
-                (LineKind::MathContent, BlockState::Math)
+                (
+                    LineKind::MathContent,
+                    BlockState::Math {
+                        first_content: false,
+                    },
+                )
             }
         }
         BlockState::FrontMatter => {
@@ -162,7 +179,12 @@ fn classify_normal(trimmed: &str) -> (LineKind, BlockState) {
         if !rest.is_empty() && rest.ends_with("$$") {
             return (LineKind::MathLine, BlockState::Normal);
         }
-        return (LineKind::MathOpen, BlockState::Math);
+        return (
+            LineKind::MathOpen,
+            BlockState::Math {
+                first_content: true,
+            },
+        );
     }
     let level = trimmed.chars().take_while(|c| *c == '#').count();
     if (1..=6).contains(&level) && trimmed.chars().nth(level).is_none_or(|c| c == ' ') {
@@ -406,7 +428,7 @@ mod tests {
     fn math_block_and_single_line_math() {
         let p = parse("$$\nx = y\n$$\n$$e = mc^2$$\nafter");
         assert_eq!(kind(&p, 0), LineKind::MathOpen);
-        assert_eq!(kind(&p, 1), LineKind::MathContent);
+        assert_eq!(kind(&p, 1), LineKind::MathContentStart);
         assert_eq!(kind(&p, 2), LineKind::MathClose);
         assert_eq!(kind(&p, 3), LineKind::MathLine);
         assert_eq!(kind(&p, 4), LineKind::Paragraph);

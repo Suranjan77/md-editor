@@ -19,7 +19,8 @@ pub fn config_file(name: &str) -> PathBuf {
 
 pub fn pdfium_dirs() -> Vec<PathBuf> {
     let exe_path = std::env::current_exe().ok();
-    pdfium_dirs_for(exe_path.as_deref())
+    let env_dir = std::env::var_os("PDFIUM_LIB_DIR").map(PathBuf::from);
+    pdfium_dirs_for(exe_path.as_deref(), env_dir.as_deref())
 }
 
 fn config_file_for(
@@ -58,8 +59,11 @@ fn portable_dir(exe_path: Option<&Path>, appimage_path: Option<&Path>) -> Option
         .find(|dir| dir.join(PORTABLE_MARKER).is_file())
 }
 
-fn pdfium_dirs_for(exe_path: Option<&Path>) -> Vec<PathBuf> {
+fn pdfium_dirs_for(exe_path: Option<&Path>, env_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
+    if let Some(env_dir) = env_dir {
+        dirs.push(env_dir.to_path_buf());
+    }
     if let Some(exe_dir) = exe_path.and_then(Path::parent) {
         dirs.push(exe_dir.join("resources"));
         dirs.push(exe_dir.to_path_buf());
@@ -140,14 +144,34 @@ mod tests {
     #[test]
     fn packaged_pdfium_directories_cover_all_layouts() {
         assert_eq!(
-            pdfium_dirs_for(Some(Path::new(
-                "/Applications/MD Editor.app/Contents/MacOS/md-editor"
-            ))),
+            pdfium_dirs_for(
+                Some(Path::new(
+                    "/Applications/MD Editor.app/Contents/MacOS/md-editor"
+                )),
+                None
+            ),
             [
                 "/Applications/MD Editor.app/Contents/MacOS/resources",
                 "/Applications/MD Editor.app/Contents/MacOS",
                 "/Applications/MD Editor.app/Contents/MacOS/../lib",
                 "/Applications/MD Editor.app/Contents/Resources",
+            ]
+            .map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn configured_pdfium_directory_has_priority() {
+        assert_eq!(
+            pdfium_dirs_for(
+                Some(Path::new("/workspace/target/debug/md-editor")),
+                Some(Path::new("/opt/pdfium")),
+            ),
+            [
+                "/opt/pdfium",
+                "/workspace/target/debug/resources",
+                "/workspace/target/debug",
+                "/workspace/target/debug/../lib",
             ]
             .map(PathBuf::from)
         );

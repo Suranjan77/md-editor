@@ -36,11 +36,10 @@ equivalent of a DOM-level UI test, and where behavior coverage belongs.
 ## PDF tests and PDFium
 
 The pure tile/cache/queue logic in `md-pdf` tests without any native library.
-Tests that need real rasterization are gated behind the `pdfium` feature and
-**skip** (rather than fail) when no `libpdfium` is available, so the default
-suite stays green on any machine. To run them locally, place a `libpdfium`
-shared library where the loader can find it (next to `target/debug/`, or point
-`PDFIUM_LIB_DIR` at its directory):
+Tests that need real rasterization are gated behind the `pdfium` feature. The
+first such build downloads a pinned, checksum-verified library for the current
+platform and caches it under `target/pdfium`. For an offline build, point
+`PDFIUM_LIB_DIR` at a directory containing a compatible platform library:
 
 ```bash
 cargo test -p md-pdf --features pdfium

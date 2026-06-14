@@ -88,7 +88,14 @@ impl PdfRenderer {
         let _calls = pdfium_lock();
         let bindings = match lib_dir {
             Some(dir) => Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir)),
-            None => Pdfium::bind_to_system_library(),
+            None => option_env!("MD_PDFIUM_LIB_DIR")
+                .map(Path::new)
+                .filter(|dir| dir.is_dir())
+                .map(|dir| {
+                    Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir))
+                })
+                .map(|bindings| bindings.or_else(|_| Pdfium::bind_to_system_library()))
+                .unwrap_or_else(Pdfium::bind_to_system_library),
         }
         .map_err(|e| PdfError::Bind(format!("{e:?}")))?;
         Ok(PdfRenderer {

@@ -242,7 +242,7 @@ impl<M: Measurer> EditorDocument<M> {
         let is_block_state = |state: &BlockState| {
             matches!(
                 state,
-                BlockState::Fence { .. } | BlockState::Math | BlockState::FrontMatter
+                BlockState::Fence { .. } | BlockState::Math { .. } | BlockState::FrontMatter
             )
         };
 

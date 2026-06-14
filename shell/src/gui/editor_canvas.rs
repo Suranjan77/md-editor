@@ -61,6 +61,17 @@ impl MonoMeasurer {
 
 impl Measurer for MonoMeasurer {
     fn measure(&self, line: &StyledLine, wrap_width: f64) -> LineMeasure {
+        if line.conceal == md_editor::layout::ConcealMode::Concealed
+            && matches!(
+                line.kind,
+                LineKind::MathOpen | LineKind::MathClose | LineKind::MathContent
+            )
+        {
+            return LineMeasure {
+                height: 0.0,
+                rows: 0,
+            };
+        }
         let width = wrap_width as f32;
         let columns = wrap_columns(width);
         let text_rows = line.display.chars().count().max(1).div_ceil(columns) as u32;

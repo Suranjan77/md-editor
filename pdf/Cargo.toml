@@ -23,3 +23,9 @@ thiserror = "2"
 # engine-to-engine.
 md-vault = { path = "../vault" }
 tempfile = "3"
+
+[build-dependencies]
+flate2 = "1"
+sha2 = "0.10"
+tar = "0.4"
+ureq = "2.12"

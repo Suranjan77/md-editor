@@ -159,7 +159,7 @@ release packages bundle the matching PDFium library next to the executable; see
 
 - Rust stable with Cargo
 - A desktop environment capable of creating native windows
-- For PDF rendering: a `libpdfium` shared library (see below)
+- Network access on the first `pdfium` build, or a local `libpdfium`
 
 ### Run In Development
 
@@ -171,14 +171,16 @@ Omitting the folder (`cargo run`) opens the welcome screen. With
 [`just`](https://github.com/casey/just) installed, `just run <vault-folder>`
 does the same.
 
-The default build does **not** include PDF rasterization, so the app builds and
-runs on machines without PDFium. To enable PDF rendering, build with the
-`pdfium` feature and make a `libpdfium` library discoverable (place it next to
-the built binary under `target/`, or point `PDFIUM_LIB_DIR` at its directory):
+The default build does **not** include PDF rasterization. Enabling the `pdfium`
+feature downloads a pinned, checksum-verified PDFium build for the current
+Windows, Linux, or macOS architecture and caches it under `target/pdfium`:
 
 ```bash
 cargo run --features pdfium -- <vault-folder>
 ```
+
+For offline or custom builds, set `PDFIUM_LIB_DIR` to a directory containing
+the platform library (`pdfium.dll`, `libpdfium.so`, or `libpdfium.dylib`).
 
 ### Build A Release Binary
 

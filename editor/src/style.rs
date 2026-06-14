@@ -194,7 +194,9 @@ pub fn line_spans(text: &str, kind: &LineKind) -> Vec<Span> {
         LineKind::MathOpen | LineKind::MathClose => {
             spans.push(Span::new(0..n, SpanKind::Marker));
         }
-        LineKind::MathContent => spans.push(Span::new(0..n, SpanKind::MathContent)),
+        LineKind::MathContentStart | LineKind::MathContent => {
+            spans.push(Span::new(0..n, SpanKind::MathContent));
+        }
         LineKind::MathLine => {
             // $$ … $$ on one line: markers at both ends.
             let lead = leading_ws(&chars);

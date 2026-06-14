@@ -169,7 +169,8 @@ impl MdSession {
                     break;
                 };
                 match styled.kind {
-                    md_editor::parse::LineKind::MathContent => {
+                    md_editor::parse::LineKind::MathContentStart
+                    | md_editor::parse::LineKind::MathContent => {
                         content.push(styled.display);
                         content_lines.push(cursor);
                         covered.insert(cursor);
@@ -631,16 +632,45 @@ mod tests {
             Err(error) => panic!("tempdir: {error}"),
         };
         let note_path = dir.path().join("note.md");
-        let text = "$$\n\\begin{align}\nx &= a + b \\\\\ny &= c + d\n\\end{align}\n$$";
+        let text = "$$\n\\begin{align}\nx &= a + b \\\\\ny &= c + d\n\\end{align}\n$$\n# After";
         let measurer = ShapedMeasurer::new(std::sync::Arc::new(std::sync::Mutex::new(
             cosmic_text::FontSystem::new(),
         )));
         let mut session = MdSession::new("note.md", text, measurer);
+        session.apply(Command::SetCursor { line: 6, col: 0 });
         session.load_visual_assets(&note_path);
 
         assert!(session.math_block_at(1).is_some());
         assert!(session.is_math_block_continuation(2));
         assert!(session.is_math_block_continuation(3));
         assert!(session.is_math_block_continuation(4));
+        assert_eq!(session.doc.layout().height_of(0), Some(0.0));
+        assert!(
+            session
+                .doc
+                .layout()
+                .height_of(1)
+                .is_some_and(|height| height > 0.0)
+        );
+        assert_eq!(session.doc.layout().height_of(2), Some(0.0));
+        assert_eq!(session.doc.layout().height_of(3), Some(0.0));
+        assert_eq!(session.doc.layout().height_of(4), Some(0.0));
+        assert_eq!(session.doc.layout().height_of(5), Some(0.0));
+        assert_eq!(
+            session.doc.layout().offset_of(6).ok(),
+            session.doc.layout().height_of(1)
+        );
+
+        session.apply(Command::SetCursor { line: 2, col: 0 });
+        for line in 0..=5 {
+            assert!(
+                session
+                    .doc
+                    .layout()
+                    .height_of(line)
+                    .is_some_and(|height| height > 0.0),
+                "revealed math source line {line} should be editable"
+            );
+        }
     }
 }

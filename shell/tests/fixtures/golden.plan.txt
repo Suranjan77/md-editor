@@ -90,16 +90,16 @@ L21 [Concealed] 'Here is some inline math: E = mc^2 and a [wikilink].'
 L22 [Concealed] ''
 L23 [Concealed] ''
 L24 [Concealed] '\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}'
-  Asset { kind: Math("\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}"), rect: RectPx { x: 300.0, y: 969.65, w: 200.0, h: 60.0 } }
+  Asset { kind: Math("\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}"), rect: RectPx { x: 300.0, y: 927.65, w: 200.0, h: 60.0 } }
 L25 [Concealed] ''
 L26 [Concealed] ''
 L27 [Concealed] '![An image](foo.png)'
-  Asset { kind: Image("foo.png"), rect: RectPx { x: 120.0, y: 1125.65, w: 560.0, h: 420.0 } }
+  Asset { kind: Image("foo.png"), rect: RectPx { x: 120.0, y: 1041.65, w: 560.0, h: 420.0 } }
 L28 [Concealed] ''
 L29 [Partial(12..22)] 'This is the *revealed* line where the caret sits.'
-  Text { content: "This is the ", x: 28.0, y: 1594.246, size: 17.0, role: Text, font: Sans }
-  Text { content: "*", x: 111.879395, y: 1594.246, size: 17.0, role: Marker, font: Mono }
-  Text { content: "revealed", x: 122.07939, y: 1594.246, size: 17.0, role: Text, font: SansItalic }
-  Text { content: "*", x: 203.67937, y: 1594.246, size: 17.0, role: Marker, font: Mono }
-  Text { content: " line where the caret sits.", x: 213.87936, y: 1594.246, size: 17.0, role: Text, font: Sans }
+  Text { content: "This is the ", x: 28.0, y: 1510.246, size: 17.0, role: Text, font: Sans }
+  Text { content: "*", x: 111.879395, y: 1510.246, size: 17.0, role: Marker, font: Mono }
+  Text { content: "revealed", x: 122.07939, y: 1510.246, size: 17.0, role: Text, font: SansItalic }
+  Text { content: "*", x: 203.67937, y: 1510.246, size: 17.0, role: Marker, font: Mono }
+  Text { content: " line where the caret sits.", x: 213.87936, y: 1510.246, size: 17.0, role: Text, font: Sans }
 L30 [Concealed] ''

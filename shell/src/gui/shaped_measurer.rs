@@ -189,6 +189,19 @@ impl ShapedMeasurer {
 
 impl Measurer for ShapedMeasurer {
     fn measure(&self, line: &StyledLine, wrap_width: f64) -> LineMeasure {
+        if line.conceal == md_editor::layout::ConcealMode::Concealed
+            && matches!(
+                line.kind,
+                md_editor::parse::LineKind::MathOpen
+                    | md_editor::parse::LineKind::MathClose
+                    | md_editor::parse::LineKind::MathContent
+            )
+        {
+            return LineMeasure {
+                height: 0.0,
+                rows: 0,
+            };
+        }
         let (metrics, pad_top, pad_bot) = self.line_metrics(line);
         let buffer = self.create_buffer(line, wrap_width as f32);
 
