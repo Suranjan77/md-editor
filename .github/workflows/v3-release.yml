@@ -1,0 +1,163 @@
+name: V3 release packages
+
+on:
+  push:
+    tags:
+      - "v3.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PDFIUM_RELEASE: chromium%2F7869
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-latest
+            asset: win-x64
+            artifact: windows-x64
+            pdfium_sha256: d1a2b39c300f62daeec94f3a648a31d83d18605707bfdc5504d818d42cab13ce
+          - name: Linux x64
+            runner: ubuntu-22.04
+            asset: linux-x64
+            artifact: linux-x64
+            pdfium_sha256: 6aeb4be0f790bf309c6b1e665552351845fe921a78d21697a1a9cb8ce427bb23
+          - name: macOS Intel
+            runner: macos-15-intel
+            asset: mac-x64
+            artifact: macos-x64
+            pdfium_sha256: 00de12ca1b9729119e7fd4901cee1f0e591367f20cf98e221a446bbf55c155d2
+          - name: macOS Apple Silicon
+            runner: macos-15
+            asset: mac-arm64
+            artifact: macos-arm64
+            pdfium_sha256: 935a50329d5f72466b2058f92f2c4a8f9e541abc8f3149b1994d078dec4190e1
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' v3/Cargo.toml)"
+          test -n "$version"
+          case "$version" in
+            *-dev)
+              echo "Release version still has -dev suffix" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Match release tag to version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' v3/Cargo.toml)"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libfontconfig1-dev libfreetype6-dev libwayland-dev fuse
+
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install nsis --yes --no-progress
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: |
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/appimagetool.AppImage" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/linuxdeploy.AppImage" \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool.AppImage" "$RUNNER_TEMP/linuxdeploy.AppImage"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool.AppImage" >> "$GITHUB_ENV"
+          echo "LINUXDEPLOY=$RUNNER_TEMP/linuxdeploy.AppImage" >> "$GITHUB_ENV"
+
+      - name: Download pinned PDFium
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pdfium"
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/pdfium.tgz" \
+            "https://github.com/bblanchon/pdfium-binaries/releases/download/${PDFIUM_RELEASE}/pdfium-${{ matrix.asset }}.tgz"
+          echo "${{ matrix.pdfium_sha256 }}  $RUNNER_TEMP/pdfium.tgz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/pdfium.tgz" -C "$RUNNER_TEMP/pdfium"
+          case "${{ runner.os }}" in
+            Windows) echo "PDFIUM_LIB=$RUNNER_TEMP/pdfium/bin/pdfium.dll" >> "$GITHUB_ENV" ;;
+            macOS) echo "PDFIUM_LIB=$RUNNER_TEMP/pdfium/lib/libpdfium.dylib" >> "$GITHUB_ENV" ;;
+            Linux) echo "PDFIUM_LIB=$RUNNER_TEMP/pdfium/lib/libpdfium.so" >> "$GITHUB_ENV" ;;
+          esac
+          echo "PDFIUM_LICENSE_DIR=$RUNNER_TEMP/pdfium/licenses" >> "$GITHUB_ENV"
+          grep -q "BUILD=7869" "$RUNNER_TEMP/pdfium/VERSION"
+
+      - name: Build release packages
+        working-directory: v3
+        run: cargo xtask dist
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: md-editor-v3-${{ matrix.artifact }}
+          path: |
+            v3/dist/*.zip
+            v3/dist/*.tar.gz
+            v3/dist/*.exe
+            v3/dist/*.AppImage
+            v3/dist/*.dmg
+            v3/dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    name: Draft GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: md-editor-v3-*
+          path: artifacts
+
+      - name: Create combined checksums
+        working-directory: artifacts
+        run: |
+          find . -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's#  \./[^/]*/#  #' > SHA256SUMS
+
+      - name: Publish draft
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.tar.gz
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.dmg
+            artifacts/SHA256SUMS

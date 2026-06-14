@@ -141,7 +141,7 @@ executable. On macOS, place it beside `MD Editor.app`. Existing local
 
 ## Supported Platforms
 
-MD Editor 1.0+ targets:
+MD Editor 3.0+ targets:
 
 | Platform | Architectures |
 | --- | --- |
@@ -244,15 +244,14 @@ cargo test -p md-editor-native
 
 ## Documentation
 
-- [Feature document](docs/FEATURES.md) covers the version 1 feature set,
-  platform notes, and architecture summary.
-- [User guide](docs/USER_GUIDE.md) covers vault setup, split research,
+- [V3 Design](docs/V3_DESIGN.md) covers the visual language and tokens.
+- [User guide](docs/V3_USER_GUIDE.md) covers vault setup, split research,
   citations, recovery, and diagnostics.
-- [Keyboard shortcuts](docs/SHORTCUTS.md) lists context rules and key bindings.
-- [Launch checklist](docs/LAUNCH.md) covers release checks, smoke testing,
-  PDFium packaging, and known constraints.
-- [Release signoff](docs/RELEASE_SIGNOFF.md) records platform validation and
-  remaining release blockers.
+- [Keyboard shortcuts](docs/V3_SHORTCUTS.md) lists context rules and key bindings.
+- [V3 Releasing](docs/V3_RELEASING.md) covers release checks, smoke testing,
+  and PDFium packaging.
+- [Project architecture](docs/ARCHITECTURE_RULES.md) lists architecture rules and
+  coding standards.
 
 ## License
 
