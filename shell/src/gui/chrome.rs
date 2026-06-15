@@ -1,10 +1,7 @@
 use super::*;
 use iced::widget::{column, row, stack};
 
-pub(super) const BOLD: iced::Font = iced::Font {
-    weight: iced::font::Weight::Bold,
-    ..iced::Font::DEFAULT
-};
+pub(super) const BOLD: iced::Font = super::fonts::SANS_BOLD;
 
 impl Shell {
     pub(super) fn layout_view<'a>(&'a self, node: &Layout<'a>) -> Element<'a, Message> {

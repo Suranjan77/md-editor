@@ -13,10 +13,7 @@ use super::tokens;
 use super::tracker_widgets::{kpi_card, panel_style};
 use crate::gui::Message;
 
-const BOLD: iced::Font = iced::Font {
-    weight: iced::font::Weight::Bold,
-    ..iced::Font::DEFAULT
-};
+const BOLD: iced::Font = crate::gui::fonts::SANS_BOLD;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrackerTab {
@@ -1081,7 +1078,7 @@ fn config_body<'a>(
                 .size(11)
                 .height(Length::Fixed(200.0))
                 .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
-                .font(iced::Font::MONOSPACE),
+                .font(crate::gui::fonts::MONO),
             button(text("Save Configuration").size(11).font(BOLD))
                 .on_press(Message::Tracker(TrackerMessage::ConfigSave))
                 .padding([6, 12])

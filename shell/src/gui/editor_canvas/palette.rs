@@ -19,7 +19,7 @@ pub fn heading(tokens: &Tokens) -> Color {
     tokens.text_heading
 }
 pub fn code(tokens: &Tokens) -> Color {
-    tokens.success
+    tokens.code_inline_text
 }
 pub fn math(tokens: &Tokens) -> Color {
     tokens.warning
@@ -28,7 +28,7 @@ pub fn link(tokens: &Tokens) -> Color {
     tokens.accent
 }
 pub fn wikilink(tokens: &Tokens) -> Color {
-    tokens.accent_secondary
+    tokens.wikilink
 }
 pub fn quote(tokens: &Tokens) -> Color {
     tokens.accent
@@ -50,12 +50,12 @@ pub fn code_bg(tokens: &Tokens) -> Color {
 pub fn syntax(tokens: &Tokens, role: md_editor::syntax::SyntaxRole) -> Color {
     use md_editor::syntax::SyntaxRole::*;
     match role {
-        Comment => tokens.text_muted,
-        Keyword => tokens.danger,
-        String => tokens.success,
-        Number => tokens.warning,
-        Type => tokens.accent_secondary,
-        Function => tokens.accent,
-        Operator | Punctuation => tokens.text_secondary,
+        Comment => tokens.syn_comment,
+        Keyword => tokens.syn_keyword,
+        String => tokens.syn_string,
+        Number => tokens.syn_function,
+        Type => tokens.syn_type,
+        Function => tokens.syn_function,
+        Operator | Punctuation => tokens.syn_param,
     }
 }

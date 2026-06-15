@@ -22,6 +22,7 @@ mod commands_settings;
 pub mod drag;
 pub mod editor_canvas;
 pub mod file_tree;
+pub mod fonts;
 pub mod icons;
 mod input;
 pub mod keys;

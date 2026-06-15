@@ -23,8 +23,9 @@ use selection::paint_selection;
 pub(crate) const LINE_HEIGHT: f32 = 27.0;
 /// Advance used only by the deterministic engine test measurer.
 pub(crate) const CHAR_WIDTH: f32 = 10.0;
-pub(crate) const MIN_PAGE_MARGIN: f32 = 28.0;
-pub(crate) const MAX_READING_WIDTH: f32 = 840.0;
+pub(crate) const MIN_PAGE_MARGIN: f32 = 40.0;
+// Quiet Vault note sheet — a centered ~752px column (docs/DESIGN-SYSTEM.md §3).
+pub(crate) const MAX_READING_WIDTH: f32 = 752.0;
 
 #[derive(Default, Clone)]
 pub struct VisualMetrics {
@@ -612,17 +613,12 @@ fn paint_role_color(tokens: &Tokens, role: &PaintRole) -> Color {
 }
 
 fn font_role_font(role: &FontRole) -> Font {
+    use super::fonts;
     match role {
-        FontRole::Sans => Font::DEFAULT,
-        FontRole::SansBold => Font {
-            weight: iced::font::Weight::Bold,
-            ..Font::DEFAULT
-        },
-        FontRole::SansItalic => Font {
-            style: iced::font::Style::Italic,
-            ..Font::DEFAULT
-        },
-        FontRole::Mono => Font::MONOSPACE,
+        FontRole::Sans => fonts::SANS,
+        FontRole::SansBold => fonts::SANS_BOLD,
+        FontRole::SansItalic => fonts::SANS_ITALIC,
+        FontRole::Mono => fonts::MONO,
     }
 }
 #[cfg(test)]

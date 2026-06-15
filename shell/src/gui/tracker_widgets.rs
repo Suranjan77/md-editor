@@ -4,10 +4,7 @@ use iced::{Background, Element, Length};
 use super::Message;
 use super::tokens::Tokens;
 
-const BOLD: iced::Font = iced::Font {
-    weight: iced::font::Weight::Bold,
-    ..iced::Font::DEFAULT
-};
+const BOLD: iced::Font = super::fonts::SANS_BOLD;
 
 pub(super) fn kpi_card<'a>(
     tokens: &'static Tokens,

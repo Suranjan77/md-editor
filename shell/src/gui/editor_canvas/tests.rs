@@ -9,7 +9,7 @@ use super::{
 #[test]
 fn reading_column_caps_and_centers_on_wide_panes() {
     assert_eq!(content_width(1200.0), MAX_READING_WIDTH);
-    assert_eq!(content_left(1200.0), 180.0);
+    assert_eq!(content_left(1200.0), (1200.0 - MAX_READING_WIDTH) / 2.0);
     assert_eq!(content_width(800.0), 800.0 - MIN_PAGE_MARGIN * 2.0);
     assert_eq!(content_left(800.0), MIN_PAGE_MARGIN);
 }

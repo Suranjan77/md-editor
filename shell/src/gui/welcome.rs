@@ -71,6 +71,9 @@ pub fn run_startup(
     )
     .title("MD Editor")
     .theme(StartupWelcome::theme)
+    .font(super::fonts::HANKEN_GROTESK_BYTES)
+    .font(super::fonts::GEIST_MONO_BYTES)
+    .default_font(super::fonts::SANS)
     .subscription(StartupWelcome::subscription)
     .window(iced::window::Settings {
         size: iced::Size::new(1200.0, 800.0),

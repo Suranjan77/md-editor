@@ -156,7 +156,8 @@ fn blockquote_bar_and_text_share_the_reading_column() {
         _ => None,
     });
 
-    assert_eq!(bar_x, Some(184.0));
+    // content_left(1200) = (1200 - 752 reading width) / 2 = 224; bar sits 4px in.
+    assert_eq!(bar_x, Some(228.0));
     assert!(text_x.is_some_and(|x| x >= 202.0));
 }
 

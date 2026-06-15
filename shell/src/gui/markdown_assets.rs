@@ -173,12 +173,13 @@ pub(super) fn render_math(tex: &str) -> Result<(iced::widget::image::Handle, f32
         font_dir: String::new(),
         device_pixel_ratio: 2.0,
     };
+    // Quiet Vault block-math color (#dcdce2) — see docs/DESIGN-SYSTEM.md §5.
     let layout_options = LayoutOptions::default()
         .with_style(MathStyle::Display)
         .with_color(RatexColor {
-            r: 0.89,
-            g: 0.90,
-            b: 0.93,
+            r: 0xdc as f32 / 255.0,
+            g: 0xdc as f32 / 255.0,
+            b: 0xe2 as f32 / 255.0,
             a: 1.0,
         });
     let ast = parse(tex).map_err(|error| format!("math parse: {error}"))?;

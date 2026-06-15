@@ -33,7 +33,7 @@ impl Shell {
             } else {
                 tokens.text_primary
             };
-            let font = if active { BOLD } else { iced::Font::DEFAULT };
+            let font = if active { BOLD } else { super::fonts::SANS };
             let content = iced::widget::row![
                 iced::widget::Space::new().width(iced::Length::Fixed(entry.depth as f32 * 12.0)),
                 text(entry.title.clone())
@@ -129,7 +129,7 @@ impl Shell {
             } else {
                 tokens.text_primary
             };
-            let font = if active { BOLD } else { iced::Font::DEFAULT };
+            let font = if active { BOLD } else { super::fonts::SANS };
             let indent = level.saturating_sub(1) as f32 * 12.0;
             let content = iced::widget::row![
                 iced::widget::Space::new().width(iced::Length::Fixed(indent)),
