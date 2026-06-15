@@ -154,7 +154,10 @@ impl Shell {
         let content: Element<'_, Message> = match pane.active_tab() {
             None => {
                 let mut welcome = column![
-                    text("MD Editor").size(24).color(tokens.accent),
+                    text("MD Editor")
+                        .size(24)
+                        .font(BOLD)
+                        .color(tokens.text_heading),
                     text("Open a note or browse the vault to begin.")
                         .size(14)
                         .color(tokens.text_muted)

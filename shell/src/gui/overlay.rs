@@ -320,11 +320,11 @@ pub fn view<'a>(
         )
         .width(520)
         .style(move |_| container::Style {
-            background: Some(iced::Background::Color(tokens.bg_secondary)),
+            background: Some(iced::Background::Color(tokens.surface_palette)),
             border: iced::Border {
-                color: tokens.border,
+                color: tokens.border_overlay,
                 width: 1.0,
-                radius: 8.0.into(),
+                radius: 14.0.into(),
             },
             ..container::Style::default()
         });
@@ -354,11 +354,11 @@ pub fn view<'a>(
         )
         .width(520)
         .style(move |_| container::Style {
-            background: Some(iced::Background::Color(tokens.bg_secondary)),
+            background: Some(iced::Background::Color(tokens.surface_palette)),
             border: iced::Border {
-                color: tokens.border,
+                color: tokens.border_overlay,
                 width: 1.0,
-                radius: 8.0.into(),
+                radius: 14.0.into(),
             },
             ..container::Style::default()
         });
@@ -398,11 +398,11 @@ pub fn view<'a>(
         )
         .width(560)
         .style(move |_| container::Style {
-            background: Some(iced::Background::Color(tokens.bg_secondary)),
+            background: Some(iced::Background::Color(tokens.surface_palette)),
             border: iced::Border {
-                color: tokens.border,
+                color: tokens.border_overlay,
                 width: 1.0,
-                radius: 8.0.into(),
+                radius: 14.0.into(),
             },
             ..container::Style::default()
         });
@@ -620,11 +620,11 @@ fn view_settings<'a>(
     )
     .width(620)
     .style(move |_| container::Style {
-        background: Some(iced::Background::Color(tokens.bg_secondary)),
+        background: Some(iced::Background::Color(tokens.surface_palette)),
         border: iced::Border {
-            color: tokens.border,
+            color: tokens.border_overlay,
             width: 1.0,
-            radius: 8.0.into(),
+            radius: 14.0.into(),
         },
         ..container::Style::default()
     });

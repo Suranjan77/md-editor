@@ -72,7 +72,7 @@ impl Shell {
                 ToastKind::Error => tokens.danger,
             };
 
-            let bg_color = tokens.bg_secondary;
+            let bg_color = tokens.bg_surface;
             let text_color = tokens.text_primary;
             let icon_color = border_color;
 
@@ -83,10 +83,14 @@ impl Shell {
                 ToastKind::Error => "✗",
             };
 
-            let close_btn = button(text("×").size(14))
-                .padding([2, 5])
-                .style(button::text)
-                .on_press(Message::CloseToastClicked(toast.id));
+            let close_btn = button(super::icons::view(
+                super::icons::Icon::Close,
+                tokens.text_muted,
+                13.0,
+            ))
+            .padding([2, 5])
+            .style(button::text)
+            .on_press(Message::CloseToastClicked(toast.id));
 
             let card = container(
                 row![
@@ -107,7 +111,7 @@ impl Shell {
                 border: iced::Border {
                     color: border_color,
                     width: 1.0,
-                    radius: 6.0.into(),
+                    radius: 10.0.into(),
                 },
                 ..container::Style::default()
             });

@@ -179,7 +179,10 @@ impl StartupWelcome {
             .unwrap_or_else(|| iced::widget::Space::new().height(0).into());
         let card = container(
             column![
-                text("MD Editor").size(34),
+                text("MD Editor")
+                    .size(34)
+                    .font(super::fonts::SANS_BOLD)
+                    .color(tokens::dark().text_heading),
                 text("Choose a folder to use as a vault.")
                     .size(15)
                     .color(tokens::dark().text_muted),
@@ -192,11 +195,11 @@ impl StartupWelcome {
         )
         .padding(28)
         .style(|_| container::Style {
-            background: Some(Background::Color(tokens::dark().bg_secondary)),
+            background: Some(Background::Color(tokens::dark().surface_palette)),
             border: Border {
-                color: tokens::dark().border,
+                color: tokens::dark().border_overlay,
                 width: 1.0,
-                radius: 10.0.into(),
+                radius: 14.0.into(),
             },
             ..container::Style::default()
         });
