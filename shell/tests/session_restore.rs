@@ -162,30 +162,15 @@ fn reduce_motion_setting_round_trips() {
 }
 
 #[test]
-fn theme_is_instance_local_and_round_trips() {
-    let light_dir = vault();
-    let dark_dir = vault();
-    let mut light = new_shell(light_dir.path());
-    let dark = new_shell(dark_dir.path());
-
-    press(&mut light, "ctrl+,");
-    let _ = light.update(Message::SettingsThemeChanged("light".to_string()));
-    let _ = light.update(Message::SettingsSave);
-
-    assert_eq!(light.theme_name(), "light");
-    assert_eq!(dark.theme_name(), "dark");
-    assert_ne!(
-        light.theme_tokens().bg_primary,
-        dark.theme_tokens().bg_primary,
-        "one shell's theme must not mutate another shell"
-    );
-    drop(light);
-
-    let restored = new_shell(light_dir.path());
-    assert_eq!(restored.theme_name(), "light");
+fn the_app_is_dark_only() {
+    // Quiet Vault is dark only: there is no theme switcher, so a fresh shell
+    // always reports the dark theme and resolves to the dark token set.
+    let dir = vault();
+    let shell = new_shell(dir.path());
+    assert_eq!(shell.theme_name(), "dark");
     assert_eq!(
-        restored.theme_tokens().bg_primary,
-        md_shell::gui::tokens::light().bg_primary
+        shell.theme_tokens().bg_primary,
+        md_shell::gui::tokens::dark().bg_primary
     );
 }
 

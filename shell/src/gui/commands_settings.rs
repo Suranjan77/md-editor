@@ -3,12 +3,6 @@ use super::*;
 impl Shell {
     pub(super) fn handle_settings_message(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::SettingsThemeChanged(theme) => {
-                if let Some(Overlay::Settings { theme: t, .. }) = &mut self.overlay {
-                    *t = theme;
-                }
-                Task::none()
-            }
             Message::SettingsReduceMotionChanged(reduce_motion) => {
                 if let Some(Overlay::Settings {
                     reduce_motion: setting,
@@ -67,7 +61,6 @@ impl Shell {
             }
             Message::SettingsSave => {
                 if let Some(Overlay::Settings {
-                    theme,
                     reduce_motion,
                     keymap,
                     error: _,
@@ -85,7 +78,6 @@ impl Shell {
                                     *err_field = Some(e);
                                 }
                             } else {
-                                self.theme_name = theme;
                                 self.reduce_motion = reduce_motion;
                                 if self.reduce_motion {
                                     for session in self.sessions.md.values_mut() {

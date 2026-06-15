@@ -28,7 +28,6 @@ pub mod icons;
 mod input;
 pub mod keys;
 mod markdown_assets;
-pub mod menu;
 mod motion;
 pub mod overlay;
 pub mod paint;
@@ -180,9 +179,6 @@ pub enum Message {
     VaultPicked(Option<PathBuf>),
     Tracker(tracker_view::TrackerMessage),
     RunCommand(CommandId),
-    MenuToggled(menu::MenuId),
-    MenuClosed,
-    MenuCommand(CommandId),
     MdJumpToLine {
         tab: TabId,
         line: usize,
@@ -246,7 +242,6 @@ pub enum Message {
     },
     DismissToast(usize),
     CloseToastClicked(usize),
-    SettingsThemeChanged(String),
     SettingsReduceMotionChanged(bool),
     SettingsScopeChanged(usize, String),
     SettingsChordChanged(usize, String),
@@ -267,7 +262,6 @@ pub struct Shell {
     vault_root: PathBuf,
     tracker_db_path: PathBuf,
     overlay: Option<Overlay>,
-    open_menu: Option<menu::MenuId>,
     /// Vault files (relative paths) for quick-open; rescanned on open.
     files: Vec<String>,
     /// FTS index, opened lazily on first vault search; persists in the
@@ -293,8 +287,6 @@ pub struct Shell {
     tree_context: Option<(String, bool)>,
     // Study Tracker State (Phase 4)
     tracker_open: bool,
-    tracker_running: bool,
-    tracker_started_at: Option<std::time::Instant>,
     tracker_sessions: Vec<md_vault::tracker::StudySession>,
     tracker_kv: std::collections::HashMap<String, String>,
     tracker_active_tab: tracker_view::TrackerTab,
@@ -356,7 +348,6 @@ impl Shell {
             vault_root,
             tracker_db_path,
             overlay: None,
-            open_menu: None,
             files: Vec::new(),
             index: None,
             annotations: None,
@@ -375,8 +366,6 @@ impl Shell {
             tree_context: None,
             // Study Tracker (Phase 4)
             tracker_open: false,
-            tracker_running: false,
-            tracker_started_at: None,
             tracker_sessions,
             tracker_kv,
             tracker_active_tab: tracker_view::TrackerTab::Dashboard,
@@ -433,10 +422,6 @@ impl Shell {
 
     pub fn tracker_open(&self) -> bool {
         self.tracker_open
-    }
-
-    pub fn open_menu(&self) -> Option<menu::MenuId> {
-        self.open_menu
     }
 
     pub fn tree_expanded(&self) -> &std::collections::BTreeSet<String> {
@@ -507,8 +492,7 @@ impl Shell {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::SettingsThemeChanged(_)
-            | Message::SettingsReduceMotionChanged(_)
+            Message::SettingsReduceMotionChanged(_)
             | Message::SettingsScopeChanged(..)
             | Message::SettingsChordChanged(..)
             | Message::SettingsCommandChanged(..)
@@ -564,24 +548,6 @@ impl Shell {
             Message::CloseToastClicked(id) => {
                 self.toasts.retain(|t| t.id != id);
                 Task::none()
-            }
-            Message::MenuToggled(menu) => {
-                if self.open_menu == Some(menu) {
-                    self.close_menu();
-                } else {
-                    self.close_overlay();
-                    self.open_menu = Some(menu);
-                    self.ws.open_overlay("menu");
-                }
-                Task::none()
-            }
-            Message::MenuClosed => {
-                self.close_menu();
-                Task::none()
-            }
-            Message::MenuCommand(command) => {
-                self.close_menu();
-                self.run_command(command)
             }
             Message::TabSelected(tab) => {
                 if let Err(e) = self.ws.focus_tab(tab) {
@@ -665,39 +631,6 @@ impl Shell {
                     tracker_view::TrackerMessage::Toggle => {
                         self.tracker_open = !self.tracker_open;
                         self.save_session();
-                    }
-                    tracker_view::TrackerMessage::Start => {
-                        self.tracker_running = true;
-                        self.tracker_started_at = Some(std::time::Instant::now());
-                        self.status = "timer: started".to_string();
-                    }
-                    tracker_view::TrackerMessage::Stop => {
-                        if self.tracker_running {
-                            self.tracker_running = false;
-                            if let Some(started_at) = self.tracker_started_at.take() {
-                                let elapsed =
-                                    std::time::Instant::now().saturating_duration_since(started_at);
-                                let hours = (elapsed.as_secs_f32() / 3600.0).max(0.01);
-                                let date =
-                                    chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-                                let session = md_vault::tracker::StudySession {
-                                    id: 0,
-                                    date,
-                                    hours,
-                                    activity_type: "Study".to_string(),
-                                    phase: "Focus".to_string(),
-                                    notes: None,
-                                };
-                                if let Ok(mut store) = self.open_tracker_store()
-                                    && store.save_session(&session).is_ok()
-                                {
-                                    if let Ok(sessions) = store.get_sessions() {
-                                        self.tracker_sessions = sessions;
-                                    }
-                                    self.status = format!("timer: saved {:.2} hours", hours);
-                                }
-                            }
-                        }
                     }
                     tracker_view::TrackerMessage::TabSelected(tab) => {
                         self.tracker_active_tab = tab;
@@ -866,7 +799,6 @@ impl Shell {
                     },
                 );
                 self.open_overlay(Overlay::Settings {
-                    theme: self.theme_name.clone(),
                     reduce_motion: self.reduce_motion,
                     keymap: overrides,
                     error: None,
@@ -891,8 +823,6 @@ impl Shell {
             "overlay.close" => {
                 if self.tree_context.is_some() {
                     self.close_tree_context();
-                } else if self.open_menu.is_some() {
-                    self.close_menu();
                 } else {
                     self.close_overlay();
                 }
@@ -905,7 +835,6 @@ impl Shell {
     }
 
     fn open_overlay(&mut self, overlay: Overlay) {
-        self.close_menu();
         self.close_tree_context();
         self.ws.open_overlay(overlay.kernel_name());
         self.overlay = Some(overlay);
@@ -914,12 +843,6 @@ impl Shell {
     fn close_overlay(&mut self) {
         self.ws.close_overlay();
         self.overlay = None;
-    }
-
-    fn close_menu(&mut self) {
-        if self.open_menu.take().is_some() {
-            self.ws.close_overlay();
-        }
     }
 
     fn close_tree_context(&mut self) {
@@ -1192,7 +1115,6 @@ impl Shell {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let tokens = self.tokens();
         let workspace = self.layout_view(&self.ws.panes.layout());
-        let focused_kind = self.ws.focused_editor_kind();
         let mut row_children = Vec::new();
 
         if self.tree_open {
@@ -1363,7 +1285,6 @@ impl Shell {
             let tracker_panel = tracker_view::view(
                 tokens,
                 self.tracker_open,
-                self.tracker_running,
                 &self.tracker_sessions,
                 &self.tracker_kv,
                 self.tracker_active_tab,
@@ -1444,17 +1365,6 @@ impl Shell {
             stack![
                 base,
                 file_tree::context_popover(self.tree_width, *is_dir, tokens)
-            ]
-            .into()
-        } else if let Some(open_menu) = self.open_menu {
-            let model = menu::menu_model(
-                &self.registry,
-                focused_kind,
-                self.ws.focused_tab().is_some(),
-            );
-            stack![
-                base,
-                menu::popover(open_menu, model, &self.registry, tokens)
             ]
             .into()
         } else {

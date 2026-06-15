@@ -564,7 +564,6 @@ impl Shell {
             }
             Message::TreeContextRequested { rel_path, is_dir } => {
                 self.close_overlay();
-                self.close_menu();
                 self.tree_selected = Some(rel_path.clone());
                 self.tree_context = Some((rel_path, is_dir));
                 self.ws.open_overlay("file-context");

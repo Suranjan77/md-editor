@@ -28,8 +28,6 @@ pub enum TrackerTab {
 #[derive(Debug, Clone)]
 pub enum TrackerMessage {
     Toggle,
-    Start,
-    Stop,
     TabSelected(TrackerTab),
     ProjectStatusChanged(String, String),
     GateToggled(String, usize),
@@ -478,7 +476,6 @@ fn milestones_panel<'a>(
 pub fn view<'a>(
     t: &'static tokens::Tokens,
     visible: bool,
-    _running: bool,
     sessions: &'a [StudySession],
     kv: &'a HashMap<String, String>,
     active_tab: TrackerTab,

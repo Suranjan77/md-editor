@@ -1,48 +1,30 @@
-use std::collections::BTreeSet;
-
-use md_kernel::CommandId;
 use md_kernel::defaults::default_registry;
-use md_kernel::input::EditorKind;
-use md_shell::gui::menu;
 
-const MOUSE_EXEMPT: [CommandId; 11] = [
-    CommandId("overlay.close"),
-    CommandId("overlay.confirm"),
-    CommandId("app.settings"),
-    CommandId("app.force-quit"),
-    CommandId("workspace.force-close-tab"),
-    CommandId("editor.heading-1"),
-    CommandId("editor.heading-2"),
-    CommandId("editor.heading-3"),
-    CommandId("editor.heading-4"),
-    CommandId("editor.heading-5"),
-    CommandId("editor.heading-6"),
-];
-
+/// With the menu bar gone (Quiet Vault), the command palette is the universal
+/// mouse surface: the command spine's ⌘K button (a `Message::RunCommand`
+/// click) opens it, and every registered command is then one click away in the
+/// palette list. Guard that invariant — `palette("")` must enumerate every
+/// command, so none is mouse-orphaned.
 #[test]
-fn every_registered_command_is_mouse_reachable_or_explicitly_exempt() {
+fn every_registered_command_is_reachable_through_the_palette() {
     let registry = match default_registry() {
         Ok(registry) => registry,
         Err(e) => panic!("registry: {e}"),
     };
-    let mut reachable = BTreeSet::new();
-    for kind in [None, Some(EditorKind::Markdown), Some(EditorKind::Pdf)] {
-        for item in menu::menu_model(&registry, kind, true)
-            .into_iter()
-            .flat_map(|group| group.items)
-        {
-            reachable.insert(item.command);
-        }
-    }
-    reachable.extend(MOUSE_EXEMPT);
+
+    let listed: std::collections::BTreeSet<_> = registry
+        .palette("")
+        .into_iter()
+        .map(|spec| spec.id)
+        .collect();
 
     let missing: Vec<&str> = registry
         .specs()
-        .filter(|spec| !reachable.contains(&spec.id))
+        .filter(|spec| !listed.contains(&spec.id))
         .map(|spec| spec.id.0)
         .collect();
     assert!(
         missing.is_empty(),
-        "commands missing mouse placement: {missing:?}"
+        "commands missing from the palette (mouse-unreachable): {missing:?}"
     );
 }

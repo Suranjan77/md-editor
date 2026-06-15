@@ -95,63 +95,20 @@ pub static DARK_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
     syn_comment: hex_color(0x5a5a62),
 });
 
-pub static LIGHT_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
-    bg_primary: hex_color(0xfbfcfd),
-    bg_secondary: hex_color(0xf0f2f5),
-    bg_tertiary: hex_color(0xe4e8ec),
-    bg_surface: hex_color(0xeceef1),
-    bg_chrome: hex_color(0xeef0f3),
-    bg_rail: hex_color(0xf4f6f8),
-    surface_palette: hex_color(0xffffff),
-    border: hex_color(0xc8cdd4),
-    border_subtle: hex_color(0xdde1e6),
-    border_overlay: hex_color_alpha(0x000000, 0.12),
-    text_primary: hex_color(0x1c2027),
-    text_secondary: hex_color(0x4a515b),
-    text_muted: hex_color(0x717a85),
-    text_heading: hex_color(0x0d1117),
-    accent: hex_color(0x7c4dd6),
-    accent_secondary: hex_color(0x6a3fc0),
-    wikilink: hex_color(0x12937c),
-    danger: hex_color(0xcf4b43),
-    success: hex_color(0x1f9d63),
-    warning: hex_color(0xb07d22),
-    sel_tint: hex_color_alpha(0x7c4dd6, 0.16),
-    highlight_default: hex_color(0xffe08a),
-    bg_hover: hex_color(0xe7eaee),
-    bg_pressed: hex_color(0xd8dde3),
-    focus_ring: hex_color(0x7c4dd6),
-    code_inline_text: hex_color(0x6a3fc0),
-    syn_base: hex_color(0x2a2f37),
-    syn_keyword: hex_color(0x7c4dd6),
-    syn_function: hex_color(0xb07d22),
-    syn_string: hex_color(0x1f7a3d),
-    syn_type: hex_color(0x12937c),
-    syn_param: hex_color(0xb05a2a),
-    syn_comment: hex_color(0x8a8f97),
-});
-
+// Quiet Vault is dark only — there is no light token set or theme switcher.
 pub fn dark() -> &'static Tokens {
     &DARK_TOKENS
 }
 
-pub fn light() -> &'static Tokens {
-    &LIGHT_TOKENS
-}
-
-pub fn for_name(name: &str) -> &'static Tokens {
-    if name == "light" { light() } else { dark() }
-}
-
 impl super::Shell {
     pub(crate) fn tokens(&self) -> &'static Tokens {
-        for_name(&self.theme_name)
+        dark()
     }
 
     pub(crate) fn theme(&self) -> iced::Theme {
         let tokens = self.tokens();
         iced::Theme::custom_with_fn(
-            format!("MD Editor {}", self.theme_name),
+            "MD Editor".to_string(),
             iced::theme::Palette {
                 background: tokens.bg_primary,
                 text: tokens.text_primary,

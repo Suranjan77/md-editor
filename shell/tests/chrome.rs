@@ -2,10 +2,7 @@ use std::path::Path;
 
 use md_kernel::CommandId;
 use md_kernel::defaults::default_registry;
-use md_kernel::input::{Chord, EditorKind};
 use md_kernel::pane::{Layout, SplitAxis};
-use md_shell::gui::keys::KeyEvent;
-use md_shell::gui::menu::{self, MenuId};
 use md_shell::gui::{Message, Shell};
 
 fn shell(root: &Path) -> Shell {
@@ -18,45 +15,6 @@ fn shell(root: &Path) -> Shell {
         Err(e) => panic!("keymap: {e}"),
     };
     Shell::new(registry, keymap, root.to_path_buf())
-}
-
-#[test]
-fn menus_disable_commands_for_the_wrong_surface() {
-    let registry = match default_registry() {
-        Ok(registry) => registry,
-        Err(e) => panic!("registry: {e}"),
-    };
-    let model = menu::menu_model(&registry, Some(EditorKind::Markdown), true);
-    let pdf = model
-        .iter()
-        .find(|group| group.id == MenuId::Pdf)
-        .unwrap_or_else(|| panic!("PDF menu missing"));
-    assert!(
-        pdf.items
-            .iter()
-            .filter(|item| item.command != CommandId("pdf.annotations-orphans"))
-            .all(|item| !item.enabled)
-    );
-}
-
-#[test]
-fn escape_closes_menu_through_overlay_fence() {
-    let dir = match tempfile::tempdir() {
-        Ok(dir) => dir,
-        Err(e) => panic!("tempdir: {e}"),
-    };
-    let mut shell = shell(dir.path());
-    let _ = shell.update(Message::MenuToggled(MenuId::File));
-    assert_eq!(shell.open_menu(), Some(MenuId::File));
-    let escape = match Chord::parse("escape") {
-        Ok(chord) => chord,
-        Err(e) => panic!("escape: {e}"),
-    };
-    let _ = shell.update(Message::Key(KeyEvent {
-        chord: Some(escape),
-        text: None,
-    }));
-    assert_eq!(shell.open_menu(), None);
 }
 
 #[test]

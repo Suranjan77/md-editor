@@ -82,7 +82,6 @@ pub enum Overlay {
         on_confirm: md_kernel::CommandId,
     },
     Settings {
-        theme: String,
         reduce_motion: bool,
         keymap: crate::settings::KeymapFile,
         error: Option<String>,
