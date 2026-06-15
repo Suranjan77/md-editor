@@ -5,6 +5,25 @@
 > reference is `docs/quiet-vault-reference.html`. This document is the *engineering* plan:
 > what to change, in which files, in what order.
 
+## Implementation status
+
+- ✅ **Phase 0** — design docs + vendored OFL fonts landed.
+- ✅ **Phase 1** — tokens & palette (purple accent, teal wikilinks, calm syntax).
+- ✅ **Phase 2** — Hanken Grotesk + Geist Mono embedded via `gui::fonts`.
+- ✅ **Phase 3** — 752px editor sheet / 40px margins.
+- ✅ **Phase 4** — command spine replaces the menu bar (`gui::command_spine`).
+- ✅ **Phase 5** — quiet rails (`bg_rail`) + tracker is a ledger (timer removed from UI).
+- ✅ **Phase 6** — overlay scrim + command-palette archetype for the shared list panel.
+- ✅ **Phase 7** — status bar restyle (partial: container/typography; content unchanged).
+- 🔶 **Phase 8** — partial: Settings/Close line icons added; remaining cleanup below.
+
+**Remaining polish (follow-ups):** restyle the per-variant overlay cards (Confirm,
+NameInput, Settings, PDF dialogs) to `surface_palette`; Welcome screen + toast restyle;
+active-line raw-marker reveal tuning; full dead-code removal of the (now UI-unreachable)
+menu, timer, and Light-theme plumbing plus their tests; `qvfade`/`qvdim` motion gated on
+reduce-motion. The unreachable plumbing is retained for now so existing behavior tests
+stay green.
+
 ## Goals & guardrails
 
 - Match `docs/quiet-vault-reference.html` exactly — no invented colors, fonts, or chrome.
