@@ -19,10 +19,13 @@
   timer, and Light theme (plus their tests) are gone; per-variant overlay cards,
   Welcome, and toasts restyled; `qvfade`/`qvdim` overlay reveal landed.
 
-**Remaining polish (follow-ups):** active-line raw-marker reveal tuning. Note the
-`qvfade` card animation is translate-only — stock iced widgets express neither the
-CSS opacity fade nor the 0.99→1 scale, so the scrim's `qvdim` alpha carries the
-cross-fade feel.
+**Migration complete.** Active-line treatment landed: an `active_line_bg` wash,
+revealed raw markers in `marker_revealed` (purple @ 0.55), and a 2px caret. Two
+implementation notes for future work: the `qvfade` card animation is
+translate-only — stock iced widgets express neither the CSS opacity fade nor the
+0.99→1 scale, so the scrim's `qvdim` alpha carries the cross-fade feel; and the
+active-line treatment is painted in `editor_canvas`, deliberately outside
+`line_plan`, to keep the golden draw-plan snapshot stable.
 
 ## Goals & guardrails
 
