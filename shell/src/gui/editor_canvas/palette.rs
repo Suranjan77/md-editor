@@ -15,6 +15,14 @@ pub fn text(tokens: &Tokens) -> Color {
 pub fn marker(tokens: &Tokens) -> Color {
     tokens.text_muted
 }
+/// Raw markers revealed on the active line read in the accent, distinct from
+/// the muted gutter markers used elsewhere (docs/DESIGN-SYSTEM.md §6).
+pub fn marker_revealed(tokens: &Tokens) -> Color {
+    tokens.marker_revealed
+}
+pub fn active_line_bg(tokens: &Tokens) -> Color {
+    tokens.active_line_bg
+}
 pub fn heading(tokens: &Tokens) -> Color {
     tokens.text_heading
 }

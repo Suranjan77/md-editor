@@ -24,6 +24,10 @@ pub struct Tokens {
     pub success: Color,
     pub warning: Color,
     pub sel_tint: Color,
+    /// Subtle accent wash behind the editor's active (caret) line.
+    pub active_line_bg: Color,
+    /// Revealed raw markdown markers on the active line (mono, purple 0.55).
+    pub marker_revealed: Color,
     pub highlight_default: Color,
     pub bg_hover: Color,
     pub bg_pressed: Color,
@@ -81,6 +85,8 @@ pub static DARK_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
     success: hex_color(0x6c8c7c),
     warning: hex_color(0xe0b04a),
     sel_tint: hex_color_alpha(0xbd93f9, 0.28),
+    active_line_bg: hex_color_alpha(0xbd93f9, 0.05),
+    marker_revealed: hex_color_alpha(0xbd93f9, 0.55),
     highlight_default: hex_color(0xffd866),
     bg_hover: hex_color(0x1a1a21),
     bg_pressed: hex_color(0x1f1f27),

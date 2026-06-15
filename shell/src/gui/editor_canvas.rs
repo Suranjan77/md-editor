@@ -391,6 +391,18 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                 .height_of(index)
                 .unwrap_or(f64::from(LINE_HEIGHT)) as f32;
 
+            // Active-line treatment: a subtle accent wash behind the caret's
+            // line (docs/DESIGN-SYSTEM.md §6). Revealed markers + caret paint
+            // on top; the band sits below the selection tint.
+            let is_active = self.focused && index == caret_line;
+            if is_active {
+                frame.fill_rectangle(
+                    Point::new(content_left(bounds.width), y),
+                    Size::new(content_width(bounds.width), line_height),
+                    palette::active_line_bg(self.tokens),
+                );
+            }
+
             // Selection highlight (behind text), clipped to this line.
             if sel_min != sel_max {
                 let line_start = doc.buffer().line_col_to_offset(index, 0);
@@ -432,6 +444,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                     } else {
                         1.0
                     },
+                    is_active,
                 },
             );
             if let Some((hovered_line, rects)) = &hovered_link
@@ -460,7 +473,7 @@ impl canvas::Program<Message> for EditorCanvas<'_> {
                     .caret_opacity(std::time::Instant::now(), self.reduce_motion);
                 frame.fill_rectangle(
                     Point::new(content_left(bounds.width) + x, y + caret_y + 2.0),
-                    Size::new(1.5, (caret_h - 4.0).max(1.0)),
+                    Size::new(2.0, (caret_h - 4.0).max(1.0)),
                     caret_color,
                 );
             }
@@ -533,6 +546,11 @@ fn paint_line(
             } => {
                 let mut color = paint_role_color(context.tokens, &role);
                 if matches!(role, PaintRole::Marker) {
+                    // Revealed markers on the active line read in the accent;
+                    // muted gutter markers elsewhere keep their resting color.
+                    if context.is_active {
+                        color = palette::marker_revealed(context.tokens);
+                    }
                     color.a *= context.reveal_opacity;
                 }
                 let font = font_role_font(&font);
@@ -594,6 +612,8 @@ struct LinePaintContext<'a> {
     session: &'a MdSession,
     tokens: &'a Tokens,
     reveal_opacity: f32,
+    /// This is the focused pane's caret line — revealed markers read in accent.
+    is_active: bool,
 }
 
 fn paint_role_color(tokens: &Tokens, role: &PaintRole) -> Color {
