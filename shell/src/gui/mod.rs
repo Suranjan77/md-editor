@@ -1406,8 +1406,26 @@ impl Shell {
             status
         ];
         let mut final_view: Element<'_, Message> = if let Some(overlay) = &self.overlay {
+            // Quiet Vault overlay archetype: a dim scrim behind the panel that
+            // also closes the overlay on an outside click (docs/DESIGN-SYSTEM.md §5).
+            let scrim = iced::widget::mouse_area(
+                container(iced::widget::Space::new())
+                    .width(Fill)
+                    .height(Fill)
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(iced::Color::from_rgba(
+                            6.0 / 255.0,
+                            6.0 / 255.0,
+                            9.0 / 255.0,
+                            0.55,
+                        ))),
+                        ..container::Style::default()
+                    }),
+            )
+            .on_press(Message::RunCommand(CommandId("overlay.close")));
             stack![
                 base,
+                scrim,
                 overlay::view(overlay, &self.registry, &self.files, tokens)
             ]
             .into()

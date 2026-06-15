@@ -9,8 +9,10 @@ pub struct Tokens {
     pub bg_surface: Color,
     pub bg_chrome: Color,
     pub bg_rail: Color,
+    pub surface_palette: Color,
     pub border: Color,
     pub border_subtle: Color,
+    pub border_overlay: Color,
     pub text_primary: Color,
     pub text_secondary: Color,
     pub text_muted: Color,
@@ -64,8 +66,10 @@ pub static DARK_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
     bg_surface: hex_color(0x101014),   // surface/1 (cards)
     bg_chrome: hex_color(0x0c0c10),    // top bar, status bar
     bg_rail: hex_color(0x0a0a0d),      // left & right rails, code-block bg
+    surface_palette: hex_color(0x141419), // command palette / overlay panels
     border: hex_color_alpha(0xffffff, 0.07),
     border_subtle: hex_color_alpha(0xffffff, 0.05),
+    border_overlay: hex_color_alpha(0xffffff, 0.10),
     text_primary: hex_color(0xe8e8ec),
     text_secondary: hex_color(0xa8a8b0),
     text_muted: hex_color(0x6b6b73),
@@ -98,8 +102,10 @@ pub static LIGHT_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
     bg_surface: hex_color(0xeceef1),
     bg_chrome: hex_color(0xeef0f3),
     bg_rail: hex_color(0xf4f6f8),
+    surface_palette: hex_color(0xffffff),
     border: hex_color(0xc8cdd4),
     border_subtle: hex_color(0xdde1e6),
+    border_overlay: hex_color_alpha(0x000000, 0.12),
     text_primary: hex_color(0x1c2027),
     text_secondary: hex_color(0x4a515b),
     text_muted: hex_color(0x717a85),

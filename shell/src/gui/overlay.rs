@@ -454,18 +454,18 @@ pub fn view<'a>(
         container(scrollable(list).id(list_scroll_id()).width(Fill).spacing(4)).max_height(420);
 
     let card = container(column![input_line, list].spacing(10).padding(14))
-        .width(560)
+        .width(640)
         .style(move |_| container::Style {
-            background: Some(iced::Background::Color(tokens.bg_secondary)),
+            background: Some(iced::Background::Color(tokens.surface_palette)),
             border: iced::Border {
-                color: tokens.border,
+                color: tokens.border_overlay,
                 width: 1.0,
-                radius: 8.0.into(),
+                radius: 14.0.into(),
             },
             ..container::Style::default()
         });
 
-    container(card).center_x(Fill).padding([60, 0]).into()
+    container(card).center_x(Fill).padding([96, 0]).into()
 }
 
 impl Overlay {
