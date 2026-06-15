@@ -370,7 +370,7 @@ impl Shell {
             tree_open: true,
             tree_expanded: std::collections::BTreeSet::new(),
             tree_selected: None,
-            tree_width: 240.0,
+            tree_width: 258.0,
             tree_resizing: false,
             tree_context: None,
             // Study Tracker (Phase 4)
@@ -1297,8 +1297,8 @@ impl Shell {
                 col = col.push(item);
             }
 
-            let sidebar_bg = tokens.bg_secondary;
-            let border_color = tokens.border;
+            let sidebar_bg = tokens.bg_rail;
+            let border_color = tokens.border_subtle;
 
             let panel = container(iced::widget::scrollable(col))
                 .width(self.tree_width)

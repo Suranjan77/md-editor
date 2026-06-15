@@ -478,7 +478,7 @@ fn milestones_panel<'a>(
 pub fn view<'a>(
     t: &'static tokens::Tokens,
     visible: bool,
-    running: bool,
+    _running: bool,
     sessions: &'a [StudySession],
     kv: &'a HashMap<String, String>,
     active_tab: TrackerTab,
@@ -521,68 +521,8 @@ pub fn view<'a>(
     .spacing(4)
     .width(Length::Fill);
 
-    let controls = row![if running {
-        button(
-            container(text("Stop Timer").size(12).font(BOLD))
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        )
-        .on_press(Message::Tracker(TrackerMessage::Stop))
-        .padding(8)
-        .width(Length::Fill)
-        .style(button::secondary)
-    } else {
-        button(
-            container(text("Start Timer").size(12).font(BOLD))
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        )
-        .on_press(Message::Tracker(TrackerMessage::Start))
-        .padding(8)
-        .width(Length::Fill)
-        .style(button::primary)
-    },]
-    .spacing(8)
-    .width(Length::Fill)
-    .align_y(Alignment::Center);
-
-    let running_status: Element<'a, Message> = if running {
-        container(
-            row![
-                text("Timer running")
-                    .size(11)
-                    .color(t.accent_secondary)
-                    .font(BOLD),
-                Space::new().width(Length::Fill),
-                text("Focus session").size(9).color(t.text_muted),
-            ]
-            .align_y(Alignment::Center),
-        )
-        .padding(8)
-        .style(move |_: &iced::Theme| container::Style {
-            background: Some(Background::Color(t.bg_surface)),
-            border: iced::Border {
-                color: t.accent,
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
-    } else {
-        container(text("Ready to log study time").size(11).color(t.text_muted))
-            .padding(8)
-            .style(move |_: &iced::Theme| container::Style {
-                background: Some(Background::Color(t.bg_secondary)),
-                border: iced::Border {
-                    color: t.border_subtle,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-    };
+    // Quiet Vault: the tracker is a ledger, not a stopwatch — no live timer
+    // controls. Daily work is logged after the fact via the Log tab.
 
     let tab_bar = scrollable(
         row![
@@ -600,9 +540,7 @@ pub fn view<'a>(
     ));
 
     let body = match active_tab {
-        TrackerTab::Dashboard => {
-            dashboard_body(t, sessions, running_status, controls, tracker_config)
-        }
+        TrackerTab::Dashboard => dashboard_body(t, sessions, tracker_config),
         TrackerTab::Log => log_body(t, sessions, manual_date, manual_hours, manual_notes),
         TrackerTab::Projects => projects_body(t, kv, tracker_config.projects),
         TrackerTab::Gates => gates_body(t, kv, tracker_config.gates),
@@ -613,12 +551,12 @@ pub fn view<'a>(
     let dashboard = column![title, tab_bar, kpis, body,].spacing(10).padding(10);
 
     container(dashboard)
-        .width(360)
+        .width(308)
         .height(Fill)
         .style(move |_| container::Style {
-            background: Some(Background::Color(t.bg_primary)),
+            background: Some(Background::Color(t.bg_rail)),
             border: iced::Border {
-                color: t.border,
+                color: t.border_subtle,
                 width: 1.0,
                 radius: 0.0.into(),
             },
@@ -652,8 +590,6 @@ fn tab_button<'a>(
 fn dashboard_body<'a>(
     t: &'static tokens::Tokens,
     sessions: &'a [StudySession],
-    running_status: Element<'a, Message>,
-    controls: iced::widget::Row<'a, Message>,
     config: TrackerConfig,
 ) -> Element<'a, Message> {
     let sessions_list = sessions_list(t, sessions);
@@ -662,8 +598,6 @@ fn dashboard_body<'a>(
 
     scrollable(
         column![
-            controls,
-            running_status,
             activity_chart(t, sessions),
             curriculum_panel(t, config.phases),
             milestones_panel(t, project_count, gate_count, config.reading),
