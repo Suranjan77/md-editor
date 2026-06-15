@@ -6,6 +6,8 @@ use iced::{Subscription, Task};
 
 const SCROLL_DURATION: Duration = Duration::from_millis(120);
 const CARET_FADE_DURATION: Duration = Duration::from_millis(90);
+/// qvfade/qvdim reveal length for overlays (CSS uses 0.12–0.16s).
+const OVERLAY_REVEAL_DURATION: Duration = Duration::from_millis(160);
 
 pub(super) struct ScrollAnimation {
     from: f32,
@@ -16,8 +18,10 @@ pub(super) struct ScrollAnimation {
 impl Shell {
     pub(super) fn motion_subscription(&self) -> Option<Subscription<Message>> {
         let now = Instant::now();
-        (!self.reduce_motion && self.sessions.md.values().any(|s| s.has_active_motion(now)))
-            .then(|| iced::time::every(Duration::from_millis(16)).map(Message::AnimationTick))
+        let active = !self.reduce_motion
+            && (self.sessions.md.values().any(|s| s.has_active_motion(now))
+                || self.overlay_reveal_active(now));
+        active.then(|| iced::time::every(Duration::from_millis(16)).map(Message::AnimationTick))
     }
 
     pub(super) fn advance_motion(&mut self, now: Instant) -> Task<Message> {
@@ -26,6 +30,34 @@ impl Shell {
         }
         Task::none()
     }
+
+    /// True while an open overlay is still playing its reveal — keeps the
+    /// frame ticker alive until the qvfade/qvdim animation lands.
+    fn overlay_reveal_active(&self, now: Instant) -> bool {
+        self.overlay.is_some()
+            && self.overlay_revealed_at.is_some_and(|at| {
+                now.saturating_duration_since(at) < OVERLAY_REVEAL_DURATION
+            })
+    }
+
+    /// Eased 0→1 reveal progress for the open overlay (qvfade slide + qvdim
+    /// scrim alpha). 1.0 immediately when motion is reduced or nothing is open.
+    pub(super) fn overlay_reveal(&self) -> f32 {
+        if self.reduce_motion {
+            return 1.0;
+        }
+        match self.overlay_revealed_at {
+            Some(at) => ease_reveal(Instant::now().saturating_duration_since(at)),
+            None => 1.0,
+        }
+    }
+}
+
+/// Ease-out cubic over [`OVERLAY_REVEAL_DURATION`]: 0 at the start, 1 once the
+/// reveal has elapsed, clamped beyond.
+fn ease_reveal(elapsed: Duration) -> f32 {
+    let progress = elapsed.as_secs_f32() / OVERLAY_REVEAL_DURATION.as_secs_f32();
+    1.0 - (1.0 - progress.clamp(0.0, 1.0)).powi(3)
 }
 
 impl MdSession {
@@ -125,5 +157,16 @@ mod tests {
         let session = session();
         assert_eq!(session.caret_opacity(Instant::now(), true), 1.0);
         assert!(session.caret_opacity(session.caret_moved_at, false) < 1.0);
+    }
+
+    #[test]
+    fn overlay_reveal_eases_in_then_settles() {
+        // Starts hidden, eases up, and is fully revealed once the duration
+        // has elapsed (and stays clamped beyond it).
+        assert_eq!(ease_reveal(Duration::ZERO), 0.0);
+        let mid = ease_reveal(OVERLAY_REVEAL_DURATION / 2);
+        assert!(mid > 0.0 && mid < 1.0, "mid reveal was {mid}");
+        assert_eq!(ease_reveal(OVERLAY_REVEAL_DURATION), 1.0);
+        assert_eq!(ease_reveal(OVERLAY_REVEAL_DURATION * 2), 1.0);
     }
 }

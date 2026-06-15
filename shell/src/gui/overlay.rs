@@ -288,7 +288,14 @@ pub fn view<'a>(
     registry: &'a CommandRegistry,
     files: &'a [String],
     tokens: &'static tokens::Tokens,
+    reveal: f32,
 ) -> Element<'a, Message> {
+    // qvfade: the card settles from 8px high down to its resting top. (CSS
+    // qvfade also fades opacity + scales 0.99→1; stock iced widgets express
+    // neither, so only the translate is animated here — the scrim's qvdim
+    // alpha fade carries the rest.) `reveal` is 1.0 when motion is reduced.
+    let slide = |top: f32| (top - 8.0 * (1.0 - reveal)).max(0.0);
+
     if let Overlay::ConfirmDelete { target, is_dir } = overlay {
         let kind = if *is_dir { "folder" } else { "file" };
         let detail = if target.ends_with(".pdf") {
@@ -327,7 +334,7 @@ pub fn view<'a>(
             },
             ..container::Style::default()
         });
-        return container(card).center_x(Fill).padding([60, 0]).into();
+        return container(card).center_x(Fill).padding([slide(60.0), 0.0]).into();
     }
 
     if let Overlay::Confirm { message, .. } = overlay {
@@ -361,7 +368,7 @@ pub fn view<'a>(
             },
             ..container::Style::default()
         });
-        return container(card).center_x(Fill).padding([60, 0]).into();
+        return container(card).center_x(Fill).padding([slide(60.0), 0.0]).into();
     }
 
     if let Overlay::Settings {
@@ -371,7 +378,7 @@ pub fn view<'a>(
         ..
     } = overlay
     {
-        return view_settings(*reduce_motion, keymap, error, tokens);
+        return view_settings(*reduce_motion, keymap, error, tokens, reveal);
     }
 
     if let Overlay::PdfLinkPreview {
@@ -406,7 +413,7 @@ pub fn view<'a>(
             ..container::Style::default()
         });
 
-        return container(card).center_x(Fill).padding([60, 0]).into();
+        return container(card).center_x(Fill).padding([slide(60.0), 0.0]).into();
     }
 
     let rows = list_rows(overlay, registry, files);
@@ -464,7 +471,7 @@ pub fn view<'a>(
             ..container::Style::default()
         });
 
-    container(card).center_x(Fill).padding([96, 0]).into()
+    container(card).center_x(Fill).padding([slide(96.0), 0.0]).into()
 }
 
 impl Overlay {
@@ -507,7 +514,9 @@ fn view_settings<'a>(
     keymap: &'a crate::settings::KeymapFile,
     error: &'a Option<String>,
     tokens: &'static tokens::Tokens,
+    reveal: f32,
 ) -> Element<'a, Message> {
+    let slide = |top: f32| (top - 8.0 * (1.0 - reveal)).max(0.0);
     use iced::widget::{button, text_input};
 
     let motion_row = row![
@@ -628,5 +637,5 @@ fn view_settings<'a>(
         ..container::Style::default()
     });
 
-    container(card).center_x(Fill).padding([40, 0]).into()
+    container(card).center_x(Fill).padding([slide(40.0), 0.0]).into()
 }

@@ -262,6 +262,9 @@ pub struct Shell {
     vault_root: PathBuf,
     tracker_db_path: PathBuf,
     overlay: Option<Overlay>,
+    /// When the current overlay opened — drives the qvfade/qvdim reveal.
+    /// `None` while no overlay is shown.
+    overlay_revealed_at: Option<std::time::Instant>,
     /// Vault files (relative paths) for quick-open; rescanned on open.
     files: Vec<String>,
     /// FTS index, opened lazily on first vault search; persists in the
@@ -348,6 +351,7 @@ impl Shell {
             vault_root,
             tracker_db_path,
             overlay: None,
+            overlay_revealed_at: None,
             files: Vec::new(),
             index: None,
             annotations: None,
@@ -838,11 +842,13 @@ impl Shell {
         self.close_tree_context();
         self.ws.open_overlay(overlay.kernel_name());
         self.overlay = Some(overlay);
+        self.overlay_revealed_at = Some(std::time::Instant::now());
     }
 
     fn close_overlay(&mut self) {
         self.ws.close_overlay();
         self.overlay = None;
+        self.overlay_revealed_at = None;
     }
 
     fn close_tree_context(&mut self) {
@@ -1329,16 +1335,19 @@ impl Shell {
         let mut final_view: Element<'_, Message> = if let Some(overlay) = &self.overlay {
             // Quiet Vault overlay archetype: a dim scrim behind the panel that
             // also closes the overlay on an outside click (docs/DESIGN-SYSTEM.md §5).
+            // qvdim: the scrim alpha eases up to 0.55 as the overlay reveals.
+            let reveal = self.overlay_reveal();
+            let scrim_alpha = 0.55 * reveal;
             let scrim = iced::widget::mouse_area(
                 container(iced::widget::Space::new())
                     .width(Fill)
                     .height(Fill)
-                    .style(|_| container::Style {
+                    .style(move |_| container::Style {
                         background: Some(iced::Background::Color(iced::Color::from_rgba(
                             6.0 / 255.0,
                             6.0 / 255.0,
                             9.0 / 255.0,
-                            0.55,
+                            scrim_alpha,
                         ))),
                         ..container::Style::default()
                     }),
@@ -1347,7 +1356,7 @@ impl Shell {
             stack![
                 base,
                 scrim,
-                overlay::view(overlay, &self.registry, &self.files, tokens)
+                overlay::view(overlay, &self.registry, &self.files, tokens, reveal)
             ]
             .into()
         } else if let Some(ctx) = &self.pdf_context_menu {
