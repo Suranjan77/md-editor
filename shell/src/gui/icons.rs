@@ -21,6 +21,7 @@ pub enum Icon {
     Refresh,
     Save,
     Search,
+    Settings,
     Sidebar,
     Split,
     SplitDown,
@@ -101,6 +102,21 @@ impl<Message> canvas::Program<Message> for IconCanvas {
                 if matches!(self.icon, Icon::Save) {
                     line(&mut frame, p(9.0, 4.0), p(9.0, 10.0), stroke);
                     line(&mut frame, p(9.0, 16.0), p(17.0, 16.0), stroke);
+                }
+            }
+            Icon::Settings => {
+                frame.stroke(&canvas::Path::circle(p(12.0, 12.0), 3.2 * scale), stroke);
+                for (x1, y1, x2, y2) in [
+                    (12.0, 2.0, 12.0, 5.0),
+                    (12.0, 19.0, 12.0, 22.0),
+                    (2.0, 12.0, 5.0, 12.0),
+                    (19.0, 12.0, 22.0, 12.0),
+                    (5.0, 5.0, 7.1, 7.1),
+                    (16.9, 16.9, 19.0, 19.0),
+                    (5.0, 19.0, 7.1, 16.9),
+                    (16.9, 7.1, 19.0, 5.0),
+                ] {
+                    line(&mut frame, p(x1, y1), p(x2, y2), stroke);
                 }
             }
             Icon::Sidebar => {

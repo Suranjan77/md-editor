@@ -13,6 +13,7 @@
 mod chrome;
 mod chrome_context;
 mod chrome_panels;
+mod command_spine;
 mod commands_file;
 mod commands_md;
 mod commands_pdf;
@@ -1390,7 +1391,7 @@ impl Shell {
         .width(Fill);
 
         let base = column![
-            menu::bar(self.open_menu, tokens),
+            self.command_spine(),
             container(workspace_content).height(Fill),
             status
         ];

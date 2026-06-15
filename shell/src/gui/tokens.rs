@@ -7,6 +7,8 @@ pub struct Tokens {
     pub bg_secondary: Color,
     pub bg_tertiary: Color,
     pub bg_surface: Color,
+    pub bg_chrome: Color,
+    pub bg_rail: Color,
     pub border: Color,
     pub border_subtle: Color,
     pub text_primary: Color,
@@ -60,6 +62,8 @@ pub static DARK_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
     bg_secondary: hex_color(0x16161c), // surface/2
     bg_tertiary: hex_color(0x1a1a21),  // surface/3 (active tab)
     bg_surface: hex_color(0x101014),   // surface/1 (cards)
+    bg_chrome: hex_color(0x0c0c10),    // top bar, status bar
+    bg_rail: hex_color(0x0a0a0d),      // left & right rails, code-block bg
     border: hex_color_alpha(0xffffff, 0.07),
     border_subtle: hex_color_alpha(0xffffff, 0.05),
     text_primary: hex_color(0xe8e8ec),
@@ -92,6 +96,8 @@ pub static LIGHT_TOKENS: LazyLock<Tokens> = LazyLock::new(|| Tokens {
     bg_secondary: hex_color(0xf0f2f5),
     bg_tertiary: hex_color(0xe4e8ec),
     bg_surface: hex_color(0xeceef1),
+    bg_chrome: hex_color(0xeef0f3),
+    bg_rail: hex_color(0xf4f6f8),
     border: hex_color(0xc8cdd4),
     border_subtle: hex_color(0xdde1e6),
     text_primary: hex_color(0x1c2027),
