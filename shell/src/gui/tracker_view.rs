@@ -497,7 +497,7 @@ pub fn view<'a>(
     let title = row![
         text("Study Tracker").size(16).color(t.accent).font(BOLD),
         Space::new().width(Length::Fill),
-        button(text("✕").size(14).font(BOLD))
+        button(super::icons::view(super::icons::Icon::Close, t.text_secondary, 14.0))
             .on_press(Message::Tracker(TrackerMessage::Toggle))
             .style(button::text),
     ]

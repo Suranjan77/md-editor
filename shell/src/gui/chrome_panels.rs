@@ -15,7 +15,7 @@ impl Shell {
                 .color(tokens.text_primary)
                 .font(BOLD),
             iced::widget::Space::new().width(iced::Length::Fill),
-            button(text("✕").size(12).font(BOLD))
+            button(super::icons::view(super::icons::Icon::Close, tokens.text_secondary, 14.0))
                 .on_press(Message::PdfCommand {
                     tab,
                     command: CommandId("pdf.toc-panel"),
@@ -106,7 +106,7 @@ impl Shell {
                 .color(tokens.text_primary)
                 .font(BOLD),
             iced::widget::Space::new().width(iced::Length::Fill),
-            button(text("✕").size(12).font(BOLD))
+            button(super::icons::view(super::icons::Icon::Close, tokens.text_secondary, 14.0))
                 .on_press(Message::RunCommand(CommandId("note.outline-panel")))
                 .style(button::text),
         ]
@@ -238,7 +238,7 @@ impl Shell {
                 .padding([3, 8])
                 .on_press(Message::MdReplaceAll { tab }),
             iced::widget::Space::new().width(iced::Length::Fill),
-            button(text("✕").size(12).font(BOLD))
+            button(super::icons::view(super::icons::Icon::Close, tokens.text_secondary, 14.0))
                 .style(button::text)
                 .on_press(Message::MdCloseFind { tab })
         ]
@@ -272,7 +272,7 @@ impl Shell {
                 .color(tokens.text_primary)
                 .font(BOLD),
             iced::widget::Space::new().width(iced::Length::Fill),
-            button(text("✕").size(12).font(BOLD))
+            button(super::icons::view(super::icons::Icon::Close, tokens.text_secondary, 14.0))
                 .on_press(Message::PdfCommand {
                     tab,
                     command: CommandId("pdf.annotations-panel"),

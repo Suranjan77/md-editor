@@ -1379,16 +1379,26 @@ impl Shell {
 
         let status = container(
             row![
-                text(self.status.clone()).size(13).color(tokens.text_muted),
+                text(self.status.clone())
+                    .size(11)
+                    .font(fonts::MONO)
+                    .color(tokens.text_muted),
                 iced::widget::Space::new().width(Fill),
                 text(self.position_status.clone())
-                    .size(13)
+                    .size(11)
+                    .font(fonts::MONO)
                     .color(tokens.text_muted)
             ]
-            .width(Fill),
+            .width(Fill)
+            .align_y(iced::Alignment::Center),
         )
-        .padding([4, 10])
-        .width(Fill);
+        .padding([0, 14])
+        .height(26)
+        .width(Fill)
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(tokens.bg_chrome)),
+            ..container::Style::default()
+        });
 
         let base = column![
             self.command_spine(),
