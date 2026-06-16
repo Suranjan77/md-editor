@@ -279,7 +279,7 @@ impl Shell {
                         let path = md_vault::resolve_target(target)
                             .to_string_lossy()
                             .to_string();
-                        self.open_document(&path);
+                        let _ = self.open_document(&path);
                     }
                     None => {}
                 }

@@ -13,6 +13,7 @@ pub enum Icon {
     Folder,
     Forward,
     Help,
+    Image,
     ListTree,
     NewFolder,
     NewNote,
@@ -212,6 +213,23 @@ impl<Message> canvas::Program<Message> for IconCanvas {
                 if matches!(self.icon, Icon::ZoomIn) {
                     line(&mut frame, p(10.0, 6.5), p(10.0, 13.5), stroke);
                 }
+            }
+            Icon::Image => {
+                let path = canvas::Path::new(|b| {
+                    b.move_to(p(3.0, 5.0));
+                    b.line_to(p(21.0, 5.0));
+                    b.line_to(p(21.0, 19.0));
+                    b.line_to(p(3.0, 19.0));
+                    b.close();
+                });
+                frame.stroke(&path, stroke);
+                frame.stroke(&canvas::Path::circle(p(8.0, 9.0), 1.5 * scale), stroke);
+                let path2 = canvas::Path::new(|b| {
+                    b.move_to(p(3.0, 19.0));
+                    b.line_to(p(11.0, 12.0));
+                    b.line_to(p(21.0, 19.0));
+                });
+                frame.stroke(&path2, stroke);
             }
             Icon::Help => {
                 frame.stroke(&canvas::Path::circle(p(12.0, 12.0), 9.0 * scale), stroke);

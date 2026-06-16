@@ -79,7 +79,7 @@ fn vault() -> (TempDir, Shell) {
         Ok(k) => k,
         Err(e) => panic!("keymap: {e}"),
     };
-    let shell = Shell::new(registry, keymap, root.to_path_buf());
+    let shell = Shell::new(registry, keymap, root.to_path_buf()).0;
     (dir, shell)
 }
 

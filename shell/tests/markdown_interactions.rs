@@ -11,7 +11,7 @@ fn shell(root: &Path) -> Shell {
     }
     let registry = default_registry().unwrap();
     let keymap = registry.keymap().unwrap();
-    Shell::new(registry, keymap, root.to_path_buf())
+    Shell::new(registry, keymap, root.to_path_buf()).0
 }
 
 fn focused_path(shell: &Shell) -> String {

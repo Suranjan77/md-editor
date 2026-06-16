@@ -37,7 +37,13 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
             walk(root, &path, out);
         } else if path
             .extension()
-            .is_some_and(|ext| ext == "md" || ext == "pdf")
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                matches!(
+                    ext.to_lowercase().as_str(),
+                    "md" | "pdf" | "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp"
+                )
+            })
             && let Ok(rel) = path.strip_prefix(root)
         {
             out.push(rel.to_string_lossy().to_string());

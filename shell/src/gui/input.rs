@@ -23,54 +23,58 @@ impl Shell {
 
     fn editor_raw_input(&mut self, event: &keys::KeyEvent) {
         let reduce_motion = self.reduce_motion;
-        let Some(session) = self.focused_md_mut() else {
-            return;
-        };
-        let command = match event.chord {
-            Some(Chord { mods, key: _ }) if mods.ctrl || mods.alt || mods.meta => None,
-            Some(Chord { mods, key }) => {
-                let extend = mods.shift;
-                match key {
-                    Key::Enter => Some(Command::Insert("\n".to_string())),
-                    Key::Tab => Some(Command::TableTab { backward: extend }),
-                    Key::Backspace => Some(Command::DeleteBackward),
-                    Key::Delete => Some(Command::DeleteForward),
-                    Key::Up => Some(Command::Move {
-                        movement: Movement::Up,
-                        extend,
-                    }),
-                    Key::Down => Some(Command::Move {
-                        movement: Movement::Down,
-                        extend,
-                    }),
-                    Key::Left => Some(Command::Move {
-                        movement: Movement::Left,
-                        extend,
-                    }),
-                    Key::Right => Some(Command::Move {
-                        movement: Movement::Right,
-                        extend,
-                    }),
-                    Key::Home => Some(Command::Move {
-                        movement: Movement::Home,
-                        extend,
-                    }),
-                    Key::End => Some(Command::Move {
-                        movement: Movement::End,
-                        extend,
-                    }),
-                    Key::PageUp | Key::PageDown => {
-                        let direction = if key == Key::PageUp { -0.9 } else { 0.9 };
-                        session.scroll_by_animated(session.viewport_h * direction, reduce_motion);
-                        None
+        let mut applied_edit = false;
+        if let Some(session) = self.focused_md_mut() {
+            let command = match event.chord {
+                Some(Chord { mods, key: _ }) if mods.ctrl || mods.alt || mods.meta => None,
+                Some(Chord { mods, key }) => {
+                    let extend = mods.shift;
+                    match key {
+                        Key::Enter => Some(Command::Insert("\n".to_string())),
+                        Key::Tab => Some(Command::TableTab { backward: extend }),
+                        Key::Backspace => Some(Command::DeleteBackward),
+                        Key::Delete => Some(Command::DeleteForward),
+                        Key::Up => Some(Command::Move {
+                            movement: Movement::Up,
+                            extend,
+                        }),
+                        Key::Down => Some(Command::Move {
+                            movement: Movement::Down,
+                            extend,
+                        }),
+                        Key::Left => Some(Command::Move {
+                            movement: Movement::Left,
+                            extend,
+                        }),
+                        Key::Right => Some(Command::Move {
+                            movement: Movement::Right,
+                            extend,
+                        }),
+                        Key::Home => Some(Command::Move {
+                            movement: Movement::Home,
+                            extend,
+                        }),
+                        Key::End => Some(Command::Move {
+                            movement: Movement::End,
+                            extend,
+                        }),
+                        Key::PageUp | Key::PageDown => {
+                            let direction = if key == Key::PageUp { -0.9 } else { 0.9 };
+                            session.scroll_by_animated(session.viewport_h * direction, reduce_motion);
+                            None
+                        }
+                        _ => event.text.clone().map(Command::Insert),
                     }
-                    _ => event.text.clone().map(Command::Insert),
                 }
+                None => event.text.clone().map(Command::Insert),
+            };
+            if let Some(command) = command {
+                session.apply(command);
+                applied_edit = true;
             }
-            None => event.text.clone().map(Command::Insert),
-        };
-        if let Some(command) = command {
-            session.apply(command);
+        }
+        if applied_edit {
+            self.schedule_open_markdown_work();
         }
     }
 

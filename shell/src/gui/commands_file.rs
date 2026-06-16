@@ -163,7 +163,7 @@ impl Shell {
         let rel = rel.to_string_lossy().to_string();
         self.refresh_after_file_change();
         self.tree_selected = Some(rel.clone());
-        self.open_document(&rel);
+        let _ = self.open_document(&rel);
         self.status = format!("created {rel}");
     }
 
@@ -341,23 +341,29 @@ impl Shell {
         self.save_session();
     }
 
-    pub(super) fn open_document(&mut self, rel: &str) {
+    pub(super) fn open_document(&mut self, rel: &str) -> Task<Message> {
         let pane = self
             .ws
             .focused_pane()
             .unwrap_or_else(|| self.ws.panes.first_pane());
-        if self.open_document_in(pane, rel).is_some() {
+        let (tab_opt, task) = self.open_document_in(pane, rel);
+        if tab_opt.is_some() {
             if self.tree_open {
                 self.files = scan_vault(&self.vault_root);
             }
             self.save_session();
         }
+        task
     }
 
     /// Open `rel` as a tab of `pane`. Returns tab on success.
-    pub(super) fn open_document_in(&mut self, pane: PaneId, rel: &str) -> Option<TabId> {
+    pub(super) fn open_document_in(&mut self, pane: PaneId, rel: &str) -> (Option<TabId>, Task<Message>) {
         let kind = if rel.ends_with(".pdf") {
             EditorKind::Pdf
+        } else if std::path::Path::new(rel).extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+            matches!(ext.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp")
+        }) {
+            EditorKind::Image
         } else {
             EditorKind::Markdown
         };
@@ -365,27 +371,42 @@ impl Shell {
             Ok(tab) => tab,
             Err(error) => {
                 self.status = error.to_string();
-                return None;
+                return (None, Task::none());
             }
         };
-        let doc = self.tab_document(tab)?;
+        let doc = match self.tab_document(tab) {
+            Some(doc) => doc,
+            None => return (None, Task::none()),
+        };
         let abs = self.vault_root.join(rel);
         let worker = self.pdf_worker.clone();
+        
+        let mut task = Task::none();
         match kind {
             EditorKind::Markdown => {
-                if let std::collections::hash_map::Entry::Vacant(entry) =
+                if let std::collections::hash_map::Entry::Vacant(_entry) =
                     self.sessions.md.entry(doc)
                 {
-                    match std::fs::read_to_string(&abs) {
-                        Ok(text) => {
-                            entry.insert(MdSession::new(rel, &text, self.measurer.clone()));
-                        }
-                        Err(error) => {
-                            self.status = format!("open {rel}: {error}");
-                            let _ = self.ws.close_tab(tab);
-                            self.sessions.gc(&self.ws.docs);
-                            return None;
-                        }
+                    let measurer = self.measurer.clone();
+                    let rel_clone = rel.to_string();
+                    let abs_clone = abs.clone();
+                    
+                    if self.sync_file_loads {
+                        let text = std::fs::read_to_string(&abs_clone).unwrap_or_else(|e| format!("Error loading file: {}", e));
+                        let session = super::session::MdSession::new(&rel_clone, &text, measurer);
+                        _entry.insert(session);
+                    } else {
+                        task = iced::Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    let text = std::fs::read_to_string(&abs_clone).unwrap_or_else(|e| format!("Error loading file: {}", e));
+                                    super::session::MdSession::new(&rel_clone, &text, measurer)
+                                })
+                                .await
+                                .unwrap()
+                            },
+                            move |session| Message::MdSessionLoaded(doc, crate::gui::AsyncLoaded(std::sync::Arc::new(std::sync::Mutex::new(Some(session))))),
+                        );
                     }
                 }
             }
@@ -395,25 +416,45 @@ impl Shell {
                 if let (Some(store), Some(hash)) = (self.annotations.as_mut(), &hash) {
                     let _ = store.record_document(hash, rel);
                 }
-                let entry = self
-                    .sessions
-                    .pdf
-                    .entry(doc)
-                    .or_insert_with(|| PdfSession::new(rel));
-                entry.doc_hash = hash;
-                pdf_view::load_geometry(entry, &abs);
-                pdf_view::ensure_tiles(entry, &abs, worker.as_ref());
-                if let Some(store) = self.annotations.as_ref() {
-                    refresh_annotations(store, entry);
+                if let std::collections::hash_map::Entry::Vacant(_entry) =
+                    self.sessions.pdf.entry(doc)
+                {
+                    let rel_clone = rel.to_string();
+                    let abs_clone = abs.clone();
+                    let worker_clone = worker.clone();
+                    
+                    if self.sync_file_loads {
+                        let mut session = super::session::PdfSession::new(&rel_clone);
+                        session.doc_hash = hash.clone();
+                        super::pdf_view::load_geometry(&mut session, &abs_clone);
+                        super::pdf_view::ensure_tiles(&mut session, &abs_clone, worker_clone.as_ref());
+                        _entry.insert(session);
+                    } else {
+                        task = iced::Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    let mut session = super::session::PdfSession::new(&rel_clone);
+                                    session.doc_hash = hash;
+                                    super::pdf_view::load_geometry(&mut session, &abs_clone);
+                                    super::pdf_view::ensure_tiles(&mut session, &abs_clone, worker_clone.as_ref());
+                                    session
+                                })
+                                .await
+                                .unwrap()
+                            },
+                            move |session| Message::PdfSessionLoaded(doc, crate::gui::AsyncLoaded(std::sync::Arc::new(std::sync::Mutex::new(Some(session))))),
+                        );
+                    }
+                } else {
+                    if let Some(entry) = self.sessions.pdf.get_mut(&doc) {
+                        super::pdf_view::ensure_tiles(entry, &abs, worker.as_ref());
+                    }
                 }
             }
             _ => {}
         }
-        if matches!(kind, EditorKind::Markdown) {
-            self.schedule_open_markdown_work();
-        }
         self.sync_status();
-        Some(tab)
+        (Some(tab), task)
     }
 }
 
@@ -549,8 +590,8 @@ impl Shell {
         match message {
             Message::TreeFileClicked(rel_path) => {
                 self.tree_selected = Some(rel_path.clone());
-                self.open_document(&rel_path);
-                Task::none()
+                let task = self.open_document(&rel_path);
+                return task;
             }
             Message::TreeDirToggled(dir_path) => {
                 self.tree_selected = Some(dir_path.clone());
@@ -586,12 +627,13 @@ impl Shell {
                         .unwrap_or_else(|| self.ws.panes.first_pane());
                     match self.ws.panes.split(pane, SplitAxis::Horizontal) {
                         Ok(pane) => {
-                            let _ = self.open_document_in(pane, &path);
+                            let (_, task) = self.open_document_in(pane, &path);
+                            return task;
                         }
                         Err(error) => self.status = error.to_string(),
                     }
                 } else {
-                    self.open_document(&path);
+                    return self.open_document(&path);
                 }
                 Task::none()
             }

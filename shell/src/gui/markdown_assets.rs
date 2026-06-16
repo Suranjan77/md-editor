@@ -45,11 +45,13 @@ pub(super) fn jobs(session: &MdSession, document: &std::path::Path) -> Vec<PdfJo
     let mut jobs = Vec::new();
     for line in 0..session.doc.line_count() {
         if let Some(tex) = session.math_block_at(line) {
-            jobs.push(PdfJob::MarkdownMath {
-                document: document.to_path_buf(),
-                key: math_key(tex),
-                tex: tex.to_string(),
-            });
+            if !session.math_cache.contains_key(tex) {
+                jobs.push(PdfJob::MarkdownMath {
+                    document: document.to_path_buf(),
+                    key: math_key(tex),
+                    tex: tex.to_string(),
+                });
+            }
             continue;
         }
         if session.is_math_block_continuation(line) {
@@ -61,14 +63,18 @@ pub(super) fn jobs(session: &MdSession, document: &std::path::Path) -> Vec<PdfJo
         let chars = styled.display.chars().collect::<Vec<_>>();
         for span in styled.spans {
             match span.kind {
-                SpanKind::Image { url } => jobs.push(PdfJob::MarkdownImage {
-                    document: document.to_path_buf(),
-                    key: image_key(&url),
-                    abs_path: base_path.join(url),
-                }),
+                SpanKind::Image { url } => {
+                    if !session.image_cache.contains_key(&url) {
+                        jobs.push(PdfJob::MarkdownImage {
+                            document: document.to_path_buf(),
+                            key: image_key(&url),
+                            abs_path: base_path.join(url),
+                        });
+                    }
+                }
                 SpanKind::Math | SpanKind::MathContent => {
                     let tex = span_text(&chars, span.range);
-                    if !tex.is_empty() {
+                    if !tex.is_empty() && !session.math_cache.contains_key(&tex) {
                         jobs.push(PdfJob::MarkdownMath {
                             document: document.to_path_buf(),
                             key: math_key(&tex),

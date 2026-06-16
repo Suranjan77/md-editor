@@ -38,7 +38,7 @@ fn new_shell(root: &Path) -> Shell {
         keymap,
         root.to_path_buf(),
         root.join(".md-editor/tracker.db"),
-    )
+    ).0
 }
 
 #[test]

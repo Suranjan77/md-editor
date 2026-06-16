@@ -44,7 +44,7 @@ fn new_shell(root: &Path) -> Shell {
         Ok(k) => k,
         Err(e) => panic!("keymap: {e}"),
     };
-    Shell::new(registry, keymap, root.to_path_buf())
+    Shell::new(registry, keymap, root.to_path_buf()).0
 }
 
 fn open_via_quick_open(shell: &mut Shell, name: &str) {

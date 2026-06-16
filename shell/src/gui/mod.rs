@@ -251,6 +251,22 @@ pub enum Message {
     SettingsSave,
     SettingsCancel,
     AnimationTick(std::time::Instant),
+    MdSessionLoaded(DocumentId, AsyncLoaded<session::MdSession>),
+    PdfSessionLoaded(DocumentId, AsyncLoaded<session::PdfSession>),
+}
+
+pub struct AsyncLoaded<T>(pub std::sync::Arc<std::sync::Mutex<Option<T>>>);
+
+impl<T> Clone for AsyncLoaded<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> std::fmt::Debug for AsyncLoaded<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AsyncLoaded")
+    }
 }
 
 pub struct Shell {
@@ -302,10 +318,11 @@ pub struct Shell {
     next_toast_id: usize,
     theme_name: String,
     reduce_motion: bool,
+    pub sync_file_loads: bool,
 }
 
 impl Shell {
-    pub fn new(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> Shell {
+    pub fn new(registry: CommandRegistry, keymap: Keymap, vault_root: PathBuf) -> (Shell, Task<Message>) {
         let tracker_db_path = crate::paths::config_file("tracker.db");
         Self::new_with_tracker_db(registry, keymap, vault_root, tracker_db_path)
     }
@@ -315,7 +332,7 @@ impl Shell {
         keymap: Keymap,
         vault_root: PathBuf,
         tracker_db_path: PathBuf,
-    ) -> Shell {
+    ) -> (Shell, Task<Message>) {
         let measurer = shaped_measurer::ShapedMeasurer::new(std::sync::Arc::new(
             std::sync::Mutex::new(cosmic_text::FontSystem::new()),
         ));
@@ -382,12 +399,13 @@ impl Shell {
             next_toast_id: 0,
             theme_name: "dark".to_string(),
             reduce_motion: false,
+            sync_file_loads: false,
         };
-        shell.restore_session();
+        let task = shell.restore_session();
         if shell.tree_open {
             shell.files = scan_vault(&shell.vault_root);
         }
-        shell
+        (shell, task)
     }
 
     // ----- read-only access for tests and the view -------------------------
@@ -542,6 +560,25 @@ impl Shell {
             | Message::PdfMouseUp { .. }
             | Message::PdfWorkerReady(..)
             | Message::PdfWorker(..) => self.handle_pdf_message(message),
+            Message::MdSessionLoaded(doc, session) => {
+                if let Some(session) = session.0.lock().unwrap().take() {
+                    self.sessions.md.insert(doc, session);
+                    self.schedule_open_markdown_work();
+                }
+                Task::none()
+            }
+            Message::PdfSessionLoaded(doc, session) => {
+                if let Some(session) = session.0.lock().unwrap().take() {
+                    self.sessions.pdf.insert(doc, session);
+                    self.schedule_open_pdf_work();
+                    if let Some(store) = self.annotations.as_ref() {
+                        if let Some(entry) = self.sessions.pdf.get_mut(&doc) {
+                            stores::refresh_annotations(store, entry);
+                        }
+                    }
+                }
+                Task::none()
+            }
             Message::Ignored => Task::none(),
             Message::Key(ev) => self.on_key(ev),
             Message::RunCommand(command) => self.run_command(command),
@@ -906,7 +943,7 @@ impl Shell {
                     .map(|(p, _)| p.clone());
                 self.close_overlay();
                 if let Some(path) = picked {
-                    self.open_document(&path);
+                    return self.open_document(&path);
                 }
             }
             Overlay::Search { hits, selected, .. } => {
@@ -915,7 +952,7 @@ impl Shell {
                     .map(|h| h.path.to_string_lossy().to_string());
                 self.close_overlay();
                 if let Some(path) = picked {
-                    self.open_document(&path);
+                    return self.open_document(&path);
                 }
             }
             Overlay::Backlinks {
@@ -937,7 +974,7 @@ impl Shell {
                     .map(|(p, _)| p.clone());
                 self.close_overlay();
                 if let Some(path) = picked {
-                    self.open_document(&path);
+                    return self.open_document(&path);
                 }
             }
             Overlay::Find { input } => {
@@ -1173,6 +1210,10 @@ impl Shell {
                     icons::Icon::Folder
                 } else if row.rel_path.ends_with(".pdf") {
                     icons::Icon::Pdf
+                } else if std::path::Path::new(&row.rel_path).extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+                    matches!(ext.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp")
+                }) {
+                    icons::Icon::Image
                 } else {
                     icons::Icon::File
                 };

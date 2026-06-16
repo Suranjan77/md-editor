@@ -134,9 +134,10 @@ impl StartupWelcome {
         crate::vault_picker::record_recent(&root);
         let mut keymap = self.keymap.clone();
         let report = crate::settings::apply_keymap_overrides(&root, &self.registry, &mut keymap);
-        self.shell = Some(Shell::new(self.registry.clone(), keymap, root));
+        let (shell, task) = Shell::new(self.registry.clone(), keymap, root);
+        self.shell = Some(shell);
         self.message = report.warnings.join("\n");
-        Task::none()
+        task.map(StartupMessage::Shell)
     }
 
     fn view(&self) -> Element<'_, StartupMessage> {

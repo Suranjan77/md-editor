@@ -61,11 +61,13 @@ impl MdSession {
         session
     }
 
-    /// Apply an editor command and keep the caret on screen.
     pub fn apply(&mut self, command: Command) -> Damage {
         let (result, damage) = self.doc.apply(command);
         if result.selection_changed {
             self.caret_moved_at = std::time::Instant::now();
+        }
+        if !damage.repaint.is_empty() || damage.shifted_from.is_some() {
+            self.refresh_block_metadata();
         }
         self.scroll_caret_into_view();
         damage

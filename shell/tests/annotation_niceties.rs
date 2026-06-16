@@ -46,7 +46,9 @@ fn new_shell(root: &Path) -> Shell {
         Ok(k) => k,
         Err(e) => panic!("keymap: {e}"),
     };
-    Shell::new(registry, keymap, root.to_path_buf())
+    let mut shell = Shell::new(registry, keymap, root.to_path_buf()).0;
+    shell.sync_file_loads = true;
+    shell
 }
 
 fn open_via_quick_open(shell: &mut Shell, name: &str) {
@@ -78,7 +80,7 @@ fn vault_with_pdf() -> TempDir {
 /// Drop a selection into the focused PDF session (the canvas drag's end
 /// state), then `ctrl+h` persists and auto-picks it.
 fn highlight_injected_selection(shell: &mut Shell) {
-    match shell.focused_pdf_session_mut() {
+    println!("ws: {:?}", shell.workspace()); match shell.focused_pdf_session_mut() {
         Some(session) => {
             session.selection = Some(PdfSelection {
                 page: 0,
@@ -115,7 +117,7 @@ fn copy_reports_the_copied_length() {
     let dir = vault_with_pdf();
     let mut shell = new_shell(dir.path());
     open_via_quick_open(&mut shell, "paper.pdf");
-    match shell.focused_pdf_session_mut() {
+    println!("ws: {:?}", shell.workspace()); match shell.focused_pdf_session_mut() {
         Some(session) => {
             session.selection = Some(PdfSelection {
                 page: 0,

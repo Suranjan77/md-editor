@@ -94,12 +94,16 @@ fn wrapped_checkbox_stays_within_its_measured_height() {
     let long = "- [ ] this is a very long checkbox item that should certainly wrap \
                 across more than one visual row in a narrow editor pane width";
     let mut s = session(&format!("intro\n{long}\ntail"));
-    s.doc.set_wrap_width(280.0);
+    // The doc's wrap_width must equal content_width(viewport_width) — the same
+    // identity the real app maintains in `set_viewport`.  MIN_PAGE_MARGIN is
+    // 40 px per side, so viewport = wrap + 80.
+    let wrap = 280.0_f32;
+    s.doc.set_wrap_width(wrap as f64);
     s.doc.remeasure();
     // Reveal the checkbox line (prefix shown) — the harshest wrap case.
     s.doc.apply(Command::SetCursor { line: 1, col: 8 });
 
-    let width = 280.0 + 56.0;
+    let width = wrap + 80.0; // 2 × MIN_PAGE_MARGIN
     for idx in 0..s.doc.line_count() {
         let styled = s.doc.styled_line(idx).unwrap();
         let top = s.doc.layout().offset_of(idx).unwrap() as f32;

@@ -19,7 +19,7 @@ fn shell(root: &Path) -> Shell {
         Ok(keymap) => keymap,
         Err(e) => panic!("keymap: {e}"),
     };
-    Shell::new(registry, keymap, root.to_path_buf())
+    Shell::new(registry, keymap, root.to_path_buf()).0
 }
 
 fn press(shell: &mut Shell, chord: &str) {

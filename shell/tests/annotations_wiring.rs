@@ -47,7 +47,9 @@ fn new_shell(root: &Path) -> Shell {
         Ok(k) => k,
         Err(e) => panic!("keymap: {e}"),
     };
-    Shell::new(registry, keymap, root.to_path_buf())
+    let mut shell = Shell::new(registry, keymap, root.to_path_buf()).0;
+    shell.sync_file_loads = true;
+    shell
 }
 
 fn open_via_quick_open(shell: &mut Shell, name: &str) {

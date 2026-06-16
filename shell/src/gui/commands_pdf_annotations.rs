@@ -152,7 +152,7 @@ impl Shell {
         match store.set_linked_note(id, &rel) {
             Ok(()) => {
                 refresh_annotations(store, session);
-                self.open_document(&rel);
+                let _ = self.open_document(&rel);
                 self.status = format!("linked note {rel}");
             }
             Err(error) => self.status = format!("linked note failed: {error}"),

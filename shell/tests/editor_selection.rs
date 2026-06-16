@@ -11,7 +11,7 @@ use md_shell::gui::{Message, Shell};
 fn new_shell(root: &Path) -> Shell {
     let registry = default_registry().unwrap();
     let keymap = registry.keymap().unwrap();
-    Shell::new(registry, keymap, root.to_path_buf())
+    let mut s = Shell::new(registry, keymap, root.to_path_buf()).0; s.sync_file_loads = true; s
 }
 
 fn open(content: &str) -> (TempDir, Shell) {

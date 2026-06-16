@@ -217,6 +217,16 @@ impl Shell {
                         Some(session) => pdf_view::view(session, tab.id, tokens),
                         None => missing_session(tokens),
                     },
+                    EditorKind::Image => {
+                        if let Some(doc) = self.ws.docs.get(tab.document) {
+                            let path = self.vault_root.join(&doc.path);
+                            container(iced::widget::image(path).content_fit(iced::ContentFit::Contain))
+                                .center(Fill)
+                                .into()
+                        } else {
+                            missing_session(tokens)
+                        }
+                    }
                     _ => container(text("unsupported editor kind").color(tokens.text_muted))
                         .center(Fill)
                         .into(),

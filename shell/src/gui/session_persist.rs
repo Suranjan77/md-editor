@@ -128,19 +128,19 @@ impl Shell {
         }
     }
 
-    pub(super) fn restore_session(&mut self) {
+    pub(super) fn restore_session(&mut self) -> Task<Message> {
         self.ensure_session_store();
         let Some(json) = self.session.as_ref().and_then(|s| s.load().ok().flatten()) else {
-            return;
+            return Task::none();
         };
         let Ok(snap) = serde_json::from_str::<SessionSnapshot>(&json) else {
             self.status = "saved session was unreadable — starting fresh".to_string();
-            return;
+            return Task::none();
         };
 
         let root_pane = self.ws.panes.first_pane();
         let mut focus = None;
-        self.restore_node(&snap.layout, root_pane, &mut focus);
+        let task = self.restore_node(&snap.layout, root_pane, &mut focus);
         self.ws.panes.collapse_empty_panes();
 
         let root = self.vault_root.clone();
@@ -207,9 +207,11 @@ impl Shell {
         {
             self.status = format!("resumed at p. {}/{}", s.current_page() + 1, s.page_count());
         }
+        task
     }
 
-    fn restore_node(&mut self, node: &NodeSnapshot, pane: PaneId, focus: &mut Option<TabId>) {
+    fn restore_node(&mut self, node: &NodeSnapshot, pane: PaneId, focus: &mut Option<TabId>) -> Task<Message> {
+        let mut tasks = Vec::new();
         match node {
             NodeSnapshot::Pane { tabs, active } => {
                 let mut opened = Vec::new();
@@ -217,9 +219,11 @@ impl Shell {
                     if !self.vault_root.join(&t.path).exists() {
                         continue;
                     }
-                    if let Some(id) = self.open_document_in(pane, &t.path) {
+                    let (id_opt, task) = self.open_document_in(pane, &t.path);
+                    if let Some(id) = id_opt {
                         opened.push((id, t.focused));
                     }
+                    tasks.push(task);
                 }
                 if let Some(&(id, _)) = opened.get((*active).min(opened.len().saturating_sub(1))) {
                     let _ = self.ws.panes.set_active_tab(pane, id);
@@ -241,15 +245,16 @@ impl Shell {
                 };
                 match self.ws.panes.split_with_ratio(pane, axis, *ratio) {
                     Ok(sibling) => {
-                        self.restore_node(first, pane, focus);
-                        self.restore_node(second, sibling, focus);
+                        tasks.push(self.restore_node(first, pane, focus));
+                        tasks.push(self.restore_node(second, sibling, focus));
                     }
                     Err(_) => {
-                        self.restore_node(first, pane, focus);
-                        self.restore_node(second, pane, focus);
+                        tasks.push(self.restore_node(first, pane, focus));
+                        tasks.push(self.restore_node(second, pane, focus));
                     }
                 }
             }
         }
+        Task::batch(tasks)
     }
 }
