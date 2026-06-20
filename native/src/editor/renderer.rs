@@ -22,6 +22,26 @@ const BASE_LINE_HEIGHT: f32 = 36.0;
 const IMAGE_HEIGHT: f32 = 280.0;
 const HORIZONTAL_SCROLLBAR_GUTTER: f32 = 16.0;
 
+/// Maximum width of the editor's content column. On wider viewports the
+/// content is centered with automatic side margins, like a web reader,
+/// instead of stretching edge to edge.
+const MAX_CONTENT_WIDTH: f32 = 880.0;
+
+/// Returns the centered content rectangle for a raw widget bounds. When the
+/// widget is wider than [`MAX_CONTENT_WIDTH`] the content column is capped and
+/// horizontally centered, leaving equal auto margins on each side. All
+/// horizontal layout/hit-testing derives from this rectangle, so callers can
+/// treat it as the editor's effective bounds.
+fn content_bounds(raw: Rectangle) -> Rectangle {
+    let width = raw.width.min(MAX_CONTENT_WIDTH);
+    let inset = ((raw.width - width) / 2.0).max(0.0);
+    Rectangle {
+        x: raw.x + inset,
+        width,
+        ..raw
+    }
+}
+
 // ── Widget ───────────────────────────────────────────────────────────
 
 pub struct Editor<'a, Message> {
@@ -931,7 +951,7 @@ where
         let state = _tree.state.downcast_mut::<State>();
         let focused = state.is_focused;
         let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
-        let max_width = limits.max().width;
+        let max_width = limits.max().width.min(MAX_CONTENT_WIDTH);
 
         // ── Populate height tree ─────────────────────────────────────────
         let n = self.lines.len();
@@ -1027,7 +1047,7 @@ where
         _cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        let bounds = layout.bounds();
+        let bounds = content_bounds(layout.bounds());
         let state = _state.state.downcast_ref::<State>();
         let focused = state.is_focused;
 
@@ -2246,13 +2266,14 @@ where
         _viewport: &Rectangle,
     ) {
         let state = _tree.state.downcast_mut::<State>();
+        let bounds = content_bounds(_layout.bounds());
 
         match event {
             // ── mouse click ──────────────────────────────────────
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if let Some(pos) = _cursor.position_in(_layout.bounds()) {
+                if let Some(pos) = _cursor.position_in(bounds) {
                     if let Some(drag) =
-                        self.horizontal_scrollbar_hit::<R>(pos, _layout.bounds().width, state)
+                        self.horizontal_scrollbar_hit::<R>(pos, bounds.width, state)
                     {
                         state.horizontal_scroll_drag = Some(drag);
                         state.is_dragging = false;
@@ -2264,7 +2285,7 @@ where
                         self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
                     let (line_idx, col) = self.hit_test::<R>(
                         pos,
-                        _layout.bounds().width,
+                        bounds.width,
                         active_block_id,
                         state.is_focused,
                         state,
@@ -2324,12 +2345,12 @@ where
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) if state.is_dragging => {
-                if let Some(pos) = _cursor.position_in(_layout.bounds()) {
+                if let Some(pos) = _cursor.position_in(bounds) {
                     let active_block_id =
                         self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
                     let (line_idx, col) = self.hit_test::<R>(
                         pos,
-                        _layout.bounds().width,
+                        bounds.width,
                         active_block_id,
                         state.is_focused,
                         state,
@@ -2349,7 +2370,7 @@ where
                 if state.horizontal_scroll_drag.is_some() =>
             {
                 if let (Some(pos), Some(drag)) = (
-                    _cursor.position_in(_layout.bounds()),
+                    _cursor.position_in(bounds),
                     state.horizontal_scroll_drag,
                 ) {
                     let track_w = drag.viewport_w.max(1.0);
@@ -2371,12 +2392,12 @@ where
                 state.horizontal_scroll_drag = None;
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                let Some(pos) = _cursor.position_in(_layout.bounds()) else {
+                let Some(pos) = _cursor.position_in(bounds) else {
                     return;
                 };
                 let Some(block_id) = self.block_at_y::<R>(
                     pos.y,
-                    _layout.bounds().width,
+                    bounds.width,
                     self.lines.get(self.buffer.cursor_line).map(|l| l.block_id),
                     state.is_focused,
                     state,
@@ -2389,7 +2410,7 @@ where
                     block_table = first_line.is_table_row;
                     block_math = first_line.is_math_block;
                 }
-                let available_w = _layout.bounds().width - TEXT_X_OFFSET - MARGIN_RIGHT;
+                let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
                 let viewport_w = if block_table {
                     available_w
                 } else if block_math {
@@ -2400,7 +2421,7 @@ where
                 .max(80.0);
                 let content_w = self.block_content_width::<R>(
                     block_id,
-                    _layout.bounds().width,
+                    bounds.width,
                     state.is_focused,
                 );
                 let max_scroll = (content_w - viewport_w).max(0.0);
@@ -2487,7 +2508,7 @@ where
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
                         let (new_line, new_col) =
-                            self.move_visual::<R>(state, -1.0, _layout.bounds().width);
+                            self.move_visual::<R>(state, -1.0, bounds.width);
                         if modifiers.shift() {
                             let (a_l, a_c) = state
                                 .selection_anchor
@@ -2513,7 +2534,7 @@ where
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
                         let (new_line, new_col) =
-                            self.move_visual::<R>(state, 1.0, _layout.bounds().width);
+                            self.move_visual::<R>(state, 1.0, bounds.width);
                         if modifiers.shift() {
                             let (a_l, a_c) = state
                                 .selection_anchor
@@ -2667,9 +2688,10 @@ where
         _renderer: &R,
     ) -> mouse::Interaction {
         let state = _state.state.downcast_ref::<State>();
-        if let Some(pos) = cursor.position_in(layout.bounds()) {
+        let bounds = content_bounds(layout.bounds());
+        if let Some(pos) = cursor.position_in(bounds) {
             if self
-                .horizontal_scrollbar_hit::<R>(pos, layout.bounds().width, state)
+                .horizontal_scrollbar_hit::<R>(pos, bounds.width, state)
                 .is_some()
             {
                 return mouse::Interaction::Pointer;
