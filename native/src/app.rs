@@ -14,7 +14,6 @@ use crate::pdf_notes::{
     append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path,
     note_filename_from_path, slug_fragment,
 };
-use crate::search::DocumentMatch;
 use crate::theme as app_theme;
 use crate::views;
 use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
@@ -94,17 +93,6 @@ fn pdf_placeholder_display_size_from(
         .unwrap_or((612.0 * zoom, 792.0 * zoom))
 }
 
-/// Identity of a computed in-document match set. When any component changes
-/// the cached matches are stale and must be rebuilt.
-#[derive(Clone, PartialEq, Eq)]
-struct DocMatchKey {
-    buffer_revision: u64,
-    query: String,
-    regex: bool,
-    match_case: bool,
-    active_path: Option<String>,
-}
-
 fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
     if start >= end {
         return String::new();
@@ -176,24 +164,11 @@ pub struct MdEditor {
     // Toast
     toast: Option<String>,
 
-    // Search
-    search_visible: bool,
-    file_search_visible: bool,
-    search_query: String,
-    search_replace: String,
-    search_regex: bool,
-    search_match_case: bool,
-    search_match_index: Option<usize>,
-    // Cache of in-document search matches. Recomputing scans the whole buffer
-    // (one String allocation per line), so we memoize it and only rebuild when
-    // the buffer or search parameters change — view() reads this every frame.
-    doc_match_cache: Vec<DocumentMatch>,
-    doc_match_key: Option<DocMatchKey>,
+    // Search (query/replace, vault + PDF results, in-document match cache)
+    search: crate::search_state::SearchState,
+    // Editor buffer revision; bumped on every text change. Owned by the editor
+    // side, read by SearchState to invalidate its match cache.
     buffer_revision: u64,
-    search_results: Vec<md_editor_core::types::SearchResult>,
-    pdf_search_results: Vec<md_editor_core::pdf::PdfSearchMatch>,
-    pdf_search_indices_by_page: std::collections::HashMap<u16, Vec<usize>>,
-    pdf_search_error: Option<String>,
 
     // TOC
     toc_visible: bool,
@@ -275,20 +250,8 @@ impl MdEditor {
             command_palette_query: String::new(),
             commands: views::command_palette::get_commands(),
             toast: None,
-            search_visible: false,
-            file_search_visible: false,
-            search_query: String::new(),
-            search_replace: String::new(),
-            search_regex: false,
-            search_match_case: false,
-            search_match_index: None,
-            doc_match_cache: Vec::new(),
-            doc_match_key: None,
+            search: crate::search_state::SearchState::new(),
             buffer_revision: 0,
-            search_results: Vec::new(),
-            pdf_search_results: Vec::new(),
-            pdf_search_indices_by_page: std::collections::HashMap::new(),
-            pdf_search_error: None,
             toc_visible: false,
             toc_entries: Vec::new(),
             image_cache: std::collections::HashMap::new(),
@@ -457,7 +420,11 @@ impl MdEditor {
         let task = self.update_inner(message);
         // Refresh the memoized search-match cache once per message so the
         // subsequent view() can read it without rescanning the buffer.
-        self.ensure_doc_matches();
+        self.search.ensure_matches(
+            &self.buffer,
+            self.active_path.as_deref(),
+            self.buffer_revision,
+        );
         task
     }
 
@@ -1356,50 +1323,50 @@ impl MdEditor {
                 | Message::TrackerSessionDelete(_)) => self.tracker.update(m, &self.state),
 
             Message::GlobalSearchOpen => {
-                self.search_visible = true;
-                if self.active_pdf_path.is_some() && !self.search_query.trim().is_empty() {
+                self.search.visible = true;
+                if self.active_pdf_path.is_some() && !self.search.query.trim().is_empty() {
                     Task::batch(vec![self.search_pdf(), focus_global_search_input()])
                 } else {
                     focus_global_search_input()
                 }
             }
             Message::SearchClose => {
-                self.search_visible = false;
-                self.file_search_visible = false;
+                self.search.visible = false;
+                self.search.file_visible = false;
                 self.restore_scroll_positions()
             }
             Message::SearchQueryChanged(q) => {
-                self.search_query = q.clone();
-                self.search_match_index = None;
-                self.pdf_search_error = None;
-                if q.len() > 2 && !self.search_regex {
+                self.search.query = q.clone();
+                self.search.match_index = None;
+                self.search.pdf_error = None;
+                if q.len() > 2 && !self.search.regex {
                     if let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q) {
-                        self.search_results = res;
+                        self.search.results = res;
                     }
                 } else {
-                    self.search_results.clear();
+                    self.search.results.clear();
                 }
-                if (self.search_visible || self.pdf_search_is_active())
+                if (self.search.visible || self.pdf_search_is_active())
                     && self.active_pdf_path.is_some()
                     && q.len() > 1
                 {
                     self.search_pdf()
                 } else {
-                    self.pdf_search_results.clear();
-                    self.pdf_search_indices_by_page.clear();
+                    self.search.pdf_results.clear();
+                    self.search.pdf_indices_by_page.clear();
                     Task::none()
                 }
             }
             Message::SearchReplaceChanged(replace) => {
-                self.search_replace = replace;
+                self.search.replace = replace;
                 Task::none()
             }
             Message::SearchRegexToggled(value) => {
-                self.search_regex = value;
-                self.search_match_index = None;
-                if (self.search_visible || self.pdf_search_is_active())
+                self.search.regex = value;
+                self.search.match_index = None;
+                if (self.search.visible || self.pdf_search_is_active())
                     && self.active_pdf_path.is_some()
-                    && self.search_query.len() > 1
+                    && self.search.query.len() > 1
                 {
                     self.search_pdf()
                 } else {
@@ -1407,11 +1374,11 @@ impl MdEditor {
                 }
             }
             Message::SearchMatchCaseToggled(value) => {
-                self.search_match_case = value;
-                self.search_match_index = None;
-                if (self.search_visible || self.pdf_search_is_active())
+                self.search.match_case = value;
+                self.search.match_index = None;
+                if (self.search.visible || self.pdf_search_is_active())
                     && self.active_pdf_path.is_some()
-                    && self.search_query.len() > 1
+                    && self.search.query.len() > 1
                 {
                     self.search_pdf()
                 } else {
@@ -1447,17 +1414,18 @@ impl MdEditor {
                 }
             },
             Message::PdfSearchResult(Ok(results)) => {
-                self.pdf_search_error = None;
-                self.pdf_search_results = results;
-                self.rebuild_pdf_search_page_index();
+                self.search.pdf_error = None;
+                self.search.pdf_results = results;
+                self.search.rebuild_pdf_page_index();
                 if self
-                    .search_match_index
-                    .is_some_and(|index| index >= self.pdf_search_results.len())
+                    .search
+                    .match_index
+                    .is_some_and(|index| index >= self.search.pdf_results.len())
                 {
-                    self.search_match_index = None;
+                    self.search.match_index = None;
                 }
-                if self.pdf_search_is_active() && !self.pdf_search_results.is_empty() {
-                    if let Some(index) = self.search_match_index {
+                if self.pdf_search_is_active() && !self.search.pdf_results.is_empty() {
+                    if let Some(index) = self.search.match_index {
                         self.navigate_pdf_search_to_index(index)
                     } else {
                         Task::none()
@@ -1467,20 +1435,21 @@ impl MdEditor {
                 }
             }
             Message::PdfSearchResult(Err(err)) => {
-                self.pdf_search_results.clear();
-                self.pdf_search_indices_by_page.clear();
-                self.pdf_search_error = Some(err);
+                self.search.pdf_results.clear();
+                self.search.pdf_indices_by_page.clear();
+                self.search.pdf_error = Some(err);
                 Task::none()
             }
             Message::PdfSearchResultClicked(page) => {
-                self.search_visible = false;
-                self.file_search_visible = true;
+                self.search.visible = false;
+                self.search.file_visible = true;
                 self.active_panel = ActivePanel::Pdf;
-                self.search_match_index = self
-                    .pdf_search_results
+                self.search.match_index = self
+                    .search
+                    .pdf_results
                     .iter()
                     .position(|result| result.page_index == page);
-                if let Some(index) = self.search_match_index {
+                if let Some(index) = self.search.match_index {
                     self.navigate_pdf_search_to_index(index)
                 } else {
                     self.pdf_current_page = page.min(self.pdf_total_pages.saturating_sub(1));
@@ -1494,8 +1463,8 @@ impl MdEditor {
                     || (self.split_view_active
                         && self.active_path.is_some()
                         && self.active_panel != ActivePanel::Pdf)
-                    || self.search_visible
-                    || self.file_search_visible
+                    || self.search.visible
+                    || self.search.file_visible
                     || self.active_modal.is_some()
                     || self.command_palette_visible
                 {
@@ -1799,7 +1768,7 @@ impl MdEditor {
                 }
             }
             Message::SearchResultClicked(path) => {
-                self.search_visible = false;
+                self.search.visible = false;
                 self.open_file(&path)
             }
 
@@ -1827,11 +1796,11 @@ impl MdEditor {
                             self.link_note_picker_search.clear();
                         } else if self.tracker.visible {
                             self.tracker.hide();
-                        } else if self.file_search_visible {
-                            self.file_search_visible = false;
+                        } else if self.search.file_visible {
+                            self.search.file_visible = false;
                             return self.restore_scroll_positions();
-                        } else if self.search_visible {
-                            self.search_visible = false;
+                        } else if self.search.visible {
+                            self.search.visible = false;
                             return self.restore_scroll_positions();
                         } else if self.command_palette_visible {
                             self.command_palette_visible = false;
@@ -1849,12 +1818,12 @@ impl MdEditor {
                     Shortcut::NewFile => Task::done(Message::CreateFileDialog),
                     Shortcut::Search => {
                         if self.split_view_active && self.active_path.is_some() {
-                            self.file_search_visible = true;
-                            self.search_visible = false;
+                            self.search.file_visible = true;
+                            self.search.visible = false;
                             if self.active_panel == ActivePanel::Pdf
                                 && self.active_pdf_path.is_some()
                             {
-                                if !self.search_query.trim().is_empty() {
+                                if !self.search.query.trim().is_empty() {
                                     return Task::batch(vec![
                                         self.search_pdf(),
                                         focus_pdf_search_input(),
@@ -1866,17 +1835,17 @@ impl MdEditor {
                                     self.restore_scroll_positions(),
                                 ])
                             } else {
-                                self.pdf_search_results.clear();
-                                self.pdf_search_indices_by_page.clear();
+                                self.search.pdf_results.clear();
+                                self.search.pdf_indices_by_page.clear();
                                 Task::batch(vec![
                                     focus_file_search_input(),
                                     self.restore_scroll_positions(),
                                 ])
                             }
                         } else if self.active_pdf_path.is_some() && self.showing_pdf {
-                            self.file_search_visible = true;
-                            self.search_visible = false;
-                            if !self.search_query.trim().is_empty() {
+                            self.search.file_visible = true;
+                            self.search.visible = false;
+                            if !self.search.query.trim().is_empty() {
                                 return Task::batch(vec![
                                     self.search_pdf(),
                                     focus_pdf_search_input(),
@@ -1888,14 +1857,14 @@ impl MdEditor {
                                 self.restore_scroll_positions(),
                             ])
                         } else if self.active_path.is_some() {
-                            self.file_search_visible = true;
-                            self.search_visible = false;
+                            self.search.file_visible = true;
+                            self.search.visible = false;
                             Task::batch(vec![
                                 focus_file_search_input(),
                                 self.restore_scroll_positions(),
                             ])
                         } else {
-                            self.search_visible = true;
+                            self.search.visible = true;
                             focus_global_search_input()
                         }
                     }
@@ -2026,12 +1995,12 @@ impl MdEditor {
         let pdf_search_active = self.pdf_search_is_active();
 
         let active_search_match = if editor_search_active {
-            self.active_search_match_position()
+            self.search.active_match_position()
         } else {
             None
         };
         let editor_search_query = if editor_search_active {
-            self.search_query.as_str()
+            self.search.query.as_str()
         } else {
             ""
         };
@@ -2049,8 +2018,8 @@ impl MdEditor {
                 )
                 .search(
                     editor_search_query,
-                    self.search_regex,
-                    self.search_match_case,
+                    self.search.regex,
+                    self.search.match_case,
                     active_search_match,
                 ),
             )
@@ -2068,12 +2037,12 @@ impl MdEditor {
         let editor_view: Element<Message, Theme, iced::Renderer> = {
             let file_bar: Element<'_, Message, Theme, iced::Renderer> = if editor_search_active {
                 views::search::file_bar(
-                    &self.search_query,
-                    &self.search_replace,
-                    self.search_regex,
-                    self.search_match_case,
-                    self.current_document_match_count(),
-                    self.search_match_index,
+                    &self.search.query,
+                    &self.search.replace,
+                    self.search.regex,
+                    self.search.match_case,
+                    self.search.match_count(),
+                    self.search.match_index,
                 )
                 .into()
             } else {
@@ -2107,13 +2076,13 @@ impl MdEditor {
                     &self.pdf_dimensions,
                     &self.pdf_page_sizes,
                     self.pdf_placeholder_page_size,
-                    if pdf_search_active || self.search_visible || self.file_search_visible {
-                        &self.pdf_search_results
+                    if pdf_search_active || self.search.visible || self.search.file_visible {
+                        &self.search.pdf_results
                     } else {
                         &[]
                     },
-                    &self.pdf_search_indices_by_page,
-                    self.search_match_index,
+                    &self.search.pdf_indices_by_page,
+                    self.search.match_index,
                     &self.pdf_page_text,
                     &self.pdf_annotations,
                     self.pdf_selection,
@@ -2128,11 +2097,11 @@ impl MdEditor {
 
                 let search_bar: Element<'_, Message, Theme, iced::Renderer> = if pdf_search_active {
                     views::pdf_viewer::search_bar(
-                        &self.search_query,
-                        self.search_regex,
-                        self.search_match_case,
-                        self.pdf_search_results.len(),
-                        self.search_match_index,
+                        &self.search.query,
+                        self.search.regex,
+                        self.search.match_case,
+                        self.search.pdf_results.len(),
+                        self.search.match_index,
                     )
                     .into()
                 } else {
@@ -2250,17 +2219,17 @@ impl MdEditor {
                 .into(),
         ];
 
-        if self.search_visible {
+        if self.search.visible {
             layers.push(
                 container(views::search::view(
-                    &self.search_query,
-                    &self.search_replace,
-                    self.search_regex,
-                    self.search_match_case,
-                    self.current_document_match_count(),
-                    &self.search_results,
-                    &self.pdf_search_results,
-                    self.pdf_search_error.as_deref(),
+                    &self.search.query,
+                    &self.search.replace,
+                    self.search.regex,
+                    self.search.match_case,
+                    self.search.match_count(),
+                    &self.search.results,
+                    &self.search.pdf_results,
+                    self.search.pdf_error.as_deref(),
                     true,
                 ))
                 .width(Length::Fill)
@@ -2478,9 +2447,9 @@ impl MdEditor {
         self.pdf_pending_pages.clear();
         self.pdf_pending_links.clear();
         self.pdf_page_links.clear();
-        self.pdf_search_results.clear();
-        self.pdf_search_indices_by_page.clear();
-        self.pdf_search_error = None;
+        self.search.pdf_results.clear();
+        self.search.pdf_indices_by_page.clear();
+        self.search.pdf_error = None;
         self.pdf_programmatic_scroll = false;
         self.pdf_toc_target_page = None;
         self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
@@ -3015,87 +2984,27 @@ impl MdEditor {
         )
     }
 
-    fn current_document_match_count(&self) -> usize {
-        self.doc_match_cache.len()
-    }
-
-    fn active_search_match_position(&self) -> Option<(usize, usize)> {
-        let matches = &self.doc_match_cache;
-        let index = self.search_match_index?;
-        matches
-            .get(index.min(matches.len().saturating_sub(1)))
-            .map(|m| (m.line, m.start_col))
-    }
-
-    /// Return the cached in-document matches, rebuilding only when the buffer
-    /// or search parameters have changed since the last computation. Called
-    /// once per `update` so `view` can read [`Self::doc_match_cache`] cheaply.
-    fn ensure_doc_matches(&mut self) {
-        let key = DocMatchKey {
-            buffer_revision: self.buffer_revision,
-            query: self.search_query.clone(),
-            regex: self.search_regex,
-            match_case: self.search_match_case,
-            active_path: self.active_path.clone(),
-        };
-        if self.doc_match_key.as_ref() == Some(&key) {
-            return;
-        }
-
-        self.doc_match_cache = self.compute_document_matches();
-        self.doc_match_key = Some(key);
-    }
-
-    fn compute_document_matches(&self) -> Vec<DocumentMatch> {
-        if self.search_query.is_empty() || self.active_path.is_none() {
-            return Vec::new();
-        }
-
-        (0..self.buffer.line_count())
-            .flat_map(|line| {
-                let text = self.buffer.line_text(line);
-                crate::search::line_matches(
-                    &text,
-                    &self.search_query,
-                    self.search_regex,
-                    self.search_match_case,
-                )
-                .into_iter()
-                .map(move |line_match| DocumentMatch {
-                    line,
-                    start_col: line_match.start_col,
-                    end_col: line_match.end_col,
-                })
-            })
-            .collect()
-    }
-
-    fn rebuild_pdf_search_page_index(&mut self) {
-        self.pdf_search_indices_by_page.clear();
-        for (idx, result) in self.pdf_search_results.iter().enumerate() {
-            self.pdf_search_indices_by_page
-                .entry(result.page_index)
-                .or_default()
-                .push(idx);
-        }
-    }
 
     fn navigate_file_search(&mut self, forward: bool) -> Task<Message> {
-        self.ensure_doc_matches();
-        let matches = self.doc_match_cache.clone();
+        self.search.ensure_matches(
+            &self.buffer,
+            self.active_path.as_deref(),
+            self.buffer_revision,
+        );
+        let matches = self.search.matches().to_vec();
         if matches.is_empty() {
-            self.search_match_index = None;
+            self.search.match_index = None;
             return Task::none();
         }
 
-        let next_index = match self.search_match_index {
+        let next_index = match self.search.match_index {
             Some(index) if forward => (index + 1) % matches.len(),
             Some(0) if !forward => matches.len() - 1,
             Some(index) => index.saturating_sub(1),
             None if forward => 0,
             None => matches.len() - 1,
         };
-        self.search_match_index = Some(next_index);
+        self.search.match_index = Some(next_index);
         let item = matches[next_index];
         self.buffer.execute(EditorCommand::SetSelection {
             anchor_line: item.line,
@@ -3107,28 +3016,28 @@ impl MdEditor {
     }
 
     fn navigate_pdf_search(&mut self, forward: bool) -> Task<Message> {
-        if self.pdf_search_results.is_empty() {
-            self.search_match_index = None;
+        if self.search.pdf_results.is_empty() {
+            self.search.match_index = None;
             return Task::none();
         }
 
-        let next_index = match self.search_match_index {
-            Some(index) if forward => (index + 1) % self.pdf_search_results.len(),
-            Some(0) if !forward => self.pdf_search_results.len() - 1,
+        let next_index = match self.search.match_index {
+            Some(index) if forward => (index + 1) % self.search.pdf_results.len(),
+            Some(0) if !forward => self.search.pdf_results.len() - 1,
             Some(index) => index.saturating_sub(1),
             None if forward => 0,
-            None => self.pdf_search_results.len() - 1,
+            None => self.search.pdf_results.len() - 1,
         };
         self.navigate_pdf_search_to_index(next_index)
     }
 
     fn navigate_pdf_search_to_index(&mut self, index: usize) -> Task<Message> {
-        let Some(result) = self.pdf_search_results.get(index).cloned() else {
-            self.search_match_index = None;
+        let Some(result) = self.search.pdf_results.get(index).cloned() else {
+            self.search.match_index = None;
             return Task::none();
         };
 
-        self.search_match_index = Some(index);
+        self.search.match_index = Some(index);
         let target_page = result
             .page_index
             .min(self.pdf_total_pages.saturating_sub(1));
@@ -3218,7 +3127,7 @@ impl MdEditor {
 
     fn estimated_editor_viewport_height(&self) -> f32 {
         let mut height = self.window_height - 48.0; // toolbar ~48px
-        if self.file_search_visible && self.active_path.is_some() {
+        if self.search.file_visible && self.active_path.is_some() {
             height -= 40.0; // search bar ~40px
         }
         height.max(200.0)
@@ -3260,7 +3169,7 @@ impl MdEditor {
     }
 
     fn pdf_search_is_active(&self) -> bool {
-        self.file_search_visible
+        self.search.file_visible
             && self.active_pdf_path.is_some()
             && (self.showing_pdf
                 || (self.split_view_active
@@ -3269,7 +3178,7 @@ impl MdEditor {
     }
 
     fn editor_search_is_active(&self) -> bool {
-        self.file_search_visible
+        self.search.file_visible
             && self.active_path.is_some()
             && !self.pdf_search_is_active()
             && (!self.split_view_active || self.active_panel == ActivePanel::Markdown)
@@ -3297,36 +3206,36 @@ impl MdEditor {
         if self.active_path.is_none() {
             return Err("Open a markdown file before replacing text".to_string());
         }
-        if self.search_query.is_empty() {
+        if self.search.query.is_empty() {
             return Err("Search query is empty".to_string());
         }
 
         let text = self.buffer.text();
-        let (new_text, count) = if self.search_regex {
-            let re = regex::RegexBuilder::new(&self.search_query)
-                .case_insensitive(!self.search_match_case)
+        let (new_text, count) = if self.search.regex {
+            let re = regex::RegexBuilder::new(&self.search.query)
+                .case_insensitive(!self.search.match_case)
                 .build()
                 .map_err(|err| format!("Invalid regex: {err}"))?;
             let count = re.find_iter(&text).count();
             (
-                re.replace_all(&text, self.search_replace.as_str())
+                re.replace_all(&text, self.search.replace.as_str())
                     .to_string(),
                 count,
             )
-        } else if self.search_match_case {
-            let count = text.match_indices(&self.search_query).count();
+        } else if self.search.match_case {
+            let count = text.match_indices(&self.search.query).count();
             (
-                text.replace(&self.search_query, &self.search_replace),
+                text.replace(&self.search.query, &self.search.replace),
                 count,
             )
         } else {
-            let re = regex::RegexBuilder::new(&regex::escape(&self.search_query))
+            let re = regex::RegexBuilder::new(&regex::escape(&self.search.query))
                 .case_insensitive(true)
                 .build()
                 .map_err(|err| err.to_string())?;
             let count = re.find_iter(&text).count();
             (
-                re.replace_all(&text, self.search_replace.as_str())
+                re.replace_all(&text, self.search.replace.as_str())
                     .to_string(),
                 count,
             )
@@ -3348,9 +3257,9 @@ impl MdEditor {
         let Some(abs_path) = self.resolve_active_path(path) else {
             return Task::none();
         };
-        let query = self.search_query.clone();
-        let regex = self.search_regex;
-        let match_case = self.search_match_case;
+        let query = self.search.query.clone();
+        let regex = self.search.regex;
+        let match_case = self.search.match_case;
         let _state = self.state.clone();
         let path_str = abs_path.to_string_lossy().to_string();
         Task::perform(

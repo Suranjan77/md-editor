@@ -3,6 +3,7 @@ mod editor;
 mod messages;
 mod pdf_notes;
 mod search;
+mod search_state;
 mod theme;
 mod tracker_state;
 mod views;
