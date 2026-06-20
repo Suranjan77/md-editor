@@ -4,6 +4,7 @@ mod messages;
 mod pdf_notes;
 mod search;
 mod theme;
+mod tracker_state;
 mod views;
 
 #[cfg(target_os = "linux")]

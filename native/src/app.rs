@@ -1,7 +1,5 @@
 use iced::widget::operation::{self, AbsoluteOffset};
-use iced::widget::{
-    Space, column, container, mouse_area, row, scrollable, stack, text, text_editor,
-};
+use iced::widget::{Space, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 
 use image::GenericImageView;
@@ -11,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::editor::highlight;
-use crate::messages::{Message, Shortcut, TrackerTab};
+use crate::messages::{Message, Shortcut};
 use crate::pdf_notes::{
     append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path,
     note_filename_from_path, slug_fragment,
@@ -163,17 +161,7 @@ pub struct MdEditor {
     pdf_text_lru: std::collections::VecDeque<u16>,
 
     // Study tracker
-    tracker_visible: bool,
-    tracker_running: bool,
-    tracker_started_at: Option<std::time::Instant>,
-    tracker_sessions: Vec<md_editor_core::tracker::StudySession>,
-    tracker_kv: std::collections::HashMap<String, String>,
-    tracker_tab: TrackerTab,
-    tracker_config_json: String,
-    tracker_config_content: text_editor::Content,
-    tracker_manual_date: String,
-    tracker_manual_hours: String,
-    tracker_manual_notes: String,
+    tracker: crate::tracker_state::TrackerState,
 
     // Modal state
     active_modal: Option<views::modals::ModalType>,
@@ -237,12 +225,7 @@ impl MdEditor {
         let last_file = md_editor_core::config::get_sys_config(&state, "last_file")
             .ok()
             .flatten();
-        let tracker_sessions = md_editor_core::tracker::get_sessions(&state).unwrap_or_default();
-        let tracker_config_json = md_editor_core::config::get_sys_config(&state, "tracker_config")
-            .ok()
-            .flatten()
-            .filter(|json| views::tracker::parse_config(json).is_ok())
-            .unwrap_or_else(views::tracker::default_config_json);
+        let tracker = crate::tracker_state::TrackerState::new(&state);
 
         let mut app = Self {
             state: state.clone(),
@@ -284,21 +267,7 @@ impl MdEditor {
             pdf_initial_target_annotation: None,
             pdf_pending_text: HashSet::new(),
             pdf_text_lru: std::collections::VecDeque::new(),
-            tracker_visible: false,
-            tracker_running: false,
-            tracker_started_at: None,
-            tracker_sessions,
-            tracker_kv: md_editor_core::tracker::get_kv(&state)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|item| (item.key, item.value))
-                .collect(),
-            tracker_tab: TrackerTab::Dashboard,
-            tracker_config_json,
-            tracker_config_content: text_editor::Content::with_text(""),
-            tracker_manual_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
-            tracker_manual_hours: String::new(),
-            tracker_manual_notes: String::new(),
+            tracker,
             active_modal: None,
             modal_input: String::new(),
             link_note_picker_search: String::new(),
@@ -339,8 +308,6 @@ impl MdEditor {
             editor_viewport_width: 900.0,
             editor_viewport_height: 720.0,
         };
-
-        app.tracker_config_content = text_editor::Content::with_text(&app.tracker_config_json);
 
         let mut task = Task::none();
         if let Some(path) = last_vault {
@@ -1359,25 +1326,7 @@ impl MdEditor {
                 Task::none()
             }
 
-            Message::TrackerToggle => {
-                self.tracker_visible = !self.tracker_visible;
-                if self.tracker_visible {
-                    self.tracker_kv = md_editor_core::tracker::get_kv(&self.state)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|item| (item.key, item.value))
-                        .collect();
-                    self.tracker_config_json =
-                        md_editor_core::config::get_sys_config(&self.state, "tracker_config")
-                            .ok()
-                            .flatten()
-                            .filter(|json| views::tracker::parse_config(json).is_ok())
-                            .unwrap_or_else(views::tracker::default_config_json);
-                    self.tracker_config_content =
-                        text_editor::Content::with_text(&self.tracker_config_json);
-                }
-                Task::none()
-            }
+            m @ Message::TrackerToggle => self.tracker.update(m, &self.state),
             Message::CommandPaletteOpen => {
                 self.command_palette_visible = true;
                 self.command_palette_query.clear();
@@ -1392,151 +1341,19 @@ impl MdEditor {
                 self.command_palette_query.clear();
                 Task::done(Message::KeyboardShortcut(shortcut))
             }
-            Message::TrackerStart => {
-                self.tracker_running = true;
-                self.tracker_started_at = Some(std::time::Instant::now());
-                self.toast = Some("Study timer started".to_string());
-                Task::none()
-            }
-            Message::TrackerStop => {
-                if let Some(started_at) = self.tracker_started_at.take() {
-                    let elapsed = started_at.elapsed();
-                    let hours = (elapsed.as_secs_f32() / 3600.0).max(0.01);
-                    let session = md_editor_core::tracker::StudySession {
-                        id: 0,
-                        date: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
-                        hours,
-                        activity_type: "Study".to_string(),
-                        phase: "Focus".to_string(),
-                        notes: None,
-                    };
-                    if md_editor_core::tracker::save_session(&self.state, session).is_ok() {
-                        self.tracker_sessions =
-                            md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
-                        self.toast = Some("Study session saved".to_string());
-                    }
-                }
-                self.tracker_running = false;
-                Task::none()
-            }
-            Message::TrackerTabSelected(tab) => {
-                self.tracker_tab = tab;
-                Task::none()
-            }
-            Message::TrackerProjectStatusChanged(id, status) => {
-                let key = format!("proj_{}", id);
-                if md_editor_core::tracker::set_kv(&self.state, &key, &status).is_ok() {
-                    self.tracker_kv.insert(key, status);
-                }
-                Task::none()
-            }
-            Message::TrackerGateToggled(gate_id, item_idx) => {
-                let key = format!("gate_{}_{}", gate_id, item_idx);
-                let next = if self
-                    .tracker_kv
-                    .get(&key)
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
-                {
-                    "false"
-                } else {
-                    "true"
-                };
-                if md_editor_core::tracker::set_kv(&self.state, &key, next).is_ok() {
-                    self.tracker_kv.insert(key, next.to_string());
-                }
-                Task::none()
-            }
-            Message::TrackerReadingToggled(section, item_idx) => {
-                let key = format!("read_{}_{}", section, item_idx);
-                let next = if self
-                    .tracker_kv
-                    .get(&key)
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
-                {
-                    "false"
-                } else {
-                    "true"
-                };
-                if md_editor_core::tracker::set_kv(&self.state, &key, next).is_ok() {
-                    self.tracker_kv.insert(key, next.to_string());
-                }
-                Task::none()
-            }
-            Message::TrackerConfigEdited(action) => {
-                self.tracker_config_content.perform(action);
-                self.tracker_config_json = self.tracker_config_content.text();
-                Task::none()
-            }
-            Message::TrackerConfigSave => {
-                match views::tracker::parse_config(&self.tracker_config_json) {
-                    Ok(_) => {
-                        if md_editor_core::config::set_sys_config(
-                            &self.state,
-                            "tracker_config",
-                            &self.tracker_config_json,
-                        )
-                        .is_ok()
-                        {
-                            self.toast = Some("Tracker configuration saved".to_string());
-                        }
-                    }
-                    Err(err) => self.toast = Some(format!("Invalid tracker JSON: {}", err)),
-                }
-                Task::none()
-            }
-            Message::TrackerManualDateChanged(value) => {
-                self.tracker_manual_date = value;
-                Task::none()
-            }
-            Message::TrackerManualHoursChanged(value) => {
-                self.tracker_manual_hours = value;
-                Task::none()
-            }
-            Message::TrackerManualNotesChanged(value) => {
-                self.tracker_manual_notes = value;
-                Task::none()
-            }
-            Message::TrackerManualAdd => {
-                match self.tracker_manual_hours.trim().parse::<f32>() {
-                    Ok(hours) if hours > 0.0 => {
-                        let session = md_editor_core::tracker::StudySession {
-                            id: 0,
-                            date: self.tracker_manual_date.trim().to_string(),
-                            hours,
-                            activity_type: "Manual".to_string(),
-                            phase: "Manual".to_string(),
-                            notes: (!self.tracker_manual_notes.trim().is_empty())
-                                .then(|| self.tracker_manual_notes.trim().to_string()),
-                        };
-                        match md_editor_core::tracker::save_session(&self.state, session) {
-                            Ok(()) => {
-                                self.tracker_sessions =
-                                    md_editor_core::tracker::get_sessions(&self.state)
-                                        .unwrap_or_default();
-                                self.tracker_manual_hours.clear();
-                                self.tracker_manual_notes.clear();
-                                self.toast = Some("Manual study session added".to_string());
-                            }
-                            Err(err) => self.toast = Some(err),
-                        }
-                    }
-                    _ => self.toast = Some("Enter a positive hour value".to_string()),
-                }
-                Task::none()
-            }
-            Message::TrackerSessionDelete(id) => {
-                match md_editor_core::tracker::delete_session(&self.state, id) {
-                    Ok(()) => {
-                        self.tracker_sessions =
-                            md_editor_core::tracker::get_sessions(&self.state).unwrap_or_default();
-                        self.toast = Some("Session deleted".to_string());
-                    }
-                    Err(err) => self.toast = Some(err),
-                }
-                Task::none()
-            }
+            m @ (Message::TrackerStart
+                | Message::TrackerStop
+                | Message::TrackerTabSelected(_)
+                | Message::TrackerProjectStatusChanged(..)
+                | Message::TrackerGateToggled(..)
+                | Message::TrackerReadingToggled(..)
+                | Message::TrackerConfigEdited(_)
+                | Message::TrackerConfigSave
+                | Message::TrackerManualDateChanged(_)
+                | Message::TrackerManualHoursChanged(_)
+                | Message::TrackerManualNotesChanged(_)
+                | Message::TrackerManualAdd
+                | Message::TrackerSessionDelete(_)) => self.tracker.update(m, &self.state),
 
             Message::GlobalSearchOpen => {
                 self.search_visible = true;
@@ -1986,6 +1803,10 @@ impl MdEditor {
                 self.open_file(&path)
             }
 
+            Message::ShowToast(text) => {
+                self.toast = Some(text);
+                Task::none()
+            }
             Message::ToastHide => {
                 self.toast = None;
                 Task::none()
@@ -2004,8 +1825,8 @@ impl MdEditor {
                             self.active_modal = None;
                             self.modal_input.clear();
                             self.link_note_picker_search.clear();
-                        } else if self.tracker_visible {
-                            self.tracker_visible = false;
+                        } else if self.tracker.visible {
+                            self.tracker.hide();
                         } else if self.file_search_visible {
                             self.file_search_visible = false;
                             return self.restore_scroll_positions();
@@ -2097,7 +1918,7 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::StudyTracker => {
-                        self.tracker_visible = !self.tracker_visible;
+                        self.tracker.toggle_visible();
                         Task::none()
                     }
                     Shortcut::SplitView => Task::done(Message::SplitViewToggle),
@@ -2105,7 +1926,7 @@ impl MdEditor {
                         self.sidebar_visible = false;
                         self.backlinks_visible = false;
                         self.toc_visible = false;
-                        self.tracker_visible = false;
+                        self.tracker.hide();
                         Task::none()
                     }
                 }
@@ -2131,7 +1952,7 @@ impl MdEditor {
                     return Task::none();
                 }
                 let side_width = if self.sidebar_visible { 250.0 } else { 0.0 }
-                    + if self.tracker_visible { 300.0 } else { 0.0 }
+                    + if self.tracker.visible { 300.0 } else { 0.0 }
                     + if self.toc_visible { 250.0 } else { 0.0 };
                 let content_width = (self.window_width - side_width).max(480.0);
                 let x_min = side_width + 240.0;
@@ -2182,7 +2003,7 @@ impl MdEditor {
             None,
             self.sidebar_visible,
             self.backlinks_visible,
-            self.tracker_visible,
+            self.tracker.visible,
             self.toc_visible,
             self.active_pdf_path.is_some()
                 && (self.showing_pdf || (self.split_view_active && self.active_path.is_some())),
@@ -2485,19 +2306,9 @@ impl MdEditor {
             ));
         }
 
-        if self.tracker_visible {
+        if self.tracker.visible {
             layers.push(
-                container(views::tracker::view(
-                    true,
-                    self.tracker_running,
-                    &self.tracker_sessions,
-                    &self.tracker_kv,
-                    self.tracker_tab,
-                    &self.tracker_config_content,
-                    &self.tracker_manual_date,
-                    &self.tracker_manual_hours,
-                    &self.tracker_manual_notes,
-                ))
+                container(self.tracker.view())
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(28)

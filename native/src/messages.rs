@@ -107,6 +107,7 @@ pub enum Message {
     TrackerSessionDelete(i64),
 
     // ── Toast ───────────────────────────────────────────────────
+    ShowToast(String),
     ToastHide,
     MathRendered(
         String,
