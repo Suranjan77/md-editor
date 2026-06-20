@@ -1097,6 +1097,33 @@ fn render_page_from_cache<'a>(
         .map_err(|e| format!("Failed to convert to image: {:?}", e))
 }
 
+/// Base for the zoom-to-render-scale quantization. A bitmap rendered at a
+/// bucket's scale is never displayed at more than this factor of
+/// magnification, so it stays sharp without re-rendering on every zoom step.
+pub const PDF_RENDER_BUCKET_BASE: f32 = 1.4;
+
+/// Quantize a continuous zoom level to a discrete render-scale bucket
+/// (the smallest power of [`PDF_RENDER_BUCKET_BASE`] that is >= `zoom`).
+///
+/// Page bitmaps are rendered at the bucket scale rather than the exact zoom,
+/// so zooming within a bucket reuses the cached bitmap (iced rescales it to
+/// the layout box) instead of re-rasterizing every page. Crossing a bucket
+/// boundary is the only event that forces a re-render.
+pub fn pdf_render_bucket(zoom: f32) -> f32 {
+    let zoom = zoom.clamp(0.05, 64.0);
+    let mut scale = 1.0_f32;
+    if zoom > 1.0 {
+        while scale < zoom {
+            scale *= PDF_RENDER_BUCKET_BASE;
+        }
+    } else {
+        while scale / PDF_RENDER_BUCKET_BASE >= zoom {
+            scale /= PDF_RENDER_BUCKET_BASE;
+        }
+    }
+    scale
+}
+
 fn bind_pdfium() -> Result<Pdfium, String> {
     static BIND_RESULT: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
 
@@ -1159,6 +1186,31 @@ mod tests {
     use super::*;
 
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_pdf_render_bucket() {
+        // Exact powers of 1.4 land on their own bucket.
+        assert_eq!(pdf_render_bucket(1.0), 1.0);
+        assert!((pdf_render_bucket(1.4) - 1.4).abs() < 1e-4);
+
+        // Zoom levels round up to the next bucket (never upscaled > 1.4x).
+        assert!((pdf_render_bucket(1.1) - 1.4).abs() < 1e-4);
+        assert!((pdf_render_bucket(1.5) - 1.4 * 1.4).abs() < 1e-3);
+
+        // A whole band of nearby zooms shares one bucket, so they reuse the
+        // same cached bitmap instead of forcing re-renders.
+        let b = pdf_render_bucket(1.05);
+        assert_eq!(b, pdf_render_bucket(1.2));
+        assert_eq!(b, pdf_render_bucket(1.4));
+
+        // Buckets stay >= zoom (so the bitmap is never upscaled), within
+        // 1.4x (so it is never wastefully oversampled).
+        for &z in &[0.5_f32, 0.75, 0.9, 1.0, 1.3, 2.0, 3.3, 4.0] {
+            let s = pdf_render_bucket(z);
+            assert!(s >= z - 1e-4, "bucket {s} below zoom {z}");
+            assert!(s < z * 1.4 + 1e-4, "bucket {s} too far above zoom {z}");
+        }
+    }
 
     #[test]
     fn test_pdf_search() {

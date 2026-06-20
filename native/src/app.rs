@@ -936,16 +936,26 @@ impl MdEditor {
                     }
                 };
 
+                // Page bitmaps are rendered at a quantized zoom bucket, so a
+                // zoom change only needs a re-render when it crosses a bucket
+                // boundary. Within a bucket the cached bitmaps are reused and
+                // iced rescales them to the new layout box — making zoom feel
+                // instant instead of re-rasterizing every page.
+                let bucket_changed = md_editor_core::pdf::pdf_render_bucket(self.pdf_zoom)
+                    != md_editor_core::pdf::pdf_render_bucket(zoom);
+
                 self.pdf_fit_to_width = false;
                 self.pdf_zoom = zoom;
-                self.pdf_pages = vec![None; self.pdf_total_pages as usize];
-                self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
-                self.pdf_placeholder_page_size = self.first_pdf_page_size();
-                self.pdf_pending_pages.clear();
-                self.pdf_pending_links.clear();
+                if bucket_changed {
+                    self.pdf_pages = vec![None; self.pdf_total_pages as usize];
+                    self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
+                    self.pdf_placeholder_page_size = self.first_pdf_page_size();
+                    self.pdf_pending_pages.clear();
+                    self.pdf_pending_links.clear();
+                    self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
+                }
                 self.pdf_toc_target_page = Some(current_page);
                 self.pdf_programmatic_scroll = true;
-                self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
 
                 let new_scroll_y = if self.pdf_scroll_y < PDF_PAGE_LIST_PADDING {
                     self.pdf_scroll_y
@@ -1004,15 +1014,22 @@ impl MdEditor {
                     })
                     .unwrap_or(612.0);
                 let next_zoom = ((available_width - 48.0).max(240.0) / page_width).clamp(0.5, 4.0);
-                self.pdf_zoom = (next_zoom * 100.0).round() / 100.0;
-                self.pdf_pages = vec![None; self.pdf_total_pages as usize];
-                self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
-                self.pdf_placeholder_page_size = self.first_pdf_page_size();
-                self.pdf_pending_pages.clear();
-                self.pdf_pending_links.clear();
+                let next_zoom = (next_zoom * 100.0).round() / 100.0;
+                // Only re-render when fit-to-width crosses a zoom bucket;
+                // otherwise reuse cached bitmaps (see PdfZoomChanged).
+                let bucket_changed = md_editor_core::pdf::pdf_render_bucket(self.pdf_zoom)
+                    != md_editor_core::pdf::pdf_render_bucket(next_zoom);
+                self.pdf_zoom = next_zoom;
+                if bucket_changed {
+                    self.pdf_pages = vec![None; self.pdf_total_pages as usize];
+                    self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
+                    self.pdf_placeholder_page_size = self.first_pdf_page_size();
+                    self.pdf_pending_pages.clear();
+                    self.pdf_pending_links.clear();
+                    self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
+                }
                 self.pdf_toc_target_page = Some(current_page);
                 self.pdf_programmatic_scroll = true;
-                self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
 
                 let new_scroll_y = if is_initial {
                     self.pdf_page_offset(current_page)
@@ -2709,7 +2726,8 @@ impl MdEditor {
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
-        let zoom = self.pdf_zoom * PDF_RENDER_SUPERSAMPLE;
+        let zoom =
+            md_editor_core::pdf::pdf_render_bucket(self.pdf_zoom) * PDF_RENDER_SUPERSAMPLE;
         let generation = self.pdf_render_generation;
         let _state = self.state.clone();
 
@@ -2743,7 +2761,8 @@ impl MdEditor {
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
-        let zoom = self.pdf_zoom * PDF_RENDER_SUPERSAMPLE;
+        let zoom =
+            md_editor_core::pdf::pdf_render_bucket(self.pdf_zoom) * PDF_RENDER_SUPERSAMPLE;
         let generation = self.pdf_render_generation;
         let _state = self.state.clone();
         if self
