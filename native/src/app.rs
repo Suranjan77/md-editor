@@ -96,6 +96,17 @@ fn pdf_placeholder_display_size_from(
         .unwrap_or((612.0 * zoom, 792.0 * zoom))
 }
 
+/// Identity of a computed in-document match set. When any component changes
+/// the cached matches are stale and must be rebuilt.
+#[derive(Clone, PartialEq, Eq)]
+struct DocMatchKey {
+    buffer_revision: u64,
+    query: String,
+    regex: bool,
+    match_case: bool,
+    active_path: Option<String>,
+}
+
 fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
     if start >= end {
         return String::new();
@@ -185,6 +196,12 @@ pub struct MdEditor {
     search_regex: bool,
     search_match_case: bool,
     search_match_index: Option<usize>,
+    // Cache of in-document search matches. Recomputing scans the whole buffer
+    // (one String allocation per line), so we memoize it and only rebuild when
+    // the buffer or search parameters change — view() reads this every frame.
+    doc_match_cache: Vec<DocumentMatch>,
+    doc_match_key: Option<DocMatchKey>,
+    buffer_revision: u64,
     search_results: Vec<md_editor_core::types::SearchResult>,
     pdf_search_results: Vec<md_editor_core::pdf::PdfSearchMatch>,
     pdf_search_indices_by_page: std::collections::HashMap<u16, Vec<usize>>,
@@ -296,6 +313,9 @@ impl MdEditor {
             search_regex: false,
             search_match_case: false,
             search_match_index: None,
+            doc_match_cache: Vec::new(),
+            doc_match_key: None,
+            buffer_revision: 0,
             search_results: Vec::new(),
             pdf_search_results: Vec::new(),
             pdf_search_indices_by_page: std::collections::HashMap::new(),
@@ -324,7 +344,7 @@ impl MdEditor {
 
         let mut task = Task::none();
         if let Some(path) = last_vault {
-            app.open_vault(&path);
+            let index_task = app.open_vault(&path);
             if let Some(file_path) = last_file {
                 let lower = file_path.to_lowercase();
                 if lower.ends_with(".md") || lower.ends_with(".markdown") {
@@ -337,6 +357,7 @@ impl MdEditor {
                     task = app.open_image(&file_path);
                 }
             }
+            task = Task::batch(vec![index_task, task]);
         }
 
         (app, task)
@@ -466,6 +487,14 @@ impl MdEditor {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.update_inner(message);
+        // Refresh the memoized search-match cache once per message so the
+        // subsequent view() can read it without rescanning the buffer.
+        self.ensure_doc_matches();
+        task
+    }
+
+    fn update_inner(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenVaultDialog => Task::perform(
                 async {
@@ -477,8 +506,17 @@ impl MdEditor {
                 },
                 Message::VaultOpened,
             ),
-            Message::VaultOpened(Some(path)) => {
-                self.open_vault(&path);
+            Message::VaultOpened(Some(path)) => self.open_vault(&path),
+            Message::VaultIndexed(entries) => {
+                self.vault_entries = entries;
+                // Backlinks for the active file depend on the freshly built
+                // index; refresh them now that indexing has completed.
+                if let Some(path) = self.active_path.clone().or_else(|| self.active_pdf_path.clone())
+                {
+                    self.backlinks =
+                        md_editor_core::vault::get_mixed_backlinks(&self.state, &path)
+                            .unwrap_or_default();
+                }
                 Task::none()
             }
             Message::SidebarToggle => {
@@ -2528,13 +2566,25 @@ impl MdEditor {
         stack(layers).into()
     }
 
-    fn open_vault(&mut self, path: &str) {
+    fn open_vault(&mut self, path: &str) -> Task<Message> {
         self.vault_root = Some(path.to_string());
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_vault", path);
+        // Publish the root immediately so file opens resolve correctly, and
+        // show the tree right away from a cheap directory listing.
         if let Ok(mut vault_root) = self.state.vault_root.lock() {
             vault_root.replace(std::path::PathBuf::from(path));
         }
         self.vault_entries = md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+
+        // Build the full-text and backlink indexes off the UI thread; a large
+        // vault must not freeze startup. `set_vault_root` does its disk I/O
+        // lock-free, so the UI stays responsive while it runs.
+        let state = self.state.clone();
+        let path = path.to_string();
+        Task::perform(
+            async move { md_editor_core::vault::set_vault_root(&state, &path).unwrap_or_default() },
+            Message::VaultIndexed,
+        )
     }
 
     fn new_entry_path(&self, name: &str) -> String {
@@ -2571,6 +2621,7 @@ impl MdEditor {
         if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
             if let Ok(content) = String::from_utf8(bytes) {
                 self.buffer = DocBuffer::from_text(&content);
+                self.buffer_revision = self.buffer_revision.wrapping_add(1);
                 self.active_path = Some(path.to_string());
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image_path = None;
@@ -3154,18 +3205,37 @@ impl MdEditor {
     }
 
     fn current_document_match_count(&self) -> usize {
-        self.current_document_matches().len()
+        self.doc_match_cache.len()
     }
 
     fn active_search_match_position(&self) -> Option<(usize, usize)> {
-        let matches = self.current_document_matches();
+        let matches = &self.doc_match_cache;
         let index = self.search_match_index?;
         matches
             .get(index.min(matches.len().saturating_sub(1)))
             .map(|m| (m.line, m.start_col))
     }
 
-    fn current_document_matches(&self) -> Vec<DocumentMatch> {
+    /// Return the cached in-document matches, rebuilding only when the buffer
+    /// or search parameters have changed since the last computation. Called
+    /// once per `update` so `view` can read [`Self::doc_match_cache`] cheaply.
+    fn ensure_doc_matches(&mut self) {
+        let key = DocMatchKey {
+            buffer_revision: self.buffer_revision,
+            query: self.search_query.clone(),
+            regex: self.search_regex,
+            match_case: self.search_match_case,
+            active_path: self.active_path.clone(),
+        };
+        if self.doc_match_key.as_ref() == Some(&key) {
+            return;
+        }
+
+        self.doc_match_cache = self.compute_document_matches();
+        self.doc_match_key = Some(key);
+    }
+
+    fn compute_document_matches(&self) -> Vec<DocumentMatch> {
         if self.search_query.is_empty() || self.active_path.is_none() {
             return Vec::new();
         }
@@ -3200,7 +3270,8 @@ impl MdEditor {
     }
 
     fn navigate_file_search(&mut self, forward: bool) -> Task<Message> {
-        let matches = self.current_document_matches();
+        self.ensure_doc_matches();
+        let matches = self.doc_match_cache.clone();
         if matches.is_empty() {
             self.search_match_index = None;
             return Task::none();
@@ -3495,6 +3566,9 @@ impl MdEditor {
         keep_cursor_visible: bool,
     ) -> Task<Message> {
         let result = self.buffer.execute(command);
+        if result.text_changed {
+            self.buffer_revision = self.buffer_revision.wrapping_add(1);
+        }
         let content_task = if result.projection_changed {
             if result.text_changed {
                 self.toc_entries = views::toc::get_toc(&self.buffer.text());

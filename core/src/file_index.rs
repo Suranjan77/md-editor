@@ -1,6 +1,12 @@
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+/// `[[target]]` / `[[target|alias]]` wikilink matcher. Compiled once and
+/// reused — `update_file` runs this for every file during indexing.
+static WIKILINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").unwrap());
 
 /// In-memory graph of wikilink references between files.
 pub struct FileIndex {
@@ -74,10 +80,9 @@ impl FileIndex {
 }
 
 fn extract_wikilinks(content: &str, vault_root: &Path, file_path: &Path) -> Vec<PathBuf> {
-    let re = Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").unwrap();
     let mut links = Vec::new();
 
-    for cap in re.captures_iter(content) {
+    for cap in WIKILINK_RE.captures_iter(content) {
         if let Some(target) = cap.get(1) {
             let target_str = target.as_str().trim();
             if target_str.starts_with('#') {

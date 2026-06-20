@@ -3,6 +3,7 @@ pub enum Message {
     // ── Vault ────────────────────────────────────────────────────
     OpenVaultDialog,
     VaultOpened(Option<String>),
+    VaultIndexed(Vec<md_editor_core::types::FileEntry>),
     CreateFileDialog,
     CreateFolderDialog,
 

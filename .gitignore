@@ -1,8 +1,14 @@
-node_modules
-src-tauri/target
-src-tauri/._target
-src-tauri/pdfium
+# Rust build output
+target
+
+# Downloaded/generated PDFium binaries (fetched by core/build_pdfium.rs)
+core/pdfium
+pdfium
+
+# Packaging output
 dist
 dist-portable
+
+# Editor/IDE
 .idea
-target
+.vscode

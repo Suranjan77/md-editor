@@ -78,12 +78,33 @@ pub fn setup_pdfium() -> PathBuf {
         return cache_dir;
     }
 
-    println!("cargo:warning=Downloading PDFium for {}...", platform_slug);
-
-    let url = format!(
-        "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-{}.tgz",
+    // Pin the PDFium release for reproducible builds. Override with the
+    // `PDFIUM_RELEASE` env var (e.g. `chromium/6996`); defaults to `latest`.
+    // To verify the archive, set `PDFIUM_SHA256` to the expected hex digest of
+    // the platform `.tgz` — the build then fails loudly on mismatch instead of
+    // trusting whatever bytes the network returned.
+    println!("cargo:rerun-if-env-changed=PDFIUM_RELEASE");
+    println!("cargo:rerun-if-env-changed=PDFIUM_SHA256");
+    let release = env::var("PDFIUM_RELEASE").unwrap_or_else(|_| "latest".to_string());
+    println!(
+        "cargo:warning=Downloading PDFium ({release}) for {}...",
         platform_slug
     );
+
+    let url = if release == "latest" {
+        format!(
+            "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-{}.tgz",
+            platform_slug
+        )
+    } else {
+        // Release tags contain a slash (e.g. `chromium/6996`) which must be
+        // percent-encoded in the download path.
+        format!(
+            "https://github.com/bblanchon/pdfium-binaries/releases/download/{}/pdfium-{}.tgz",
+            release.replace('/', "%2F"),
+            platform_slug
+        )
+    };
 
     let archive_path = cache_dir.join("pdfium.tgz");
     fs::create_dir_all(&cache_dir).expect("Failed to create PDFium cache directory");
@@ -94,6 +115,21 @@ pub fn setup_pdfium() -> PathBuf {
             e
         );
         return cache_dir;
+    }
+
+    if let Ok(expected) = env::var("PDFIUM_SHA256") {
+        match verify_sha256(&archive_path, &expected) {
+            Ok(()) => println!("cargo:warning=PDFium archive checksum verified"),
+            Err(e) => {
+                let _ = fs::remove_file(&archive_path);
+                panic!("PDFium archive checksum verification failed: {e}");
+            }
+        }
+    } else {
+        println!(
+            "cargo:warning=PDFIUM_SHA256 not set — PDFium archive integrity is unverified. \
+             Set PDFIUM_RELEASE and PDFIUM_SHA256 to pin and verify the download."
+        );
     }
 
     if let Err(e) = extract_tgz(&archive_path, &cache_dir) {
@@ -120,6 +156,23 @@ fn download_to_file(url: &str, archive_path: &Path) -> Result<(), String> {
     copy(&mut reader, &mut out).map_err(|e| format!("write archive failed: {e}"))?;
     println!("cargo:warning=PDFium downloaded successfully");
     Ok(())
+}
+
+fn verify_sha256(archive_path: &Path, expected_hex: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+
+    let mut file = File::open(archive_path).map_err(|e| format!("open archive failed: {e}"))?;
+    let mut hasher = Sha256::new();
+    copy(&mut file, &mut hasher).map_err(|e| format!("hashing failed: {e}"))?;
+    let actual = hasher.finalize();
+    let actual_hex: String = actual.iter().map(|b| format!("{b:02x}")).collect();
+
+    let expected = expected_hex.trim().to_lowercase();
+    if actual_hex == expected {
+        Ok(())
+    } else {
+        Err(format!("expected {expected}, got {actual_hex}"))
+    }
 }
 
 fn extract_tgz(archive_path: &Path, destination: &Path) -> Result<(), String> {
