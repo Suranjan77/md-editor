@@ -1,15 +1,26 @@
 # Plan: Decompose the `MdEditor` god-struct
 
-> Status: **field grouping complete.** All six sub-states have been extracted;
-> `MdEditor` went from ~80 fields to 12. Each step was its own commit, build
-> clean with all tests passing, no behavior change. Remaining follow-up: move
-> the per-domain *methods* (PDF geometry/render/navigation, editor
-> highlighting) off the shell into their sub-states — the fields now live in
-> the right place, but some behavior still reads through `self.<domain>` from
-> shell methods.
+> Status: **field grouping complete; pure-state methods moved.** All six
+> sub-states have been extracted; `MdEditor` went from ~80 fields to 12. Each
+> step was its own commit, build clean with all tests passing, no behavior
+> change.
 >
 > Extraction order as executed: TrackerState → SearchState → UiState →
 > PdfPane → VaultState → EditorPane.
+>
+> **Method moves (follow-up, in progress):** the *pure functions of a single
+> pane's state* have moved onto that pane — PdfPane now owns the page-geometry
+> cluster (display sizes, page height/offset, total height, page-at-scroll,
+> search-match scroll target, link/annotation hit-testing) and the two `*_from`
+> helpers.
+>
+> **Intentionally staying on the shell:** orchestration methods that coordinate
+> multiple domains or emit `Task`s — PDF open/render/navigation, the layout-
+> dependent `pdf_available_width` (needs sidebar/TOC/split/window state), the
+> editor highlight pipeline (`refresh_highlighting`/`load_images`/`load_math`
+> need the vault root + active path), and search navigation (moves the editor
+> cursor / scrolls). These are the shell's coordinator role and don't belong on
+> a single pane.
 
 ## Problem
 
