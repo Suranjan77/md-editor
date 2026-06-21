@@ -4,10 +4,9 @@ use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 
 use image::GenericImageView;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
-use crate::editor::highlight;
 use crate::messages::{Message, Shortcut};
 use crate::pdf_notes::{
     append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path,
@@ -20,8 +19,6 @@ use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
 const PDF_RENDER_SUPERSAMPLE: f32 = 2.0;
-const LARGE_DOC_LINE_THRESHOLD: usize = 1_000;
-const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -705,15 +702,14 @@ impl MdEditor {
                 };
                 self.editor.pending_highlight_generation = None;
                 self.editor.pending_highlight_requested_at = None;
-                Self::highlight_task(generation, text)
+                crate::editor_state::EditorPane::highlight_task(generation, text)
             }
             Message::HighlightReady(generation, lines) => {
                 if generation != self.editor.highlight_generation {
                     return Task::none();
                 }
                 self.editor.highlighted_lines = lines;
-                self.load_images();
-                self.load_math()
+                self.load_editor_resources()
             }
 
             Message::PdfLoaded(generation, pages) => {
@@ -2672,36 +2668,22 @@ impl MdEditor {
     }
 
     fn refresh_highlighting_for_current_buffer(&mut self, opened_file: bool) -> Task<Message> {
-        let text = self.editor.buffer.text();
-        let line_count = self.editor.buffer.line_count();
-        self.editor.highlight_generation = self.editor.highlight_generation.wrapping_add(1);
-        let generation = self.editor.highlight_generation;
-        self.editor.pending_highlight_generation = None;
-        self.editor.pending_highlight_requested_at = None;
-        self.editor.pending_highlight_text = None;
-
-        if opened_file && line_count > HUGE_DOC_LINE_THRESHOLD {
-            self.editor.highlighted_lines = plain_highlight_placeholders(&text);
-            return Self::highlight_task(generation, text);
+        let (task, load_resources) = self.editor.refresh_highlighting(opened_file);
+        if load_resources {
+            Task::batch(vec![task, self.load_editor_resources()])
+        } else {
+            task
         }
-
-        if !opened_file && line_count > LARGE_DOC_LINE_THRESHOLD {
-            self.editor.pending_highlight_generation = Some(generation);
-            self.editor.pending_highlight_requested_at = Some(Instant::now());
-            self.editor.pending_highlight_text = Some(text);
-            return Task::none();
-        }
-
-        self.editor.highlighted_lines = highlight::highlight_markdown(&text);
-        self.load_images();
-        self.load_math()
     }
 
-    fn highlight_task(generation: u64, text: String) -> Task<Message> {
-        Task::perform(
-            async move { highlight::highlight_markdown(&text) },
-            move |lines| Message::HighlightReady(generation, lines),
-        )
+    /// Load images and math for the freshly highlighted lines. Images resolve
+    /// relative to the active document, so the vault root + active path are
+    /// supplied from the shell.
+    fn load_editor_resources(&mut self) -> Task<Message> {
+        if let (Some(root), Some(path)) = (self.vault.root.clone(), self.active_path.clone()) {
+            self.editor.load_images(&root, &path);
+        }
+        self.editor.load_math()
     }
 
 
@@ -3031,110 +3013,6 @@ impl MdEditor {
         }
     }
 
-    fn load_images(&mut self) {
-        let Some(active_path) = &self.active_path else {
-            return;
-        };
-        let Some(vault_root) = &self.vault.root else {
-            return;
-        };
-        let Some(base_path) = std::path::Path::new(vault_root)
-            .join(active_path)
-            .parent()
-            .map(|path| path.to_path_buf())
-        else {
-            return;
-        };
-
-        for line in &self.editor.highlighted_lines {
-            for span in &line.spans {
-                if span.is_image {
-                    if let Some(path) = &span.image_path {
-                        if !self.editor.image_cache.contains_key(path) {
-                            let img_path = base_path.join(path);
-                            if let Ok(img) = image::open(&img_path) {
-                                let (width, height) = img.dimensions();
-                                let handle = iced::widget::image::Handle::from_rgba(
-                                    width,
-                                    height,
-                                    img.into_rgba8().into_raw(),
-                                );
-                                self.editor.image_cache
-                                    .insert(path.clone(), (handle, width as f32, height as f32));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn load_math(&self) -> Task<Message> {
-        let mut tasks = Vec::new();
-        for line in &self.editor.highlighted_lines {
-            for span in &line.spans {
-                if span.is_math {
-                    let tex = span
-                        .visible_text(false)
-                        .trim_matches('$')
-                        .trim()
-                        .to_string();
-                    if !tex.is_empty() && !self.editor.math_cache.contains_key(&tex) {
-                        let tex_clone = tex.clone();
-                        tasks.push(Task::perform(
-                            async move { (tex_clone.clone(), Self::render_latex_task(&tex_clone)) },
-                            |(t, r)| Message::MathRendered(t, r),
-                        ));
-                    }
-                }
-            }
-        }
-        Task::batch(tasks)
-    }
-
-    fn render_latex_task(tex: &str) -> Result<(iced::widget::image::Handle, f32, f32), String> {
-        use ratex_layout::{LayoutOptions, layout, to_display_list};
-        use ratex_parser::parser::parse;
-        use ratex_render::{RenderOptions, render_to_png};
-        use ratex_types::color::Color as RatexColor;
-        use ratex_types::math_style::MathStyle;
-
-        let options = RenderOptions {
-            font_size: 24.0,
-            padding: 4.0,
-            background_color: RatexColor {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 0.0,
-            },
-            font_dir: String::new(),
-            device_pixel_ratio: 2.0,
-        };
-
-        let layout_opts = LayoutOptions::default()
-            .with_style(MathStyle::Display)
-            .with_color(RatexColor {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            });
-
-        let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
-        let lbox = layout(&ast, &layout_opts);
-        let display_list = to_display_list(&lbox);
-        let bytes =
-            render_to_png(&display_list, &options).map_err(|e| format!("Render error: {:?}", e))?;
-
-        let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-        let (w, h) = img.dimensions();
-        Ok((
-            iced::widget::image::Handle::from_bytes(bytes),
-            w as f32 / 2.0,
-            h as f32 / 2.0,
-        ))
-    }
 }
 
 fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
@@ -3156,18 +3034,6 @@ fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
             | EditorCommand::Undo
             | EditorCommand::Redo
     )
-}
-
-fn plain_highlight_placeholders(text: &str) -> Vec<highlight::StyledLine> {
-    text.split('\n')
-        .enumerate()
-        .map(|(idx, line)| {
-            let mut styled = highlight::StyledLine::new();
-            styled.block_id = idx;
-            styled.spans.push(highlight::StyledSpan::plain(line));
-            styled
-        })
-        .collect()
 }
 
 fn focus_file_search_input() -> Task<Message> {
@@ -3405,7 +3271,7 @@ mod tests {
     #[test]
     fn test_find_heading_or_widget_line() {
         let text = "Line 0\n$$E = mc^2$$ \\label{equation-1}\nLine 2\n<div id=\"figure-1\">\nLine 4\n$$E = h\\nu$$ { #equation-2 }";
-        let highlighted = highlight::highlight_markdown(text);
+        let highlighted = crate::editor::highlight::highlight_markdown(text);
         assert_eq!(
             find_heading_or_widget_line(text, &highlighted, "equation-1"),
             Some(1)
@@ -3425,7 +3291,7 @@ mod tests {
 
         // Also test the dynamic numbering of figures and math equations
         let dynamic_text = "Here is an image:\n![Alt](image.png)\nAnd a math block:\n$$\nE = mc^2\n$$\nAnother image:\n![Alt2](pic.png)";
-        let dyn_highlighted = highlight::highlight_markdown(dynamic_text);
+        let dyn_highlighted = crate::editor::highlight::highlight_markdown(dynamic_text);
         assert_eq!(
             find_heading_or_widget_line(dynamic_text, &dyn_highlighted, "figure-1"),
             Some(1)
