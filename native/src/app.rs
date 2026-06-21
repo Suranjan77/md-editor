@@ -105,13 +105,8 @@ pub struct MdEditor {
     vault: crate::vault_state::VaultState,
     active_path: Option<String>,
 
-    // Editor state
-    buffer: DocBuffer,
-    highlighted_lines: Vec<highlight::StyledLine>,
-    highlight_generation: u64,
-    pending_highlight_generation: Option<u64>,
-    pending_highlight_requested_at: Option<Instant>,
-    pending_highlight_text: Option<String>,
+    // Editor pane: buffer, highlighting, TOC, scroll/viewport, resource caches
+    editor: crate::editor_state::EditorPane,
 
     // PDF viewer (document pages, geometry, annotations, render bookkeeping)
     pdf: crate::pdf_pane::PdfPane,
@@ -129,19 +124,7 @@ pub struct MdEditor {
 
     // Search (query/replace, vault + PDF results, in-document match cache)
     search: crate::search_state::SearchState,
-    // Editor buffer revision; bumped on every text change. Owned by the editor
-    // side, read by SearchState to invalidate its match cache.
-    buffer_revision: u64,
-
-    // TOC
-    toc_visible: bool,
-    toc_entries: Vec<views::toc::TocEntry>,
-    image_cache: std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    math_cache: std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     active_panel: ActivePanel,
-    editor_scroll_y: f32,
-    editor_viewport_width: f32,
-    editor_viewport_height: f32,
 }
 
 impl MdEditor {
@@ -159,12 +142,7 @@ impl MdEditor {
             state: state.clone(),
             vault: crate::vault_state::VaultState::new(),
             active_path: None,
-            buffer: DocBuffer::new(),
-            highlighted_lines: Vec::new(),
-            highlight_generation: 0,
-            pending_highlight_generation: None,
-            pending_highlight_requested_at: None,
-            pending_highlight_text: None,
+            editor: crate::editor_state::EditorPane::new(),
             pdf: crate::pdf_pane::PdfPane::new(),
             active_image_path: None,
             active_image: None,
@@ -172,15 +150,7 @@ impl MdEditor {
             tracker,
             ui: crate::ui_state::UiState::new(),
             search: crate::search_state::SearchState::new(),
-            buffer_revision: 0,
-            toc_visible: false,
-            toc_entries: Vec::new(),
-            image_cache: std::collections::HashMap::new(),
-            math_cache: std::collections::HashMap::new(),
             active_panel: ActivePanel::Markdown,
-            editor_scroll_y: 0.0,
-            editor_viewport_width: 900.0,
-            editor_viewport_height: 720.0,
         };
 
         let mut task = Task::none();
@@ -207,7 +177,7 @@ impl MdEditor {
     pub fn title(&self) -> String {
         format!(
             "{}Md-editor — {}",
-            if self.buffer.dirty { "● " } else { "" },
+            if self.editor.buffer.dirty { "● " } else { "" },
             self.active_path
                 .as_deref()
                 .or(self.pdf.active_path.as_deref())
@@ -287,7 +257,7 @@ impl MdEditor {
             Subscription::none()
         };
 
-        let highlight_debounce = if self.pending_highlight_generation.is_some() {
+        let highlight_debounce = if self.editor.pending_highlight_generation.is_some() {
             iced::time::every(HIGHLIGHT_DEBOUNCE).map(|_| Message::HighlightDebounceElapsed)
         } else {
             Subscription::none()
@@ -332,9 +302,9 @@ impl MdEditor {
         // Refresh the memoized search-match cache once per message so the
         // subsequent view() can read it without rescanning the buffer.
         self.search.ensure_matches(
-            &self.buffer,
+            &self.editor.buffer,
             self.active_path.as_deref(),
-            self.buffer_revision,
+            self.editor.buffer_revision,
         );
         task
     }
@@ -468,8 +438,8 @@ impl MdEditor {
                             if file_part.is_empty() {
                                 let target_slug = slugify(anchor_part);
                                 if let Some(line_idx) = find_heading_or_widget_line(
-                                    &self.buffer.text(),
-                                    &self.highlighted_lines,
+                                    &self.editor.buffer.text(),
+                                    &self.editor.highlighted_lines,
                                     &target_slug,
                                 ) {
                                     let scroll_task = self.scroll_editor_to_line(line_idx);
@@ -500,8 +470,8 @@ impl MdEditor {
 
                                 let target_slug = slugify(anchor_part);
                                 if let Some(line_idx) = find_heading_or_widget_line(
-                                    &self.buffer.text(),
-                                    &self.highlighted_lines,
+                                    &self.editor.buffer.text(),
+                                    &self.editor.highlighted_lines,
                                     &target_slug,
                                 ) {
                                     let scroll_task = self.scroll_editor_to_line(line_idx);
@@ -513,7 +483,7 @@ impl MdEditor {
                                     Task::batch(vec![open_task, cmd_task, scroll_task])
                                 } else {
                                     // If heading or widget not found in the new file, reset scroll to top!
-                                    self.editor_scroll_y = 0.0;
+                                    self.editor.scroll_y = 0.0;
                                     let scroll_task = operation::scroll_to(
                                         iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
                                         AbsoluteOffset { x: 0.0, y: 0.0 },
@@ -684,8 +654,8 @@ impl MdEditor {
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         if self.active_path.as_deref() == Some(path.as_str()) {
                             self.active_path = None;
-                            self.buffer = DocBuffer::new();
-                            self.highlighted_lines.clear();
+                            self.editor.buffer = DocBuffer::new();
+                            self.editor.highlighted_lines.clear();
                         }
                         if self.pdf.active_path.as_deref() == Some(path.as_str()) {
                             self.pdf.active_path = None;
@@ -707,15 +677,15 @@ impl MdEditor {
             }
             Message::MathRendered(tex, res) => {
                 if let Ok(tuple) = res {
-                    self.math_cache.insert(tex, tuple);
+                    self.editor.math_cache.insert(tex, tuple);
                 }
                 Task::none()
             }
             Message::EditorSave => {
                 if let Some(path) = &self.active_path {
-                    let content = self.buffer.text();
+                    let content = self.editor.buffer.text();
                     let _ = md_editor_core::vault::save_file(&self.state, path, &content);
-                    self.buffer.dirty = false;
+                    self.editor.buffer.dirty = false;
                     self.ui.toast = Some("File saved".to_string());
                 }
                 Task::none()
@@ -732,9 +702,9 @@ impl MdEditor {
                 viewport_height,
             } => {
                 self.active_panel = ActivePanel::Markdown;
-                self.editor_scroll_y = y;
-                self.editor_viewport_width = viewport_width;
-                self.editor_viewport_height = viewport_height;
+                self.editor.scroll_y = y;
+                self.editor.viewport_width = viewport_width;
+                self.editor.viewport_height = viewport_height;
                 Task::none()
             }
             Message::ScrollEditorToTarget(target_y) => operation::scroll_to(
@@ -746,28 +716,29 @@ impl MdEditor {
             ),
             Message::HighlightDebounceElapsed => {
                 if self
+                    .editor
                     .pending_highlight_requested_at
                     .is_some_and(|requested| requested.elapsed() < HIGHLIGHT_DEBOUNCE)
                 {
                     return Task::none();
                 }
-                let Some(generation) = self.pending_highlight_generation else {
+                let Some(generation) = self.editor.pending_highlight_generation else {
                     return Task::none();
                 };
-                let Some(text) = self.pending_highlight_text.take() else {
-                    self.pending_highlight_generation = None;
-                    self.pending_highlight_requested_at = None;
+                let Some(text) = self.editor.pending_highlight_text.take() else {
+                    self.editor.pending_highlight_generation = None;
+                    self.editor.pending_highlight_requested_at = None;
                     return Task::none();
                 };
-                self.pending_highlight_generation = None;
-                self.pending_highlight_requested_at = None;
+                self.editor.pending_highlight_generation = None;
+                self.editor.pending_highlight_requested_at = None;
                 Self::highlight_task(generation, text)
             }
             Message::HighlightReady(generation, lines) => {
-                if generation != self.highlight_generation {
+                if generation != self.editor.highlight_generation {
                     return Task::none();
                 }
-                self.highlighted_lines = lines;
+                self.editor.highlighted_lines = lines;
                 self.load_images();
                 self.load_math()
             }
@@ -1192,7 +1163,7 @@ impl MdEditor {
 
                 let mut mapped = Vec::new();
                 flatten_pdf_toc(&entries, 1, &mut mapped);
-                self.toc_entries = mapped;
+                self.editor.toc_entries = mapped;
                 Task::none()
             }
             Message::PdfPageLinksLoaded(generation, page, links) => {
@@ -1715,8 +1686,8 @@ impl MdEditor {
                             return self.restore_scroll_positions();
                         } else if self.ui.command_palette_visible {
                             self.ui.command_palette_visible = false;
-                        } else if self.toc_visible {
-                            self.toc_visible = false;
+                        } else if self.editor.toc_visible {
+                            self.editor.toc_visible = false;
                         }
                         Task::none()
                     }
@@ -1793,7 +1764,7 @@ impl MdEditor {
                             && (self.showing_pdf
                                 || (self.ui.split_view_active && self.active_path.is_some()))
                         {
-                            self.toc_visible = !self.toc_visible;
+                            self.editor.toc_visible = !self.editor.toc_visible;
                         }
                         Task::none()
                     }
@@ -1805,7 +1776,7 @@ impl MdEditor {
                     Shortcut::FocusMode => {
                         self.vault.sidebar_visible = false;
                         self.vault.backlinks_visible = false;
-                        self.toc_visible = false;
+                        self.editor.toc_visible = false;
                         self.tracker.hide();
                         Task::none()
                     }
@@ -1833,7 +1804,7 @@ impl MdEditor {
                 }
                 let side_width = if self.vault.sidebar_visible { 250.0 } else { 0.0 }
                     + if self.tracker.visible { 300.0 } else { 0.0 }
-                    + if self.toc_visible { 250.0 } else { 0.0 };
+                    + if self.editor.toc_visible { 250.0 } else { 0.0 };
                 let content_width = (self.ui.window_width - side_width).max(480.0);
                 let x_min = side_width + 240.0;
                 let x_max = side_width + content_width - 240.0;
@@ -1862,7 +1833,7 @@ impl MdEditor {
                 if self.pdf.active_path.is_some()
                     && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()))
                 {
-                    self.toc_visible = !self.toc_visible;
+                    self.editor.toc_visible = !self.editor.toc_visible;
                 }
                 Task::none()
             }
@@ -1884,7 +1855,7 @@ impl MdEditor {
             self.vault.sidebar_visible,
             self.vault.backlinks_visible,
             self.tracker.visible,
-            self.toc_visible,
+            self.editor.toc_visible,
             self.pdf.active_path.is_some()
                 && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some())),
             self.ui.split_view_active,
@@ -1918,10 +1889,10 @@ impl MdEditor {
         let editor_scroll = scrollable(
             container(
                 crate::editor::renderer::Editor::new(
-                    &self.buffer,
-                    &self.highlighted_lines,
-                    &self.image_cache,
-                    &self.math_cache,
+                    &self.editor.buffer,
+                    &self.editor.highlighted_lines,
+                    &self.editor.image_cache,
+                    &self.editor.math_cache,
                     Message::EditorCommand,
                     Message::EditorCommandNoScroll,
                     Message::SidebarFileClicked,
@@ -1977,7 +1948,7 @@ impl MdEditor {
                     self.pdf.current_page,
                     self.pdf.total_pages,
                     self.pdf.zoom,
-                    self.toc_visible,
+                    self.editor.toc_visible,
                     self.pdf.selection.is_some(),
                     focused_ann,
                 );
@@ -2032,8 +2003,8 @@ impl MdEditor {
         let pdf_toc_available = self.pdf.active_path.is_some()
             && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()));
         let toc_view: Element<Message, Theme, iced::Renderer> =
-            if self.toc_visible && pdf_toc_available {
-                views::toc::view(&self.toc_entries)
+            if self.editor.toc_visible && pdf_toc_available {
+                views::toc::view(&self.editor.toc_entries)
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
@@ -2312,20 +2283,20 @@ impl MdEditor {
         let is_different = self.active_path.as_deref() != Some(path);
         if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
             if let Ok(content) = String::from_utf8(bytes) {
-                self.buffer = DocBuffer::from_text(&content);
-                self.buffer_revision = self.buffer_revision.wrapping_add(1);
+                self.editor.buffer = DocBuffer::from_text(&content);
+                self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
                 self.active_path = Some(path.to_string());
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image_path = None;
                 self.active_image = None;
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
-                self.toc_entries = views::toc::get_toc(&content);
+                self.editor.toc_entries = views::toc::get_toc(&content);
                 let highlight_task = self.refresh_highlighting_for_current_buffer(true);
                 self.vault.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                     .unwrap_or_default();
                 if is_different && reset_scroll {
-                    self.editor_scroll_y = 0.0;
+                    self.editor.scroll_y = 0.0;
                     let scroll_task = operation::scroll_to(
                         iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
                         AbsoluteOffset { x: 0.0, y: 0.0 },
@@ -2451,7 +2422,7 @@ impl MdEditor {
                 self.pdf.active_path = None;
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
-                self.toc_entries.clear();
+                self.editor.toc_entries.clear();
                 self.vault.backlinks.clear();
             }
             Err(err) => {
@@ -2700,7 +2671,7 @@ impl MdEditor {
 
     fn pdf_available_width(&self) -> f32 {
         let sidebar_width = if self.vault.sidebar_visible { 260.0 } else { 0.0 };
-        let toc_width = if self.toc_visible { 260.0 } else { 0.0 };
+        let toc_width = if self.editor.toc_visible { 260.0 } else { 0.0 };
         let backlinks_width = if self.vault.backlinks_visible { 260.0 } else { 0.0 };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
@@ -2864,27 +2835,27 @@ impl MdEditor {
     }
 
     fn refresh_highlighting_for_current_buffer(&mut self, opened_file: bool) -> Task<Message> {
-        let text = self.buffer.text();
-        let line_count = self.buffer.line_count();
-        self.highlight_generation = self.highlight_generation.wrapping_add(1);
-        let generation = self.highlight_generation;
-        self.pending_highlight_generation = None;
-        self.pending_highlight_requested_at = None;
-        self.pending_highlight_text = None;
+        let text = self.editor.buffer.text();
+        let line_count = self.editor.buffer.line_count();
+        self.editor.highlight_generation = self.editor.highlight_generation.wrapping_add(1);
+        let generation = self.editor.highlight_generation;
+        self.editor.pending_highlight_generation = None;
+        self.editor.pending_highlight_requested_at = None;
+        self.editor.pending_highlight_text = None;
 
         if opened_file && line_count > HUGE_DOC_LINE_THRESHOLD {
-            self.highlighted_lines = plain_highlight_placeholders(&text);
+            self.editor.highlighted_lines = plain_highlight_placeholders(&text);
             return Self::highlight_task(generation, text);
         }
 
         if !opened_file && line_count > LARGE_DOC_LINE_THRESHOLD {
-            self.pending_highlight_generation = Some(generation);
-            self.pending_highlight_requested_at = Some(Instant::now());
-            self.pending_highlight_text = Some(text);
+            self.editor.pending_highlight_generation = Some(generation);
+            self.editor.pending_highlight_requested_at = Some(Instant::now());
+            self.editor.pending_highlight_text = Some(text);
             return Task::none();
         }
 
-        self.highlighted_lines = highlight::highlight_markdown(&text);
+        self.editor.highlighted_lines = highlight::highlight_markdown(&text);
         self.load_images();
         self.load_math()
     }
@@ -2899,9 +2870,9 @@ impl MdEditor {
 
     fn navigate_file_search(&mut self, forward: bool) -> Task<Message> {
         self.search.ensure_matches(
-            &self.buffer,
+            &self.editor.buffer,
             self.active_path.as_deref(),
-            self.buffer_revision,
+            self.editor.buffer_revision,
         );
         let matches = self.search.matches().to_vec();
         if matches.is_empty() {
@@ -2918,7 +2889,7 @@ impl MdEditor {
         };
         self.search.match_index = Some(next_index);
         let item = matches[next_index];
-        self.buffer.execute(EditorCommand::SetSelection {
+        self.editor.buffer.execute(EditorCommand::SetSelection {
             anchor_line: item.line,
             anchor_col: item.start_col,
             focus_line: item.line,
@@ -3025,7 +2996,7 @@ impl MdEditor {
 
     fn estimated_editor_viewport_width(&self) -> f32 {
         let sidebar_width = if self.vault.sidebar_visible { 260.0 } else { 0.0 };
-        let toc_width = if self.toc_visible { 260.0 } else { 0.0 };
+        let toc_width = if self.editor.toc_visible { 260.0 } else { 0.0 };
         let backlinks_width = if self.vault.backlinks_visible { 260.0 } else { 0.0 };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
@@ -3047,12 +3018,12 @@ impl MdEditor {
 
     fn estimated_editor_line_y(&self, target_line: usize) -> f32 {
         crate::editor::renderer::line_visual_y::<iced::Renderer>(
-            &self.highlighted_lines,
-            &self.image_cache,
-            &self.math_cache,
+            &self.editor.highlighted_lines,
+            &self.editor.image_cache,
+            &self.editor.math_cache,
             self.estimated_editor_viewport_width().max(240.0),
-            self.buffer.cursor_line,
-            self.buffer.cursor_col,
+            self.editor.buffer.cursor_line,
+            self.editor.buffer.cursor_col,
             target_line,
             true,
         ) + 20.0
@@ -3061,7 +3032,7 @@ impl MdEditor {
     fn restore_scroll_positions(&self) -> Task<Message> {
         let mut tasks = Vec::new();
         // Restore editor scroll position after search bar toggle
-        let editor_y = self.editor_scroll_y;
+        let editor_y = self.editor.scroll_y;
         tasks.push(operation::scroll_to(
             iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
             AbsoluteOffset {
@@ -3122,7 +3093,7 @@ impl MdEditor {
             return Err("Search query is empty".to_string());
         }
 
-        let text = self.buffer.text();
+        let text = self.editor.buffer.text();
         let (new_text, count) = if self.search.regex {
             let re = regex::RegexBuilder::new(&self.search.query)
                 .case_insensitive(!self.search.match_case)
@@ -3154,8 +3125,8 @@ impl MdEditor {
         };
 
         if count > 0 {
-            self.buffer.set_text(&new_text);
-            self.toc_entries = views::toc::get_toc(&self.buffer.text());
+            self.editor.buffer.set_text(&new_text);
+            self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
             let task = self.highlight_all();
             return Ok((count, task));
         }
@@ -3197,17 +3168,17 @@ impl MdEditor {
         command: EditorCommand,
         keep_cursor_visible: bool,
     ) -> Task<Message> {
-        let result = self.buffer.execute(command);
+        let result = self.editor.buffer.execute(command);
         if result.text_changed {
-            self.buffer_revision = self.buffer_revision.wrapping_add(1);
+            self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
         }
         let content_task = if result.projection_changed {
             if result.text_changed {
-                self.toc_entries = views::toc::get_toc(&self.buffer.text());
+                self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
             }
             self.highlight_all()
         } else if result.text_changed {
-            self.toc_entries = views::toc::get_toc(&self.buffer.text());
+            self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
             Task::none()
         } else {
             Task::none()
@@ -3216,7 +3187,7 @@ impl MdEditor {
         if keep_cursor_visible {
             Task::batch(vec![
                 content_task,
-                self.scroll_editor_to_line(self.buffer.cursor_line),
+                self.scroll_editor_to_line(self.editor.buffer.cursor_line),
             ])
         } else {
             content_task
@@ -3238,11 +3209,11 @@ impl MdEditor {
             return;
         };
 
-        for line in &self.highlighted_lines {
+        for line in &self.editor.highlighted_lines {
             for span in &line.spans {
                 if span.is_image {
                     if let Some(path) = &span.image_path {
-                        if !self.image_cache.contains_key(path) {
+                        if !self.editor.image_cache.contains_key(path) {
                             let img_path = base_path.join(path);
                             if let Ok(img) = image::open(&img_path) {
                                 let (width, height) = img.dimensions();
@@ -3251,7 +3222,7 @@ impl MdEditor {
                                     height,
                                     img.into_rgba8().into_raw(),
                                 );
-                                self.image_cache
+                                self.editor.image_cache
                                     .insert(path.clone(), (handle, width as f32, height as f32));
                             }
                         }
@@ -3263,7 +3234,7 @@ impl MdEditor {
 
     fn load_math(&self) -> Task<Message> {
         let mut tasks = Vec::new();
-        for line in &self.highlighted_lines {
+        for line in &self.editor.highlighted_lines {
             for span in &line.spans {
                 if span.is_math {
                     let tex = span
@@ -3271,7 +3242,7 @@ impl MdEditor {
                         .trim_matches('$')
                         .trim()
                         .to_string();
-                    if !tex.is_empty() && !self.math_cache.contains_key(&tex) {
+                    if !tex.is_empty() && !self.editor.math_cache.contains_key(&tex) {
                         let tex_clone = tex.clone();
                         tasks.push(Task::perform(
                             async move { (tex_clone.clone(), Self::render_latex_task(&tex_clone)) },

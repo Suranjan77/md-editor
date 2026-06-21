@@ -1,5 +1,6 @@
 mod app;
 mod editor;
+mod editor_state;
 mod messages;
 mod pdf_notes;
 mod pdf_pane;
