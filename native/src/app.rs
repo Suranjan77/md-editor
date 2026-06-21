@@ -1024,7 +1024,7 @@ impl MdEditor {
                     } else {
                         Task::none()
                     }
-                } else if let Some(ann) = self.annotation_at(page_idx, x, y) {
+                } else if let Some(ann) = self.pdf.annotation_at(page_idx, x, y) {
                     self.pdf.focused_annotation_id = Some(ann.id.clone());
                     if let Some(ref path) = ann.linked_note_path {
                         if !path.is_empty() {
@@ -1053,7 +1053,7 @@ impl MdEditor {
                         }
                     }
                 } else {
-                    target_ann = self.annotation_at(page_idx, x, y);
+                    target_ann = self.pdf.annotation_at(page_idx, x, y);
                 }
 
                 if let Some(ann) = target_ann {
@@ -2626,32 +2626,6 @@ impl MdEditor {
         } else {
             content_width
         }
-    }
-
-    fn annotation_at(
-        &self,
-        page_idx: u16,
-        x: f32,
-        y: f32,
-    ) -> Option<md_editor_core::pdf::PdfAnnotation> {
-        let page_text = self.pdf.page_text.get(&page_idx)?;
-        let px = x * page_text.page_width;
-        let py = y * page_text.page_height;
-
-        let page_anns = self.pdf.annotations.get(&page_idx)?;
-        for ann in page_anns {
-            for rect in &ann.rects {
-                let view_y = page_text.page_height - rect.y - rect.height;
-                if px >= rect.x
-                    && px <= rect.x + rect.width
-                    && py >= view_y
-                    && py <= view_y + rect.height
-                {
-                    return Some(ann.clone());
-                }
-            }
-        }
-        None
     }
 
     fn resolve_active_path(&self, path: &str) -> Option<std::path::PathBuf> {

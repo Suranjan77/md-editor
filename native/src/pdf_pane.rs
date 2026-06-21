@@ -182,6 +182,27 @@ impl PdfPane {
         )
     }
 
+    pub fn annotation_at(&self, page_idx: u16, x: f32, y: f32) -> Option<PdfAnnotation> {
+        let page_text = self.page_text.get(&page_idx)?;
+        let px = x * page_text.page_width;
+        let py = y * page_text.page_height;
+
+        let page_anns = self.annotations.get(&page_idx)?;
+        for ann in page_anns {
+            for rect in &ann.rects {
+                let view_y = page_text.page_height - rect.y - rect.height;
+                if px >= rect.x
+                    && px <= rect.x + rect.width
+                    && py >= view_y
+                    && py <= view_y + rect.height
+                {
+                    return Some(ann.clone());
+                }
+            }
+        }
+        None
+    }
+
     pub fn link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<LinkInfo> {
         let links = self.page_links.get(&page_idx)?;
         let dim = self.dimensions.get(page_idx as usize).and_then(|d| *d)?;
