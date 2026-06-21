@@ -49,20 +49,6 @@ fn pdf_slot_total_height(total_pages: u16, slot_height: f32) -> f32 {
     PDF_PAGE_LIST_PADDING + f32::from(total_pages) * (slot_height + PDF_PAGE_SPACING)
 }
 
-fn pdf_search_match_scroll_y_from(
-    page_offset: f32,
-    rect_y: Option<f32>,
-    rect_height: f32,
-    page_height: f32,
-    zoom: f32,
-    max_y: f32,
-) -> f32 {
-    let match_top = rect_y
-        .map(|y| (page_height - y - rect_height).max(0.0) * zoom)
-        .unwrap_or(0.0);
-    (page_offset + match_top - 96.0).clamp(0.0, max_y.max(0.0))
-}
-
 #[allow(dead_code)]
 fn pdf_slot_page_at_scroll(scroll_y: f32, total_pages: u16, slot_height: f32) -> u16 {
     if total_pages == 0 {
@@ -76,19 +62,6 @@ fn pdf_slot_page_at_scroll(scroll_y: f32, total_pages: u16, slot_height: f32) ->
 
     let page = ((scroll_y - PDF_PAGE_LIST_PADDING).max(0.0) / slot_stride).floor() as u16;
     page.min(total_pages.saturating_sub(1))
-}
-
-fn pdf_placeholder_display_size_from(
-    placeholder_page_size: Option<(f32, f32)>,
-    first_page_size: Option<(f32, f32)>,
-    first_dimensions: Option<(u32, u32)>,
-    zoom: f32,
-) -> (f32, f32) {
-    placeholder_page_size
-        .or(first_page_size)
-        .or_else(|| first_dimensions.map(|(w, h)| (w as f32 / zoom, h as f32 / zoom)))
-        .map(|(w, h)| (w * zoom, h * zoom))
-        .unwrap_or((612.0 * zoom, 792.0 * zoom))
 }
 
 fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
@@ -777,12 +750,12 @@ impl MdEditor {
                 }
             }
             Message::PdfZoomChanged(zoom) => {
-                let current_page = self.pdf_page_at_scroll(self.pdf.scroll_y);
-                let page_start_offset = self.pdf_page_offset(current_page);
+                let current_page = self.pdf.page_at_scroll(self.pdf.scroll_y);
+                let page_start_offset = self.pdf.page_offset(current_page);
                 let relative_ratio = if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
                     0.0
                 } else {
-                    let page_height_old = self.pdf_page_height(current_page);
+                    let page_height_old = self.pdf.page_height(current_page);
                     if page_height_old > 0.0 {
                         ((self.pdf.scroll_y - page_start_offset).max(0.0)) / page_height_old
                     } else {
@@ -803,7 +776,7 @@ impl MdEditor {
                 if bucket_changed {
                     self.pdf.pages = vec![None; self.pdf.total_pages as usize];
                     self.pdf.dimensions = vec![None; self.pdf.total_pages as usize];
-                    self.pdf.placeholder_page_size = self.first_pdf_page_size();
+                    self.pdf.placeholder_page_size = self.pdf.first_page_size();
                     self.pdf.pending_pages.clear();
                     self.pdf.pending_links.clear();
                     self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
@@ -814,8 +787,8 @@ impl MdEditor {
                 let new_scroll_y = if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
                     self.pdf.scroll_y
                 } else {
-                    self.pdf_page_offset(current_page)
-                        + relative_ratio * self.pdf_page_height(current_page)
+                    self.pdf.page_offset(current_page)
+                        + relative_ratio * self.pdf.page_height(current_page)
                 };
                 self.pdf.scroll_y = new_scroll_y;
 
@@ -835,15 +808,15 @@ impl MdEditor {
                 let current_page = if let Some(target_page) = self.pdf.initial_target_page.take() {
                     target_page.min(self.pdf.total_pages.saturating_sub(1))
                 } else {
-                    self.pdf_page_at_scroll(self.pdf.scroll_y)
+                    self.pdf.page_at_scroll(self.pdf.scroll_y)
                 };
-                let page_start_offset = self.pdf_page_offset(current_page);
+                let page_start_offset = self.pdf.page_offset(current_page);
                 let relative_ratio = if is_initial {
                     0.0
                 } else if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
                     0.0
                 } else {
-                    let page_height_old = self.pdf_page_height(current_page);
+                    let page_height_old = self.pdf.page_height(current_page);
                     if page_height_old > 0.0 {
                         ((self.pdf.scroll_y - page_start_offset).max(0.0)) / page_height_old
                     } else {
@@ -877,7 +850,7 @@ impl MdEditor {
                 if bucket_changed {
                     self.pdf.pages = vec![None; self.pdf.total_pages as usize];
                     self.pdf.dimensions = vec![None; self.pdf.total_pages as usize];
-                    self.pdf.placeholder_page_size = self.first_pdf_page_size();
+                    self.pdf.placeholder_page_size = self.pdf.first_page_size();
                     self.pdf.pending_pages.clear();
                     self.pdf.pending_links.clear();
                     self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
@@ -886,12 +859,12 @@ impl MdEditor {
                 self.pdf.programmatic_scroll = true;
 
                 let new_scroll_y = if is_initial {
-                    self.pdf_page_offset(current_page)
+                    self.pdf.page_offset(current_page)
                 } else if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
                     self.pdf.scroll_y
                 } else {
-                    self.pdf_page_offset(current_page)
-                        + relative_ratio * self.pdf_page_height(current_page)
+                    self.pdf.page_offset(current_page)
+                        + relative_ratio * self.pdf.page_height(current_page)
                 };
                 self.pdf.scroll_y = new_scroll_y;
                 if is_initial {
@@ -921,7 +894,7 @@ impl MdEditor {
                         .resize(self.pdf.total_pages as usize, None);
                 }
                 if self.pdf.placeholder_page_size.is_none() {
-                    self.pdf.placeholder_page_size = self.first_pdf_page_size();
+                    self.pdf.placeholder_page_size = self.pdf.first_page_size();
                 }
                 if self.pdf.fit_to_width && self.pdf.total_pages > 0 {
                     Task::done(Message::PdfFitToWidth)
@@ -959,7 +932,7 @@ impl MdEditor {
                 }
                 if self.pdf.toc_target_page == Some(page) {
                     self.pdf.programmatic_scroll = true;
-                    let scroll_y = self.pdf_page_offset(page);
+                    let scroll_y = self.pdf.page_offset(page);
                     tasks.push(operation::scroll_to(
                         iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
                         AbsoluteOffset {
@@ -1004,7 +977,7 @@ impl MdEditor {
             Message::PdfScrolled { y, viewport_height } => {
                 self.active_panel = ActivePanel::Pdf;
                 self.pdf.scroll_y = y;
-                let new_page = self.pdf_page_at_scroll(y + viewport_height * 0.33);
+                let new_page = self.pdf.page_at_scroll(y + viewport_height * 0.33);
                 if self.pdf.programmatic_scroll {
                     self.pdf.programmatic_scroll = false;
                     let target_page = self.pdf.toc_target_page.take().unwrap_or(new_page);
@@ -1027,7 +1000,7 @@ impl MdEditor {
             }
             Message::PdfLeftClicked(page_idx, x, y, modifiers) => {
                 self.active_panel = ActivePanel::Pdf;
-                if let Some(link) = self.pdf_link_at(page_idx, x, y) {
+                if let Some(link) = self.pdf.link_at(page_idx, x, y) {
                     if let Some(dest_page) = link.dest_page {
                         self.pdf.current_page =
                             dest_page.min(u32::from(self.pdf.total_pages.saturating_sub(1))) as u16;
@@ -1088,7 +1061,8 @@ impl MdEditor {
                     self.ui.modal_input = ann.note.unwrap_or_default();
                     Task::none()
                 } else if let Some(link) = self
-                    .pdf_link_at(page_idx, x, y)
+                    .pdf
+                    .link_at(page_idx, x, y)
                     .filter(|link| link.dest_page.is_some())
                 {
                     let Some(dest_page) = link.dest_page else {
@@ -1352,7 +1326,7 @@ impl MdEditor {
                 {
                     return Task::none();
                 }
-                let max_y = self.pdf_total_height().max(0.0);
+                let max_y = self.pdf.total_height().max(0.0);
                 let y = (self.pdf.scroll_y + delta).clamp(0.0, max_y);
                 operation::scroll_to(
                     iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
@@ -2566,7 +2540,7 @@ impl MdEditor {
             return Task::none();
         }
         // Estimate visible range using viewport height and page height
-        let page_h = self.estimated_pdf_page_height().max(100.0);
+        let page_h = self.pdf.estimated_page_height().max(100.0);
         let viewport_h = self.ui.window_height.max(400.0);
         let pages_in_view = (viewport_h / page_h).ceil() as u16;
         let first_visible = self.pdf.current_page;
@@ -2597,8 +2571,8 @@ impl MdEditor {
             return Task::none();
         }
 
-        let first_visible = self.pdf_page_at_scroll(scroll_y);
-        let last_visible = self.pdf_page_at_scroll(scroll_y + viewport_height);
+        let first_visible = self.pdf.page_at_scroll(scroll_y);
+        let last_visible = self.pdf.page_at_scroll(scroll_y + viewport_height);
 
         if let Some(path) = &self.pdf.active_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
@@ -2609,9 +2583,9 @@ impl MdEditor {
             }
         }
 
-        let first = self.pdf_page_at_scroll((scroll_y - self.estimated_pdf_page_height()).max(0.0));
+        let first = self.pdf.page_at_scroll((scroll_y - self.pdf.estimated_page_height()).max(0.0));
         let last =
-            self.pdf_page_at_scroll(scroll_y + viewport_height + self.estimated_pdf_page_height());
+            self.pdf.page_at_scroll(scroll_y + viewport_height + self.pdf.estimated_page_height());
         self.render_pdf_page_range(
             first.saturating_sub(2),
             (last + 2).min(self.pdf.total_pages.saturating_sub(1)),
@@ -2640,35 +2614,6 @@ impl MdEditor {
         Task::batch(tasks)
     }
 
-    fn estimated_pdf_page_height(&self) -> f32 {
-        self.pdf_placeholder_display_size().1
-    }
-
-    fn first_pdf_page_size(&self) -> Option<(f32, f32)> {
-        self.pdf.page_sizes.first().and_then(|s| *s).or_else(|| {
-            self.pdf.dimensions
-                .first()
-                .and_then(|d| d.map(|(w, h)| (w as f32 / self.pdf.zoom, h as f32 / self.pdf.zoom)))
-        })
-    }
-
-    fn pdf_placeholder_display_size(&self) -> (f32, f32) {
-        pdf_placeholder_display_size_from(
-            self.pdf.placeholder_page_size,
-            self.pdf.page_sizes.first().and_then(|s| *s),
-            self.pdf.dimensions.first().and_then(|d| *d),
-            self.pdf.zoom,
-        )
-    }
-
-    fn pdf_page_display_size(&self, page: u16) -> (f32, f32) {
-        if let Some(Some((w, h))) = self.pdf.page_sizes.get(page as usize) {
-            (*w * self.pdf.zoom, *h * self.pdf.zoom)
-        } else {
-            self.pdf_placeholder_display_size()
-        }
-    }
-
     fn pdf_available_width(&self) -> f32 {
         let sidebar_width = if self.vault.sidebar_visible { 260.0 } else { 0.0 };
         let toc_width = if self.editor.toc_visible { 260.0 } else { 0.0 };
@@ -2681,88 +2626,6 @@ impl MdEditor {
         } else {
             content_width
         }
-    }
-
-    fn pdf_page_height(&self, page: u16) -> f32 {
-        if (page as usize) < self.pdf.total_pages as usize {
-            self.pdf_page_display_size(page).1
-        } else {
-            self.estimated_pdf_page_height()
-        }
-    }
-
-    fn pdf_page_offset(&self, page: u16) -> f32 {
-        let mut offset = PDF_PAGE_LIST_PADDING;
-        let limit = page.min(self.pdf.total_pages);
-        for i in 0..limit {
-            offset += self.pdf_page_height(i) + PDF_PAGE_SPACING;
-        }
-        offset
-    }
-
-    fn pdf_total_height(&self) -> f32 {
-        if self.pdf.total_pages == 0 {
-            return PDF_PAGE_LIST_PADDING;
-        }
-        let mut total = PDF_PAGE_LIST_PADDING;
-        for i in 0..self.pdf.total_pages {
-            total += self.pdf_page_height(i) + PDF_PAGE_SPACING;
-        }
-        total
-    }
-
-    fn pdf_page_at_scroll(&self, scroll_y: f32) -> u16 {
-        if self.pdf.total_pages == 0 {
-            return 0;
-        }
-        let mut offset = PDF_PAGE_LIST_PADDING;
-        for i in 0..self.pdf.total_pages {
-            let page_h = self.pdf_page_height(i);
-            if scroll_y < offset + page_h + PDF_PAGE_SPACING {
-                return i;
-            }
-            offset += page_h + PDF_PAGE_SPACING;
-        }
-        self.pdf.total_pages.saturating_sub(1)
-    }
-
-    fn pdf_search_match_scroll_y(&self, result: &md_editor_core::pdf::PdfSearchMatch) -> f32 {
-        let rect = result.rects.first();
-        let page_height = self
-            .pdf.page_sizes
-            .get(result.page_index as usize)
-            .and_then(|size| *size)
-            .map(|(_, h)| h)
-            .unwrap_or_else(|| self.pdf_page_height(result.page_index) / self.pdf.zoom.max(0.01));
-        pdf_search_match_scroll_y_from(
-            self.pdf_page_offset(result.page_index),
-            rect.map(|rect| rect.y),
-            rect.map(|rect| rect.height).unwrap_or(0.0),
-            page_height,
-            self.pdf.zoom,
-            self.pdf_total_height(),
-        )
-    }
-
-    fn pdf_link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<md_editor_core::pdf::LinkInfo> {
-        let links = self.pdf.page_links.get(&page_idx)?;
-        let dim = self
-            .pdf.dimensions
-            .get(page_idx as usize)
-            .and_then(|d| *d)?;
-        let real_x = (x * dim.0 as f32) / self.pdf.zoom;
-        let real_y = (y * dim.1 as f32) / self.pdf.zoom;
-
-        links
-            .iter()
-            .find(|link| {
-                let lx = link.bbox.x;
-                let ly = link.bbox.y;
-                let lw = link.bbox.width;
-                let lh = link.bbox.height;
-                real_x >= lx && real_x <= lx + lw && real_y >= ly && real_y <= ly + lh
-            })
-            .cloned()
     }
 
     fn annotation_at(
@@ -2928,7 +2791,7 @@ impl MdEditor {
         self.pdf.programmatic_scroll = true;
         self.pdf.toc_target_page = None;
 
-        let scroll_y = self.pdf_search_match_scroll_y(&result);
+        let scroll_y = self.pdf.search_match_scroll_y(&result);
         if let Some(path) = &self.pdf.active_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
                 let path_str = abs_path.to_string_lossy().to_string();
@@ -2983,7 +2846,7 @@ impl MdEditor {
         }
 
         self.pdf.programmatic_scroll = true;
-        let scroll_y = self.pdf_page_offset(target_page);
+        let scroll_y = self.pdf.page_offset(target_page);
         tasks.push(operation::scroll_to(
             iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
             AbsoluteOffset {
@@ -3651,11 +3514,11 @@ mod tests {
     #[test]
     fn pdf_search_scroll_targets_match_rect_not_just_page_top() {
         assert_eq!(
-            pdf_search_match_scroll_y_from(1000.0, Some(250.0), 20.0, 792.0, 2.0, 5000.0),
+            crate::pdf_pane::search_match_scroll_y_from(1000.0, Some(250.0), 20.0, 792.0, 2.0, 5000.0),
             1948.0
         );
         assert_eq!(
-            pdf_search_match_scroll_y_from(20.0, Some(780.0), 10.0, 792.0, 1.0, 5000.0),
+            crate::pdf_pane::search_match_scroll_y_from(20.0, Some(780.0), 10.0, 792.0, 1.0, 5000.0),
             0.0
         );
     }
@@ -3663,7 +3526,7 @@ mod tests {
     #[test]
     fn pdf_placeholder_size_scales_with_zoom() {
         assert_eq!(
-            pdf_placeholder_display_size_from(Some((612.0, 792.0)), None, None, 2.0),
+            crate::pdf_pane::placeholder_display_size_from(Some((612.0, 792.0)), None, None, 2.0),
             (1224.0, 1584.0)
         );
     }
@@ -3671,7 +3534,7 @@ mod tests {
     #[test]
     fn pdf_placeholder_prefers_first_page_size_over_rendered_dimensions() {
         assert_eq!(
-            pdf_placeholder_display_size_from(
+            crate::pdf_pane::placeholder_display_size_from(
                 Some((612.0, 792.0)),
                 Some((300.0, 300.0)),
                 Some((5000, 5000)),
