@@ -151,18 +151,8 @@ pub struct MdEditor {
     // Study tracker
     tracker: crate::tracker_state::TrackerState,
 
-    // Modal state
-    active_modal: Option<views::modals::ModalType>,
-    modal_input: String,
-    link_note_picker_search: String,
-
-    // Command palette
-    command_palette_visible: bool,
-    command_palette_query: String,
-    commands: Vec<views::command_palette::Command>,
-
-    // Toast
-    toast: Option<String>,
+    // Shell UI chrome: modals, command palette, toast, split view, window size
+    ui: crate::ui_state::UiState,
 
     // Search (query/replace, vault + PDF results, in-document match cache)
     search: crate::search_state::SearchState,
@@ -180,12 +170,7 @@ pub struct MdEditor {
     pdf_render_generation: u64,
     pdf_programmatic_scroll: bool,
     pdf_toc_target_page: Option<u16>,
-    split_view_active: bool,
-    split_ratio: f32,
-    is_resizing_split: bool,
     active_panel: ActivePanel,
-    window_width: f32,
-    window_height: f32,
     editor_scroll_y: f32,
     editor_viewport_width: f32,
     editor_viewport_height: f32,
@@ -243,13 +228,7 @@ impl MdEditor {
             pdf_pending_text: HashSet::new(),
             pdf_text_lru: std::collections::VecDeque::new(),
             tracker,
-            active_modal: None,
-            modal_input: String::new(),
-            link_note_picker_search: String::new(),
-            command_palette_visible: false,
-            command_palette_query: String::new(),
-            commands: views::command_palette::get_commands(),
-            toast: None,
+            ui: crate::ui_state::UiState::new(),
             search: crate::search_state::SearchState::new(),
             buffer_revision: 0,
             toc_visible: false,
@@ -261,12 +240,7 @@ impl MdEditor {
             pdf_render_generation: 0,
             pdf_programmatic_scroll: false,
             pdf_toc_target_page: None,
-            split_view_active: false,
-            split_ratio: 0.5,
-            is_resizing_split: false,
             active_panel: ActivePanel::Markdown,
-            window_width: 1200.0,
-            window_height: 800.0,
             editor_scroll_y: 0.0,
             editor_viewport_width: 900.0,
             editor_viewport_height: 720.0,
@@ -370,7 +344,7 @@ impl MdEditor {
             Message::Tick
         });
 
-        let toast = if self.toast.is_some() {
+        let toast = if self.ui.toast.is_some() {
             iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::ToastHide)
         } else {
             Subscription::none()
@@ -382,7 +356,7 @@ impl MdEditor {
             Subscription::none()
         };
 
-        let mouse_drag = if self.is_resizing_split {
+        let mouse_drag = if self.ui.is_resizing_split {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::SplitViewDragging(position.x))
@@ -490,7 +464,7 @@ impl MdEditor {
                         pdf_path,
                     );
 
-                    self.split_view_active = true;
+                    self.ui.split_view_active = true;
                     self.showing_pdf = true;
 
                     if self.active_pdf_path.as_deref() == Some(&resolved_pdf_path) {
@@ -569,7 +543,7 @@ impl MdEditor {
                                         });
                                     Task::batch(vec![cmd_task, scroll_task])
                                 } else {
-                                    self.toast = Some(format!(
+                                    self.ui.toast = Some(format!(
                                         "Heading or widget not found: #{}",
                                         anchor_part
                                     ));
@@ -646,32 +620,32 @@ impl MdEditor {
                 Task::none()
             }
             Message::CreateFileDialog => {
-                self.active_modal = Some(views::modals::ModalType::CreateFile);
-                self.modal_input.clear();
-                self.link_note_picker_search.clear();
+                self.ui.active_modal = Some(views::modals::ModalType::CreateFile);
+                self.ui.modal_input.clear();
+                self.ui.link_note_picker_search.clear();
                 Task::none()
             }
             Message::CreateFolderDialog => {
-                self.active_modal = Some(views::modals::ModalType::CreateFolder);
-                self.modal_input.clear();
-                self.link_note_picker_search.clear();
+                self.ui.active_modal = Some(views::modals::ModalType::CreateFolder);
+                self.ui.modal_input.clear();
+                self.ui.link_note_picker_search.clear();
                 Task::none()
             }
             Message::DeleteFileDialog(path) => {
-                self.active_modal = Some(views::modals::ModalType::Delete(path));
+                self.ui.active_modal = Some(views::modals::ModalType::Delete(path));
                 Task::none()
             }
             Message::NameModalInputChanged(input) => {
-                self.modal_input = input;
+                self.ui.modal_input = input;
                 Task::none()
             }
             Message::PdfLinkNoteFolderSelected(folder) => {
                 if matches!(
-                    self.active_modal,
+                    self.ui.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
                 ) {
-                    let filename = note_filename_from_path(&self.modal_input);
-                    self.modal_input = if folder.is_empty() {
+                    let filename = note_filename_from_path(&self.ui.modal_input);
+                    self.ui.modal_input = if folder.is_empty() {
                         filename
                     } else {
                         format!("{}/{}", folder.trim_end_matches('/'), filename)
@@ -681,63 +655,63 @@ impl MdEditor {
             }
             Message::PdfLinkNoteFileSelected(path) => {
                 if matches!(
-                    self.active_modal,
+                    self.ui.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
                 ) {
-                    self.modal_input = normalize_note_path(&path);
+                    self.ui.modal_input = normalize_note_path(&path);
                 }
                 Task::none()
             }
             Message::PdfLinkNotePickerSearchChanged(query) => {
                 if matches!(
-                    self.active_modal,
+                    self.ui.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
                 ) {
-                    self.link_note_picker_search = query;
+                    self.ui.link_note_picker_search = query;
                 }
                 Task::none()
             }
             Message::NameModalCancel => {
-                self.active_modal = None;
-                self.modal_input.clear();
-                self.link_note_picker_search.clear();
+                self.ui.active_modal = None;
+                self.ui.modal_input.clear();
+                self.ui.link_note_picker_search.clear();
                 Task::none()
             }
             Message::NameModalSubmitCurrent => {
                 if matches!(
-                    self.active_modal,
+                    self.ui.active_modal,
                     Some(views::modals::ModalType::CreateFile)
                         | Some(views::modals::ModalType::CreateFolder)
                         | Some(views::modals::ModalType::QuickNote(_))
                         | Some(views::modals::ModalType::LinkNote(_))
                 ) {
-                    Task::done(Message::NameModalSubmit(self.modal_input.clone()))
+                    Task::done(Message::NameModalSubmit(self.ui.modal_input.clone()))
                 } else {
                     Task::none()
                 }
             }
             Message::NameModalSubmit(input) => {
-                if let Some(views::modals::ModalType::QuickNote(id)) = self.active_modal.clone() {
-                    self.active_modal = None;
-                    self.modal_input.clear();
-                    self.link_note_picker_search.clear();
+                if let Some(views::modals::ModalType::QuickNote(id)) = self.ui.active_modal.clone() {
+                    self.ui.active_modal = None;
+                    self.ui.modal_input.clear();
+                    self.ui.link_note_picker_search.clear();
                     return Task::done(Message::PdfAddQuickNote(id, input));
                 }
-                if let Some(views::modals::ModalType::LinkNote(id)) = self.active_modal.clone() {
-                    self.active_modal = None;
-                    self.modal_input.clear();
-                    self.link_note_picker_search.clear();
+                if let Some(views::modals::ModalType::LinkNote(id)) = self.ui.active_modal.clone() {
+                    self.ui.active_modal = None;
+                    self.ui.modal_input.clear();
+                    self.ui.link_note_picker_search.clear();
                     return Task::done(Message::PdfLinkNote(id, input));
                 }
 
                 let name = input.trim();
                 if name.is_empty() {
-                    self.toast = Some("Name cannot be empty".to_string());
+                    self.ui.toast = Some("Name cannot be empty".to_string());
                     return Task::none();
                 }
 
                 let target_path = self.new_entry_path(name);
-                let result = match self.active_modal.as_ref() {
+                let result = match self.ui.active_modal.as_ref() {
                     Some(views::modals::ModalType::CreateFile) => {
                         let path =
                             if target_path.ends_with(".md") || target_path.ends_with(".markdown") {
@@ -757,12 +731,12 @@ impl MdEditor {
                     Ok(()) => {
                         self.vault_entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                        self.active_modal = None;
-                        self.modal_input.clear();
-                        self.link_note_picker_search.clear();
-                        self.toast = Some("Created".to_string());
+                        self.ui.active_modal = None;
+                        self.ui.modal_input.clear();
+                        self.ui.link_note_picker_search.clear();
+                        self.ui.toast = Some("Created".to_string());
                     }
-                    Err(err) => self.toast = Some(err),
+                    Err(err) => self.ui.toast = Some(err),
                 }
                 Task::none()
             }
@@ -781,11 +755,11 @@ impl MdEditor {
                             self.pdf_pages.clear();
                             self.pdf_dimensions.clear();
                         }
-                        self.active_modal = None;
-                        self.link_note_picker_search.clear();
-                        self.toast = Some("Deleted".to_string());
+                        self.ui.active_modal = None;
+                        self.ui.link_note_picker_search.clear();
+                        self.ui.toast = Some("Deleted".to_string());
                     }
-                    Err(err) => self.toast = Some(err),
+                    Err(err) => self.ui.toast = Some(err),
                 }
                 Task::none()
             }
@@ -805,7 +779,7 @@ impl MdEditor {
                     let content = self.buffer.text();
                     let _ = md_editor_core::vault::save_file(&self.state, path, &content);
                     self.buffer.dirty = false;
-                    self.toast = Some("File saved".to_string());
+                    self.ui.toast = Some("File saved".to_string());
                 }
                 Task::none()
             }
@@ -876,7 +850,7 @@ impl MdEditor {
                 self.pdf_programmatic_scroll = false;
                 self.pdf_toc_target_page = None;
                 if pages == 0 {
-                    self.toast = Some(
+                    self.ui.toast = Some(
                         "PDF renderer is unavailable or the PDF could not be opened".to_string(),
                     );
                 }
@@ -1097,7 +1071,7 @@ impl MdEditor {
                     self.pdf_toc_target_page = None;
                     self.pdf_programmatic_scroll = false;
                 }
-                self.toast = Some(format!("Could not render PDF page {}", page + 1));
+                self.ui.toast = Some(format!("Could not render PDF page {}", page + 1));
                 Task::none()
             }
             Message::PdfRenderSkipped(generation, page) => {
@@ -1160,9 +1134,9 @@ impl MdEditor {
                             let _ = std::process::Command::new("open").arg(&uri).spawn();
                             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
                             let _ = std::process::Command::new("xdg-open").arg(&uri).spawn();
-                            self.toast = Some(format!("Opening: {}", uri));
+                            self.ui.toast = Some(format!("Opening: {}", uri));
                         } else {
-                            self.toast =
+                            self.ui.toast =
                                 Some(format!("External link (Ctrl+click to open): {}", uri));
                         }
                         Task::none()
@@ -1202,8 +1176,8 @@ impl MdEditor {
                 }
 
                 if let Some(ann) = target_ann {
-                    self.active_modal = Some(views::modals::ModalType::QuickNote(ann.id));
-                    self.modal_input = ann.note.unwrap_or_default();
+                    self.ui.active_modal = Some(views::modals::ModalType::QuickNote(ann.id));
+                    self.ui.modal_input = ann.note.unwrap_or_default();
                     Task::none()
                 } else if let Some(link) = self
                     .pdf_link_at(page_idx, x, y)
@@ -1251,7 +1225,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfLinkPreviewResult(Err(e)) => {
-                self.toast = Some(format!("Preview Error: {}", e));
+                self.ui.toast = Some(format!("Preview Error: {}", e));
                 Task::none()
             }
             Message::ClosePdfLinkPreview => {
@@ -1295,17 +1269,17 @@ impl MdEditor {
 
             m @ Message::TrackerToggle => self.tracker.update(m, &self.state),
             Message::CommandPaletteOpen => {
-                self.command_palette_visible = true;
-                self.command_palette_query.clear();
+                self.ui.command_palette_visible = true;
+                self.ui.command_palette_query.clear();
                 Task::none()
             }
             Message::CommandPaletteQueryChanged(query) => {
-                self.command_palette_query = query;
+                self.ui.command_palette_query = query;
                 Task::none()
             }
             Message::CommandPaletteCommandClicked(shortcut) => {
-                self.command_palette_visible = false;
-                self.command_palette_query.clear();
+                self.ui.command_palette_visible = false;
+                self.ui.command_palette_query.clear();
                 Task::done(Message::KeyboardShortcut(shortcut))
             }
             m @ (Message::TrackerStart
@@ -1405,11 +1379,11 @@ impl MdEditor {
             }
             Message::SearchReplaceAll => match self.replace_all_in_current_document() {
                 Ok((count, task)) => {
-                    self.toast = Some(format!("Replaced {} matches", count));
+                    self.ui.toast = Some(format!("Replaced {} matches", count));
                     task
                 }
                 Err(err) => {
-                    self.toast = Some(err);
+                    self.ui.toast = Some(err);
                     Task::none()
                 }
             },
@@ -1459,14 +1433,14 @@ impl MdEditor {
             Message::PdfScrollBy(delta) => {
                 if self.active_pdf_path.is_none()
                     || (!self.showing_pdf
-                        && !(self.split_view_active && self.active_path.is_some()))
-                    || (self.split_view_active
+                        && !(self.ui.split_view_active && self.active_path.is_some()))
+                    || (self.ui.split_view_active
                         && self.active_path.is_some()
                         && self.active_panel != ActivePanel::Pdf)
                     || self.search.visible
                     || self.search.file_visible
-                    || self.active_modal.is_some()
-                    || self.command_palette_visible
+                    || self.ui.active_modal.is_some()
+                    || self.ui.command_palette_visible
                 {
                     return Task::none();
                 }
@@ -1614,7 +1588,7 @@ impl MdEditor {
                         };
 
                         if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                            self.toast = Some(format!("Failed to save highlight: {}", e));
+                            self.ui.toast = Some(format!("Failed to save highlight: {}", e));
                         } else {
                             self.pdf_annotations
                                 .entry(sel.page_index)
@@ -1633,7 +1607,7 @@ impl MdEditor {
             }
             Message::PdfDeleteHighlight(id) => {
                 if let Err(e) = self.state.delete_pdf_annotation(&id) {
-                    self.toast = Some(format!("Failed to delete highlight: {}", e));
+                    self.ui.toast = Some(format!("Failed to delete highlight: {}", e));
                 } else {
                     for page_anns in self.pdf_annotations.values_mut() {
                         page_anns.retain(|a| a.id != id);
@@ -1641,10 +1615,10 @@ impl MdEditor {
                     if self.focused_annotation_id.as_ref() == Some(&id) {
                         self.focused_annotation_id = None;
                     }
-                    if let Some(views::modals::ModalType::QuickNote(ref mid)) = self.active_modal {
+                    if let Some(views::modals::ModalType::QuickNote(ref mid)) = self.ui.active_modal {
                         if mid == &id {
-                            self.active_modal = None;
-                            self.modal_input.clear();
+                            self.ui.active_modal = None;
+                            self.ui.modal_input.clear();
                         }
                     }
                     if let Some(ref path) = self.active_pdf_path {
@@ -1670,7 +1644,7 @@ impl MdEditor {
                 }
                 if let Some(ann) = found_ann {
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                        self.toast = Some(format!("Failed to save note: {}", e));
+                        self.ui.toast = Some(format!("Failed to save note: {}", e));
                     } else {
                         if let Some(ref path) = self.active_pdf_path {
                             self.backlinks =
@@ -1691,9 +1665,9 @@ impl MdEditor {
                 }
                 if let Some(mut ann) = annotation {
                     if note_path.is_empty() {
-                        self.modal_input = self.default_pdf_note_path(&ann);
-                        self.link_note_picker_search.clear();
-                        self.active_modal = Some(views::modals::ModalType::LinkNote(annotation_id));
+                        self.ui.modal_input = self.default_pdf_note_path(&ann);
+                        self.ui.link_note_picker_search.clear();
+                        self.ui.active_modal = Some(views::modals::ModalType::LinkNote(annotation_id));
                         return Task::none();
                     }
 
@@ -1704,7 +1678,7 @@ impl MdEditor {
                         if let Err(e) =
                             md_editor_core::vault::save_file(&self.state, &note_path, &content)
                         {
-                            self.toast = Some(format!("Failed to create linked note: {}", e));
+                            self.ui.toast = Some(format!("Failed to create linked note: {}", e));
                             return Task::none();
                         }
                     } else {
@@ -1718,7 +1692,7 @@ impl MdEditor {
                         .as_secs() as i64;
 
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                        self.toast = Some(format!("Failed to link note: {}", e));
+                        self.ui.toast = Some(format!("Failed to link note: {}", e));
                     } else {
                         for page_anns in self.pdf_annotations.values_mut() {
                             if let Some(a) = page_anns.iter_mut().find(|a| a.id == annotation_id) {
@@ -1729,14 +1703,14 @@ impl MdEditor {
                         }
                         self.vault_entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                        self.toast = Some(format!("Linked note: {}", note_path));
+                        self.ui.toast = Some(format!("Linked note: {}", note_path));
                         return Task::done(Message::PdfOpenLinkedNote(note_path));
                     }
                 }
                 Task::none()
             }
             Message::PdfOpenLinkedNote(note_path) => {
-                self.split_view_active = true;
+                self.ui.split_view_active = true;
                 let open_task = self.open_file_extended(&note_path, false);
                 if self.pdf_fit_to_width {
                     Task::batch(vec![open_task, Task::done(Message::PdfFitToWidth)])
@@ -1755,7 +1729,7 @@ impl MdEditor {
                     &document_path,
                 );
 
-                self.split_view_active = true;
+                self.ui.split_view_active = true;
                 self.showing_pdf = true;
 
                 if self.active_pdf_path.as_deref() == Some(&resolved_pdf_path) {
@@ -1773,11 +1747,11 @@ impl MdEditor {
             }
 
             Message::ShowToast(text) => {
-                self.toast = Some(text);
+                self.ui.toast = Some(text);
                 Task::none()
             }
             Message::ToastHide => {
-                self.toast = None;
+                self.ui.toast = None;
                 Task::none()
             }
             Message::KeyboardShortcut(s) => {
@@ -1790,10 +1764,10 @@ impl MdEditor {
                             self.focused_annotation_id = None;
                         } else if self.pdf_link_preview.is_some() {
                             self.pdf_link_preview = None;
-                        } else if self.active_modal.is_some() {
-                            self.active_modal = None;
-                            self.modal_input.clear();
-                            self.link_note_picker_search.clear();
+                        } else if self.ui.active_modal.is_some() {
+                            self.ui.active_modal = None;
+                            self.ui.modal_input.clear();
+                            self.ui.link_note_picker_search.clear();
                         } else if self.tracker.visible {
                             self.tracker.hide();
                         } else if self.search.file_visible {
@@ -1802,8 +1776,8 @@ impl MdEditor {
                         } else if self.search.visible {
                             self.search.visible = false;
                             return self.restore_scroll_positions();
-                        } else if self.command_palette_visible {
-                            self.command_palette_visible = false;
+                        } else if self.ui.command_palette_visible {
+                            self.ui.command_palette_visible = false;
                         } else if self.toc_visible {
                             self.toc_visible = false;
                         }
@@ -1817,7 +1791,7 @@ impl MdEditor {
                     Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
                     Shortcut::NewFile => Task::done(Message::CreateFileDialog),
                     Shortcut::Search => {
-                        if self.split_view_active && self.active_path.is_some() {
+                        if self.ui.split_view_active && self.active_path.is_some() {
                             self.search.file_visible = true;
                             self.search.visible = false;
                             if self.active_panel == ActivePanel::Pdf
@@ -1869,8 +1843,8 @@ impl MdEditor {
                         }
                     }
                     Shortcut::CommandPalette => {
-                        self.command_palette_visible = true;
-                        self.command_palette_query.clear();
+                        self.ui.command_palette_visible = true;
+                        self.ui.command_palette_query.clear();
                         Task::none()
                     }
                     Shortcut::ToggleBacklinks => {
@@ -1880,7 +1854,7 @@ impl MdEditor {
                     Shortcut::TableOfContents => {
                         if self.active_pdf_path.is_some()
                             && (self.showing_pdf
-                                || (self.split_view_active && self.active_path.is_some()))
+                                || (self.ui.split_view_active && self.active_path.is_some()))
                         {
                             self.toc_visible = !self.toc_visible;
                         }
@@ -1902,46 +1876,46 @@ impl MdEditor {
             }
             Message::SplitViewToggle => {
                 if self.active_path.is_some() && self.active_pdf_path.is_some() {
-                    self.split_view_active = !self.split_view_active;
+                    self.ui.split_view_active = !self.ui.split_view_active;
                     if self.pdf_fit_to_width {
                         return Task::done(Message::PdfFitToWidth);
                     }
                 } else {
-                    self.toast =
+                    self.ui.toast =
                         Some("Open a markdown file and a PDF to use split view".to_string());
                 }
                 Task::none()
             }
             Message::SplitViewDragStart => {
-                self.is_resizing_split = true;
+                self.ui.is_resizing_split = true;
                 Task::none()
             }
             Message::SplitViewDragging(x_pos) => {
-                if !self.is_resizing_split {
+                if !self.ui.is_resizing_split {
                     return Task::none();
                 }
                 let side_width = if self.sidebar_visible { 250.0 } else { 0.0 }
                     + if self.tracker.visible { 300.0 } else { 0.0 }
                     + if self.toc_visible { 250.0 } else { 0.0 };
-                let content_width = (self.window_width - side_width).max(480.0);
+                let content_width = (self.ui.window_width - side_width).max(480.0);
                 let x_min = side_width + 240.0;
                 let x_max = side_width + content_width - 240.0;
                 let total_width = x_max - x_min;
                 if total_width > 1.0 {
-                    self.split_ratio = ((x_pos - x_min) / total_width).clamp(0.25, 0.75);
+                    self.ui.split_ratio = ((x_pos - x_min) / total_width).clamp(0.25, 0.75);
                 }
                 Task::none()
             }
             Message::SplitViewDragEnd => {
-                self.is_resizing_split = false;
+                self.ui.is_resizing_split = false;
                 if self.pdf_fit_to_width && self.active_pdf_path.is_some() {
                     return Task::done(Message::PdfFitToWidth);
                 }
                 Task::none()
             }
             Message::WindowResized(width, height) => {
-                self.window_width = width;
-                self.window_height = height;
+                self.ui.window_width = width;
+                self.ui.window_height = height;
                 if self.pdf_fit_to_width && self.active_pdf_path.is_some() {
                     return Task::done(Message::PdfFitToWidth);
                 }
@@ -1949,7 +1923,7 @@ impl MdEditor {
             }
             Message::ToggleTOC => {
                 if self.active_pdf_path.is_some()
-                    && (self.showing_pdf || (self.split_view_active && self.active_path.is_some()))
+                    && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()))
                 {
                     self.toc_visible = !self.toc_visible;
                 }
@@ -1975,8 +1949,8 @@ impl MdEditor {
             self.tracker.visible,
             self.toc_visible,
             self.active_pdf_path.is_some()
-                && (self.showing_pdf || (self.split_view_active && self.active_path.is_some())),
-            self.split_view_active,
+                && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some())),
+            self.ui.split_view_active,
             self.active_path.is_some(),
         );
 
@@ -2119,7 +2093,7 @@ impl MdEditor {
             };
 
         let pdf_toc_available = self.active_pdf_path.is_some()
-            && (self.showing_pdf || (self.split_view_active && self.active_path.is_some()));
+            && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()));
         let toc_view: Element<Message, Theme, iced::Renderer> =
             if self.toc_visible && pdf_toc_available {
                 views::toc::view(&self.toc_entries)
@@ -2156,12 +2130,12 @@ impl MdEditor {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
 
-        let main_content: Element<Message, Theme, iced::Renderer> = if self.split_view_active
+        let main_content: Element<Message, Theme, iced::Renderer> = if self.ui.split_view_active
             && self.active_path.is_some()
             && self.active_pdf_path.is_some()
         {
-            let left_portion = (self.split_ratio * 1000.0) as u16;
-            let right_portion = ((1.0 - self.split_ratio) * 1000.0) as u16;
+            let left_portion = (self.ui.split_ratio * 1000.0) as u16;
+            let right_portion = ((1.0 - self.ui.split_ratio) * 1000.0) as u16;
 
             let divider = mouse_area(
                 container(text("⋮").size(14).color(app_theme::TEXT_MUTED))
@@ -2246,11 +2220,11 @@ impl MdEditor {
             );
         }
 
-        if self.command_palette_visible {
+        if self.ui.command_palette_visible {
             layers.push(
                 container(views::command_palette::view(
-                    &self.command_palette_query,
-                    &self.commands,
+                    &self.ui.command_palette_query,
+                    &self.ui.commands,
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -2266,11 +2240,11 @@ impl MdEditor {
             );
         }
 
-        if let Some(modal_type) = &self.active_modal {
+        if let Some(modal_type) = &self.ui.active_modal {
             layers.push(views::modals::view(
                 modal_type,
-                &self.modal_input,
-                &self.link_note_picker_search,
+                &self.ui.modal_input,
+                &self.ui.link_note_picker_search,
                 &self.vault_entries,
             ));
         }
@@ -2331,7 +2305,7 @@ impl MdEditor {
             layers.push(modal.into());
         }
 
-        if let Some(msg) = &self.toast {
+        if let Some(msg) = &self.ui.toast {
             layers.push(
                 container(views::toast::view(msg))
                     .width(Length::Fill)
@@ -2428,7 +2402,7 @@ impl MdEditor {
 
     fn open_pdf(&mut self, path: &str) -> Task<Message> {
         let Some(abs_path) = self.resolve_active_path(path) else {
-            self.toast = Some("Open a vault before opening a PDF".to_string());
+            self.ui.toast = Some("Open a vault before opening a PDF".to_string());
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
@@ -2520,7 +2494,7 @@ impl MdEditor {
 
     fn open_image(&mut self, path: &str) -> Task<Message> {
         let Some(abs_path) = self.resolve_active_path(path) else {
-            self.toast = Some("Open a vault before opening an image".to_string());
+            self.ui.toast = Some("Open a vault before opening an image".to_string());
             return Task::none();
         };
 
@@ -2543,7 +2517,7 @@ impl MdEditor {
                 self.backlinks.clear();
             }
             Err(err) => {
-                self.toast = Some(format!("Could not open image: {err}"));
+                self.ui.toast = Some(format!("Could not open image: {err}"));
             }
         }
         Task::none()
@@ -2684,7 +2658,7 @@ impl MdEditor {
         }
         // Estimate visible range using viewport height and page height
         let page_h = self.estimated_pdf_page_height().max(100.0);
-        let viewport_h = self.window_height.max(400.0);
+        let viewport_h = self.ui.window_height.max(400.0);
         let pages_in_view = (viewport_h / page_h).ceil() as u16;
         let first_visible = self.pdf_current_page;
         let last_visible =
@@ -2791,10 +2765,10 @@ impl MdEditor {
         let toc_width = if self.toc_visible { 260.0 } else { 0.0 };
         let backlinks_width = if self.backlinks_visible { 260.0 } else { 0.0 };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
-        let content_width = (self.window_width - chrome_width).max(320.0);
+        let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
-        if self.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
-            (content_width * (1.0 - self.split_ratio)).max(280.0)
+        if self.ui.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
+            (content_width * (1.0 - self.ui.split_ratio)).max(280.0)
         } else {
             content_width
         }
@@ -3116,17 +3090,17 @@ impl MdEditor {
         let toc_width = if self.toc_visible { 260.0 } else { 0.0 };
         let backlinks_width = if self.backlinks_visible { 260.0 } else { 0.0 };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
-        let content_width = (self.window_width - chrome_width).max(320.0);
+        let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
-        if self.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
-            (content_width * self.split_ratio).max(280.0)
+        if self.ui.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
+            (content_width * self.ui.split_ratio).max(280.0)
         } else {
             content_width
         }
     }
 
     fn estimated_editor_viewport_height(&self) -> f32 {
-        let mut height = self.window_height - 48.0; // toolbar ~48px
+        let mut height = self.ui.window_height - 48.0; // toolbar ~48px
         if self.search.file_visible && self.active_path.is_some() {
             height -= 40.0; // search bar ~40px
         }
@@ -3172,7 +3146,7 @@ impl MdEditor {
         self.search.file_visible
             && self.active_pdf_path.is_some()
             && (self.showing_pdf
-                || (self.split_view_active
+                || (self.ui.split_view_active
                     && self.active_path.is_some()
                     && self.active_panel == ActivePanel::Pdf))
     }
@@ -3181,14 +3155,14 @@ impl MdEditor {
         self.search.file_visible
             && self.active_path.is_some()
             && !self.pdf_search_is_active()
-            && (!self.split_view_active || self.active_panel == ActivePanel::Markdown)
+            && (!self.ui.split_view_active || self.active_panel == ActivePanel::Markdown)
     }
 
     fn pdf_copy_shortcut_is_active(&self) -> bool {
         self.pdf_selection.is_some()
             && self.active_pdf_path.is_some()
             && (self.showing_pdf
-                || (self.split_view_active
+                || (self.ui.split_view_active
                     && self.active_path.is_some()
                     && self.active_panel == ActivePanel::Pdf))
     }

@@ -6,6 +6,7 @@ mod search;
 mod search_state;
 mod theme;
 mod tracker_state;
+mod ui_state;
 mod views;
 
 #[cfg(target_os = "linux")]
