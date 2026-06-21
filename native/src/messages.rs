@@ -115,7 +115,6 @@ pub enum Message {
     ),
 
     // ── System ───────────────────────────────────────────────────
-    Tick,
     KeyboardShortcut(Shortcut),
     ToggleTOC,
     TocClicked(usize),

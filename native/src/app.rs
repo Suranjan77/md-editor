@@ -161,64 +161,50 @@ impl MdEditor {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let keyboard = iced::keyboard::listen().map(|event| {
-            match event {
-                iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
-                    // Escape key — close overlays
-                    if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) {
-                        return Message::KeyboardShortcut(Shortcut::Escape);
-                    }
-                    if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) {
-                        return Message::NameModalSubmitCurrent;
-                    }
-                    if modifiers.command() || modifiers.control() {
-                        match key {
-                            iced::keyboard::Key::Character(c) if c == "s" => {
-                                return Message::KeyboardShortcut(Shortcut::Save);
-                            }
-                            iced::keyboard::Key::Character(c) if c == "o" => {
-                                return Message::KeyboardShortcut(Shortcut::OpenVault);
-                            }
-                            iced::keyboard::Key::Character(c) if c == "n" => {
-                                return Message::KeyboardShortcut(Shortcut::NewFile);
-                            }
-                            iced::keyboard::Key::Character(c) if c == "f" => {
-                                return Message::KeyboardShortcut(Shortcut::Search);
-                            }
-                            iced::keyboard::Key::Character(c) if c == "c" => {
-                                return Message::PdfCopySelection;
-                            }
-                            iced::keyboard::Key::Character(c) if c == "p" => {
-                                return Message::KeyboardShortcut(Shortcut::CommandPalette);
-                            }
-                            iced::keyboard::Key::Character(c) if c == "b" => {
-                                return Message::KeyboardShortcut(Shortcut::ToggleSidebar);
-                            }
-                            iced::keyboard::Key::Character(c) if c == "t" => {
-                                return Message::KeyboardShortcut(Shortcut::TableOfContents);
-                            }
-                            _ => {}
-                        }
-                    }
-                    match key {
-                        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => {
-                            return Message::PdfScrollBy(64.0);
-                        }
-                        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp) => {
-                            return Message::PdfScrollBy(-64.0);
-                        }
-                        iced::keyboard::Key::Named(iced::keyboard::key::Named::PageDown) => {
-                            return Message::PdfScrollBy(520.0);
-                        }
-                        iced::keyboard::Key::Named(iced::keyboard::key::Named::PageUp) => {
-                            return Message::PdfScrollBy(-520.0);
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
+        // App-level keyboard handling. Returns `None` for keys we don't act on
+        // so unhandled keystrokes (ordinary text entry, handled by the focused
+        // editor widget) don't each spawn a redundant update cycle. The
+        // context-sensitive messages below are gated in their own handlers
+        // (e.g. PdfScrollBy only scrolls when the PDF pane is the active
+        // target, NameModalSubmitCurrent is a no-op without an open modal).
+        let keyboard = iced::event::listen_with(|event, _status, _window_id| {
+            use iced::keyboard::Key;
+            use iced::keyboard::key::Named;
+
+            let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) =
+                event
+            else {
+                return None;
+            };
+
+            if key == Key::Named(Named::Escape) {
+                return Some(Message::KeyboardShortcut(Shortcut::Escape));
             }
-            Message::Tick
+            if key == Key::Named(Named::Enter) {
+                return Some(Message::NameModalSubmitCurrent);
+            }
+            if modifiers.command() || modifiers.control() {
+                if let Key::Character(c) = key.as_ref() {
+                    return match c {
+                        "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
+                        "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
+                        "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
+                        "f" => Some(Message::KeyboardShortcut(Shortcut::Search)),
+                        "c" => Some(Message::PdfCopySelection),
+                        "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
+                        "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
+                        "t" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
+                        _ => None,
+                    };
+                }
+            }
+            match key {
+                Key::Named(Named::ArrowDown) => Some(Message::PdfScrollBy(64.0)),
+                Key::Named(Named::ArrowUp) => Some(Message::PdfScrollBy(-64.0)),
+                Key::Named(Named::PageDown) => Some(Message::PdfScrollBy(520.0)),
+                Key::Named(Named::PageUp) => Some(Message::PdfScrollBy(-520.0)),
+                _ => None,
+            }
         });
 
         let toast = if self.ui.toast.is_some() {
