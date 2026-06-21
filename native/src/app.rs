@@ -3,7 +3,6 @@ use iced::widget::{Space, column, container, mouse_area, row, scrollable, stack,
 use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 
 use image::GenericImageView;
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -102,14 +101,9 @@ fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
 
 pub struct MdEditor {
     state: Arc<md_editor_core::state::AppState>,
-    vault_root: Option<String>,
-    vault_entries: Vec<md_editor_core::types::FileEntry>,
-    selected_path: Option<String>,
+    // Vault navigation: root, file tree, sidebar selection/expansion, backlinks
+    vault: crate::vault_state::VaultState,
     active_path: Option<String>,
-    expanded_folders: BTreeSet<String>,
-    sidebar_visible: bool,
-    backlinks_visible: bool,
-    backlinks: Vec<md_editor_core::types::BacklinkItem>,
 
     // Editor state
     buffer: DocBuffer,
@@ -163,14 +157,8 @@ impl MdEditor {
 
         let mut app = Self {
             state: state.clone(),
-            vault_root: None,
-            vault_entries: Vec::new(),
-            selected_path: None,
+            vault: crate::vault_state::VaultState::new(),
             active_path: None,
-            expanded_folders: BTreeSet::new(),
-            sidebar_visible: true,
-            backlinks_visible: false,
-            backlinks: Vec::new(),
             buffer: DocBuffer::new(),
             highlighted_lines: Vec::new(),
             highlight_generation: 0,
@@ -365,19 +353,19 @@ impl MdEditor {
             ),
             Message::VaultOpened(Some(path)) => self.open_vault(&path),
             Message::VaultIndexed(entries) => {
-                self.vault_entries = entries;
+                self.vault.entries = entries;
                 // Backlinks for the active file depend on the freshly built
                 // index; refresh them now that indexing has completed.
                 if let Some(path) = self.active_path.clone().or_else(|| self.pdf.active_path.clone())
                 {
-                    self.backlinks =
+                    self.vault.backlinks =
                         md_editor_core::vault::get_mixed_backlinks(&self.state, &path)
                             .unwrap_or_default();
                 }
                 Task::none()
             }
             Message::SidebarToggle => {
-                self.sidebar_visible = !self.sidebar_visible;
+                self.vault.sidebar_visible = !self.vault.sidebar_visible;
                 Task::none()
             }
             Message::SidebarFileClicked(path) => {
@@ -408,7 +396,7 @@ impl MdEditor {
                     }
 
                     let resolved_pdf_path = resolve_relative_link_path(
-                        self.vault_root.as_deref(),
+                        self.vault.root.as_deref(),
                         self.active_path.as_deref(),
                         pdf_path,
                     );
@@ -500,14 +488,14 @@ impl MdEditor {
                                 }
                             } else {
                                 let mut resolved_file = resolve_relative_link_path(
-                                    self.vault_root.as_deref(),
+                                    self.vault.root.as_deref(),
                                     self.active_path.as_deref(),
                                     file_part,
                                 );
                                 if std::path::Path::new(&resolved_file).extension().is_none() {
                                     resolved_file.push_str(".md");
                                 }
-                                self.selected_path = Some(resolved_file.clone());
+                                self.vault.selected_path = Some(resolved_file.clone());
                                 let open_task = self.open_file_extended(&resolved_file, false);
 
                                 let target_slug = slugify(anchor_part);
@@ -535,14 +523,14 @@ impl MdEditor {
                             }
                         } else {
                             let mut resolved_path = resolve_relative_link_path(
-                                self.vault_root.as_deref(),
+                                self.vault.root.as_deref(),
                                 self.active_path.as_deref(),
                                 &path,
                             );
                             if std::path::Path::new(&resolved_path).extension().is_none() {
                                 resolved_path.push_str(".md");
                             }
-                            self.selected_path = Some(resolved_path.clone());
+                            self.vault.selected_path = Some(resolved_path.clone());
                             let lower = resolved_path.to_lowercase();
                             if lower.ends_with(".md") || lower.ends_with(".markdown") {
                                 self.showing_pdf = false;
@@ -561,10 +549,10 @@ impl MdEditor {
                 }
             }
             Message::SidebarFolderToggled(path) => {
-                if self.expanded_folders.contains(&path) {
-                    self.expanded_folders.remove(&path);
+                if self.vault.expanded_folders.contains(&path) {
+                    self.vault.expanded_folders.remove(&path);
                 } else {
-                    self.expanded_folders.insert(path);
+                    self.vault.expanded_folders.insert(path);
                 }
                 Task::none()
             }
@@ -678,7 +666,7 @@ impl MdEditor {
 
                 match result {
                     Ok(()) => {
-                        self.vault_entries =
+                        self.vault.entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         self.ui.active_modal = None;
                         self.ui.modal_input.clear();
@@ -692,7 +680,7 @@ impl MdEditor {
             Message::DeleteFile(path) => {
                 match md_editor_core::vault::delete_entry(&self.state, &path) {
                     Ok(()) => {
-                        self.vault_entries =
+                        self.vault.entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         if self.active_path.as_deref() == Some(path.as_str()) {
                             self.active_path = None;
@@ -1545,7 +1533,7 @@ impl MdEditor {
                                 .push(ann);
                             self.pdf.selection = None;
                             if let Some(ref path) = self.pdf.active_path {
-                                self.backlinks =
+                                self.vault.backlinks =
                                     md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                         .unwrap_or_default();
                             }
@@ -1571,7 +1559,7 @@ impl MdEditor {
                         }
                     }
                     if let Some(ref path) = self.pdf.active_path {
-                        self.backlinks =
+                        self.vault.backlinks =
                             md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                 .unwrap_or_default();
                     }
@@ -1596,7 +1584,7 @@ impl MdEditor {
                         self.ui.toast = Some(format!("Failed to save note: {}", e));
                     } else {
                         if let Some(ref path) = self.pdf.active_path {
-                            self.backlinks =
+                            self.vault.backlinks =
                                 md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                     .unwrap_or_default();
                         }
@@ -1650,7 +1638,7 @@ impl MdEditor {
                                 break;
                             }
                         }
-                        self.vault_entries =
+                        self.vault.entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         self.ui.toast = Some(format!("Linked note: {}", note_path));
                         return Task::done(Message::PdfOpenLinkedNote(note_path));
@@ -1673,7 +1661,7 @@ impl MdEditor {
                 page,
             } => {
                 let resolved_pdf_path = resolve_relative_link_path(
-                    self.vault_root.as_deref(),
+                    self.vault.root.as_deref(),
                     self.active_path.as_deref(),
                     &document_path,
                 );
@@ -1733,7 +1721,7 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::ToggleSidebar => {
-                        self.sidebar_visible = !self.sidebar_visible;
+                        self.vault.sidebar_visible = !self.vault.sidebar_visible;
                         Task::none()
                     }
                     Shortcut::Save => Task::done(Message::EditorSave),
@@ -1797,7 +1785,7 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::ToggleBacklinks => {
-                        self.backlinks_visible = !self.backlinks_visible;
+                        self.vault.backlinks_visible = !self.vault.backlinks_visible;
                         Task::none()
                     }
                     Shortcut::TableOfContents => {
@@ -1815,8 +1803,8 @@ impl MdEditor {
                     }
                     Shortcut::SplitView => Task::done(Message::SplitViewToggle),
                     Shortcut::FocusMode => {
-                        self.sidebar_visible = false;
-                        self.backlinks_visible = false;
+                        self.vault.sidebar_visible = false;
+                        self.vault.backlinks_visible = false;
                         self.toc_visible = false;
                         self.tracker.hide();
                         Task::none()
@@ -1843,7 +1831,7 @@ impl MdEditor {
                 if !self.ui.is_resizing_split {
                     return Task::none();
                 }
-                let side_width = if self.sidebar_visible { 250.0 } else { 0.0 }
+                let side_width = if self.vault.sidebar_visible { 250.0 } else { 0.0 }
                     + if self.tracker.visible { 300.0 } else { 0.0 }
                     + if self.toc_visible { 250.0 } else { 0.0 };
                 let content_width = (self.ui.window_width - side_width).max(480.0);
@@ -1883,7 +1871,7 @@ impl MdEditor {
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        if self.vault_root.is_none() {
+        if self.vault.root.is_none() {
             return views::welcome::view();
         }
 
@@ -1893,8 +1881,8 @@ impl MdEditor {
                 .as_deref()
                 .or(self.active_image_path.as_deref()),
             None,
-            self.sidebar_visible,
-            self.backlinks_visible,
+            self.vault.sidebar_visible,
+            self.vault.backlinks_visible,
             self.tracker.visible,
             self.toc_visible,
             self.pdf.active_path.is_some()
@@ -1904,14 +1892,14 @@ impl MdEditor {
         );
 
         let sidebar = views::sidebar::view(
-            &self.vault_entries,
-            self.selected_path.as_deref(),
+            &self.vault.entries,
+            self.vault.selected_path.as_deref(),
             self.active_path
                 .as_deref()
                 .or(self.pdf.active_path.as_deref())
                 .or(self.active_image_path.as_deref()),
-            &self.expanded_folders,
-            !self.sidebar_visible,
+            &self.vault.expanded_folders,
+            !self.vault.sidebar_visible,
         );
 
         let editor_search_active = self.editor_search_is_active();
@@ -2127,7 +2115,7 @@ impl MdEditor {
         let content = column![toolbar, main_content].height(Length::Fill);
 
         let backlinks_view: Element<Message, Theme, iced::Renderer> =
-            views::backlinks::view(&self.backlinks, self.backlinks_visible);
+            views::backlinks::view(&self.vault.backlinks, self.vault.backlinks_visible);
 
         let layout = row![sidebar, content, backlinks_view, toc_view].height(Length::Fill);
 
@@ -2194,7 +2182,7 @@ impl MdEditor {
                 modal_type,
                 &self.ui.modal_input,
                 &self.ui.link_note_picker_search,
-                &self.vault_entries,
+                &self.vault.entries,
             ));
         }
 
@@ -2270,14 +2258,14 @@ impl MdEditor {
     }
 
     fn open_vault(&mut self, path: &str) -> Task<Message> {
-        self.vault_root = Some(path.to_string());
+        self.vault.root = Some(path.to_string());
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_vault", path);
         // Publish the root immediately so file opens resolve correctly, and
         // show the tree right away from a cheap directory listing.
         if let Ok(mut vault_root) = self.state.vault_root.lock() {
             vault_root.replace(std::path::PathBuf::from(path));
         }
-        self.vault_entries = md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+        self.vault.entries = md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
 
         // Build the full-text and backlink indexes off the UI thread; a large
         // vault must not freeze startup. `set_vault_root` does its disk I/O
@@ -2291,9 +2279,10 @@ impl MdEditor {
     }
 
     fn new_entry_path(&self, name: &str) -> String {
-        let parent = self.selected_path.as_deref().and_then(|path| {
+        let parent = self.vault.selected_path.as_deref().and_then(|path| {
             if self
-                .vault_entries
+                .vault
+                .entries
                 .iter()
                 .any(|entry| entry.path == path && entry.is_dir)
             {
@@ -2333,7 +2322,7 @@ impl MdEditor {
                 self.active_panel = ActivePanel::Markdown;
                 self.toc_entries = views::toc::get_toc(&content);
                 let highlight_task = self.refresh_highlighting_for_current_buffer(true);
-                self.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
+                self.vault.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                     .unwrap_or_default();
                 if is_different && reset_scroll {
                     self.editor_scroll_y = 0.0;
@@ -2386,7 +2375,7 @@ impl MdEditor {
         self.pdf.focused_annotation_id = None;
         self.pdf.pending_text.clear();
         self.pdf.text_lru.clear();
-        self.backlinks =
+        self.vault.backlinks =
             md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
 
         let path_for_hash = path.to_string();
@@ -2463,7 +2452,7 @@ impl MdEditor {
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
                 self.toc_entries.clear();
-                self.backlinks.clear();
+                self.vault.backlinks.clear();
             }
             Err(err) => {
                 self.ui.toast = Some(format!("Could not open image: {err}"));
@@ -2710,9 +2699,9 @@ impl MdEditor {
     }
 
     fn pdf_available_width(&self) -> f32 {
-        let sidebar_width = if self.sidebar_visible { 260.0 } else { 0.0 };
+        let sidebar_width = if self.vault.sidebar_visible { 260.0 } else { 0.0 };
         let toc_width = if self.toc_visible { 260.0 } else { 0.0 };
-        let backlinks_width = if self.backlinks_visible { 260.0 } else { 0.0 };
+        let backlinks_width = if self.vault.backlinks_visible { 260.0 } else { 0.0 };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
@@ -2832,7 +2821,7 @@ impl MdEditor {
     }
 
     fn resolve_active_path(&self, path: &str) -> Option<std::path::PathBuf> {
-        let root = self.vault_root.as_deref()?;
+        let root = self.vault.root.as_deref()?;
         Some(md_editor_core::vault::resolve_vault_path(
             std::path::Path::new(root),
             path,
@@ -3035,9 +3024,9 @@ impl MdEditor {
     }
 
     fn estimated_editor_viewport_width(&self) -> f32 {
-        let sidebar_width = if self.sidebar_visible { 260.0 } else { 0.0 };
+        let sidebar_width = if self.vault.sidebar_visible { 260.0 } else { 0.0 };
         let toc_width = if self.toc_visible { 260.0 } else { 0.0 };
-        let backlinks_width = if self.backlinks_visible { 260.0 } else { 0.0 };
+        let backlinks_width = if self.vault.backlinks_visible { 260.0 } else { 0.0 };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
@@ -3238,7 +3227,7 @@ impl MdEditor {
         let Some(active_path) = &self.active_path else {
             return;
         };
-        let Some(vault_root) = &self.vault_root else {
+        let Some(vault_root) = &self.vault.root else {
             return;
         };
         let Some(base_path) = std::path::Path::new(vault_root)
