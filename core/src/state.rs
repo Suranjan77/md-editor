@@ -23,6 +23,11 @@ impl AppState {
     pub fn new() -> Self {
         let db_path = settings_db_path();
         let db = Connection::open(&db_path).expect("Failed to open local sqlite database");
+        // WAL keeps writes fast (and would allow concurrent reads if we ever add
+        // a second connection); synchronous=NORMAL is the safe, recommended
+        // pairing for WAL. Best-effort — fall back silently if unsupported.
+        let _ = db.pragma_update(None, "journal_mode", "WAL");
+        let _ = db.pragma_update(None, "synchronous", "NORMAL");
         init_schema(&db).expect("Failed to initialize database schema");
 
         AppState {
