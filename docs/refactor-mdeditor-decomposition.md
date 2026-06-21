@@ -8,19 +8,24 @@
 > Extraction order as executed: TrackerState → SearchState → UiState →
 > PdfPane → VaultState → EditorPane.
 >
-> **Method moves (follow-up, in progress):** the *pure functions of a single
-> pane's state* have moved onto that pane — PdfPane now owns the page-geometry
-> cluster (display sizes, page height/offset, total height, page-at-scroll,
-> search-match scroll target, link/annotation hit-testing) and the two `*_from`
-> helpers.
+> **Method moves (follow-up, done where clean):** the *logic that operates on a
+> single pane's own state* now lives on that pane:
+> - **PdfPane** owns the page-geometry cluster (display sizes, page
+>   height/offset, total height, page-at-scroll, search-match scroll target,
+>   link/annotation hit-testing) and the two `*_from` helpers.
+> - **EditorPane** owns the highlight pipeline (`refresh_highlighting`,
+>   `highlight_task`, `load_images`, `load_math`, `render_latex_task`, the
+>   `plain_highlight_placeholders` helper, and the doc-size thresholds).
+>   `refresh_highlighting` returns `(Task, load_resources)` so the only
+>   shell-side glue is a thin `load_editor_resources()` that supplies the vault
+>   root + active path (needed to resolve relative image paths).
 >
-> **Intentionally staying on the shell:** orchestration methods that coordinate
-> multiple domains or emit `Task`s — PDF open/render/navigation, the layout-
-> dependent `pdf_available_width` (needs sidebar/TOC/split/window state), the
-> editor highlight pipeline (`refresh_highlighting`/`load_images`/`load_math`
-> need the vault root + active path), and search navigation (moves the editor
-> cursor / scrolls). These are the shell's coordinator role and don't belong on
-> a single pane.
+> **Intentionally staying on the shell (coordinator role):** orchestration that
+> needs the shared `Arc<AppState>`, resolves vault paths, or coordinates
+> multiple panes — PDF open/render/page-text/navigation, the layout-dependent
+> `pdf_available_width` (sidebar/TOC/split/window state), and search navigation
+> (moves the editor cursor / scrolls). Threading `&AppState` through these to
+> force them onto a pane would fight the design, not improve it.
 
 ## Problem
 
