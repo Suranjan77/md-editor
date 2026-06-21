@@ -19,3 +19,4 @@ uuid = { version = "1", features = ["v4"] }
 ureq = { version = "3.3.0", default-features = true }
 flate2 = "1"
 tar = "0.4"
+sha2 = "0.10.9"

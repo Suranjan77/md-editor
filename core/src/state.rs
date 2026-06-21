@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::Connection;
@@ -23,117 +23,12 @@ impl AppState {
     pub fn new() -> Self {
         let db_path = settings_db_path();
         let db = Connection::open(&db_path).expect("Failed to open local sqlite database");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to initialize settings table");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                hours REAL NOT NULL,
-                activity_type TEXT NOT NULL,
-                phase TEXT NOT NULL,
-                notes TEXT
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_sessions");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                text TEXT NOT NULL,
-                time TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_activity");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_kv (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_kv");
-
-        db.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS file_search USING fts5(
-                path,
-                content
-            )",
-            [],
-        )
-        .expect("Failed to create file_search fts table");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_documents (
-                document_id TEXT PRIMARY KEY,
-                vault_relative_path TEXT NOT NULL,
-                file_size INTEGER NOT NULL,
-                modified_at INTEGER,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_documents table");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_documents_vault_relative_path
-             ON pdf_documents(vault_relative_path)",
-            [],
-        )
-        .expect("Failed to create pdf document path index");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_annotations (
-                id TEXT PRIMARY KEY,
-                document_id TEXT NOT NULL,
-                page_index INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                color TEXT NOT NULL,
-                selected_text TEXT NOT NULL,
-                ranges_json TEXT NOT NULL,
-                rects_json TEXT NOT NULL,
-                note TEXT,
-                linked_note_path TEXT,
-                markdown_anchor TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_annotations table");
-
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_page
-             ON pdf_annotations(document_id, page_index)",
-            [],
-        )
-        .expect("Failed to create pdf_annotations index");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_linked_note
-             ON pdf_annotations(document_id, linked_note_path)
-             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
-            [],
-        )
-        .expect("Failed to create pdf annotation linked-note index");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_linked_note
-             ON pdf_annotations(linked_note_path)
-             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
-            [],
-        )
-        .expect("Failed to create pdf annotation note backlink index");
+        // WAL keeps writes fast (and would allow concurrent reads if we ever add
+        // a second connection); synchronous=NORMAL is the safe, recommended
+        // pairing for WAL. Best-effort — fall back silently if unsupported.
+        let _ = db.pragma_update(None, "journal_mode", "WAL");
+        let _ = db.pragma_update(None, "synchronous", "NORMAL");
+        init_schema(&db).expect("Failed to initialize database schema");
 
         AppState {
             vault_root: Mutex::new(None),
@@ -146,117 +41,7 @@ impl AppState {
 
     pub fn new_in_memory() -> Self {
         let db = Connection::open_in_memory().expect("Failed to open memory sqlite database");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to initialize settings table");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                hours REAL NOT NULL,
-                activity_type TEXT NOT NULL,
-                phase TEXT NOT NULL,
-                notes TEXT
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_sessions");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                text TEXT NOT NULL,
-                time TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_activity");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS tracker_kv (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create tracker_kv");
-
-        db.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS file_search USING fts5(
-                path,
-                content
-            )",
-            [],
-        )
-        .expect("Failed to create file_search fts table");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_documents (
-                document_id TEXT PRIMARY KEY,
-                vault_relative_path TEXT NOT NULL,
-                file_size INTEGER NOT NULL,
-                modified_at INTEGER,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_documents table");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_documents_vault_relative_path
-             ON pdf_documents(vault_relative_path)",
-            [],
-        )
-        .expect("Failed to create pdf document path index");
-
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_annotations (
-                id TEXT PRIMARY KEY,
-                document_id TEXT NOT NULL,
-                page_index INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                color TEXT NOT NULL,
-                selected_text TEXT NOT NULL,
-                ranges_json TEXT NOT NULL,
-                rects_json TEXT NOT NULL,
-                note TEXT,
-                linked_note_path TEXT,
-                markdown_anchor TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .expect("Failed to create pdf_annotations table");
-
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_page
-             ON pdf_annotations(document_id, page_index)",
-            [],
-        )
-        .expect("Failed to create pdf_annotations index");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_document_linked_note
-             ON pdf_annotations(document_id, linked_note_path)
-             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
-            [],
-        )
-        .expect("Failed to create pdf annotation linked-note index");
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS pdf_annotations_linked_note
-             ON pdf_annotations(linked_note_path)
-             WHERE linked_note_path IS NOT NULL AND linked_note_path != ''",
-            [],
-        )
-        .expect("Failed to create pdf annotation note backlink index");
+        init_schema(&db).expect("Failed to initialize database schema");
 
         AppState {
             vault_root: Mutex::new(None),
@@ -440,22 +225,242 @@ impl AppState {
     }
 }
 
-fn settings_db_path() -> PathBuf {
-    let mut dir = config_dir();
-    if let Err(err) = std::fs::create_dir_all(&dir) {
-        eprintln!("Failed to create config directory {}: {err}", dir.display());
-        return PathBuf::from("md_editor_settings.sqlite");
+/// Current on-disk schema version. Bump this and add a corresponding arm in
+/// [`apply_migrations`] whenever the schema changes.
+const SCHEMA_VERSION: i64 = 1;
+
+/// Create all tables/indexes (idempotent) and run version migrations.
+///
+/// Shared by both the on-disk and in-memory constructors so the schema lives
+/// in exactly one place.
+fn init_schema(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS tracker_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            hours REAL NOT NULL,
+            activity_type TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS tracker_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            text TEXT NOT NULL,
+            time TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS tracker_kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS file_search USING fts5(
+            path,
+            content
+        );
+
+        CREATE TABLE IF NOT EXISTS pdf_documents (
+            document_id TEXT PRIMARY KEY,
+            vault_relative_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            modified_at INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS pdf_documents_vault_relative_path
+            ON pdf_documents(vault_relative_path);
+
+        CREATE TABLE IF NOT EXISTS pdf_annotations (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            page_index INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            color TEXT NOT NULL,
+            selected_text TEXT NOT NULL,
+            ranges_json TEXT NOT NULL,
+            rects_json TEXT NOT NULL,
+            note TEXT,
+            linked_note_path TEXT,
+            markdown_anchor TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS pdf_annotations_document_page
+            ON pdf_annotations(document_id, page_index);
+        CREATE INDEX IF NOT EXISTS pdf_annotations_document_linked_note
+            ON pdf_annotations(document_id, linked_note_path)
+            WHERE linked_note_path IS NOT NULL AND linked_note_path != '';
+        CREATE INDEX IF NOT EXISTS pdf_annotations_linked_note
+            ON pdf_annotations(linked_note_path)
+            WHERE linked_note_path IS NOT NULL AND linked_note_path != '';",
+    )?;
+
+    apply_migrations(db)?;
+    Ok(())
+}
+
+/// Apply incremental migrations based on `PRAGMA user_version`.
+///
+/// New schema changes should be expressed as additive steps here, each
+/// bumping `user_version`, rather than editing the base DDL above (which only
+/// runs for fresh databases via `IF NOT EXISTS`).
+fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
+    let mut version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+
+    // Example shape for future migrations:
+    // if version < 2 {
+    //     db.execute_batch("ALTER TABLE ...;")?;
+    //     version = 2;
+    // }
+
+    if version < SCHEMA_VERSION {
+        version = SCHEMA_VERSION;
     }
-    dir.push("md_editor_settings.sqlite");
+
+    db.execute_batch(&format!("PRAGMA user_version = {version};"))?;
+    Ok(())
+}
+
+const DB_FILE_NAME: &str = "md_editor_settings.sqlite";
+
+fn settings_db_path() -> PathBuf {
+    let mut dir = data_dir();
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        eprintln!("Failed to create data directory {}: {err}", dir.display());
+        return PathBuf::from(DB_FILE_NAME);
+    }
+    dir.push(DB_FILE_NAME);
+
+    // One-time migration: earlier versions stored the database next to the
+    // executable. If there's no database at the new (XDG) location but a legacy
+    // one exists, copy it over so users keep their settings and study history.
+    if !dir.exists() {
+        if let Some(legacy) = legacy_db_path() {
+            migrate_legacy_db(&legacy, &dir);
+        }
+    }
+
     dir
 }
 
-fn config_dir() -> PathBuf {
+/// Database location used by versions that stored it next to the executable.
+fn legacy_db_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join(DB_FILE_NAME))
+}
+
+/// Copy a legacy database (and its WAL sidecars, if any) to `new_path` when the
+/// new location is empty and the legacy file exists in a different place. The
+/// legacy file is left in place so nothing is lost if the copy is interrupted.
+fn migrate_legacy_db(legacy: &Path, new_path: &Path) {
+    if legacy == new_path || !legacy.exists() || new_path.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::copy(legacy, new_path) {
+        eprintln!("Failed to migrate legacy settings database: {e}");
+        return;
+    }
+    // Best-effort: bring along WAL/SHM sidecars so any not-yet-checkpointed
+    // writes survive the move.
+    for suffix in ["-wal", "-shm"] {
+        let from = sidecar(legacy, suffix);
+        if from.exists() {
+            let _ = std::fs::copy(&from, sidecar(new_path, suffix));
+        }
+    }
+    eprintln!(
+        "Migrated settings database from {} to {}",
+        legacy.display(),
+        new_path.display()
+    );
+}
+
+fn sidecar(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// Per-user data directory for the settings database.
+///
+/// Prefers the platform data directory (XDG `$XDG_DATA_HOME` or
+/// `~/.local/share` on Linux) so the app works when installed to a read-only
+/// location. Falls back to the executable directory, then the current
+/// directory, for portable/unusual setups.
+fn data_dir() -> PathBuf {
+    if let Some(base) = platform_data_home() {
+        return base.join("md-editor");
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             return dir.to_path_buf();
         }
     }
-
     PathBuf::from(".")
+}
+
+fn platform_data_home() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join("Library").join("Application Support"))
+    } else if cfg!(target_os = "windows") {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_legacy_db_with_sidecars_when_new_location_empty() {
+        let base = std::env::temp_dir().join(format!("md_editor_mig_{}", uuid::Uuid::new_v4()));
+        let legacy_dir = base.join("legacy");
+        let new_dir = base.join("xdg");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+
+        let legacy = legacy_dir.join(DB_FILE_NAME);
+        let new_path = new_dir.join(DB_FILE_NAME);
+        std::fs::write(&legacy, b"DBDATA").unwrap();
+        std::fs::write(sidecar(&legacy, "-wal"), b"WAL").unwrap();
+
+        migrate_legacy_db(&legacy, &new_path);
+
+        assert_eq!(std::fs::read(&new_path).unwrap(), b"DBDATA");
+        assert_eq!(std::fs::read(sidecar(&new_path, "-wal")).unwrap(), b"WAL");
+        // Legacy file is left untouched.
+        assert!(legacy.exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn migration_never_overwrites_an_existing_new_db() {
+        let base = std::env::temp_dir().join(format!("md_editor_mig_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let legacy = base.join("legacy.sqlite");
+        let new_path = base.join("new.sqlite");
+        std::fs::write(&legacy, b"OLD").unwrap();
+        std::fs::write(&new_path, b"CURRENT").unwrap();
+
+        migrate_legacy_db(&legacy, &new_path);
+
+        assert_eq!(std::fs::read(&new_path).unwrap(), b"CURRENT");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

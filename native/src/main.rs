@@ -1,9 +1,15 @@
 mod app;
 mod editor;
+mod editor_state;
 mod messages;
 mod pdf_notes;
+mod pdf_pane;
 mod search;
+mod search_state;
 mod theme;
+mod tracker_state;
+mod ui_state;
+mod vault_state;
 mod views;
 
 #[cfg(target_os = "linux")]

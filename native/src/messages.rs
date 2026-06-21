@@ -3,6 +3,7 @@ pub enum Message {
     // ── Vault ────────────────────────────────────────────────────
     OpenVaultDialog,
     VaultOpened(Option<String>),
+    VaultIndexed(Vec<md_editor_core::types::FileEntry>),
     CreateFileDialog,
     CreateFolderDialog,
 
@@ -106,6 +107,7 @@ pub enum Message {
     TrackerSessionDelete(i64),
 
     // ── Toast ───────────────────────────────────────────────────
+    ShowToast(String),
     ToastHide,
     MathRendered(
         String,
@@ -113,7 +115,6 @@ pub enum Message {
     ),
 
     // ── System ───────────────────────────────────────────────────
-    Tick,
     KeyboardShortcut(Shortcut),
     ToggleTOC,
     TocClicked(usize),

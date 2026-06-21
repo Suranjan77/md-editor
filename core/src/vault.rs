@@ -17,34 +17,52 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
         return Err(format!("Not a directory: {}", path));
     }
 
+    // Phase 1: read every file and build the link index into local structures
+    // WITHOUT holding any shared lock. The disk I/O here is the slow part; if
+    // it ran while holding `file_index`/`db`, the UI thread would block the
+    // moment it touched the index (e.g. opening a file), reintroducing the
+    // freeze this off-thread indexing is meant to avoid.
+    let md_files = list_all_md_files(&root)?;
+    let mut index = FileIndex::new(root.clone());
+    let mut indexed: Vec<(String, String)> = Vec::with_capacity(md_files.len());
+    for file_path in md_files {
+        if let Ok(content) = read_file(&file_path) {
+            index.update_file(&file_path, &content);
+            let rel_path = file_path
+                .strip_prefix(&root)
+                .unwrap_or(&file_path)
+                .to_string_lossy()
+                .to_string();
+            indexed.push((rel_path, content));
+        }
+    }
+
+    // Phase 2: publish results under short-lived locks only.
     {
         let mut vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
         *vault_root = Some(root.clone());
     }
-
     {
-        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
-        *index = FileIndex::new(root.clone());
-        let md_files = list_all_md_files(&root)?;
-
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.execute("DELETE FROM file_search", []).ok();
-
-        for file_path in md_files {
-            if let Ok(content) = read_file(&file_path) {
-                index.update_file(&file_path, &content);
-                let rel_path = file_path
-                    .strip_prefix(&root)
-                    .unwrap_or(&file_path)
-                    .to_string_lossy()
-                    .to_string();
-                db.execute(
-                    "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
-                    rusqlite::params![&rel_path, &content],
-                )
-                .ok();
+        // Rebuild the FTS index atomically: a single transaction is far faster
+        // than per-row autocommit and prevents a half-rebuilt index if
+        // indexing is interrupted partway through.
+        let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM file_search", [])
+            .map_err(|e| e.to_string())?;
+        for (rel_path, content) in &indexed {
+            if let Err(e) = tx.execute(
+                "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
+                rusqlite::params![rel_path, content],
+            ) {
+                eprintln!("Failed to index {rel_path} for search: {e}");
             }
         }
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+    {
+        let mut file_index = state.file_index.lock().map_err(|e| e.to_string())?;
+        *file_index = index;
     }
 
     list_vault_entries(&root)
@@ -54,7 +72,7 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
 pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path_checked(vault_root, path)?;
 
     if abs_path
         .extension()
@@ -73,23 +91,25 @@ pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
 pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path_checked(vault_root, path)?;
     write_file(&abs_path, content)?;
 
     let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
     index.update_file(&abs_path, content);
 
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.execute(
+    if let Err(e) = db.execute(
         "DELETE FROM file_search WHERE path = ?1",
         rusqlite::params![path],
-    )
-    .ok();
-    db.execute(
+    ) {
+        eprintln!("Failed to clear stale search index for {path}: {e}");
+    }
+    if let Err(e) = db.execute(
         "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
         rusqlite::params![path, content],
-    )
-    .ok();
+    ) {
+        eprintln!("Failed to update search index for {path}: {e}");
+    }
 
     Ok(())
 }
@@ -98,7 +118,7 @@ pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), Stri
 pub fn create_file(state: &AppState, path: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path_checked(vault_root, path)?;
     if abs_path.exists() {
         return Err(format!("File already exists: {}", abs_path.display()));
     }
@@ -109,7 +129,7 @@ pub fn create_file(state: &AppState, path: &str) -> Result<(), String> {
 pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path_checked(vault_root, path)?;
     if abs_path.exists() {
         return Err(format!("Directory already exists: {}", abs_path.display()));
     }
@@ -121,18 +141,19 @@ pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
 pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_old = resolve_vault_path(vault_root, old_path);
-    let abs_new = resolve_vault_path(vault_root, new_path);
+    let abs_old = resolve_vault_path_checked(vault_root, old_path)?;
+    let abs_new = resolve_vault_path_checked(vault_root, new_path)?;
 
     if abs_old.is_file() && abs_old.extension().map_or(false, |e| e == "md") {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         index.remove_file(&abs_old);
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.execute(
+        if let Err(e) = db.execute(
             "DELETE FROM file_search WHERE path = ?1",
             rusqlite::params![old_path],
-        )
-        .ok();
+        ) {
+            eprintln!("Failed to remove {old_path} from search index: {e}");
+        }
     }
 
     if abs_new.exists() {
@@ -146,17 +167,18 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
 pub fn delete_entry(state: &AppState, path: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path_checked(vault_root, path)?;
 
     if abs_path.is_file() {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
         index.remove_file(&abs_path);
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.execute(
+        if let Err(e) = db.execute(
             "DELETE FROM file_search WHERE path = ?1",
             rusqlite::params![path],
-        )
-        .ok();
+        ) {
+            eprintln!("Failed to remove {path} from search index: {e}");
+        }
     }
 
     if abs_path.is_dir() {
@@ -334,14 +356,66 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
 pub fn read_vault_image(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_path = resolve_vault_path(vault_root, path);
+    let abs_path = resolve_vault_path_checked(vault_root, path)?;
     read_image(&abs_path)
 }
 
 // ── Internal helpers ────────────────────────────────────────────────
 
+/// Resolve a vault-relative path to an absolute path, guaranteed to stay
+/// within `vault_root`.
+///
+/// The relative path is normalized lexically: `.` is dropped, `..` pops a
+/// component, and any attempt to escape the root (leading `..` or an absolute
+/// path) is clamped so the result can never point outside the vault. Use
+/// [`resolve_vault_path_checked`] when an escape attempt should be a hard
+/// error rather than silently clamped.
 pub fn resolve_vault_path(vault_root: &Path, relative_path: &str) -> PathBuf {
-    vault_root.join(relative_path)
+    normalize_within_root(vault_root, relative_path).0
+}
+
+/// Like [`resolve_vault_path`] but returns an error if `relative_path` tries to
+/// escape the vault root. Use for filesystem mutations (save/create/delete/
+/// rename) and reads where operating on the wrong file would be harmful.
+pub fn resolve_vault_path_checked(
+    vault_root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, String> {
+    let (resolved, escaped) = normalize_within_root(vault_root, relative_path);
+    if escaped {
+        return Err(format!("Path escapes the vault root: {relative_path}"));
+    }
+    Ok(resolved)
+}
+
+/// Lexically normalize `relative_path` against `vault_root`. Returns the
+/// clamped absolute path and whether the input attempted to escape the root.
+fn normalize_within_root(vault_root: &Path, relative_path: &str) -> (PathBuf, bool) {
+    use std::path::Component;
+
+    let mut stack: Vec<std::ffi::OsString> = Vec::new();
+    let mut escaped = false;
+
+    for component in Path::new(relative_path).components() {
+        match component {
+            Component::Normal(c) => stack.push(c.to_os_string()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if stack.pop().is_none() {
+                    escaped = true;
+                }
+            }
+            // An absolute path supplied where a relative one was expected is
+            // an escape attempt; ignore the anchor and keep building under root.
+            Component::RootDir | Component::Prefix(_) => escaped = true,
+        }
+    }
+
+    let mut resolved = vault_root.to_path_buf();
+    for c in stack {
+        resolved.push(c);
+    }
+    (resolved, escaped)
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
@@ -458,4 +532,40 @@ fn list_all_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_normal_paths_stay_within_root() {
+        let root = Path::new("/vault");
+        assert_eq!(resolve_vault_path(root, "notes/a.md"), PathBuf::from("/vault/notes/a.md"));
+        assert_eq!(resolve_vault_path(root, "./a.md"), PathBuf::from("/vault/a.md"));
+        // Interior `..` that stays inside the vault is allowed.
+        assert_eq!(
+            resolve_vault_path(root, "notes/../a.md"),
+            PathBuf::from("/vault/a.md")
+        );
+    }
+
+    #[test]
+    fn checked_rejects_traversal_escapes() {
+        let root = Path::new("/vault");
+        assert!(resolve_vault_path_checked(root, "../etc/passwd").is_err());
+        assert!(resolve_vault_path_checked(root, "notes/../../secret").is_err());
+        assert!(resolve_vault_path_checked(root, "/etc/passwd").is_err());
+        assert!(resolve_vault_path_checked(root, "notes/a.md").is_ok());
+    }
+
+    #[test]
+    fn resolve_clamps_escapes_into_root() {
+        let root = Path::new("/vault");
+        // Even the non-checked variant must never escape the root.
+        let resolved = resolve_vault_path(root, "../../etc/passwd");
+        assert!(resolved.starts_with("/vault"));
+        let resolved_abs = resolve_vault_path(root, "/etc/passwd");
+        assert!(resolved_abs.starts_with("/vault"));
+    }
 }
