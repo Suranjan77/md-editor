@@ -1,8 +1,15 @@
 # Plan: Decompose the `MdEditor` god-struct
 
-> Status: **proposed / not started.** Deferred until after the core-hardening
-> fixes (DB/XDG, path-traversal guard, async vault indexing, search-match
-> cache, repo hygiene) land. This document is the migration plan for that work.
+> Status: **field grouping complete.** All six sub-states have been extracted;
+> `MdEditor` went from ~80 fields to 12. Each step was its own commit, build
+> clean with all tests passing, no behavior change. Remaining follow-up: move
+> the per-domain *methods* (PDF geometry/render/navigation, editor
+> highlighting) off the shell into their sub-states — the fields now live in
+> the right place, but some behavior still reads through `self.<domain>` from
+> shell methods.
+>
+> Extraction order as executed: TrackerState → SearchState → UiState →
+> PdfPane → VaultState → EditorPane.
 
 ## Problem
 
