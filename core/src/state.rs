@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::Connection;
@@ -323,14 +323,64 @@ fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+const DB_FILE_NAME: &str = "md_editor_settings.sqlite";
+
 fn settings_db_path() -> PathBuf {
     let mut dir = data_dir();
     if let Err(err) = std::fs::create_dir_all(&dir) {
         eprintln!("Failed to create data directory {}: {err}", dir.display());
-        return PathBuf::from("md_editor_settings.sqlite");
+        return PathBuf::from(DB_FILE_NAME);
     }
-    dir.push("md_editor_settings.sqlite");
+    dir.push(DB_FILE_NAME);
+
+    // One-time migration: earlier versions stored the database next to the
+    // executable. If there's no database at the new (XDG) location but a legacy
+    // one exists, copy it over so users keep their settings and study history.
+    if !dir.exists() {
+        if let Some(legacy) = legacy_db_path() {
+            migrate_legacy_db(&legacy, &dir);
+        }
+    }
+
     dir
+}
+
+/// Database location used by versions that stored it next to the executable.
+fn legacy_db_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join(DB_FILE_NAME))
+}
+
+/// Copy a legacy database (and its WAL sidecars, if any) to `new_path` when the
+/// new location is empty and the legacy file exists in a different place. The
+/// legacy file is left in place so nothing is lost if the copy is interrupted.
+fn migrate_legacy_db(legacy: &Path, new_path: &Path) {
+    if legacy == new_path || !legacy.exists() || new_path.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::copy(legacy, new_path) {
+        eprintln!("Failed to migrate legacy settings database: {e}");
+        return;
+    }
+    // Best-effort: bring along WAL/SHM sidecars so any not-yet-checkpointed
+    // writes survive the move.
+    for suffix in ["-wal", "-shm"] {
+        let from = sidecar(legacy, suffix);
+        if from.exists() {
+            let _ = std::fs::copy(&from, sidecar(new_path, suffix));
+        }
+    }
+    eprintln!(
+        "Migrated settings database from {} to {}",
+        legacy.display(),
+        new_path.display()
+    );
+}
+
+fn sidecar(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    PathBuf::from(name)
 }
 
 /// Per-user data directory for the settings database.
@@ -364,5 +414,48 @@ fn platform_data_home() -> Option<PathBuf> {
             .or_else(|| {
                 std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_legacy_db_with_sidecars_when_new_location_empty() {
+        let base = std::env::temp_dir().join(format!("md_editor_mig_{}", uuid::Uuid::new_v4()));
+        let legacy_dir = base.join("legacy");
+        let new_dir = base.join("xdg");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+
+        let legacy = legacy_dir.join(DB_FILE_NAME);
+        let new_path = new_dir.join(DB_FILE_NAME);
+        std::fs::write(&legacy, b"DBDATA").unwrap();
+        std::fs::write(sidecar(&legacy, "-wal"), b"WAL").unwrap();
+
+        migrate_legacy_db(&legacy, &new_path);
+
+        assert_eq!(std::fs::read(&new_path).unwrap(), b"DBDATA");
+        assert_eq!(std::fs::read(sidecar(&new_path, "-wal")).unwrap(), b"WAL");
+        // Legacy file is left untouched.
+        assert!(legacy.exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn migration_never_overwrites_an_existing_new_db() {
+        let base = std::env::temp_dir().join(format!("md_editor_mig_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let legacy = base.join("legacy.sqlite");
+        let new_path = base.join("new.sqlite");
+        std::fs::write(&legacy, b"OLD").unwrap();
+        std::fs::write(&new_path, b"CURRENT").unwrap();
+
+        migrate_legacy_db(&legacy, &new_path);
+
+        assert_eq!(std::fs::read(&new_path).unwrap(), b"CURRENT");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
