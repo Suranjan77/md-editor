@@ -2,6 +2,7 @@ mod app;
 mod editor;
 mod messages;
 mod pdf_notes;
+mod pdf_pane;
 mod search;
 mod search_state;
 mod theme;

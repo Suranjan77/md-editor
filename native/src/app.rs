@@ -17,7 +17,6 @@ use crate::pdf_notes::{
 use crate::theme as app_theme;
 use crate::views;
 use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
-use std::collections::HashSet;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
@@ -120,33 +119,13 @@ pub struct MdEditor {
     pending_highlight_requested_at: Option<Instant>,
     pending_highlight_text: Option<String>,
 
-    // PDF state
-    pdf_current_page: u16,
-    pdf_total_pages: u16,
-    pdf_zoom: f32,
-    pdf_pages: Vec<Option<iced::widget::image::Handle>>,
-    pdf_dimensions: Vec<Option<(u32, u32)>>,
-    pdf_page_sizes: Vec<Option<(f32, f32)>>,
-    pdf_placeholder_page_size: Option<(f32, f32)>,
-    active_pdf_path: Option<String>,
+    // PDF viewer (document pages, geometry, annotations, render bookkeeping)
+    pdf: crate::pdf_pane::PdfPane,
+
+    // Image viewer + active-viewer mode flag (shell-level routing)
     active_image_path: Option<String>,
     active_image: Option<(iced::widget::image::Handle, f32, f32)>,
-    pdf_scroll_y: f32,
-    pdf_page_links: std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
-    pdf_link_preview: Option<iced::widget::image::Handle>,
     showing_pdf: bool,
-    pdf_fit_to_width: bool,
-
-    // PDF study fields
-    pdf_document_id: Option<String>,
-    pdf_page_text: std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
-    pdf_selection: Option<views::interactive_pdf::PdfSelection>,
-    pdf_annotations: std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
-    focused_annotation_id: Option<String>,
-    pdf_initial_target_page: Option<u16>,
-    pdf_initial_target_annotation: Option<String>,
-    pdf_pending_text: HashSet<u16>,
-    pdf_text_lru: std::collections::VecDeque<u16>,
 
     // Study tracker
     tracker: crate::tracker_state::TrackerState,
@@ -165,11 +144,6 @@ pub struct MdEditor {
     toc_entries: Vec<views::toc::TocEntry>,
     image_cache: std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
     math_cache: std::collections::HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    pdf_pending_pages: HashSet<u16>,
-    pdf_pending_links: HashSet<u16>,
-    pdf_render_generation: u64,
-    pdf_programmatic_scroll: bool,
-    pdf_toc_target_page: Option<u16>,
     active_panel: ActivePanel,
     editor_scroll_y: f32,
     editor_viewport_width: f32,
@@ -203,30 +177,10 @@ impl MdEditor {
             pending_highlight_generation: None,
             pending_highlight_requested_at: None,
             pending_highlight_text: None,
-            pdf_current_page: 0,
-            pdf_total_pages: 0,
-            pdf_zoom: 1.5,
-            pdf_pages: Vec::new(),
-            pdf_dimensions: Vec::new(),
-            pdf_page_sizes: Vec::new(),
-            pdf_placeholder_page_size: None,
-            active_pdf_path: None,
+            pdf: crate::pdf_pane::PdfPane::new(),
             active_image_path: None,
             active_image: None,
-            pdf_scroll_y: 0.0,
-            pdf_page_links: std::collections::HashMap::new(),
-            pdf_link_preview: None,
             showing_pdf: false,
-            pdf_fit_to_width: true,
-            pdf_document_id: None,
-            pdf_page_text: std::collections::HashMap::new(),
-            pdf_selection: None,
-            pdf_annotations: std::collections::HashMap::new(),
-            focused_annotation_id: None,
-            pdf_initial_target_page: None,
-            pdf_initial_target_annotation: None,
-            pdf_pending_text: HashSet::new(),
-            pdf_text_lru: std::collections::VecDeque::new(),
             tracker,
             ui: crate::ui_state::UiState::new(),
             search: crate::search_state::SearchState::new(),
@@ -235,11 +189,6 @@ impl MdEditor {
             toc_entries: Vec::new(),
             image_cache: std::collections::HashMap::new(),
             math_cache: std::collections::HashMap::new(),
-            pdf_pending_pages: HashSet::new(),
-            pdf_pending_links: HashSet::new(),
-            pdf_render_generation: 0,
-            pdf_programmatic_scroll: false,
-            pdf_toc_target_page: None,
             active_panel: ActivePanel::Markdown,
             editor_scroll_y: 0.0,
             editor_viewport_width: 900.0,
@@ -254,7 +203,7 @@ impl MdEditor {
                 if lower.ends_with(".md") || lower.ends_with(".markdown") {
                     task = app.open_file(&file_path);
                 } else if lower.ends_with(".pdf") {
-                    app.active_pdf_path = Some(file_path.clone());
+                    app.pdf.active_path = Some(file_path.clone());
                     app.showing_pdf = true;
                     task = app.open_pdf(&file_path);
                 } else if is_supported_image_path(&lower) {
@@ -273,7 +222,7 @@ impl MdEditor {
             if self.buffer.dirty { "● " } else { "" },
             self.active_path
                 .as_deref()
-                .or(self.active_pdf_path.as_deref())
+                .or(self.pdf.active_path.as_deref())
                 .or(self.active_image_path.as_deref())
                 .unwrap_or("New File")
         )
@@ -419,7 +368,7 @@ impl MdEditor {
                 self.vault_entries = entries;
                 // Backlinks for the active file depend on the freshly built
                 // index; refresh them now that indexing has completed.
-                if let Some(path) = self.active_path.clone().or_else(|| self.active_pdf_path.clone())
+                if let Some(path) = self.active_path.clone().or_else(|| self.pdf.active_path.clone())
                 {
                     self.backlinks =
                         md_editor_core::vault::get_mixed_backlinks(&self.state, &path)
@@ -467,15 +416,15 @@ impl MdEditor {
                     self.ui.split_view_active = true;
                     self.showing_pdf = true;
 
-                    if self.active_pdf_path.as_deref() == Some(&resolved_pdf_path) {
-                        self.focused_annotation_id = annotation_id;
+                    if self.pdf.active_path.as_deref() == Some(&resolved_pdf_path) {
+                        self.pdf.focused_annotation_id = annotation_id;
                         if let Some(p) = page {
                             let p_0 = p.saturating_sub(1);
                             self.navigate_pdf_page(p_0)
                         } else {
-                            if let Some(ref ann_id) = self.focused_annotation_id {
+                            if let Some(ref ann_id) = self.pdf.focused_annotation_id {
                                 let mut target_page = None;
-                                for (page_idx, page_anns) in &self.pdf_annotations {
+                                for (page_idx, page_anns) in &self.pdf.annotations {
                                     if page_anns.iter().any(|a| &a.id == ann_id) {
                                         target_page = Some(*page_idx);
                                         break;
@@ -491,8 +440,8 @@ impl MdEditor {
                             }
                         }
                     } else {
-                        self.pdf_initial_target_page = page.map(|p| p.saturating_sub(1));
-                        self.pdf_initial_target_annotation = annotation_id;
+                        self.pdf.initial_target_page = page.map(|p| p.saturating_sub(1));
+                        self.pdf.initial_target_annotation = annotation_id;
                         self.open_pdf(&resolved_pdf_path)
                     }
                 } else {
@@ -599,7 +548,7 @@ impl MdEditor {
                                 self.showing_pdf = false;
                                 self.open_file(&resolved_path)
                             } else if lower.ends_with(".pdf") {
-                                self.active_pdf_path = Some(resolved_path.clone());
+                                self.pdf.active_path = Some(resolved_path.clone());
                                 self.showing_pdf = true;
                                 self.open_pdf(&resolved_path)
                             } else if is_supported_image_path(&lower) {
@@ -750,10 +699,10 @@ impl MdEditor {
                             self.buffer = DocBuffer::new();
                             self.highlighted_lines.clear();
                         }
-                        if self.active_pdf_path.as_deref() == Some(path.as_str()) {
-                            self.active_pdf_path = None;
-                            self.pdf_pages.clear();
-                            self.pdf_dimensions.clear();
+                        if self.pdf.active_path.as_deref() == Some(path.as_str()) {
+                            self.pdf.active_path = None;
+                            self.pdf.pages.clear();
+                            self.pdf.dimensions.clear();
                         }
                         self.ui.active_modal = None;
                         self.ui.link_note_picker_search.clear();
@@ -836,47 +785,47 @@ impl MdEditor {
             }
 
             Message::PdfLoaded(generation, pages) => {
-                if generation != self.pdf_render_generation {
+                if generation != self.pdf.render_generation {
                     return Task::none();
                 }
-                self.pdf_total_pages = pages;
-                self.pdf_pages = vec![None; pages as usize];
-                self.pdf_dimensions = vec![None; pages as usize];
-                if self.pdf_page_sizes.len() != pages as usize {
-                    self.pdf_page_sizes = vec![None; pages as usize];
+                self.pdf.total_pages = pages;
+                self.pdf.pages = vec![None; pages as usize];
+                self.pdf.dimensions = vec![None; pages as usize];
+                if self.pdf.page_sizes.len() != pages as usize {
+                    self.pdf.page_sizes = vec![None; pages as usize];
                 }
-                self.pdf_pending_pages.clear();
-                self.pdf_pending_links.clear();
-                self.pdf_programmatic_scroll = false;
-                self.pdf_toc_target_page = None;
+                self.pdf.pending_pages.clear();
+                self.pdf.pending_links.clear();
+                self.pdf.programmatic_scroll = false;
+                self.pdf.toc_target_page = None;
                 if pages == 0 {
                     self.ui.toast = Some(
                         "PDF renderer is unavailable or the PDF could not be opened".to_string(),
                     );
                 }
-                if self.pdf_fit_to_width
+                if self.pdf.fit_to_width
                     && self
-                        .pdf_page_sizes
+                        .pdf.page_sizes
                         .iter()
                         .take(pages as usize)
                         .any(Option::is_some)
                 {
                     Task::done(Message::PdfFitToWidth)
-                } else if self.pdf_fit_to_width {
+                } else if self.pdf.fit_to_width {
                     Task::none()
                 } else {
                     self.render_all_pdf_pages()
                 }
             }
             Message::PdfZoomChanged(zoom) => {
-                let current_page = self.pdf_page_at_scroll(self.pdf_scroll_y);
+                let current_page = self.pdf_page_at_scroll(self.pdf.scroll_y);
                 let page_start_offset = self.pdf_page_offset(current_page);
-                let relative_ratio = if self.pdf_scroll_y < PDF_PAGE_LIST_PADDING {
+                let relative_ratio = if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
                     0.0
                 } else {
                     let page_height_old = self.pdf_page_height(current_page);
                     if page_height_old > 0.0 {
-                        ((self.pdf_scroll_y - page_start_offset).max(0.0)) / page_height_old
+                        ((self.pdf.scroll_y - page_start_offset).max(0.0)) / page_height_old
                     } else {
                         0.0
                     }
@@ -887,29 +836,29 @@ impl MdEditor {
                 // boundary. Within a bucket the cached bitmaps are reused and
                 // iced rescales them to the new layout box — making zoom feel
                 // instant instead of re-rasterizing every page.
-                let bucket_changed = md_editor_core::pdf::pdf_render_bucket(self.pdf_zoom)
+                let bucket_changed = md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom)
                     != md_editor_core::pdf::pdf_render_bucket(zoom);
 
-                self.pdf_fit_to_width = false;
-                self.pdf_zoom = zoom;
+                self.pdf.fit_to_width = false;
+                self.pdf.zoom = zoom;
                 if bucket_changed {
-                    self.pdf_pages = vec![None; self.pdf_total_pages as usize];
-                    self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
-                    self.pdf_placeholder_page_size = self.first_pdf_page_size();
-                    self.pdf_pending_pages.clear();
-                    self.pdf_pending_links.clear();
-                    self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
+                    self.pdf.pages = vec![None; self.pdf.total_pages as usize];
+                    self.pdf.dimensions = vec![None; self.pdf.total_pages as usize];
+                    self.pdf.placeholder_page_size = self.first_pdf_page_size();
+                    self.pdf.pending_pages.clear();
+                    self.pdf.pending_links.clear();
+                    self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
                 }
-                self.pdf_toc_target_page = Some(current_page);
-                self.pdf_programmatic_scroll = true;
+                self.pdf.toc_target_page = Some(current_page);
+                self.pdf.programmatic_scroll = true;
 
-                let new_scroll_y = if self.pdf_scroll_y < PDF_PAGE_LIST_PADDING {
-                    self.pdf_scroll_y
+                let new_scroll_y = if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
+                    self.pdf.scroll_y
                 } else {
                     self.pdf_page_offset(current_page)
                         + relative_ratio * self.pdf_page_height(current_page)
                 };
-                self.pdf_scroll_y = new_scroll_y;
+                self.pdf.scroll_y = new_scroll_y;
 
                 Task::batch(vec![
                     self.render_visible_pdf_pages(),
@@ -923,71 +872,71 @@ impl MdEditor {
                 ])
             }
             Message::PdfFitToWidth => {
-                let is_initial = self.pdf_initial_target_page.is_some();
-                let current_page = if let Some(target_page) = self.pdf_initial_target_page.take() {
-                    target_page.min(self.pdf_total_pages.saturating_sub(1))
+                let is_initial = self.pdf.initial_target_page.is_some();
+                let current_page = if let Some(target_page) = self.pdf.initial_target_page.take() {
+                    target_page.min(self.pdf.total_pages.saturating_sub(1))
                 } else {
-                    self.pdf_page_at_scroll(self.pdf_scroll_y)
+                    self.pdf_page_at_scroll(self.pdf.scroll_y)
                 };
                 let page_start_offset = self.pdf_page_offset(current_page);
                 let relative_ratio = if is_initial {
                     0.0
-                } else if self.pdf_scroll_y < PDF_PAGE_LIST_PADDING {
+                } else if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
                     0.0
                 } else {
                     let page_height_old = self.pdf_page_height(current_page);
                     if page_height_old > 0.0 {
-                        ((self.pdf_scroll_y - page_start_offset).max(0.0)) / page_height_old
+                        ((self.pdf.scroll_y - page_start_offset).max(0.0)) / page_height_old
                     } else {
                         0.0
                     }
                 };
 
-                self.pdf_fit_to_width = true;
+                self.pdf.fit_to_width = true;
                 let available_width = self.pdf_available_width();
                 let page_width = self
-                    .pdf_page_sizes
+                    .pdf.page_sizes
                     .iter()
                     .flatten()
                     .next()
                     .map(|(w, _)| (*w).max(1.0))
                     .or_else(|| {
-                        self.pdf_dimensions
+                        self.pdf.dimensions
                             .iter()
                             .flatten()
                             .next()
-                            .map(|(w, _)| (*w as f32 / self.pdf_zoom).max(1.0))
+                            .map(|(w, _)| (*w as f32 / self.pdf.zoom).max(1.0))
                     })
                     .unwrap_or(612.0);
                 let next_zoom = ((available_width - 48.0).max(240.0) / page_width).clamp(0.5, 4.0);
                 let next_zoom = (next_zoom * 100.0).round() / 100.0;
                 // Only re-render when fit-to-width crosses a zoom bucket;
                 // otherwise reuse cached bitmaps (see PdfZoomChanged).
-                let bucket_changed = md_editor_core::pdf::pdf_render_bucket(self.pdf_zoom)
+                let bucket_changed = md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom)
                     != md_editor_core::pdf::pdf_render_bucket(next_zoom);
-                self.pdf_zoom = next_zoom;
+                self.pdf.zoom = next_zoom;
                 if bucket_changed {
-                    self.pdf_pages = vec![None; self.pdf_total_pages as usize];
-                    self.pdf_dimensions = vec![None; self.pdf_total_pages as usize];
-                    self.pdf_placeholder_page_size = self.first_pdf_page_size();
-                    self.pdf_pending_pages.clear();
-                    self.pdf_pending_links.clear();
-                    self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
+                    self.pdf.pages = vec![None; self.pdf.total_pages as usize];
+                    self.pdf.dimensions = vec![None; self.pdf.total_pages as usize];
+                    self.pdf.placeholder_page_size = self.first_pdf_page_size();
+                    self.pdf.pending_pages.clear();
+                    self.pdf.pending_links.clear();
+                    self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
                 }
-                self.pdf_toc_target_page = Some(current_page);
-                self.pdf_programmatic_scroll = true;
+                self.pdf.toc_target_page = Some(current_page);
+                self.pdf.programmatic_scroll = true;
 
                 let new_scroll_y = if is_initial {
                     self.pdf_page_offset(current_page)
-                } else if self.pdf_scroll_y < PDF_PAGE_LIST_PADDING {
-                    self.pdf_scroll_y
+                } else if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
+                    self.pdf.scroll_y
                 } else {
                     self.pdf_page_offset(current_page)
                         + relative_ratio * self.pdf_page_height(current_page)
                 };
-                self.pdf_scroll_y = new_scroll_y;
+                self.pdf.scroll_y = new_scroll_y;
                 if is_initial {
-                    self.pdf_current_page = current_page;
+                    self.pdf.current_page = current_page;
                 }
 
                 Task::batch(vec![
@@ -1002,28 +951,28 @@ impl MdEditor {
                 ])
             }
             Message::PdfPageSizesLoaded(generation, path, sizes) => {
-                if generation != self.pdf_render_generation
-                    && self.active_pdf_path.as_deref() != Some(path.as_str())
+                if generation != self.pdf.render_generation
+                    && self.pdf.active_path.as_deref() != Some(path.as_str())
                 {
                     return Task::none();
                 }
-                self.pdf_page_sizes = sizes.into_iter().map(Some).collect();
-                if self.pdf_page_sizes.len() < self.pdf_total_pages as usize {
-                    self.pdf_page_sizes
-                        .resize(self.pdf_total_pages as usize, None);
+                self.pdf.page_sizes = sizes.into_iter().map(Some).collect();
+                if self.pdf.page_sizes.len() < self.pdf.total_pages as usize {
+                    self.pdf.page_sizes
+                        .resize(self.pdf.total_pages as usize, None);
                 }
-                if self.pdf_placeholder_page_size.is_none() {
-                    self.pdf_placeholder_page_size = self.first_pdf_page_size();
+                if self.pdf.placeholder_page_size.is_none() {
+                    self.pdf.placeholder_page_size = self.first_pdf_page_size();
                 }
-                if self.pdf_fit_to_width && self.pdf_total_pages > 0 {
+                if self.pdf.fit_to_width && self.pdf.total_pages > 0 {
                     Task::done(Message::PdfFitToWidth)
                 } else {
                     Task::none()
                 }
             }
             Message::PdfRendered(generation, page, img) => {
-                self.pdf_pending_pages.remove(&page);
-                if generation != self.pdf_render_generation {
+                self.pdf.pending_pages.remove(&page);
+                if generation != self.pdf.render_generation {
                     return Task::none();
                 }
                 let (width, height) = img.dimensions();
@@ -1034,23 +983,23 @@ impl MdEditor {
                 );
                 let logical_width = (width as f32 / PDF_RENDER_SUPERSAMPLE).round() as u32;
                 let logical_height = (height as f32 / PDF_RENDER_SUPERSAMPLE).round() as u32;
-                if (page as usize) < self.pdf_pages.len() {
-                    self.pdf_pages[page as usize] = Some(handle);
-                    self.pdf_dimensions[page as usize] = Some((logical_width, logical_height));
+                if (page as usize) < self.pdf.pages.len() {
+                    self.pdf.pages[page as usize] = Some(handle);
+                    self.pdf.dimensions[page as usize] = Some((logical_width, logical_height));
                 }
-                if self.pdf_placeholder_page_size.is_none() || page == 0 {
-                    self.pdf_placeholder_page_size = Some((
-                        logical_width as f32 / self.pdf_zoom,
-                        logical_height as f32 / self.pdf_zoom,
+                if self.pdf.placeholder_page_size.is_none() || page == 0 {
+                    self.pdf.placeholder_page_size = Some((
+                        logical_width as f32 / self.pdf.zoom,
+                        logical_height as f32 / self.pdf.zoom,
                     ));
                 }
                 let mut tasks = vec![self.load_pdf_page_links(page)];
-                if !self.pdf_page_text.contains_key(&page) && !self.pdf_pending_text.contains(&page)
+                if !self.pdf.page_text.contains_key(&page) && !self.pdf.pending_text.contains(&page)
                 {
                     tasks.push(self.load_pdf_page_text(page));
                 }
-                if self.pdf_toc_target_page == Some(page) {
-                    self.pdf_programmatic_scroll = true;
+                if self.pdf.toc_target_page == Some(page) {
+                    self.pdf.programmatic_scroll = true;
                     let scroll_y = self.pdf_page_offset(page);
                     tasks.push(operation::scroll_to(
                         iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
@@ -1063,31 +1012,31 @@ impl MdEditor {
                 Task::batch(tasks)
             }
             Message::PdfRenderFailed(generation, page) => {
-                self.pdf_pending_pages.remove(&page);
-                if generation != self.pdf_render_generation {
+                self.pdf.pending_pages.remove(&page);
+                if generation != self.pdf.render_generation {
                     return Task::none();
                 }
-                if self.pdf_toc_target_page == Some(page) {
-                    self.pdf_toc_target_page = None;
-                    self.pdf_programmatic_scroll = false;
+                if self.pdf.toc_target_page == Some(page) {
+                    self.pdf.toc_target_page = None;
+                    self.pdf.programmatic_scroll = false;
                 }
                 self.ui.toast = Some(format!("Could not render PDF page {}", page + 1));
                 Task::none()
             }
             Message::PdfRenderSkipped(generation, page) => {
-                self.pdf_pending_pages.remove(&page);
-                if generation != self.pdf_render_generation {
+                self.pdf.pending_pages.remove(&page);
+                if generation != self.pdf.render_generation {
                     return Task::none();
                 }
-                if self.pdf_toc_target_page == Some(page) {
-                    self.pdf_toc_target_page = None;
-                    self.pdf_programmatic_scroll = false;
+                if self.pdf.toc_target_page == Some(page) {
+                    self.pdf.toc_target_page = None;
+                    self.pdf.programmatic_scroll = false;
                 }
                 Task::none()
             }
             Message::TocClicked(index) => {
-                if self.active_pdf_path.is_some() {
-                    let target_page = (index as u16).min(self.pdf_total_pages.saturating_sub(1));
+                if self.pdf.active_path.is_some() {
+                    let target_page = (index as u16).min(self.pdf.total_pages.saturating_sub(1));
                     self.navigate_pdf_page(target_page)
                 } else {
                     Task::done(Message::EditorCursorMove(index, 0))
@@ -1095,23 +1044,23 @@ impl MdEditor {
             }
             Message::PdfScrolled { y, viewport_height } => {
                 self.active_panel = ActivePanel::Pdf;
-                self.pdf_scroll_y = y;
+                self.pdf.scroll_y = y;
                 let new_page = self.pdf_page_at_scroll(y + viewport_height * 0.33);
-                if self.pdf_programmatic_scroll {
-                    self.pdf_programmatic_scroll = false;
-                    let target_page = self.pdf_toc_target_page.take().unwrap_or(new_page);
-                    self.pdf_current_page = target_page.min(self.pdf_total_pages.saturating_sub(1));
-                    let start = self.pdf_current_page.saturating_sub(2);
+                if self.pdf.programmatic_scroll {
+                    self.pdf.programmatic_scroll = false;
+                    let target_page = self.pdf.toc_target_page.take().unwrap_or(new_page);
+                    self.pdf.current_page = target_page.min(self.pdf.total_pages.saturating_sub(1));
+                    let start = self.pdf.current_page.saturating_sub(2);
                     let end =
-                        (self.pdf_current_page + 2).min(self.pdf_total_pages.saturating_sub(1));
+                        (self.pdf.current_page + 2).min(self.pdf.total_pages.saturating_sub(1));
                     return self.render_pdf_page_range(start, end);
                 }
-                if new_page != self.pdf_current_page && new_page < self.pdf_total_pages {
-                    if new_page.abs_diff(self.pdf_current_page) > 8 {
-                        self.pdf_pending_pages.clear();
-                        self.pdf_pending_links.clear();
+                if new_page != self.pdf.current_page && new_page < self.pdf.total_pages {
+                    if new_page.abs_diff(self.pdf.current_page) > 8 {
+                        self.pdf.pending_pages.clear();
+                        self.pdf.pending_links.clear();
                     }
-                    self.pdf_current_page = new_page;
+                    self.pdf.current_page = new_page;
                     self.render_pdf_pages_for_viewport(y, viewport_height)
                 } else {
                     self.render_pdf_pages_for_viewport(y, viewport_height)
@@ -1121,9 +1070,9 @@ impl MdEditor {
                 self.active_panel = ActivePanel::Pdf;
                 if let Some(link) = self.pdf_link_at(page_idx, x, y) {
                     if let Some(dest_page) = link.dest_page {
-                        self.pdf_current_page =
-                            dest_page.min(u32::from(self.pdf_total_pages.saturating_sub(1))) as u16;
-                        self.navigate_pdf_page(self.pdf_current_page)
+                        self.pdf.current_page =
+                            dest_page.min(u32::from(self.pdf.total_pages.saturating_sub(1))) as u16;
+                        self.navigate_pdf_page(self.pdf.current_page)
                     } else if let Some(uri) = link.uri {
                         if modifiers.control() || modifiers.command() {
                             #[cfg(target_os = "windows")]
@@ -1144,7 +1093,7 @@ impl MdEditor {
                         Task::none()
                     }
                 } else if let Some(ann) = self.annotation_at(page_idx, x, y) {
-                    self.focused_annotation_id = Some(ann.id.clone());
+                    self.pdf.focused_annotation_id = Some(ann.id.clone());
                     if let Some(ref path) = ann.linked_note_path {
                         if !path.is_empty() {
                             Task::done(Message::PdfOpenLinkedNote(path.clone()))
@@ -1155,7 +1104,7 @@ impl MdEditor {
                         Task::none()
                     }
                 } else {
-                    self.focused_annotation_id = None;
+                    self.pdf.focused_annotation_id = None;
                     Task::none()
                 }
             }
@@ -1163,8 +1112,8 @@ impl MdEditor {
                 self.active_panel = ActivePanel::Pdf;
                 let mut target_ann = None;
                 if x < 0.0 || y < 0.0 {
-                    if let Some(ref ann_id) = self.focused_annotation_id {
-                        for page_anns in self.pdf_annotations.values() {
+                    if let Some(ref ann_id) = self.pdf.focused_annotation_id {
+                        for page_anns in self.pdf.annotations.values() {
                             if let Some(ann) = page_anns.iter().find(|a| a.id == *ann_id) {
                                 target_ann = Some(ann.clone());
                                 break;
@@ -1187,7 +1136,7 @@ impl MdEditor {
                         return Task::none();
                     };
                     let dest_y = link.dest_y;
-                    let Some(path) = self.active_pdf_path.clone() else {
+                    let Some(path) = self.pdf.active_path.clone() else {
                         return Task::none();
                     };
                     let Some(abs_path) = self.resolve_active_path(&path) else {
@@ -1216,7 +1165,7 @@ impl MdEditor {
             Message::PdfLinkPreviewResult(Ok(res)) => {
                 if let Ok(img) = image::load_from_memory(&res.image_data) {
                     let (width, height) = img.dimensions();
-                    self.pdf_link_preview = Some(iced::widget::image::Handle::from_rgba(
+                    self.pdf.link_preview = Some(iced::widget::image::Handle::from_rgba(
                         width,
                         height,
                         img.into_rgba8().into_raw(),
@@ -1229,11 +1178,11 @@ impl MdEditor {
                 Task::none()
             }
             Message::ClosePdfLinkPreview => {
-                self.pdf_link_preview = None;
+                self.pdf.link_preview = None;
                 Task::none()
             }
             Message::PdfTocLoaded(generation, entries) => {
-                if generation != self.pdf_render_generation {
+                if generation != self.pdf.render_generation {
                     return Task::none();
                 }
                 fn flatten_pdf_toc(
@@ -1259,11 +1208,11 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfPageLinksLoaded(generation, page, links) => {
-                self.pdf_pending_links.remove(&page);
-                if generation != self.pdf_render_generation {
+                self.pdf.pending_links.remove(&page);
+                if generation != self.pdf.render_generation {
                     return Task::none();
                 }
-                self.pdf_page_links.insert(page, links);
+                self.pdf.page_links.insert(page, links);
                 Task::none()
             }
 
@@ -1298,7 +1247,7 @@ impl MdEditor {
 
             Message::GlobalSearchOpen => {
                 self.search.visible = true;
-                if self.active_pdf_path.is_some() && !self.search.query.trim().is_empty() {
+                if self.pdf.active_path.is_some() && !self.search.query.trim().is_empty() {
                     Task::batch(vec![self.search_pdf(), focus_global_search_input()])
                 } else {
                     focus_global_search_input()
@@ -1321,7 +1270,7 @@ impl MdEditor {
                     self.search.results.clear();
                 }
                 if (self.search.visible || self.pdf_search_is_active())
-                    && self.active_pdf_path.is_some()
+                    && self.pdf.active_path.is_some()
                     && q.len() > 1
                 {
                     self.search_pdf()
@@ -1339,7 +1288,7 @@ impl MdEditor {
                 self.search.regex = value;
                 self.search.match_index = None;
                 if (self.search.visible || self.pdf_search_is_active())
-                    && self.active_pdf_path.is_some()
+                    && self.pdf.active_path.is_some()
                     && self.search.query.len() > 1
                 {
                     self.search_pdf()
@@ -1351,7 +1300,7 @@ impl MdEditor {
                 self.search.match_case = value;
                 self.search.match_index = None;
                 if (self.search.visible || self.pdf_search_is_active())
-                    && self.active_pdf_path.is_some()
+                    && self.pdf.active_path.is_some()
                     && self.search.query.len() > 1
                 {
                     self.search_pdf()
@@ -1426,12 +1375,12 @@ impl MdEditor {
                 if let Some(index) = self.search.match_index {
                     self.navigate_pdf_search_to_index(index)
                 } else {
-                    self.pdf_current_page = page.min(self.pdf_total_pages.saturating_sub(1));
-                    self.navigate_pdf_page(self.pdf_current_page)
+                    self.pdf.current_page = page.min(self.pdf.total_pages.saturating_sub(1));
+                    self.navigate_pdf_page(self.pdf.current_page)
                 }
             }
             Message::PdfScrollBy(delta) => {
-                if self.active_pdf_path.is_none()
+                if self.pdf.active_path.is_none()
                     || (!self.showing_pdf
                         && !(self.ui.split_view_active && self.active_path.is_some()))
                     || (self.ui.split_view_active
@@ -1445,7 +1394,7 @@ impl MdEditor {
                     return Task::none();
                 }
                 let max_y = self.pdf_total_height().max(0.0);
-                let y = (self.pdf_scroll_y + delta).clamp(0.0, max_y);
+                let y = (self.pdf.scroll_y + delta).clamp(0.0, max_y);
                 operation::scroll_to(
                     iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
                     AbsoluteOffset { x: 0.0, y },
@@ -1453,37 +1402,37 @@ impl MdEditor {
             }
             Message::PdfDocumentIdComputed(Some((path, hash, len, mtime))) => {
                 let _ = self.state.save_pdf_document(&hash, &path, len, mtime);
-                self.pdf_document_id = Some(hash.clone());
+                self.pdf.document_id = Some(hash.clone());
 
                 let annotations = self
                     .state
                     .get_pdf_annotations(&hash, None)
                     .unwrap_or_default();
-                self.pdf_annotations.clear();
+                self.pdf.annotations.clear();
                 for ann in annotations {
-                    self.pdf_annotations
+                    self.pdf.annotations
                         .entry(ann.page_index)
                         .or_default()
                         .push(ann);
                 }
 
                 let mut target_page = None;
-                if let Some(ref target_id) = self.pdf_initial_target_annotation {
-                    for (page_idx, page_anns) in &self.pdf_annotations {
+                if let Some(ref target_id) = self.pdf.initial_target_annotation {
+                    for (page_idx, page_anns) in &self.pdf.annotations {
                         if page_anns.iter().any(|a| &a.id == target_id) {
                             target_page = Some(*page_idx);
-                            self.focused_annotation_id = Some(target_id.clone());
+                            self.pdf.focused_annotation_id = Some(target_id.clone());
                             break;
                         }
                     }
                 }
 
                 let scroll_task = if let Some(page) = target_page {
-                    self.pdf_initial_target_page = None;
-                    self.pdf_initial_target_annotation = None;
+                    self.pdf.initial_target_page = None;
+                    self.pdf.initial_target_annotation = None;
                     self.navigate_pdf_page(page)
-                } else if let Some(page) = self.pdf_initial_target_page {
-                    self.pdf_initial_target_page = None;
+                } else if let Some(page) = self.pdf.initial_target_page {
+                    self.pdf.initial_target_page = None;
                     self.navigate_pdf_page(page)
                 } else {
                     Task::none()
@@ -1493,14 +1442,14 @@ impl MdEditor {
             }
             Message::PdfDocumentIdComputed(None) => Task::none(),
             Message::PdfPageTextLoaded(generation, page, res) => {
-                self.pdf_pending_text.remove(&page);
-                if generation == self.pdf_render_generation {
+                self.pdf.pending_text.remove(&page);
+                if generation == self.pdf.render_generation {
                     if let Ok(page_text) = res {
-                        self.pdf_page_text.insert(page, page_text);
-                        self.pdf_text_lru.push_back(page);
-                        if self.pdf_text_lru.len() > 12 {
-                            if let Some(oldest) = self.pdf_text_lru.pop_front() {
-                                self.pdf_page_text.remove(&oldest);
+                        self.pdf.page_text.insert(page, page_text);
+                        self.pdf.text_lru.push_back(page);
+                        if self.pdf.text_lru.len() > 12 {
+                            if let Some(oldest) = self.pdf.text_lru.pop_front() {
+                                self.pdf.page_text.remove(&oldest);
                             }
                         }
                     }
@@ -1509,7 +1458,7 @@ impl MdEditor {
             }
             Message::PdfSelectionChanged(page, anchor, focus) => {
                 self.active_panel = ActivePanel::Pdf;
-                self.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+                self.pdf.selection = Some(views::interactive_pdf::PdfSelection {
                     page_index: page,
                     anchor_idx: anchor,
                     focus_idx: focus,
@@ -1517,12 +1466,12 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfSelectionCleared => {
-                self.pdf_selection = None;
+                self.pdf.selection = None;
                 Task::none()
             }
             Message::PdfSelectionFinished(page, anchor, focus) => {
                 self.active_panel = ActivePanel::Pdf;
-                self.pdf_selection = Some(views::interactive_pdf::PdfSelection {
+                self.pdf.selection = Some(views::interactive_pdf::PdfSelection {
                     page_index: page,
                     anchor_idx: anchor,
                     focus_idx: focus,
@@ -1533,8 +1482,8 @@ impl MdEditor {
                 if !self.pdf_copy_shortcut_is_active() {
                     return Task::none();
                 }
-                if let Some(sel) = &self.pdf_selection {
-                    if let Some(page_text) = self.pdf_page_text.get(&sel.page_index) {
+                if let Some(sel) = &self.pdf.selection {
+                    if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
                         let start = sel.anchor_idx.min(sel.focus_idx);
                         let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
                         let selected = text_by_char_range(&page_text.text, start, end);
@@ -1546,8 +1495,8 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfCreateHighlight(color) => {
-                if let (Some(sel), Some(doc_id)) = (&self.pdf_selection, &self.pdf_document_id) {
-                    if let Some(page_text) = self.pdf_page_text.get(&sel.page_index) {
+                if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id) {
+                    if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
                         let start = sel.anchor_idx.min(sel.focus_idx);
                         let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
 
@@ -1590,12 +1539,12 @@ impl MdEditor {
                         if let Err(e) = self.state.save_pdf_annotation(&ann) {
                             self.ui.toast = Some(format!("Failed to save highlight: {}", e));
                         } else {
-                            self.pdf_annotations
+                            self.pdf.annotations
                                 .entry(sel.page_index)
                                 .or_default()
                                 .push(ann);
-                            self.pdf_selection = None;
-                            if let Some(ref path) = self.active_pdf_path {
+                            self.pdf.selection = None;
+                            if let Some(ref path) = self.pdf.active_path {
                                 self.backlinks =
                                     md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                         .unwrap_or_default();
@@ -1609,11 +1558,11 @@ impl MdEditor {
                 if let Err(e) = self.state.delete_pdf_annotation(&id) {
                     self.ui.toast = Some(format!("Failed to delete highlight: {}", e));
                 } else {
-                    for page_anns in self.pdf_annotations.values_mut() {
+                    for page_anns in self.pdf.annotations.values_mut() {
                         page_anns.retain(|a| a.id != id);
                     }
-                    if self.focused_annotation_id.as_ref() == Some(&id) {
-                        self.focused_annotation_id = None;
+                    if self.pdf.focused_annotation_id.as_ref() == Some(&id) {
+                        self.pdf.focused_annotation_id = None;
                     }
                     if let Some(views::modals::ModalType::QuickNote(ref mid)) = self.ui.active_modal {
                         if mid == &id {
@@ -1621,7 +1570,7 @@ impl MdEditor {
                             self.ui.modal_input.clear();
                         }
                     }
-                    if let Some(ref path) = self.active_pdf_path {
+                    if let Some(ref path) = self.pdf.active_path {
                         self.backlinks =
                             md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                 .unwrap_or_default();
@@ -1631,7 +1580,7 @@ impl MdEditor {
             }
             Message::PdfAddQuickNote(id, note_content) => {
                 let mut found_ann = None;
-                for page_anns in self.pdf_annotations.values_mut() {
+                for page_anns in self.pdf.annotations.values_mut() {
                     if let Some(ann) = page_anns.iter_mut().find(|a| a.id == id) {
                         ann.note = Some(note_content.clone());
                         ann.updated_at = std::time::SystemTime::now()
@@ -1646,7 +1595,7 @@ impl MdEditor {
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
                         self.ui.toast = Some(format!("Failed to save note: {}", e));
                     } else {
-                        if let Some(ref path) = self.active_pdf_path {
+                        if let Some(ref path) = self.pdf.active_path {
                             self.backlinks =
                                 md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                     .unwrap_or_default();
@@ -1657,7 +1606,7 @@ impl MdEditor {
             }
             Message::PdfLinkNote(annotation_id, mut note_path) => {
                 let mut annotation = None;
-                for page_anns in self.pdf_annotations.values() {
+                for page_anns in self.pdf.annotations.values() {
                     if let Some(ann) = page_anns.iter().find(|a| a.id == annotation_id) {
                         annotation = Some(ann.clone());
                         break;
@@ -1672,7 +1621,7 @@ impl MdEditor {
                     }
 
                     note_path = normalize_note_path(&note_path);
-                    if let Some(ref pdf_path) = self.active_pdf_path {
+                    if let Some(ref pdf_path) = self.pdf.active_path {
                         let content = self.linked_pdf_note_file_content(&note_path, pdf_path, &ann);
 
                         if let Err(e) =
@@ -1694,7 +1643,7 @@ impl MdEditor {
                     if let Err(e) = self.state.save_pdf_annotation(&ann) {
                         self.ui.toast = Some(format!("Failed to link note: {}", e));
                     } else {
-                        for page_anns in self.pdf_annotations.values_mut() {
+                        for page_anns in self.pdf.annotations.values_mut() {
                             if let Some(a) = page_anns.iter_mut().find(|a| a.id == annotation_id) {
                                 a.linked_note_path = Some(note_path.clone());
                                 a.updated_at = ann.updated_at;
@@ -1712,7 +1661,7 @@ impl MdEditor {
             Message::PdfOpenLinkedNote(note_path) => {
                 self.ui.split_view_active = true;
                 let open_task = self.open_file_extended(&note_path, false);
-                if self.pdf_fit_to_width {
+                if self.pdf.fit_to_width {
                     Task::batch(vec![open_task, Task::done(Message::PdfFitToWidth)])
                 } else {
                     Task::batch(vec![open_task, self.restore_scroll_positions()])
@@ -1732,12 +1681,12 @@ impl MdEditor {
                 self.ui.split_view_active = true;
                 self.showing_pdf = true;
 
-                if self.active_pdf_path.as_deref() == Some(&resolved_pdf_path) {
-                    self.focused_annotation_id = Some(annotation_id);
+                if self.pdf.active_path.as_deref() == Some(&resolved_pdf_path) {
+                    self.pdf.focused_annotation_id = Some(annotation_id);
                     self.navigate_pdf_page(page.saturating_sub(1))
                 } else {
-                    self.pdf_initial_target_page = Some(page.saturating_sub(1));
-                    self.pdf_initial_target_annotation = Some(annotation_id);
+                    self.pdf.initial_target_page = Some(page.saturating_sub(1));
+                    self.pdf.initial_target_annotation = Some(annotation_id);
                     self.open_pdf(&resolved_pdf_path)
                 }
             }
@@ -1758,12 +1707,12 @@ impl MdEditor {
                 match s {
                     Shortcut::Escape => {
                         // Close overlays in priority order
-                        if self.pdf_selection.is_some() {
-                            self.pdf_selection = None;
-                        } else if self.focused_annotation_id.is_some() {
-                            self.focused_annotation_id = None;
-                        } else if self.pdf_link_preview.is_some() {
-                            self.pdf_link_preview = None;
+                        if self.pdf.selection.is_some() {
+                            self.pdf.selection = None;
+                        } else if self.pdf.focused_annotation_id.is_some() {
+                            self.pdf.focused_annotation_id = None;
+                        } else if self.pdf.link_preview.is_some() {
+                            self.pdf.link_preview = None;
                         } else if self.ui.active_modal.is_some() {
                             self.ui.active_modal = None;
                             self.ui.modal_input.clear();
@@ -1795,7 +1744,7 @@ impl MdEditor {
                             self.search.file_visible = true;
                             self.search.visible = false;
                             if self.active_panel == ActivePanel::Pdf
-                                && self.active_pdf_path.is_some()
+                                && self.pdf.active_path.is_some()
                             {
                                 if !self.search.query.trim().is_empty() {
                                     return Task::batch(vec![
@@ -1816,7 +1765,7 @@ impl MdEditor {
                                     self.restore_scroll_positions(),
                                 ])
                             }
-                        } else if self.active_pdf_path.is_some() && self.showing_pdf {
+                        } else if self.pdf.active_path.is_some() && self.showing_pdf {
                             self.search.file_visible = true;
                             self.search.visible = false;
                             if !self.search.query.trim().is_empty() {
@@ -1852,7 +1801,7 @@ impl MdEditor {
                         Task::none()
                     }
                     Shortcut::TableOfContents => {
-                        if self.active_pdf_path.is_some()
+                        if self.pdf.active_path.is_some()
                             && (self.showing_pdf
                                 || (self.ui.split_view_active && self.active_path.is_some()))
                         {
@@ -1875,9 +1824,9 @@ impl MdEditor {
                 }
             }
             Message::SplitViewToggle => {
-                if self.active_path.is_some() && self.active_pdf_path.is_some() {
+                if self.active_path.is_some() && self.pdf.active_path.is_some() {
                     self.ui.split_view_active = !self.ui.split_view_active;
-                    if self.pdf_fit_to_width {
+                    if self.pdf.fit_to_width {
                         return Task::done(Message::PdfFitToWidth);
                     }
                 } else {
@@ -1908,7 +1857,7 @@ impl MdEditor {
             }
             Message::SplitViewDragEnd => {
                 self.ui.is_resizing_split = false;
-                if self.pdf_fit_to_width && self.active_pdf_path.is_some() {
+                if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
                     return Task::done(Message::PdfFitToWidth);
                 }
                 Task::none()
@@ -1916,13 +1865,13 @@ impl MdEditor {
             Message::WindowResized(width, height) => {
                 self.ui.window_width = width;
                 self.ui.window_height = height;
-                if self.pdf_fit_to_width && self.active_pdf_path.is_some() {
+                if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
                     return Task::done(Message::PdfFitToWidth);
                 }
                 Task::none()
             }
             Message::ToggleTOC => {
-                if self.active_pdf_path.is_some()
+                if self.pdf.active_path.is_some()
                     && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()))
                 {
                     self.toc_visible = !self.toc_visible;
@@ -1940,7 +1889,7 @@ impl MdEditor {
 
         let toolbar = views::toolbar::view(
             self.active_path.as_deref(),
-            self.active_pdf_path
+            self.pdf.active_path
                 .as_deref()
                 .or(self.active_image_path.as_deref()),
             None,
@@ -1948,7 +1897,7 @@ impl MdEditor {
             self.backlinks_visible,
             self.tracker.visible,
             self.toc_visible,
-            self.active_pdf_path.is_some()
+            self.pdf.active_path.is_some()
                 && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some())),
             self.ui.split_view_active,
             self.active_path.is_some(),
@@ -1959,7 +1908,7 @@ impl MdEditor {
             self.selected_path.as_deref(),
             self.active_path
                 .as_deref()
-                .or(self.active_pdf_path.as_deref())
+                .or(self.pdf.active_path.as_deref())
                 .or(self.active_image_path.as_deref()),
             &self.expanded_folders,
             !self.sidebar_visible,
@@ -2029,27 +1978,27 @@ impl MdEditor {
         };
 
         let pdf_view: Element<Message, Theme, iced::Renderer> =
-            if let Some(_) = &self.active_pdf_path {
-                let focused_ann = self.focused_annotation_id.as_ref().and_then(|ann_id| {
-                    self.pdf_annotations
+            if let Some(_) = &self.pdf.active_path {
+                let focused_ann = self.pdf.focused_annotation_id.as_ref().and_then(|ann_id| {
+                    self.pdf.annotations
                         .values()
                         .flatten()
                         .find(|a| &a.id == ann_id)
                 });
                 let pdf_toolbar = views::pdf_viewer::toolbar(
-                    self.pdf_current_page,
-                    self.pdf_total_pages,
-                    self.pdf_zoom,
+                    self.pdf.current_page,
+                    self.pdf.total_pages,
+                    self.pdf.zoom,
                     self.toc_visible,
-                    self.pdf_selection.is_some(),
+                    self.pdf.selection.is_some(),
                     focused_ann,
                 );
                 let pdf_pages = scrollable(views::pdf_viewer::view_continuous(
-                    &self.pdf_pages,
-                    self.pdf_zoom,
-                    &self.pdf_dimensions,
-                    &self.pdf_page_sizes,
-                    self.pdf_placeholder_page_size,
+                    &self.pdf.pages,
+                    self.pdf.zoom,
+                    &self.pdf.dimensions,
+                    &self.pdf.page_sizes,
+                    self.pdf.placeholder_page_size,
                     if pdf_search_active || self.search.visible || self.search.file_visible {
                         &self.search.pdf_results
                     } else {
@@ -2057,10 +2006,10 @@ impl MdEditor {
                     },
                     &self.search.pdf_indices_by_page,
                     self.search.match_index,
-                    &self.pdf_page_text,
-                    &self.pdf_annotations,
-                    self.pdf_selection,
-                    self.focused_annotation_id.as_deref(),
+                    &self.pdf.page_text,
+                    &self.pdf.annotations,
+                    self.pdf.selection,
+                    self.pdf.focused_annotation_id.as_deref(),
                 ))
                 .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
                 .on_scroll(|vp| Message::PdfScrolled {
@@ -2092,7 +2041,7 @@ impl MdEditor {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
 
-        let pdf_toc_available = self.active_pdf_path.is_some()
+        let pdf_toc_available = self.pdf.active_path.is_some()
             && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()));
         let toc_view: Element<Message, Theme, iced::Renderer> =
             if self.toc_visible && pdf_toc_available {
@@ -2132,7 +2081,7 @@ impl MdEditor {
 
         let main_content: Element<Message, Theme, iced::Renderer> = if self.ui.split_view_active
             && self.active_path.is_some()
-            && self.active_pdf_path.is_some()
+            && self.pdf.active_path.is_some()
         {
             let left_portion = (self.ui.split_ratio * 1000.0) as u16;
             let right_portion = ((1.0 - self.ui.split_ratio) * 1000.0) as u16;
@@ -2167,7 +2116,7 @@ impl MdEditor {
                     })
             ]
             .into()
-        } else if self.showing_pdf && self.active_pdf_path.is_some() {
+        } else if self.showing_pdf && self.pdf.active_path.is_some() {
             pdf_view
         } else if self.active_image.is_some() {
             image_view
@@ -2265,7 +2214,7 @@ impl MdEditor {
             );
         }
 
-        if let Some(preview_handle) = &self.pdf_link_preview {
+        if let Some(preview_handle) = &self.pdf.link_preview {
             let img = iced::widget::image(preview_handle.clone())
                 .width(Length::Fill)
                 .content_fit(iced::ContentFit::Contain);
@@ -2406,37 +2355,37 @@ impl MdEditor {
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
-        self.active_pdf_path = Some(path.to_string());
+        self.pdf.active_path = Some(path.to_string());
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
         self.showing_pdf = true;
         self.active_panel = ActivePanel::Pdf;
-        self.pdf_current_page = 0;
-        self.pdf_fit_to_width = true;
-        self.pdf_pages = Vec::new();
-        self.pdf_dimensions = Vec::new();
-        self.pdf_page_sizes = Vec::new();
-        self.pdf_placeholder_page_size = None;
-        self.pdf_pending_pages.clear();
-        self.pdf_pending_links.clear();
-        self.pdf_page_links.clear();
+        self.pdf.current_page = 0;
+        self.pdf.fit_to_width = true;
+        self.pdf.pages = Vec::new();
+        self.pdf.dimensions = Vec::new();
+        self.pdf.page_sizes = Vec::new();
+        self.pdf.placeholder_page_size = None;
+        self.pdf.pending_pages.clear();
+        self.pdf.pending_links.clear();
+        self.pdf.page_links.clear();
         self.search.pdf_results.clear();
         self.search.pdf_indices_by_page.clear();
         self.search.pdf_error = None;
-        self.pdf_programmatic_scroll = false;
-        self.pdf_toc_target_page = None;
-        self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
-        let generation = self.pdf_render_generation;
+        self.pdf.programmatic_scroll = false;
+        self.pdf.toc_target_page = None;
+        self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
+        let generation = self.pdf.render_generation;
 
         // Reset PDF study state
-        self.pdf_document_id = None;
-        self.pdf_page_text.clear();
-        self.pdf_selection = None;
-        self.pdf_annotations.clear();
-        self.focused_annotation_id = None;
-        self.pdf_pending_text.clear();
-        self.pdf_text_lru.clear();
+        self.pdf.document_id = None;
+        self.pdf.page_text.clear();
+        self.pdf.selection = None;
+        self.pdf.annotations.clear();
+        self.pdf.focused_annotation_id = None;
+        self.pdf.pending_text.clear();
+        self.pdf.text_lru.clear();
         self.backlinks =
             md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
 
@@ -2510,7 +2459,7 @@ impl MdEditor {
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image = Some((handle, width as f32, height as f32));
                 self.active_path = None;
-                self.active_pdf_path = None;
+                self.pdf.active_path = None;
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
                 self.toc_entries.clear();
@@ -2524,7 +2473,7 @@ impl MdEditor {
     }
 
     fn render_pdf_page(&self, page: u16) -> Task<Message> {
-        let Some(path) = &self.active_pdf_path else {
+        let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
         let Some(abs_path) = self.resolve_active_path(path) else {
@@ -2532,8 +2481,8 @@ impl MdEditor {
         };
         let path_str = abs_path.to_string_lossy().to_string();
         let zoom =
-            md_editor_core::pdf::pdf_render_bucket(self.pdf_zoom) * PDF_RENDER_SUPERSAMPLE;
-        let generation = self.pdf_render_generation;
+            md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * PDF_RENDER_SUPERSAMPLE;
+        let generation = self.pdf.render_generation;
         let _state = self.state.clone();
 
         Task::perform(
@@ -2559,7 +2508,7 @@ impl MdEditor {
     }
 
     fn render_pdf_page_direct(&mut self, page: u16) -> Task<Message> {
-        let Some(path) = &self.active_pdf_path else {
+        let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
         let Some(abs_path) = self.resolve_active_path(path) else {
@@ -2567,15 +2516,15 @@ impl MdEditor {
         };
         let path_str = abs_path.to_string_lossy().to_string();
         let zoom =
-            md_editor_core::pdf::pdf_render_bucket(self.pdf_zoom) * PDF_RENDER_SUPERSAMPLE;
-        let generation = self.pdf_render_generation;
+            md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * PDF_RENDER_SUPERSAMPLE;
+        let generation = self.pdf.render_generation;
         let _state = self.state.clone();
         if self
-            .pdf_pages
+            .pdf.pages
             .get(page as usize)
             .map_or(true, |p| p.is_none())
         {
-            self.pdf_pending_pages.insert(page);
+            self.pdf.pending_pages.insert(page);
         }
 
         Task::perform(
@@ -2598,18 +2547,18 @@ impl MdEditor {
     }
 
     fn load_pdf_page_links(&mut self, page: u16) -> Task<Message> {
-        if self.pdf_page_links.contains_key(&page) || self.pdf_pending_links.contains(&page) {
+        if self.pdf.page_links.contains_key(&page) || self.pdf.pending_links.contains(&page) {
             return Task::none();
         }
-        let Some(path) = &self.active_pdf_path else {
+        let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
         let Some(abs_path) = self.resolve_active_path(path) else {
             return Task::none();
         };
-        self.pdf_pending_links.insert(page);
+        self.pdf.pending_links.insert(page);
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf_render_generation;
+        let generation = self.pdf.render_generation;
         let _state = self.state.clone();
 
         Task::perform(
@@ -2622,18 +2571,18 @@ impl MdEditor {
     }
 
     fn load_pdf_page_text(&mut self, page: u16) -> Task<Message> {
-        if self.pdf_page_text.contains_key(&page) || self.pdf_pending_text.contains(&page) {
+        if self.pdf.page_text.contains_key(&page) || self.pdf.pending_text.contains(&page) {
             return Task::none();
         }
-        let Some(path) = &self.active_pdf_path else {
+        let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
         let Some(abs_path) = self.resolve_active_path(path) else {
             return Task::none();
         };
-        self.pdf_pending_text.insert(page);
+        self.pdf.pending_text.insert(page);
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf_render_generation;
+        let generation = self.pdf.render_generation;
         let _state = self.state.clone();
 
         Task::perform(
@@ -2653,18 +2602,18 @@ impl MdEditor {
     }
 
     fn render_visible_pdf_pages(&mut self) -> Task<Message> {
-        if self.pdf_total_pages == 0 {
+        if self.pdf.total_pages == 0 {
             return Task::none();
         }
         // Estimate visible range using viewport height and page height
         let page_h = self.estimated_pdf_page_height().max(100.0);
         let viewport_h = self.ui.window_height.max(400.0);
         let pages_in_view = (viewport_h / page_h).ceil() as u16;
-        let first_visible = self.pdf_current_page;
+        let first_visible = self.pdf.current_page;
         let last_visible =
-            (first_visible + pages_in_view).min(self.pdf_total_pages.saturating_sub(1));
+            (first_visible + pages_in_view).min(self.pdf.total_pages.saturating_sub(1));
 
-        if let Some(path) = &self.active_pdf_path {
+        if let Some(path) = &self.pdf.active_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
                 let path_str = abs_path.to_string_lossy().to_string();
                 if let Some(renderer) = self.state.pdf_renderer.as_ref() {
@@ -2673,9 +2622,9 @@ impl MdEditor {
             }
         }
 
-        let start = self.pdf_current_page.saturating_sub(3);
+        let start = self.pdf.current_page.saturating_sub(3);
         let end =
-            (self.pdf_current_page + pages_in_view + 3).min(self.pdf_total_pages.saturating_sub(1));
+            (self.pdf.current_page + pages_in_view + 3).min(self.pdf.total_pages.saturating_sub(1));
         self.render_pdf_page_range(start, end)
     }
 
@@ -2684,14 +2633,14 @@ impl MdEditor {
         scroll_y: f32,
         viewport_height: f32,
     ) -> Task<Message> {
-        if self.pdf_total_pages == 0 {
+        if self.pdf.total_pages == 0 {
             return Task::none();
         }
 
         let first_visible = self.pdf_page_at_scroll(scroll_y);
         let last_visible = self.pdf_page_at_scroll(scroll_y + viewport_height);
 
-        if let Some(path) = &self.active_pdf_path {
+        if let Some(path) = &self.pdf.active_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
                 let path_str = abs_path.to_string_lossy().to_string();
                 if let Some(renderer) = self.state.pdf_renderer.as_ref() {
@@ -2705,7 +2654,7 @@ impl MdEditor {
             self.pdf_page_at_scroll(scroll_y + viewport_height + self.estimated_pdf_page_height());
         self.render_pdf_page_range(
             first.saturating_sub(2),
-            (last + 2).min(self.pdf_total_pages.saturating_sub(1)),
+            (last + 2).min(self.pdf.total_pages.saturating_sub(1)),
         )
     }
 
@@ -2713,16 +2662,16 @@ impl MdEditor {
         let mut tasks = Vec::new();
         for page_idx in start..=end {
             if self
-                .pdf_pages
+                .pdf.pages
                 .get(page_idx as usize)
                 .map_or(true, |p| p.is_none())
-                && !self.pdf_pending_pages.contains(&page_idx)
+                && !self.pdf.pending_pages.contains(&page_idx)
             {
-                self.pdf_pending_pages.insert(page_idx);
+                self.pdf.pending_pages.insert(page_idx);
                 tasks.push(self.render_pdf_page(page_idx));
             }
-            if !self.pdf_page_text.contains_key(&page_idx)
-                && !self.pdf_pending_text.contains(&page_idx)
+            if !self.pdf.page_text.contains_key(&page_idx)
+                && !self.pdf.pending_text.contains(&page_idx)
             {
                 tasks.push(self.load_pdf_page_text(page_idx));
             }
@@ -2736,25 +2685,25 @@ impl MdEditor {
     }
 
     fn first_pdf_page_size(&self) -> Option<(f32, f32)> {
-        self.pdf_page_sizes.first().and_then(|s| *s).or_else(|| {
-            self.pdf_dimensions
+        self.pdf.page_sizes.first().and_then(|s| *s).or_else(|| {
+            self.pdf.dimensions
                 .first()
-                .and_then(|d| d.map(|(w, h)| (w as f32 / self.pdf_zoom, h as f32 / self.pdf_zoom)))
+                .and_then(|d| d.map(|(w, h)| (w as f32 / self.pdf.zoom, h as f32 / self.pdf.zoom)))
         })
     }
 
     fn pdf_placeholder_display_size(&self) -> (f32, f32) {
         pdf_placeholder_display_size_from(
-            self.pdf_placeholder_page_size,
-            self.pdf_page_sizes.first().and_then(|s| *s),
-            self.pdf_dimensions.first().and_then(|d| *d),
-            self.pdf_zoom,
+            self.pdf.placeholder_page_size,
+            self.pdf.page_sizes.first().and_then(|s| *s),
+            self.pdf.dimensions.first().and_then(|d| *d),
+            self.pdf.zoom,
         )
     }
 
     fn pdf_page_display_size(&self, page: u16) -> (f32, f32) {
-        if let Some(Some((w, h))) = self.pdf_page_sizes.get(page as usize) {
-            (*w * self.pdf_zoom, *h * self.pdf_zoom)
+        if let Some(Some((w, h))) = self.pdf.page_sizes.get(page as usize) {
+            (*w * self.pdf.zoom, *h * self.pdf.zoom)
         } else {
             self.pdf_placeholder_display_size()
         }
@@ -2767,7 +2716,7 @@ impl MdEditor {
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
-        if self.ui.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
+        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some() {
             (content_width * (1.0 - self.ui.split_ratio)).max(280.0)
         } else {
             content_width
@@ -2775,7 +2724,7 @@ impl MdEditor {
     }
 
     fn pdf_page_height(&self, page: u16) -> f32 {
-        if (page as usize) < self.pdf_total_pages as usize {
+        if (page as usize) < self.pdf.total_pages as usize {
             self.pdf_page_display_size(page).1
         } else {
             self.estimated_pdf_page_height()
@@ -2784,7 +2733,7 @@ impl MdEditor {
 
     fn pdf_page_offset(&self, page: u16) -> f32 {
         let mut offset = PDF_PAGE_LIST_PADDING;
-        let limit = page.min(self.pdf_total_pages);
+        let limit = page.min(self.pdf.total_pages);
         for i in 0..limit {
             offset += self.pdf_page_height(i) + PDF_PAGE_SPACING;
         }
@@ -2792,57 +2741,57 @@ impl MdEditor {
     }
 
     fn pdf_total_height(&self) -> f32 {
-        if self.pdf_total_pages == 0 {
+        if self.pdf.total_pages == 0 {
             return PDF_PAGE_LIST_PADDING;
         }
         let mut total = PDF_PAGE_LIST_PADDING;
-        for i in 0..self.pdf_total_pages {
+        for i in 0..self.pdf.total_pages {
             total += self.pdf_page_height(i) + PDF_PAGE_SPACING;
         }
         total
     }
 
     fn pdf_page_at_scroll(&self, scroll_y: f32) -> u16 {
-        if self.pdf_total_pages == 0 {
+        if self.pdf.total_pages == 0 {
             return 0;
         }
         let mut offset = PDF_PAGE_LIST_PADDING;
-        for i in 0..self.pdf_total_pages {
+        for i in 0..self.pdf.total_pages {
             let page_h = self.pdf_page_height(i);
             if scroll_y < offset + page_h + PDF_PAGE_SPACING {
                 return i;
             }
             offset += page_h + PDF_PAGE_SPACING;
         }
-        self.pdf_total_pages.saturating_sub(1)
+        self.pdf.total_pages.saturating_sub(1)
     }
 
     fn pdf_search_match_scroll_y(&self, result: &md_editor_core::pdf::PdfSearchMatch) -> f32 {
         let rect = result.rects.first();
         let page_height = self
-            .pdf_page_sizes
+            .pdf.page_sizes
             .get(result.page_index as usize)
             .and_then(|size| *size)
             .map(|(_, h)| h)
-            .unwrap_or_else(|| self.pdf_page_height(result.page_index) / self.pdf_zoom.max(0.01));
+            .unwrap_or_else(|| self.pdf_page_height(result.page_index) / self.pdf.zoom.max(0.01));
         pdf_search_match_scroll_y_from(
             self.pdf_page_offset(result.page_index),
             rect.map(|rect| rect.y),
             rect.map(|rect| rect.height).unwrap_or(0.0),
             page_height,
-            self.pdf_zoom,
+            self.pdf.zoom,
             self.pdf_total_height(),
         )
     }
 
     fn pdf_link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<md_editor_core::pdf::LinkInfo> {
-        let links = self.pdf_page_links.get(&page_idx)?;
+        let links = self.pdf.page_links.get(&page_idx)?;
         let dim = self
-            .pdf_dimensions
+            .pdf.dimensions
             .get(page_idx as usize)
             .and_then(|d| *d)?;
-        let real_x = (x * dim.0 as f32) / self.pdf_zoom;
-        let real_y = (y * dim.1 as f32) / self.pdf_zoom;
+        let real_x = (x * dim.0 as f32) / self.pdf.zoom;
+        let real_y = (y * dim.1 as f32) / self.pdf.zoom;
 
         links
             .iter()
@@ -2862,11 +2811,11 @@ impl MdEditor {
         x: f32,
         y: f32,
     ) -> Option<md_editor_core::pdf::PdfAnnotation> {
-        let page_text = self.pdf_page_text.get(&page_idx)?;
+        let page_text = self.pdf.page_text.get(&page_idx)?;
         let px = x * page_text.page_width;
         let py = y * page_text.page_height;
 
-        let page_anns = self.pdf_annotations.get(&page_idx)?;
+        let page_anns = self.pdf.annotations.get(&page_idx)?;
         for ann in page_anns {
             for rect in &ann.rects {
                 let view_y = page_text.page_height - rect.y - rect.height;
@@ -2892,7 +2841,7 @@ impl MdEditor {
 
     fn default_pdf_note_path(&self, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
         let pdf_filename = self
-            .active_pdf_path
+            .pdf.active_path
             .as_deref()
             .and_then(|pdf_path| std::path::Path::new(pdf_path).file_stem())
             .and_then(|s| s.to_str())
@@ -3014,19 +2963,19 @@ impl MdEditor {
         self.search.match_index = Some(index);
         let target_page = result
             .page_index
-            .min(self.pdf_total_pages.saturating_sub(1));
-        self.pdf_current_page = target_page;
-        self.pdf_programmatic_scroll = true;
-        self.pdf_toc_target_page = None;
+            .min(self.pdf.total_pages.saturating_sub(1));
+        self.pdf.current_page = target_page;
+        self.pdf.programmatic_scroll = true;
+        self.pdf.toc_target_page = None;
 
         let scroll_y = self.pdf_search_match_scroll_y(&result);
-        if let Some(path) = &self.active_pdf_path {
+        if let Some(path) = &self.pdf.active_path {
             if let Some(abs_path) = self.resolve_active_path(path) {
                 let path_str = abs_path.to_string_lossy().to_string();
                 if let Some(renderer) = self.state.pdf_renderer.as_ref() {
                     renderer.set_visible_range(
                         target_page.saturating_sub(1),
-                        (target_page + 1).min(self.pdf_total_pages.saturating_sub(1)),
+                        (target_page + 1).min(self.pdf.total_pages.saturating_sub(1)),
                         &path_str,
                     );
                 }
@@ -3036,7 +2985,7 @@ impl MdEditor {
         let mut tasks = vec![self.render_pdf_page_direct(target_page)];
         tasks.push(self.render_pdf_page_range(
             target_page.saturating_sub(2),
-            (target_page + 2).min(self.pdf_total_pages.saturating_sub(1)),
+            (target_page + 2).min(self.pdf.total_pages.saturating_sub(1)),
         ));
         tasks.push(operation::scroll_to(
             iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
@@ -3049,20 +2998,20 @@ impl MdEditor {
     }
 
     fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {
-        let target_page = page.min(self.pdf_total_pages.saturating_sub(1));
-        self.pdf_current_page = target_page;
-        self.pdf_pending_pages.clear();
-        self.pdf_pending_links.clear();
-        self.pdf_render_generation = self.pdf_render_generation.wrapping_add(1);
-        self.pdf_toc_target_page = Some(target_page);
+        let target_page = page.min(self.pdf.total_pages.saturating_sub(1));
+        self.pdf.current_page = target_page;
+        self.pdf.pending_pages.clear();
+        self.pdf.pending_links.clear();
+        self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
+        self.pdf.toc_target_page = Some(target_page);
 
         let target_dimensions_ready = self
-            .pdf_dimensions
+            .pdf.dimensions
             .get(target_page as usize)
             .and_then(|d| *d)
             .is_some();
         let target_image_ready = self
-            .pdf_pages
+            .pdf.pages
             .get(target_page as usize)
             .is_some_and(|page| page.is_some());
 
@@ -3073,7 +3022,7 @@ impl MdEditor {
             tasks.push(self.render_pdf_page_direct(target_page));
         }
 
-        self.pdf_programmatic_scroll = true;
+        self.pdf.programmatic_scroll = true;
         let scroll_y = self.pdf_page_offset(target_page);
         tasks.push(operation::scroll_to(
             iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
@@ -3092,7 +3041,7 @@ impl MdEditor {
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
-        if self.ui.split_view_active && self.active_path.is_some() && self.active_pdf_path.is_some() {
+        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some() {
             (content_width * self.ui.split_ratio).max(280.0)
         } else {
             content_width
@@ -3132,8 +3081,8 @@ impl MdEditor {
             },
         ));
         // Restore PDF scroll position after search bar toggle
-        if self.active_pdf_path.is_some() {
-            let pdf_y = self.pdf_scroll_y;
+        if self.pdf.active_path.is_some() {
+            let pdf_y = self.pdf.scroll_y;
             tasks.push(operation::scroll_to(
                 iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
                 AbsoluteOffset { x: 0.0, y: pdf_y },
@@ -3144,7 +3093,7 @@ impl MdEditor {
 
     fn pdf_search_is_active(&self) -> bool {
         self.search.file_visible
-            && self.active_pdf_path.is_some()
+            && self.pdf.active_path.is_some()
             && (self.showing_pdf
                 || (self.ui.split_view_active
                     && self.active_path.is_some()
@@ -3159,8 +3108,8 @@ impl MdEditor {
     }
 
     fn pdf_copy_shortcut_is_active(&self) -> bool {
-        self.pdf_selection.is_some()
-            && self.active_pdf_path.is_some()
+        self.pdf.selection.is_some()
+            && self.pdf.active_path.is_some()
             && (self.showing_pdf
                 || (self.ui.split_view_active
                     && self.active_path.is_some()
@@ -3225,7 +3174,7 @@ impl MdEditor {
     }
 
     fn search_pdf(&self) -> Task<Message> {
-        let Some(path) = &self.active_pdf_path else {
+        let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
         let Some(abs_path) = self.resolve_active_path(path) else {
@@ -3791,7 +3740,7 @@ mod tests {
         };
 
         let mut app = MdEditor::new().0;
-        app.active_pdf_path = Some("papers/My PDF File.pdf".to_string());
+        app.pdf.active_path = Some("papers/My PDF File.pdf".to_string());
         assert_eq!(
             app.default_pdf_note_path(&ann),
             "pdf-notes/my-pdf-file-p5-abcdef12.md"
