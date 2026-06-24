@@ -410,14 +410,7 @@ impl MdEditor {
                                     Task::none()
                                 }
                             } else {
-                                let mut resolved_file = resolve_relative_link_path(
-                                    self.vault.root.as_deref(),
-                                    self.active_path.as_deref(),
-                                    file_part,
-                                );
-                                if std::path::Path::new(&resolved_file).extension().is_none() {
-                                    resolved_file.push_str(".md");
-                                }
+                                let resolved_file = self.resolve_internal_link_path(file_part);
                                 self.vault.selected_path = Some(resolved_file.clone());
                                 let open_task = self.open_file_extended(&resolved_file, false);
 
@@ -445,14 +438,7 @@ impl MdEditor {
                                 }
                             }
                         } else {
-                            let mut resolved_path = resolve_relative_link_path(
-                                self.vault.root.as_deref(),
-                                self.active_path.as_deref(),
-                                &path,
-                            );
-                            if std::path::Path::new(&resolved_path).extension().is_none() {
-                                resolved_path.push_str(".md");
-                            }
+                            let resolved_path = self.resolve_internal_link_path(&path);
                             self.vault.selected_path = Some(resolved_path.clone());
                             let lower = resolved_path.to_lowercase();
                             if lower.ends_with(".md") || lower.ends_with(".markdown") {
@@ -2080,6 +2066,33 @@ impl MdEditor {
         self.open_file_extended(path, true)
     }
 
+    /// Resolve an internal link target (wikilink / relative markdown link) to a
+    /// vault file path. Tries the existing relative-path resolution first, then
+    /// falls back to a vault-wide basename lookup so `[[NoteName]]` resolves to
+    /// a note living in any subfolder.
+    fn resolve_internal_link_path(&self, link_path: &str) -> String {
+        let mut resolved = resolve_relative_link_path(
+            self.vault.root.as_deref(),
+            self.active_path.as_deref(),
+            link_path,
+        );
+        if std::path::Path::new(&resolved).extension().is_none() {
+            resolved.push_str(".md");
+        }
+        let exists = self
+            .vault
+            .root
+            .as_deref()
+            .map(|root| std::path::Path::new(root).join(&resolved).exists())
+            .unwrap_or(false);
+        if !exists {
+            if let Some(found) = resolve_vault_note_by_name(&self.vault.entries, link_path) {
+                return found;
+            }
+        }
+        resolved
+    }
+
     fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
         let is_different = self.active_path.as_deref() != Some(path);
         if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
@@ -2941,6 +2954,51 @@ fn resolve_relative_link_path(
     link_path.to_string()
 }
 
+/// Resolve a bare wikilink name (e.g. `[[NoteName]]`) to a vault file path by
+/// matching the link's final component against every file's basename, case-
+/// insensitively, with or without a `.md`/`.markdown` extension. When several
+/// files match, the shortest path wins (Obsidian-style "closest" resolution);
+/// `None` is returned for no match or an ambiguous tie at the same depth.
+fn resolve_vault_note_by_name(
+    entries: &[md_editor_core::types::FileEntry],
+    link_path: &str,
+) -> Option<String> {
+    // Use only the final path component as the target name.
+    let target = link_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(link_path)
+        .trim();
+    if target.is_empty() {
+        return None;
+    }
+    let target_lower = target.to_lowercase();
+
+    let mut matches: Vec<&str> = Vec::new();
+    for entry in entries {
+        if entry.is_dir {
+            continue;
+        }
+        let name_lower = entry.name.to_lowercase();
+        let stem_lower = name_lower
+            .strip_suffix(".md")
+            .or_else(|| name_lower.strip_suffix(".markdown"))
+            .unwrap_or(&name_lower);
+        if name_lower == target_lower || stem_lower == target_lower {
+            matches.push(entry.path.as_str());
+        }
+    }
+
+    matches.sort_by_key(|p| p.len());
+    match matches.as_slice() {
+        [] => None,
+        [only] => Some((*only).to_string()),
+        // Prefer a strictly shortest path; bail if the two shortest tie.
+        [a, b, ..] if a.len() != b.len() => Some((*a).to_string()),
+        _ => None,
+    }
+}
+
 fn slugify(s: &str) -> String {
     let mut result = String::new();
     let mut last_was_hyphen = false;
@@ -3056,6 +3114,51 @@ mod tests {
         assert_eq!(find_heading_line(text, "header-equation-1"), Some(2));
         assert_eq!(find_heading_line(text, "bold-heading"), Some(4));
         assert_eq!(find_heading_line(text, "not-existent"), None);
+    }
+
+    #[test]
+    fn test_resolve_vault_note_by_name() {
+        use md_editor_core::types::FileEntry;
+        let entry = |path: &str, name: &str, is_dir: bool| FileEntry {
+            path: path.to_string(),
+            name: name.to_string(),
+            is_dir,
+        };
+        let entries = vec![
+            entry("notes", "notes", true),
+            entry("notes/Alpha.md", "Alpha.md", false),
+            entry("archive/old/Beta.md", "Beta.md", false),
+            entry("Gamma.pdf", "Gamma.pdf", false),
+            entry("a/Dup.md", "Dup.md", false),
+            entry("deep/nested/Dup.md", "Dup.md", false),
+        ];
+
+        // Bare name in a subfolder, case-insensitive, with/without extension.
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "Alpha").as_deref(),
+            Some("notes/Alpha.md")
+        );
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "beta").as_deref(),
+            Some("archive/old/Beta.md")
+        );
+        // Non-md extension matches on full name.
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "Gamma.pdf").as_deref(),
+            Some("Gamma.pdf")
+        );
+        // Only the final path component is used as the target name.
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "folder/Alpha").as_deref(),
+            Some("notes/Alpha.md")
+        );
+        // Shortest path wins when paths differ in length.
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "Dup").as_deref(),
+            Some("a/Dup.md")
+        );
+        // No match.
+        assert_eq!(resolve_vault_note_by_name(&entries, "Missing"), None);
     }
 
     #[test]
