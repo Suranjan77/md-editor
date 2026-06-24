@@ -13,7 +13,7 @@
 //! `docs/refactor-mdeditor-decomposition.md`.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use iced::widget::image::Handle;
 use iced::Task;
@@ -23,6 +23,11 @@ use crate::editor::buffer::DocBuffer;
 use crate::editor::highlight::{self, StyledLine};
 use crate::messages::Message;
 use crate::views;
+
+/// Debounce window before a queued highlight pass actually runs. Owned here
+/// alongside the highlight pipeline; the keyboard subscription on the shell
+/// references it to schedule the debounce tick.
+pub const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
 
 /// Above this line count, an opened document is shown with plain placeholders
 /// first and highlighted asynchronously.
@@ -116,6 +121,41 @@ impl EditorPane {
             async move { highlight::highlight_markdown(&text) },
             move |lines| Message::HighlightReady(generation, lines),
         )
+    }
+
+    /// Handle messages that mutate only this pane's own state: caching a
+    /// rendered LaTeX image and firing a debounced highlight pass. Arms that
+    /// need vault paths to resolve resources (`HighlightReady`) stay on the
+    /// shell.
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::MathRendered(tex, res) => {
+                if let Ok(tuple) = res {
+                    self.math_cache.insert(tex, tuple);
+                }
+                Task::none()
+            }
+            Message::HighlightDebounceElapsed => {
+                if self
+                    .pending_highlight_requested_at
+                    .is_some_and(|requested| requested.elapsed() < HIGHLIGHT_DEBOUNCE)
+                {
+                    return Task::none();
+                }
+                let Some(generation) = self.pending_highlight_generation else {
+                    return Task::none();
+                };
+                let Some(text) = self.pending_highlight_text.take() else {
+                    self.pending_highlight_generation = None;
+                    self.pending_highlight_requested_at = None;
+                    return Task::none();
+                };
+                self.pending_highlight_generation = None;
+                self.pending_highlight_requested_at = None;
+                Self::highlight_task(generation, text)
+            }
+            _ => Task::none(),
+        }
     }
 
     // ── Resource loading for rendered content ────────────────────────

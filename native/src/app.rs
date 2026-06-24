@@ -4,7 +4,6 @@ use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 
 use image::GenericImageView;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::messages::{Message, Shortcut};
@@ -18,7 +17,6 @@ use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
 const PDF_RENDER_SUPERSAMPLE: f32 = 2.0;
-const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActivePanel {
@@ -213,7 +211,8 @@ impl MdEditor {
         };
 
         let highlight_debounce = if self.editor.pending_highlight_generation.is_some() {
-            iced::time::every(HIGHLIGHT_DEBOUNCE).map(|_| Message::HighlightDebounceElapsed)
+            iced::time::every(crate::editor_state::HIGHLIGHT_DEBOUNCE)
+                .map(|_| Message::HighlightDebounceElapsed)
         } else {
             Subscription::none()
         };
@@ -575,11 +574,10 @@ impl MdEditor {
             Message::EditorCommandNoScroll(command) => {
                 self.run_editor_command_with_scroll(command, false)
             }
-            Message::MathRendered(tex, res) => {
-                if let Ok(tuple) = res {
-                    self.editor.math_cache.insert(tex, tuple);
-                }
-                Task::none()
+            // Editor arms that mutate only `self.editor` are routed to
+            // `EditorPane::update`; see editor_state.rs.
+            m @ (Message::MathRendered(..) | Message::HighlightDebounceElapsed) => {
+                self.editor.update(m)
             }
             Message::EditorSave => {
                 if let Some(path) = &self.active_path {
@@ -614,26 +612,6 @@ impl MdEditor {
                     y: target_y,
                 },
             ),
-            Message::HighlightDebounceElapsed => {
-                if self
-                    .editor
-                    .pending_highlight_requested_at
-                    .is_some_and(|requested| requested.elapsed() < HIGHLIGHT_DEBOUNCE)
-                {
-                    return Task::none();
-                }
-                let Some(generation) = self.editor.pending_highlight_generation else {
-                    return Task::none();
-                };
-                let Some(text) = self.editor.pending_highlight_text.take() else {
-                    self.editor.pending_highlight_generation = None;
-                    self.editor.pending_highlight_requested_at = None;
-                    return Task::none();
-                };
-                self.editor.pending_highlight_generation = None;
-                self.editor.pending_highlight_requested_at = None;
-                crate::editor_state::EditorPane::highlight_task(generation, text)
-            }
             Message::HighlightReady(generation, lines) => {
                 if generation != self.editor.highlight_generation {
                     return Task::none();
