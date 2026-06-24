@@ -37,6 +37,11 @@ pub struct UiState {
     // Window geometry
     pub window_width: f32,
     pub window_height: f32,
+    /// OS display scale factor (device pixels per logical pixel) for the
+    /// window. Drives PDF supersampling so pages stay sharp on HiDPI/fractional
+    /// displays without over-rendering on 1× screens. Defaults to 1.0 until the
+    /// real value is reported by the window.
+    pub scale_factor: f32,
 }
 
 impl UiState {
@@ -54,6 +59,7 @@ impl UiState {
             is_resizing_split: false,
             window_width: 1200.0,
             window_height: 800.0,
+            scale_factor: 1.0,
         }
     }
 

@@ -7,6 +7,36 @@ use crate::types::{BacklinkItem, BacklinkTarget, FileEntry, SearchResult};
 
 const IMAGE_EXTENSIONS: [&str; 6] = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
 
+/// Directory names that are never worth indexing or showing in the tree. These
+/// are heavy or irrelevant in note vaults and would otherwise blow up indexing
+/// time and the file listing. Dotfiles (`.git`, `.obsidian`, …) are skipped
+/// separately by the `starts_with('.')` check in the walkers.
+const EXCLUDED_DIRS: [&str; 6] = [
+    "node_modules",
+    "target",
+    "build",
+    "dist",
+    "__pycache__",
+    ".trash",
+];
+
+/// Maximum directory depth the vault walkers descend. Guards against
+/// pathologically deep trees (and, together with the symlink check, against
+/// runaway recursion) without affecting any realistic vault layout.
+const MAX_WALK_DEPTH: usize = 32;
+
+/// Whether a directory should be skipped during indexing/listing: dotfolders
+/// and the well-known heavy directories in [`EXCLUDED_DIRS`].
+fn is_excluded_dir(name: &str) -> bool {
+    name.starts_with('.') || EXCLUDED_DIRS.contains(&name)
+}
+
+/// Whether a directory entry is a symlink. Symlinked directories are not
+/// followed during walks so a symlink cycle can never make indexing hang.
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path).map_or(false, |m| m.file_type().is_symlink())
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 
 /// Set the vault root directory and index all markdown files.
@@ -24,16 +54,60 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
     // freeze this off-thread indexing is meant to avoid.
     let md_files = list_all_md_files(&root)?;
     let mut index = FileIndex::new(root.clone());
+    // (relative path, content) for the FTS rebuild.
     let mut indexed: Vec<(String, String)> = Vec::with_capacity(md_files.len());
+    // (absolute path, content) for the two-pass link-graph rebuild, which needs
+    // every file's name registered before it can resolve bare links to files in
+    // other subfolders.
+    let mut for_graph: Vec<(PathBuf, String)> = Vec::with_capacity(md_files.len());
     for file_path in md_files {
         if let Ok(content) = read_file(&file_path) {
-            index.update_file(&file_path, &content);
             let rel_path = file_path
                 .strip_prefix(&root)
                 .unwrap_or(&file_path)
                 .to_string_lossy()
                 .to_string();
-            indexed.push((rel_path, content));
+            indexed.push((rel_path, content.clone()));
+            for_graph.push((file_path, content));
+        }
+    }
+    index.rebuild(&for_graph);
+
+    // Phase 1b: extract PDF text for full-text search. Best-effort and done
+    // without holding any lock (pdfium extraction is slow); skipped entirely
+    // when no renderer is available (e.g. headless/test builds).
+    let mut pdf_indexed: Vec<(String, String)> = Vec::new();
+    if let Some(renderer) = state.pdf_renderer.as_ref() {
+        if let Ok(pdf_files) = list_all_pdf_files(&root) {
+            for pdf_path in pdf_files {
+                let rel_path = pdf_path
+                    .strip_prefix(&root)
+                    .unwrap_or(&pdf_path)
+                    .to_string_lossy()
+                    .to_string();
+                let (file_size, modified_at) = file_size_and_mtime(&pdf_path);
+
+                // Reuse cached text when the PDF is unchanged; only fall back to
+                // the (slow) pdfium extraction when size/mtime differ.
+                let text = if let Some(cached) =
+                    state.get_cached_pdf_text(&rel_path, file_size, modified_at)
+                {
+                    cached
+                } else {
+                    match renderer.extract_document_text(&pdf_path.to_string_lossy()) {
+                        Ok(text) => {
+                            // Cache even empty results (e.g. scanned PDFs) so we
+                            // don't re-extract them on every open.
+                            state.put_cached_pdf_text(&rel_path, file_size, modified_at, &text);
+                            text
+                        }
+                        Err(_) => continue,
+                    }
+                };
+                if !text.trim().is_empty() {
+                    pdf_indexed.push((rel_path, text));
+                }
+            }
         }
     }
 
@@ -50,7 +124,7 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
         let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM file_search", [])
             .map_err(|e| e.to_string())?;
-        for (rel_path, content) in &indexed {
+        for (rel_path, content) in indexed.iter().chain(pdf_indexed.iter()) {
             if let Err(e) = tx.execute(
                 "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
                 rusqlite::params![rel_path, content],
@@ -114,6 +188,53 @@ pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// Reconcile the link/search index with the on-disk state of a single
+/// vault-relative markdown path after an *external* change (a filesystem watcher
+/// event, a git pull, another editor). Existing files are re-read and
+/// re-indexed; vanished files are removed from the index and search. Non-
+/// markdown paths are ignored. Safe to call redundantly — it's idempotent.
+pub fn sync_path_from_disk(state: &AppState, rel_path: &str) -> Result<(), String> {
+    let vault_root = {
+        let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
+        guard.as_ref().ok_or("No vault root set")?.clone()
+    };
+    let abs = resolve_vault_path_checked(&vault_root, rel_path)?;
+    let is_md = abs.extension().map_or(false, |e| e == "md" || e == "markdown");
+    if !is_md {
+        return Ok(());
+    }
+
+    if abs.is_file() {
+        let Ok(content) = read_file(&abs) else {
+            return Ok(());
+        };
+        {
+            let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+            index.update_file(&abs, &content);
+        }
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = db.execute(
+            "DELETE FROM file_search WHERE path = ?1",
+            rusqlite::params![rel_path],
+        );
+        let _ = db.execute(
+            "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
+            rusqlite::params![rel_path, content],
+        );
+    } else {
+        {
+            let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+            index.remove_file(&abs);
+        }
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = db.execute(
+            "DELETE FROM file_search WHERE path = ?1",
+            rusqlite::params![rel_path],
+        );
+    }
+    Ok(())
+}
+
 /// Create a new empty file.
 pub fn create_file(state: &AppState, path: &str) -> Result<(), String> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
@@ -137,30 +258,108 @@ pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to create directory {}: {}", abs_path.display(), e))
 }
 
-/// Rename a file or directory.
+/// Rename (or move) a file or directory.
+///
+/// When a markdown file is renamed, every `[[wikilink]]` that pointed at it is
+/// rewritten in the files that linked to it, so backlinks survive the rename.
+/// The link graph and full-text index are updated for both the renamed file and
+/// each file whose links were rewritten.
 pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<(), String> {
-    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
-    let abs_old = resolve_vault_path_checked(vault_root, old_path)?;
-    let abs_new = resolve_vault_path_checked(vault_root, new_path)?;
-
-    if abs_old.is_file() && abs_old.extension().map_or(false, |e| e == "md") {
-        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
-        index.remove_file(&abs_old);
-        let db = state.db.lock().map_err(|e| e.to_string())?;
-        if let Err(e) = db.execute(
-            "DELETE FROM file_search WHERE path = ?1",
-            rusqlite::params![old_path],
-        ) {
-            eprintln!("Failed to remove {old_path} from search index: {e}");
-        }
-    }
+    let vault_root = {
+        let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
+        guard.as_ref().ok_or("No vault root set")?.clone()
+    };
+    let abs_old = resolve_vault_path_checked(&vault_root, old_path)?;
+    let abs_new = resolve_vault_path_checked(&vault_root, new_path)?;
 
     if abs_new.exists() {
         return Err(format!("Target already exists: {}", abs_new.display()));
     }
+
+    let is_md_file = abs_old.is_file() && abs_old.extension().map_or(false, |e| e == "md");
+
+    // Snapshot the files that link to this note *before* mutating the index —
+    // these are the ones whose `[[wikilinks]]` need rewriting.
+    let backlinks: Vec<PathBuf> = if is_md_file {
+        let index = state.file_index.lock().map_err(|e| e.to_string())?;
+        index.get_backlinks(&abs_old)
+    } else {
+        Vec::new()
+    };
+
+    // Do the physical rename first; if it fails, nothing else has changed.
     fs::rename(&abs_old, &abs_new)
-        .map_err(|e| format!("Failed to rename {}: {}", abs_old.display(), e))
+        .map_err(|e| format!("Failed to rename {}: {}", abs_old.display(), e))?;
+
+    if !is_md_file {
+        return Ok(());
+    }
+
+    // New link target: vault-relative, forward slashes, no extension.
+    let new_rel = abs_new
+        .strip_prefix(&vault_root)
+        .unwrap_or(&abs_new)
+        .with_extension("");
+    let new_rel_str = new_rel.to_string_lossy().replace('\\', "/");
+
+    // Rewrite links in each backlinking file that resolved to the old path.
+    for bl in &backlinks {
+        if bl == &abs_old {
+            continue;
+        }
+        let Ok(content) = read_file(bl) else { continue };
+        let Some(updated) =
+            crate::file_index::rewrite_links_to(&content, &vault_root, bl, &abs_old, &new_rel_str)
+        else {
+            continue;
+        };
+        if write_file(bl, &updated).is_err() {
+            continue;
+        }
+        {
+            let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+            index.update_file(bl, &updated);
+        }
+        let bl_rel = path_to_relative_string(bl, &vault_root);
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = db.execute(
+            "DELETE FROM file_search WHERE path = ?1",
+            rusqlite::params![bl_rel],
+        );
+        if let Err(e) = db.execute(
+            "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
+            rusqlite::params![bl_rel, updated],
+        ) {
+            eprintln!("Failed to reindex {bl_rel} after rename: {e}");
+        }
+    }
+
+    // Re-key the renamed file in the link graph and search index.
+    {
+        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+        index.remove_file(&abs_old);
+        if let Ok(content) = read_file(&abs_new) {
+            index.update_file(&abs_new, &content);
+            drop(index);
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            let _ = db.execute(
+                "DELETE FROM file_search WHERE path = ?1",
+                rusqlite::params![old_path],
+            );
+            let _ = db.execute(
+                "DELETE FROM file_search WHERE path = ?1",
+                rusqlite::params![new_path],
+            );
+            if let Err(e) = db.execute(
+                "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
+                rusqlite::params![new_path, content],
+            ) {
+                eprintln!("Failed to index renamed file {new_path}: {e}");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Delete a file or directory.
@@ -418,6 +617,22 @@ fn normalize_within_root(vault_root: &Path, relative_path: &str) -> (PathBuf, bo
     (resolved, escaped)
 }
 
+/// File size in bytes and modified time as a Unix timestamp (seconds), used as
+/// the PDF text cache key. Returns `(0, 0)` when the file can't be stat'd, which
+/// simply forces a fresh extraction.
+fn file_size_and_mtime(path: &Path) -> (u64, i64) {
+    let Ok(meta) = fs::metadata(path) else {
+        return (0, 0);
+    };
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    (meta.len(), mtime)
+}
+
 fn read_file(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))
 }
@@ -445,7 +660,7 @@ pub fn is_image(ext: &str) -> bool {
 
 fn list_vault_entries(root: &Path) -> Result<Vec<FileEntry>, String> {
     let mut entries = Vec::new();
-    list_vault_recursive(root, root, &mut entries)?;
+    list_vault_recursive(root, root, &mut entries, 0)?;
     entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,
@@ -458,7 +673,11 @@ fn list_vault_recursive(
     root: &Path,
     dir: &Path,
     entries: &mut Vec<FileEntry>,
+    depth: usize,
 ) -> Result<(), String> {
+    if depth >= MAX_WALK_DEPTH {
+        return Ok(());
+    }
     let read_dir = fs::read_dir(dir)
         .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
 
@@ -467,17 +686,20 @@ fn list_vault_recursive(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
-        if name.starts_with('.') {
-            continue;
-        }
-
         if path.is_dir() {
+            // Skip excluded/dot directories and never follow directory
+            // symlinks (which could form a cycle).
+            if is_excluded_dir(&name) || is_symlink(&path) {
+                continue;
+            }
             entries.push(FileEntry {
                 path: path_to_relative_string(&path, root),
                 name,
                 is_dir: true,
             });
-            list_vault_recursive(root, &path, entries)?;
+            list_vault_recursive(root, &path, entries, depth + 1)?;
+        } else if name.starts_with('.') {
+            continue;
         } else if path
             .extension()
             .map(|e| {
@@ -505,11 +727,38 @@ fn path_to_relative_string(path: &Path, root: &Path) -> String {
 
 pub fn list_all_md_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
-    list_all_md_files_recursive(root, &mut files)?;
+    list_all_md_files_recursive(root, &mut files, 0)?;
     Ok(files)
 }
 
-fn list_all_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+fn list_all_md_files_recursive(
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+    depth: usize,
+) -> Result<(), String> {
+    list_files_matching(dir, files, depth, &|ext| ext == "md" || ext == "markdown")
+}
+
+/// List every `.pdf` file in the vault, applying the same exclusion/symlink/
+/// depth guards as the markdown walker.
+pub fn list_all_pdf_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    list_files_matching(root, &mut files, 0, &|ext| ext == "pdf")?;
+    Ok(files)
+}
+
+/// Recursively collect files whose extension satisfies `keep`, skipping
+/// dotfiles, excluded/dot directories, and directory symlinks, bounded by
+/// [`MAX_WALK_DEPTH`].
+fn list_files_matching(
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+    depth: usize,
+    keep: &dyn Fn(&str) -> bool,
+) -> Result<(), String> {
+    if depth >= MAX_WALK_DEPTH {
+        return Ok(());
+    }
     let read_dir = fs::read_dir(dir)
         .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
 
@@ -518,16 +767,14 @@ fn list_all_md_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
-        if name.starts_with('.') {
-            continue;
-        }
-
         if path.is_dir() {
-            list_all_md_files_recursive(&path, files)?;
-        } else if path
-            .extension()
-            .map_or(false, |e| e == "md" || e == "markdown")
-        {
+            if is_excluded_dir(&name) || is_symlink(&path) {
+                continue;
+            }
+            list_files_matching(&path, files, depth + 1, keep)?;
+        } else if name.starts_with('.') {
+            continue;
+        } else if path.extension().and_then(|e| e.to_str()).map_or(false, keep) {
             files.push(path);
         }
     }
@@ -557,6 +804,39 @@ mod tests {
         assert!(resolve_vault_path_checked(root, "notes/../../secret").is_err());
         assert!(resolve_vault_path_checked(root, "/etc/passwd").is_err());
         assert!(resolve_vault_path_checked(root, "notes/a.md").is_ok());
+    }
+
+    #[test]
+    fn walk_skips_excluded_and_dot_dirs() {
+        let base = std::env::temp_dir().join(format!("md_walk_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("notes")).unwrap();
+        fs::create_dir_all(base.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(base.join(".obsidian")).unwrap();
+        fs::write(base.join("notes/a.md"), "a").unwrap();
+        fs::write(base.join("node_modules/pkg/b.md"), "b").unwrap();
+        fs::write(base.join(".obsidian/c.md"), "c").unwrap();
+
+        let files = list_all_md_files(&base).unwrap();
+        assert_eq!(files.len(), 1, "only notes/a.md should be indexed");
+        assert!(files[0].ends_with("notes/a.md"));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_does_not_follow_symlink_cycles() {
+        let base = std::env::temp_dir().join(format!("md_symlink_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("real")).unwrap();
+        fs::write(base.join("real/a.md"), "a").unwrap();
+        // A symlink pointing back at the vault root would loop forever if followed.
+        std::os::unix::fs::symlink(&base, base.join("real/loop")).unwrap();
+
+        // Must terminate and find the single real file.
+        let files = list_all_md_files(&base).unwrap();
+        assert_eq!(files.len(), 1);
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

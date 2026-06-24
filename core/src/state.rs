@@ -150,6 +150,103 @@ impl AppState {
         Ok(())
     }
 
+    /// Cached resolved internal references for a document, or `None` if the
+    /// document has not been scanned yet. Keyed by `document_id` (a content
+    /// hash), so the cache is valid until the file changes.
+    pub fn get_pdf_references(
+        &self,
+        document_id: &str,
+    ) -> Option<Vec<crate::references::ReferenceLink>> {
+        let db = self.db.lock().ok()?;
+        let json: String = db
+            .query_row(
+                "SELECT links_json FROM pdf_references WHERE document_id = ?1",
+                [document_id],
+                |row| row.get(0),
+            )
+            .ok()?;
+        // Stored as (resolver_version, links); ignore entries from an older
+        // resolver so an algorithm change doesn't serve stale results.
+        let (version, links): (u32, Vec<crate::references::ReferenceLink>) =
+            serde_json::from_str(&json).ok()?;
+        (version == crate::references::RESOLVER_VERSION).then_some(links)
+    }
+
+    /// Store resolved references for a document. Best-effort; the one-time text
+    /// scan that produced these is the expensive part, so caching avoids
+    /// repeating it on every open.
+    pub fn put_pdf_references(
+        &self,
+        document_id: &str,
+        links: &[crate::references::ReferenceLink],
+    ) {
+        let Ok(db) = self.db.lock() else {
+            return;
+        };
+        let Ok(json) = serde_json::to_string(&(crate::references::RESOLVER_VERSION, links))
+        else {
+            return;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        if let Err(e) = db.execute(
+            "INSERT INTO pdf_references (document_id, links_json, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(document_id) DO UPDATE SET
+                links_json = excluded.links_json,
+                updated_at = excluded.updated_at",
+            rusqlite::params![document_id, json, now],
+        ) {
+            eprintln!("Failed to cache PDF references for {document_id}: {e}");
+        }
+    }
+
+    /// Return cached extracted text for a PDF if the cache entry's size and
+    /// modified-time match the current file (i.e. the PDF is unchanged since it
+    /// was last indexed). Returns `None` on any mismatch or error.
+    pub fn get_cached_pdf_text(
+        &self,
+        rel_path: &str,
+        file_size: u64,
+        modified_at: i64,
+    ) -> Option<String> {
+        let db = self.db.lock().ok()?;
+        db.query_row(
+            "SELECT content FROM pdf_text_cache
+             WHERE path = ?1 AND file_size = ?2 AND modified_at = ?3",
+            rusqlite::params![rel_path, file_size as i64, modified_at],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+    }
+
+    /// Store extracted PDF text keyed by path + size + modified-time so an
+    /// unchanged PDF is not re-extracted on the next vault open. Best-effort.
+    pub fn put_cached_pdf_text(
+        &self,
+        rel_path: &str,
+        file_size: u64,
+        modified_at: i64,
+        content: &str,
+    ) {
+        let Ok(db) = self.db.lock() else {
+            return;
+        };
+        if let Err(e) = db.execute(
+            "INSERT INTO pdf_text_cache (path, file_size, modified_at, content)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(path) DO UPDATE SET
+                file_size = excluded.file_size,
+                modified_at = excluded.modified_at,
+                content = excluded.content",
+            rusqlite::params![rel_path, file_size as i64, modified_at, content],
+        ) {
+            eprintln!("Failed to cache PDF text for {rel_path}: {e}");
+        }
+    }
+
     pub fn get_pdf_annotations(
         &self,
         document_id: &str,
@@ -299,7 +396,20 @@ fn init_schema(db: &Connection) -> rusqlite::Result<()> {
             WHERE linked_note_path IS NOT NULL AND linked_note_path != '';
         CREATE INDEX IF NOT EXISTS pdf_annotations_linked_note
             ON pdf_annotations(linked_note_path)
-            WHERE linked_note_path IS NOT NULL AND linked_note_path != '';",
+            WHERE linked_note_path IS NOT NULL AND linked_note_path != '';
+
+        CREATE TABLE IF NOT EXISTS pdf_text_cache (
+            path TEXT PRIMARY KEY,
+            file_size INTEGER NOT NULL,
+            modified_at INTEGER NOT NULL,
+            content TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS pdf_references (
+            document_id TEXT PRIMARY KEY,
+            links_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );",
     )?;
 
     apply_migrations(db)?;
@@ -447,6 +557,28 @@ mod tests {
         assert!(legacy.exists());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pdf_text_cache_hits_only_when_size_and_mtime_match() {
+        let state = AppState::new_in_memory();
+        assert!(state.get_cached_pdf_text("a.pdf", 100, 5).is_none());
+
+        state.put_cached_pdf_text("a.pdf", 100, 5, "hello world");
+        assert_eq!(
+            state.get_cached_pdf_text("a.pdf", 100, 5).as_deref(),
+            Some("hello world")
+        );
+        // A changed size or mtime is a miss (the PDF was modified).
+        assert!(state.get_cached_pdf_text("a.pdf", 101, 5).is_none());
+        assert!(state.get_cached_pdf_text("a.pdf", 100, 6).is_none());
+
+        // Re-extraction updates the entry in place.
+        state.put_cached_pdf_text("a.pdf", 101, 6, "new text");
+        assert_eq!(
+            state.get_cached_pdf_text("a.pdf", 101, 6).as_deref(),
+            Some("new text")
+        );
     }
 
     #[test]

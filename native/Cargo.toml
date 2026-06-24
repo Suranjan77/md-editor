@@ -25,3 +25,5 @@ ratex-parser = "0.1.7"
 ratex-layout = "0.1.7"
 ratex-types = "0.1.7"
 uuid = { version = "1", features = ["v4"] }
+notify = "8"
+tokio = { version = "1", features = ["sync", "time"] }

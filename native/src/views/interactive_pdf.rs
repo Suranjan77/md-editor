@@ -261,7 +261,11 @@ where
         let bounds = layout.bounds();
 
         renderer.draw_image(
-            iced::advanced::image::Image::new(self.handle.clone()),
+            // Linear filtering keeps supersampled pages crisp when iced scales
+            // the bitmap to the layout box; set explicitly so a future change
+            // to the iced default can't silently regress sharpness.
+            iced::advanced::image::Image::new(self.handle.clone())
+                .filter_method(iced::widget::image::FilterMethod::Linear),
             bounds,
             *viewport,
         );

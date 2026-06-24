@@ -37,7 +37,15 @@ pub struct PdfPane {
     pub placeholder_page_size: Option<(f32, f32)>,
 
     pub page_links: HashMap<u16, Vec<LinkInfo>>,
+    /// Synthetic links for recognised internal references (numbered equations,
+    /// figures, tables, sections), resolved once for the whole document and
+    /// converted to `LinkInfo` so they reuse the existing hit-test and preview.
+    /// Keyed by source page. See `md_editor_core::references`.
+    pub references: HashMap<u16, Vec<LinkInfo>>,
     pub link_preview: Option<Handle>,
+    /// Pixel size of the current link-preview image, so the modal box can be
+    /// sized to its aspect ratio (centered, no letterboxing).
+    pub link_preview_size: Option<(f32, f32)>,
 
     pub document_id: Option<String>,
     pub page_text: HashMap<u16, PdfPageText>,
@@ -76,7 +84,9 @@ impl PdfPane {
             page_sizes: Vec::new(),
             placeholder_page_size: None,
             page_links: HashMap::new(),
+            references: HashMap::new(),
             link_preview: None,
+            link_preview_size: None,
             document_id: None,
             page_text: HashMap::new(),
             selection: None,
@@ -134,6 +144,7 @@ impl PdfPane {
             }
             Message::ClosePdfLinkPreview => {
                 self.link_preview = None;
+                self.link_preview_size = None;
                 Task::none()
             }
             Message::PdfPageTextLoaded(generation, page, res) => {
@@ -276,22 +287,69 @@ impl PdfPane {
         None
     }
 
-    pub fn link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<LinkInfo> {
-        let links = self.page_links.get(&page_idx)?;
+    /// The page's size in PDF points, preferring loaded page sizes, then
+    /// extracted page text, then falling back to the rasterized dimensions
+    /// divided by zoom. Used to map normalized click coordinates into the point
+    /// space that link/annotation rects live in.
+    fn page_point_size(&self, page_idx: u16) -> Option<(f32, f32)> {
+        if let Some(Some(size)) = self.page_sizes.get(page_idx as usize) {
+            return Some(*size);
+        }
+        if let Some(pt) = self.page_text.get(&page_idx) {
+            return Some((pt.page_width, pt.page_height));
+        }
         let dim = self.dimensions.get(page_idx as usize).and_then(|d| *d)?;
-        let real_x = (x * dim.0 as f32) / self.zoom;
-        let real_y = (y * dim.1 as f32) / self.zoom;
+        let zoom = self.zoom.max(0.01);
+        Some((dim.0 as f32 / zoom, dim.1 as f32 / zoom))
+    }
 
-        links
-            .iter()
-            .find(|link| {
-                let lx = link.bbox.x;
-                let ly = link.bbox.y;
-                let lw = link.bbox.width;
-                let lh = link.bbox.height;
-                real_x >= lx && real_x <= lx + lw && real_y >= ly && real_y <= ly + lh
-            })
-            .cloned()
+    pub fn link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<LinkInfo> {
+        // Click coordinates are normalized [0,1] over the page; link bboxes are
+        // in PDF points (top-left origin). Convert using the page's point size —
+        // NOT `dimensions/zoom`, since `dimensions` are rasterized at the zoom
+        // *bucket*, not the live zoom, which threw the mapping off by up to ~40%
+        // and made the reference-preview right-click miss every link.
+        let (page_w, page_h) = self.page_point_size(page_idx)?;
+        let real_x = x * page_w;
+        let real_y = y * page_h;
+
+        let hit = |links: &[LinkInfo]| {
+            links
+                .iter()
+                .find(|link| {
+                    let lx = link.bbox.x;
+                    let ly = link.bbox.y;
+                    let lw = link.bbox.width;
+                    let lh = link.bbox.height;
+                    real_x >= lx && real_x <= lx + lw && real_y >= ly && real_y <= ly + lh
+                })
+                .cloned()
+        };
+
+        // Embedded link annotations take priority; synthetic reference links
+        // (recognised equations/figures/sections) fill in where the PDF itself
+        // has none.
+        self.page_links
+            .get(&page_idx)
+            .and_then(|l| hit(l))
+            .or_else(|| self.references.get(&page_idx).and_then(|l| hit(l)))
+    }
+
+    /// Replace the document's synthetic reference links, indexed by source page
+    /// and converted to `LinkInfo` so they reuse the hit-test and preview path.
+    pub fn set_references(&mut self, links: Vec<md_editor_core::references::ReferenceLink>) {
+        self.references.clear();
+        for r in links {
+            self.references
+                .entry(r.src_page)
+                .or_default()
+                .push(LinkInfo {
+                    bbox: r.bbox,
+                    dest_page: Some(r.dest_page),
+                    dest_y: r.dest_y,
+                    uri: None,
+                });
+        }
     }
 }
 
