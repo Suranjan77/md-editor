@@ -93,6 +93,9 @@ pub enum EditorCommand {
     FormatItalic,
     FormatInlineCode,
     InsertLink,
+    /// A single typed character that may participate in auto-pairing
+    /// (brackets/quotes). Falls back to plain insertion when not paired.
+    TypePaired(char),
     Undo,
     Redo,
 }
@@ -227,6 +230,7 @@ impl DocBuffer {
             EditorCommand::FormatItalic => self.wrap_selection_or_insert("*", "*", "italic"),
             EditorCommand::FormatInlineCode => self.wrap_selection_or_insert("`", "`", "code"),
             EditorCommand::InsertLink => self.wrap_selection_or_insert("[", "](url)", "link"),
+            EditorCommand::TypePaired(c) => self.type_paired(c),
             EditorCommand::Undo => {
                 if self.undo() {
                     CommandResult::changed()
@@ -681,6 +685,79 @@ impl DocBuffer {
         CommandResult::changed()
     }
 
+    fn char_at(&self, offset: usize) -> Option<char> {
+        if offset < self.rope.len_chars() {
+            Some(self.rope.char(offset))
+        } else {
+            None
+        }
+    }
+
+    /// Handle a typed character with auto-pairing for brackets and quotes:
+    /// insert a matching closer (cursor between), wrap a selection, or skip over
+    /// an existing closer. Non-paired characters insert normally.
+    fn type_paired(&mut self, c: char) -> CommandResult {
+        const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+
+        // Opening bracket: wrap a selection, else insert an empty pair.
+        if let Some(&(open, close)) = PAIRS.iter().find(|&&(o, _)| o == c) {
+            if self.selection_offsets.is_some() {
+                return self.wrap_selection_or_insert(&open.to_string(), &close.to_string(), "");
+            }
+            return self.insert_pair_empty(open, close);
+        }
+
+        // Closing bracket: skip over a closer already at the cursor.
+        if let Some(&(_, close)) = PAIRS.iter().find(|&&(_, cl)| cl == c) {
+            if self.selection_offsets.is_none() && self.char_at(self.cursor_offset) == Some(close) {
+                self.move_cursor(Movement::Right, false);
+                return CommandResult::default();
+            }
+            return self.insert_text(&c.to_string());
+        }
+
+        // Quote characters use the same glyph for open and close.
+        if matches!(c, '"' | '\'' | '`') {
+            if self.selection_offsets.is_some() {
+                return self.wrap_selection_or_insert(&c.to_string(), &c.to_string(), "");
+            }
+            // Skip over an identical quote immediately ahead.
+            if self.char_at(self.cursor_offset) == Some(c) {
+                self.move_cursor(Movement::Right, false);
+                return CommandResult::default();
+            }
+            // Don't auto-pair a quote that follows a word character, so
+            // apostrophes in contractions ("don't") stay single.
+            let prev = self
+                .cursor_offset
+                .checked_sub(1)
+                .and_then(|i| self.char_at(i));
+            if prev.is_some_and(|p| p.is_alphanumeric()) {
+                return self.insert_text(&c.to_string());
+            }
+            return self.insert_pair_empty(c, c);
+        }
+
+        self.insert_text(&c.to_string())
+    }
+
+    /// Insert `open`+`close` at the cursor and leave the cursor between them.
+    fn insert_pair_empty(&mut self, open: char, close: char) -> CommandResult {
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+        let insert_at = self.cursor_offset;
+        let text = format!("{open}{close}");
+        self.rope.insert(insert_at, &text);
+        let ops = vec![EditOp::Insert {
+            char_offset: insert_at,
+            text,
+        }];
+        self.cursor_offset = insert_at + 1;
+        self.selection_offsets = None;
+        self.commit_transaction(ops, before_cursor, before_selection);
+        CommandResult::changed()
+    }
+
     fn commit_transaction(
         &mut self,
         ops: Vec<EditOp>,
@@ -859,6 +936,51 @@ mod tests {
         assert_eq!(buffer.text(), "Hello world");
         assert_eq!(buffer.cursor_offset(), 11);
         assert_eq!((buffer.cursor_line, buffer.cursor_col), (0, 11));
+    }
+
+    #[test]
+    fn auto_pair_inserts_matching_closer_with_cursor_between() {
+        let mut buffer = DocBuffer::from_text("");
+        buffer.execute(EditorCommand::TypePaired('('));
+        assert_eq!(buffer.text(), "()");
+        assert_eq!(buffer.cursor_offset(), 1);
+        // Typing the closer skips over the auto-inserted one.
+        buffer.execute(EditorCommand::TypePaired(')'));
+        assert_eq!(buffer.text(), "()");
+        assert_eq!(buffer.cursor_offset(), 2);
+    }
+
+    #[test]
+    fn auto_pair_wraps_selection() {
+        let mut buffer = DocBuffer::from_text("hello");
+        buffer.set_selection(0, 0, 0, 5);
+        buffer.execute(EditorCommand::TypePaired('['));
+        assert_eq!(buffer.text(), "[hello]");
+    }
+
+    #[test]
+    fn auto_pair_quote_word_guard() {
+        // Apostrophe after a word character must not pair.
+        let mut buffer = DocBuffer::from_text("don");
+        buffer.set_cursor(0, 3);
+        buffer.execute(EditorCommand::TypePaired('\''));
+        assert_eq!(buffer.text(), "don'");
+        assert_eq!(buffer.cursor_offset(), 4);
+
+        // Quote at the start of a word pairs.
+        let mut buffer = DocBuffer::from_text("");
+        buffer.execute(EditorCommand::TypePaired('"'));
+        assert_eq!(buffer.text(), "\"\"");
+        assert_eq!(buffer.cursor_offset(), 1);
+    }
+
+    #[test]
+    fn auto_pair_closer_inserts_when_not_skipping() {
+        let mut buffer = DocBuffer::from_text("");
+        // A lone closing bracket with nothing ahead inserts literally.
+        buffer.execute(EditorCommand::TypePaired(')'));
+        assert_eq!(buffer.text(), ")");
+        assert_eq!(buffer.cursor_offset(), 1);
     }
 
     #[test]

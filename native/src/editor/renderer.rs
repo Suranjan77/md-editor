@@ -2666,9 +2666,27 @@ where
                 if let Some(t) = text {
                     if let Some(c) = t.chars().next() {
                         if !c.is_control() {
-                            shell.publish((self.on_command)(EditorCommand::InsertText(
-                                t.to_string(),
-                            )));
+                            // Route bracket/quote characters through auto-pairing
+                            // (single-char input only); everything else inserts
+                            // verbatim.
+                            let command = if t.chars().count() == 1
+                                && matches!(
+                                    c,
+                                    '(' | ')'
+                                        | '['
+                                        | ']'
+                                        | '{'
+                                        | '}'
+                                        | '"'
+                                        | '\''
+                                        | '`'
+                                )
+                            {
+                                EditorCommand::TypePaired(c)
+                            } else {
+                                EditorCommand::InsertText(t.to_string())
+                            };
+                            shell.publish((self.on_command)(command));
                             state.selection_anchor = None;
                             state.selection_focus = None;
                         }
