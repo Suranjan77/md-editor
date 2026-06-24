@@ -9,8 +9,7 @@ use std::time::Duration;
 use crate::editor::buffer::{DocBuffer, EditorCommand};
 use crate::messages::{Message, Shortcut};
 use crate::pdf_notes::{
-    append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path,
-    note_filename_from_path, slug_fragment,
+    append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path, slug_fragment,
 };
 use crate::theme as app_theme;
 use crate::views;
@@ -482,77 +481,22 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::CreateFileDialog => {
-                self.ui.active_modal = Some(views::modals::ModalType::CreateFile);
-                self.ui.modal_input.clear();
-                self.ui.link_note_picker_search.clear();
-                Task::none()
-            }
-            Message::CreateFolderDialog => {
-                self.ui.active_modal = Some(views::modals::ModalType::CreateFolder);
-                self.ui.modal_input.clear();
-                self.ui.link_note_picker_search.clear();
-                Task::none()
-            }
-            Message::DeleteFileDialog(path) => {
-                self.ui.active_modal = Some(views::modals::ModalType::Delete(path));
-                Task::none()
-            }
-            Message::NameModalInputChanged(input) => {
-                self.ui.modal_input = input;
-                Task::none()
-            }
-            Message::PdfLinkNoteFolderSelected(folder) => {
-                if matches!(
-                    self.ui.active_modal,
-                    Some(views::modals::ModalType::LinkNote(_))
-                ) {
-                    let filename = note_filename_from_path(&self.ui.modal_input);
-                    self.ui.modal_input = if folder.is_empty() {
-                        filename
-                    } else {
-                        format!("{}/{}", folder.trim_end_matches('/'), filename)
-                    };
-                }
-                Task::none()
-            }
-            Message::PdfLinkNoteFileSelected(path) => {
-                if matches!(
-                    self.ui.active_modal,
-                    Some(views::modals::ModalType::LinkNote(_))
-                ) {
-                    self.ui.modal_input = normalize_note_path(&path);
-                }
-                Task::none()
-            }
-            Message::PdfLinkNotePickerSearchChanged(query) => {
-                if matches!(
-                    self.ui.active_modal,
-                    Some(views::modals::ModalType::LinkNote(_))
-                ) {
-                    self.ui.link_note_picker_search = query;
-                }
-                Task::none()
-            }
-            Message::NameModalCancel => {
-                self.ui.active_modal = None;
-                self.ui.modal_input.clear();
-                self.ui.link_note_picker_search.clear();
-                Task::none()
-            }
-            Message::NameModalSubmitCurrent => {
-                if matches!(
-                    self.ui.active_modal,
-                    Some(views::modals::ModalType::CreateFile)
-                        | Some(views::modals::ModalType::CreateFolder)
-                        | Some(views::modals::ModalType::QuickNote(_))
-                        | Some(views::modals::ModalType::LinkNote(_))
-                ) {
-                    Task::done(Message::NameModalSubmit(self.ui.modal_input.clone()))
-                } else {
-                    Task::none()
-                }
-            }
+            // UI chrome arms that mutate only `self.ui` are routed to
+            // `UiState::update`; see ui_state.rs.
+            m @ (Message::CreateFileDialog
+            | Message::CreateFolderDialog
+            | Message::DeleteFileDialog(_)
+            | Message::NameModalInputChanged(_)
+            | Message::PdfLinkNoteFolderSelected(_)
+            | Message::PdfLinkNoteFileSelected(_)
+            | Message::PdfLinkNotePickerSearchChanged(_)
+            | Message::NameModalCancel
+            | Message::NameModalSubmitCurrent
+            | Message::CommandPaletteOpen
+            | Message::CommandPaletteQueryChanged(_)
+            | Message::ShowToast(_)
+            | Message::ToastHide
+            | Message::SplitViewDragStart) => self.ui.update(m),
             Message::NameModalSubmit(input) => {
                 if let Some(views::modals::ModalType::QuickNote(id)) = self.ui.active_modal.clone() {
                     self.ui.active_modal = None;
@@ -1132,15 +1076,6 @@ impl MdEditor {
             }
 
             m @ Message::TrackerToggle => self.tracker.update(m, &self.state),
-            Message::CommandPaletteOpen => {
-                self.ui.command_palette_visible = true;
-                self.ui.command_palette_query.clear();
-                Task::none()
-            }
-            Message::CommandPaletteQueryChanged(query) => {
-                self.ui.command_palette_query = query;
-                Task::none()
-            }
             Message::CommandPaletteCommandClicked(shortcut) => {
                 self.ui.command_palette_visible = false;
                 self.ui.command_palette_query.clear();
@@ -1610,14 +1545,6 @@ impl MdEditor {
                 self.open_file(&path)
             }
 
-            Message::ShowToast(text) => {
-                self.ui.toast = Some(text);
-                Task::none()
-            }
-            Message::ToastHide => {
-                self.ui.toast = None;
-                Task::none()
-            }
             Message::KeyboardShortcut(s) => {
                 match s {
                     Shortcut::Escape => {
@@ -1748,10 +1675,6 @@ impl MdEditor {
                     self.ui.toast =
                         Some("Open a markdown file and a PDF to use split view".to_string());
                 }
-                Task::none()
-            }
-            Message::SplitViewDragStart => {
-                self.ui.is_resizing_split = true;
                 Task::none()
             }
             Message::SplitViewDragging(x_pos) => {
