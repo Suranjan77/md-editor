@@ -20,12 +20,29 @@
 >   shell-side glue is a thin `load_editor_resources()` that supplies the vault
 >   root + active path (needed to resolve relative image paths).
 >
+> **Message routing (final pass, done):** every sub-state now has an
+> `update(&mut self, msg) -> Task<Message>` (mirroring the original
+> `TrackerState` pattern), and the shell forwards the message arms that mutate
+> *only that pane's own state* via grouped `m @ (..) => self.<pane>.update(m)`
+> arms. 24 arms moved: ui 14 (modals, link-note picker, command palette, toast,
+> split-drag start), pdf 5 (page-size load, render-skip, page-text cache,
+> link-preview close, selection clear), editor 2 (math cache, debounced
+> highlight — `HIGHLIGHT_DEBOUNCE` moved to `editor_state` too), vault 2
+> (sidebar toggle, folder expand), search 1 (replace-field text).
+>
 > **Intentionally staying on the shell (coordinator role):** orchestration that
 > needs the shared `Arc<AppState>`, resolves vault paths, or coordinates
 > multiple panes — PDF open/render/page-text/navigation, the layout-dependent
 > `pdf_available_width` (sidebar/TOC/split/window state), and search navigation
 > (moves the editor cursor / scrolls). Threading `&AppState` through these to
-> force them onto a pane would fight the design, not improve it.
+> force them onto a pane would fight the design, not improve it. This is the
+> **terminal state**, not a gap: the bulk of `update_inner`'s remaining lines
+> are inherently cross-pane dispatchers (`KeyboardShortcut`, `SidebarFileClicked`,
+> `ToggleTOC`, the PDF-annotation cluster that persists via `AppState` and spawns
+> vault notes), so `update_inner` stays a coordinator, not a thin forwarder. A
+> handful of arms that *look* single-pane (`PdfLinkPreviewResult`,
+> `PdfSearchResult`) keep both their `Ok` and `Err` halves on the shell because
+> the two halves target different panes and can't route as one variant.
 
 ## Problem
 
@@ -112,8 +129,17 @@ is reviewable.
 
 ## Definition of done
 
-- `MdEditor` holds only sub-states + the shared `Arc<AppState>` + truly global UI
-  flags.
-- Each sub-state has `update` and `view` (or view helpers) in its own module.
-- `update_inner` in the shell is a routing layer, not business logic.
-- All existing tests pass; no behavior change intended (pure refactor).
+- ✅ `MdEditor` holds only sub-states + the shared `Arc<AppState>` + truly global
+  UI flags (12 fields, down from ~80).
+- ✅ Each sub-state has `update` and `view` (or view helpers) in its own module.
+- ✅ `update_inner` routes every *single-pane* message arm to the owning
+  sub-state's `update`. The remaining inline arms are genuinely cross-cutting
+  coordination (need `Arc<AppState>`, resolve vault paths, or touch multiple
+  panes) — keeping them on the shell is the intended coordinator design, not
+  leftover business logic. See the top-of-file note for the boundary.
+- ✅ All existing tests pass; no behavior change intended (pure refactor).
+
+**Status: complete.** The god-struct is decomposed into six cohesive
+sub-states, pure-state methods live on their pane, and message routing forwards
+all cleanly-single-pane arms. The shell remains a deliberate coordinator for the
+cross-pane orchestration that defines this app's interactions.
