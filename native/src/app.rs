@@ -808,26 +808,13 @@ impl MdEditor {
                     ),
                 ])
             }
-            Message::PdfPageSizesLoaded(generation, path, sizes) => {
-                if generation != self.pdf.render_generation
-                    && self.pdf.active_path.as_deref() != Some(path.as_str())
-                {
-                    return Task::none();
-                }
-                self.pdf.page_sizes = sizes.into_iter().map(Some).collect();
-                if self.pdf.page_sizes.len() < self.pdf.total_pages as usize {
-                    self.pdf.page_sizes
-                        .resize(self.pdf.total_pages as usize, None);
-                }
-                if self.pdf.placeholder_page_size.is_none() {
-                    self.pdf.placeholder_page_size = self.pdf.first_page_size();
-                }
-                if self.pdf.fit_to_width && self.pdf.total_pages > 0 {
-                    Task::done(Message::PdfFitToWidth)
-                } else {
-                    Task::none()
-                }
-            }
+            // PDF arms that mutate only `self.pdf` are routed to
+            // `PdfPane::update`; see pdf_pane.rs.
+            m @ (Message::PdfPageSizesLoaded(..)
+            | Message::PdfRenderSkipped(..)
+            | Message::ClosePdfLinkPreview
+            | Message::PdfPageTextLoaded(..)
+            | Message::PdfSelectionCleared) => self.pdf.update(m),
             Message::PdfRendered(generation, page, img) => {
                 self.pdf.pending_pages.remove(&page);
                 if generation != self.pdf.render_generation {
@@ -879,17 +866,6 @@ impl MdEditor {
                     self.pdf.programmatic_scroll = false;
                 }
                 self.ui.toast = Some(format!("Could not render PDF page {}", page + 1));
-                Task::none()
-            }
-            Message::PdfRenderSkipped(generation, page) => {
-                self.pdf.pending_pages.remove(&page);
-                if generation != self.pdf.render_generation {
-                    return Task::none();
-                }
-                if self.pdf.toc_target_page == Some(page) {
-                    self.pdf.toc_target_page = None;
-                    self.pdf.programmatic_scroll = false;
-                }
                 Task::none()
             }
             Message::TocClicked(index) => {
@@ -1034,10 +1010,6 @@ impl MdEditor {
             }
             Message::PdfLinkPreviewResult(Err(e)) => {
                 self.ui.toast = Some(format!("Preview Error: {}", e));
-                Task::none()
-            }
-            Message::ClosePdfLinkPreview => {
-                self.pdf.link_preview = None;
                 Task::none()
             }
             Message::PdfTocLoaded(generation, entries) => {
@@ -1291,21 +1263,6 @@ impl MdEditor {
                 scroll_task
             }
             Message::PdfDocumentIdComputed(None) => Task::none(),
-            Message::PdfPageTextLoaded(generation, page, res) => {
-                self.pdf.pending_text.remove(&page);
-                if generation == self.pdf.render_generation {
-                    if let Ok(page_text) = res {
-                        self.pdf.page_text.insert(page, page_text);
-                        self.pdf.text_lru.push_back(page);
-                        if self.pdf.text_lru.len() > 12 {
-                            if let Some(oldest) = self.pdf.text_lru.pop_front() {
-                                self.pdf.page_text.remove(&oldest);
-                            }
-                        }
-                    }
-                }
-                Task::none()
-            }
             Message::PdfSelectionChanged(page, anchor, focus) => {
                 self.active_panel = ActivePanel::Pdf;
                 self.pdf.selection = Some(views::interactive_pdf::PdfSelection {
@@ -1313,10 +1270,6 @@ impl MdEditor {
                     anchor_idx: anchor,
                     focus_idx: focus,
                 });
-                Task::none()
-            }
-            Message::PdfSelectionCleared => {
-                self.pdf.selection = None;
                 Task::none()
             }
             Message::PdfSelectionFinished(page, anchor, focus) => {

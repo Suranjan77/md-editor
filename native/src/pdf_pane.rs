@@ -13,9 +13,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use iced::widget::image::Handle;
+use iced::Task;
 
 use md_editor_core::pdf::{LinkInfo, PdfAnnotation, PdfPageText, PdfSearchMatch};
 
+use crate::messages::Message;
 use crate::views::interactive_pdf::PdfSelection;
 use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
@@ -83,6 +85,70 @@ impl PdfPane {
             render_generation: 0,
             programmatic_scroll: false,
             toc_target_page: None,
+        }
+    }
+
+    /// Handle messages that mutate only this pane's own state: render
+    /// bookkeeping (page sizes/skips), cached page text, the link preview,
+    /// and selection clearing. Arms that need the shared `AppState`, resolve
+    /// vault paths, or render/navigate (which the shell coordinates) stay on
+    /// the shell.
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::PdfPageSizesLoaded(generation, path, sizes) => {
+                if generation != self.render_generation
+                    && self.active_path.as_deref() != Some(path.as_str())
+                {
+                    return Task::none();
+                }
+                self.page_sizes = sizes.into_iter().map(Some).collect();
+                if self.page_sizes.len() < self.total_pages as usize {
+                    self.page_sizes.resize(self.total_pages as usize, None);
+                }
+                if self.placeholder_page_size.is_none() {
+                    self.placeholder_page_size = self.first_page_size();
+                }
+                if self.fit_to_width && self.total_pages > 0 {
+                    Task::done(Message::PdfFitToWidth)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfRenderSkipped(generation, page) => {
+                self.pending_pages.remove(&page);
+                if generation != self.render_generation {
+                    return Task::none();
+                }
+                if self.toc_target_page == Some(page) {
+                    self.toc_target_page = None;
+                    self.programmatic_scroll = false;
+                }
+                Task::none()
+            }
+            Message::ClosePdfLinkPreview => {
+                self.link_preview = None;
+                Task::none()
+            }
+            Message::PdfPageTextLoaded(generation, page, res) => {
+                self.pending_text.remove(&page);
+                if generation == self.render_generation {
+                    if let Ok(page_text) = res {
+                        self.page_text.insert(page, page_text);
+                        self.text_lru.push_back(page);
+                        if self.text_lru.len() > 12 {
+                            if let Some(oldest) = self.text_lru.pop_front() {
+                                self.page_text.remove(&oldest);
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::PdfSelectionCleared => {
+                self.selection = None;
+                Task::none()
+            }
+            _ => Task::none(),
         }
     }
 
