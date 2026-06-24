@@ -65,7 +65,7 @@ pub enum Message {
     },
     PdfLeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
     PdfRightClicked(u16, f32, f32),
-    PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
+    PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>, bool),
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
     PdfSearchResultClicked(u16),

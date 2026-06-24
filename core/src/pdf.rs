@@ -284,7 +284,7 @@ enum PdfCommand {
     ),
     GetToc(
         String,
-        std::sync::mpsc::SyncSender<Result<Vec<TocEntry>, String>>,
+        std::sync::mpsc::SyncSender<Result<(Vec<TocEntry>, bool), String>>,
     ),
     GetLinks(
         String,
@@ -460,7 +460,26 @@ impl PdfRenderer {
                                 current = bookmark.next_sibling();
                                 bookmarks.push(bookmark);
                             }
-                            Ok(Self::parse_bookmarks(&bookmarks))
+                            let embedded = Self::parse_bookmarks(&bookmarks);
+                            if !embedded.is_empty() {
+                                return Ok((embedded, false));
+                            }
+                            // No embedded bookmarks: synthesize an outline from
+                            // page text using a font-size heuristic.
+                            let pages_handle = doc.pages();
+                            let page_count = pages_handle.len();
+                            let mut page_texts = Vec::new();
+                            for i in 0..page_count {
+                                let page = match pages_handle.get(i) {
+                                    Ok(p) => p,
+                                    Err(_) => continue,
+                                };
+                                if let Ok(pt) = build_page_text(&page, i as u16) {
+                                    page_texts.push(pt);
+                                }
+                            }
+                            let synthetic = synthesize_toc(&page_texts);
+                            Ok((synthetic, true))
                         })();
                         let _ = resp.send(res);
                     }
@@ -797,108 +816,7 @@ impl PdfRenderer {
                                 return Err("Page index out of bounds".to_string());
                             }
                             let page = pages.get(index as i32).map_err(|e| e.to_string())?;
-                            let text_page = page.text().map_err(|e| e.to_string())?;
-
-                            let page_width = page.width().value;
-                            let page_height = page.height().value;
-
-                            let mut text = String::new();
-                            let mut chars = Vec::new();
-                            let mut text_index = 0usize;
-
-                            for c in text_page.chars().iter() {
-                                if let Some(ch) = c.unicode_char() {
-                                    let char_index = c.index() as u32;
-                                    text.push(ch);
-
-                                    let bbox = match c.loose_bounds() {
-                                        Ok(rect) => PdfRect {
-                                            x: rect.left().value,
-                                            y: rect.bottom().value,
-                                            width: rect.width().value,
-                                            height: rect.height().value,
-                                        },
-                                        Err(_) => PdfRect {
-                                            x: 0.0,
-                                            y: 0.0,
-                                            width: 0.0,
-                                            height: 0.0,
-                                        },
-                                    };
-
-                                    chars.push(PdfTextChar {
-                                        char_index,
-                                        text_index,
-                                        ch,
-                                        bbox,
-                                    });
-                                    text_index += 1;
-                                }
-                            }
-
-                            // Group into lines
-                            let mut lines = Vec::new();
-                            let mut current_line: Option<PdfTextLine> = None;
-
-                            for c in chars
-                                .iter()
-                                .filter(|c| c.bbox.width > 0.0 && c.bbox.height > 0.0)
-                            {
-                                match &mut current_line {
-                                    Some(line) => {
-                                        let line_y_min = line.bbox.y;
-                                        let line_y_max = line.bbox.y + line.bbox.height;
-                                        let c_y_min = c.bbox.y;
-                                        let c_y_max = c.bbox.y + c.bbox.height;
-
-                                        let overlap =
-                                            line_y_max.min(c_y_max) - line_y_min.max(c_y_min);
-                                        let min_h = line.bbox.height.min(c.bbox.height);
-
-                                        if overlap > 0.0 && overlap > 0.3 * min_h {
-                                            // Merge bbox
-                                            let x_min = line.bbox.x.min(c.bbox.x);
-                                            let x_max = (line.bbox.x + line.bbox.width)
-                                                .max(c.bbox.x + c.bbox.width);
-                                            let y_min = line.bbox.y.min(c.bbox.y);
-                                            let y_max = (line.bbox.y + line.bbox.height)
-                                                .max(c.bbox.y + c.bbox.height);
-
-                                            line.bbox.x = x_min;
-                                            line.bbox.y = y_min;
-                                            line.bbox.width = x_max - x_min;
-                                            line.bbox.height = y_max - y_min;
-                                            line.end_text_index = c.text_index + 1;
-                                        } else {
-                                            lines.push(current_line.take().unwrap());
-                                            current_line = Some(PdfTextLine {
-                                                start_text_index: c.text_index,
-                                                end_text_index: c.text_index + 1,
-                                                bbox: c.bbox.clone(),
-                                            });
-                                        }
-                                    }
-                                    None => {
-                                        current_line = Some(PdfTextLine {
-                                            start_text_index: c.text_index,
-                                            end_text_index: c.text_index + 1,
-                                            bbox: c.bbox.clone(),
-                                        });
-                                    }
-                                }
-                            }
-                            if let Some(line) = current_line {
-                                lines.push(line);
-                            }
-
-                            Ok(PdfPageText {
-                                page_index: index,
-                                page_width,
-                                page_height,
-                                text,
-                                chars,
-                                lines,
-                            })
+                            build_page_text(&page, index)
                         })();
                         let _ = resp.send(res);
                     }
@@ -974,7 +892,10 @@ impl PdfRenderer {
         rx.recv().map_err(|e| e.to_string())?
     }
 
-    pub fn get_toc(&self, path: &str) -> Result<Vec<TocEntry>, String> {
+    /// Returns the document's table of contents along with a flag that is
+    /// `true` when the outline was synthesized from page text because the PDF
+    /// has no embedded bookmarks.
+    pub fn get_toc(&self, path: &str) -> Result<(Vec<TocEntry>, bool), String> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetToc(path.to_string(), tx))
@@ -1097,6 +1018,288 @@ fn render_page_from_cache<'a>(
         .map_err(|e| format!("Failed to convert to image: {:?}", e))
 }
 
+/// Extract a page's text, per-character bounding boxes, and grouped text lines.
+///
+/// Shared by the `GetPageText` command and the auto-TOC synthesis path so the
+/// line-grouping heuristic lives in exactly one place.
+fn build_page_text(page: &PdfPage, index: u16) -> Result<PdfPageText, String> {
+    let text_page = page.text().map_err(|e| e.to_string())?;
+
+    let page_width = page.width().value;
+    let page_height = page.height().value;
+
+    let mut text = String::new();
+    let mut chars = Vec::new();
+    let mut text_index = 0usize;
+
+    for c in text_page.chars().iter() {
+        if let Some(ch) = c.unicode_char() {
+            let char_index = c.index() as u32;
+            text.push(ch);
+
+            let bbox = match c.loose_bounds() {
+                Ok(rect) => PdfRect {
+                    x: rect.left().value,
+                    y: rect.bottom().value,
+                    width: rect.width().value,
+                    height: rect.height().value,
+                },
+                Err(_) => PdfRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 0.0,
+                    height: 0.0,
+                },
+            };
+
+            chars.push(PdfTextChar {
+                char_index,
+                text_index,
+                ch,
+                bbox,
+            });
+            text_index += 1;
+        }
+    }
+
+    // Group into lines
+    let mut lines = Vec::new();
+    let mut current_line: Option<PdfTextLine> = None;
+
+    for c in chars
+        .iter()
+        .filter(|c| c.bbox.width > 0.0 && c.bbox.height > 0.0)
+    {
+        match &mut current_line {
+            Some(line) => {
+                let line_y_min = line.bbox.y;
+                let line_y_max = line.bbox.y + line.bbox.height;
+                let c_y_min = c.bbox.y;
+                let c_y_max = c.bbox.y + c.bbox.height;
+
+                let overlap = line_y_max.min(c_y_max) - line_y_min.max(c_y_min);
+                let min_h = line.bbox.height.min(c.bbox.height);
+
+                if overlap > 0.0 && overlap > 0.3 * min_h {
+                    // Merge bbox
+                    let x_min = line.bbox.x.min(c.bbox.x);
+                    let x_max = (line.bbox.x + line.bbox.width).max(c.bbox.x + c.bbox.width);
+                    let y_min = line.bbox.y.min(c.bbox.y);
+                    let y_max = (line.bbox.y + line.bbox.height).max(c.bbox.y + c.bbox.height);
+
+                    line.bbox.x = x_min;
+                    line.bbox.y = y_min;
+                    line.bbox.width = x_max - x_min;
+                    line.bbox.height = y_max - y_min;
+                    line.end_text_index = c.text_index + 1;
+                } else {
+                    lines.push(current_line.take().unwrap());
+                    current_line = Some(PdfTextLine {
+                        start_text_index: c.text_index,
+                        end_text_index: c.text_index + 1,
+                        bbox: c.bbox.clone(),
+                    });
+                }
+            }
+            None => {
+                current_line = Some(PdfTextLine {
+                    start_text_index: c.text_index,
+                    end_text_index: c.text_index + 1,
+                    bbox: c.bbox.clone(),
+                });
+            }
+        }
+    }
+    if let Some(line) = current_line {
+        lines.push(line);
+    }
+
+    Ok(PdfPageText {
+        page_index: index,
+        page_width,
+        page_height,
+        text,
+        chars,
+        lines,
+    })
+}
+
+/// Text of a single line, sliced out of the page's character buffer.
+fn line_text(page: &PdfPageText, line: &PdfTextLine) -> String {
+    page.text
+        .chars()
+        .skip(line.start_text_index)
+        .take(line.end_text_index.saturating_sub(line.start_text_index))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Synthesize a table of contents from page text when a PDF has no embedded
+/// bookmark tree.
+///
+/// Heuristic: lines whose height is meaningfully larger than the document's
+/// body text are treated as headings. Distinct heading sizes are ranked into a
+/// small number of levels. Running headers/footers (identical text repeated on
+/// many pages) are dropped. The result is a flat list of [`TocEntry`] with
+/// `page_index` set, which flows through the same downstream pipeline as
+/// embedded bookmarks.
+///
+/// Pure and windowless so it can be unit-tested without pdfium.
+pub fn synthesize_toc(pages: &[PdfPageText]) -> Vec<TocEntry> {
+    const HEADING_RATIO: f32 = 1.15;
+    const MAX_HEADING_WORDS: usize = 12;
+    const HEADER_REPEAT_FRACTION: f32 = 0.25;
+    const MAX_LEVELS: usize = 4;
+    const MAX_ENTRIES: usize = 500;
+
+    if pages.is_empty() {
+        return Vec::new();
+    }
+
+    // Collect every line's height to find the document body size.
+    let mut heights: Vec<f32> = Vec::new();
+    for page in pages {
+        for line in &page.lines {
+            if line.bbox.height > 0.0 {
+                heights.push(line.bbox.height);
+            }
+        }
+    }
+    if heights.is_empty() {
+        return Vec::new();
+    }
+
+    // Body size = median line height (robust against a few large headings).
+    let body_size = {
+        let mut sorted = heights.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        sorted[sorted.len() / 2]
+    };
+    let heading_threshold = body_size * HEADING_RATIO;
+
+    // Count identical text occurrences across pages to spot running
+    // headers/footers, which should never become TOC entries.
+    let mut text_page_counts: std::collections::HashMap<String, std::collections::HashSet<u16>> =
+        std::collections::HashMap::new();
+    for page in pages {
+        for line in &page.lines {
+            let t = line_text(page, line);
+            if !t.is_empty() {
+                text_page_counts
+                    .entry(t)
+                    .or_default()
+                    .insert(page.page_index);
+            }
+        }
+    }
+    let repeat_page_threshold =
+        ((pages.len() as f32) * HEADER_REPEAT_FRACTION).ceil().max(2.0) as usize;
+
+    // Gather candidate headings.
+    struct Candidate {
+        title: String,
+        page_index: u32,
+        size: f32,
+    }
+    let mut candidates: Vec<Candidate> = Vec::new();
+    for page in pages {
+        for line in &page.lines {
+            if line.bbox.height < heading_threshold {
+                continue;
+            }
+            let title = line_text(page, line);
+            if title.is_empty() {
+                continue;
+            }
+            if title.split_whitespace().count() > MAX_HEADING_WORDS {
+                continue;
+            }
+            // Drop running headers/footers (repeat across many pages).
+            if text_page_counts
+                .get(&title)
+                .map(|set| set.len() >= repeat_page_threshold)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            candidates.push(Candidate {
+                title,
+                page_index: page.page_index as u32,
+                size: line.bbox.height,
+            });
+            if candidates.len() >= MAX_ENTRIES {
+                break;
+            }
+        }
+        if candidates.len() >= MAX_ENTRIES {
+            break;
+        }
+    }
+
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    // Cluster distinct heading sizes (descending) into <= MAX_LEVELS levels.
+    let mut distinct_sizes: Vec<f32> = candidates.iter().map(|c| c.size).collect();
+    distinct_sizes.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    distinct_sizes.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    distinct_sizes.truncate(MAX_LEVELS);
+
+    // Map a heading size to a level (0 = largest/top). Larger or equal to the
+    // n-th distinct size means level n.
+    let level_for = |size: f32| -> usize {
+        for (i, s) in distinct_sizes.iter().enumerate() {
+            if size >= *s - 0.5 {
+                return i;
+            }
+        }
+        distinct_sizes.len().saturating_sub(1)
+    };
+
+    // Build a nested tree by level using a stack so downstream `flatten_pdf_toc`
+    // renders deeper headings indented under their parent. A heading attaches as
+    // a child of the most recent shallower heading, or at the root otherwise.
+    let mut roots: Vec<TocEntry> = Vec::new();
+    // Stack of indices describing the path from a root down to the last entry at
+    // each level: each element is (level, pointer-as-path). We resolve pointers
+    // by walking from roots, so store the path of child-indices instead.
+    let mut path: Vec<(usize, Vec<usize>)> = Vec::new();
+
+    for c in candidates {
+        let level = level_for(c.size);
+        let entry = TocEntry {
+            title: c.title,
+            page_index: Some(c.page_index),
+            children: Vec::new(),
+        };
+
+        // Pop deeper-or-equal levels so we attach under a strictly shallower one.
+        while path.last().map(|(l, _)| *l >= level).unwrap_or(false) {
+            path.pop();
+        }
+
+        let new_path = if let Some((_, parent_path)) = path.last().cloned() {
+            // Append as a child of the entry at parent_path.
+            let mut node = &mut roots;
+            for &idx in &parent_path {
+                node = &mut node[idx].children;
+            }
+            node.push(entry);
+            let mut p = parent_path;
+            p.push(node.len() - 1);
+            p
+        } else {
+            roots.push(entry);
+            vec![roots.len() - 1]
+        };
+        path.push((level, new_path));
+    }
+
+    roots
+}
+
 /// Base for the zoom-to-render-scale quantization. A bitmap rendered at a
 /// bucket's scale is never displayed at more than this factor of
 /// magnification, so it stays sharp without re-rendering on every zoom step.
@@ -1210,6 +1413,138 @@ mod tests {
             assert!(s >= z - 1e-4, "bucket {s} below zoom {z}");
             assert!(s < z * 1.4 + 1e-4, "bucket {s} too far above zoom {z}");
         }
+    }
+
+    // --- synthesize_toc (windowless: no pdfium) -------------------------
+
+    /// Build a `PdfPageText` from `(text, height)` line specs. The page `text`
+    /// is the lines joined by '\n', and each `PdfTextLine` spans its slice with
+    /// a bbox of the given height.
+    fn page_fixture(page_index: u16, lines: &[(&str, f32)]) -> PdfPageText {
+        let mut text = String::new();
+        let mut text_lines = Vec::new();
+        for (i, (s, h)) in lines.iter().enumerate() {
+            if i > 0 {
+                text.push('\n');
+            }
+            let start = text.chars().count();
+            text.push_str(s);
+            let end = text.chars().count();
+            text_lines.push(PdfTextLine {
+                start_text_index: start,
+                end_text_index: end,
+                bbox: PdfRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: *h,
+                },
+            });
+        }
+        PdfPageText {
+            page_index,
+            page_width: 600.0,
+            page_height: 800.0,
+            text,
+            chars: Vec::new(),
+            lines: text_lines,
+        }
+    }
+
+    fn flatten_titles(entries: &[TocEntry], out: &mut Vec<String>) {
+        for e in entries {
+            out.push(e.title.clone());
+            flatten_titles(&e.children, out);
+        }
+    }
+
+    #[test]
+    fn test_synthesize_toc_picks_large_lines() {
+        // Body text at 10pt, two headings at 16pt.
+        let pages = vec![
+            page_fixture(
+                0,
+                &[
+                    ("Big Heading One", 16.0),
+                    ("some body text here", 10.0),
+                    ("more body text here", 10.0),
+                ],
+            ),
+            page_fixture(
+                1,
+                &[
+                    ("Big Heading Two", 16.0),
+                    ("yet more body text", 10.0),
+                ],
+            ),
+        ];
+        let toc = synthesize_toc(&pages);
+        let mut titles = Vec::new();
+        flatten_titles(&toc, &mut titles);
+        assert_eq!(titles, vec!["Big Heading One", "Big Heading Two"]);
+        assert_eq!(toc[0].page_index, Some(0));
+        assert_eq!(toc[1].page_index, Some(1));
+    }
+
+    #[test]
+    fn test_synthesize_toc_drops_running_header() {
+        // A 16pt running header repeats on every page and must not appear,
+        // while a genuine 16pt heading on page 1 does.
+        let mut pages = Vec::new();
+        for p in 0..4u16 {
+            let mut lines = vec![
+                ("My Document Title", 16.0), // running header on every page
+                ("body line one here", 10.0),
+                ("body line two here", 10.0),
+            ];
+            if p == 1 {
+                lines.insert(1, ("Introduction", 16.0));
+            }
+            pages.push(page_fixture(p, &lines));
+        }
+        let toc = synthesize_toc(&pages);
+        let mut titles = Vec::new();
+        flatten_titles(&toc, &mut titles);
+        assert!(
+            !titles.iter().any(|t| t == "My Document Title"),
+            "running header should be dropped, got {titles:?}"
+        );
+        assert!(titles.iter().any(|t| t == "Introduction"));
+    }
+
+    #[test]
+    fn test_synthesize_toc_levels_nest() {
+        // 18pt > 14pt > 10pt body: the 14pt heading nests under the 18pt one.
+        let pages = vec![page_fixture(
+            0,
+            &[
+                ("Chapter", 18.0),
+                ("Section", 14.0),
+                ("body text content", 10.0),
+                ("more body content", 10.0),
+                ("even more content", 10.0),
+                ("still more content", 10.0),
+            ],
+        )];
+        let toc = synthesize_toc(&pages);
+        assert_eq!(toc.len(), 1);
+        assert_eq!(toc[0].title, "Chapter");
+        assert_eq!(toc[0].children.len(), 1);
+        assert_eq!(toc[0].children[0].title, "Section");
+    }
+
+    #[test]
+    fn test_synthesize_toc_empty_when_uniform() {
+        // All lines the same size => no headings.
+        let pages = vec![page_fixture(
+            0,
+            &[
+                ("line one here", 10.0),
+                ("line two here", 10.0),
+                ("line three here", 10.0),
+            ],
+        )];
+        assert!(synthesize_toc(&pages).is_empty());
     }
 
     #[test]
