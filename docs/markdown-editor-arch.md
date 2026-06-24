@@ -34,6 +34,13 @@ Important behavior:
 - Cursor and selection state are stored alongside transactions.
 - Formatting commands wrap selections or insert markdown placeholders.
 - Movement commands operate on rope character positions, while visual movement delegates to renderer geometry.
+- Typed characters route through `type_paired`, which auto-pairs brackets and
+  quotes: an opener inserts its matching closer (cursor between) or wraps the
+  active selection; typing a closer already at the cursor skips over it rather
+  than inserting a duplicate; `"`, `'`, and `` ` `` pair the same way but are
+  left single after a word character so contraction apostrophes are unaffected.
+  Non-paired characters fall back to plain insertion. This is covered by unit
+  tests in `buffer.rs`.
 
 ## Markdown Parsing
 

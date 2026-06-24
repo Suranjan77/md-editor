@@ -448,22 +448,25 @@ fn settings_db_path() -> PathBuf {
     }
     dir.push(DB_FILE_NAME);
 
-    // One-time migration: earlier versions stored the database next to the
-    // executable. If there's no database at the new (XDG) location but a legacy
-    // one exists, copy it over so users keep their settings and study history.
+    // One-time migration: an interim version stored the database in the per-user
+    // platform data directory. If the portable location (beside the executable)
+    // has no database yet but that one does, copy it back so users keep their
+    // settings and study history.
     if !dir.exists() {
-        if let Some(legacy) = legacy_db_path() {
-            migrate_legacy_db(&legacy, &dir);
+        if let Some(other) = platform_data_db_path() {
+            if other != dir {
+                migrate_legacy_db(&other, &dir);
+            }
         }
     }
 
     dir
 }
 
-/// Database location used by versions that stored it next to the executable.
-fn legacy_db_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    Some(exe.parent()?.join(DB_FILE_NAME))
+/// Database location used by the interim version that stored it in the per-user
+/// platform data directory.
+fn platform_data_db_path() -> Option<PathBuf> {
+    Some(platform_data_home()?.join("md-editor").join(DB_FILE_NAME))
 }
 
 /// Copy a legacy database (and its WAL sidecars, if any) to `new_path` when the
@@ -498,22 +501,44 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Per-user data directory for the settings database.
+/// Directory holding the settings database.
 ///
-/// Prefers the platform data directory (XDG `$XDG_DATA_HOME` or
-/// `~/.local/share` on Linux) so the app works when installed to a read-only
-/// location. Falls back to the executable directory, then the current
-/// directory, for portable/unusual setups.
+/// Portability is a core promise, so the database lives **beside the
+/// executable** by default and the whole app travels as one folder. Only when
+/// that directory is not writable — e.g. a read-only system install — does it
+/// fall back to the per-user platform data directory (`%APPDATA%`,
+/// `~/Library/Application Support`, or `$XDG_DATA_HOME`/`~/.local/share`), and
+/// finally the current directory.
 fn data_dir() -> PathBuf {
-    if let Some(base) = platform_data_home() {
-        return base.join("md-editor");
-    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            if is_writable_dir(dir) {
+                return dir.to_path_buf();
+            }
+            if let Some(base) = platform_data_home() {
+                return base.join("md-editor");
+            }
             return dir.to_path_buf();
         }
     }
+    if let Some(base) = platform_data_home() {
+        return base.join("md-editor");
+    }
     PathBuf::from(".")
+}
+
+/// Best-effort writability probe: create and delete a temp file in `dir`. Used
+/// to decide whether the portable, exe-adjacent location can hold the database
+/// before falling back to a per-user directory.
+fn is_writable_dir(dir: &Path) -> bool {
+    let probe = dir.join(".md_editor_write_test");
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn platform_data_home() -> Option<PathBuf> {

@@ -36,11 +36,19 @@ It exposes synchronous request methods used from iced tasks:
 - `page_count(path)`
 - `page_sizes(path)`
 - `get_toc(path)`
+- `get_embedded_toc(path)` — embedded bookmarks only, no text scan.
 - `render_page(path, page, scale)`
 - `render_page_priority(path, page, scale)`
 - `get_page_links(path, page)`
+- `get_page_text(path, page)`
+- `get_references(path)` — resolve all internal references in one call (a full
+  text scan; the native side prefers the chunked path below).
 - `search_text(path, query, regex, match_case)`
 - `render_link_preview(path, page, dest_y)`
+
+The free function `recover_toc_from_texts(&[PdfPageText])` recovers section
+structure from already-extracted text without the `PdfDocument` handle (used by
+the chunked reference resolver).
 
 Internally it owns:
 
@@ -87,6 +95,9 @@ Important fields:
   unloaded blank placeholders.
 - `pdf_scroll_y`: current scroll offset.
 - `pdf_page_links`: loaded links per page.
+- `pdf_references`: synthetic links for recognized internal references
+  (equations, figures, tables, sections), resolved once for the whole document
+  and grouped by source page. See "Internal Reference Recognition".
 - `pdf_page_text`: lazily loaded text geometry for visible pages.
 - `pdf_annotations`: sidecar study highlights and notes grouped by page.
 - `pdf_selection`: active PDF text selection in page text-index coordinates.
@@ -217,6 +228,7 @@ with a dedicated canvas:
 2. Focused annotation outlines.
 3. Active PDF search highlights and the current match.
 4. Active text-selection highlight.
+5. Internal-reference underlines (hairline, drawn via the `thin` overlay flag).
 
 This avoids creating one iced widget per annotation rectangle and keeps large
 study documents responsive.
@@ -288,6 +300,141 @@ The page image and page links use separate pending sets:
 Links are generally loaded after the page image renders. This keeps navigation
 responsive and avoids scheduling image rendering and link extraction for many
 nearby pages at the same time during TOC jumps.
+
+## TOC Recovery
+
+`get_toc(path)` returns `(Vec<TocEntry>, synthetic)`. When a PDF has embedded
+bookmarks they are used directly and `synthetic` is `false`. Otherwise an outline
+is recovered from the document text, best source first, and `synthetic` is `true`:
+
+1. **Printed-contents link annotations** — `detect_toc_pages` finds the contents
+   page(s); `harvest_linked_toc` reads the link annotations there, giving exact
+   destination pages. Used when it yields at least two entries.
+2. **Printed-contents text** — `parse_printed_toc` parses contents lines,
+   handling dot leaders (`Title .......... 23`) and the common two-column layout
+   where the page number sits in a separate right-hand column on the same row.
+3. **Typographic heuristic** — `synthesize_toc` infers headings from font size
+   and numbering when there is no printed contents page at all.
+
+The recovery heuristics are guarded against fabricating junk: titles dominated by
+symbols or Private-Use-Area math glyphs are rejected, and a synthesized outline is
+discarded when its candidates cluster onto too few pages (an index/bibliography)
+or appear too densely (equation noise). The result is that real papers recover
+their section structure while scanned or structureless PDFs correctly yield an
+empty outline rather than a content dump.
+
+`recover_toc(doc, &pages)` runs this chain; `recover_toc_from_texts(&pages)` runs
+the text-only subset (steps 2-3, no doc handle) for the reference resolver.
+
+## Internal Reference Recognition
+
+Many PDFs reference their own equations, figures, tables, and sections by number
+("see equation (3.14)", "Figure 1.1", "Section 3.2") but carry no embedded link
+annotations for those mentions. The reference subsystem recognizes these
+cross-references from the text layer and makes them right-click-previewable
+without modifying the PDF.
+
+### Resolver engine (`core/src/references.rs`)
+
+`resolve_references(&[PdfPageText], &[TocEntry]) -> Vec<ReferenceLink>` is pure:
+it operates only on already-extracted page text plus the outline, touches no
+PDFium, and is therefore `Send`, cheap (~15-30 ms for a full textbook), and unit
+tested windowlessly.
+
+It runs in two passes:
+
+1. **Build a target map** (label → location) for each family: equation labels
+   are parenthesised numbers in the right margin beside display math; figure and
+   table targets are caption lines (`Figure N[.M]`, `Table N[.M]`); section
+   targets come from the outline's leading section numbers. A label seen at two
+   locations is dropped as ambiguous.
+2. **Scan call-sites** (in-prose mentions) and emit a `ReferenceLink` only when a
+   call-site's label matches a *unique* target. "No target ⇒ no link" is the core
+   precision rule; it prevents stray numbers (intervals, quantities, years) from
+   becoming bogus links.
+
+Precision rules learned from the real corpus: reject bare 4+-digit parenthesised
+numbers (citation years like `(2003)`), capture dotted figure/table numbers
+(otherwise `Figure 1.1` and `Figure 1.2` collapse), and require a dotted section
+number (bare chapter integers are too coarse to target).
+
+`ReferenceLink.bbox` is emitted in **top-left origin** PDF points to match
+`LinkInfo`/`get_page_links`, so references drop straight into the existing
+hit-test and preview path.
+
+Two `cargo run --example` tools in `core/examples/` aid development: `dump_refs`
+prints resolved references with surrounding source text (precision spot-check)
+and `bench_refs` reports text-scan cost per document.
+
+### Chunked scan and single-threaded PDFium
+
+References need the whole text layer, but PDFium is single-threaded: one
+monolithic full-document command would block page rendering for ~0.5-1 s, because
+priority renders only drain *between* worker commands. The native side therefore
+resolves references with a **chunked** background task (in the
+`PdfDocumentIdComputed` handler):
+
+1. `get_embedded_toc(path)` for section targets (cheap, no scan).
+2. Extract text one page at a time via `get_page_text(path, i)` so the worker
+   drains queued priority page renders between each page.
+3. If there were no embedded bookmarks, recover section structure from the text
+   just collected via `recover_toc_from_texts(&pages)` (no second scan).
+4. `resolve_references(&pages, &toc)` on the async thread (pure).
+
+For bookmark-less PDFs the full-document scan already happens for TOC recovery,
+so references are effectively free there; for bookmarked PDFs this chunking is
+what keeps first-open rendering responsive.
+
+### Caching and gating
+
+Resolved references are cached in the `pdf_references` SQLite table keyed by
+`document_id` (the content hash, like sidecar annotations), so the scan runs once
+per document and every reopen is instant. The stored value is
+`(RESOLVER_VERSION, links)`; `get_pdf_references` discards entries whose version
+does not match the current resolver, so changing the algorithm transparently
+invalidates stale results instead of serving them. Bump
+`references::RESOLVER_VERSION` on any algorithm or coordinate change.
+
+The `PdfReferencesLoaded(document_id, links)` result is gated on `document_id`,
+**not** `pdf_render_generation`. References are a document-level artifact, and the
+scan routinely outlives the fit-to-width zoom change that bumps the generation on
+open; generation-gating would silently drop them on first open (the tell was that
+a *reopened* PDF worked via the synchronous cache path while a fresh one did not).
+
+### Preview and underline rendering
+
+Because reference links are `LinkInfo` with `dest_page = Some`, the existing
+right-click preview path renders them with no special-casing. One adjustment: a
+caption sits *beside* (not on) its figure/table, so `scan_caption_callsites`
+nudges the preview target off the caption toward the artwork — figures up
+(caption-below convention), tables down (caption-above) by
+`CAPTION_PREVIEW_SHIFT` — so the figure/table fills the preview instead of being
+clipped.
+
+`view_continuous` draws a subtle accent **underline** under each reference so it
+reads as clickable. These rects set the `OverlayRect.thin` flag, which bypasses
+the minimum-size clamp (3x8 px) that keeps highlight rects legible, letting the
+underline render as a true 1 px hairline. Reference underlines convert with a
+plain `* zoom` because the bbox is already top-left origin, unlike the bottom-left
+annotation/search rects handled by `search_rect_to_view_rect`.
+
+## PDF Search And Annotation Behavior
+
+**Loose-whitespace search.** When the loose toggle is on, the query is split on
+whitespace and rejoined with `\s+`, then run through the normal regex search
+path. This lets a phrase match even when it wraps across a PDF line break, where
+the extracted text contains a newline or run of spaces between the words.
+
+**Highlight color cycling.** The pane's `next_highlight_color` advances through
+the palette (yellow → green → blue → pink → orange, via `PdfAnnotationColor::next`)
+after each quick highlight, so successive quick highlights are visually distinct
+without the user picking a color each time.
+
+**Orphan / drift report.** `pdf_orphan_report` compares each highlight's stored
+selected text against the text currently under its saved rectangle and reports
+how many annotations have drifted. Only pages whose text is already loaded can be
+checked, so the report states how many of the total annotations were checkable
+(text is loaded lazily per visible page).
 
 ## TOC, Link, And Search Navigation
 
@@ -437,3 +584,10 @@ When changing this code, preserve these rules:
     them into one widget per rectangle.
 12. Linked-note file writes must append to existing notes unless the exact
     highlight link already exists.
+13. Reference resolution must not issue a monolithic full-document worker
+    command from the UI path; extract text per page so priority renders
+    interleave.
+14. Reference results are gated on `document_id`, never on
+    `pdf_render_generation`.
+15. Bump `references::RESOLVER_VERSION` whenever the resolver's output for the
+    same input changes, so cached results are invalidated.
