@@ -1085,6 +1085,18 @@ impl MdEditor {
                     Task::none()
                 }
             }
+            Message::PdfSearchLooseToggled(value) => {
+                self.search.loose = value;
+                self.search.match_index = None;
+                if (self.search.visible || self.pdf_search_is_active())
+                    && self.pdf.active_path.is_some()
+                    && self.search.query.len() > 1
+                {
+                    self.search_pdf()
+                } else {
+                    Task::none()
+                }
+            }
             Message::SearchPrevious => {
                 if self.pdf_search_is_active() {
                     self.navigate_pdf_search(false)
@@ -1252,64 +1264,30 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::PdfCreateHighlight(color) => {
-                if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id) {
-                    if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
-                        let start = sel.anchor_idx.min(sel.focus_idx);
-                        let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-
-                        let mut selected_chars = Vec::new();
-                        for c in &page_text.chars {
-                            if c.text_index >= start && c.text_index < end {
-                                selected_chars.push(c.clone());
-                            }
-                        }
-
-                        let selected_text = text_by_char_range(&page_text.text, start, end);
-
-                        let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
-
-                        let id = uuid::Uuid::new_v4().to_string();
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs() as i64;
-
-                        let ann = md_editor_core::pdf::PdfAnnotation {
-                            id: id.clone(),
-                            document_id: doc_id.clone(),
-                            page_index: sel.page_index,
-                            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-                            color,
-                            selected_text,
-                            ranges: vec![md_editor_core::pdf::PdfTextRange {
-                                start_text_index: start,
-                                end_text_index: end,
-                            }],
-                            rects,
-                            note: None,
-                            linked_note_path: None,
-                            markdown_anchor: None,
-                            created_at: now,
-                            updated_at: now,
-                        };
-
-                        if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                            self.ui.toast = Some(format!("Failed to save highlight: {}", e));
-                        } else {
-                            self.pdf.annotations
-                                .entry(sel.page_index)
-                                .or_default()
-                                .push(ann);
-                            self.pdf.selection = None;
-                            if let Some(ref path) = self.pdf.active_path {
-                                self.vault.backlinks =
-                                    md_editor_core::vault::get_mixed_backlinks(&self.state, path)
-                                        .unwrap_or_default();
-                            }
-                        }
-                    }
+            Message::PdfCreateHighlight(color) => self.create_highlight(color),
+            Message::PdfQuickHighlight => {
+                let color = self.pdf.next_highlight_color;
+                self.pdf.next_highlight_color = color.next();
+                self.create_highlight(color)
+            }
+            Message::PdfCopyAnnotationText(id) => {
+                if let Some(text) = self
+                    .pdf
+                    .annotations
+                    .values()
+                    .flatten()
+                    .find(|a| a.id == id)
+                    .map(|a| a.selected_text.clone())
+                {
+                    self.ui.toast = Some("Annotation text copied".to_string());
+                    iced::clipboard::write(text)
+                } else {
+                    Task::none()
                 }
+            }
+            Message::PdfOrphanReport => {
+                let report = self.pdf_orphan_report();
+                self.ui.toast = Some(report);
                 Task::none()
             }
             Message::PdfDeleteHighlight(id) => {
@@ -1769,6 +1747,7 @@ impl MdEditor {
                         &self.search.query,
                         self.search.regex,
                         self.search.match_case,
+                        self.search.loose,
                         self.search.pdf_results.len(),
                         self.search.match_index,
                     )
@@ -2801,6 +2780,108 @@ impl MdEditor {
         Ok((count, Task::none()))
     }
 
+    /// Create a highlight annotation over the current PDF text selection.
+    /// Shared by the explicit color buttons and the cycling quick highlight.
+    fn create_highlight(
+        &mut self,
+        color: md_editor_core::pdf::PdfAnnotationColor,
+    ) -> Task<Message> {
+        if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id) {
+            if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
+                let start = sel.anchor_idx.min(sel.focus_idx);
+                let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
+
+                let mut selected_chars = Vec::new();
+                for c in &page_text.chars {
+                    if c.text_index >= start && c.text_index < end {
+                        selected_chars.push(c.clone());
+                    }
+                }
+
+                let selected_text = text_by_char_range(&page_text.text, start, end);
+
+                let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
+
+                let id = uuid::Uuid::new_v4().to_string();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                let ann = md_editor_core::pdf::PdfAnnotation {
+                    id: id.clone(),
+                    document_id: doc_id.clone(),
+                    page_index: sel.page_index,
+                    kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
+                    color,
+                    selected_text,
+                    ranges: vec![md_editor_core::pdf::PdfTextRange {
+                        start_text_index: start,
+                        end_text_index: end,
+                    }],
+                    rects,
+                    note: None,
+                    linked_note_path: None,
+                    markdown_anchor: None,
+                    created_at: now,
+                    updated_at: now,
+                };
+
+                if let Err(e) = self.state.save_pdf_annotation(&ann) {
+                    self.ui.toast = Some(format!("Failed to save highlight: {}", e));
+                } else {
+                    self.pdf
+                        .annotations
+                        .entry(sel.page_index)
+                        .or_default()
+                        .push(ann);
+                    self.pdf.selection = None;
+                    if let Some(ref path) = self.pdf.active_path {
+                        self.vault.backlinks =
+                            md_editor_core::vault::get_mixed_backlinks(&self.state, path)
+                                .unwrap_or_default();
+                    }
+                }
+            }
+        }
+        Task::none()
+    }
+
+    /// Build a short report of "orphan" annotations: highlights whose stored
+    /// `selected_text` no longer appears in the current text of their page,
+    /// which means the underlying PDF text has drifted away from the anchor.
+    fn pdf_orphan_report(&self) -> String {
+        let mut total = 0usize;
+        let mut orphans = 0usize;
+        let mut checked = 0usize;
+        for (page_index, anns) in &self.pdf.annotations {
+            let page_text = self.pdf.page_text.get(page_index);
+            for ann in anns {
+                total += 1;
+                let needle = ann.selected_text.trim();
+                if needle.is_empty() {
+                    continue;
+                }
+                // Only pages whose text has been loaded can be checked.
+                if let Some(pt) = page_text {
+                    checked += 1;
+                    if !pt.text.contains(needle) {
+                        orphans += 1;
+                    }
+                }
+            }
+        }
+        if checked == 0 {
+            format!(
+                "Orphan report: 0 of {total} annotations checkable (scroll pages to load text first)"
+            )
+        } else if orphans == 0 {
+            format!("Orphan report: no drift found ({checked} of {total} checked)")
+        } else {
+            format!("Orphan report: {orphans} drifted of {checked} checked ({total} total)")
+        }
+    }
+
     fn search_pdf(&self) -> Task<Message> {
         let Some(path) = &self.pdf.active_path else {
             return Task::none();
@@ -2808,8 +2889,21 @@ impl MdEditor {
         let Some(abs_path) = self.resolve_active_path(path) else {
             return Task::none();
         };
-        let query = self.search.query.clone();
-        let regex = self.search.regex;
+        // Loose whitespace: build a regex that allows any whitespace run
+        // (including PDF line breaks) between the query's tokens, so a phrase
+        // wrapping across lines still matches. Reuses the existing regex path.
+        let (query, regex) = if self.search.loose {
+            let pattern = self
+                .search
+                .query
+                .split_whitespace()
+                .map(regex::escape)
+                .collect::<Vec<_>>()
+                .join(r"\s+");
+            (pattern, true)
+        } else {
+            (self.search.query.clone(), self.search.regex)
+        };
         let match_case = self.search.match_case;
         let _state = self.state.clone();
         let path_str = abs_path.to_string_lossy().to_string();

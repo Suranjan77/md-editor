@@ -81,6 +81,7 @@ pub fn search_bar<'a>(
     query: &'a str,
     regex: bool,
     match_case: bool,
+    loose: bool,
     current_match_count: usize,
     active_match_index: Option<usize>,
 ) -> Element<'a, Message, Theme, Renderer> {
@@ -103,6 +104,10 @@ pub fn search_bar<'a>(
             checkbox(match_case)
                 .label("Case")
                 .on_toggle(Message::SearchMatchCaseToggled)
+                .size(14),
+            checkbox(loose)
+                .label("Loose WS")
+                .on_toggle(Message::PdfSearchLooseToggled)
                 .size(14),
             button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
                 .on_press(Message::SearchPrevious)
@@ -211,6 +216,10 @@ pub fn toolbar<'a>(
                 row![
                     text("Highlight").size(12).color(theme::TEXT_MUTED),
                     color_row,
+                    button(text("⟳").size(14).color(theme::TEXT_SECONDARY))
+                        .on_press(Message::PdfQuickHighlight)
+                        .padding(5)
+                        .style(button::text),
                     button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
                         .on_press(Message::PdfSelectionCleared)
                         .padding(5)
@@ -284,6 +293,17 @@ pub fn toolbar<'a>(
             .style(button::text)
         };
 
+        let copy_btn = button(
+            row![
+                text("⧉").size(14).color(theme::TEXT_PRIMARY),
+                text(" Copy").size(12).color(theme::TEXT_PRIMARY)
+            ]
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::PdfCopyAnnotationText(ann.id.clone()))
+        .padding([4, 8])
+        .style(button::text);
+
         let delete_btn = button(icons::view(
             Icon::Trash,
             Color::from_rgb8(239, 83, 80),
@@ -297,6 +317,7 @@ pub fn toolbar<'a>(
             text("Highlight:").size(12).color(theme::TEXT_MUTED),
             note_btn,
             link_btn,
+            copy_btn,
             delete_btn,
         ]
         .spacing(8)
@@ -315,6 +336,10 @@ pub fn toolbar<'a>(
             .on_press(Message::ToggleTOC)
             .padding(8)
             .style(button::text),
+            button(text("⚠ Orphans").size(12).color(theme::TEXT_MUTED))
+                .on_press(Message::PdfOrphanReport)
+                .padding(8)
+                .style(button::text),
             Space::new().width(Length::Fill),
             study_controls,
             annotation_controls,

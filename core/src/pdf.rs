@@ -81,6 +81,18 @@ impl PdfAnnotationColor {
             _ => Err(format!("Unknown annotation color: {s}")),
         }
     }
+
+    /// Next color in the highlight palette, wrapping around. Used to cycle
+    /// colors across successive quick highlights.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Yellow => Self::Green,
+            Self::Green => Self::Blue,
+            Self::Blue => Self::Pink,
+            Self::Pink => Self::Orange,
+            Self::Orange => Self::Yellow,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

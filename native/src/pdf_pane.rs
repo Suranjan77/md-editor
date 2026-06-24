@@ -15,7 +15,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use iced::widget::image::Handle;
 use iced::Task;
 
-use md_editor_core::pdf::{LinkInfo, PdfAnnotation, PdfPageText, PdfSearchMatch};
+use md_editor_core::pdf::{
+    LinkInfo, PdfAnnotation, PdfAnnotationColor, PdfPageText, PdfSearchMatch,
+};
 
 use crate::messages::Message;
 use crate::views::interactive_pdf::PdfSelection;
@@ -54,6 +56,10 @@ pub struct PdfPane {
     pub render_generation: u64,
     pub programmatic_scroll: bool,
     pub toc_target_page: Option<u16>,
+
+    /// Color used by the next quick highlight; advances through the palette on
+    /// each quick highlight so successive highlights are visually distinct.
+    pub next_highlight_color: PdfAnnotationColor,
 }
 
 impl PdfPane {
@@ -85,6 +91,7 @@ impl PdfPane {
             render_generation: 0,
             programmatic_scroll: false,
             toc_target_page: None,
+            next_highlight_color: PdfAnnotationColor::Yellow,
         }
     }
 
