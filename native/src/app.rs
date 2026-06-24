@@ -1071,10 +1071,9 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::SearchReplaceChanged(replace) => {
-                self.search.replace = replace;
-                Task::none()
-            }
+            // Search arms that mutate only `self.search` are routed to
+            // `SearchState::update`; see search_state.rs.
+            m @ Message::SearchReplaceChanged(_) => self.search.update(m),
             Message::SearchRegexToggled(value) => {
                 self.search.regex = value;
                 self.search.match_index = None;

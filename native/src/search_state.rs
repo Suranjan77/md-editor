@@ -12,7 +12,10 @@
 
 use std::collections::HashMap;
 
+use iced::Task;
+
 use crate::editor::buffer::DocBuffer;
+use crate::messages::Message;
 use crate::search::DocumentMatch;
 
 use md_editor_core::pdf::PdfSearchMatch;
@@ -51,6 +54,20 @@ pub struct SearchState {
 impl SearchState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Handle messages that mutate only this pane's own state. Query/flag
+    /// changes that re-run the search, and result navigation (which moves the
+    /// editor cursor or scrolls a pane), stay on the shell as cross-cutting
+    /// coordination.
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::SearchReplaceChanged(replace) => {
+                self.replace = replace;
+                Task::none()
+            }
+            _ => Task::none(),
+        }
     }
 
     pub fn match_count(&self) -> usize {
