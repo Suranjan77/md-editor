@@ -13,7 +13,11 @@
 
 use std::collections::BTreeSet;
 
+use iced::Task;
+
 use md_editor_core::types::{BacklinkItem, FileEntry};
+
+use crate::messages::Message;
 
 pub struct VaultState {
     pub root: Option<String>,
@@ -35,6 +39,28 @@ impl VaultState {
             sidebar_visible: true,
             backlinks_visible: false,
             backlinks: Vec::new(),
+        }
+    }
+
+    /// Handle messages that mutate only this pane's own navigation state:
+    /// sidebar visibility and folder expansion. Arms that open files, build
+    /// the index, or compute backlinks (which need the shared `AppState`) stay
+    /// on the shell.
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::SidebarToggle => {
+                self.sidebar_visible = !self.sidebar_visible;
+                Task::none()
+            }
+            Message::SidebarFolderToggled(path) => {
+                if self.expanded_folders.contains(&path) {
+                    self.expanded_folders.remove(&path);
+                } else {
+                    self.expanded_folders.insert(path);
+                }
+                Task::none()
+            }
+            _ => Task::none(),
         }
     }
 }

@@ -288,10 +288,9 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::SidebarToggle => {
-                self.vault.sidebar_visible = !self.vault.sidebar_visible;
-                Task::none()
-            }
+            // Vault navigation arms that mutate only `self.vault` are routed
+            // to `VaultState::update`; see vault_state.rs.
+            m @ (Message::SidebarToggle | Message::SidebarFolderToggled(_)) => self.vault.update(m),
             Message::SidebarFileClicked(path) => {
                 let path = path.trim().to_string();
                 if path.starts_with("pdf://") {
@@ -471,14 +470,6 @@ impl MdEditor {
                         }
                     }
                 }
-            }
-            Message::SidebarFolderToggled(path) => {
-                if self.vault.expanded_folders.contains(&path) {
-                    self.vault.expanded_folders.remove(&path);
-                } else {
-                    self.vault.expanded_folders.insert(path);
-                }
-                Task::none()
             }
             // UI chrome arms that mutate only `self.ui` are routed to
             // `UiState::update`; see ui_state.rs.
