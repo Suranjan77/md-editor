@@ -51,6 +51,9 @@ pub struct EditorPane {
 
     pub toc_visible: bool,
     pub toc_entries: Vec<views::toc::TocEntry>,
+    /// True when `toc_entries` were synthesized from PDF page text (no embedded
+    /// bookmarks), so the UI can flag the outline as generated/heuristic.
+    pub toc_is_synthetic: bool,
 
     pub scroll_y: f32,
     pub viewport_width: f32,
@@ -72,6 +75,7 @@ impl EditorPane {
             buffer_revision: 0,
             toc_visible: false,
             toc_entries: Vec::new(),
+            toc_is_synthetic: false,
             scroll_y: 0.0,
             viewport_width: 900.0,
             viewport_height: 720.0,

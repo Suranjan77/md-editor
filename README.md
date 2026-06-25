@@ -55,8 +55,10 @@ The editor supports the things you expect in a real Markdown workspace:
 - fenced code blocks with syntax highlighting;
 - tables, images, and math rendering;
 - in-file search with highlighted matches;
+- auto-pairing of brackets and quotes as you type;
 - table of contents navigation for longer notes;
-- backlinks for discovering connected material.
+- backlinks for discovering connected material, with bare `[[Name]]` links
+  resolving across subfolders by filename.
 
 ### 3. Keep References Beside Your Notes
 
@@ -64,14 +66,18 @@ PDFs open inside the app, so reading and writing can happen in one place.
 
 - Continuous page rendering
 - Fit-to-width viewing
-- PDF table of contents
-- Internal PDF links
+- PDF table of contents, recovered from the document when a PDF has no embedded
+  bookmarks
+- Internal PDF links, plus recognition of by-number cross-references (equations,
+  figures, tables, sections) that you can right-click to preview in place
 - Text selection and copy
-- PDF search with highlighted matches
-- Sidecar highlights and quick notes
+- PDF search with highlighted matches, including a loose mode that matches across
+  line breaks
+- Sidecar highlights (with auto-cycling colors) and quick notes
 - Linked Markdown notes for important passages
 
-PDF highlights are stored separately, so the original PDF is not modified.
+PDF highlights and recognized references are stored separately, so the original
+PDF is not modified.
 
 ### 4. Search Without Breaking Flow
 
@@ -112,13 +118,17 @@ MD Editor does not try to hide your work inside a proprietary database.
 - Settings and app state are stored beside the executable by default.
 - No system-wide configuration directories are used automatically.
 
-The app creates a local SQLite file named:
+The app creates a single SQLite file named:
 
 ```text
 md_editor_settings.sqlite
 ```
 
-This keeps the application portable and easy to reason about.
+It lives next to the executable, so the whole app travels as one portable
+folder. Only when the executable's directory is not writable (a read-only system
+install) does it fall back to the per-user platform data directory and then the
+current directory; a database left in that per-user directory by an interim
+version is migrated back beside the executable on first run.
 
 ## Supported Files
 

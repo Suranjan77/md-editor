@@ -17,6 +17,11 @@ Markdown files open in the main editor. The editor supports:
 - Image references and image previews.
 - Horizontal scrolling for wide code, math, and table blocks.
 - In-file search with highlighted matches and previous/next navigation.
+- Auto-pairing of brackets and quotes: typing `(`, `[`, or `{` inserts the
+  matching closer with the cursor between them (or wraps the current selection);
+  typing a closer that already sits at the cursor skips over it; `"`, `'`, and
+  `` ` `` pair the same way, except a quote following a word character is left
+  single so apostrophes in contractions are unaffected.
 - Save, undo/redo, selection editing, and common keyboard shortcuts.
 - Large-document rendering optimizations using cached line heights, viewport culling, and debounced highlighting.
 
@@ -28,12 +33,16 @@ The app supports three search modes:
 - Global search, opened from the toolbar, searches the indexed vault and PDF text.
 - PDF search, opened with `Ctrl+F` when the PDF pane is active, highlights
   matches directly on the rendered PDF pages and scrolls next/previous matches
-  into view.
+  into view. A loose-whitespace toggle lets a phrase match even when it wraps
+  across PDF line breaks (any whitespace run between words is allowed).
 
 Additional navigation tools include:
 
 - Table of contents generated from headings.
 - Backlinks panel for wiki-style note discovery.
+- Bare `[[Name]]` wikilinks resolve across subfolders by filename (shortest path
+  wins), so a link, its navigation, and its backlink all reach the same file
+  even when the target lives in a different folder.
 - Command palette for common actions.
 
 ### Work With Reference Material
@@ -43,12 +52,29 @@ PDF files open in an integrated viewer with:
 - Continuous page rendering.
 - Fit-to-width zoom.
 - Keyboard and scroll-wheel navigation.
-- PDF table of contents.
+- PDF table of contents. When a PDF has no embedded bookmarks, an outline is
+  recovered from the document itself — first from a printed contents page (its
+  link annotations, then its dot-leader text), and failing that from a
+  typographic heading heuristic — so even bookmark-less PDFs get a usable TOC.
 - PDF text search.
 - Internal PDF link handling.
+- Recognition of internal cross-references in PDFs that have no embedded links:
+  numbered equations (e.g. `(3.14)`), figures and tables (e.g. `Figure 1.1`,
+  `Table 6.1`), and sections (e.g. `Section 3.2`). References are detected by
+  reading the text layer; the original PDF is never modified. Recognized
+  references are marked with a subtle underline, and right-clicking one previews
+  its target (the equation, figure, table, or section) in place without losing
+  your reading position. Resolution runs once per document and is cached, so
+  scanned/image-only PDFs (no text layer) simply yield no references.
 - Text selection and clipboard copy for PDFs with embedded text.
 - Sidecar PDF highlights, quick notes, and linked markdown notes without
   modifying the original PDF.
+- Highlight colors cycle automatically through the palette (yellow, green, blue,
+  pink, orange) on each quick highlight, so successive highlights stay visually
+  distinct.
+- An orphan/drift report flags highlights whose stored text no longer matches the
+  text currently under their saved position, helping find annotations that have
+  drifted (it reports how many of the loaded annotations were checkable).
 - Linked-note creation through a searchable in-app vault picker. Users can
   select an existing markdown note to append a highlight section, or select a
   folder and create a new note path.
@@ -78,9 +104,20 @@ Version 1.0 targets:
 - Linux x64 and Linux ARM64.
 - macOS Intel and Apple Silicon.
 
-Md-editor is 100% portable. All application settings, session state, and the SQLite database are stored in a file named `md_editor_settings.sqlite` located in the same directory as the executable.
+Md-editor is portable. All application settings, session state, and study
+history live in a single SQLite database named `md_editor_settings.sqlite`,
+stored **next to the executable by default**, so the entire app travels as one
+self-contained folder and does not write to system-wide configuration
+directories.
 
-The app does not write to system-wide configuration directories like `%APPDATA%` or `~/Library/Application Support` automatically.
+The only exception is a read-only install: when the executable's own directory
+is not writable, the database falls back to the per-user platform data directory
+(`%APPDATA%\md-editor\` on Windows, `~/Library/Application Support/md-editor/` on
+macOS, `$XDG_DATA_HOME/md-editor/` or `~/.local/share/md-editor/` on Linux), and
+finally the current directory. An interim version stored the database in that
+per-user directory; on first run the app migrates such a database (including its
+write-ahead-log sidecars) back beside the executable, leaving the original in
+place. The database uses WAL journal mode.
 
 On Linux, optional desktop launcher integration (desktop entry shortcuts and multi-size application icons) can be explicitly installed or uninstalled using command-line arguments:
 - `--install` or `--install-desktop`: Installs the desktop entry and system icons.
@@ -99,7 +136,7 @@ PDF support uses a platform-specific PDFium dynamic library. The application loo
 
 The workspace is split into two crates:
 
-- `md-editor-core`: vault management, indexing, SQLite config, full-text search, PDF rendering, and tracker storage.
+- `md-editor-core`: vault management, indexing, SQLite config, full-text search, PDF rendering, internal-reference resolution, and tracker storage.
 - `md-editor-native`: Iced desktop UI, editor rendering, views, commands, and interaction state.
 
 Important native modules:

@@ -40,6 +40,9 @@ pub struct SearchState {
     pub replace: String,
     pub regex: bool,
     pub match_case: bool,
+    /// PDF-only: treat runs of whitespace in the query as `\s+` so matches
+    /// survive PDF line breaks / dropped newlines.
+    pub loose: bool,
     pub match_index: Option<usize>,
     pub results: Vec<SearchResult>,
     pub pdf_results: Vec<PdfSearchMatch>,

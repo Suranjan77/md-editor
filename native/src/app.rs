@@ -16,7 +16,14 @@ use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
-const PDF_RENDER_SUPERSAMPLE: f32 = 2.0;
+/// Upper bound on PDF supersampling. The actual factor tracks the display's
+/// scale factor (see `MdEditor::pdf_supersample`); this caps bitmap cost on
+/// unusually high-DPI displays.
+const PDF_SUPERSAMPLE_MAX: f32 = 3.0;
+/// How many pages beyond the rendered window keep their cached bitmap before
+/// being evicted. Bounds resident bitmap memory for long PDFs while leaving
+/// enough slack that ordinary scrolling reuses cached pages.
+const PDF_PAGE_BITMAP_EVICT_MARGIN: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActivePanel {
@@ -231,16 +238,28 @@ impl MdEditor {
             Subscription::none()
         };
 
-        let window_events = iced::event::listen_with(|event, _status, _window_id| {
-            if let iced::Event::Window(iced::window::Event::Resized(size)) = event {
-                Some(Message::WindowResized(
-                    size.width as f32,
-                    size.height as f32,
-                ))
-            } else {
-                None
+        let window_events = iced::event::listen_with(|event, _status, window_id| match event {
+            iced::Event::Window(iced::window::Event::Resized(size)) => {
+                Some(Message::WindowResized(size.width as f32, size.height as f32))
             }
+            // Captured so we can query the initial scale factor — a static
+            // HiDPI monitor may never emit `Rescaled`.
+            iced::Event::Window(iced::window::Event::Opened { .. }) => {
+                Some(Message::WindowOpened(window_id))
+            }
+            iced::Event::Window(iced::window::Event::Rescaled(factor)) => {
+                Some(Message::WindowRescaled(factor))
+            }
+            _ => None,
         });
+
+        // Watch the vault root for external changes so the index, search, and
+        // file tree stay current without reopening the vault. Keyed by the root
+        // path so it re-subscribes (and re-watches) when the vault changes.
+        let vault_watch = match self.vault.root.clone() {
+            Some(root) => Subscription::run_with(root, vault_watch_stream),
+            None => Subscription::none(),
+        };
 
         Subscription::batch(vec![
             keyboard,
@@ -248,6 +267,7 @@ impl MdEditor {
             highlight_debounce,
             mouse_drag,
             window_events,
+            vault_watch,
         ])
     }
 
@@ -324,31 +344,37 @@ impl MdEditor {
                         pdf_path,
                     );
 
+                    // Turning on split view shrinks the PDF pane; re-fit below if
+                    // it actually changed so an already-open PDF isn't stretched.
+                    let split_changed = !self.ui.split_view_active;
                     self.ui.split_view_active = true;
                     self.showing_pdf = true;
 
                     if self.pdf.active_path.as_deref() == Some(&resolved_pdf_path) {
                         self.pdf.focused_annotation_id = annotation_id;
-                        if let Some(p) = page {
+                        let nav_task = if let Some(p) = page {
                             let p_0 = p.saturating_sub(1);
                             self.navigate_pdf_page(p_0)
-                        } else {
-                            if let Some(ref ann_id) = self.pdf.focused_annotation_id {
-                                let mut target_page = None;
-                                for (page_idx, page_anns) in &self.pdf.annotations {
-                                    if page_anns.iter().any(|a| &a.id == ann_id) {
-                                        target_page = Some(*page_idx);
-                                        break;
-                                    }
+                        } else if let Some(ref ann_id) = self.pdf.focused_annotation_id {
+                            let mut target_page = None;
+                            for (page_idx, page_anns) in &self.pdf.annotations {
+                                if page_anns.iter().any(|a| &a.id == ann_id) {
+                                    target_page = Some(*page_idx);
+                                    break;
                                 }
-                                if let Some(target_page) = target_page {
-                                    self.navigate_pdf_page(target_page)
-                                } else {
-                                    Task::none()
-                                }
+                            }
+                            if let Some(target_page) = target_page {
+                                self.navigate_pdf_page(target_page)
                             } else {
                                 Task::none()
                             }
+                        } else {
+                            Task::none()
+                        };
+                        if split_changed {
+                            Task::batch(vec![self.refit_pdf_if_needed(), nav_task])
+                        } else {
+                            nav_task
                         }
                     } else {
                         self.pdf.initial_target_page = page.map(|p| p.saturating_sub(1));
@@ -410,14 +436,7 @@ impl MdEditor {
                                     Task::none()
                                 }
                             } else {
-                                let mut resolved_file = resolve_relative_link_path(
-                                    self.vault.root.as_deref(),
-                                    self.active_path.as_deref(),
-                                    file_part,
-                                );
-                                if std::path::Path::new(&resolved_file).extension().is_none() {
-                                    resolved_file.push_str(".md");
-                                }
+                                let resolved_file = self.resolve_internal_link_path(file_part);
                                 self.vault.selected_path = Some(resolved_file.clone());
                                 let open_task = self.open_file_extended(&resolved_file, false);
 
@@ -445,14 +464,7 @@ impl MdEditor {
                                 }
                             }
                         } else {
-                            let mut resolved_path = resolve_relative_link_path(
-                                self.vault.root.as_deref(),
-                                self.active_path.as_deref(),
-                                &path,
-                            );
-                            if std::path::Path::new(&resolved_path).extension().is_none() {
-                                resolved_path.push_str(".md");
-                            }
+                            let resolved_path = self.resolve_internal_link_path(&path);
                             self.vault.selected_path = Some(resolved_path.clone());
                             let lower = resolved_path.to_lowercase();
                             if lower.ends_with(".md") || lower.ends_with(".markdown") {
@@ -795,8 +807,9 @@ impl MdEditor {
                     height,
                     img.into_rgba8().into_raw(),
                 );
-                let logical_width = (width as f32 / PDF_RENDER_SUPERSAMPLE).round() as u32;
-                let logical_height = (height as f32 / PDF_RENDER_SUPERSAMPLE).round() as u32;
+                let supersample = self.pdf_supersample();
+                let logical_width = (width as f32 / supersample).round() as u32;
+                let logical_height = (height as f32 / supersample).round() as u32;
                 if (page as usize) < self.pdf.pages.len() {
                     self.pdf.pages[page as usize] = Some(handle);
                     self.pdf.dimensions[page as usize] = Some((logical_width, logical_height));
@@ -948,12 +961,13 @@ impl MdEditor {
                     };
                     let abs_path = abs_path.to_string_lossy().to_string();
                     let _state = self.state.clone();
+                    let target_px = self.preview_target_px();
 
                     Task::perform(
                         async move {
                             let renderer = _state.pdf_renderer.as_ref()?;
                             renderer
-                                .render_link_preview(&abs_path, dest_page, dest_y)
+                                .render_link_preview(&abs_path, dest_page, dest_y, target_px)
                                 .ok()
                         },
                         |res| {
@@ -969,6 +983,7 @@ impl MdEditor {
             Message::PdfLinkPreviewResult(Ok(res)) => {
                 if let Ok(img) = image::load_from_memory(&res.image_data) {
                     let (width, height) = img.dimensions();
+                    self.pdf.link_preview_size = Some((width as f32, height as f32));
                     self.pdf.link_preview = Some(iced::widget::image::Handle::from_rgba(
                         width,
                         height,
@@ -981,7 +996,7 @@ impl MdEditor {
                 self.ui.toast = Some(format!("Preview Error: {}", e));
                 Task::none()
             }
-            Message::PdfTocLoaded(generation, entries) => {
+            Message::PdfTocLoaded(generation, entries, synthetic) => {
                 if generation != self.pdf.render_generation {
                     return Task::none();
                 }
@@ -1005,6 +1020,7 @@ impl MdEditor {
                 let mut mapped = Vec::new();
                 flatten_pdf_toc(&entries, 1, &mut mapped);
                 self.editor.toc_entries = mapped;
+                self.editor.toc_is_synthetic = synthetic;
                 Task::none()
             }
             Message::PdfPageLinksLoaded(generation, page, links) => {
@@ -1088,6 +1104,18 @@ impl MdEditor {
             }
             Message::SearchMatchCaseToggled(value) => {
                 self.search.match_case = value;
+                self.search.match_index = None;
+                if (self.search.visible || self.pdf_search_is_active())
+                    && self.pdf.active_path.is_some()
+                    && self.search.query.len() > 1
+                {
+                    self.search_pdf()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfSearchLooseToggled(value) => {
+                self.search.loose = value;
                 self.search.match_index = None;
                 if (self.search.visible || self.pdf_search_is_active())
                     && self.pdf.active_path.is_some()
@@ -1228,7 +1256,69 @@ impl MdEditor {
                     Task::none()
                 };
 
-                scroll_task
+                // Internal references: load the cached target map if this
+                // document has already been scanned, otherwise resolve once in
+                // the background and cache it. Gated on document_id (not render
+                // generation): references are a document-level artifact, and the
+                // scan outlives the fit-to-width zoom change that bumps the
+                // generation.
+                //
+                // The scan extracts text one page at a time so the single
+                // pdfium worker drains queued page renders *between* commands —
+                // avoiding the ~0.5–1s stall a monolithic full-document command
+                // would cause on first open of a bookmarked PDF.
+                let refs_task = if let Some(links) = self.state.get_pdf_references(&hash) {
+                    self.pdf.set_references(links);
+                    Task::none()
+                } else if let Some(abs) = self.resolve_active_path(&path) {
+                    let abs = abs.to_string_lossy().to_string();
+                    let state_refs = self.state.clone();
+                    let doc_id = hash.clone();
+                    let doc_id_msg = hash.clone();
+                    Task::perform(
+                        async move {
+                            let renderer = state_refs.pdf_renderer.as_ref()?;
+                            // Embedded outline first (cheap, no scan).
+                            let mut toc =
+                                renderer.get_embedded_toc(&abs).unwrap_or_default();
+                            let n = renderer.page_count(&abs).ok()?;
+                            let mut pages = Vec::with_capacity(n as usize);
+                            for i in 0..n {
+                                if let Ok(pt) = renderer.get_page_text(&abs, i) {
+                                    pages.push(pt);
+                                }
+                            }
+                            // No bookmarks → recover section structure from the
+                            // text just collected (no second scan).
+                            if toc.is_empty() {
+                                toc = md_editor_core::pdf::recover_toc_from_texts(&pages);
+                            }
+                            let links = md_editor_core::references::resolve_references(
+                                &pages, &toc,
+                            );
+                            state_refs.put_pdf_references(&doc_id, &links);
+                            Some(links)
+                        },
+                        move |res| {
+                            Message::PdfReferencesLoaded(
+                                doc_id_msg.clone(),
+                                res.unwrap_or_default(),
+                            )
+                        },
+                    )
+                } else {
+                    Task::none()
+                };
+
+                Task::batch(vec![scroll_task, refs_task])
+            }
+            Message::PdfReferencesLoaded(doc_id, links) => {
+                // Apply only if still on the same document (the scan is async and
+                // may finish after the user has navigated away).
+                if self.pdf.document_id.as_deref() == Some(doc_id.as_str()) {
+                    self.pdf.set_references(links);
+                }
+                Task::none()
             }
             Message::PdfDocumentIdComputed(None) => Task::none(),
             Message::PdfSelectionChanged(page, anchor, focus) => {
@@ -1265,64 +1355,37 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::PdfCreateHighlight(color) => {
-                if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id) {
-                    if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
-                        let start = sel.anchor_idx.min(sel.focus_idx);
-                        let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-
-                        let mut selected_chars = Vec::new();
-                        for c in &page_text.chars {
-                            if c.text_index >= start && c.text_index < end {
-                                selected_chars.push(c.clone());
-                            }
-                        }
-
-                        let selected_text = text_by_char_range(&page_text.text, start, end);
-
-                        let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
-
-                        let id = uuid::Uuid::new_v4().to_string();
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs() as i64;
-
-                        let ann = md_editor_core::pdf::PdfAnnotation {
-                            id: id.clone(),
-                            document_id: doc_id.clone(),
-                            page_index: sel.page_index,
-                            kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-                            color,
-                            selected_text,
-                            ranges: vec![md_editor_core::pdf::PdfTextRange {
-                                start_text_index: start,
-                                end_text_index: end,
-                            }],
-                            rects,
-                            note: None,
-                            linked_note_path: None,
-                            markdown_anchor: None,
-                            created_at: now,
-                            updated_at: now,
-                        };
-
-                        if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                            self.ui.toast = Some(format!("Failed to save highlight: {}", e));
-                        } else {
-                            self.pdf.annotations
-                                .entry(sel.page_index)
-                                .or_default()
-                                .push(ann);
-                            self.pdf.selection = None;
-                            if let Some(ref path) = self.pdf.active_path {
-                                self.vault.backlinks =
-                                    md_editor_core::vault::get_mixed_backlinks(&self.state, path)
-                                        .unwrap_or_default();
-                            }
-                        }
-                    }
+            Message::PdfCreateHighlight(color) => self.create_highlight(color),
+            Message::PdfQuickHighlight => {
+                // Only consume a palette color when there is actually a
+                // selection to highlight, so the cycle doesn't silently
+                // advance on empty clicks.
+                if self.pdf.selection.is_none() {
+                    Task::none()
+                } else {
+                    let color = self.pdf.next_highlight_color;
+                    self.pdf.next_highlight_color = color.next();
+                    self.create_highlight(color)
                 }
+            }
+            Message::PdfCopyAnnotationText(id) => {
+                if let Some(text) = self
+                    .pdf
+                    .annotations
+                    .values()
+                    .flatten()
+                    .find(|a| a.id == id)
+                    .map(|a| a.selected_text.clone())
+                {
+                    self.ui.toast = Some("Annotation text copied".to_string());
+                    iced::clipboard::write(text)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::PdfOrphanReport => {
+                let report = self.pdf_orphan_report();
+                self.ui.toast = Some(report);
                 Task::none()
             }
             Message::PdfDeleteHighlight(id) => {
@@ -1449,12 +1512,18 @@ impl MdEditor {
                     &document_path,
                 );
 
+                let split_changed = !self.ui.split_view_active;
                 self.ui.split_view_active = true;
                 self.showing_pdf = true;
 
                 if self.pdf.active_path.as_deref() == Some(&resolved_pdf_path) {
                     self.pdf.focused_annotation_id = Some(annotation_id);
-                    self.navigate_pdf_page(page.saturating_sub(1))
+                    let nav_task = self.navigate_pdf_page(page.saturating_sub(1));
+                    if split_changed {
+                        Task::batch(vec![self.refit_pdf_if_needed(), nav_task])
+                    } else {
+                        nav_task
+                    }
                 } else {
                     self.pdf.initial_target_page = Some(page.saturating_sub(1));
                     self.pdf.initial_target_annotation = Some(annotation_id);
@@ -1463,7 +1532,14 @@ impl MdEditor {
             }
             Message::SearchResultClicked(path) => {
                 self.search.visible = false;
-                self.open_file(&path)
+                self.vault.selected_path = Some(path.clone());
+                if path.to_lowercase().ends_with(".pdf") {
+                    self.pdf.active_path = Some(path.clone());
+                    self.showing_pdf = true;
+                    self.open_pdf(&path)
+                } else {
+                    self.open_file(&path)
+                }
             }
 
             Message::KeyboardShortcut(s) => {
@@ -1476,6 +1552,7 @@ impl MdEditor {
                             self.pdf.focused_annotation_id = None;
                         } else if self.pdf.link_preview.is_some() {
                             self.pdf.link_preview = None;
+                            self.pdf.link_preview_size = None;
                         } else if self.ui.active_modal.is_some() {
                             self.ui.active_modal = None;
                             self.ui.modal_input.clear();
@@ -1497,7 +1574,7 @@ impl MdEditor {
                     }
                     Shortcut::ToggleSidebar => {
                         self.vault.sidebar_visible = !self.vault.sidebar_visible;
-                        Task::none()
+                        self.refit_pdf_if_needed()
                     }
                     Shortcut::Save => Task::done(Message::EditorSave),
                     Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
@@ -1563,15 +1640,7 @@ impl MdEditor {
                         self.vault.backlinks_visible = !self.vault.backlinks_visible;
                         Task::none()
                     }
-                    Shortcut::TableOfContents => {
-                        if self.pdf.active_path.is_some()
-                            && (self.showing_pdf
-                                || (self.ui.split_view_active && self.active_path.is_some()))
-                        {
-                            self.editor.toc_visible = !self.editor.toc_visible;
-                        }
-                        Task::none()
-                    }
+                    Shortcut::TableOfContents => Task::done(Message::ToggleTOC),
                     Shortcut::StudyTracker => {
                         self.tracker.toggle_visible();
                         Task::none()
@@ -1629,11 +1698,61 @@ impl MdEditor {
                 }
                 Task::none()
             }
+            Message::WindowOpened(id) => {
+                // Pull the real scale factor; a static HiDPI monitor may never
+                // emit a `Rescaled` event, so the listener alone isn't enough.
+                iced::window::scale_factor(id).map(Message::WindowRescaled)
+            }
+            Message::WindowRescaled(factor) => {
+                // Clamp: below 1 makes no sense, and capping at 3 bounds the
+                // bitmap cost on unusually high-DPI displays.
+                let factor = factor.clamp(1.0, 3.0);
+                if (factor - self.ui.scale_factor).abs() < 0.01 {
+                    return Task::none();
+                }
+                self.ui.scale_factor = factor;
+                // Cached page bitmaps were rasterized at the old supersample;
+                // drop them and re-render at the new device resolution.
+                if self.pdf.active_path.is_some() && self.pdf.total_pages > 0 {
+                    self.pdf.pages = vec![None; self.pdf.total_pages as usize];
+                    self.pdf.dimensions = vec![None; self.pdf.total_pages as usize];
+                    self.pdf.placeholder_page_size = self.pdf.first_page_size();
+                    self.pdf.pending_pages.clear();
+                    self.pdf.pending_links.clear();
+                    self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
+                    return self.render_visible_pdf_pages();
+                }
+                Task::none()
+            }
+            Message::VaultFilesChanged(paths) => {
+                // Reconcile the index/search for changed markdown files. The
+                // open editor buffer is intentionally NOT reloaded — that would
+                // clobber unsaved edits and fire on our own saves.
+                for path in &paths {
+                    let _ = md_editor_core::vault::sync_path_from_disk(&self.state, path);
+                }
+                if let Ok(entries) = md_editor_core::vault::list_vault(&self.state) {
+                    self.vault.entries = entries;
+                }
+                if let Some(active) = self
+                    .active_path
+                    .clone()
+                    .or_else(|| self.pdf.active_path.clone())
+                {
+                    self.vault.backlinks =
+                        md_editor_core::vault::get_mixed_backlinks(&self.state, &active)
+                            .unwrap_or_default();
+                }
+                Task::none()
+            }
             Message::ToggleTOC => {
                 if self.pdf.active_path.is_some()
                     && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()))
                 {
                     self.editor.toc_visible = !self.editor.toc_visible;
+                    // The TOC panel changes the PDF pane width — re-fit so pages
+                    // don't render stretched at the old width.
+                    return self.refit_pdf_if_needed();
                 }
                 Task::none()
             }
@@ -1750,6 +1869,7 @@ impl MdEditor {
                     self.pdf.zoom,
                     self.editor.toc_visible,
                     self.pdf.selection.is_some(),
+                    self.pdf.annotations.values().any(|v| !v.is_empty()),
                     focused_ann,
                 );
                 let pdf_pages = scrollable(views::pdf_viewer::view_continuous(
@@ -1767,6 +1887,7 @@ impl MdEditor {
                     self.search.match_index,
                     &self.pdf.page_text,
                     &self.pdf.annotations,
+                    &self.pdf.references,
                     self.pdf.selection,
                     self.pdf.focused_annotation_id.as_deref(),
                 ))
@@ -1782,6 +1903,7 @@ impl MdEditor {
                         &self.search.query,
                         self.search.regex,
                         self.search.match_case,
+                        self.search.loose,
                         self.search.pdf_results.len(),
                         self.search.match_index,
                     )
@@ -1804,7 +1926,7 @@ impl MdEditor {
             && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()));
         let toc_view: Element<Message, Theme, iced::Renderer> =
             if self.editor.toc_visible && pdf_toc_available {
-                views::toc::view(&self.editor.toc_entries)
+                views::toc::view(&self.editor.toc_entries, self.editor.toc_is_synthetic)
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
@@ -1974,8 +2096,25 @@ impl MdEditor {
         }
 
         if let Some(preview_handle) = &self.pdf.link_preview {
+            // Size the box to the preview's aspect ratio, as large as fits in
+            // ~85% of the window. Matching the aspect means the image fills the
+            // box (no letterboxing) and the destination — centered in the
+            // crop — sits centered in the modal, as large as the window allows.
+            let (img_w, img_h) = self.pdf.link_preview_size.unwrap_or((800.0, 600.0));
+            let aspect = (img_w / img_h).max(0.1);
+            let max_w = self.preview_max_box_width();
+            let max_h = (self.ui.window_height * 0.85).clamp(360.0, 1000.0);
+            let mut preview_box_w = max_w;
+            let mut preview_box_h = preview_box_w / aspect;
+            if preview_box_h > max_h {
+                preview_box_h = max_h;
+                preview_box_w = preview_box_h * aspect;
+            }
+
             let img = iced::widget::image(preview_handle.clone())
+                .filter_method(iced::widget::image::FilterMethod::Linear)
                 .width(Length::Fill)
+                .height(Length::Fill)
                 .content_fit(iced::ContentFit::Contain);
 
             let modal = container(
@@ -1987,8 +2126,8 @@ impl MdEditor {
                             .padding(8)
                     ],
                     container(img)
-                        .width(Length::Fixed(800.0))
-                        .height(Length::Fixed(600.0))
+                        .width(Length::Fixed(preview_box_w))
+                        .height(Length::Fixed(preview_box_h))
                         .style(|_| container::Style {
                             background: Some(iced::Background::Color(iced::Color::WHITE)),
                             border: iced::Border {
@@ -2079,6 +2218,33 @@ impl MdEditor {
         self.open_file_extended(path, true)
     }
 
+    /// Resolve an internal link target (wikilink / relative markdown link) to a
+    /// vault file path. Tries the existing relative-path resolution first, then
+    /// falls back to a vault-wide basename lookup so `[[NoteName]]` resolves to
+    /// a note living in any subfolder.
+    fn resolve_internal_link_path(&self, link_path: &str) -> String {
+        let mut resolved = resolve_relative_link_path(
+            self.vault.root.as_deref(),
+            self.active_path.as_deref(),
+            link_path,
+        );
+        if std::path::Path::new(&resolved).extension().is_none() {
+            resolved.push_str(".md");
+        }
+        let exists = self
+            .vault
+            .root
+            .as_deref()
+            .map(|root| std::path::Path::new(root).join(&resolved).exists())
+            .unwrap_or(false);
+        if !exists {
+            if let Some(found) = resolve_vault_note_by_name(&self.vault.entries, link_path) {
+                return found;
+            }
+        }
+        resolved
+    }
+
     fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
         let is_different = self.active_path.as_deref() != Some(path);
         if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
@@ -2092,6 +2258,7 @@ impl MdEditor {
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
                 self.editor.toc_entries = views::toc::get_toc(&content);
+                self.editor.toc_is_synthetic = false;
                 let highlight_task = self.refresh_highlighting_for_current_buffer(true);
                 self.vault.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                     .unwrap_or_default();
@@ -2130,6 +2297,7 @@ impl MdEditor {
         self.pdf.pending_pages.clear();
         self.pdf.pending_links.clear();
         self.pdf.page_links.clear();
+        self.pdf.references.clear();
         self.search.pdf_results.clear();
         self.search.pdf_indices_by_page.clear();
         self.search.pdf_error = None;
@@ -2196,7 +2364,10 @@ impl MdEditor {
                     let renderer = _state_toc.pdf_renderer.as_ref()?;
                     renderer.get_toc(&path_str_toc).ok()
                 },
-                move |res| Message::PdfTocLoaded(generation, res.unwrap_or_default()),
+                move |res| {
+                    let (entries, synthetic) = res.unwrap_or_default();
+                    Message::PdfTocLoaded(generation, entries, synthetic)
+                },
             ),
         ])
     }
@@ -2223,6 +2394,7 @@ impl MdEditor {
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
                 self.editor.toc_entries.clear();
+                self.editor.toc_is_synthetic = false;
                 self.vault.backlinks.clear();
             }
             Err(err) => {
@@ -2241,7 +2413,7 @@ impl MdEditor {
         };
         let path_str = abs_path.to_string_lossy().to_string();
         let zoom =
-            md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * PDF_RENDER_SUPERSAMPLE;
+            md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * self.pdf_supersample();
         let generation = self.pdf.render_generation;
         let _state = self.state.clone();
 
@@ -2276,7 +2448,7 @@ impl MdEditor {
         };
         let path_str = abs_path.to_string_lossy().to_string();
         let zoom =
-            md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * PDF_RENDER_SUPERSAMPLE;
+            md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * self.pdf_supersample();
         let generation = self.pdf.render_generation;
         let _state = self.state.clone();
         if self
@@ -2437,7 +2609,64 @@ impl MdEditor {
             }
         }
 
+        // Free bitmaps well outside the rendered window so a long PDF doesn't
+        // keep every page resident in memory (each page is a full RGBA bitmap,
+        // and supersampling multiplies that cost). Layout metadata in
+        // `dimensions`/`page_sizes` is cheap and kept, so geometry/link
+        // hit-testing still work; an evicted page simply re-renders when it
+        // scrolls back into view.
+        self.evict_distant_page_bitmaps(start, end);
+
         Task::batch(tasks)
+    }
+
+    /// Drop cached page bitmaps further than [`PDF_PAGE_BITMAP_EVICT_MARGIN`]
+    /// from the `[start, end]` render window. The margin gives scroll
+    /// hysteresis so small back-and-forth movements reuse cached pages.
+    fn evict_distant_page_bitmaps(&mut self, start: u16, end: u16) {
+        let keep_lo = start.saturating_sub(PDF_PAGE_BITMAP_EVICT_MARGIN);
+        let keep_hi = end.saturating_add(PDF_PAGE_BITMAP_EVICT_MARGIN);
+        for (idx, slot) in self.pdf.pages.iter_mut().enumerate() {
+            let idx = idx as u16;
+            if (idx < keep_lo || idx > keep_hi) && slot.is_some() {
+                *slot = None;
+            }
+        }
+    }
+
+    /// Supersampling factor for PDF rasterization. Renders at the display's
+    /// device-pixel ratio so pages are pixel-sharp on HiDPI/fractional displays
+    /// while staying 1:1 (no wasted work) on standard 1× screens. With zoom
+    /// bucketing always rounding up, this guarantees the rasterized bitmap is
+    /// never undersampled relative to the physical pixels it lands on.
+    fn pdf_supersample(&self) -> f32 {
+        self.ui.scale_factor.clamp(1.0, PDF_SUPERSAMPLE_MAX)
+    }
+
+    /// Re-fit the PDF to the available width when fit-to-width is active and a
+    /// PDF is open. Call after any change that alters the PDF pane's width (TOC,
+    /// sidebar, split view) so pages re-render at the correct scale instead of
+    /// being stretched from a stale zoom.
+    /// Logical width the link-preview modal box is sized to (width-limited for
+    /// the typical landscape crop). Shared by the render request and the view so
+    /// the rendered bitmap matches the on-screen box.
+    fn preview_max_box_width(&self) -> f32 {
+        (self.ui.window_width * 0.85).clamp(480.0, 1400.0)
+    }
+
+    /// Physical pixel width to rasterize the link preview at: the logical box
+    /// width times the display scale factor, so the enlarged preview renders
+    /// pixel-sharp. Capped to bound the render cost.
+    fn preview_target_px(&self) -> u32 {
+        (self.preview_max_box_width() * self.ui.scale_factor).clamp(600.0, 4000.0) as u32
+    }
+
+    fn refit_pdf_if_needed(&self) -> Task<Message> {
+        if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
+            Task::done(Message::PdfFitToWidth)
+        } else {
+            Task::none()
+        }
     }
 
     fn pdf_available_width(&self) -> f32 {
@@ -2782,6 +3011,108 @@ impl MdEditor {
         Ok((count, Task::none()))
     }
 
+    /// Create a highlight annotation over the current PDF text selection.
+    /// Shared by the explicit color buttons and the cycling quick highlight.
+    fn create_highlight(
+        &mut self,
+        color: md_editor_core::pdf::PdfAnnotationColor,
+    ) -> Task<Message> {
+        if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id) {
+            if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
+                let start = sel.anchor_idx.min(sel.focus_idx);
+                let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
+
+                let mut selected_chars = Vec::new();
+                for c in &page_text.chars {
+                    if c.text_index >= start && c.text_index < end {
+                        selected_chars.push(c.clone());
+                    }
+                }
+
+                let selected_text = text_by_char_range(&page_text.text, start, end);
+
+                let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
+
+                let id = uuid::Uuid::new_v4().to_string();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                let ann = md_editor_core::pdf::PdfAnnotation {
+                    id: id.clone(),
+                    document_id: doc_id.clone(),
+                    page_index: sel.page_index,
+                    kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
+                    color,
+                    selected_text,
+                    ranges: vec![md_editor_core::pdf::PdfTextRange {
+                        start_text_index: start,
+                        end_text_index: end,
+                    }],
+                    rects,
+                    note: None,
+                    linked_note_path: None,
+                    markdown_anchor: None,
+                    created_at: now,
+                    updated_at: now,
+                };
+
+                if let Err(e) = self.state.save_pdf_annotation(&ann) {
+                    self.ui.toast = Some(format!("Failed to save highlight: {}", e));
+                } else {
+                    self.pdf
+                        .annotations
+                        .entry(sel.page_index)
+                        .or_default()
+                        .push(ann);
+                    self.pdf.selection = None;
+                    if let Some(ref path) = self.pdf.active_path {
+                        self.vault.backlinks =
+                            md_editor_core::vault::get_mixed_backlinks(&self.state, path)
+                                .unwrap_or_default();
+                    }
+                }
+            }
+        }
+        Task::none()
+    }
+
+    /// Build a short report of "orphan" annotations: highlights whose stored
+    /// `selected_text` no longer appears in the current text of their page,
+    /// which means the underlying PDF text has drifted away from the anchor.
+    fn pdf_orphan_report(&self) -> String {
+        let mut total = 0usize;
+        let mut orphans = 0usize;
+        let mut checked = 0usize;
+        for (page_index, anns) in &self.pdf.annotations {
+            let page_text = self.pdf.page_text.get(page_index);
+            for ann in anns {
+                total += 1;
+                let needle = ann.selected_text.trim();
+                if needle.is_empty() {
+                    continue;
+                }
+                // Only pages whose text has been loaded can be checked.
+                if let Some(pt) = page_text {
+                    checked += 1;
+                    if !pt.text.contains(needle) {
+                        orphans += 1;
+                    }
+                }
+            }
+        }
+        if checked == 0 {
+            format!(
+                "Orphan report: 0 of {total} annotations checkable (scroll pages to load text first)"
+            )
+        } else if orphans == 0 {
+            format!("Orphan report: no drift found ({checked} of {total} checked)")
+        } else {
+            format!("Orphan report: {orphans} drifted of {checked} checked ({total} total)")
+        }
+    }
+
     fn search_pdf(&self) -> Task<Message> {
         let Some(path) = &self.pdf.active_path else {
             return Task::none();
@@ -2789,8 +3120,21 @@ impl MdEditor {
         let Some(abs_path) = self.resolve_active_path(path) else {
             return Task::none();
         };
-        let query = self.search.query.clone();
-        let regex = self.search.regex;
+        // Loose whitespace: build a regex that allows any whitespace run
+        // (including PDF line breaks) between the query's tokens, so a phrase
+        // wrapping across lines still matches. Reuses the existing regex path.
+        let (query, regex) = if self.search.loose {
+            let pattern = self
+                .search
+                .query
+                .split_whitespace()
+                .map(regex::escape)
+                .collect::<Vec<_>>()
+                .join(r"\s+");
+            (pattern, true)
+        } else {
+            (self.search.query.clone(), self.search.regex)
+        };
         let match_case = self.search.match_case;
         let _state = self.state.clone();
         let path_str = abs_path.to_string_lossy().to_string();
@@ -2872,6 +3216,100 @@ fn focus_file_search_input() -> Task<Message> {
     ))
 }
 
+/// Debounce window for coalescing filesystem-watcher events. Editors and tools
+/// often write a file as several rapid operations (write + rename of a temp
+/// file); coalescing avoids a re-index storm.
+const VAULT_WATCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Stream factory for [`iced::Subscription::run_with`]: watches `root`
+/// recursively and emits a debounced [`Message::VaultFilesChanged`] listing the
+/// vault-relative paths that changed. Must be a plain `fn` (not a closure) to
+/// satisfy `run_with`; the root is threaded in via the `&String` argument.
+fn vault_watch_stream(
+    root: &String,
+) -> std::pin::Pin<Box<dyn iced::futures::Stream<Item = Message> + Send>> {
+    use iced::futures::SinkExt;
+    use notify::{RecursiveMode, Watcher};
+
+    let root = root.clone();
+    Box::pin(iced::stream::channel(
+        64,
+        move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+        let root_path = std::path::PathBuf::from(&root);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Event>();
+
+        let mut watcher = match notify::recommended_watcher(
+            move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    let _ = tx.send(event);
+                }
+            },
+        ) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("Failed to create vault watcher: {e}");
+                return;
+            }
+        };
+        if let Err(e) = watcher.watch(&root_path, RecursiveMode::Recursive) {
+            eprintln!("Failed to watch vault root {}: {e}", root_path.display());
+            return;
+        }
+        // Hold the watcher for the lifetime of this stream; dropping it stops
+        // delivery.
+        let _watcher = watcher;
+
+        loop {
+            let Some(first) = rx.recv().await else {
+                break; // sender dropped — watcher gone
+            };
+            let mut changed = std::collections::BTreeSet::new();
+            collect_changed_paths(&first, &root_path, &mut changed);
+            // Drain the burst within the debounce window.
+            while let Ok(Some(event)) = tokio::time::timeout(VAULT_WATCH_DEBOUNCE, rx.recv()).await {
+                collect_changed_paths(&event, &root_path, &mut changed);
+            }
+            if !changed.is_empty() {
+                let paths: Vec<String> = changed.into_iter().collect();
+                if output.send(Message::VaultFilesChanged(paths)).await.is_err() {
+                    break; // receiver dropped — subscription ended
+                }
+            }
+        }
+    }))
+}
+
+/// Collect the vault-relative paths touched by a watcher `event`, skipping
+/// access-only events, dotfiles, and excluded directories.
+fn collect_changed_paths(
+    event: &notify::Event,
+    root: &std::path::Path,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    use notify::EventKind;
+    if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
+        return;
+    }
+    for path in &event.paths {
+        let Ok(rel) = path.strip_prefix(root) else {
+            continue;
+        };
+        // Ignore dotfiles/dot-dirs and well-known heavy directories.
+        let skip = rel.components().any(|c| {
+            let s = c.as_os_str().to_string_lossy();
+            s.starts_with('.')
+                || matches!(
+                    s.as_ref(),
+                    "node_modules" | "target" | "build" | "dist" | "__pycache__"
+                )
+        });
+        if skip {
+            continue;
+        }
+        out.insert(rel.to_string_lossy().replace('\\', "/"));
+    }
+}
+
 fn focus_global_search_input() -> Task<Message> {
     operation::focus(iced::advanced::widget::Id::new(
         views::search::GLOBAL_SEARCH_INPUT_ID,
@@ -2933,6 +3371,51 @@ fn resolve_relative_link_path(
         }
     }
     link_path.to_string()
+}
+
+/// Resolve a bare wikilink name (e.g. `[[NoteName]]`) to a vault file path by
+/// matching the link's final component against every file's basename, case-
+/// insensitively, with or without a `.md`/`.markdown` extension. When several
+/// files match, the shortest path wins (Obsidian-style "closest" resolution);
+/// `None` is returned for no match or an ambiguous tie at the same depth.
+fn resolve_vault_note_by_name(
+    entries: &[md_editor_core::types::FileEntry],
+    link_path: &str,
+) -> Option<String> {
+    // Use only the final path component as the target name.
+    let target = link_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(link_path)
+        .trim();
+    if target.is_empty() {
+        return None;
+    }
+    let target_lower = target.to_lowercase();
+
+    let mut matches: Vec<&str> = Vec::new();
+    for entry in entries {
+        if entry.is_dir {
+            continue;
+        }
+        let name_lower = entry.name.to_lowercase();
+        let stem_lower = name_lower
+            .strip_suffix(".md")
+            .or_else(|| name_lower.strip_suffix(".markdown"))
+            .unwrap_or(&name_lower);
+        if name_lower == target_lower || stem_lower == target_lower {
+            matches.push(entry.path.as_str());
+        }
+    }
+
+    matches.sort_by_key(|p| p.len());
+    match matches.as_slice() {
+        [] => None,
+        [only] => Some((*only).to_string()),
+        // Prefer a strictly shortest path; bail if the two shortest tie.
+        [a, b, ..] if a.len() != b.len() => Some((*a).to_string()),
+        _ => None,
+    }
 }
 
 fn slugify(s: &str) -> String {
@@ -3050,6 +3533,51 @@ mod tests {
         assert_eq!(find_heading_line(text, "header-equation-1"), Some(2));
         assert_eq!(find_heading_line(text, "bold-heading"), Some(4));
         assert_eq!(find_heading_line(text, "not-existent"), None);
+    }
+
+    #[test]
+    fn test_resolve_vault_note_by_name() {
+        use md_editor_core::types::FileEntry;
+        let entry = |path: &str, name: &str, is_dir: bool| FileEntry {
+            path: path.to_string(),
+            name: name.to_string(),
+            is_dir,
+        };
+        let entries = vec![
+            entry("notes", "notes", true),
+            entry("notes/Alpha.md", "Alpha.md", false),
+            entry("archive/old/Beta.md", "Beta.md", false),
+            entry("Gamma.pdf", "Gamma.pdf", false),
+            entry("a/Dup.md", "Dup.md", false),
+            entry("deep/nested/Dup.md", "Dup.md", false),
+        ];
+
+        // Bare name in a subfolder, case-insensitive, with/without extension.
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "Alpha").as_deref(),
+            Some("notes/Alpha.md")
+        );
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "beta").as_deref(),
+            Some("archive/old/Beta.md")
+        );
+        // Non-md extension matches on full name.
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "Gamma.pdf").as_deref(),
+            Some("Gamma.pdf")
+        );
+        // Only the final path component is used as the target name.
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "folder/Alpha").as_deref(),
+            Some("notes/Alpha.md")
+        );
+        // Shortest path wins when paths differ in length.
+        assert_eq!(
+            resolve_vault_note_by_name(&entries, "Dup").as_deref(),
+            Some("a/Dup.md")
+        );
+        // No match.
+        assert_eq!(resolve_vault_note_by_name(&entries, "Missing"), None);
     }
 
     #[test]

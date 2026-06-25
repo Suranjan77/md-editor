@@ -17,6 +17,10 @@ struct OverlayRect {
     rect: md_editor_core::pdf::PdfRect,
     color: Color,
     border_color: Option<Color>,
+    /// When true, the minimum-size clamp is skipped so the rect can render as a
+    /// hairline (used for reference underlines). Highlights leave this false so
+    /// they stay legibly tall.
+    thin: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -41,8 +45,16 @@ impl<Message> canvas::Program<Message> for PdfOverlay {
             let rect = Rectangle {
                 x: item.rect.x,
                 y: item.rect.y,
-                width: item.rect.width.max(3.0),
-                height: item.rect.height.max(8.0),
+                width: if item.thin {
+                    item.rect.width
+                } else {
+                    item.rect.width.max(3.0)
+                },
+                height: if item.thin {
+                    item.rect.height
+                } else {
+                    item.rect.height.max(8.0)
+                },
             };
             frame.fill_rectangle(
                 Point::new(rect.x, rect.y),
@@ -81,6 +93,7 @@ pub fn search_bar<'a>(
     query: &'a str,
     regex: bool,
     match_case: bool,
+    loose: bool,
     current_match_count: usize,
     active_match_index: Option<usize>,
 ) -> Element<'a, Message, Theme, Renderer> {
@@ -103,6 +116,10 @@ pub fn search_bar<'a>(
             checkbox(match_case)
                 .label("Case")
                 .on_toggle(Message::SearchMatchCaseToggled)
+                .size(14),
+            checkbox(loose)
+                .label("Loose WS")
+                .on_toggle(Message::PdfSearchLooseToggled)
                 .size(14),
             button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
                 .on_press(Message::SearchPrevious)
@@ -147,6 +164,7 @@ pub fn toolbar<'a>(
     zoom: f32,
     toc_visible: bool,
     selection_active: bool,
+    has_annotations: bool,
     focused_annotation: Option<&'a md_editor_core::pdf::PdfAnnotation>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let page_label = if total_pages == 0 {
@@ -211,6 +229,10 @@ pub fn toolbar<'a>(
                 row![
                     text("Highlight").size(12).color(theme::TEXT_MUTED),
                     color_row,
+                    button(text("⟳").size(14).color(theme::TEXT_SECONDARY))
+                        .on_press(Message::PdfQuickHighlight)
+                        .padding(5)
+                        .style(button::text),
                     button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
                         .on_press(Message::PdfSelectionCleared)
                         .padding(5)
@@ -284,6 +306,17 @@ pub fn toolbar<'a>(
             .style(button::text)
         };
 
+        let copy_btn = button(
+            row![
+                text("⧉").size(14).color(theme::TEXT_PRIMARY),
+                text(" Copy").size(12).color(theme::TEXT_PRIMARY)
+            ]
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::PdfCopyAnnotationText(ann.id.clone()))
+        .padding([4, 8])
+        .style(button::text);
+
         let delete_btn = button(icons::view(
             Icon::Trash,
             Color::from_rgb8(239, 83, 80),
@@ -297,12 +330,26 @@ pub fn toolbar<'a>(
             text("Highlight:").size(12).color(theme::TEXT_MUTED),
             note_btn,
             link_btn,
+            copy_btn,
             delete_btn,
         ]
         .spacing(8)
         .align_y(Alignment::Center)
     } else {
         row![]
+    };
+
+    // Only offer the orphan-anchor check when the document actually has
+    // annotations — otherwise there is nothing to check and a standing
+    // warning-styled control just adds noise to every PDF.
+    let orphan_btn: Element<'a, Message, Theme, Renderer> = if has_annotations {
+        button(text("Check anchors").size(12).color(theme::TEXT_MUTED))
+            .on_press(Message::PdfOrphanReport)
+            .padding(8)
+            .style(button::text)
+            .into()
+    } else {
+        Space::new().width(Length::Fixed(0.0)).into()
     };
 
     container(
@@ -315,6 +362,7 @@ pub fn toolbar<'a>(
             .on_press(Message::ToggleTOC)
             .padding(8)
             .style(button::text),
+            orphan_btn,
             Space::new().width(Length::Fill),
             study_controls,
             annotation_controls,
@@ -365,6 +413,7 @@ pub fn view_continuous<'a>(
     active_search_index: Option<usize>,
     page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
     annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
+    references: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
@@ -451,6 +500,7 @@ pub fn view_continuous<'a>(
                         rect: search_rect_to_view_rect(rect, page_height, zoom),
                         color,
                         border_color,
+                        thin: false,
                     });
                 }
             }
@@ -467,6 +517,7 @@ pub fn view_continuous<'a>(
                 rect,
                 color: Color::from_rgba(1.0, 0.78, 0.18, 0.38),
                 border_color: None,
+                thin: false,
             }));
             let active_search_highlights = active_search_index
                 .and_then(|idx| search_matches.get(idx))
@@ -484,6 +535,7 @@ pub fn view_continuous<'a>(
                     rect,
                     color: Color::from_rgba(1.0, 0.62, 0.0, 0.68),
                     border_color: None,
+                    thin: false,
                 }
             }));
             if let (Some(sel), Some(page_text)) = (active_selection, page_text) {
@@ -503,8 +555,32 @@ pub fn view_continuous<'a>(
                                 rect: search_rect_to_view_rect(&rect, page_text.page_height, zoom),
                                 color: Color::from_rgba(0.12, 0.53, 0.9, 0.45),
                                 border_color: None,
+                                thin: false,
                             }),
                     );
+                }
+            }
+            // Underline recognised internal references so they read as
+            // clickable. `LinkInfo.bbox` is already top-left origin in PDF
+            // points, so it converts to view space with a plain zoom scale (no
+            // y-flip, unlike the bottom-left annotation/search rects above).
+            if let Some(refs) = references.get(&page_index) {
+                // Hairline underline: fixed ~1px, not scaled by zoom (a
+                // zoom-scaled rule reads as a heavy bar when zoomed in).
+                let thickness = 1.0;
+                for link in refs {
+                    let b = &link.bbox;
+                    overlay_rects.push(OverlayRect {
+                        rect: md_editor_core::pdf::PdfRect {
+                            x: b.x * zoom,
+                            y: (b.y + b.height) * zoom - thickness,
+                            width: b.width * zoom,
+                            height: thickness,
+                        },
+                        color: Color { a: 0.5, ..theme::ACCENT },
+                        border_color: None,
+                        thin: true,
+                    });
                 }
             }
             let interactive = InteractivePdf::new(

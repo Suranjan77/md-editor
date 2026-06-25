@@ -65,8 +65,9 @@ pub enum Message {
     },
     PdfLeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
     PdfRightClicked(u16, f32, f32),
-    PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>),
+    PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>, bool),
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
+    PdfReferencesLoaded(String, Vec<md_editor_core::references::ReferenceLink>),
     PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
     PdfSearchResultClicked(u16),
     PdfScrollBy(f32),
@@ -80,7 +81,11 @@ pub enum Message {
     PdfSelectionFinished(u16, usize, usize),
     PdfCopySelection,
     PdfCreateHighlight(md_editor_core::pdf::PdfAnnotationColor),
+    PdfQuickHighlight,
     PdfDeleteHighlight(String),
+    PdfCopyAnnotationText(String),
+    PdfSearchLooseToggled(bool),
+    PdfOrphanReport,
     PdfAddQuickNote(String, String),
     PdfLinkNote(String, String),
     PdfOpenLinkedNote(String),
@@ -123,6 +128,10 @@ pub enum Message {
     SplitViewDragging(f32),
     SplitViewDragEnd,
     WindowResized(f32, f32),
+    WindowOpened(iced::window::Id),
+    WindowRescaled(f32),
+    /// Vault-relative paths that changed on disk (filesystem watcher), debounced.
+    VaultFilesChanged(Vec<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
