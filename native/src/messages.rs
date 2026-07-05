@@ -115,9 +115,11 @@ pub enum Message {
     // ── Toast ───────────────────────────────────────────────────
     ShowToast(String),
     ToastHide,
+    // tex, scale factor the bitmaps were rasterized for, render result
     MathRendered(
         String,
-        Result<(iced::widget::image::Handle, f32, f32), String>,
+        f32,
+        Result<crate::editor::renderer::MathRender, String>,
     ),
 
     // ── System ───────────────────────────────────────────────────

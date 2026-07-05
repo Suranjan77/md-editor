@@ -659,13 +659,21 @@ impl MdEditor {
                     );
                 }
                 // A target page stashed by PdfDocumentIdComputed while the page
-                // count was still unknown (see that handler) is consumed here.
-                let target_task = if pages > 0 {
-                    if let Some(page) = self.pdf.initial_target_page.take() {
-                        self.navigate_pdf_page(page)
-                    } else {
-                        Task::none()
-                    }
+                // count was still unknown (see that handler) is resolved here.
+                let target_task = if pages == 0 {
+                    // Failed load: drop the target so it can't leak into the
+                    // next document opened.
+                    self.pdf.initial_target_page = None;
+                    self.pdf.initial_target_annotation = None;
+                    Task::none()
+                } else if self.pdf.fit_to_width {
+                    // Leave the stash for the PdfFitToWidth handler, whose
+                    // `is_initial` path scrolls to the target at the post-fit
+                    // zoom. Navigating here would use pre-fit page offsets and
+                    // then be re-scrolled to page 0 by the fit pass.
+                    Task::none()
+                } else if let Some(page) = self.pdf.initial_target_page.take() {
+                    self.navigate_pdf_page(page)
                 } else {
                     Task::none()
                 };
@@ -1312,8 +1320,10 @@ impl MdEditor {
                     Some(page) => {
                         // The hash task won the race against PdfLoaded, so the
                         // page count isn't known yet and navigating now would
-                        // clamp the target to 0. Stash it; the PdfLoaded
-                        // handler consumes it once the document is applied.
+                        // clamp the target to 0. Stash it; once the document is
+                        // applied it is consumed by PdfFitToWidth's is_initial
+                        // path (the normal fit-on-open flow) or by PdfLoaded
+                        // directly when fit-to-width is off.
                         self.pdf.initial_target_page = Some(page);
                         Task::none()
                     }
@@ -1777,12 +1787,10 @@ impl MdEditor {
                 self.ui.scale_factor = factor;
                 // Math bitmaps are rasterized at the display scale but cached
                 // by TeX string only; flush and re-render at the new density.
-                let math_task = if self.editor.math_cache.is_empty() {
-                    Task::none()
-                } else {
-                    self.editor.math_cache.clear();
-                    self.editor.load_math(factor)
-                };
+                // load_math also records the new scale so results still in
+                // flight from before the rescale get dropped on arrival.
+                self.editor.math_cache.clear();
+                let math_task = self.editor.load_math(factor);
                 // Cached page bitmaps were rasterized at the old supersample;
                 // drop them and re-render at the new device resolution.
                 if self.pdf.active_path.is_some() && self.pdf.total_pages > 0 {

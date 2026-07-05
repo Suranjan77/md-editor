@@ -35,7 +35,7 @@ pub fn line_hash(line: &StyledLine) -> u64 {
 pub fn resource_hash(
     line: &StyledLine,
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    math_cache: &HashMap<String, crate::editor::renderer::MathRender>,
 ) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for span in &line.spans {
@@ -51,7 +51,7 @@ pub fn resource_hash(
             tex.hash(&mut hasher);
             math_cache
                 .get(tex)
-                .map(|(_, w, h)| (w.to_bits(), h.to_bits()))
+                .map(|m| (m.width.to_bits(), m.height.to_bits()))
                 .hash(&mut hasher);
         }
     }
