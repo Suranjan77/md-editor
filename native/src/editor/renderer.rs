@@ -44,6 +44,12 @@ fn content_bounds(raw: Rectangle) -> Rectangle {
 
 // ── Widget ───────────────────────────────────────────────────────────
 
+/// Display-size boost applied to block (`$$`) math relative to inline math.
+/// The rasterizer bakes this into the bitmap's device-pixel ratio (see
+/// `render_latex_task`) so block math is displayed at exactly 1:1 device
+/// pixels instead of being upscaled from a smaller bitmap.
+pub const MATH_BLOCK_SCALE: f32 = 1.2;
+
 pub struct Editor<'a, Message> {
     buffer: &'a DocBuffer,
     lines: &'a [StyledLine],
@@ -53,6 +59,9 @@ pub struct Editor<'a, Message> {
     search_regex: bool,
     search_match_case: bool,
     active_search_match: Option<(usize, usize)>,
+    /// Device pixels per logical unit; used to snap rendered math bitmaps to
+    /// the device-pixel grid so 1-px glyph strokes don't straddle two pixels.
+    scale_factor: f32,
     on_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_pointer_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
@@ -111,6 +120,7 @@ impl<'a, Message> Editor<'a, Message> {
             search_regex: false,
             search_match_case: false,
             active_search_match: None,
+            scale_factor: 1.0,
             on_command: Box::new(on_command),
             on_pointer_command: Box::new(on_pointer_command),
             on_link_click: Box::new(on_link_click),
@@ -129,6 +139,11 @@ impl<'a, Message> Editor<'a, Message> {
         self.search_regex = regex;
         self.search_match_case = match_case;
         self.active_search_match = active_match;
+        self
+    }
+
+    pub fn scale_factor(mut self, factor: f32) -> Self {
+        self.scale_factor = factor.max(1.0);
         self
     }
 }
@@ -174,7 +189,7 @@ where
                 for span in &line.spans {
                     let tex = span.visible_text(false).trim_matches('$').trim();
                     if let Some((_, _, h)) = math_cache.get(tex) {
-                        max_h = max_h.max(*h * 1.2 + 48.0);
+                        max_h = max_h.max(*h * MATH_BLOCK_SCALE + 48.0);
                     } else if !tex.is_empty() {
                         let visual_lines = tex
                             .lines()
@@ -1148,7 +1163,7 @@ where
                             let tex = span.visible_text(false).trim_matches('$').trim();
                             self.math_cache
                                 .get(tex)
-                                .map(|(_, w, _)| *w * 1.2 + 48.0)
+                                .map(|(_, w, _)| *w * MATH_BLOCK_SCALE + 48.0)
                                 .unwrap_or_else(|| {
                                     measure_width::<R>(tex, 16.0, iced::Font::MONOSPACE) + 48.0
                                 })
@@ -1950,7 +1965,11 @@ where
                     }
 
                     let tex = span.visible_text(false).trim_matches('$').trim();
-                    let scale: f32 = if line.is_math_block { 1.2 } else { 1.0 };
+                    let scale: f32 = if line.is_math_block {
+                        MATH_BLOCK_SCALE
+                    } else {
+                        1.0
+                    };
                     let mut drawn_w = 0.0;
                     let mut image_rendered = false;
 
@@ -2037,19 +2056,28 @@ where
                                     *viewport
                                 };
 
+                                let draw_y = if line.is_math_block {
+                                    line_draw_y + (lh - draw_h) / 2.0
+                                } else {
+                                    let margin_top = (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
+                                    line_draw_y + margin_top
+                                };
+                                // Snap the rect to the device-pixel grid. The
+                                // centering math above yields fractional
+                                // positions with a different sub-pixel phase
+                                // per axis, which makes the horizontal and
+                                // vertical strokes of the same glyph sample
+                                // differently (one crisp, one split across two
+                                // dim pixels).
+                                let sf = self.scale_factor;
+                                let snap = |v: f32| (v * sf).round() / sf;
                                 renderer.draw_image(
                                     iced::advanced::image::Image::new(handle.clone()),
                                     Rectangle {
-                                        x: draw_x,
-                                        y: if line.is_math_block {
-                                            line_draw_y + (lh - draw_h) / 2.0
-                                        } else {
-                                            let margin_top =
-                                                (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
-                                            line_draw_y + margin_top
-                                        },
-                                        width: draw_w,
-                                        height: draw_h,
+                                        x: snap(draw_x),
+                                        y: snap(draw_y),
+                                        width: snap(draw_w),
+                                        height: snap(draw_h),
                                     },
                                     math_viewport,
                                 );
@@ -3382,7 +3410,7 @@ impl<'a, Message> Editor<'a, Message> {
                     let width = self
                         .math_cache
                         .get(tex)
-                        .map(|(_, w, _)| *w * 1.2 + 72.0)
+                        .map(|(_, w, _)| *w * MATH_BLOCK_SCALE + 72.0)
                         .unwrap_or_else(|| measure_width::<R>(tex, 16.0, iced::Font::MONOSPACE));
                     max_width = max_width.max(width);
                 }

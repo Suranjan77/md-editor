@@ -16,6 +16,7 @@ pub enum Message {
     GlobalSearchOpen,
     SearchClose,
     SearchQueryChanged(String),
+    SearchDebounceElapsed,
     SearchReplaceChanged(String),
     SearchRegexToggled(bool),
     SearchMatchCaseToggled(bool),

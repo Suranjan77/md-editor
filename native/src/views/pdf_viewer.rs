@@ -409,7 +409,6 @@ pub fn view_continuous<'a>(
     page_sizes: &'a [Option<(f32, f32)>],
     placeholder_page_size: Option<(f32, f32)>,
     search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
-    _search_match_indices_by_page: &'a std::collections::HashMap<u16, Vec<usize>>,
     active_search_index: Option<usize>,
     page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
     annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,

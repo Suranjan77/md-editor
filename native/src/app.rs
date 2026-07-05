@@ -40,31 +40,6 @@ pub(crate) fn is_supported_image_path(path: &str) -> bool {
         || path.ends_with(".webp")
 }
 
-#[allow(dead_code)]
-fn pdf_slot_offset(page: u16, slot_height: f32) -> f32 {
-    PDF_PAGE_LIST_PADDING + f32::from(page) * (slot_height + PDF_PAGE_SPACING)
-}
-
-#[allow(dead_code)]
-fn pdf_slot_total_height(total_pages: u16, slot_height: f32) -> f32 {
-    PDF_PAGE_LIST_PADDING + f32::from(total_pages) * (slot_height + PDF_PAGE_SPACING)
-}
-
-#[allow(dead_code)]
-fn pdf_slot_page_at_scroll(scroll_y: f32, total_pages: u16, slot_height: f32) -> u16 {
-    if total_pages == 0 {
-        return 0;
-    }
-
-    let slot_stride = slot_height + PDF_PAGE_SPACING;
-    if slot_stride <= 0.0 {
-        return 0;
-    }
-
-    let page = ((scroll_y - PDF_PAGE_LIST_PADDING).max(0.0) / slot_stride).floor() as u16;
-    page.min(total_pages.saturating_sub(1))
-}
-
 fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
     if start >= end {
         return String::new();
@@ -103,6 +78,17 @@ pub struct MdEditor {
 
 impl MdEditor {
     pub fn new() -> (Self, Task<Message>) {
+        Self::new_with_startup_file(None)
+    }
+
+    /// `startup_file` is a path passed on the command line (typically by the
+    /// OS "open with" handler). When set it overrides the remembered
+    /// last-vault/last-file: a file inside the last vault opens in that vault,
+    /// any other file opens with its parent directory as the vault, and a
+    /// directory opens as a vault.
+    pub fn new_with_startup_file(
+        startup_file: Option<std::path::PathBuf>,
+    ) -> (Self, Task<Message>) {
         let state = Arc::new(md_editor_core::state::AppState::new());
         let last_vault = md_editor_core::config::get_sys_config(&state, "last_vault")
             .ok()
@@ -127,25 +113,41 @@ impl MdEditor {
             active_panel: ActivePanel::Markdown,
         };
 
+        let startup = startup_file.and_then(|p| resolve_startup_target(&p, last_vault.as_deref()));
+
         let mut task = Task::none();
-        if let Some(path) = last_vault {
+        if let Some((vault_root, rel_file)) = startup {
+            let index_task = app.open_vault(&vault_root);
+            if let Some(file_path) = rel_file {
+                task = app.open_startup_file(&file_path);
+            }
+            task = Task::batch(vec![index_task, task]);
+        } else if let Some(path) = last_vault {
             let index_task = app.open_vault(&path);
             if let Some(file_path) = last_file {
-                let lower = file_path.to_lowercase();
-                if lower.ends_with(".md") || lower.ends_with(".markdown") {
-                    task = app.open_file(&file_path);
-                } else if lower.ends_with(".pdf") {
-                    app.pdf.active_path = Some(file_path.clone());
-                    app.showing_pdf = true;
-                    task = app.open_pdf(&file_path);
-                } else if is_supported_image_path(&lower) {
-                    task = app.open_image(&file_path);
-                }
+                task = app.open_startup_file(&file_path);
             }
             task = Task::batch(vec![index_task, task]);
         }
 
         (app, task)
+    }
+
+    /// Open a vault-relative file by extension (markdown, PDF, or image);
+    /// unsupported extensions are ignored.
+    fn open_startup_file(&mut self, file_path: &str) -> Task<Message> {
+        let lower = file_path.to_lowercase();
+        if lower.ends_with(".md") || lower.ends_with(".markdown") {
+            self.open_file(file_path)
+        } else if lower.ends_with(".pdf") {
+            self.pdf.active_path = Some(file_path.to_string());
+            self.showing_pdf = true;
+            self.open_pdf(file_path)
+        } else if is_supported_image_path(&lower) {
+            self.open_image(file_path)
+        } else {
+            Task::none()
+        }
     }
 
     pub fn title(&self) -> String {
@@ -224,6 +226,13 @@ impl MdEditor {
             Subscription::none()
         };
 
+        let search_debounce = if self.search.pending_query_at.is_some() {
+            iced::time::every(crate::search_state::SEARCH_DEBOUNCE)
+                .map(|_| Message::SearchDebounceElapsed)
+        } else {
+            Subscription::none()
+        };
+
         let mouse_drag = if self.ui.is_resizing_split {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
@@ -265,6 +274,7 @@ impl MdEditor {
             keyboard,
             toast,
             highlight_debounce,
+            search_debounce,
             mouse_drag,
             window_events,
             vault_watch,
@@ -585,9 +595,15 @@ impl MdEditor {
             Message::EditorSave => {
                 if let Some(path) = &self.active_path {
                     let content = self.editor.buffer.text();
-                    let _ = md_editor_core::vault::save_file(&self.state, path, &content);
-                    self.editor.buffer.dirty = false;
-                    self.ui.toast = Some("File saved".to_string());
+                    match md_editor_core::vault::save_file(&self.state, path, &content) {
+                        Ok(()) => {
+                            self.editor.buffer.dirty = false;
+                            self.ui.toast = Some("File saved".to_string());
+                        }
+                        Err(err) => {
+                            self.ui.toast = Some(format!("Save failed: {err}"));
+                        }
+                    }
                 }
                 Task::none()
             }
@@ -642,7 +658,18 @@ impl MdEditor {
                         "PDF renderer is unavailable or the PDF could not be opened".to_string(),
                     );
                 }
-                if self.pdf.fit_to_width
+                // A target page stashed by PdfDocumentIdComputed while the page
+                // count was still unknown (see that handler) is consumed here.
+                let target_task = if pages > 0 {
+                    if let Some(page) = self.pdf.initial_target_page.take() {
+                        self.navigate_pdf_page(page)
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                };
+                let layout_task = if self.pdf.fit_to_width
                     && self
                         .pdf.page_sizes
                         .iter()
@@ -654,7 +681,8 @@ impl MdEditor {
                     Task::none()
                 } else {
                     self.render_all_pdf_pages()
-                }
+                };
+                Task::batch(vec![layout_task, target_task])
             }
             Message::PdfZoomChanged(zoom) => {
                 let current_page = self.pdf.page_at_scroll(self.pdf.scroll_y);
@@ -1066,15 +1094,42 @@ impl MdEditor {
                 self.restore_scroll_positions()
             }
             Message::SearchQueryChanged(q) => {
-                self.search.query = q.clone();
+                self.search.query = q;
                 self.search.match_index = None;
                 self.search.pdf_error = None;
+                // Stale results are cleared immediately, but the actual vault
+                // FTS query and full-document PDF scan run debounced (see
+                // SearchDebounceElapsed) so they fire once per pause in
+                // typing, not once per keystroke.
+                if self.search.query.len() <= 2 || self.search.regex {
+                    self.search.results.clear();
+                }
+                if !((self.search.visible || self.pdf_search_is_active())
+                    && self.pdf.active_path.is_some()
+                    && self.search.query.len() > 1)
+                {
+                    self.search.pdf_results.clear();
+                    self.search.pdf_indices_by_page.clear();
+                }
+                self.search.pending_query_at = Some(std::time::Instant::now());
+                Task::none()
+            }
+            Message::SearchDebounceElapsed => {
+                if self
+                    .search
+                    .pending_query_at
+                    .is_some_and(|at| at.elapsed() < crate::search_state::SEARCH_DEBOUNCE)
+                {
+                    return Task::none();
+                }
+                if self.search.pending_query_at.take().is_none() {
+                    return Task::none();
+                }
+                let q = self.search.query.clone();
                 if q.len() > 2 && !self.search.regex {
                     if let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q) {
                         self.search.results = res;
                     }
-                } else {
-                    self.search.results.clear();
                 }
                 if (self.search.visible || self.pdf_search_is_active())
                     && self.pdf.active_path.is_some()
@@ -1082,8 +1137,6 @@ impl MdEditor {
                 {
                     self.search_pdf()
                 } else {
-                    self.search.pdf_results.clear();
-                    self.search.pdf_indices_by_page.clear();
                     Task::none()
                 }
             }
@@ -1245,15 +1298,26 @@ impl MdEditor {
                     }
                 }
 
-                let scroll_task = if let Some(page) = target_page {
-                    self.pdf.initial_target_page = None;
+                let resolved_target = if let Some(page) = target_page {
                     self.pdf.initial_target_annotation = None;
-                    self.navigate_pdf_page(page)
-                } else if let Some(page) = self.pdf.initial_target_page {
-                    self.pdf.initial_target_page = None;
-                    self.navigate_pdf_page(page)
+                    Some(page)
                 } else {
-                    Task::none()
+                    self.pdf.initial_target_page
+                };
+                let scroll_task = match resolved_target {
+                    Some(page) if self.pdf.total_pages > 0 => {
+                        self.pdf.initial_target_page = None;
+                        self.navigate_pdf_page(page)
+                    }
+                    Some(page) => {
+                        // The hash task won the race against PdfLoaded, so the
+                        // page count isn't known yet and navigating now would
+                        // clamp the target to 0. Stash it; the PdfLoaded
+                        // handler consumes it once the document is applied.
+                        self.pdf.initial_target_page = Some(page);
+                        Task::none()
+                    }
+                    None => Task::none(),
                 };
 
                 // Internal references: load the cached target map if this
@@ -1711,6 +1775,14 @@ impl MdEditor {
                     return Task::none();
                 }
                 self.ui.scale_factor = factor;
+                // Math bitmaps are rasterized at the display scale but cached
+                // by TeX string only; flush and re-render at the new density.
+                let math_task = if self.editor.math_cache.is_empty() {
+                    Task::none()
+                } else {
+                    self.editor.math_cache.clear();
+                    self.editor.load_math(factor)
+                };
                 // Cached page bitmaps were rasterized at the old supersample;
                 // drop them and re-render at the new device resolution.
                 if self.pdf.active_path.is_some() && self.pdf.total_pages > 0 {
@@ -1720,9 +1792,9 @@ impl MdEditor {
                     self.pdf.pending_pages.clear();
                     self.pdf.pending_links.clear();
                     self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
-                    return self.render_visible_pdf_pages();
+                    return Task::batch(vec![math_task, self.render_visible_pdf_pages()]);
                 }
-                Task::none()
+                math_task
             }
             Message::VaultFilesChanged(paths) => {
                 // Reconcile the index/search for changed markdown files. The
@@ -1822,7 +1894,8 @@ impl MdEditor {
                     self.search.regex,
                     self.search.match_case,
                     active_search_match,
-                ),
+                )
+                .scale_factor(self.ui.scale_factor),
             )
             .padding(20)
             .width(Length::Fill),
@@ -1883,7 +1956,6 @@ impl MdEditor {
                     } else {
                         &[]
                     },
-                    &self.search.pdf_indices_by_page,
                     self.search.match_index,
                     &self.pdf.page_text,
                     &self.pdf.annotations,
@@ -2247,33 +2319,46 @@ impl MdEditor {
 
     fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
         let is_different = self.active_path.as_deref() != Some(path);
-        if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, path) {
-            if let Ok(content) = String::from_utf8(bytes) {
-                self.editor.buffer = DocBuffer::from_text(&content);
-                self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
-                self.active_path = Some(path.to_string());
-                let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
-                self.active_image_path = None;
-                self.active_image = None;
-                self.showing_pdf = false;
-                self.active_panel = ActivePanel::Markdown;
-                self.editor.toc_entries = views::toc::get_toc(&content);
-                self.editor.toc_is_synthetic = false;
-                let highlight_task = self.refresh_highlighting_for_current_buffer(true);
-                self.vault.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, path)
-                    .unwrap_or_default();
-                if is_different && reset_scroll {
-                    self.editor.scroll_y = 0.0;
-                    let scroll_task = operation::scroll_to(
-                        iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
-                        AbsoluteOffset { x: 0.0, y: 0.0 },
-                    );
-                    return Task::batch(vec![highlight_task, scroll_task]);
+        match md_editor_core::vault::open_file(&self.state, path) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(content) => {
+                    self.editor.buffer = DocBuffer::from_text(&content);
+                    self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+                    self.active_path = Some(path.to_string());
+                    let _ =
+                        md_editor_core::config::set_sys_config(&self.state, "last_file", path);
+                    self.active_image_path = None;
+                    self.active_image = None;
+                    self.showing_pdf = false;
+                    self.active_panel = ActivePanel::Markdown;
+                    self.editor.toc_entries = views::toc::get_toc(&content);
+                    self.editor.toc_is_synthetic = false;
+                    let highlight_task = self.refresh_highlighting_for_current_buffer(true);
+                    self.vault.backlinks =
+                        md_editor_core::vault::get_mixed_backlinks(&self.state, path)
+                            .unwrap_or_default();
+                    if is_different && reset_scroll {
+                        self.editor.scroll_y = 0.0;
+                        let scroll_task = operation::scroll_to(
+                            iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                            AbsoluteOffset { x: 0.0, y: 0.0 },
+                        );
+                        return Task::batch(vec![highlight_task, scroll_task]);
+                    }
+                    highlight_task
                 }
-                return highlight_task;
+                Err(_) => {
+                    self.ui.toast = Some(format!(
+                        "Cannot open {path}: not valid UTF-8 text (unsupported encoding?)"
+                    ));
+                    Task::none()
+                }
+            },
+            Err(err) => {
+                self.ui.toast = Some(format!("Cannot open {path}: {err}"));
+                Task::none()
             }
         }
-        Task::none()
     }
 
     fn open_pdf(&mut self, path: &str) -> Task<Message> {
@@ -2742,7 +2827,7 @@ impl MdEditor {
         if let (Some(root), Some(path)) = (self.vault.root.clone(), self.active_path.clone()) {
             self.editor.load_images(&root, &path);
         }
-        self.editor.load_math()
+        self.editor.load_math(self.ui.scale_factor)
     }
 
 
@@ -2840,7 +2925,10 @@ impl MdEditor {
         self.pdf.current_page = target_page;
         self.pdf.pending_pages.clear();
         self.pdf.pending_links.clear();
-        self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
+        // No generation bump here: the document and zoom bucket are unchanged,
+        // so in-flight results are still valid. Bumping would race the initial
+        // PdfLoaded/PdfTocLoaded tasks (tagged with the open generation) and
+        // silently drop them when a PDF is opened with a target page.
         self.pdf.toc_target_page = Some(target_page);
 
         let target_dimensions_ready = self
@@ -3322,6 +3410,40 @@ fn focus_pdf_search_input() -> Task<Message> {
     ))
 }
 
+/// Resolve a path passed on the command line to `(vault_root, vault_relative_file)`.
+/// A directory becomes the vault itself; a file inside `last_vault` reuses that
+/// vault; any other file uses its parent directory as the vault.
+fn resolve_startup_target(
+    path: &std::path::Path,
+    last_vault: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    // `std::path::absolute` (not `canonicalize`) to avoid `\\?\` verbatim
+    // prefixes on Windows, which would leak into stored vault paths.
+    let abs = std::path::absolute(path).ok()?;
+    if abs.is_dir() {
+        return Some((abs.to_string_lossy().to_string(), None));
+    }
+    if !abs.is_file() {
+        return None;
+    }
+    let (root, rel) = match last_vault
+        .map(std::path::Path::new)
+        .and_then(|v| std::path::absolute(v).ok())
+        .and_then(|v| abs.strip_prefix(&v).ok().map(|rel| (v.clone(), rel.to_path_buf())))
+    {
+        Some((vault, rel)) => (vault, rel),
+        None => {
+            let parent = abs.parent()?.to_path_buf();
+            let rel = abs.strip_prefix(&parent).ok()?.to_path_buf();
+            (parent, rel)
+        }
+    };
+    Some((
+        root.to_string_lossy().to_string(),
+        Some(rel.to_string_lossy().replace('\\', "/")),
+    ))
+}
+
 fn normalize_path(path: &std::path::Path) -> String {
     let mut components = Vec::new();
     for component in path.components() {
@@ -3339,7 +3461,9 @@ fn normalize_path(path: &std::path::Path) -> String {
         }
     }
     let normalized: std::path::PathBuf = components.into_iter().collect();
-    normalized.to_string_lossy().to_string()
+    // Vault-relative strings use forward slashes everywhere (see core's
+    // path_to_relative_string); PathBuf would yield `\` on Windows.
+    normalized.to_string_lossy().replace('\\', "/")
 }
 
 fn resolve_relative_link_path(
@@ -3436,8 +3560,16 @@ fn slugify(s: &str) -> String {
 }
 
 fn find_heading_line(text: &str, target_slug: &str) -> Option<usize> {
+    let mut in_code_block = false;
     for (line_idx, line_content) in text.split('\n').enumerate() {
         let trimmed = line_content.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
         if trimmed.starts_with('#') {
             let mut level = 0;
             for c in trimmed.chars() {
@@ -3669,44 +3801,6 @@ mod tests {
         assert!(editor_command_keeps_cursor_visible(
             &EditorCommand::InsertText("\n".to_string())
         ));
-    }
-
-    #[test]
-    fn pdf_slot_offsets_use_fixed_placeholder_stride() {
-        let slot_height = 792.0;
-        let target_page = 250;
-
-        let offset = pdf_slot_offset(target_page, slot_height);
-
-        assert_eq!(
-            offset,
-            PDF_PAGE_LIST_PADDING + f32::from(target_page) * (slot_height + PDF_PAGE_SPACING)
-        );
-        assert_eq!(
-            pdf_slot_page_at_scroll(offset, 500, slot_height),
-            target_page
-        );
-    }
-
-    #[test]
-    fn pdf_slot_page_lookup_does_not_drift_to_later_pages() {
-        let slot_height = 792.0;
-        let target_page = 250;
-        let offset = pdf_slot_offset(target_page, slot_height);
-
-        assert_eq!(pdf_slot_page_at_scroll(offset, 500, slot_height), 250);
-        assert_ne!(pdf_slot_page_at_scroll(offset, 500, slot_height), 400);
-    }
-
-    #[test]
-    fn pdf_total_height_reserves_space_for_every_blank_page() {
-        let total_pages = 500;
-        let slot_height = 792.0;
-
-        assert_eq!(
-            pdf_slot_total_height(total_pages, slot_height),
-            PDF_PAGE_LIST_PADDING + f32::from(total_pages) * (slot_height + PDF_PAGE_SPACING)
-        );
     }
 
     #[test]

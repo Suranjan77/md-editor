@@ -144,14 +144,13 @@ pub fn compute_provisional_id(
         .map_err(|e| format!("Failed to read file: {e}"))?;
     buffer.truncate(bytes_read);
 
+    // Deliberately content-only (first 1 MiB + length): the id keys all
+    // annotations, and including mtime would orphan them whenever the file is
+    // copied, restored from backup, or re-downloaded. mtime is still returned
+    // for bookkeeping in `pdf_documents`.
     let mut hasher = Sha256::new();
     hasher.update(&buffer);
     hasher.update(&file_len.to_be_bytes());
-    if let Some(mtime) = modified {
-        hasher.update(&mtime.to_be_bytes());
-    } else {
-        hasher.update(&[0u8; 8]);
-    }
 
     let hash_result = hasher.finalize();
     let id = format!("{:x}", hash_result);
@@ -248,24 +247,6 @@ pub struct PdfSearchMatch {
     pub page_index: u16,
     pub context: String,
     pub rects: Vec<PdfRect>,
-}
-
-pub struct PdfState {
-    pub current_page: u16,
-    pub total_pages: u16,
-    pub scale: f32,
-    pub path: Option<String>,
-}
-
-impl PdfState {
-    pub fn new() -> Self {
-        Self {
-            current_page: 0,
-            total_pages: 0,
-            scale: 1.5,
-            path: None,
-        }
-    }
 }
 
 pub struct PdfRenderer {

@@ -12,8 +12,16 @@ pub struct TocEntry {
 
 pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
     let mut toc = Vec::new();
+    let mut in_code_block = false;
     for (i, line) in buffer_text.split('\n').enumerate() {
         let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
         if trimmed.starts_with('#') {
             let mut level = 0;
             for c in trimmed.chars() {

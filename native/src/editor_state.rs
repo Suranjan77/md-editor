@@ -200,8 +200,10 @@ impl EditorPane {
         }
     }
 
-    /// Spawn render tasks for any not-yet-cached math spans.
-    pub fn load_math(&self) -> Task<Message> {
+    /// Spawn render tasks for any not-yet-cached math spans. `scale_factor` is
+    /// the window's device-pixel ratio; the cache must be flushed when it
+    /// changes (see the WindowRescaled handler) since it is not part of the key.
+    pub fn load_math(&self, scale_factor: f32) -> Task<Message> {
         let mut tasks = Vec::new();
         for line in &self.highlighted_lines {
             for span in &line.spans {
@@ -210,7 +212,12 @@ impl EditorPane {
                     if !tex.is_empty() && !self.math_cache.contains_key(&tex) {
                         let tex_clone = tex.clone();
                         tasks.push(Task::perform(
-                            async move { (tex_clone.clone(), render_latex_task(&tex_clone)) },
+                            async move {
+                                (
+                                    tex_clone.clone(),
+                                    render_latex_task(&tex_clone, scale_factor),
+                                )
+                            },
                             |(t, r)| Message::MathRendered(t, r),
                         ));
                     }
@@ -237,13 +244,21 @@ pub(crate) fn plain_highlight_placeholders(text: &str) -> Vec<StyledLine> {
         .collect()
 }
 
-fn render_latex_task(tex: &str) -> Result<(Handle, f32, f32), String> {
+fn render_latex_task(tex: &str, scale_factor: f32) -> Result<(Handle, f32, f32), String> {
     use ratex_layout::{LayoutOptions, layout, to_display_list};
     use ratex_parser::parser::parse;
     use ratex_render::{RenderOptions, render_to_png};
     use ratex_types::color::Color as RatexColor;
     use ratex_types::math_style::MathStyle;
 
+    // Rasterize at the display's real pixel density times the block display
+    // scale, so a block equation drawn at `logical_size * MATH_BLOCK_SCALE`
+    // maps 1:1 onto device pixels instead of being resampled at a fractional
+    // ratio (which renders thin glyph strokes alternately crisp and blurry).
+    // Inline math is drawn at 1.0× logical, a mild downscale that bilinear
+    // sampling handles well.
+    let device_pixel_ratio =
+        (crate::editor::renderer::MATH_BLOCK_SCALE * scale_factor.max(1.0)).min(6.0);
     let options = RenderOptions {
         font_size: 24.0,
         padding: 4.0,
@@ -254,7 +269,7 @@ fn render_latex_task(tex: &str) -> Result<(Handle, f32, f32), String> {
             a: 0.0,
         },
         font_dir: String::new(),
-        device_pixel_ratio: 2.0,
+        device_pixel_ratio,
     };
 
     let layout_opts = LayoutOptions::default()
@@ -274,5 +289,11 @@ fn render_latex_task(tex: &str) -> Result<(Handle, f32, f32), String> {
 
     let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
     let (w, h) = img.dimensions();
-    Ok((Handle::from_bytes(bytes), w as f32 / 2.0, h as f32 / 2.0))
+    // Cache the logical size (bitmap pixels / raster DPR); layout and drawing
+    // work in logical units.
+    Ok((
+        Handle::from_bytes(bytes),
+        w as f32 / device_pixel_ratio,
+        h as f32 / device_pixel_ratio,
+    ))
 }
