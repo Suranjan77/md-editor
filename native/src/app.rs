@@ -1032,8 +1032,12 @@ impl MdEditor {
                 self.ui.toast = Some(format!("Preview Error: {}", e));
                 Task::none()
             }
-            Message::PdfTocLoaded(generation, entries, synthetic) => {
-                if generation != self.pdf.render_generation {
+            Message::PdfTocLoaded(path, entries, synthetic) => {
+                // Path-gated, not generation-gated: fit-to-width bumps the
+                // render generation right after open, and the TOC scan for
+                // bookmark-less PDFs regularly finishes after that. Only a
+                // result for a different document is stale.
+                if self.pdf.active_path.as_deref() != Some(path.as_str()) {
                     return Task::none();
                 }
                 fn flatten_pdf_toc(
@@ -1055,8 +1059,8 @@ impl MdEditor {
 
                 let mut mapped = Vec::new();
                 flatten_pdf_toc(&entries, 1, &mut mapped);
-                self.editor.toc_entries = mapped;
-                self.editor.toc_is_synthetic = synthetic;
+                self.pdf.toc_entries = mapped;
+                self.pdf.toc_is_synthetic = synthetic;
                 Task::none()
             }
             Message::PdfPageLinksLoaded(generation, page, links) => {
@@ -2006,7 +2010,7 @@ impl MdEditor {
             && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()));
         let toc_view: Element<Message, Theme, iced::Renderer> =
             if self.editor.toc_visible && pdf_toc_available {
-                views::toc::view(&self.editor.toc_entries, self.editor.toc_is_synthetic)
+                views::toc::view(&self.pdf.toc_entries, self.pdf.toc_is_synthetic)
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
@@ -2407,6 +2411,8 @@ impl MdEditor {
         self.pdf.focused_annotation_id = None;
         self.pdf.pending_text.clear();
         self.pdf.text_lru.clear();
+        self.pdf.toc_entries.clear();
+        self.pdf.toc_is_synthetic = false;
         self.vault.backlinks =
             md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
 
@@ -2427,6 +2433,7 @@ impl MdEditor {
         let _state_sizes = self.state.clone();
         let path_clone = path_str.clone();
         let path_str_toc = path_str.clone();
+        let path_for_toc = path.to_string();
         let path_for_sizes = path.to_string();
         let path_str_sizes = path_str.clone();
 
@@ -2459,7 +2466,7 @@ impl MdEditor {
                 },
                 move |res| {
                     let (entries, synthetic) = res.unwrap_or_default();
-                    Message::PdfTocLoaded(generation, entries, synthetic)
+                    Message::PdfTocLoaded(path_for_toc.clone(), entries, synthetic)
                 },
             ),
         ])
@@ -2488,6 +2495,8 @@ impl MdEditor {
                 self.active_panel = ActivePanel::Markdown;
                 self.editor.toc_entries.clear();
                 self.editor.toc_is_synthetic = false;
+                self.pdf.toc_entries.clear();
+                self.pdf.toc_is_synthetic = false;
                 self.vault.backlinks.clear();
             }
             Err(err) => {

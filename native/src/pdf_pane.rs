@@ -56,6 +56,14 @@ pub struct PdfPane {
     pub initial_target_page: Option<u16>,
     pub initial_target_annotation: Option<String>,
 
+    /// Flattened outline of the open document, shown in the TOC panel. Kept
+    /// separate from the editor's markdown TOC — in split view both documents
+    /// are open at once and each pane owns its own outline.
+    pub toc_entries: Vec<crate::views::toc::TocEntry>,
+    /// True when the outline was synthesized from page text rather than read
+    /// from embedded bookmarks.
+    pub toc_is_synthetic: bool,
+
     pub pending_text: HashSet<u16>,
     pub text_lru: VecDeque<u16>,
     pub pending_pages: HashSet<u16>,
@@ -94,6 +102,8 @@ impl PdfPane {
             focused_annotation_id: None,
             initial_target_page: None,
             initial_target_annotation: None,
+            toc_entries: Vec::new(),
+            toc_is_synthetic: false,
             pending_text: HashSet::new(),
             text_lru: VecDeque::new(),
             pending_pages: HashSet::new(),

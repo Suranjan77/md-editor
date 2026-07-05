@@ -66,7 +66,11 @@ pub enum Message {
     },
     PdfLeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
     PdfRightClicked(u16, f32, f32),
-    PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>, bool),
+    // vault-relative path the TOC belongs to, outline entries, synthetic flag.
+    // Gated on the path (not the render generation): the TOC is a
+    // document-level artifact and must survive the zoom/fit generation bumps
+    // that happen while it is still being extracted.
+    PdfTocLoaded(String, Vec<md_editor_core::pdf::TocEntry>, bool),
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfReferencesLoaded(String, Vec<md_editor_core::references::ReferenceLink>),
     PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
