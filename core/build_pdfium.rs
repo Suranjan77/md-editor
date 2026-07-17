@@ -10,6 +10,15 @@ use tar::Archive;
 /// Download and set up PDFium binaries for the current platform.
 /// Returns the directory containing the PDFium shared library.
 pub fn setup_pdfium() -> PathBuf {
+    const DEFAULT_PDFIUM_RELEASE: &str = "chromium/6996";
+    println!("cargo:rerun-if-env-changed=PDFIUM_RELEASE");
+    println!("cargo:rerun-if-env-changed=PDFIUM_SHA256");
+    let release = env::var("PDFIUM_RELEASE")
+        .unwrap_or_else(|_| DEFAULT_PDFIUM_RELEASE.to_string());
+    let release_slug: String = release
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' { ch } else { '_' })
+        .collect();
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| {
         if cfg!(target_os = "windows") {
             "windows".to_string()
@@ -64,11 +73,20 @@ pub fn setup_pdfium() -> PathBuf {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| target_dir.join(&profile));
 
-    let cache_dir = target_dir.join("pdfium").join(platform_slug);
+    let cache_dir = target_dir
+        .join("pdfium")
+        .join(format!("{platform_slug}-{release_slug}"));
     let lib_subdir = if target_os == "windows" { "bin" } else { "lib" };
     let lib_path = cache_dir.join(lib_subdir).join(lib_filename);
 
-    if lib_path.exists() {
+    let expected_sha = env::var("PDFIUM_SHA256").ok();
+    let checksum_marker = cache_dir.join(".sha256");
+    let checksum_matches = expected_sha.as_ref().is_none_or(|expected| {
+        fs::read_to_string(&checksum_marker)
+            .ok()
+            .is_some_and(|recorded| recorded.trim().eq_ignore_ascii_case(expected.trim()))
+    });
+    if lib_path.exists() && checksum_matches {
         println!(
             "cargo:warning=PDFium already cached at {}",
             lib_path.display()
@@ -83,9 +101,6 @@ pub fn setup_pdfium() -> PathBuf {
     // To verify the archive, set `PDFIUM_SHA256` to the expected hex digest of
     // the platform `.tgz` — the build then fails loudly on mismatch instead of
     // trusting whatever bytes the network returned.
-    println!("cargo:rerun-if-env-changed=PDFIUM_RELEASE");
-    println!("cargo:rerun-if-env-changed=PDFIUM_SHA256");
-    let release = env::var("PDFIUM_RELEASE").unwrap_or_else(|_| "latest".to_string());
     println!(
         "cargo:warning=Downloading PDFium ({release}) for {}...",
         platform_slug
@@ -117,9 +132,13 @@ pub fn setup_pdfium() -> PathBuf {
         return cache_dir;
     }
 
-    if let Ok(expected) = env::var("PDFIUM_SHA256") {
+    if let Some(expected) = expected_sha {
         match verify_sha256(&archive_path, &expected) {
-            Ok(()) => println!("cargo:warning=PDFium archive checksum verified"),
+            Ok(()) => {
+                fs::write(&checksum_marker, expected.trim())
+                    .expect("Failed to record verified PDFium checksum");
+                println!("cargo:warning=PDFium archive checksum verified");
+            }
             Err(e) => {
                 let _ = fs::remove_file(&archive_path);
                 panic!("PDFium archive checksum verification failed: {e}");

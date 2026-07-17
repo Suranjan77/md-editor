@@ -10,6 +10,7 @@ on:
 
 env:
   APP_NAME: md-editor
+  PDFIUM_RELEASE: chromium/6996
 
 permissions:
   contents: write
@@ -36,25 +37,6 @@ jobs:
         run: |
           cargo build --release
 
-      - name: Download Pdfium Windows x64
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "pdfium-download" | Out-Null
-
-          Invoke-WebRequest `
-            -Uri "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-win-x64.tgz" `
-            -OutFile "pdfium-download/pdfium-win-x64.tgz"
-
-          tar -xzf "pdfium-download/pdfium-win-x64.tgz" -C "pdfium-download"
-
-          $pdfiumDll = Get-ChildItem -Path "pdfium-download" -Recurse -Filter "pdfium.dll" | Select-Object -First 1
-
-          if (-not $pdfiumDll) {
-            throw "pdfium.dll was not found in the downloaded Pdfium archive."
-          }
-
-          Write-Host "Found Pdfium DLL at: $($pdfiumDll.FullName)"
-
       - name: Create release package layout
         shell: pwsh
         run: |
@@ -71,8 +53,11 @@ jobs:
 
           Copy-Item $exePath "$packageDir/"
           
-          $pdfiumDll = Get-ChildItem -Path "pdfium-download" -Recurse -Filter "pdfium.dll" | Select-Object -First 1
-          Copy-Item $pdfiumDll.FullName "$resourceDir/pdfium.dll"
+          $pdfiumDll = "target/release/pdfium.dll"
+          if (-not (Test-Path $pdfiumDll)) {
+            throw "pdfium.dll was not copied by the build script: $pdfiumDll"
+          }
+          Copy-Item $pdfiumDll "$resourceDir/pdfium.dll"
 
           Write-Host "Package layout:"
           Get-ChildItem -Path $packageDir -Recurse
@@ -174,6 +159,7 @@ jobs:
     name: Publish GitHub Release
     needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -193,10 +179,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Latest Build' }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           draft: false
-          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          prerelease: false
           files: |
             ./artifacts/windows/${{ env.APP_NAME }}-windows-x64.zip
             ./artifacts/linux/${{ env.APP_NAME }}-linux-x64.tar.gz

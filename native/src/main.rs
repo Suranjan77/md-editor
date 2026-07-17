@@ -25,9 +25,9 @@ fn install_linux_desktop_entry_with_home(home: &str) -> bool {
         let hicolor_dir = icons_dir.join("hicolor");
 
         // Create directories if they do not exist
-        let _ = std::fs::create_dir_all(&app_dir);
-        let _ = std::fs::create_dir_all(&icons_dir);
-        let _ = std::fs::create_dir_all(&hicolor_dir);
+        std::fs::create_dir_all(&app_dir).ok()?;
+        std::fs::create_dir_all(&icons_dir).ok()?;
+        std::fs::create_dir_all(&hicolor_dir).ok()?;
 
         // Copy system hicolor index.theme if missing locally
         let index_theme_path = hicolor_dir.join("index.theme");
@@ -40,7 +40,7 @@ fn install_linux_desktop_entry_with_home(home: &str) -> bool {
 
         // Write primary icon (1024x1024) directly to ~/.local/share/icons/md-editor.png
         let primary_icon_path = icons_dir.join("md-editor.png");
-        let _ = std::fs::write(&primary_icon_path, icon_bytes);
+        std::fs::write(&primary_icon_path, icon_bytes).ok()?;
 
         // Write scalable icon (1024x1024) to ~/.local/share/icons/hicolor/scalable/apps/md-editor.png
         let scalable_apps_dir = hicolor_dir.join("scalable").join("apps");
@@ -87,7 +87,7 @@ StartupWMClass=md-editor
         );
 
         let desktop_file_path = app_dir.join("md-editor.desktop");
-        let _ = std::fs::write(desktop_file_path, desktop_content);
+        std::fs::write(desktop_file_path, desktop_content).ok()?;
 
         // Update desktop database and icon cache
         let _ = std::process::Command::new("update-desktop-database")
@@ -179,11 +179,11 @@ fn uninstall_linux_desktop_entry() -> bool {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum CliAction {
     Install,
     Uninstall,
-    RunApp,
+    RunApp(Option<String>),
 }
 
 fn parse_cli_args(args: &[String]) -> CliAction {
@@ -195,7 +195,12 @@ fn parse_cli_args(args: &[String]) -> CliAction {
             return CliAction::Uninstall;
         }
     }
-    CliAction::RunApp
+    let path = args
+        .iter()
+        .skip(1)
+        .find(|arg| !arg.starts_with('-'))
+        .cloned();
+    CliAction::RunApp(path)
 }
 
 fn main() -> iced::Result {
@@ -221,7 +226,7 @@ fn main() -> iced::Result {
                 }
                 std::process::exit(0);
             }
-            CliAction::RunApp => {}
+            CliAction::RunApp(_) => {}
         }
     }
 
@@ -240,6 +245,9 @@ fn main() -> iced::Result {
     #[cfg(not(target_os = "linux"))]
     let platform_specific = iced::window::settings::PlatformSpecific::default();
 
+    let (window_width, window_height) =
+        md_editor_core::state::persisted_window_size().unwrap_or((1200.0, 800.0));
+
     iced::application(
         app::MdEditor::new,
         app::MdEditor::update,
@@ -249,7 +257,7 @@ fn main() -> iced::Result {
     .theme(|state: &app::MdEditor| state.theme())
     .subscription(app::MdEditor::subscription)
     .window(iced::window::Settings {
-        size: iced::Size::new(1200.0, 800.0),
+        size: iced::Size::new(window_width, window_height),
         icon,
         platform_specific,
         exit_on_close_request: false,
@@ -276,7 +284,7 @@ mod tests {
         // Empty args list (just binary path) -> RunApp
         assert_eq!(
             parse_cli_args(&["md-editor".to_string()]),
-            CliAction::RunApp
+            CliAction::RunApp(None)
         );
 
         // Standard flags for installation
@@ -302,11 +310,15 @@ mod tests {
         // Arbitrary args (like opening a file or directory path) -> RunApp
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "notes.md".to_string()]),
-            CliAction::RunApp
+            CliAction::RunApp(Some("notes.md".to_string()))
         );
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "/home/user/vault".to_string()]),
-            CliAction::RunApp
+            CliAction::RunApp(Some("/home/user/vault".to_string()))
+        );
+        assert_eq!(
+            parse_cli_args(&["md-editor".to_string(), "--unknown".to_string()]),
+            CliAction::RunApp(None)
         );
     }
 
@@ -376,5 +388,18 @@ mod tests {
 
         // Clean up the temporary folder
         let _ = std::fs::remove_dir_all(&test_home);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn desktop_install_reports_essential_write_failure() {
+        let target = std::env::temp_dir().join("md_editor_home_is_a_file");
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_dir_all(&target);
+        std::fs::write(&target, b"not a directory").unwrap();
+        assert!(!super::install_linux_desktop_entry_with_home(
+            target.to_str().unwrap()
+        ));
+        let _ = std::fs::remove_file(target);
     }
 }
