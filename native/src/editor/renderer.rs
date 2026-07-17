@@ -4034,6 +4034,29 @@ mod tests {
     }
 
     #[test]
+    fn tab_measurement_and_hit_testing_agree() {
+        let buffer = DocBuffer::from_text("\tfoo");
+        let lines = highlight_markdown(&buffer.text());
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let editor = editor_for(&buffer, &lines, &image_cache, &math_cache);
+        let tab_width = measure_char_width::<iced::Renderer>('\t', 16.0, iced::Font::DEFAULT);
+        let spaces_width = measure_width::<iced::Renderer>("    ", 16.0, iced::Font::DEFAULT);
+        assert!((tab_width - spaces_width).abs() < 0.01);
+        assert_eq!(
+            editor.col_for_visual_point::<iced::Renderer>(
+                &lines[0],
+                tab_width + 1.0,
+                0.0,
+                900.0,
+                false,
+                None,
+            ),
+            1
+        );
+    }
+
+    #[test]
     fn visual_movement_tolerates_stale_highlight_lines() {
         let mut buffer = DocBuffer::from_text("first\nnew line");
         buffer.execute(EditorCommand::SetCursor { line: 1, col: 8 });
