@@ -104,6 +104,7 @@ pub struct MdEditor {
 impl MdEditor {
     pub fn new() -> (Self, Task<Message>) {
         let state = Arc::new(md_editor_core::state::AppState::new());
+        let startup_notice = state.take_startup_notice();
         let last_vault = md_editor_core::config::get_sys_config(&state, "last_vault")
             .ok()
             .flatten();
@@ -126,6 +127,7 @@ impl MdEditor {
             search: crate::search_state::SearchState::new(),
             active_panel: ActivePanel::Markdown,
         };
+        app.ui.toast = startup_notice;
 
         let mut task = Task::none();
         if let Some(path) = last_vault {

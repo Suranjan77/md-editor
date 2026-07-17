@@ -17,18 +17,44 @@ pub struct AppState {
     pub db: Mutex<Connection>,
     pub pdf_state: Mutex<PdfState>,
     pub pdf_renderer: Option<PdfRenderer>,
+    startup_notice: Mutex<Option<String>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         let db_path = settings_db_path();
-        let db = Connection::open(&db_path).expect("Failed to open local sqlite database");
+        Self::new_with_db_path(&db_path)
+    }
+
+    fn new_with_db_path(db_path: &Path) -> Self {
+        let (db, startup_notice) = match open_and_initialize_db(db_path) {
+            Ok(db) => (db, None),
+            Err(first_error) => {
+                let backup = quarantine_database(db_path).unwrap_or_else(|rename_error| {
+                    panic!(
+                        "Failed to open settings database ({first_error}); could not preserve it before retrying: {rename_error}"
+                    )
+                });
+                let db = open_and_initialize_db(db_path).unwrap_or_else(|retry_error| {
+                    panic!(
+                        "Failed to recreate settings database after preserving {}: {retry_error}",
+                        backup.display()
+                    )
+                });
+                (
+                    db,
+                    Some(format!(
+                        "Settings database was corrupt and has been reset; the old file was kept as {}",
+                        backup.display()
+                    )),
+                )
+            }
+        };
         // WAL keeps writes fast (and would allow concurrent reads if we ever add
         // a second connection); synchronous=NORMAL is the safe, recommended
         // pairing for WAL. Best-effort — fall back silently if unsupported.
         let _ = db.pragma_update(None, "journal_mode", "WAL");
         let _ = db.pragma_update(None, "synchronous", "NORMAL");
-        init_schema(&db).expect("Failed to initialize database schema");
 
         AppState {
             vault_root: Mutex::new(None),
@@ -36,6 +62,7 @@ impl AppState {
             db: Mutex::new(db),
             pdf_state: Mutex::new(PdfState::new()),
             pdf_renderer: PdfRenderer::new().ok(),
+            startup_notice: Mutex::new(startup_notice),
         }
     }
 
@@ -49,7 +76,12 @@ impl AppState {
             db: Mutex::new(db),
             pdf_state: Mutex::new(PdfState::new()),
             pdf_renderer: None,
+            startup_notice: Mutex::new(None),
         }
+    }
+
+    pub fn take_startup_notice(&self) -> Option<String> {
+        self.startup_notice.lock().ok()?.take()
     }
 
     pub fn save_pdf_document(
@@ -440,6 +472,40 @@ fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
 
 const DB_FILE_NAME: &str = "md_editor_settings.sqlite";
 
+fn open_and_initialize_db(path: &Path) -> rusqlite::Result<Connection> {
+    let db = Connection::open(path)?;
+    init_schema(&db)?;
+    Ok(db)
+}
+
+fn quarantine_database(path: &Path) -> std::io::Result<PathBuf> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut backup = PathBuf::from(format!("{}.corrupt-{timestamp}", path.display()));
+    let mut suffix = 1_u32;
+    while backup.exists() {
+        backup = PathBuf::from(format!("{}.corrupt-{timestamp}-{suffix}", path.display()));
+        suffix += 1;
+    }
+
+    std::fs::rename(path, &backup)?;
+    for sidecar_suffix in ["-wal", "-shm"] {
+        let original_sidecar = sidecar(path, sidecar_suffix);
+        if original_sidecar.exists() {
+            let backup_sidecar = sidecar(&backup, sidecar_suffix);
+            if let Err(error) = std::fs::rename(&original_sidecar, &backup_sidecar) {
+                eprintln!(
+                    "Failed to preserve settings database sidecar {}: {error}",
+                    original_sidecar.display()
+                );
+            }
+        }
+    }
+    Ok(backup)
+}
+
 fn settings_db_path() -> PathBuf {
     let mut dir = data_dir();
     if let Err(err) = std::fs::create_dir_all(&dir) {
@@ -618,6 +684,60 @@ mod tests {
         migrate_legacy_db(&legacy, &new_path);
 
         assert_eq!(std::fs::read(&new_path).unwrap(), b"CURRENT");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn corrupt_database_is_preserved_and_recreated() {
+        let base = std::env::temp_dir().join(format!("md_editor_corrupt_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let db_path = base.join(DB_FILE_NAME);
+        std::fs::write(&db_path, b"this is not sqlite").unwrap();
+
+        let state = AppState::new_with_db_path(&db_path);
+
+        assert!(db_path.exists());
+        assert!(state
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get::<_, i64>(0))
+            .is_ok());
+        let notice = state.take_startup_notice().expect("recovery notice");
+        assert!(notice.contains("has been reset"));
+        let backup = std::fs::read_dir(&base)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("md_editor_settings.sqlite.corrupt-") && !name.ends_with("-wal"))
+            })
+            .expect("quarantined database");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"this is not sqlite");
+        assert!(state.take_startup_notice().is_none());
+
+        drop(state);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn quarantining_database_preserves_sidecars() {
+        let base = std::env::temp_dir().join(format!("md_editor_sidecars_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let db_path = base.join(DB_FILE_NAME);
+        std::fs::write(&db_path, b"database").unwrap();
+        std::fs::write(sidecar(&db_path, "-wal"), b"wal").unwrap();
+        std::fs::write(sidecar(&db_path, "-shm"), b"shm").unwrap();
+
+        let backup = quarantine_database(&db_path).unwrap();
+
+        assert_eq!(std::fs::read(&backup).unwrap(), b"database");
+        assert_eq!(std::fs::read(sidecar(&backup, "-wal")).unwrap(), b"wal");
+        assert_eq!(std::fs::read(sidecar(&backup, "-shm")).unwrap(), b"shm");
+        assert!(!db_path.exists());
+
         let _ = std::fs::remove_dir_all(&base);
     }
 }

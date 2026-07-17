@@ -1090,7 +1090,11 @@ where
         let mut blocks: std::collections::HashMap<usize, BlockMeta> =
             std::collections::HashMap::new();
         let mut visible_block_ids = std::collections::HashSet::new();
-        for line in &self.lines[visible_start..visible_end] {
+        for line in self
+            .lines
+            .get(visible_start..visible_end)
+            .unwrap_or_default()
+        {
             if line.is_code_block || line.is_math_block || line.is_blockquote || line.is_table_row {
                 visible_block_ids.insert(line.block_id);
             }
@@ -1123,7 +1127,10 @@ where
                 code_lang: first_line.code_block_lang.clone(),
             };
 
-            for line in &self.lines[start..=end] {
+            let Some(block_lines) = self.lines.get(start..=end) else {
+                continue;
+            };
+            for line in block_lines {
                 if meta.code_lang.is_none() && line.code_block_lang.is_some() {
                     meta.code_lang = line.code_block_lang.clone();
                 }
@@ -1747,7 +1754,7 @@ where
                         continue;
                     }
 
-                    let is_last_row = !self.lines[i + 1..].iter().any(|next_line| {
+                    let is_last_row = !self.lines.get(i + 1..).unwrap_or_default().iter().any(|next_line| {
                         next_line.is_table_row
                             && next_line.block_id == line.block_id
                             && !next_line.table_cells.is_empty()
@@ -3342,7 +3349,10 @@ impl<'a, Message> Editor<'a, Message> {
         else {
             return (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
         };
-        for line in &self.lines[start..=end] {
+        let Some(block_lines) = self.lines.get(start..=end) else {
+            return (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
+        };
+        for line in block_lines {
             let is_editing = is_block_editing_line(line, active_block_id, focused);
             if line.is_code_block {
                 let width = line
@@ -3533,6 +3543,28 @@ impl<'a, Message> Editor<'a, Message> {
     where
         R: iced::advanced::text::Renderer<Font = iced::Font>,
     {
+        let Some(line) = self.lines.get(self.buffer.cursor_line) else {
+            // Highlighting can lag the buffer briefly for large documents.
+            // Up from a newly-added line should land on the last highlighted
+            // line; other movement waits for the highlight snapshot to catch up.
+            return if delta_lines < 0.0 {
+                self.lines
+                    .len()
+                    .checked_sub(1)
+                    .map(|line_idx| {
+                        let col = self
+                            .buffer
+                            .line_text(line_idx)
+                            .chars()
+                            .count()
+                            .min(self.buffer.cursor_col);
+                        (line_idx, col)
+                    })
+                    .unwrap_or((self.buffer.cursor_line, self.buffer.cursor_col))
+            } else {
+                (self.buffer.cursor_line, self.buffer.cursor_col)
+            };
+        };
         if state.layout_tree.len() != self.lines.len() {
             self.rebuild_layout_tree::<R>(state, available_width);
         }
@@ -3541,7 +3573,6 @@ impl<'a, Message> Editor<'a, Message> {
         let cur_y_base = self.widget_y_for_line(self.buffer.cursor_line, state);
 
         let visual_x = *state.desired_visual_x.get_or_insert(cur_x);
-        let line = &self.lines[self.buffer.cursor_line];
         let max_font = line
             .spans
             .iter()
@@ -3932,6 +3963,26 @@ mod tests {
             "down should visit second empty line, visited={visited:?}"
         );
         assert_eq!(buffer.cursor_line, 4);
+    }
+
+    #[test]
+    fn visual_movement_tolerates_stale_highlight_lines() {
+        let mut buffer = DocBuffer::from_text("first\nnew line");
+        buffer.execute(EditorCommand::SetCursor { line: 1, col: 8 });
+        let lines = highlight_markdown("first");
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let editor = editor_for(&buffer, &lines, &image_cache, &math_cache);
+        let mut state = test_state();
+
+        assert_eq!(
+            editor.move_visual::<iced::Renderer>(&mut state, -1.0, 900.0),
+            (0, 5)
+        );
+        assert_eq!(
+            editor.move_visual::<iced::Renderer>(&mut state, 1.0, 900.0),
+            (1, 8)
+        );
     }
 
     #[test]

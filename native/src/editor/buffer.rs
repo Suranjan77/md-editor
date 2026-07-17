@@ -845,7 +845,7 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
     if (rest.starts_with("- [") || rest.starts_with("* [") || rest.starts_with("+ ["))
         && rest.len() >= 5
     {
-        let has_space_after = rest.len() >= 6 && &rest[5..6] == " ";
+        let has_space_after = rest.as_bytes().get(5) == Some(&b' ');
         let bracket_end = rest.find(']');
         if bracket_end == Some(4) {
             let box_char = &rest[3..4];
@@ -902,7 +902,7 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
     if let Some(dot) = dot_idx {
         if dot > 0 {
             let is_at_end = rest.len() == dot + 1;
-            let has_space_after = rest.len() >= dot + 2 && &rest[dot + 1..dot + 2] == " ";
+            let has_space_after = rest.as_bytes().get(dot + 1) == Some(&b' ');
             if is_at_end || has_space_after {
                 let marker_len = if has_space_after { dot + 2 } else { dot + 1 };
                 let marker = rest[..marker_len].to_string();
@@ -1312,5 +1312,22 @@ mod tests {
         buffer.insert_at_cursor("\n");
         assert_eq!(buffer.text(), "1. Step one\n");
         assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 0));
+    }
+
+    #[test]
+    fn list_continuation_handles_multibyte_content_after_markers() {
+        for (input, expected) in [
+            ("- [ ]é", "- [ ]é\n- [ ] "),
+            ("- [x]世界", "- [x]世界\n- [ ] "),
+            ("* [ ]🙂", "* [ ]🙂\n* [ ] "),
+            // No space after an ordered marker is not a list item, but Enter
+            // must still insert a newline without slicing through UTF-8.
+            ("1.任务", "1.任务\n"),
+        ] {
+            let mut buffer = DocBuffer::from_text(input);
+            buffer.set_cursor(0, input.chars().count());
+            buffer.insert_at_cursor("\n");
+            assert_eq!(buffer.text(), expected, "input: {input}");
+        }
     }
 }
