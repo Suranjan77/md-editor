@@ -25,6 +25,8 @@ use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
 pub struct PdfPane {
     pub active_path: Option<String>,
+    // TODO(P3.3): add a password-entry retry flow for encrypted PDFs; the
+    // current safe minimum reports the distinct password-required error.
     pub load_error: Option<String>,
     pub current_page: u16,
     pub total_pages: u16,
