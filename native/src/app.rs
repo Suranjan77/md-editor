@@ -778,6 +778,7 @@ impl MdEditor {
                     return Task::none();
                 }
                 self.editor.highlighted_lines = lines;
+                self.editor.projection_revision = self.editor.projection_revision.wrapping_add(1);
                 self.load_editor_resources()
             }
 
@@ -2076,6 +2077,7 @@ impl MdEditor {
                     Message::SidebarFileClicked,
                     Message::EditorCheckboxToggle,
                 )
+                .projection_revision(self.editor.projection_revision)
                 .search(
                     editor_search_query,
                     self.search.regex,

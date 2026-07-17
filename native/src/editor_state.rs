@@ -48,6 +48,9 @@ pub struct EditorPane {
     /// Bumped on every text change; read by SearchState to invalidate its
     /// in-document match cache.
     pub buffer_revision: u64,
+    /// Bumped whenever the styled projection is replaced; renderer layout
+    /// caches use it to avoid re-hashing every unchanged line every pass.
+    pub projection_revision: u64,
 
     pub toc_visible: bool,
     pub toc_entries: Vec<views::toc::TocEntry>,
@@ -73,6 +76,7 @@ impl EditorPane {
             pending_highlight_requested_at: None,
             pending_highlight_text: None,
             buffer_revision: 0,
+            projection_revision: 0,
             toc_visible: false,
             toc_entries: Vec::new(),
             toc_is_synthetic: false,
@@ -106,6 +110,7 @@ impl EditorPane {
 
         if opened_file && line_count > HUGE_DOC_LINE_THRESHOLD {
             self.highlighted_lines = plain_highlight_placeholders(&text);
+            self.projection_revision = self.projection_revision.wrapping_add(1);
             return (Self::highlight_task(generation, text), false);
         }
 
@@ -117,6 +122,7 @@ impl EditorPane {
         }
 
         self.highlighted_lines = highlight::highlight_markdown(&text);
+        self.projection_revision = self.projection_revision.wrapping_add(1);
         (Task::none(), true)
     }
 

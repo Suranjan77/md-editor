@@ -59,6 +59,7 @@ pub struct Editor<'a, Message> {
     on_pointer_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
     on_checkbox_toggle: Box<dyn Fn(usize) -> Message + 'a>,
+    projection_revision: u64,
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -82,6 +83,8 @@ pub struct State {
     line_height_cache: Vec<LineHeightCache>,
     last_layout_width: f32,
     block_ranges: HashMap<usize, (usize, usize)>,
+    line_hashes: Vec<u64>,
+    projection_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +120,13 @@ impl<'a, Message> Editor<'a, Message> {
             on_pointer_command: Box::new(on_pointer_command),
             on_link_click: Box::new(on_link_click),
             on_checkbox_toggle: Box::new(on_checkbox_toggle),
+            projection_revision: 0,
         }
+    }
+
+    pub fn projection_revision(mut self, revision: u64) -> Self {
+        self.projection_revision = revision;
+        self
     }
 
     pub fn search(
@@ -1031,6 +1040,10 @@ where
         if state.line_height_cache.len() != n {
             state.line_height_cache = vec![LineHeightCache::default(); n];
         }
+        if state.projection_revision != self.projection_revision || state.line_hashes.len() != n {
+            state.line_hashes = self.lines.iter().map(line_hash).collect();
+            state.projection_revision = self.projection_revision;
+        }
         if (state.last_layout_width - max_width).abs() > 0.5 {
             for cache in &mut state.line_height_cache {
                 cache.valid = false;
@@ -1057,7 +1070,7 @@ where
             };
 
             let gutter = table_block_gutter_after(self.lines, i, is_editing);
-            let hash = line_hash(line) ^ resource_hash(line, self.image_cache, self.math_cache);
+            let hash = state.line_hashes[i] ^ resource_hash(line, self.image_cache, self.math_cache);
             let cached = state.line_height_cache[i];
             let line_total = if cached.valid
                 && cached.hash == hash
