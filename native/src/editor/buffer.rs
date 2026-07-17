@@ -1,5 +1,6 @@
 use ropey::Rope;
 use serde::{Deserialize, Serialize};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection {
@@ -485,7 +486,10 @@ impl DocBuffer {
         if self.cursor_offset == 0 {
             return CommandResult::default();
         }
-        self.delete_range(self.cursor_offset - 1, self.cursor_offset)
+        self.delete_range(
+            self.previous_grapheme_boundary(self.cursor_offset),
+            self.cursor_offset,
+        )
     }
 
     fn delete_forward(&mut self) -> CommandResult {
@@ -495,7 +499,10 @@ impl DocBuffer {
         if self.cursor_offset >= self.rope.len_chars() {
             return CommandResult::default();
         }
-        self.delete_range(self.cursor_offset, self.cursor_offset + 1)
+        self.delete_range(
+            self.cursor_offset,
+            self.next_grapheme_boundary(self.cursor_offset),
+        )
     }
 
     fn delete_range(&mut self, start: usize, end: usize) -> CommandResult {
@@ -527,8 +534,8 @@ impl DocBuffer {
         };
 
         self.cursor_offset = match movement {
-            Movement::Left => self.cursor_offset.saturating_sub(1),
-            Movement::Right => (self.cursor_offset + 1).min(self.rope.len_chars()),
+            Movement::Left => self.previous_grapheme_boundary(self.cursor_offset),
+            Movement::Right => self.next_grapheme_boundary(self.cursor_offset),
             Movement::Home => {
                 self.desired_col = None;
                 let line = self
@@ -725,6 +732,32 @@ impl DocBuffer {
         } else {
             None
         }
+    }
+
+    fn previous_grapheme_boundary(&self, offset: usize) -> usize {
+        let mut char_offset = 0;
+        let mut previous = 0;
+        for grapheme in self.text().graphemes(true) {
+            let next = char_offset + grapheme.chars().count();
+            if next >= offset {
+                return char_offset;
+            }
+            previous = char_offset;
+            char_offset = next;
+        }
+        previous.max(char_offset)
+    }
+
+    fn next_grapheme_boundary(&self, offset: usize) -> usize {
+        let mut char_offset = 0;
+        for grapheme in self.text().graphemes(true) {
+            let next = char_offset + grapheme.chars().count();
+            if next > offset {
+                return next;
+            }
+            char_offset = next;
+        }
+        self.rope.len_chars()
     }
 
     /// Handle a typed character with auto-pairing for brackets and quotes:
@@ -1273,13 +1306,23 @@ mod tests {
     }
 
     #[test]
-    fn unicode_boundaries_are_char_based() {
+    fn unicode_boundaries_are_grapheme_based() {
         let mut buffer = DocBuffer::from_text("a👩‍💻b");
         buffer.set_cursor(0, 4);
         buffer.backspace();
-        assert_eq!(buffer.text(), "a👩‍b");
+        assert_eq!(buffer.text(), "ab");
         buffer.undo();
         assert_eq!(buffer.text(), "a👩‍💻b");
+    }
+
+    #[test]
+    fn arrow_steps_over_regional_indicator_grapheme() {
+        let mut buffer = DocBuffer::from_text("🇩🇪x");
+        buffer.set_cursor(0, 0);
+        buffer.move_cursor_right();
+        assert_eq!(buffer.cursor_offset(), 2);
+        buffer.move_cursor_left();
+        assert_eq!(buffer.cursor_offset(), 0);
     }
 
     #[test]

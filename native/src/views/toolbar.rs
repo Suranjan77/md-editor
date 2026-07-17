@@ -8,7 +8,7 @@ use crate::views::icons::{self, Icon};
 pub fn view<'a>(
     active_path: Option<&'a str>,
     active_pdf_path: Option<&'a str>,
-    _sync_status: Option<&'a str>,
+    dirty: bool,
     sidebar_visible: bool,
     _backlinks_visible: bool,
     tracker_visible: bool,
@@ -36,7 +36,13 @@ pub fn view<'a>(
                 .size(13)
                 .color(theme::TEXT_PRIMARY)
                 .font(iced::Font::default()),
-            text(" • Saved").size(11).color(theme::TEXT_MUTED),
+            text(if dirty {
+                " • Unsaved changes"
+            } else {
+                " • Saved"
+            })
+            .size(11)
+            .color(theme::TEXT_MUTED),
         ]
         .spacing(8)
         .align_y(Alignment::Center)

@@ -25,6 +25,7 @@ use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
 pub struct PdfPane {
     pub active_path: Option<String>,
+    pub load_error: Option<String>,
     pub current_page: u16,
     pub total_pages: u16,
     pub zoom: f32,
@@ -74,6 +75,7 @@ impl PdfPane {
     pub fn new() -> Self {
         Self {
             active_path: None,
+            load_error: None,
             current_page: 0,
             total_pages: 0,
             zoom: 1.5,

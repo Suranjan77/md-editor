@@ -204,15 +204,7 @@ pub fn resolve_wikilink_target(
         return None;
     }
     let path_part = if let Some(idx) = target_str.find('#') {
-        let anchor = &target_str[idx + 1..];
-        if anchor
-            .chars()
-            .any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')'))
-        {
-            target_str
-        } else {
-            target_str[..idx].trim()
-        }
+        target_str[..idx].trim()
     } else {
         target_str
     };
@@ -247,8 +239,10 @@ pub fn resolve_wikilink_target(
         }
     }
     let mut normalized: PathBuf = components.into_iter().collect();
-    if normalized.extension().is_none() {
-        normalized.set_extension("md");
+    if !crate::vault::is_supported_vault_path(&normalized) {
+        let mut name = normalized.into_os_string();
+        name.push(".md");
+        normalized = PathBuf::from(name);
     }
     Some(normalized)
 }
@@ -271,7 +265,11 @@ pub fn rewrite_links_to(
         let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("");
         let target = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         match resolve_wikilink_target(target, vault_root, file_path) {
-            Some(resolved) if resolved == *old_abs => {
+            Some(resolved)
+                if resolved == *old_abs
+                    || (crate::vault::is_markdown_path(&resolved)
+                        && resolved.with_extension("markdown") == *old_abs) =>
+            {
                 changed = true;
                 let trimmed = target.trim();
                 // Keep the `#anchor` (from the target group) and `|alias`
@@ -389,5 +387,23 @@ mod tests {
         index.rebuild(&[(file_a.clone(), "See [[nonexistent]].".to_string())]);
         let backlinks = index.get_backlinks(&PathBuf::from("/vault/nonexistent.md"));
         assert_eq!(backlinks, vec![file_a]);
+    }
+
+    #[test]
+    fn dotted_titles_and_punctuated_anchors_resolve() {
+        let root = PathBuf::from("/vault");
+        let source = root.join("source.md");
+        assert_eq!(
+            resolve_wikilink_target("Chapter 3.2", &root, &source),
+            Some(root.join("Chapter 3.2.md"))
+        );
+        assert_eq!(
+            resolve_wikilink_target("Note#Results (2024)", &root, &source),
+            Some(root.join("Note.md"))
+        );
+        assert_eq!(
+            resolve_wikilink_target("paper.pdf", &root, &source),
+            Some(root.join("paper.pdf"))
+        );
     }
 }

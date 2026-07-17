@@ -793,14 +793,6 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
 }
 
 fn detect_heading(trimmed: &str) -> Option<u8> {
-    let heading_without_required_space = |prefix: &str| {
-        trimmed.starts_with(prefix)
-            && trimmed
-                .chars()
-                .nth(prefix.len())
-                .map(|c| !c.is_whitespace() && c != '#')
-                .unwrap_or(false)
-    };
     if trimmed.starts_with("###### ") {
         return Some(6);
     }
@@ -817,24 +809,6 @@ fn detect_heading(trimmed: &str) -> Option<u8> {
         return Some(2);
     }
     if trimmed.starts_with("# ") {
-        return Some(1);
-    }
-    if heading_without_required_space("######") {
-        return Some(6);
-    }
-    if heading_without_required_space("#####") {
-        return Some(5);
-    }
-    if heading_without_required_space("####") {
-        return Some(4);
-    }
-    if heading_without_required_space("###") {
-        return Some(3);
-    }
-    if heading_without_required_space("##") {
-        return Some(2);
-    }
-    if heading_without_required_space("#") {
         return Some(1);
     }
     None
@@ -1061,6 +1035,20 @@ mod tests {
     }
 
     #[test]
+    fn tag_without_space_is_not_a_heading() {
+        let tag = highlight_markdown("#tag");
+        assert!(!tag[0].spans.iter().any(|span| span.is_heading));
+
+        let heading = highlight_markdown("# H1");
+        assert!(heading[0].spans.iter().any(|span| span.is_heading));
+
+        let incomplete = highlight_markdown("#");
+        assert!(!incomplete[0].spans.iter().any(|span| span.is_heading));
+        let transitioned = highlight_markdown("# Heading");
+        assert!(transitioned[0].spans.iter().any(|span| span.is_heading));
+    }
+
+    #[test]
     fn align_environment_is_one_math_block() {
         let lines = highlight_markdown("\\begin{align}\na &= b\n\\end{align}\n# Next");
         assert!(lines[0].is_math_block);
@@ -1079,7 +1067,7 @@ mod tests {
 
     #[test]
     fn single_line_display_math_does_not_swallow_following_heading() {
-        let lines = highlight_markdown("$$a=b$$\n##Change of Basis\nPlain text");
+        let lines = highlight_markdown("$$a=b$$\n## Change of Basis\nPlain text");
         assert!(lines[0].is_math_block);
         assert!(!lines[1].is_math_block);
         assert!(lines[1].spans.iter().any(|span| span.is_heading));

@@ -21,6 +21,8 @@ const TOP_PAD: f32 = 24.0;
 const BASE_LINE_HEIGHT: f32 = 36.0;
 const IMAGE_HEIGHT: f32 = 280.0;
 const HORIZONTAL_SCROLLBAR_GUTTER: f32 = 16.0;
+// TODO(P3.12): wrapping and hit-testing still iterate Unicode scalars with
+// `.chars()`; make those visual boundaries grapheme-aware to match DocBuffer.
 
 /// Maximum width of the editor's content column. On wider viewports the
 /// content is centered with automatic side margins, like a web reader,
@@ -560,6 +562,64 @@ fn span_visible_text<'a>(
     let span_editing = block_editing
         || active_col.is_some_and(|col| span_is_inline_edit_target(line, span_idx, col));
     span.visible_text(span_editing)
+}
+
+fn actionable_span_at_col(line: &StyledLine, col: usize) -> Option<&crate::editor::highlight::StyledSpan> {
+    let mut start = 0;
+    for span in &line.spans {
+        let end = source_col_after_span(span, start);
+        if col >= start && col < end && (span.is_checkbox || span.is_link) {
+            return Some(span);
+        }
+        start = end;
+    }
+    None
+}
+
+fn wrapped_row_rects(
+    from_x: f32,
+    from_y: f32,
+    to_x: f32,
+    to_y: f32,
+    content_width: f32,
+    row_step: f32,
+    vertical_inset: f32,
+    height: f32,
+) -> Vec<Rectangle> {
+    if (to_y - from_y).abs() < 1.0 {
+        return vec![Rectangle {
+            x: from_x,
+            y: from_y + vertical_inset,
+            width: (to_x - from_x).max(3.0),
+            height,
+        }];
+    }
+
+    let mut rects = vec![Rectangle {
+        x: from_x,
+        y: from_y + vertical_inset,
+        width: (content_width - from_x).max(3.0),
+        height,
+    }];
+    let mut row_y = from_y + row_step;
+    while row_y < to_y - 1.0 {
+        rects.push(Rectangle {
+            x: 0.0,
+            y: row_y + vertical_inset,
+            width: content_width.max(3.0),
+            height,
+        });
+        row_y += row_step;
+    }
+    if to_x > 0.0 {
+        rects.push(Rectangle {
+            x: 0.0,
+            y: to_y + vertical_inset,
+            width: to_x.max(3.0),
+            height,
+        });
+    }
+    rects
 }
 
 fn is_block_editing_line(line: &StyledLine, active_block_id: Option<usize>, focused: bool) -> bool {
@@ -1472,28 +1532,38 @@ where
                             is_editing,
                             active_col,
                         );
-                        let select_x = bounds.x + TEXT_X_OFFSET + from_x;
-                        let select_w = if (to_y - from_y).abs() < 1.0 {
-                            (to_x - from_x).max(3.0)
-                        } else {
-                            (bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - from_x).max(3.0)
-                        };
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: Rectangle {
-                                    x: select_x,
-                                    y: y + from_y + 4.0,
-                                    width: select_w,
-                                    height: (BASE_LINE_HEIGHT - 8.0).max(16.0),
-                                },
-                                border: iced::Border {
-                                    radius: 3.0.into(),
+                        let max_font = line
+                            .spans
+                            .iter()
+                            .map(|span| span.font_size)
+                            .fold(17.0_f32, f32::max);
+                        let row_step = visual_line_step(max_font);
+                        for rect in wrapped_row_rects(
+                            from_x,
+                            from_y,
+                            to_x,
+                            to_y,
+                            bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT,
+                            row_step,
+                            4.0,
+                            (row_step - 8.0).max(16.0),
+                        ) {
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: Rectangle {
+                                        x: bounds.x + TEXT_X_OFFSET + rect.x,
+                                        y: y + rect.y,
+                                        ..rect
+                                    },
+                                    border: iced::Border {
+                                        radius: 3.0.into(),
+                                        ..Default::default()
+                                    },
                                     ..Default::default()
                                 },
-                                ..Default::default()
-                            },
-                            Color::from_rgba(0.69, 0.80, 0.78, 0.24),
-                        );
+                                Color::from_rgba(0.69, 0.80, 0.78, 0.24),
+                            );
+                        }
                     }
                 }
             }
@@ -1517,33 +1587,43 @@ where
                     );
                     let (to_x, to_y) =
                         self.position_for_col::<R>(i, to_col, bounds.width, is_editing, active_col);
-                    let same_visual_line = (to_y - from_y).abs() < 1.0;
-                    let highlight_w = if same_visual_line {
-                        (to_x - from_x).max(4.0)
-                    } else {
-                        (bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - from_x).max(4.0)
-                    };
                     let active = self.active_search_match == Some((i, from_col));
-                    renderer.fill_quad(
-                        renderer::Quad {
-                            bounds: Rectangle {
-                                x: bounds.x + TEXT_X_OFFSET + from_x,
-                                y: y + from_y + 5.0,
-                                width: highlight_w,
-                                height: (BASE_LINE_HEIGHT - 10.0).max(16.0),
-                            },
-                            border: iced::Border {
-                                radius: 3.0.into(),
+                    let max_font = line
+                        .spans
+                        .iter()
+                        .map(|span| span.font_size)
+                        .fold(17.0_f32, f32::max);
+                    let row_step = visual_line_step(max_font);
+                    for rect in wrapped_row_rects(
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT,
+                        row_step,
+                        5.0,
+                        (row_step - 10.0).max(16.0),
+                    ) {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: bounds.x + TEXT_X_OFFSET + rect.x,
+                                    y: y + rect.y,
+                                    ..rect
+                                },
+                                border: iced::Border {
+                                    radius: 3.0.into(),
+                                    ..Default::default()
+                                },
                                 ..Default::default()
                             },
-                            ..Default::default()
-                        },
-                        if active {
-                            Color::from_rgba(0.92, 0.70, 0.30, 0.45)
-                        } else {
-                            Color::from_rgba(0.92, 0.70, 0.30, 0.24)
-                        },
-                    );
+                            if active {
+                                Color::from_rgba(0.92, 0.70, 0.30, 0.45)
+                            } else {
+                                Color::from_rgba(0.92, 0.70, 0.30, 0.24)
+                            },
+                        );
+                    }
                 }
             }
 
@@ -2307,42 +2387,22 @@ where
                     }));
                     state.is_dragging = true;
 
-                    // Check for checkbox / link clicks
+                    // Resolve actions from the wrap-aware source column, not
+                    // from a flat accumulation of unwrapped span widths.
                     if let Some(line) = self.lines.get(line_idx) {
-                        let active_block_id =
-                            self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
-                        let is_editing =
-                            is_block_editing_line(line, active_block_id, state.is_focused);
-                        let mut x_acc = 0.0_f32;
-                        let active_col =
-                            (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
-                        for (span_idx, span) in line.spans.iter().enumerate() {
-                            let font = span_font(span, line);
-                            let w = if span.is_checkbox && !is_editing {
-                                26.0
-                            } else {
-                                measure_width::<R>(
-                                    span_visible_text(line, span_idx, is_editing, active_col),
-                                    span.font_size,
-                                    font,
-                                )
-                            };
-                            let click_x = pos.x - TEXT_X_OFFSET;
-                            if click_x >= x_acc && click_x < x_acc + w {
-                                if span.is_checkbox {
-                                    shell.publish((self.on_checkbox_toggle)(line_idx));
-                                    return;
-                                }
-                                if span.is_link {
-                                    if let Some(target) = &span.link_target {
-                                        if state.modifiers.control() || state.modifiers.command() {
-                                            shell.publish((self.on_link_click)(target.clone()));
-                                            return;
-                                        }
+                        if let Some(span) = actionable_span_at_col(line, col) {
+                            if span.is_checkbox {
+                                shell.publish((self.on_checkbox_toggle)(line_idx));
+                                return;
+                            }
+                            if span.is_link {
+                                if let Some(target) = &span.link_target {
+                                    if state.modifiers.control() || state.modifiers.command() {
+                                        shell.publish((self.on_link_click)(target.clone()));
+                                        return;
                                     }
                                 }
                             }
-                            x_acc += w;
                         }
                     }
                 } else {
@@ -2723,37 +2783,20 @@ where
             }
 
             let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
-            let line_idx = self.line_at_widget_y(pos.y, state);
-
-            if let Some(line_idx) = line_idx {
-                if let Some(line) = self.lines.get(line_idx) {
-                    let is_editing = is_block_editing_line(line, active_block_id, state.is_focused);
-                    let mut x_acc = 0.0_f32;
-                    let active_col =
-                        (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
-                    for (span_idx, span) in line.spans.iter().enumerate() {
-                        let font = span_font(span, line);
-                        let w = if span.is_checkbox && !is_editing {
-                            26.0
-                        } else {
-                            measure_width::<R>(
-                                span_visible_text(line, span_idx, is_editing, active_col),
-                                span.font_size,
-                                font,
-                            )
-                        };
-                        let click_x = pos.x - TEXT_X_OFFSET;
-                        if click_x >= x_acc && click_x < x_acc + w {
-                            if span.is_checkbox {
-                                return mouse::Interaction::Pointer;
-                            }
-                            if span.is_link
-                                && (state.modifiers.control() || state.modifiers.command())
-                            {
-                                return mouse::Interaction::Pointer;
-                            }
-                        }
-                        x_acc += w;
+            let (line_idx, col) = self.hit_test::<R>(
+                pos,
+                bounds.width,
+                active_block_id,
+                state.is_focused,
+                state,
+            );
+            if let Some(line) = self.lines.get(line_idx) {
+                if let Some(span) = actionable_span_at_col(line, col) {
+                    if span.is_checkbox
+                        || (span.is_link
+                            && (state.modifiers.control() || state.modifiers.command()))
+                    {
+                        return mouse::Interaction::Pointer;
                     }
                 }
             }
@@ -3983,6 +4026,83 @@ mod tests {
             editor.move_visual::<iced::Renderer>(&mut state, 1.0, 900.0),
             (1, 8)
         );
+    }
+
+    #[test]
+    fn wrapped_action_hit_testing_uses_visual_row_and_source_column() {
+        let checkbox_text =
+            "- [ ] this task has enough words to wrap across several narrow visual rows";
+        let checkbox_buffer = DocBuffer::from_text(checkbox_text);
+        let checkbox_lines = highlight_markdown(checkbox_text);
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let checkbox_editor =
+            editor_for(&checkbox_buffer, &checkbox_lines, &image_cache, &math_cache);
+        let mut checkbox_state = test_state();
+        checkbox_editor
+            .rebuild_layout_tree::<iced::Renderer>(&mut checkbox_state, 180.0);
+        let (line, col) = checkbox_editor.hit_test::<iced::Renderer>(
+            Point::new(TEXT_X_OFFSET + 5.0, TOP_PAD + BASE_LINE_HEIGHT + 8.0),
+            180.0,
+            None,
+            false,
+            &checkbox_state,
+        );
+        assert_eq!(line, 0);
+        assert!(
+            actionable_span_at_col(&checkbox_lines[0], col)
+                .is_none_or(|span| !span.is_checkbox),
+            "continuation-row click resolved to checkbox at col {col}"
+        );
+
+        let link_text = "prefix prefix prefix prefix [wrapped link](note.md)";
+        let link_buffer = DocBuffer::from_text(link_text);
+        let link_lines = highlight_markdown(link_text);
+        let link_editor = editor_for(&link_buffer, &link_lines, &image_cache, &math_cache);
+        let mut link_state = test_state();
+        link_editor.rebuild_layout_tree::<iced::Renderer>(&mut link_state, 220.0);
+        let link_col = link_lines[0]
+            .spans
+            .iter()
+            .take_while(|span| !span.is_link)
+            .map(|span| span.text.chars().count())
+            .sum::<usize>();
+        let (link_x, link_y) =
+            link_editor.position_for_col::<iced::Renderer>(0, link_col, 220.0, false, None);
+        assert!(link_y > 0.0, "link should be forced onto a wrapped row");
+        let (_, hit_col) = link_editor.hit_test::<iced::Renderer>(
+            Point::new(
+                TEXT_X_OFFSET + link_x + 2.0,
+                TOP_PAD + link_y + BASE_LINE_HEIGHT / 2.0,
+            ),
+            220.0,
+            None,
+            false,
+            &link_state,
+        );
+        assert!(
+            actionable_span_at_col(&link_lines[0], hit_col).is_some_and(|span| span.is_link),
+            "wrapped link was not hit at col {hit_col}"
+        );
+    }
+
+    #[test]
+    fn wrapped_highlight_geometry_covers_each_visual_row() {
+        let rects = wrapped_row_rects(
+            30.0,
+            0.0,
+            45.0,
+            BASE_LINE_HEIGHT * 2.0,
+            120.0,
+            BASE_LINE_HEIGHT,
+            4.0,
+            28.0,
+        );
+        assert_eq!(rects.len(), 3);
+        assert_eq!((rects[0].x, rects[0].width), (30.0, 90.0));
+        assert_eq!((rects[1].x, rects[1].width), (0.0, 120.0));
+        assert_eq!((rects[2].x, rects[2].width), (0.0, 45.0));
+        assert!(rects[0].y < rects[1].y && rects[1].y < rects[2].y);
     }
 
     #[test]

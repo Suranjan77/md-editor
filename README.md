@@ -136,7 +136,7 @@ version is migrated back beside the executable on first run.
 | --- | --- |
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
-| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp` |
+| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` |
 
 ## Supported Platforms
 

@@ -130,7 +130,7 @@ PDF support uses a platform-specific PDFium dynamic library. The application loo
 
 - Markdown: `.md`, `.markdown`
 - PDF: `.pdf`
-- Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`
+- Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif`
 
 ## Architecture
 

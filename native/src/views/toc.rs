@@ -12,19 +12,32 @@ pub struct TocEntry {
 
 pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
     let mut toc = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
     for (i, line) in buffer_text.split('\n').enumerate() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with('#') {
-            let mut level = 0;
-            for c in trimmed.chars() {
-                if c == '#' {
-                    level += 1;
-                } else {
-                    break;
-                }
+        let marker = trimmed
+            .chars()
+            .next()
+            .filter(|c| *c == '\x60' || *c == '~');
+        let marker_len = marker
+            .map(|marker| trimmed.chars().take_while(|c| *c == marker).count())
+            .unwrap_or(0);
+        if let Some((fence_marker, fence_len)) = fence {
+            if marker == Some(fence_marker) && marker_len >= fence_len {
+                fence = None;
             }
-            if level > 0 && level <= 6 {
-                let text = trimmed[level..].trim().to_string();
+            continue;
+        } else if let Some(marker) = marker.filter(|_| marker_len >= 3) {
+            fence = Some((marker, marker_len));
+            continue;
+        }
+
+        let level = trimmed.chars().take_while(|c| *c == '#').count();
+        if (1..=6).contains(&level)
+            && trimmed.chars().nth(level).is_some_and(|c| c == ' ')
+        {
+            let text = trimmed[level + 1..].trim().to_string();
+            if !text.is_empty() {
                 toc.push(TocEntry {
                     level: level as u8,
                     text,
@@ -34,6 +47,28 @@ pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
         }
     }
     toc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_toc;
+
+    #[test]
+    fn toc_skips_fenced_comments_and_tags() {
+        let toc = get_toc(
+            "# Real\n\n\x60\x60\x60bash\n# not a heading\n\x60\x60\x60\n#tag\n## Heading",
+        );
+        assert_eq!(toc.len(), 2);
+        assert_eq!((toc[0].text.as_str(), toc[0].line), ("Real", 0));
+        assert_eq!((toc[1].text.as_str(), toc[1].line), ("Heading", 6));
+    }
+
+    #[test]
+    fn toc_tracks_tilde_fences() {
+        let toc = get_toc("~~~text\n## hidden\n~~~~\n### Visible");
+        assert_eq!(toc.len(), 1);
+        assert_eq!((toc[0].text.as_str(), toc[0].line), ("Visible", 3));
+    }
 }
 
 pub fn view<'a>(

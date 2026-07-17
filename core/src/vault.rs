@@ -5,7 +5,10 @@ use crate::file_index::FileIndex;
 use crate::state::AppState;
 use crate::types::{BacklinkItem, BacklinkTarget, FileEntry, SearchResult};
 
-const IMAGE_EXTENSIONS: [&str; 6] = ["jpeg", "jpg", "png", "svg", "webp", "avif"];
+pub const IMAGE_EXTENSIONS: [&str; 8] =
+    ["jpeg", "jpg", "png", "gif", "bmp", "svg", "webp", "avif"];
+const MARKDOWN_EXTENSIONS: [&str; 2] = ["md", "markdown"];
+const PDF_EXTENSIONS: [&str; 1] = ["pdf"];
 
 /// Directory names that are never worth indexing or showing in the tree. These
 /// are heavy or irrelevant in note vaults and would otherwise blow up indexing
@@ -148,10 +151,7 @@ pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
 
-    if abs_path
-        .extension()
-        .map_or(false, |e| is_image(e.to_str().unwrap_or("")))
-    {
+    if is_image_path(&abs_path) {
         read_image(&abs_path)
     } else {
         let content = read_file(&abs_path)?;
@@ -199,8 +199,7 @@ pub fn sync_path_from_disk(state: &AppState, rel_path: &str) -> Result<(), Strin
         guard.as_ref().ok_or("No vault root set")?.clone()
     };
     let abs = resolve_vault_path_checked(&vault_root, rel_path)?;
-    let is_md = abs.extension().map_or(false, |e| e == "md" || e == "markdown");
-    if !is_md {
+    if !is_markdown_path(&abs) {
         return Ok(());
     }
 
@@ -276,7 +275,7 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
         return Err(format!("Target already exists: {}", abs_new.display()));
     }
 
-    let is_md_file = abs_old.is_file() && abs_old.extension().map_or(false, |e| e == "md");
+    let is_md_file = abs_old.is_file() && is_markdown_path(&abs_old);
 
     // Snapshot the files that link to this note *before* mutating the index —
     // these are the ones whose `[[wikilinks]]` need rewriting.
@@ -461,10 +460,9 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
 
-    let lower_path = path.to_lowercase();
     let mut results = Vec::new();
 
-    if lower_path.ends_with(".pdf") {
+    if is_pdf_path(Path::new(path)) {
         // PDF Case:
         // 1. Get incoming backlinks from FileIndex (markdown files linking to this PDF)
         let abs_path = resolve_vault_path(vault_root, path);
@@ -670,10 +668,7 @@ fn read_file(path: &Path) -> Result<String, String> {
 }
 
 fn read_image(path: &Path) -> Result<Vec<u8>, String> {
-    if !path
-        .extension()
-        .map_or(false, |e| is_image(e.to_str().unwrap_or("")))
-    {
+    if !is_image_path(path) {
         return Err(format!("Not an image: {}", path.display()));
     }
     fs::read(path).map_err(|e| format!("Failed to read image {}: {}", path.display(), e))
@@ -687,7 +682,35 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
 }
 
 pub fn is_image(ext: &str) -> bool {
-    IMAGE_EXTENSIONS.contains(&ext)
+    IMAGE_EXTENSIONS
+        .iter()
+        .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+}
+
+pub fn ext_matches(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extensions
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
+}
+
+pub fn is_markdown_path(path: &Path) -> bool {
+    ext_matches(path, &MARKDOWN_EXTENSIONS)
+}
+
+pub fn is_pdf_path(path: &Path) -> bool {
+    ext_matches(path, &PDF_EXTENSIONS)
+}
+
+pub fn is_image_path(path: &Path) -> bool {
+    ext_matches(path, &IMAGE_EXTENSIONS)
+}
+
+pub fn is_supported_vault_path(path: &Path) -> bool {
+    is_markdown_path(path) || is_pdf_path(path) || is_image_path(path)
 }
 
 fn list_vault_entries(root: &Path) -> Result<Vec<FileEntry>, String> {
@@ -732,13 +755,7 @@ fn list_vault_recursive(
             list_vault_recursive(root, &path, entries, depth + 1)?;
         } else if name.starts_with('.') || is_symlink(&path) {
             continue;
-        } else if path
-            .extension()
-            .map(|e| {
-                e == "md" || e == "markdown" || e == "pdf" || is_image(e.to_str().unwrap_or(""))
-            })
-            .unwrap_or(false)
-        {
+        } else if is_supported_vault_path(&path) {
             entries.push(FileEntry {
                 path: path_to_relative_string(&path, root),
                 name,
@@ -768,14 +785,14 @@ fn list_all_md_files_recursive(
     files: &mut Vec<PathBuf>,
     depth: usize,
 ) -> Result<(), String> {
-    list_files_matching(dir, files, depth, &|ext| ext == "md" || ext == "markdown")
+    list_files_matching(dir, files, depth, &is_markdown_path)
 }
 
 /// List every `.pdf` file in the vault, applying the same exclusion/symlink/
 /// depth guards as the markdown walker.
 pub fn list_all_pdf_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
-    list_files_matching(root, &mut files, 0, &|ext| ext == "pdf")?;
+    list_files_matching(root, &mut files, 0, &is_pdf_path)?;
     Ok(files)
 }
 
@@ -786,7 +803,7 @@ fn list_files_matching(
     dir: &Path,
     files: &mut Vec<PathBuf>,
     depth: usize,
-    keep: &dyn Fn(&str) -> bool,
+    keep: &dyn Fn(&Path) -> bool,
 ) -> Result<(), String> {
     if depth >= MAX_WALK_DEPTH {
         return Ok(());
@@ -806,7 +823,7 @@ fn list_files_matching(
             list_files_matching(&path, files, depth + 1, keep)?;
         } else if name.starts_with('.') || is_symlink(&path) {
             continue;
-        } else if path.extension().and_then(|e| e.to_str()).map_or(false, keep) {
+        } else if keep(&path) {
             files.push(path);
         }
     }
@@ -951,6 +968,50 @@ mod tests {
 
         let error = save_file(&state, "blocked.md", "content").unwrap_err();
         assert!(error.contains("Failed to write file"));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn listing_accepts_supported_extensions_case_insensitively() {
+        let base = std::env::temp_dir().join(format!("md_extensions_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        for name in ["README.MD", "Notes.PDF", "IMG.JPG", "anim.gif", "scan.bmp"] {
+            fs::write(base.join(name), "content").unwrap();
+        }
+
+        let mut names: Vec<String> = list_vault_entries(&base)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["IMG.JPG", "Notes.PDF", "README.MD", "anim.gif", "scan.bmp"]
+        );
+
+        let markdown = list_all_md_files(&base).unwrap();
+        assert_eq!(markdown, vec![base.join("README.MD")]);
+        let pdfs = list_all_pdf_files(&base).unwrap();
+        assert_eq!(pdfs, vec![base.join("Notes.PDF")]);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn renaming_markdown_extension_rewrites_backlinks() {
+        let base = std::env::temp_dir().join(format!("md_rename_markdown_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join("target.markdown"), "target").unwrap();
+        fs::write(base.join("source.md"), "[[target]]").unwrap();
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+        rename_entry(&state, "target.markdown", "renamed.markdown").unwrap();
+
+        assert_eq!(fs::read_to_string(base.join("source.md")).unwrap(), "[[renamed]]");
+        assert!(base.join("renamed.markdown").exists());
 
         let _ = fs::remove_dir_all(&base);
     }

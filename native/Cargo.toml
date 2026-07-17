@@ -14,6 +14,7 @@ md-editor-core = { path = "../core" }
 iced = { version = "0.14", features = ["canvas", "image", "advanced", "tokio"] }
 rfd = "0.17.2"
 ropey = "1.6"
+unicode-segmentation = "1.13"
 image = "0.25"
 chrono = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }

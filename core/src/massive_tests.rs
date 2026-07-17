@@ -70,10 +70,18 @@ fn test_file_index_wikilink_combinatorics() {
                 content.push(' ');
 
                 // Deduplicate expected path resolution
-                let trimmed_target = unique_target.trim();
+                let trimmed_target = unique_target
+                    .trim()
+                    .split_once('#')
+                    .map_or(unique_target.trim(), |(path, _)| path.trim());
+                if trimmed_target.is_empty() {
+                    continue;
+                }
                 let mut target_path = root.join(trimmed_target);
-                if target_path.extension().is_none() {
-                    target_path.set_extension("md");
+                if !crate::vault::is_supported_vault_path(&target_path) {
+                    let mut name = target_path.into_os_string();
+                    name.push(".md");
+                    target_path = std::path::PathBuf::from(name);
                 }
                 expected_targets.insert(target_path);
             }

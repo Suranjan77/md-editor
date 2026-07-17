@@ -61,6 +61,14 @@ fn should_confirm_dirty_buffer(
     }
 }
 
+fn search_result_should_reload(active_path: Option<&str>, target_path: &str) -> bool {
+    active_path != Some(target_path)
+}
+
+fn pdf_search_generation_is_current(current: u64, incoming: u64) -> bool {
+    current == incoming
+}
+
 fn apply_editor_save_result(
     buffer: &mut DocBuffer,
     toast: &mut Option<String>,
@@ -471,15 +479,7 @@ impl MdEditor {
                         Task::none()
                     } else {
                         let (file_part, anchor_part) = if let Some(idx) = path.find('#') {
-                            let anchor = &path[idx + 1..];
-                            if anchor
-                                .chars()
-                                .any(|c| matches!(c, '%' | '^' | '&' | '*' | '!' | '@' | '(' | ')'))
-                            {
-                                (path.as_str(), None)
-                            } else {
-                                (&path[..idx], Some(anchor))
-                            }
+                            (&path[..idx], Some(&path[idx + 1..]))
                         } else {
                             (path.as_str(), None)
                         };
@@ -728,10 +728,27 @@ impl MdEditor {
                 self.load_editor_resources()
             }
 
-            Message::PdfLoaded(generation, pages) => {
+            Message::PdfLoaded(generation, result) => {
                 if generation != self.pdf.render_generation {
                     return Task::none();
                 }
+                let pages = match result {
+                    Ok(pages) if pages > 0 => {
+                        self.pdf.load_error = None;
+                        pages
+                    }
+                    Ok(_) => {
+                        let file = self.pdf.active_path.as_deref().unwrap_or("PDF");
+                        self.pdf.load_error =
+                            Some(format!("Could not open '{file}': the document has no pages"));
+                        0
+                    }
+                    Err(error) => {
+                        let file = self.pdf.active_path.as_deref().unwrap_or("PDF");
+                        self.pdf.load_error = Some(format!("Could not open '{file}': {error}"));
+                        0
+                    }
+                };
                 self.pdf.total_pages = pages;
                 self.pdf.pages = vec![None; pages as usize];
                 self.pdf.dimensions = vec![None; pages as usize];
@@ -742,10 +759,8 @@ impl MdEditor {
                 self.pdf.pending_links.clear();
                 self.pdf.programmatic_scroll = false;
                 self.pdf.toc_target_page = None;
-                if pages == 0 {
-                    self.ui.toast = Some(
-                        "PDF renderer is unavailable or the PDF could not be opened".to_string(),
-                    );
+                if let Some(error) = self.pdf.load_error.clone() {
+                    self.ui.toast = Some(error);
                 }
                 if self.pdf.fit_to_width
                     && self
@@ -1259,7 +1274,10 @@ impl MdEditor {
                     Task::none()
                 }
             },
-            Message::PdfSearchResult(Ok(results)) => {
+            Message::PdfSearchResult(generation, Ok(results)) => {
+                if !pdf_search_generation_is_current(self.pdf.render_generation, generation) {
+                    return Task::none();
+                }
                 self.search.pdf_error = None;
                 self.search.pdf_results = results;
                 self.search.rebuild_pdf_page_index();
@@ -1280,7 +1298,10 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::PdfSearchResult(Err(err)) => {
+            Message::PdfSearchResult(generation, Err(err)) => {
+                if !pdf_search_generation_is_current(self.pdf.render_generation, generation) {
+                    return Task::none();
+                }
                 self.search.pdf_results.clear();
                 self.search.pdf_indices_by_page.clear();
                 self.search.pdf_error = Some(err);
@@ -1642,7 +1663,7 @@ impl MdEditor {
                 }
             }
             Message::SearchResultClicked(path) => {
-                if self.active_path.as_deref() == Some(path.as_str()) {
+                if !search_result_should_reload(self.active_path.as_deref(), &path) {
                     // The open buffer is authoritative while dirty; a global
                     // search hit for this same file must not reload disk state.
                     self.search.visible = false;
@@ -1908,7 +1929,7 @@ impl MdEditor {
             self.pdf.active_path
                 .as_deref()
                 .or(self.active_image_path.as_deref()),
-            None,
+            self.editor.buffer.dirty,
             self.vault.sidebar_visible,
             self.vault.backlinks_visible,
             self.tracker.visible,
@@ -2028,6 +2049,7 @@ impl MdEditor {
                     &self.pdf.references,
                     self.pdf.selection,
                     self.pdf.focused_annotation_id.as_deref(),
+                    self.pdf.load_error.as_deref(),
                 ))
                 .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
                 .on_scroll(|vp| Message::PdfScrolled {
@@ -2445,7 +2467,7 @@ impl MdEditor {
             self.active_path.as_deref(),
             link_path,
         );
-        if std::path::Path::new(&resolved).extension().is_none() {
+        if !md_editor_core::vault::is_supported_vault_path(std::path::Path::new(&resolved)) {
             resolved.push_str(".md");
         }
         let exists = self
@@ -2500,6 +2522,7 @@ impl MdEditor {
         };
         let path_str = abs_path.to_string_lossy().to_string();
         self.pdf.active_path = Some(path.to_string());
+        self.pdf.load_error = None;
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
@@ -2558,10 +2581,13 @@ impl MdEditor {
             hash_task,
             Task::perform(
                 async move {
-                    let renderer = _state.pdf_renderer.as_ref()?;
-                    renderer.page_count(&path_clone).ok()
+                    let renderer = _state
+                        .pdf_renderer
+                        .as_ref()
+                        .ok_or_else(|| "PDF renderer is unavailable".to_string())?;
+                    renderer.page_count(&path_clone)
                 },
-                move |res| Message::PdfLoaded(generation, res.unwrap_or(0)),
+                move |res| Message::PdfLoaded(generation, res),
             ),
             Task::perform(
                 async move {
@@ -3351,6 +3377,7 @@ impl MdEditor {
         let match_case = self.search.match_case;
         let _state = self.state.clone();
         let path_str = abs_path.to_string_lossy().to_string();
+        let generation = self.pdf.render_generation;
         Task::perform(
             async move {
                 let Some(renderer) = _state.pdf_renderer.as_ref() else {
@@ -3360,7 +3387,7 @@ impl MdEditor {
                 };
                 renderer.search_text(&path_str, &query, regex, match_case)
             },
-            Message::PdfSearchResult,
+            move |result| Message::PdfSearchResult(generation, result),
         )
     }
 
@@ -3374,6 +3401,7 @@ impl MdEditor {
         command: EditorCommand,
         keep_cursor_visible: bool,
     ) -> Task<Message> {
+        self.active_panel = ActivePanel::Markdown;
         let result = self.editor.buffer.execute(command);
         if result.text_changed {
             self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
@@ -4025,5 +4053,39 @@ mod tests {
         assert!(path_is_same_or_descendant("folder/note.md", "folder"));
         assert!(path_is_same_or_descendant("folder", "folder"));
         assert!(!path_is_same_or_descendant("folder-two/note.md", "folder"));
+    }
+
+    #[test]
+    fn same_file_search_result_does_not_reload_open_buffer() {
+        assert!(!search_result_should_reload(
+            Some("notes/current.md"),
+            "notes/current.md"
+        ));
+        assert!(search_result_should_reload(
+            Some("notes/current.md"),
+            "notes/other.md"
+        ));
+    }
+
+    #[test]
+    fn stale_pdf_search_generation_is_rejected() {
+        assert!(!pdf_search_generation_is_current(8, 7));
+        assert!(pdf_search_generation_is_current(8, 8));
+    }
+
+    #[test]
+    fn editor_cursor_move_reclaims_active_panel_from_pdf() {
+        let mut app = MdEditor::new().0;
+        app.pdf.render_generation = 8;
+        app.search.pdf_error = Some("keep".to_string());
+        let _ = app.update_inner(Message::PdfSearchResult(
+            7,
+            Err("stale result".to_string()),
+        ));
+        assert_eq!(app.search.pdf_error.as_deref(), Some("keep"));
+
+        app.active_panel = ActivePanel::Pdf;
+        let _ = app.update_inner(Message::EditorCursorMove(0, 0));
+        assert_eq!(app.active_panel, ActivePanel::Markdown);
     }
 }

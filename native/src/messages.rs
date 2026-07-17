@@ -57,7 +57,7 @@ pub enum Message {
     // ── PDF ──────────────────────────────────────────────────────
     PdfZoomChanged(f32),
     PdfFitToWidth,
-    PdfLoaded(u64, u16), // render generation, total pages
+    PdfLoaded(u64, Result<u16, String>), // render generation, total pages or load error
     PdfPageSizesLoaded(u64, String, Vec<(f32, f32)>),
     PdfRendered(u64, u16, image::DynamicImage),
     PdfRenderFailed(u64, u16),
@@ -71,7 +71,7 @@ pub enum Message {
     PdfTocLoaded(u64, Vec<md_editor_core::pdf::TocEntry>, bool),
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfReferencesLoaded(String, Vec<md_editor_core::references::ReferenceLink>),
-    PdfSearchResult(Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
+    PdfSearchResult(u64, Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
     PdfSearchResultClicked(u16),
     PdfScrollBy(f32),
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
