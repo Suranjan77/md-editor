@@ -49,7 +49,7 @@ impl TrackerState {
             .map(|item| (item.key, item.value))
             .collect();
 
-        Self {
+        let mut tracker = Self {
             visible: false,
             running: false,
             started_at: None,
@@ -61,7 +61,9 @@ impl TrackerState {
             manual_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
             manual_hours: String::new(),
             manual_notes: String::new(),
-        }
+        };
+        tracker.migrate_completion_keys(state);
+        tracker
     }
 
     pub fn toggle_visible(&mut self) {
@@ -120,14 +122,14 @@ impl TrackerState {
                 }
                 Task::none()
             }
-            Message::TrackerGateToggled(gate_id, item_idx) => {
-                let key = format!("gate_{}_{}", gate_id, item_idx);
-                self.toggle_bool_kv(state, key);
+            Message::TrackerGateToggled(gate_id, item, item_idx) => {
+                let keys = views::tracker::gate_completion_keys(&gate_id, &item, item_idx);
+                self.toggle_bool_kv_with_legacy(state, keys);
                 Task::none()
             }
-            Message::TrackerReadingToggled(section, item_idx) => {
-                let key = format!("read_{}_{}", section, item_idx);
-                self.toggle_bool_kv(state, key);
+            Message::TrackerReadingToggled(section, item, item_idx) => {
+                let keys = views::tracker::reading_completion_keys(&section, &item, item_idx);
+                self.toggle_bool_kv_with_legacy(state, keys);
                 Task::none()
             }
             Message::TrackerConfigEdited(action) => {
@@ -205,6 +207,7 @@ impl TrackerState {
             .filter(|json| views::tracker::parse_config(json).is_ok())
             .unwrap_or_else(views::tracker::default_config_json);
         self.config_content = text_editor::Content::with_text(&self.config_json);
+        self.migrate_completion_keys(state);
     }
 
     fn refresh_sessions(&mut self, state: &AppState) {
@@ -222,12 +225,58 @@ impl TrackerState {
         }
     }
 
+    fn toggle_bool_kv_with_legacy(&mut self, state: &AppState, (key, legacy): (String, String)) {
+        if !self.kv.contains_key(&key) {
+            if let Some(value) = self.kv.get(&legacy).cloned() {
+                let _ = md_editor_core::tracker::set_kv(state, &key, &value);
+                self.kv.insert(key.clone(), value);
+            }
+        }
+        self.toggle_bool_kv(state, key);
+    }
+
+
+    fn migrate_completion_keys(&mut self, state: &AppState) {
+        let Ok(config) = views::tracker::parse_config(&self.config_json) else {
+            return;
+        };
+        let mut keys = Vec::new();
+        for gate in config.gates {
+            for (index, item) in gate.items.iter().enumerate() {
+                keys.push(views::tracker::gate_completion_keys(&gate.id, item, index));
+            }
+        }
+        for section in config.reading {
+            let section_key = section.section.replace(' ', "");
+            for (index, item) in section.items.iter().enumerate() {
+                keys.push(views::tracker::reading_completion_keys(
+                    &section_key,
+                    &item.title,
+                    index,
+                ));
+            }
+        }
+        for (key, legacy) in keys {
+            if !self.kv.contains_key(&key) {
+                if let Some(value) = self.kv.get(&legacy).cloned() {
+                    if md_editor_core::tracker::set_kv(state, &key, &value).is_ok() {
+                        self.kv.insert(key, value);
+                    }
+                }
+            }
+        }
+    }
+
     fn add_manual_session(&mut self, state: &AppState) -> Task<Message> {
+        let date = match chrono::NaiveDate::parse_from_str(self.manual_date.trim(), "%Y-%m-%d") {
+            Ok(date) => date.format("%Y-%m-%d").to_string(),
+            Err(_) => return toast("Enter a valid date in YYYY-MM-DD format"),
+        };
         match self.manual_hours.trim().parse::<f32>() {
             Ok(hours) if hours > 0.0 => {
                 let session = StudySession {
                     id: 0,
-                    date: self.manual_date.trim().to_string(),
+                    date,
                     hours,
                     activity_type: "Manual".to_string(),
                     phase: "Manual".to_string(),

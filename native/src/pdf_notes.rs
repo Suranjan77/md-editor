@@ -35,10 +35,35 @@ pub fn new_linked_pdf_note_content(
 ) -> String {
     format!(
         "---\ntype: pdf-note\nsource_pdf: {}\n---\n\n# {}\n\n{}",
-        pdf_path,
+        encode_pdf_link_path(pdf_path),
         note_title_from_path(note_path),
         linked_pdf_note_section(pdf_path, ann)
     )
+}
+
+pub fn encode_pdf_link_path(path: &str) -> String {
+    path.replace('%', "%25")
+        .replace('?', "%3F")
+        .replace('&', "%26")
+        .replace('#', "%23")
+}
+
+pub fn decode_pdf_link_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(value) = u8::from_str_radix(&path[index + 1..index + 3], 16) {
+                decoded.push(value);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 pub fn append_linked_pdf_note_section(
@@ -134,6 +159,15 @@ fn linked_pdf_note_section(pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pdf_link_paths_escape_query_delimiters() {
+        let path = "papers/why?this&that#1%.pdf";
+        let encoded = encode_pdf_link_path(path);
+        assert!(!encoded.contains('?'));
+        assert!(!encoded.contains('&'));
+        assert_eq!(decode_pdf_link_path(&encoded), path);
+    }
 
     #[test]
     fn formats_sections_for_shared_notes() {

@@ -60,6 +60,36 @@ pub struct ReadingItemConfig {
     pub title: String,
 }
 
+fn content_hash(text: &str) -> u64 {
+    text.as_bytes().iter().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
+}
+
+pub(crate) fn gate_completion_keys(gate: &str, item: &str, index: usize) -> (String, String) {
+    (
+        format!("gate_{gate}_{:016x}", content_hash(item)),
+        format!("gate_{gate}_{index}"),
+    )
+}
+
+pub(crate) fn reading_completion_keys(
+    section: &str,
+    title: &str,
+    index: usize,
+) -> (String, String) {
+    (
+        format!("read_{section}_{:016x}", content_hash(title)),
+        format!("read_{section}_{index}"),
+    )
+}
+
+fn completion_checked(kv: &std::collections::HashMap<String, String>, keys: &(String, String)) -> bool {
+    kv.get(&keys.0)
+        .or_else(|| kv.get(&keys.1))
+        .is_some_and(|value| value == "true")
+}
+
 const PHASES: &[(&str, &str, &str, &str)] = &[
     ("1A", "Mathematics", "Year 1", "Months 1-4"),
     ("1B", "Systems: C/C++ & Hardware", "Year 1", "Months 4-8"),
@@ -201,6 +231,25 @@ const READING_ITEMS: &[(&str, &[(&str, &str)])] = &[
 
 pub fn default_config_json() -> String {
     serde_json::to_string_pretty(&default_config()).unwrap_or_else(|_| "{}".to_string())
+}
+
+#[cfg(test)]
+mod completion_key_tests {
+    use super::*;
+
+    #[test]
+    fn content_keys_survive_reordering() {
+        let first = gate_completion_keys("g", "alpha", 0).0;
+        let reordered = gate_completion_keys("g", "alpha", 4).0;
+        assert_eq!(first, reordered);
+        assert_ne!(first, gate_completion_keys("g", "beta", 0).0);
+    }
+
+    #[test]
+    fn manual_dates_can_be_normalized() {
+        let date = chrono::NaiveDate::parse_from_str("2026-7-16", "%Y-%m-%d").unwrap();
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2026-07-16");
+    }
 }
 
 pub fn parse_config(json: &str) -> Result<TrackerConfig, String> {
@@ -912,10 +961,8 @@ fn gates_body<'a>(
             gate.items
                 .iter()
                 .enumerate()
-                .filter(|(idx, _)| {
-                    kv.get(&format!("gate_{}_{}", gate.id, idx))
-                        .map(|v| v == "true")
-                        .unwrap_or(false)
+                .filter(|(idx, item)| {
+                    completion_checked(kv, &gate_completion_keys(&gate.id, item, *idx))
                 })
                 .count()
         })
@@ -934,10 +981,8 @@ fn gates_body<'a>(
             .items
             .iter()
             .enumerate()
-            .filter(|(idx, _)| {
-                kv.get(&format!("gate_{}_{}", gate.id, idx))
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
+            .filter(|(idx, item)| {
+                completion_checked(kv, &gate_completion_keys(&gate.id, item, *idx))
             })
             .count();
         let mut item_col = column![
@@ -949,15 +994,13 @@ fn gates_body<'a>(
         ]
         .spacing(8);
         for (idx, item) in gate.items.into_iter().enumerate() {
-            let checked = kv
-                .get(&format!("gate_{}_{}", gate.id, idx))
-                .map(|v| v == "true")
-                .unwrap_or(false);
+            let checked = completion_checked(kv, &gate_completion_keys(&gate.id, &item, idx));
             let gate_id = gate.id.clone();
+            let item_key = item.clone();
             item_col = item_col.push(
                 checkbox(checked)
                     .label(item)
-                    .on_toggle(move |_| Message::TrackerGateToggled(gate_id.clone(), idx))
+                    .on_toggle(move |_| Message::TrackerGateToggled(gate_id.clone(), item_key.clone(), idx))
                     .size(15),
             );
         }
@@ -982,10 +1025,8 @@ fn reading_body<'a>(
                 .items
                 .iter()
                 .enumerate()
-                .filter(|(idx, _)| {
-                    kv.get(&format!("read_{key_section}_{idx}"))
-                        .map(|v| v == "true")
-                        .unwrap_or(false)
+                .filter(|(idx, item)| {
+                    completion_checked(kv, &reading_completion_keys(&key_section, &item.title, *idx))
                 })
                 .count()
         })
@@ -1005,10 +1046,8 @@ fn reading_body<'a>(
             .items
             .iter()
             .enumerate()
-            .filter(|(idx, _)| {
-                kv.get(&format!("read_{key_section}_{idx}"))
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
+            .filter(|(idx, item)| {
+                completion_checked(kv, &reading_completion_keys(&key_section, &item.title, *idx))
             })
             .count();
         let mut item_col = column![
@@ -1020,16 +1059,14 @@ fn reading_body<'a>(
         ]
         .spacing(8);
         for (idx, item) in section.items.into_iter().enumerate() {
-            let checked = kv
-                .get(&format!("read_{key_section}_{idx}"))
-                .map(|v| v == "true")
-                .unwrap_or(false);
+            let checked = completion_checked(kv, &reading_completion_keys(&key_section, &item.title, idx));
             let label = format!("{}  {}", item.priority.to_uppercase(), item.title);
             let section_clone = key_section.clone();
+            let item_key = item.title.clone();
             item_col = item_col.push(
                 checkbox(checked)
                     .label(label)
-                    .on_toggle(move |_| Message::TrackerReadingToggled(section_clone.clone(), idx))
+                    .on_toggle(move |_| Message::TrackerReadingToggled(section_clone.clone(), item_key.clone(), idx))
                     .size(15),
             );
         }

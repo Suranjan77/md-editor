@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension};
 
@@ -55,6 +56,7 @@ impl AppState {
         // pairing for WAL. Best-effort — fall back silently if unsupported.
         let _ = db.pragma_update(None, "journal_mode", "WAL");
         let _ = db.pragma_update(None, "synchronous", "NORMAL");
+        let _ = db.busy_timeout(Duration::from_secs(5));
 
         AppState {
             vault_root: Mutex::new(None),
@@ -68,6 +70,7 @@ impl AppState {
 
     pub fn new_in_memory() -> Self {
         let db = Connection::open_in_memory().expect("Failed to open memory sqlite database");
+        let _ = db.busy_timeout(Duration::from_secs(5));
         init_schema(&db).expect("Failed to initialize database schema");
 
         AppState {
@@ -572,6 +575,23 @@ fn settings_db_path() -> PathBuf {
     }
 
     dir
+}
+
+/// Read the last window geometry without constructing PDF services. This is
+/// used before Iced creates the first window.
+pub fn persisted_window_size() -> Option<(f32, f32)> {
+    let db = Connection::open(settings_db_path()).ok()?;
+    let read = |key: &str| -> Option<f32> {
+        db.query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
+        .ok()?
+        .parse()
+        .ok()
+    };
+    let width = read("layout_window_width")?;
+    let height = read("layout_window_height")?;
+    (width >= 640.0 && height >= 480.0).then_some((width, height))
 }
 
 /// Database location used by the interim version that stored it in the per-user

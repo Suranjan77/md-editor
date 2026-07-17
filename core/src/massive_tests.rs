@@ -487,9 +487,8 @@ fn test_vault_fts5_indexing_and_search() {
 
     let vault_path_str = temp_dir.to_string_lossy().to_string();
 
-    // 1. Create 300 markdown files with content that has specific search phrases
-    // 100 with "rust guidelines", 100 with "md-editor space", 100 with "lorem ipsum"
-    for i in 0..100 {
+    // 1. Create 450 markdown files, 150 per search phrase, so the UI cap is exercised.
+    for i in 0..150 {
         let path_rust = temp_dir.join(format!("rust_file_{}.md", i));
         let path_space = temp_dir.join(format!("space_file_{}.md", i));
         let path_lorem = temp_dir.join(format!("lorem_file_{}.md", i));
@@ -525,23 +524,26 @@ fn test_vault_fts5_indexing_and_search() {
 
     // 2. Perform FTS5 searches
     let results_rust = search_vault(&state, "rust coding").expect("Search failed");
-    assert_eq!(results_rust.len(), 100);
-    for r in &results_rust {
+    assert_eq!(results_rust.items.len(), 100);
+    assert!(results_rust.truncated);
+    for r in &results_rust.items {
         let lower_ctx = r.context.to_lowercase();
         assert!(lower_ctx.contains("rust") && lower_ctx.contains("coding"));
         assert!(r.context.contains("<b>") && r.context.contains("</b>"));
     }
 
     let results_space = search_vault(&state, "md-editor space").expect("Search failed");
-    assert_eq!(results_space.len(), 100);
-    for r in &results_space {
+    assert_eq!(results_space.items.len(), 100);
+    assert!(results_space.truncated);
+    for r in &results_space.items {
         let lower_ctx = r.context.to_lowercase();
         assert!(lower_ctx.contains("md-editor") && lower_ctx.contains("space"));
         assert!(r.context.contains("<b>") && r.context.contains("</b>"));
     }
 
     let results_lorem = search_vault(&state, "consectetur adipiscing").expect("Search failed");
-    assert_eq!(results_lorem.len(), 100);
+    assert_eq!(results_lorem.items.len(), 100);
+    assert!(results_lorem.truncated);
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

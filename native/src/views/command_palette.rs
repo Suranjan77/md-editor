@@ -60,7 +60,29 @@ pub fn get_commands() -> Vec<Command> {
     ]
 }
 
-pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Theme, Renderer> {
+pub fn filtered_commands<'a>(query: &str, commands: &'a [Command]) -> Vec<&'a Command> {
+    if query.is_empty() {
+        commands.iter().collect()
+    } else {
+        let query = query.to_lowercase();
+        commands
+            .iter()
+            .filter(|command| command.name.to_lowercase().contains(&query))
+            .collect()
+    }
+}
+
+pub fn selected_shortcut(query: &str, commands: &[Command], index: usize) -> Option<Shortcut> {
+    filtered_commands(query, commands)
+        .get(index)
+        .map(|command| command.shortcut)
+}
+
+pub fn view<'a>(
+    query: &str,
+    commands: &'a [Command],
+    selected_index: usize,
+) -> Element<'a, Message, Theme, Renderer> {
     let input = text_input("Type a command...", query)
         .on_input(Message::CommandPaletteQueryChanged)
         .padding(12)
@@ -68,16 +90,9 @@ pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Th
 
     let mut list = column![].spacing(5);
 
-    let filtered: Vec<&Command> = if query.is_empty() {
-        commands.iter().collect()
-    } else {
-        commands
-            .iter()
-            .filter(|c| c.name.to_lowercase().contains(&query.to_lowercase()))
-            .collect()
-    };
+    let filtered = filtered_commands(query, commands);
 
-    for cmd in filtered {
+    for (index, cmd) in filtered.into_iter().enumerate() {
         list = list.push(
             button(
                 row![
@@ -107,7 +122,11 @@ pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Th
             )
             .width(Length::Fill)
             .on_press(Message::CommandPaletteCommandClicked(cmd.shortcut))
-            .style(button::text),
+            .style(if index == selected_index {
+                button::secondary
+            } else {
+                button::text
+            }),
         );
     }
 
@@ -152,5 +171,22 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::StudyTracker => "Tracker",
         Shortcut::SplitView => "Split",
         Shortcut::Escape => "Esc",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filtered_selection_runs_the_visible_command() {
+        let commands = get_commands();
+        let filtered = filtered_commands("toggle", &commands);
+        assert!(filtered.len() >= 2);
+        assert_eq!(
+            selected_shortcut("toggle", &commands, 1),
+            Some(filtered[1].shortcut)
+        );
+        assert_eq!(selected_shortcut("missing", &commands, 0), None);
     }
 }

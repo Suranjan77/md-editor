@@ -4,7 +4,7 @@ use iced::advanced::renderer;
 use iced::advanced::widget::{self, Widget};
 use iced::advanced::{Clipboard, Shell};
 use iced::mouse;
-use iced::{Color, Element, Length, Rectangle, Size};
+use iced::{Element, Length, Rectangle, Size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdfSelection {
@@ -24,15 +24,9 @@ pub struct InteractivePdf<'a, Message> {
     handle: iced::widget::image::Handle,
     width: f32,
     height: f32,
-    page_width: f32,
-    page_height: f32,
     page_index: u16,
     page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
-    highlights: &'a [md_editor_core::pdf::PdfAnnotation],
-    search_highlights: Vec<md_editor_core::pdf::PdfRect>,
-    active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
     active_selection: Option<PdfSelection>,
-    focused_annotation_id: Option<&'a str>,
     on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
     on_right_click: Box<dyn Fn(f32, f32) -> Message + 'a>,
     on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
@@ -46,15 +40,9 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         handle: iced::widget::image::Handle,
         width: f32,
         height: f32,
-        page_width: f32,
-        page_height: f32,
         page_index: u16,
         page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
-        highlights: &'a [md_editor_core::pdf::PdfAnnotation],
-        search_highlights: Vec<md_editor_core::pdf::PdfRect>,
-        active_search_highlights: Vec<md_editor_core::pdf::PdfRect>,
         active_selection: Option<PdfSelection>,
-        focused_annotation_id: Option<&'a str>,
         on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a,
         on_right_click: impl Fn(f32, f32) -> Message + 'a,
         on_selection_changed: impl Fn(u16, usize, usize) -> Message + 'a,
@@ -66,15 +54,9 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             handle,
             width,
             height,
-            page_width,
-            page_height,
             page_index,
             page_text,
-            highlights,
-            search_highlights,
-            active_search_highlights,
             active_selection,
-            focused_annotation_id,
             on_left_click: Box::new(on_left_click),
             on_right_click: Box::new(on_right_click),
             on_selection_changed: Box::new(on_selection_changed),
@@ -96,56 +78,6 @@ fn search_rect_to_view_rect(
         width: rect.width * zoom,
         height: rect.height * zoom,
     }
-}
-
-fn to_screen_rect(
-    pdf_rect: &md_editor_core::pdf::PdfRect,
-    page_height: f32,
-    zoom: f32,
-    bounds: Rectangle,
-) -> Rectangle {
-    Rectangle {
-        x: bounds.x + pdf_rect.x * zoom,
-        y: bounds.y + (page_height - pdf_rect.y - pdf_rect.height) * zoom,
-        width: pdf_rect.width * zoom,
-        height: pdf_rect.height * zoom,
-    }
-}
-
-fn get_annotation_color(color: md_editor_core::pdf::PdfAnnotationColor) -> Color {
-    match color {
-        md_editor_core::pdf::PdfAnnotationColor::Yellow => Color::from_rgba(1.0, 0.92, 0.23, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Green => Color::from_rgba(0.3, 0.85, 0.3, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Blue => Color::from_rgba(0.12, 0.53, 0.9, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Pink => Color::from_rgba(0.95, 0.3, 0.6, 0.35),
-        md_editor_core::pdf::PdfAnnotationColor::Orange => Color::from_rgba(1.0, 0.6, 0.1, 0.35),
-    }
-}
-
-fn draw_view_highlight<R>(
-    renderer: &mut R,
-    page_bounds: Rectangle,
-    rect: &md_editor_core::pdf::PdfRect,
-    color: Color,
-) where
-    R: renderer::Renderer,
-{
-    renderer.fill_quad(
-        renderer::Quad {
-            bounds: Rectangle {
-                x: page_bounds.x + rect.x,
-                y: page_bounds.y + rect.y,
-                width: rect.width.max(3.0),
-                height: rect.height.max(8.0),
-            },
-            border: iced::Border {
-                radius: 2.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        color,
-    );
 }
 
 fn hit_test(
@@ -270,77 +202,8 @@ where
             *viewport,
         );
 
-        let page_height = self
-            .page_text
-            .map(|page_text| page_text.page_height)
-            .unwrap_or(self.page_height);
-        let zoom = self
-            .page_text
-            .map(|page_text| self.width / page_text.page_width)
-            .unwrap_or_else(|| self.width / self.page_width.max(1.0));
-
-        // 1. Draw persistent annotation highlights
-        for ann in self.highlights {
-            let color = get_annotation_color(ann.color);
-            let is_focused = self.focused_annotation_id == Some(ann.id.as_str());
-            let border = if is_focused {
-                iced::Border {
-                    color: Color::from_rgb8(177, 204, 198), // theme::ACCENT
-                    width: 1.5,
-                    radius: 0.0.into(),
-                }
-            } else {
-                iced::Border::default()
-            };
-
-            for r in &ann.rects {
-                let screen_rect = to_screen_rect(r, page_height, zoom, bounds);
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: screen_rect,
-                        border,
-                        ..Default::default()
-                    },
-                    color,
-                );
-            }
-        }
-
-        // 2. Draw search highlights. These are pre-converted into view coordinates
-        // by the PDF view builder, matching the stable main-branch search path.
-        for r in &self.search_highlights {
-            draw_view_highlight(renderer, bounds, r, Color::from_rgba(1.0, 0.78, 0.18, 0.38));
-        }
-        for r in &self.active_search_highlights {
-            draw_view_highlight(renderer, bounds, r, Color::from_rgba(1.0, 0.62, 0.0, 0.68));
-        }
-
-        // 3. Draw active selection highlight
-        if let Some(page_text) = self.page_text {
-            if let Some(sel) = self.active_selection {
-                if sel.page_index == self.page_index {
-                    let start = sel.anchor_idx.min(sel.focus_idx);
-                    let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-                    let selected_chars: Vec<md_editor_core::pdf::PdfTextChar> = page_text
-                        .chars
-                        .iter()
-                        .filter(|c| c.text_index >= start && c.text_index < end)
-                        .cloned()
-                        .collect();
-                    let selection_rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
-                    for r in selection_rects {
-                        let screen_rect = to_screen_rect(&r, page_text.page_height, zoom, bounds);
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: screen_rect,
-                                ..Default::default()
-                            },
-                            Color::from_rgba(0.12, 0.53, 0.9, 0.45),
-                        );
-                    }
-                }
-            }
-        }
+        // The stacked `PdfOverlay` paints annotations, search matches, and
+        // selection exactly once above this page bitmap.
     }
 
     fn state(&self) -> iced::advanced::widget::tree::State {

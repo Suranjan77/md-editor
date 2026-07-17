@@ -21,6 +21,7 @@ pub fn file_bar<'a>(
     let search_input = text_input("Find in current file", query)
         .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
+        .on_submit(Message::GlobalSearchSubmit)
         .on_submit(Message::SearchNext)
         .padding([8, 12])
         .size(14)
@@ -94,6 +95,7 @@ pub fn view<'a>(
     match_case: bool,
     current_match_count: usize,
     results: &'a [md_editor_core::types::SearchResult],
+    results_truncated: bool,
     pdf_results: &'a [md_editor_core::pdf::PdfSearchMatch],
     pdf_error: Option<&'a str>,
     visible: bool,
@@ -214,6 +216,11 @@ pub fn view<'a>(
                 text("PDF results").size(11).color(theme::TEXT_MUTED),
                 pdf_result_list,
                 text("Vault results").size(11).color(theme::TEXT_MUTED),
+                if results_truncated {
+                    text("100+ results — refine your search").size(11).color(theme::TEXT_MUTED)
+                } else {
+                    text("").size(1)
+                },
                 vault_results,
             ]
             .spacing(8)

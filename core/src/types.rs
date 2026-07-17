@@ -15,6 +15,12 @@ pub struct SearchResult {
     pub context: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct SearchResults {
+    pub items: Vec<SearchResult>,
+    pub truncated: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum BacklinkTarget {
     MarkdownFile {

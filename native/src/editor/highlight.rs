@@ -483,7 +483,7 @@ fn highlight_line(line: &str) -> StyledLine {
     }
 
     // Horizontal rule
-    if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+    if is_horizontal_rule(trimmed) {
         sl.spans.push(StyledSpan {
             text: line.to_string(),
             display_text: Some(String::new()),
@@ -524,14 +524,12 @@ fn highlight_line(line: &str) -> StyledLine {
     }
 
     // Task list items (must check before regular list items)
-    if trimmed.starts_with("- [ ] ")
-        || trimmed.starts_with("- [x] ")
-        || trimmed.starts_with("- [X] ")
-    {
-        let checkbox_end = line.len() - trimmed.len() + 6;
+    if is_task_prefix(trimmed) {
+        let prefix_len = if trimmed.len() == 5 { 5 } else { 6 };
+        let checkbox_end = line.len() - trimmed.len() + prefix_len;
         let is_checked = trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]");
         sl.spans.push(StyledSpan {
-            text: line[..(line.len() - trimmed.len() + 6)].to_string(),
+            text: line[..checkbox_end].to_string(),
             display_text: Some(if is_checked {
                 "☑ ".to_string()
             } else {
@@ -590,6 +588,20 @@ fn highlight_line(line: &str) -> StyledLine {
     }
 
     sl
+}
+
+fn is_horizontal_rule(trimmed: &str) -> bool {
+    let mut chars = trimmed.chars();
+    let Some(marker @ ('-' | '*' | '_')) = chars.next() else {
+        return false;
+    };
+    chars.clone().count() >= 2 && chars.all(|ch| ch == marker)
+}
+
+fn is_task_prefix(trimmed: &str) -> bool {
+    ["- [ ]", "- [x]", "- [X]"].iter().any(|prefix| {
+        trimmed == *prefix || trimmed.starts_with(&format!("{prefix} "))
+    })
 }
 
 fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
@@ -1130,6 +1142,17 @@ mod tests {
 
         assert!(lines[1].spans.iter().any(|span| span.is_rule));
         assert_eq!(lines[1].spans[0].text, "---");
+    }
+
+    #[test]
+    fn longer_horizontal_rules_and_eol_checkboxes_are_highlighted() {
+        let rules = highlight_markdown("----\n*****\n_____");
+        assert!(rules.iter().all(|line| line.spans[0].is_rule));
+
+        let tasks = highlight_markdown("- [ ]\n- [x]");
+        assert!(tasks.iter().all(|line| line.spans[0].is_checkbox));
+        assert!(!tasks[0].spans[0].is_checked);
+        assert!(tasks[1].spans[0].is_checked);
     }
 
     #[test]

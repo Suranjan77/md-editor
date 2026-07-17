@@ -145,6 +145,10 @@ fn render_tree_level<'a>(
             .on_press(Message::DeleteFileDialog(path.clone()))
             .padding(7)
             .style(button::text);
+        let rename_btn = button(text("✎").size(14).color(theme::TEXT_MUTED))
+            .on_press(Message::RenameEntryDialog(path.clone()))
+            .padding(7)
+            .style(button::text);
 
         // Add a small indicator for active file
         let item = if is_active {
@@ -163,13 +167,14 @@ fn render_tree_level<'a>(
                     ..Default::default()
                 }),
                 container(btn).width(Length::Fill),
+                rename_btn,
                 delete_btn
             ]
             .spacing(4)
             .align_y(Alignment::Center)
             .into()
         } else {
-            row![btn, delete_btn]
+            row![btn, rename_btn, delete_btn]
                 .spacing(4)
                 .align_y(Alignment::Center)
                 .into()

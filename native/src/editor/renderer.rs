@@ -312,6 +312,13 @@ fn measure_width<R>(content: &str, size: f32, font: iced::Font) -> f32
 where
     R: iced::advanced::text::Renderer<Font = iced::Font>,
 {
+    if content.contains('\t') {
+        return content
+            .split('\t')
+            .map(|part| measure_width::<R>(part, size, font))
+            .sum::<f32>()
+            + content.matches('\t').count() as f32 * measure_width::<R>("    ", size, font);
+    }
     use iced::advanced::text::Paragraph;
     if content.is_empty() {
         return 0.0;
@@ -334,6 +341,9 @@ fn measure_char_width<R>(ch: char, size: f32, font: iced::Font) -> f32
 where
     R: iced::advanced::text::Renderer<Font = iced::Font>,
 {
+    if ch == '\t' {
+        return measure_width::<R>("    ", size, font);
+    }
     static CACHE: OnceLock<Mutex<HashMap<CharCacheKey, f32>>> = OnceLock::new();
     let key = CharCacheKey {
         ch,
@@ -2473,7 +2483,11 @@ where
                 };
                 let mut block_table = false;
                 let mut block_math = false;
-                if let Some(first_line) = self.lines.iter().find(|l| l.block_id == block_id) {
+                if let Some(first_line) = state
+                    .block_ranges
+                    .get(&block_id)
+                    .and_then(|(start, _)| self.lines.get(*start))
+                {
                     block_table = first_line.is_table_row;
                     block_math = first_line.is_math_block;
                 }
@@ -2490,6 +2504,7 @@ where
                     block_id,
                     bounds.width,
                     state.is_focused,
+                    state,
                 );
                 let max_scroll = (content_w - viewport_w).max(0.0);
                 if max_scroll <= 0.0 {
@@ -3370,26 +3385,20 @@ impl<'a, Message> Editor<'a, Message> {
         }
     }
 
-    fn block_content_width<R>(&self, block_id: usize, available_width: f32, focused: bool) -> f32
+    fn block_content_width<R>(
+        &self,
+        block_id: usize,
+        available_width: f32,
+        focused: bool,
+        state: &State,
+    ) -> f32
     where
         R: iced::advanced::text::Renderer<Font = iced::Font>,
     {
         let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
         let mut max_width = 0.0_f32;
         let mut table_widths: Vec<f32> = Vec::new();
-        let Some((start, end)) = self
-            .lines
-            .iter()
-            .position(|line| line.block_id == block_id)
-            .map(|start| {
-                let end = self.lines[start..]
-                    .iter()
-                    .position(|line| line.block_id != block_id)
-                    .map(|offset| start + offset.saturating_sub(1))
-                    .unwrap_or_else(|| self.lines.len().saturating_sub(1));
-                (start, end)
-            })
-        else {
+        let Some(&(start, end)) = state.block_ranges.get(&block_id) else {
             return (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
         };
         let Some(block_lines) = self.lines.get(start..=end) else {
@@ -3503,17 +3512,20 @@ impl<'a, Message> Editor<'a, Message> {
     where
         R: iced::advanced::text::Renderer<Font = iced::Font>,
     {
-        let content_w = self.block_content_width::<R>(block_id, available_width, focused);
-        if content_w <= viewport_w + 1.0 {
-            return None;
-        }
-
         let scrollbar_y = block_y + block_h - 7.0;
         if pos.x < viewport_x
             || pos.x > viewport_x + viewport_w
             || pos.y < scrollbar_y - 8.0
             || pos.y > scrollbar_y + 10.0
         {
+            return None;
+        }
+
+        // Width measurement can shape every line in a large code/table
+        // block, so only do it once the pointer is actually in the bar band.
+        let content_w =
+            self.block_content_width::<R>(block_id, available_width, focused, state);
+        if content_w <= viewport_w + 1.0 {
             return None;
         }
 

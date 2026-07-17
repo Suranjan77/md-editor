@@ -45,6 +45,7 @@ pub struct SearchState {
     pub loose: bool,
     pub match_index: Option<usize>,
     pub results: Vec<SearchResult>,
+    pub results_truncated: bool,
     pub pdf_results: Vec<PdfSearchMatch>,
     pub pdf_indices_by_page: HashMap<u16, Vec<usize>>,
     pub pdf_error: Option<String>,

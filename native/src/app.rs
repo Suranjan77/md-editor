@@ -45,6 +45,20 @@ fn path_is_same_or_descendant(path: &str, parent: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
+fn rename_open_path(path: &mut Option<String>, old_path: &str, new_path: &str) {
+    let Some(current) = path.as_deref() else {
+        return;
+    };
+    if current == old_path {
+        *path = Some(new_path.to_string());
+    } else if let Some(suffix) = current
+        .strip_prefix(old_path)
+        .filter(|suffix| suffix.starts_with('/'))
+    {
+        *path = Some(format!("{new_path}{suffix}"));
+    }
+}
+
 fn should_confirm_dirty_buffer(
     dirty: bool,
     active_path: Option<&str>,
@@ -76,7 +90,7 @@ fn apply_editor_save_result(
 ) -> bool {
     match result {
         Ok(()) => {
-            buffer.dirty = false;
+            buffer.mark_saved();
             *toast = Some("File saved".to_string());
             true
         }
@@ -163,12 +177,16 @@ impl MdEditor {
     pub fn new() -> (Self, Task<Message>) {
         let state = Arc::new(md_editor_core::state::AppState::new());
         let startup_notice = state.take_startup_notice();
-        let last_vault = md_editor_core::config::get_sys_config(&state, "last_vault")
+        let mut last_vault = md_editor_core::config::get_sys_config(&state, "last_vault")
             .ok()
             .flatten();
-        let last_file = md_editor_core::config::get_sys_config(&state, "last_file")
+        let mut last_file = md_editor_core::config::get_sys_config(&state, "last_file")
             .ok()
             .flatten();
+        if let Some((vault, file)) = startup_target_from_args(std::env::args().skip(1)) {
+            last_vault = Some(vault);
+            last_file = file;
+        }
         let tracker = crate::tracker_state::TrackerState::new(&state);
 
         let mut app = Self {
@@ -187,6 +205,7 @@ impl MdEditor {
             pending_action: None,
         };
         app.ui.toast = startup_notice;
+        app.restore_layout();
 
         let mut task = Task::none();
         if let Some(path) = last_vault {
@@ -246,7 +265,7 @@ impl MdEditor {
                 return Some(Message::KeyboardShortcut(Shortcut::Escape));
             }
             if key == Key::Named(Named::Enter) {
-                return Some(Message::NameModalSubmitCurrent);
+                return Some(Message::OverlaySubmitCurrent);
             }
             if modifiers.command() || modifiers.control() {
                 if let Key::Character(c) = key.as_ref() {
@@ -264,8 +283,8 @@ impl MdEditor {
                 }
             }
             match key {
-                Key::Named(Named::ArrowDown) => Some(Message::PdfScrollBy(64.0)),
-                Key::Named(Named::ArrowUp) => Some(Message::PdfScrollBy(-64.0)),
+                Key::Named(Named::ArrowDown) => Some(Message::CommandPaletteMove(1)),
+                Key::Named(Named::ArrowUp) => Some(Message::CommandPaletteMove(-1)),
                 Key::Named(Named::PageDown) => Some(Message::PdfScrollBy(520.0)),
                 Key::Named(Named::PageUp) => Some(Message::PdfScrollBy(-520.0)),
                 _ => None,
@@ -396,11 +415,12 @@ impl MdEditor {
                 }
                 if path.starts_with("pdf://") {
                     let url_str = &path["pdf://".len()..];
-                    let (pdf_path, query) = if let Some(idx) = url_str.find('?') {
+                    let (encoded_pdf_path, query) = if let Some(idx) = url_str.find('?') {
                         (&url_str[..idx], Some(&url_str[idx + 1..]))
                     } else {
                         (url_str, None)
                     };
+                    let pdf_path = crate::pdf_notes::decode_pdf_link_path(encoded_pdf_path);
 
                     let mut page: Option<u16> = None;
                     let mut annotation_id: Option<String> = None;
@@ -422,7 +442,7 @@ impl MdEditor {
                     let resolved_pdf_path = resolve_relative_link_path(
                         self.vault.root.as_deref(),
                         self.active_path.as_deref(),
-                        pdf_path,
+                        &pdf_path,
                     );
 
                     // Turning on split view shrinks the PDF pane; re-fit below if
@@ -561,6 +581,7 @@ impl MdEditor {
             m @ (Message::CreateFileDialog
             | Message::CreateFolderDialog
             | Message::DeleteFileDialog(_)
+            | Message::RenameEntryDialog(_)
             | Message::NameModalInputChanged(_)
             | Message::PdfLinkNoteFolderSelected(_)
             | Message::PdfLinkNoteFileSelected(_)
@@ -589,6 +610,38 @@ impl MdEditor {
                 let name = input.trim();
                 if name.is_empty() {
                     self.ui.toast = Some("Name cannot be empty".to_string());
+                    return Task::none();
+                }
+                if name.contains('/') || name.contains('\\') {
+                    self.ui.toast = Some("Name cannot contain path separators".to_string());
+                    return Task::none();
+                }
+
+                if let Some(views::modals::ModalType::Rename(old_path)) =
+                    self.ui.active_modal.clone()
+                {
+                    let parent = std::path::Path::new(&old_path)
+                        .parent()
+                        .filter(|path| !path.as_os_str().is_empty());
+                    let new_path = parent
+                        .map(|path| path.join(name))
+                        .unwrap_or_else(|| std::path::PathBuf::from(name))
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    match md_editor_core::vault::rename_entry(&self.state, &old_path, &new_path) {
+                        Ok(()) => {
+                            self.vault.entries =
+                                md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+                            rename_open_path(&mut self.active_path, &old_path, &new_path);
+                            rename_open_path(&mut self.pdf.active_path, &old_path, &new_path);
+                            rename_open_path(&mut self.active_image_path, &old_path, &new_path);
+                            rename_open_path(&mut self.vault.selected_path, &old_path, &new_path);
+                            self.ui.active_modal = None;
+                            self.ui.modal_input.clear();
+                            self.ui.toast = Some("Renamed".to_string());
+                        }
+                        Err(error) => self.ui.toast = Some(error),
+                    }
                     return Task::none();
                 }
 
@@ -1158,6 +1211,40 @@ impl MdEditor {
                 self.ui.command_palette_query.clear();
                 Task::done(Message::KeyboardShortcut(shortcut))
             }
+            Message::CommandPaletteMove(delta) => {
+                if !self.ui.command_palette_visible {
+                    return Task::done(Message::PdfScrollBy(delta as f32 * 64.0));
+                }
+                let count = views::command_palette::filtered_commands(
+                    &self.ui.command_palette_query,
+                    &self.ui.commands,
+                )
+                .len();
+                if count > 0 {
+                    self.ui.command_palette_selected_index = (self
+                        .ui
+                        .command_palette_selected_index as i32
+                        + delta)
+                        .rem_euclid(count as i32) as usize;
+                }
+                Task::none()
+            }
+            Message::OverlaySubmitCurrent => {
+                if self.ui.command_palette_visible {
+                    if let Some(shortcut) = views::command_palette::selected_shortcut(
+                        &self.ui.command_palette_query,
+                        &self.ui.commands,
+                        self.ui.command_palette_selected_index,
+                    ) {
+                        return Task::done(Message::CommandPaletteCommandClicked(shortcut));
+                    }
+                    Task::none()
+                } else if self.search.visible {
+                    Task::done(Message::GlobalSearchSubmit)
+                } else {
+                    Task::done(Message::NameModalSubmitCurrent)
+                }
+            }
             m @ (Message::TrackerStart
                 | Message::TrackerStop
                 | Message::TrackerTabSelected(_)
@@ -1180,6 +1267,15 @@ impl MdEditor {
                     focus_global_search_input()
                 }
             }
+            Message::GlobalSearchSubmit => {
+                if let Some(result) = self.search.pdf_results.first() {
+                    Task::done(Message::PdfSearchResultClicked(result.page_index))
+                } else if let Some(result) = self.search.results.first() {
+                    Task::done(Message::SearchResultClicked(result.path.clone()))
+                } else {
+                    Task::none()
+                }
+            }
             Message::SearchClose => {
                 self.search.visible = false;
                 self.search.file_visible = false;
@@ -1191,10 +1287,12 @@ impl MdEditor {
                 self.search.pdf_error = None;
                 if q.len() > 2 && !self.search.regex {
                     if let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q) {
-                        self.search.results = res;
+                        self.search.results = res.items;
+                        self.search.results_truncated = res.truncated;
                     }
                 } else {
                     self.search.results.clear();
+                    self.search.results_truncated = false;
                 }
                 if (self.search.visible || self.pdf_search_is_active())
                     && self.pdf.active_path.is_some()
@@ -1833,6 +1931,7 @@ impl MdEditor {
             }
             Message::SplitViewDragEnd => {
                 self.ui.is_resizing_split = false;
+                self.persist_layout();
                 if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
                     return Task::done(Message::PdfFitToWidth);
                 }
@@ -1873,6 +1972,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::WindowCloseRequested(id) => {
+                self.persist_layout();
                 if self.guard_dirty_action(
                     BufferReplacement::Always,
                     Message::WindowCloseNow(id),
@@ -2192,6 +2292,7 @@ impl MdEditor {
                     self.search.match_case,
                     self.search.match_count(),
                     &self.search.results,
+                    self.search.results_truncated,
                     &self.search.pdf_results,
                     self.search.pdf_error.as_deref(),
                     true,
@@ -2215,6 +2316,7 @@ impl MdEditor {
                 container(views::command_palette::view(
                     &self.ui.command_palette_query,
                     &self.ui.commands,
+                    self.ui.command_palette_selected_index,
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -3396,6 +3498,55 @@ impl MdEditor {
         self.run_editor_command_with_scroll(command, keep_cursor_visible)
     }
 
+    fn restore_layout(&mut self) {
+        let get = |key| {
+            md_editor_core::config::get_sys_config(&self.state, key)
+                .ok()
+                .flatten()
+        };
+        self.vault.sidebar_visible = get("layout_sidebar_visible")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(self.vault.sidebar_visible);
+        self.vault.backlinks_visible = get("layout_backlinks_visible")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(self.vault.backlinks_visible);
+        self.editor.toc_visible = get("layout_toc_visible")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(self.editor.toc_visible);
+        self.tracker.visible = get("layout_tracker_visible")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(self.tracker.visible);
+        self.ui.split_view_active = get("layout_split_active")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(self.ui.split_view_active);
+        self.ui.split_ratio = get("layout_split_ratio")
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(self.ui.split_ratio)
+            .clamp(0.25, 0.75);
+        self.ui.window_width = get("layout_window_width")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(self.ui.window_width);
+        self.ui.window_height = get("layout_window_height")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(self.ui.window_height);
+    }
+
+    fn persist_layout(&self) {
+        let values = [
+            ("layout_sidebar_visible", self.vault.sidebar_visible.to_string()),
+            ("layout_backlinks_visible", self.vault.backlinks_visible.to_string()),
+            ("layout_toc_visible", self.editor.toc_visible.to_string()),
+            ("layout_tracker_visible", self.tracker.visible.to_string()),
+            ("layout_split_active", self.ui.split_view_active.to_string()),
+            ("layout_split_ratio", self.ui.split_ratio.to_string()),
+            ("layout_window_width", self.ui.window_width.to_string()),
+            ("layout_window_height", self.ui.window_height.to_string()),
+        ];
+        for (key, value) in values {
+            let _ = md_editor_core::config::set_sys_config(&self.state, key, &value);
+        }
+    }
+
     fn run_editor_command_with_scroll(
         &mut self,
         command: EditorCommand,
@@ -3418,7 +3569,15 @@ impl MdEditor {
             Task::none()
         };
 
-        if keep_cursor_visible {
+        let cursor_y = self.estimated_editor_line_y(self.editor.buffer.cursor_line);
+        if keep_cursor_visible
+            && editor_cursor_needs_scroll(
+                cursor_y,
+                self.editor.scroll_y,
+                self.editor.viewport_height,
+                36.0,
+            )
+        {
             Task::batch(vec![
                 content_task,
                 self.scroll_editor_to_line(self.editor.buffer.cursor_line),
@@ -3449,6 +3608,34 @@ fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
             | EditorCommand::Undo
             | EditorCommand::Redo
     )
+}
+
+fn editor_cursor_needs_scroll(
+    cursor_y: f32,
+    scroll_y: f32,
+    viewport_height: f32,
+    margin: f32,
+) -> bool {
+    if viewport_height <= margin * 2.0 {
+        return true;
+    }
+    cursor_y < scroll_y + margin || cursor_y > scroll_y + viewport_height - margin
+}
+
+fn startup_target_from_args(args: impl Iterator<Item = String>) -> Option<(String, Option<String>)> {
+    let argument = args.into_iter().find(|arg| !arg.starts_with('-'))?;
+    let path = std::path::PathBuf::from(argument);
+    if path.is_dir() {
+        return Some((path.to_string_lossy().to_string(), None));
+    }
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    let parent = absolute.parent()?.to_string_lossy().to_string();
+    let file = absolute.file_name()?.to_string_lossy().to_string();
+    Some((parent, Some(file)))
 }
 
 fn focus_file_search_input() -> Task<Message> {
@@ -3910,6 +4097,20 @@ mod tests {
         assert!(editor_command_keeps_cursor_visible(
             &EditorCommand::InsertText("\n".to_string())
         ));
+    }
+
+    #[test]
+    fn cursor_scroll_predicate_preserves_manual_scroll_while_visible() {
+        assert!(!editor_cursor_needs_scroll(250.0, 100.0, 400.0, 36.0));
+        assert!(editor_cursor_needs_scroll(120.0, 100.0, 400.0, 36.0));
+        assert!(editor_cursor_needs_scroll(490.0, 100.0, 400.0, 36.0));
+    }
+
+    #[test]
+    fn rename_updates_open_descendant_paths() {
+        let mut path = Some("folder/sub/note.md".to_string());
+        rename_open_path(&mut path, "folder", "renamed");
+        assert_eq!(path.as_deref(), Some("renamed/sub/note.md"));
     }
 
     #[test]

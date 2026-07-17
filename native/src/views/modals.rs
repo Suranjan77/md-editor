@@ -10,9 +10,24 @@ pub enum ModalType {
     CreateFile,
     CreateFolder,
     Delete(String),    // path
+    Rename(String),    // old path
     UnsavedChanges(String), // current file name
     QuickNote(String), // annotation ID
     LinkNote(String),  // annotation ID
+}
+
+fn delete_confirmation(path: &str, entries: &[md_editor_core::types::FileEntry]) -> String {
+    let is_dir = entries.iter().any(|entry| entry.path == path && entry.is_dir);
+    if is_dir {
+        let prefix = format!("{}/", path.trim_end_matches('/'));
+        let count = entries
+            .iter()
+            .filter(|entry| !entry.is_dir && entry.path.starts_with(&prefix))
+            .count();
+        format!("Delete folder '{path}' and its {count} files? This cannot be undone.")
+    } else {
+        format!("Are you sure you want to delete '{path}'?")
+    }
 }
 
 pub fn view<'a>(
@@ -25,6 +40,7 @@ pub fn view<'a>(
         ModalType::CreateFile => "Create New File",
         ModalType::CreateFolder => "Create New Folder",
         ModalType::Delete(_) => "Delete Confirmation",
+        ModalType::Rename(_) => "Rename",
         ModalType::UnsavedChanges(_) => "Unsaved Changes",
         ModalType::QuickNote(_) => "Edit Quick Note",
         ModalType::LinkNote(_) => "Create Linked Note",
@@ -32,7 +48,7 @@ pub fn view<'a>(
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
         ModalType::Delete(path) => column![
-            text(format!("Are you sure you want to delete '{}'?", path)).color(theme::TEXT_PRIMARY),
+            text(delete_confirmation(path, vault_entries)).color(theme::TEXT_PRIMARY),
             text("This action cannot be undone.")
                 .size(12)
                 .color(theme::TEXT_MUTED),
@@ -126,4 +142,23 @@ pub fn view<'a>(
         ..Default::default()
     })
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_delete_copy_counts_only_contained_files() {
+        let entries = vec![
+            md_editor_core::types::FileEntry { path: "dir".into(), name: "dir".into(), is_dir: true },
+            md_editor_core::types::FileEntry { path: "dir/a.md".into(), name: "a.md".into(), is_dir: false },
+            md_editor_core::types::FileEntry { path: "dir/sub".into(), name: "sub".into(), is_dir: true },
+            md_editor_core::types::FileEntry { path: "dir/sub/b.md".into(), name: "b.md".into(), is_dir: false },
+        ];
+        assert_eq!(
+            delete_confirmation("dir", &entries),
+            "Delete folder 'dir' and its 2 files? This cannot be undone."
+        );
+    }
 }

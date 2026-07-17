@@ -54,6 +54,8 @@ pub struct EditTransaction {
     after_cursor: usize,
     before_selection: Option<Selection>,
     after_selection: Option<Selection>,
+    before_revision: u64,
+    after_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +133,10 @@ pub struct DocBuffer {
 
     undo_stack: Vec<EditTransaction>,
     redo_stack: Vec<EditTransaction>,
+    revision: u64,
+    saved_revision: u64,
+    next_revision: u64,
+    eol: &'static str,
 }
 
 impl DocBuffer {
@@ -150,6 +156,10 @@ impl DocBuffer {
             dirty: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            revision: 0,
+            saved_revision: 0,
+            next_revision: 1,
+            eol: dominant_eol(text),
         };
         buffer.sync_public_state();
         buffer
@@ -166,8 +176,16 @@ impl DocBuffer {
         self.desired_col = None;
         self.undo_stack.clear();
         self.redo_stack.clear();
-        self.dirty = true;
+        self.eol = dominant_eol(text);
+        self.revision = self.next_revision;
+        self.next_revision = self.next_revision.wrapping_add(1);
+        self.update_dirty();
         self.sync_public_state();
+    }
+
+    pub fn mark_saved(&mut self) {
+        self.saved_revision = self.revision;
+        self.update_dirty();
     }
 
     pub fn replace_all_text(&mut self, text: &str) -> bool {
@@ -329,7 +347,12 @@ impl DocBuffer {
         self.cursor_offset = transaction.before_cursor.min(self.rope.len_chars());
         self.selection_offsets = transaction.before_selection;
         self.redo_stack.push(transaction);
-        self.dirty = true;
+        self.revision = self
+            .redo_stack
+            .last()
+            .map(|transaction| transaction.before_revision)
+            .unwrap_or(0);
+        self.update_dirty();
         self.desired_col = None;
         self.sync_public_state();
         true
@@ -344,8 +367,9 @@ impl DocBuffer {
         }
         self.cursor_offset = transaction.after_cursor.min(self.rope.len_chars());
         self.selection_offsets = transaction.after_selection;
+        self.revision = transaction.after_revision;
         self.undo_stack.push(transaction);
-        self.dirty = true;
+        self.update_dirty();
         self.desired_col = None;
         self.sync_public_state();
         true
@@ -404,6 +428,7 @@ impl DocBuffer {
         let mut text_to_insert = text.to_string();
 
         if text == "\n" {
+            text_to_insert = self.eol.to_string();
             let line_idx = self.rope.char_to_line(insert_at);
             let line_text = self.line_text(line_idx);
             if let Some(list_item) = parse_list_item(&line_text) {
@@ -433,7 +458,7 @@ impl DocBuffer {
                     } else {
                         // Non-empty list item: auto-continue on next line!
                         let next_prefix = format!("{}{}", list_item.indent, list_item.next_marker);
-                        text_to_insert = format!("\n{}", next_prefix);
+                        text_to_insert = format!("{}{}", self.eol, next_prefix);
                     }
                 }
             }
@@ -485,6 +510,19 @@ impl DocBuffer {
         }
         if self.cursor_offset == 0 {
             return CommandResult::default();
+        }
+        let previous = self.char_at(self.cursor_offset - 1);
+        let next = self.char_at(self.cursor_offset);
+        if matches!(
+            (previous, next),
+            (Some('('), Some(')'))
+                | (Some('['), Some(']'))
+                | (Some('{'), Some('}'))
+                | (Some('"'), Some('"'))
+                | (Some('\''), Some('\''))
+                | (Some('`'), Some('`'))
+        ) {
+            return self.delete_range(self.cursor_offset - 1, self.cursor_offset + 1);
         }
         self.delete_range(
             self.previous_grapheme_boundary(self.cursor_offset),
@@ -831,7 +869,11 @@ impl DocBuffer {
         before_cursor: usize,
         before_selection: Option<Selection>,
     ) {
-        self.dirty = true;
+        let before_revision = self.revision;
+        let after_revision = self.next_revision;
+        self.next_revision = self.next_revision.wrapping_add(1);
+        self.revision = after_revision;
+        self.update_dirty();
         self.desired_col = None;
         self.undo_stack.push(EditTransaction {
             ops,
@@ -839,9 +881,15 @@ impl DocBuffer {
             after_cursor: self.cursor_offset,
             before_selection,
             after_selection: self.selection_offsets,
+            before_revision,
+            after_revision,
         });
         self.redo_stack.clear();
         self.sync_public_state();
+    }
+
+    fn update_dirty(&mut self) {
+        self.dirty = self.revision != self.saved_revision;
     }
 
     fn apply_op(&mut self, op: &EditOp) {
@@ -893,6 +941,16 @@ struct ListItem {
     marker: String,
     next_marker: String,
     is_empty: bool,
+}
+
+fn dominant_eol(text: &str) -> &'static str {
+    let crlf = text.match_indices("\r\n").count();
+    let lf = text.bytes().filter(|byte| *byte == b'\n').count();
+    if crlf > lf.saturating_sub(crlf) {
+        "\r\n"
+    } else {
+        "\n"
+    }
 }
 
 fn parse_list_item(line_text: &str) -> Option<ListItem> {
@@ -1323,6 +1381,57 @@ mod tests {
         assert_eq!(buffer.cursor_offset(), 2);
         buffer.move_cursor_left();
         assert_eq!(buffer.cursor_offset(), 0);
+    }
+
+    #[test]
+    fn undo_and_redo_track_the_saved_revision() {
+        let mut buffer = DocBuffer::from_text("saved");
+        buffer.set_cursor(0, 5);
+        buffer.insert_at_cursor(" edit");
+        assert!(buffer.dirty);
+        assert!(buffer.undo());
+        assert!(!buffer.dirty, "undo returned to the loaded saved state");
+        assert!(buffer.redo());
+        buffer.mark_saved();
+        assert!(!buffer.dirty);
+        assert!(buffer.undo());
+        assert!(buffer.dirty, "undo moved away from the explicitly saved revision");
+        assert!(buffer.redo());
+        assert!(!buffer.dirty, "redo returned to the explicitly saved revision");
+    }
+
+    #[test]
+    fn backspace_between_auto_pairs_deletes_both_delimiters() {
+        for delimiter in ['(', '"', '`'] {
+            let mut buffer = DocBuffer::from_text("");
+            buffer.execute(EditorCommand::TypePaired(delimiter));
+            buffer.backspace();
+            assert_eq!(buffer.text(), "", "delimiter: {delimiter}");
+            assert!(buffer.undo());
+        }
+
+        let mut normal = DocBuffer::from_text(")x");
+        normal.set_cursor(0, 1);
+        normal.backspace();
+        assert_eq!(normal.text(), "x");
+    }
+
+    #[test]
+    fn enter_preserves_dominant_line_endings() {
+        let mut crlf = DocBuffer::from_text("first\r\nsecond");
+        crlf.set_cursor(1, 6);
+        crlf.insert_at_cursor("\n");
+        assert_eq!(crlf.text(), "first\r\nsecond\r\n");
+
+        let mut crlf_list = DocBuffer::from_text("- one\r\n- two");
+        crlf_list.set_cursor(1, 5);
+        crlf_list.insert_at_cursor("\n");
+        assert_eq!(crlf_list.text(), "- one\r\n- two\r\n- ");
+
+        let mut lf = DocBuffer::from_text("first\nsecond");
+        lf.set_cursor(1, 6);
+        lf.insert_at_cursor("\n");
+        assert_eq!(lf.text(), "first\nsecond\n");
     }
 
     #[test]

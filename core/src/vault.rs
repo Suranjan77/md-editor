@@ -65,11 +65,7 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
     let mut for_graph: Vec<(PathBuf, String)> = Vec::with_capacity(md_files.len());
     for file_path in md_files {
         if let Ok(content) = read_file(&file_path) {
-            let rel_path = file_path
-                .strip_prefix(&root)
-                .unwrap_or(&file_path)
-                .to_string_lossy()
-                .to_string();
+            let rel_path = path_to_relative_string(&file_path, &root);
             indexed.push((rel_path, content.clone()));
             for_graph.push((file_path, content));
         }
@@ -411,13 +407,17 @@ pub fn list_vault(state: &AppState) -> Result<Vec<FileEntry>, String> {
 }
 
 /// Full-text search across the vault using FTS5.
-pub fn search_vault(state: &AppState, query: &str) -> Result<Vec<SearchResult>, String> {
+pub fn search_vault(state: &AppState, query: &str) -> Result<crate::types::SearchResults, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    let fts_query = format!("\"{}\"", query.replace('"', "\"\""));
+    let fts_query = query
+        .split_whitespace()
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ");
 
     let mut stmt = db
         .prepare(
-            "SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15) FROM file_search WHERE content MATCH ?1 ORDER BY rank LIMIT 100",
+            "SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15) FROM file_search WHERE content MATCH ?1 ORDER BY rank LIMIT 101",
         )
         .map_err(|e| e.to_string())?;
 
@@ -437,7 +437,12 @@ pub fn search_vault(state: &AppState, query: &str) -> Result<Vec<SearchResult>, 
             results.push(r);
         }
     }
-    Ok(results)
+    let truncated = results.len() > 100;
+    results.truncate(100);
+    Ok(crate::types::SearchResults {
+        items: results,
+        truncated,
+    })
 }
 
 /// Get backlinks for a file.
