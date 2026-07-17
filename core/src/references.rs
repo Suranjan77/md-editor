@@ -307,6 +307,9 @@ fn scan_equation_callsites(
         let Some(target) = targets.get(&label) else {
             continue;
         };
+        if page.page_index == target.page {
+            continue;
+        }
         let cs = char_index_at_byte(&page.text, s);
         let ce = char_index_at_byte(&page.text, e);
         // Skip the label itself (right-aligned occurrence) and any occurrence
@@ -361,6 +364,9 @@ fn scan_section_callsites(
         let Some(target) = targets.get(&label) else {
             continue;
         };
+        if page.page_index == target.page {
+            continue;
+        }
         let cs = char_index_at_byte(&page.text, s);
         let ce = char_index_at_byte(&page.text, e);
         push_link(links, page, cs, ce, target, label, ReferenceKind::Section);

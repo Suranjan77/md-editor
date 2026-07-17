@@ -36,10 +36,24 @@ pub fn line_matches(text: &str, query: &str, regex: bool, match_case: bool) -> V
             .collect();
     }
 
+    let mut original_indices = Vec::new();
     let haystack: Vec<char> = if match_case {
-        text.chars().collect()
+        text.chars()
+            .enumerate()
+            .map(|(index, ch)| {
+                original_indices.push(index);
+                ch
+            })
+            .collect()
     } else {
-        text.to_lowercase().chars().collect()
+        let mut folded = Vec::new();
+        for (index, ch) in text.chars().enumerate() {
+            for lower in ch.to_lowercase() {
+                folded.push(lower);
+                original_indices.push(index);
+            }
+        }
+        folded
     };
     let needle: Vec<char> = if match_case {
         query.chars().collect()
@@ -55,14 +69,24 @@ pub fn line_matches(text: &str, query: &str, regex: bool, match_case: bool) -> V
     let mut index = 0;
     while index + needle.len() <= haystack.len() {
         if haystack[index..index + needle.len()] == needle[..] {
-            matches.push(LineMatch {
-                start_col: index,
-                end_col: index + needle.len(),
-            });
+            let start_col = original_indices[index];
+            let end_col = original_indices[index + needle.len() - 1] + 1;
+            matches.push(LineMatch { start_col, end_col });
             index += needle.len().max(1);
         } else {
             index += 1;
         }
     }
     matches
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expanding_lowercase_keeps_original_columns() {
+        let matches = line_matches("İx TARGET", "target", false, false);
+        assert_eq!(matches, vec![LineMatch { start_col: 3, end_col: 9 }]);
+    }
 }

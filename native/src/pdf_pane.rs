@@ -290,8 +290,7 @@ impl PdfPane {
     }
 
     /// The page's size in PDF points, preferring loaded page sizes, then
-    /// extracted page text, then falling back to the rasterized dimensions
-    /// divided by zoom. Used to map normalized click coordinates into the point
+    /// extracted page text. Used to map normalized click coordinates into the point
     /// space that link/annotation rects live in.
     fn page_point_size(&self, page_idx: u16) -> Option<(f32, f32)> {
         if let Some(Some(size)) = self.page_sizes.get(page_idx as usize) {
@@ -300,9 +299,7 @@ impl PdfPane {
         if let Some(pt) = self.page_text.get(&page_idx) {
             return Some((pt.page_width, pt.page_height));
         }
-        let dim = self.dimensions.get(page_idx as usize).and_then(|d| *d)?;
-        let zoom = self.zoom.max(0.01);
-        Some((dim.0 as f32 / zoom, dim.1 as f32 / zoom))
+        None
     }
 
     pub fn link_at(&self, page_idx: u16, x: f32, y: f32) -> Option<LinkInfo> {
