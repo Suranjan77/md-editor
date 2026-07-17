@@ -378,14 +378,29 @@ pub fn delete_entry(state: &AppState, path: &str) -> Result<(), String> {
         ) {
             eprintln!("Failed to remove {path} from search index: {e}");
         }
-    }
-
-    if abs_path.is_dir() {
-        fs::remove_dir_all(&abs_path)
-            .map_err(|e| format!("Failed to delete directory {}: {}", abs_path.display(), e))
-    } else {
         fs::remove_file(&abs_path)
             .map_err(|e| format!("Failed to delete file {}: {}", abs_path.display(), e))
+    } else if abs_path.is_dir() {
+        let indexed_files = list_all_md_files(&abs_path)?;
+        fs::remove_dir_all(&abs_path)
+            .map_err(|e| format!("Failed to delete directory {}: {}", abs_path.display(), e))?;
+        {
+            let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+            for indexed_file in indexed_files {
+                index.remove_file(&indexed_file);
+            }
+        }
+        let prefix = format!("{}/", path.trim_end_matches('/'));
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute(
+            "DELETE FROM file_search
+             WHERE path = ?1 OR substr(path, 1, length(?2)) = ?2",
+            rusqlite::params![path, prefix],
+        )
+        .map_err(|e| format!("Failed to remove {path} subtree from search index: {e}"))?;
+        Ok(())
+    } else {
+        Err(format!("Path does not exist: {}", abs_path.display()))
     }
 }
 
@@ -584,6 +599,23 @@ pub fn resolve_vault_path_checked(
     if escaped {
         return Err(format!("Path escapes the vault root: {relative_path}"));
     }
+    let canonical_root = fs::canonicalize(vault_root)
+        .map_err(|e| format!("Failed to resolve vault root {}: {e}", vault_root.display()))?;
+    let mut existing = resolved.as_path();
+    while fs::symlink_metadata(existing).is_err() {
+        existing = existing.parent().ok_or_else(|| {
+            format!("Could not resolve an existing ancestor for {}", resolved.display())
+        })?;
+    }
+    let canonical_existing = fs::canonicalize(existing).map_err(|e| {
+        format!(
+            "Failed to resolve path inside vault {}: {e}",
+            existing.display()
+        )
+    })?;
+    if !canonical_existing.starts_with(&canonical_root) {
+        return Err(format!("Path resolves outside the vault root: {relative_path}"));
+    }
     Ok(resolved)
 }
 
@@ -698,7 +730,7 @@ fn list_vault_recursive(
                 is_dir: true,
             });
             list_vault_recursive(root, &path, entries, depth + 1)?;
-        } else if name.starts_with('.') {
+        } else if name.starts_with('.') || is_symlink(&path) {
             continue;
         } else if path
             .extension()
@@ -772,7 +804,7 @@ fn list_files_matching(
                 continue;
             }
             list_files_matching(&path, files, depth + 1, keep)?;
-        } else if name.starts_with('.') {
+        } else if name.starts_with('.') || is_symlink(&path) {
             continue;
         } else if path.extension().and_then(|e| e.to_str()).map_or(false, keep) {
             files.push(path);
@@ -799,11 +831,14 @@ mod tests {
 
     #[test]
     fn checked_rejects_traversal_escapes() {
-        let root = Path::new("/vault");
+        let base = std::env::temp_dir().join(format!("md_checked_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let root = base.as_path();
         assert!(resolve_vault_path_checked(root, "../etc/passwd").is_err());
         assert!(resolve_vault_path_checked(root, "notes/../../secret").is_err());
         assert!(resolve_vault_path_checked(root, "/etc/passwd").is_err());
         assert!(resolve_vault_path_checked(root, "notes/a.md").is_ok());
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -847,5 +882,76 @@ mod tests {
         assert!(resolved.starts_with("/vault"));
         let resolved_abs = resolve_vault_path(root, "/etc/passwd");
         assert!(resolved_abs.starts_with("/vault"));
+    }
+
+    #[test]
+    fn deleting_directory_removes_subtree_from_indexes() {
+        let base = std::env::temp_dir().join(format!("md_delete_dir_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("dir")).unwrap();
+        fs::write(base.join("dir/a.md"), "[[dir/b]] alpha").unwrap();
+        fs::write(base.join("dir/b.md"), "beta").unwrap();
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+        delete_entry(&state, "dir").unwrap();
+
+        assert!(!base.join("dir").exists());
+        let index = state.file_index.lock().unwrap();
+        assert!(index.get_outgoing_links(&base.join("dir/a.md")).is_empty());
+        assert!(index.get_backlinks(&base.join("dir/b.md")).is_empty());
+        drop(index);
+        let db = state.db.lock().unwrap();
+        let remaining: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM file_search WHERE substr(path, 1, 4) = 'dir/'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_symlinks_are_hidden_and_cannot_escape_vault() {
+        let base = std::env::temp_dir().join(format!("md_file_symlink_{}", uuid::Uuid::new_v4()));
+        let outside = std::env::temp_dir().join(format!("md_outside_{}.md", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        fs::write(&outside, "outside").unwrap();
+        std::os::unix::fs::symlink(&outside, base.join("linked.md")).unwrap();
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+        assert!(list_vault(&state).unwrap().is_empty());
+        assert!(list_all_md_files(&base).unwrap().is_empty());
+        assert!(open_file(&state, "linked.md").is_err());
+        assert!(save_file(&state, "linked.md", "changed").is_err());
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "outside");
+
+        let dangling_target = outside.with_extension("missing");
+        std::os::unix::fs::symlink(&dangling_target, base.join("dangling.md")).unwrap();
+        assert!(create_file(&state, "dangling.md").is_err());
+        assert!(!dangling_target.exists());
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_file(&outside);
+    }
+
+    #[test]
+    fn save_file_surfaces_write_failures() {
+        let base = std::env::temp_dir().join(format!("md_save_failure_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("blocked.md")).unwrap();
+        let state = AppState::new_in_memory();
+        {
+            let mut root = state.vault_root.lock().unwrap();
+            *root = Some(base.clone());
+        }
+
+        let error = save_file(&state, "blocked.md", "content").unwrap_err();
+        assert!(error.contains("Failed to write file"));
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

@@ -252,6 +252,7 @@ fn main() -> iced::Result {
         size: iced::Size::new(1200.0, 800.0),
         icon,
         platform_specific,
+        exit_on_close_request: false,
         ..Default::default()
     })
     .run()

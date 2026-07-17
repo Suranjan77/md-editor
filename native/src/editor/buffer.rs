@@ -169,6 +169,40 @@ impl DocBuffer {
         self.sync_public_state();
     }
 
+    pub fn replace_all_text(&mut self, text: &str) -> bool {
+        let previous = self.text();
+        if previous == text {
+            return false;
+        }
+
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+        let previous_len = self.rope.len_chars();
+        if previous_len > 0 {
+            self.rope.remove(0..previous_len);
+        }
+        if !text.is_empty() {
+            self.rope.insert(0, text);
+        }
+        let mut ops = Vec::with_capacity(2);
+        if !previous.is_empty() {
+            ops.push(EditOp::Delete {
+                char_offset: 0,
+                text: previous,
+            });
+        }
+        if !text.is_empty() {
+            ops.push(EditOp::Insert {
+                char_offset: 0,
+                text: text.to_string(),
+            });
+        }
+        self.cursor_offset = before_cursor.min(self.rope.len_chars());
+        self.selection_offsets = None;
+        self.commit_transaction(ops, before_cursor, before_selection);
+        true
+    }
+
     pub fn line_count(&self) -> usize {
         self.rope.len_lines()
     }
@@ -1031,6 +1065,20 @@ mod tests {
         assert_eq!(buffer.text(), "Hello small world");
         assert_eq!((buffer.cursor_line, buffer.cursor_col), (0, 11));
         assert_eq!(buffer.selection, None);
+    }
+
+    #[test]
+    fn replace_all_is_undoable_without_destroying_prior_history() {
+        let mut buffer = DocBuffer::from_text("one one");
+        buffer.set_cursor(0, 7);
+        buffer.insert_at_cursor("!");
+        assert!(buffer.replace_all_text("two two!"));
+        assert_eq!(buffer.text(), "two two!");
+
+        assert!(buffer.undo());
+        assert_eq!(buffer.text(), "one one!");
+        assert!(buffer.undo());
+        assert_eq!(buffer.text(), "one one");
     }
 
     #[test]

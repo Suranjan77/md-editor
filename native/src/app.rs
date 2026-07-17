@@ -31,6 +31,55 @@ enum ActivePanel {
     Pdf,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum BufferReplacement<'a> {
+    Open(&'a str),
+    Delete(&'a str),
+    Always,
+}
+
+fn path_is_same_or_descendant(path: &str, parent: &str) -> bool {
+    path == parent
+        || path
+            .strip_prefix(parent.trim_end_matches('/'))
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn should_confirm_dirty_buffer(
+    dirty: bool,
+    active_path: Option<&str>,
+    replacement: BufferReplacement<'_>,
+) -> bool {
+    if !dirty {
+        return false;
+    }
+    match replacement {
+        BufferReplacement::Open(path) => active_path != Some(path),
+        BufferReplacement::Delete(path) => active_path
+            .is_some_and(|active| path_is_same_or_descendant(active, path)),
+        BufferReplacement::Always => true,
+    }
+}
+
+fn apply_editor_save_result(
+    buffer: &mut DocBuffer,
+    toast: &mut Option<String>,
+    result: Result<(), String>,
+) -> bool {
+    match result {
+        Ok(()) => {
+            buffer.dirty = false;
+            *toast = Some("File saved".to_string());
+            true
+        }
+        Err(error) => {
+            buffer.dirty = true;
+            *toast = Some(format!("Save failed: {error}"));
+            false
+        }
+    }
+}
+
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
     path.ends_with(".png")
         || path.ends_with(".jpg")
@@ -99,6 +148,7 @@ pub struct MdEditor {
     // Search (query/replace, vault + PDF results, in-document match cache)
     search: crate::search_state::SearchState,
     active_panel: ActivePanel,
+    pending_action: Option<Box<Message>>,
 }
 
 impl MdEditor {
@@ -126,6 +176,7 @@ impl MdEditor {
             ui: crate::ui_state::UiState::new(),
             search: crate::search_state::SearchState::new(),
             active_panel: ActivePanel::Markdown,
+            pending_action: None,
         };
         app.ui.toast = startup_notice;
 
@@ -254,6 +305,8 @@ impl MdEditor {
             }
             _ => None,
         });
+        let close_requests =
+            iced::window::close_requests().map(Message::WindowCloseRequested);
 
         // Watch the vault root for external changes so the index, search, and
         // file tree stay current without reopening the vault. Keyed by the root
@@ -269,6 +322,7 @@ impl MdEditor {
             highlight_debounce,
             mouse_drag,
             window_events,
+            close_requests,
             vault_watch,
         ])
     }
@@ -297,7 +351,16 @@ impl MdEditor {
                 },
                 Message::VaultOpened,
             ),
-            Message::VaultOpened(Some(path)) => self.open_vault(&path),
+            Message::VaultOpened(Some(path)) => {
+                if self.guard_dirty_action(
+                    BufferReplacement::Always,
+                    Message::VaultOpened(Some(path.clone())),
+                ) {
+                    Task::none()
+                } else {
+                    self.open_vault(&path)
+                }
+            }
             Message::VaultIndexed(entries) => {
                 self.vault.entries = entries;
                 // Backlinks for the active file depend on the freshly built
@@ -315,6 +378,14 @@ impl MdEditor {
             m @ (Message::SidebarToggle | Message::SidebarFolderToggled(_)) => self.vault.update(m),
             Message::SidebarFileClicked(path) => {
                 let path = path.trim().to_string();
+                if self.sidebar_click_replaces_buffer(&path)
+                    && self.guard_dirty_action(
+                        BufferReplacement::Always,
+                        Message::SidebarFileClicked(path.clone()),
+                    )
+                {
+                    return Task::none();
+                }
                 if path.starts_with("pdf://") {
                     let url_str = &path["pdf://".len()..];
                     let (pdf_path, query) = if let Some(idx) = url_str.find('?') {
@@ -552,16 +623,30 @@ impl MdEditor {
                 Task::none()
             }
             Message::DeleteFile(path) => {
+                if self.guard_dirty_action(
+                    BufferReplacement::Delete(&path),
+                    Message::DeleteFile(path.clone()),
+                ) {
+                    return Task::none();
+                }
                 match md_editor_core::vault::delete_entry(&self.state, &path) {
                     Ok(()) => {
                         self.vault.entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                        if self.active_path.as_deref() == Some(path.as_str()) {
+                        if self
+                            .active_path
+                            .as_deref()
+                            .is_some_and(|active| path_is_same_or_descendant(active, &path))
+                        {
                             self.active_path = None;
                             self.editor.buffer = DocBuffer::new();
                             self.editor.highlighted_lines.clear();
                         }
-                        if self.pdf.active_path.as_deref() == Some(path.as_str()) {
+                        if self
+                            .pdf.active_path
+                            .as_deref()
+                            .is_some_and(|active| path_is_same_or_descendant(active, &path))
+                        {
                             self.pdf.active_path = None;
                             self.pdf.pages.clear();
                             self.pdf.dimensions.clear();
@@ -585,12 +670,30 @@ impl MdEditor {
                 self.editor.update(m)
             }
             Message::EditorSave => {
-                if let Some(path) = &self.active_path {
-                    let content = self.editor.buffer.text();
-                    let _ = md_editor_core::vault::save_file(&self.state, path, &content);
-                    self.editor.buffer.dirty = false;
-                    self.ui.toast = Some("File saved".to_string());
+                self.save_editor();
+                Task::none()
+            }
+            Message::UnsavedChangesSave => {
+                if self.save_editor() {
+                    self.ui.active_modal = None;
+                    if let Some(action) = self.pending_action.take() {
+                        return Task::done(*action);
+                    }
                 }
+                Task::none()
+            }
+            Message::UnsavedChangesDiscard => {
+                self.discard_editor_changes();
+                self.ui.active_modal = None;
+                if let Some(action) = self.pending_action.take() {
+                    Task::done(*action)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::UnsavedChangesCancel => {
+                self.pending_action = None;
+                self.ui.active_modal = None;
                 Task::none()
             }
             Message::EditorCheckboxToggle(line_idx) => {
@@ -1495,6 +1598,12 @@ impl MdEditor {
                 Task::none()
             }
             Message::PdfOpenLinkedNote(note_path) => {
+                if self.guard_dirty_action(
+                    BufferReplacement::Always,
+                    Message::PdfOpenLinkedNote(note_path.clone()),
+                ) {
+                    return Task::none();
+                }
                 self.ui.split_view_active = true;
                 let open_task = self.open_file_extended(&note_path, false);
                 if self.pdf.fit_to_width {
@@ -1533,6 +1642,21 @@ impl MdEditor {
                 }
             }
             Message::SearchResultClicked(path) => {
+                if self.active_path.as_deref() == Some(path.as_str()) {
+                    // The open buffer is authoritative while dirty; a global
+                    // search hit for this same file must not reload disk state.
+                    self.search.visible = false;
+                    self.vault.selected_path = Some(path);
+                    return Task::none();
+                }
+                if !path.to_lowercase().ends_with(".pdf")
+                    && self.guard_dirty_action(
+                        BufferReplacement::Open(&path),
+                        Message::SearchResultClicked(path.clone()),
+                    )
+                {
+                    return Task::none();
+                }
                 self.search.visible = false;
                 self.vault.selected_path = Some(path.clone());
                 if path.to_lowercase().ends_with(".pdf") {
@@ -1556,6 +1680,7 @@ impl MdEditor {
                             self.pdf.link_preview = None;
                             self.pdf.link_preview_size = None;
                         } else if self.ui.active_modal.is_some() {
+                            self.pending_action = None;
                             self.ui.active_modal = None;
                             self.ui.modal_input.clear();
                             self.ui.link_note_picker_search.clear();
@@ -1726,6 +1851,17 @@ impl MdEditor {
                 }
                 Task::none()
             }
+            Message::WindowCloseRequested(id) => {
+                if self.guard_dirty_action(
+                    BufferReplacement::Always,
+                    Message::WindowCloseNow(id),
+                ) {
+                    Task::none()
+                } else {
+                    iced::window::close(id)
+                }
+            }
+            Message::WindowCloseNow(id) => iced::window::close(id),
             Message::VaultFilesChanged(paths) => {
                 // Reconcile the index/search for changed markdown files. The
                 // open editor buffer is intentionally NOT reloaded — that would
@@ -2169,7 +2305,86 @@ impl MdEditor {
         stack(layers).into()
     }
 
+    fn guard_dirty_action(
+        &mut self,
+        replacement: BufferReplacement<'_>,
+        action: Message,
+    ) -> bool {
+        if !should_confirm_dirty_buffer(
+            self.editor.buffer.dirty,
+            self.active_path.as_deref(),
+            replacement,
+        ) {
+            return false;
+        }
+        let name = self
+            .active_path
+            .as_deref()
+            .and_then(|path| std::path::Path::new(path).file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled".to_string());
+        self.pending_action = Some(Box::new(action));
+        self.ui.active_modal = Some(views::modals::ModalType::UnsavedChanges(name));
+        true
+    }
+
+    fn sidebar_click_replaces_buffer(&self, path: &str) -> bool {
+        if path.starts_with("pdf://")
+            || path.starts_with("http://")
+            || path.starts_with("https://")
+            || (path.contains("://") && !path.starts_with("file://"))
+        {
+            return false;
+        }
+        let file_part = path.split_once('#').map_or(path, |(file, _)| file).trim();
+        if file_part.is_empty() {
+            return false;
+        }
+        let resolved = self.resolve_internal_link_path(file_part);
+        let lower = resolved.to_lowercase();
+        if lower.ends_with(".pdf") {
+            false
+        } else if is_supported_image_path(&lower) {
+            true
+        } else {
+            true
+        }
+    }
+
+    fn save_editor(&mut self) -> bool {
+        let result = if let Some(path) = self.active_path.clone() {
+            let content = self.editor.buffer.text();
+            md_editor_core::vault::save_file(&self.state, &path, &content)
+        } else {
+            Err("no markdown file is open".to_string())
+        };
+        apply_editor_save_result(&mut self.editor.buffer, &mut self.ui.toast, result)
+    }
+
+    fn discard_editor_changes(&mut self) {
+        if let Some(path) = self.active_path.clone() {
+            if let Ok(bytes) = md_editor_core::vault::open_file(&self.state, &path) {
+                if let Ok(content) = String::from_utf8(bytes) {
+                    self.editor.buffer = DocBuffer::from_text(&content);
+                    self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+                    return;
+                }
+            }
+        }
+        self.editor.buffer = DocBuffer::new();
+        self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+    }
+
     fn open_vault(&mut self, path: &str) -> Task<Message> {
+        self.active_path = None;
+        self.editor.buffer = DocBuffer::new();
+        self.editor.highlighted_lines.clear();
+        self.editor.toc_entries.clear();
+        self.pdf.active_path = None;
+        self.pdf.pages.clear();
+        self.active_image_path = None;
+        self.active_image = None;
+        self.showing_pdf = false;
         self.vault.root = Some(path.to_string());
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_vault", path);
         // Publish the root immediately so file opens resolve correctly, and
@@ -2391,13 +2606,9 @@ impl MdEditor {
                 self.active_image_path = Some(path.to_string());
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image = Some((handle, width as f32, height as f32));
-                self.active_path = None;
                 self.pdf.active_path = None;
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
-                self.editor.toc_entries.clear();
-                self.editor.toc_is_synthetic = false;
-                self.vault.backlinks.clear();
             }
             Err(err) => {
                 self.ui.toast = Some(format!("Could not open image: {err}"));
@@ -3005,7 +3216,7 @@ impl MdEditor {
         };
 
         if count > 0 {
-            self.editor.buffer.set_text(&new_text);
+            self.editor.buffer.replace_all_text(&new_text);
             self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
             let task = self.highlight_all();
             return Ok((count, task));
@@ -3768,5 +3979,51 @@ mod tests {
             app.default_pdf_note_path(&ann),
             "pdf-notes/my-pdf-file-p5-abcdef12.md"
         );
+    }
+
+    #[test]
+    fn dirty_guard_prompts_only_for_replacing_actions() {
+        assert!(should_confirm_dirty_buffer(
+            true,
+            Some("notes/current.md"),
+            BufferReplacement::Open("notes/other.md")
+        ));
+        assert!(!should_confirm_dirty_buffer(
+            true,
+            Some("notes/current.md"),
+            BufferReplacement::Open("notes/current.md")
+        ));
+        assert!(!should_confirm_dirty_buffer(
+            false,
+            Some("notes/current.md"),
+            BufferReplacement::Always
+        ));
+        assert!(should_confirm_dirty_buffer(
+            true,
+            Some("folder/current.md"),
+            BufferReplacement::Delete("folder")
+        ));
+    }
+
+    #[test]
+    fn failed_save_keeps_buffer_dirty_and_reports_error() {
+        let mut buffer = DocBuffer::from_text("changed");
+        buffer.dirty = true;
+        let mut toast = None;
+
+        assert!(!apply_editor_save_result(
+            &mut buffer,
+            &mut toast,
+            Err("permission denied".to_string())
+        ));
+        assert!(buffer.dirty);
+        assert_eq!(toast.as_deref(), Some("Save failed: permission denied"));
+    }
+
+    #[test]
+    fn deleted_folder_prefix_matches_open_children_only() {
+        assert!(path_is_same_or_descendant("folder/note.md", "folder"));
+        assert!(path_is_same_or_descendant("folder", "folder"));
+        assert!(!path_is_same_or_descendant("folder-two/note.md", "folder"));
     }
 }

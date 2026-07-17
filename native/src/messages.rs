@@ -35,6 +35,9 @@ pub enum Message {
     PdfLinkNotePickerSearchChanged(String),
     DeleteFile(String),
     DeleteFileDialog(String),
+    UnsavedChangesSave,
+    UnsavedChangesDiscard,
+    UnsavedChangesCancel,
 
     // ── Editor ───────────────────────────────────────────────────
     EditorCommand(crate::editor::buffer::EditorCommand),
@@ -130,6 +133,8 @@ pub enum Message {
     WindowResized(f32, f32),
     WindowOpened(iced::window::Id),
     WindowRescaled(f32),
+    WindowCloseRequested(iced::window::Id),
+    WindowCloseNow(iced::window::Id),
     /// Vault-relative paths that changed on disk (filesystem watcher), debounced.
     VaultFilesChanged(Vec<String>),
 }

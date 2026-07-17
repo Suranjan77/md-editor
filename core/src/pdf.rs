@@ -147,11 +147,6 @@ pub fn compute_provisional_id(
     let mut hasher = Sha256::new();
     hasher.update(&buffer);
     hasher.update(&file_len.to_be_bytes());
-    if let Some(mtime) = modified {
-        hasher.update(&mtime.to_be_bytes());
-    } else {
-        hasher.update(&[0u8; 8]);
-    }
 
     let hash_result = hasher.finalize();
     let id = format!("{:x}", hash_result);

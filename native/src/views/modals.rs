@@ -10,6 +10,7 @@ pub enum ModalType {
     CreateFile,
     CreateFolder,
     Delete(String),    // path
+    UnsavedChanges(String), // current file name
     QuickNote(String), // annotation ID
     LinkNote(String),  // annotation ID
 }
@@ -24,6 +25,7 @@ pub fn view<'a>(
         ModalType::CreateFile => "Create New File",
         ModalType::CreateFolder => "Create New Folder",
         ModalType::Delete(_) => "Delete Confirmation",
+        ModalType::UnsavedChanges(_) => "Unsaved Changes",
         ModalType::QuickNote(_) => "Edit Quick Note",
         ModalType::LinkNote(_) => "Create Linked Note",
     };
@@ -43,6 +45,28 @@ pub fn view<'a>(
                     .on_press(Message::DeleteFile(path.clone()))
                     .padding([8, 20])
                     .style(button::secondary),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+        ]
+        .spacing(20)
+        .into(),
+        ModalType::UnsavedChanges(path) => column![
+            text("Unsaved Changes").size(18).color(theme::TEXT_PRIMARY),
+            text(format!("Save changes to '{}'?", path)).color(theme::TEXT_PRIMARY),
+            row![
+                button(text("Cancel").size(14))
+                    .on_press(Message::UnsavedChangesCancel)
+                    .padding([8, 20])
+                    .style(button::text),
+                button(text("Discard").size(14))
+                    .on_press(Message::UnsavedChangesDiscard)
+                    .padding([8, 20])
+                    .style(button::secondary),
+                button(text("Save").size(14))
+                    .on_press(Message::UnsavedChangesSave)
+                    .padding([8, 20])
+                    .style(button::primary),
             ]
             .spacing(10)
             .align_y(Alignment::Center)

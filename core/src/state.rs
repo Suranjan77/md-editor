@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::file_index::FileIndex;
 use crate::pdf::{
@@ -97,7 +97,50 @@ impl AppState {
             .unwrap_or_default()
             .as_secs() as i64;
 
-        db.execute(
+        let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+
+        let existing_new: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pdf_documents WHERE document_id = ?1)",
+                [document_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !existing_new {
+            // Path is the durable user-facing identity. Prefer a size match,
+            // but adopt the newest same-path row even after a replacement so
+            // annotations are preserved instead of silently orphaned.
+            let previous_id: Option<String> = tx
+                .query_row(
+                    "SELECT document_id FROM pdf_documents
+                     WHERE vault_relative_path = ?1 AND document_id != ?2
+                     ORDER BY (file_size = ?3) DESC, updated_at DESC
+                     LIMIT 1",
+                    rusqlite::params![vault_relative_path, document_id, file_size as i64],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            if let Some(previous_id) = previous_id {
+                tx.execute(
+                    "UPDATE pdf_annotations SET document_id = ?1 WHERE document_id = ?2",
+                    rusqlite::params![document_id, previous_id],
+                )
+                .map_err(|e| format!("Failed to reconcile pdf annotations: {e}"))?;
+                tx.execute(
+                    "UPDATE pdf_references SET document_id = ?1 WHERE document_id = ?2",
+                    rusqlite::params![document_id, previous_id],
+                )
+                .map_err(|e| format!("Failed to reconcile pdf references: {e}"))?;
+                tx.execute(
+                    "UPDATE pdf_documents SET document_id = ?1 WHERE document_id = ?2",
+                    rusqlite::params![document_id, previous_id],
+                )
+                .map_err(|e| format!("Failed to reconcile pdf document: {e}"))?;
+            }
+        }
+
+        tx.execute(
             "INSERT INTO pdf_documents (document_id, vault_relative_path, file_size, modified_at, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?5)
              ON CONFLICT(document_id) DO UPDATE SET
@@ -114,6 +157,8 @@ impl AppState {
             ],
         )
         .map_err(|e| format!("Failed to save pdf document: {e}"))?;
+
+        tx.commit().map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -739,5 +784,93 @@ mod tests {
         assert!(!db_path.exists());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pdf_document_reconciliation_rekeys_existing_annotations() {
+        use sha2::{Digest, Sha256};
+
+        let state = AppState::new_in_memory();
+        let base = std::env::temp_dir().join(format!("md_editor_pdf_id_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("paper.pdf");
+        let bytes = b"stable pdf bytes";
+        std::fs::write(&path, bytes).unwrap();
+        let (_, size, mtime) = crate::pdf::compute_provisional_id(&path).unwrap();
+
+        let mut old_hasher = Sha256::new();
+        old_hasher.update(bytes);
+        old_hasher.update(size.to_be_bytes());
+        old_hasher.update(mtime.unwrap_or_default().to_be_bytes());
+        let old_id = format!("{:x}", old_hasher.finalize());
+        state
+            .save_pdf_document(&old_id, "paper.pdf", size, mtime)
+            .unwrap();
+        state
+            .save_pdf_annotation(&PdfAnnotation {
+                id: "annotation-1".to_string(),
+                document_id: old_id.clone(),
+                page_index: 0,
+                kind: PdfAnnotationKind::Highlight,
+                color: PdfAnnotationColor::Yellow,
+                selected_text: "stable".to_string(),
+                ranges: vec![],
+                rects: vec![],
+                note: None,
+                linked_note_path: None,
+                markdown_anchor: None,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let bumped = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        file.set_times(std::fs::FileTimes::new().set_modified(bumped)).unwrap();
+        let (new_id, new_size, new_mtime) = crate::pdf::compute_provisional_id(&path).unwrap();
+        assert_ne!(old_id, new_id);
+
+        state
+            .save_pdf_document(&new_id, "paper.pdf", new_size, new_mtime)
+            .unwrap();
+
+        assert!(state.get_pdf_annotations(&old_id, None).unwrap().is_empty());
+        let annotations = state.get_pdf_annotations(&new_id, None).unwrap();
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].id, "annotation-1");
+        assert_eq!(annotations[0].document_id, new_id);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pdf_document_reconciliation_prefers_preservation_on_same_path_size_change() {
+        let state = AppState::new_in_memory();
+        state
+            .save_pdf_document("old", "paper.pdf", 10, Some(1))
+            .unwrap();
+        state
+            .save_pdf_annotation(&PdfAnnotation {
+                id: "annotation-2".to_string(),
+                document_id: "old".to_string(),
+                page_index: 0,
+                kind: PdfAnnotationKind::Note,
+                color: PdfAnnotationColor::Blue,
+                selected_text: String::new(),
+                ranges: vec![],
+                rects: vec![],
+                note: Some("keep me".to_string()),
+                linked_note_path: None,
+                markdown_anchor: None,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+
+        state
+            .save_pdf_document("new", "paper.pdf", 20, Some(2))
+            .unwrap();
+
+        assert_eq!(state.get_pdf_annotations("new", None).unwrap().len(), 1);
     }
 }
