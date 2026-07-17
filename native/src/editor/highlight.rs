@@ -103,6 +103,13 @@ pub struct StyledLine {
     pub table_cells: Vec<Vec<StyledSpan>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MathBlockEnd {
+    Dollars,
+    Bracket,
+    Environment(String),
+}
+
 impl StyledLine {
     pub fn new() -> Self {
         Self {
@@ -125,7 +132,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
 
     let mut in_code_block = false;
     let mut code_lang: Option<String> = None;
-    let mut in_math_block = false;
+    let mut math_block_end: Option<MathBlockEnd> = None;
     let mut in_table = false;
     let mut block_id: usize = 0;
     let mut current_block_id: usize = 0;
@@ -193,14 +200,29 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             }
         }
 
+        // Fenced code is literal Markdown. In particular, math delimiters in
+        // a `markdown` example must not start a display-math block.
+        if in_code_block {
+            let mut sl = StyledLine::new();
+            sl.is_code_block = true;
+            sl.block_id = current_block_id;
+            sl.code_block_lang = code_lang.clone();
+            sl.spans = highlight_code_spans(raw_line, &mut code_highlighter, code_lang.as_deref());
+            lines.push(sl);
+            continue;
+        }
+
         // Math block fences. Keep this narrow so ordinary markdown/HTML is not
         // accidentally promoted to a math block.
-        if in_math_block && is_obvious_markdown_boundary(trimmed) {
-            in_math_block = false;
+        if math_block_end.is_some() && is_obvious_markdown_boundary(trimmed) {
+            math_block_end = None;
             block_id += 1;
         }
 
-        if in_math_block && (trimmed.starts_with("$$") || is_math_end(trimmed)) {
+        if math_block_end
+            .as_ref()
+            .is_some_and(|end| is_matching_math_end(trimmed, end))
+        {
             let mut sl = StyledLine::new();
             sl.is_math_block = true;
             sl.is_block_fence = true;
@@ -215,12 +237,14 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 ..StyledSpan::plain("")
             });
             lines.push(sl);
-            in_math_block = false;
+            math_block_end = None;
             block_id += 1;
             continue;
         }
 
-        if trimmed.starts_with("$$") || is_math_begin(trimmed) {
+        if math_block_end.is_none()
+            && let Some(end) = math_block_end_for(trimmed)
+        {
             if let Some(inline_math) = single_line_display_math(trimmed) {
                 block_id += 1;
                 let mut sl = StyledLine::new();
@@ -239,9 +263,28 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 continue;
             }
 
+            if matches!(&end, MathBlockEnd::Environment(env) if has_matching_end_on_line(trimmed, env))
+            {
+                block_id += 1;
+                let mut sl = StyledLine::new();
+                sl.is_math_block = true;
+                sl.block_id = block_id;
+                sl.spans.push(StyledSpan {
+                    text: raw_line.to_string(),
+                    display_text: Some(trimmed.to_string()),
+                    color: theme::WARNING,
+                    italic: true,
+                    font_size: 16.0,
+                    is_math: true,
+                    ..StyledSpan::plain("")
+                });
+                lines.push(sl);
+                continue;
+            }
+
             block_id += 1;
             current_block_id = block_id;
-            in_math_block = true;
+            math_block_end = Some(end);
             let mut sl = StyledLine::new();
             sl.is_math_block = true;
             sl.is_block_fence = true;
@@ -259,19 +302,8 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             continue;
         }
 
-        // Inside code block
-        if in_code_block {
-            let mut sl = StyledLine::new();
-            sl.is_code_block = true;
-            sl.block_id = current_block_id;
-            sl.code_block_lang = code_lang.clone();
-            sl.spans = highlight_code_spans(raw_line, &mut code_highlighter, code_lang.as_deref());
-            lines.push(sl);
-            continue;
-        }
-
         // Inside math block
-        if in_math_block {
+        if math_block_end.is_some() {
             let mut sl = StyledLine::new();
             sl.is_math_block = true;
             sl.block_id = current_block_id;
@@ -348,7 +380,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 .first()
                 .map(|s| s.text.trim())
                 .unwrap_or("");
-            if first_trimmed.starts_with("\\begin{") {
+            if math_env(first_trimmed, "\\begin").is_some() {
                 math_lines.push(first_trimmed);
             }
 
@@ -360,7 +392,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 } else {
                     // If the closing fence is \end{...}, include it.
                     let last_trimmed = lines[j].spans.first().map(|s| s.text.trim()).unwrap_or("");
-                    if last_trimmed.starts_with("\\end{") {
+                    if math_env(last_trimmed, "\\end").is_some() {
                         math_lines.push(last_trimmed);
                     }
                 }
@@ -512,14 +544,17 @@ fn highlight_line(line: &str) -> StyledLine {
             is_syntax: true,
             ..StyledSpan::plain("")
         });
-        // Blockquote content
-        sl.spans.push(StyledSpan {
-            text: line[rest_start..].to_string(),
-            display_text: None,
-            color: theme::ACCENT,
-            italic: true,
-            ..StyledSpan::plain("")
-        });
+        // Blockquote content can contain the same inline Markdown as a
+        // paragraph. Keep the quote styling while retaining actionable links.
+        let content_start = sl.spans.len();
+        parse_inline_spans(&line[rest_start..], &mut sl.spans);
+        if sl.spans.len() == content_start {
+            sl.spans.push(StyledSpan::plain(""));
+        }
+        for span in &mut sl.spans[content_start..] {
+            span.color = theme::ACCENT;
+            span.italic = true;
+        }
         return sl;
     }
 
@@ -826,16 +861,39 @@ fn detect_heading(trimmed: &str) -> Option<u8> {
     None
 }
 
-fn is_math_begin(trimmed: &str) -> bool {
-    trimmed == "\\[" || math_env(trimmed, "\\begin{").is_some()
+fn math_block_end_for(trimmed: &str) -> Option<MathBlockEnd> {
+    if trimmed.starts_with("$$") {
+        Some(MathBlockEnd::Dollars)
+    } else if trimmed == "\\[" {
+        Some(MathBlockEnd::Bracket)
+    } else {
+        math_env(trimmed, "\\begin")
+            .map(|environment| MathBlockEnd::Environment(environment.to_string()))
+    }
 }
 
-fn is_math_end(trimmed: &str) -> bool {
-    trimmed == "\\]" || math_env(trimmed, "\\end{").is_some()
+fn is_matching_math_end(trimmed: &str, expected: &MathBlockEnd) -> bool {
+    match expected {
+        MathBlockEnd::Dollars => trimmed.starts_with("$$"),
+        MathBlockEnd::Bracket => trimmed == "\\]",
+        MathBlockEnd::Environment(environment) => {
+            math_env(trimmed, "\\end") == Some(environment.as_str())
+        }
+    }
 }
 
-fn math_env<'a>(trimmed: &'a str, prefix: &str) -> Option<&'a str> {
-    let rest = trimmed.strip_prefix(prefix)?;
+fn has_matching_end_on_line(trimmed: &str, environment: &str) -> bool {
+    let Some(open_end) = trimmed.find('}') else {
+        return false;
+    };
+    trimmed[open_end + 1..]
+        .match_indices("\\end")
+        .any(|(idx, _)| math_env(&trimmed[open_end + 1 + idx..], "\\end") == Some(environment))
+}
+
+fn math_env<'a>(trimmed: &'a str, command: &str) -> Option<&'a str> {
+    let rest = trimmed.strip_prefix(command)?.trim_start();
+    let rest = rest.strip_prefix('{')?;
     let end = rest.find('}')?;
     let env = &rest[..end];
     match env {
@@ -1066,8 +1124,85 @@ mod tests {
         assert!(lines[0].is_math_block);
         assert_eq!(lines[0].block_id, lines[1].block_id);
         assert_eq!(lines[1].block_id, lines[2].block_id);
+        assert_eq!(
+            lines[0].spans[0].visible_text(false),
+            "\\begin{align}\na &= b\n\\end{align}"
+        );
         assert!(!lines[3].is_math_block);
         assert!(lines[3].spans.iter().any(|span| span.is_heading));
+    }
+
+    #[test]
+    fn align_with_nonumber_accepts_whitespace_before_environment_braces() {
+        let lines = highlight_markdown("\\begin {align}\na &= b \\nonumber\n\\end {align}\nAfter");
+
+        let block_id = lines[0].block_id;
+        assert!(
+            lines[..3]
+                .iter()
+                .all(|line| line.is_math_block && line.block_id == block_id)
+        );
+        assert!(lines[2].is_block_fence);
+        assert_eq!(
+            lines[0].spans[0].visible_text(false),
+            "\\begin {align}\na &= b \\nonumber\n\\end {align}"
+        );
+        assert!(!lines[3].is_math_block);
+        assert_eq!(lines[3].spans[0].visible_text(false), "After");
+    }
+
+    #[test]
+    fn dollar_math_keeps_nested_align_until_the_dollar_fence() {
+        let markdown = "$$\n\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}\n$$\nAfter";
+        let lines = highlight_markdown(markdown);
+
+        let block_id = lines[0].block_id;
+        assert!(
+            lines[..6]
+                .iter()
+                .all(|line| line.is_math_block && line.block_id == block_id)
+        );
+        assert!(!lines[4].is_block_fence);
+        assert!(lines[5].is_block_fence);
+        assert_eq!(
+            lines[0].spans[0].visible_text(false),
+            "\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}"
+        );
+        assert!(!lines[6].is_math_block);
+        assert_eq!(lines[6].spans[0].visible_text(false), "After");
+    }
+
+    #[test]
+    fn math_environment_only_closes_on_its_matching_end() {
+        let markdown = "\\begin{align}\nf(x) &= \\begin{cases}\nx & x > 0\n\\end{cases} \\\\\ng(x) &= 0\n\\end{align}\nAfter";
+        let lines = highlight_markdown(markdown);
+
+        let block_id = lines[0].block_id;
+        assert!(
+            lines[..6]
+                .iter()
+                .all(|line| line.is_math_block && line.block_id == block_id)
+        );
+        assert!(!lines[3].is_block_fence);
+        assert!(lines[5].is_block_fence);
+        assert!(
+            lines[0].spans[0]
+                .visible_text(false)
+                .contains(r"\end{cases} \\")
+        );
+        assert!(!lines[6].is_math_block);
+    }
+
+    #[test]
+    fn single_line_math_environment_does_not_swallow_following_text() {
+        let lines = highlight_markdown("\\begin{align}a &= b\\end{align}\nAfter");
+
+        assert!(lines[0].is_math_block);
+        assert_eq!(
+            lines[0].spans[0].visible_text(false),
+            "\\begin{align}a &= b\\end{align}"
+        );
+        assert!(!lines[1].is_math_block);
     }
 
     #[test]
@@ -1162,6 +1297,45 @@ mod tests {
         assert_eq!(lines[1].code_block_lang.as_deref(), Some("rust"));
         assert!(lines[1].spans.iter().all(|span| span.is_code));
         assert!(lines[1].spans.len() > 1);
+    }
+
+    #[test]
+    fn fenced_markdown_keeps_math_and_markdown_markers_literal() {
+        let markdown = "```markdown\n$$\n\\begin{align}\na &= b\n\\end{align}\n$$\n# Heading\n- [ ] task\n| A | B |\n```";
+        let lines = highlight_markdown(markdown);
+
+        assert!(lines.iter().all(|line| line.is_code_block));
+        assert!(lines.iter().all(|line| !line.is_math_block));
+        assert!(lines
+            .iter()
+            .all(|line| !line.spans.iter().any(|span| span.is_heading)));
+        assert!(lines
+            .iter()
+            .all(|line| !line.spans.iter().any(|span| span.is_checkbox)));
+        assert!(lines.iter().all(|line| !line.is_table_row));
+    }
+
+    #[test]
+    fn blockquote_content_retains_inline_formatting_and_links() {
+        let lines = highlight_markdown("> **Linked from:** [[curriculum]] · `notes`");
+        let quote = &lines[0];
+
+        assert!(quote.is_blockquote);
+        assert!(quote
+            .spans
+            .iter()
+            .any(|span| span.text == "Linked from:" && span.bold));
+        assert!(quote.spans.iter().any(|span| {
+            span.is_link && span.link_target.as_deref() == Some("curriculum")
+        }));
+        assert!(quote
+            .spans
+            .iter()
+            .any(|span| span.text == "notes" && span.is_code));
+        assert_eq!(
+            quote.spans.iter().map(|span| span.text.as_str()).collect::<String>(),
+            "> **Linked from:** [[curriculum]] · `notes`"
+        );
     }
 
     #[test]

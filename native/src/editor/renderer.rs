@@ -170,7 +170,13 @@ where
     }
     if line.is_math_block {
         if is_editing {
-            return BASE_LINE_HEIGHT;
+            return measured_inline_height::<R>(
+                line,
+                math_cache,
+                available_width,
+                is_editing,
+                active_col,
+            );
         } else {
             let has_visible_math = line
                 .spans
@@ -583,7 +589,10 @@ fn span_visible_text<'a>(
     span.visible_text(span_editing)
 }
 
-fn actionable_span_at_col(line: &StyledLine, col: usize) -> Option<&crate::editor::highlight::StyledSpan> {
+fn actionable_span_at_col(
+    line: &StyledLine,
+    col: usize,
+) -> Option<&crate::editor::highlight::StyledSpan> {
     let mut start = 0;
     for span in &line.spans {
         let end = source_col_after_span(span, start);
@@ -591,6 +600,39 @@ fn actionable_span_at_col(line: &StyledLine, col: usize) -> Option<&crate::edito
             return Some(span);
         }
         start = end;
+    }
+
+    // Preview tables keep their raw row in `spans` for editing and their
+    // parsed inline Markdown in `table_cells`. Map parsed spans back to their
+    // source range so links still work once the table switches to raw mode.
+    if line.is_table_row {
+        let source = line
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>();
+        let mut search_from = 0;
+        for cell in &line.table_cells {
+            for span in cell {
+                if span.text.is_empty() {
+                    continue;
+                }
+                let Some(relative_start) = source[search_from..].find(&span.text) else {
+                    continue;
+                };
+                let byte_start = search_from + relative_start;
+                let byte_end = byte_start + span.text.len();
+                let source_start = source[..byte_start].chars().count();
+                let source_end = source[..byte_end].chars().count();
+                if col >= source_start
+                    && col < source_end
+                    && (span.is_checkbox || span.is_link)
+                {
+                    return Some(span);
+                }
+                search_from = byte_end;
+            }
+        }
     }
     None
 }
@@ -2400,6 +2442,15 @@ where
                         state.is_focused,
                         state,
                     );
+                    let actionable = self.actionable_span_at_point::<R>(
+                        line_idx,
+                        col,
+                        pos.x,
+                        bounds.width,
+                        active_block_id,
+                        state.is_focused,
+                        state,
+                    );
                     state.is_focused = true;
                     state.selection_anchor = Some((line_idx, col));
                     state.selection_focus = Some((line_idx, col));
@@ -2412,18 +2463,16 @@ where
 
                     // Resolve actions from the wrap-aware source column, not
                     // from a flat accumulation of unwrapped span widths.
-                    if let Some(line) = self.lines.get(line_idx) {
-                        if let Some(span) = actionable_span_at_col(line, col) {
-                            if span.is_checkbox {
-                                shell.publish((self.on_checkbox_toggle)(line_idx));
-                                return;
-                            }
-                            if span.is_link {
-                                if let Some(target) = &span.link_target {
-                                    if state.modifiers.control() || state.modifiers.command() {
-                                        shell.publish((self.on_link_click)(target.clone()));
-                                        return;
-                                    }
+                    if let Some(span) = actionable {
+                        if span.is_checkbox {
+                            shell.publish((self.on_checkbox_toggle)(line_idx));
+                            return;
+                        }
+                        if span.is_link {
+                            if let Some(target) = &span.link_target {
+                                if state.modifiers.control() || state.modifiers.command() {
+                                    shell.publish((self.on_link_click)(target.clone()));
+                                    return;
                                 }
                             }
                         }
@@ -2811,21 +2860,21 @@ where
             }
 
             let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
-            let (line_idx, col) = self.hit_test::<R>(
-                pos,
+            let (line_idx, col) =
+                self.hit_test::<R>(pos, bounds.width, active_block_id, state.is_focused, state);
+            if let Some(span) = self.actionable_span_at_point::<R>(
+                line_idx,
+                col,
+                pos.x,
                 bounds.width,
                 active_block_id,
                 state.is_focused,
                 state,
-            );
-            if let Some(line) = self.lines.get(line_idx) {
-                if let Some(span) = actionable_span_at_col(line, col) {
-                    if span.is_checkbox
-                        || (span.is_link
-                            && (state.modifiers.control() || state.modifiers.command()))
-                    {
-                        return mouse::Interaction::Pointer;
-                    }
+            ) {
+                if span.is_checkbox
+                    || (span.is_link && (state.modifiers.control() || state.modifiers.command()))
+                {
+                    return mouse::Interaction::Pointer;
                 }
             }
             return mouse::Interaction::Text;
@@ -3466,6 +3515,101 @@ impl<'a, Message> Editor<'a, Message> {
         max_width
             .max(table_widths.iter().sum::<f32>() + 12.0)
             .max((available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0))
+    }
+
+    fn table_actionable_span_at_x<R>(
+        &self,
+        line_idx: usize,
+        pos_x: f32,
+        available_width: f32,
+        state: &State,
+    ) -> Option<&crate::editor::highlight::StyledSpan>
+    where
+        R: iced::advanced::text::Renderer<Font = iced::Font>,
+    {
+        let line = self.lines.get(line_idx)?;
+        if !line.is_table_row || line.table_cells.is_empty() {
+            return None;
+        }
+        let &(start, end) = state.block_ranges.get(&line.block_id)?;
+        let mut column_widths = Vec::<f32>::new();
+        for table_line in self.lines.get(start..=end)? {
+            for (column, cell) in table_line.table_cells.iter().enumerate() {
+                let width = cell
+                    .iter()
+                    .map(|span| {
+                        measure_width::<R>(
+                            span.visible_text(false),
+                            span.font_size,
+                            span_font(span, table_line),
+                        )
+                    })
+                    .sum::<f32>()
+                    + 20.0;
+                if column >= column_widths.len() {
+                    column_widths.push(width);
+                } else {
+                    column_widths[column] = column_widths[column].max(width);
+                }
+            }
+        }
+
+        let viewport_width = (available_width - TEXT_X_OFFSET - MARGIN_RIGHT).max(80.0);
+        let content_width = column_widths.iter().sum::<f32>();
+        let scroll_x = state
+            .block_scroll_x
+            .get(&line.block_id)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, (content_width - viewport_width).max(0.0));
+        let table_x = pos_x - TEXT_X_OFFSET + scroll_x;
+        if table_x < 0.0 {
+            return None;
+        }
+
+        let mut column_x = 0.0;
+        for (column, width) in column_widths.iter().copied().enumerate() {
+            let width = width.max(42.0);
+            if table_x < column_x + width {
+                let cell = line.table_cells.get(column)?;
+                let mut span_x = column_x + 7.0;
+                for span in cell {
+                    let span_width = measure_width::<R>(
+                        span.visible_text(false),
+                        span.font_size,
+                        span_font(span, line),
+                    );
+                    if table_x >= span_x && table_x < span_x + span_width {
+                        return (span.is_checkbox || span.is_link).then_some(span);
+                    }
+                    span_x += span_width;
+                }
+                return None;
+            }
+            column_x += width;
+        }
+        None
+    }
+
+    fn actionable_span_at_point<R>(
+        &self,
+        line_idx: usize,
+        col: usize,
+        pos_x: f32,
+        available_width: f32,
+        active_block_id: Option<usize>,
+        focused: bool,
+        state: &State,
+    ) -> Option<&crate::editor::highlight::StyledSpan>
+    where
+        R: iced::advanced::text::Renderer<Font = iced::Font>,
+    {
+        let line = self.lines.get(line_idx)?;
+        if line.is_table_row && !is_block_editing_line(line, active_block_id, focused) {
+            self.table_actionable_span_at_x::<R>(line_idx, pos_x, available_width, state)
+        } else {
+            actionable_span_at_col(line, col)
+        }
     }
 
     fn horizontal_scrollbar_hit<R>(
@@ -4135,6 +4279,40 @@ mod tests {
     }
 
     #[test]
+    fn table_links_are_actionable_in_preview_and_raw_editing() {
+        let text = concat!(
+            "| Framework | Purpose | Link |\n",
+            "|---|---|---|\n",
+            "| bitsandbytes | Quantization | [repository](https://example.com/repo) |"
+        );
+        let buffer = DocBuffer::from_text(text);
+        let lines = highlight_markdown(text);
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let editor = editor_for(&buffer, &lines, &image_cache, &math_cache);
+        let mut state = test_state();
+        state.is_focused = false;
+        editor.rebuild_layout_tree::<iced::Renderer>(&mut state, 900.0);
+
+        assert!(!lines[2].spans.iter().any(|span| span.is_link));
+        let preview_link = (TEXT_X_OFFSET as usize..900).find_map(|x| {
+            editor.table_actionable_span_at_x::<iced::Renderer>(2, x as f32, 900.0, &state)
+        });
+        assert_eq!(
+            preview_link.and_then(|span| span.link_target.as_deref()),
+            Some("https://example.com/repo")
+        );
+
+        let raw = lines[2].spans[0].text.as_str();
+        let link_col = raw[..raw.find("[repository]").unwrap()].chars().count() + 1;
+        assert_eq!(
+            actionable_span_at_col(&lines[2], link_col)
+                .and_then(|span| span.link_target.as_deref()),
+            Some("https://example.com/repo")
+        );
+    }
+
+    #[test]
     fn wrapped_highlight_geometry_covers_each_visual_row() {
         let rects = wrapped_row_rects(
             30.0,
@@ -4214,6 +4392,108 @@ mod tests {
             y_after_table,
             TOP_PAD + 24.0 + 34.0 + 34.0 + HORIZONTAL_SCROLLBAR_GUTTER
         );
+    }
+
+    #[test]
+    fn align_block_height_keeps_following_line_below_the_rendered_image() {
+        let markdown = "$$\n\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}\n$$\nAfter";
+        let lines = highlight_markdown(markdown);
+        let tex = lines[0].spans[0].visible_text(false).to_string();
+        let image_cache = HashMap::new();
+        let mut math_cache = HashMap::new();
+        let rendered_height = 96.0;
+        math_cache.insert(
+            tex,
+            (
+                iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]),
+                240.0,
+                rendered_height,
+            ),
+        );
+
+        let after_y = line_visual_y::<iced::Renderer>(
+            &lines,
+            &image_cache,
+            &math_cache,
+            900.0,
+            6,
+            0,
+            6,
+            true,
+        );
+        let block_height = rendered_height * 1.2 + 48.0;
+        let image_bottom = TOP_PAD + (block_height + rendered_height * 1.2) / 2.0;
+        assert_eq!(after_y, TOP_PAD + block_height);
+        assert!(after_y > image_bottom);
+
+        let editing_line_y: Vec<f32> = (0..6)
+            .map(|line| {
+                line_visual_y::<iced::Renderer>(
+                    &lines,
+                    &image_cache,
+                    &math_cache,
+                    900.0,
+                    2,
+                    0,
+                    line,
+                    true,
+                )
+            })
+            .collect();
+        assert!(editing_line_y.windows(2).all(|pair| pair[1] > pair[0]));
+    }
+
+    #[test]
+    fn editing_long_align_row_reserves_its_wrapped_height() {
+        let markdown = r"$$
+\begin{align}
+TS(u_k) &= T \left( \sum_{i=1}^n A_{i,k}\;\;v_i \right) \nonumber \\
+        &= \sum_{i=1}^n A_{i,k}\;\;Tv_i \nonumber \\
+        &= \sum_{i=1}^n A_{i,k}\;\;\sum_{j=1}^m B_{j,i}\;\;w_j   \nonumber \\
+        &= \sum_{j=1}^m \left(\sum_{i=1}^n B_{j,i}\; A_{i,k} \right)\;w_j \nonumber
+\end{align}
+$$
+After";
+        let lines = highlight_markdown(markdown);
+        let image_cache = HashMap::new();
+        let math_cache = HashMap::new();
+        let available_width = 420.0;
+        let final_row = 5;
+        let closing_environment = 6;
+        let mut seen_math_blocks = std::collections::HashSet::new();
+
+        let final_row_height = line_height_for::<iced::Renderer>(
+            &lines[final_row],
+            &image_cache,
+            &math_cache,
+            available_width,
+            true,
+            None,
+            &mut seen_math_blocks,
+        );
+        assert!(final_row_height > BASE_LINE_HEIGHT);
+
+        let row_y = line_visual_y::<iced::Renderer>(
+            &lines,
+            &image_cache,
+            &math_cache,
+            available_width,
+            final_row,
+            0,
+            final_row,
+            true,
+        );
+        let closing_y = line_visual_y::<iced::Renderer>(
+            &lines,
+            &image_cache,
+            &math_cache,
+            available_width,
+            final_row,
+            0,
+            closing_environment,
+            true,
+        );
+        assert_eq!(closing_y - row_y, final_row_height);
     }
 
     #[test]
@@ -4319,7 +4599,7 @@ mod tests {
                             assert_eq!(h, 34.0);
                         }
                     } else if line.is_math_block && is_editing {
-                        assert_eq!(h, BASE_LINE_HEIGHT);
+                        assert!(h >= BASE_LINE_HEIGHT);
                     } else if line.is_blockquote {
                         assert!(h > 0.0);
                     }
