@@ -455,9 +455,12 @@ impl PdfRenderer {
                                 return Err("PDF document was not loaded".to_string());
                             };
                             let mut sizes = Vec::with_capacity(doc.pages().len() as usize);
+                            let mut fallback = (612.0, 792.0);
                             for index in 0..doc.pages().len() {
-                                let page = doc.pages().get(index).map_err(|e| e.to_string())?;
-                                sizes.push((page.width().value, page.height().value));
+                                if let Ok(page) = doc.pages().get(index) {
+                                    fallback = (page.width().value, page.height().value);
+                                }
+                                sizes.push(fallback);
                             }
                             Ok(sizes)
                         })();
@@ -831,6 +834,36 @@ impl PdfRenderer {
                                 if matches.len() >= 250 {
                                     break;
                                 }
+
+                                // PDFium is single-threaded, but search need
+                                // not monopolize it: yield to the newest
+                                // visible-page render after each small chunk.
+                                if index % 8 == 7 || index + 1 == doc.pages().len() {
+                                    while let Ok(mut priority) = priority_receiver.try_recv() {
+                                        while let Ok(newer) = priority_receiver.try_recv() {
+                                            priority = newer;
+                                        }
+                                        let rendered = if priority.path == path {
+                                            render_page_from_document(
+                                                doc,
+                                                priority.page_index,
+                                                priority.scale,
+                                            )
+                                        } else {
+                                            pdfium
+                                                .load_pdf_from_file(&priority.path, None)
+                                                .map_err(format_pdf_load_error)
+                                                .and_then(|other| {
+                                                    render_page_from_document(
+                                                        &other,
+                                                        priority.page_index,
+                                                        priority.scale,
+                                                    )
+                                                })
+                                        };
+                                        let _ = priority.resp.send(rendered);
+                                    }
+                                }
                             }
                             Ok(matches)
                         })();
@@ -1150,6 +1183,14 @@ fn render_page_from_cache<'a>(
     let Some((_, doc)) = current_document.as_ref() else {
         return Err("PDF document was not loaded".to_string());
     };
+    render_page_from_document(doc, index, scale)
+}
+
+fn render_page_from_document(
+    doc: &PdfDocument<'_>,
+    index: u16,
+    scale: f32,
+) -> Result<DynamicImage, String> {
     let pages = doc.pages();
     if i32::from(index) >= pages.len() {
         return Err("Page index out of bounds".to_string());
@@ -2661,7 +2702,9 @@ mod tests {
     fn test_pdf_search() {
         let _guard = TEST_LOCK.lock().unwrap();
         let pdfium = bind_pdfium().unwrap();
-        let doc = pdfium.load_pdf_from_file("../dummy.pdf", None).unwrap();
+        let doc = pdfium
+            .load_pdf_from_file("../tests-fixtures/pdf/dummy.pdf", None)
+            .unwrap();
         let page = doc.pages().get(0).unwrap();
         let text_page = page.text().unwrap();
         let page_height = page.height().value;
@@ -2695,7 +2738,7 @@ mod tests {
     fn test_pdf_renderer_search() {
         let _guard = TEST_LOCK.lock().unwrap();
         let renderer = PdfRenderer::new().unwrap();
-        let path = "../dummy.pdf";
+        let path = "../tests-fixtures/pdf/dummy.pdf";
 
         // Test non-regex search
         let results = renderer.search_text(path, "dummy", false, false).unwrap();
@@ -2728,7 +2771,7 @@ mod tests {
     #[test]
     fn test_pdf_text_extraction_and_hashing() {
         let _guard = TEST_LOCK.lock().unwrap();
-        let path = "../dummy.pdf";
+        let path = "../tests-fixtures/pdf/dummy.pdf";
         let (id, size, modified) = compute_provisional_id(std::path::Path::new(path)).unwrap();
         assert!(!id.is_empty(), "Document hash must not be empty");
         assert!(size > 0, "Document size must be > 0");
