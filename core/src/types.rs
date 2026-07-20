@@ -42,3 +42,54 @@ pub struct BacklinkItem {
     pub label: String,
     pub context: Option<String>,
 }
+
+/// A deterministic, UI-ready snapshot of the vault's note/reference graph.
+///
+/// Nodes and edges are sorted by their stable vault-relative paths before the
+/// snapshot is returned. Callers can therefore use vector indices as stable
+/// layout seeds for as long as the underlying graph is unchanged.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct GraphSnapshot {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct GraphNode {
+    /// Vault-relative path using `/` separators. This is the stable node id.
+    pub path: String,
+    /// A short display label, normally the filename without its extension.
+    pub label: String,
+    pub kind: GraphNodeKind,
+    /// Whether the target currently exists in the indexed vault.
+    pub exists: bool,
+    /// Weighted number of incoming relationships.
+    pub incoming: usize,
+    /// Weighted number of outgoing relationships.
+    pub outgoing: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GraphNodeKind {
+    Markdown,
+    Pdf,
+    /// A wikilink or annotation endpoint that no longer resolves to a file.
+    Missing,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct GraphEdge {
+    /// Vault-relative source node path.
+    pub source: String,
+    /// Vault-relative target node path.
+    pub target: String,
+    pub kind: GraphEdgeKind,
+    /// Number of relationships represented by this aggregated edge.
+    pub weight: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GraphEdgeKind {
+    WikiLink,
+    PdfAnnotation,
+}

@@ -1,6 +1,6 @@
 # MD Editor
 
-**A calm, local-first Markdown workspace for notes, PDFs, images, search, backlinks, and study progress.**
+**A calm, local-first Markdown workspace for notes, PDFs, knowledge graphs, search, backlinks, and study progress.**
 
 ![MD Editor intro](images/intro.gif)
 
@@ -19,7 +19,7 @@ outside the app.
 
 | Work locally | Read deeply | Find quickly | Keep momentum |
 | --- | --- | --- | --- |
-| Use any folder as a vault. Your Markdown, PDFs, and images stay as normal files. | Open PDFs beside notes, copy text, create sidecar highlights, and link important passages back to Markdown. | Search the active file, the full vault, and PDF text with focused result navigation. | Track sessions, reading, project stages, and study gates in the same workspace. |
+| Use any folder as a vault. Your Markdown, PDFs, and images stay as normal files. | Open PDFs beside notes, copy text, create sidecar highlights, and link important passages back to Markdown. | Search across notes and papers, or explore their connections in the knowledge graph. | Track sessions, reading, project stages, and study gates in the same workspace. |
 
 ## Why It Exists
 
@@ -27,9 +27,9 @@ Most writing tools are either too small for research or too eager to own your
 workflow. MD Editor takes a quieter route.
 
 You bring a folder. The app gives you a native workspace around it: an editor,
-file tree, backlinks, table of contents, PDF viewer, search tools, image preview,
-and study tracker. When you close the app, your work is still there as plain
-Markdown and local files.
+file tree, backlinks, knowledge graph, table of contents, PDF viewer, search
+tools, image preview, and study tracker. When you close the app, your work is
+still there as plain Markdown and local files.
 
 Use it for:
 
@@ -60,7 +60,23 @@ The editor supports the things you expect in a real Markdown workspace:
 - backlinks for discovering connected material, with bare `[[Name]]` links
   resolving across subfolders by filename.
 
-### 3. Keep References Beside Your Notes
+### 3. Explore The Knowledge Graph
+
+Open the Knowledge Graph from the toolbar, the command palette, or with
+`Ctrl+G`. Global view maps the vault's notes and PDFs; Local view follows the
+active note or PDF by one or two hops. Markdown notes, PDFs, and unresolved
+targets are shown as distinct nodes, while both wikilinks and links created from
+PDF annotations become connections.
+
+Pan and zoom the canvas, drag notes into place for the current session, select a
+node to inspect its incoming and outgoing links, or open it directly. Search and
+filters can narrow the graph to useful material, while related-note suggestions
+and vault-health summaries reveal unconnected notes, broken links, and highly
+connected hubs.
+
+Graph connections reflect the saved vault, so new wikilinks appear after save.
+
+### 4. Keep References Beside Your Notes
 
 PDFs open inside the app, so reading and writing can happen in one place.
 
@@ -79,7 +95,7 @@ PDFs open inside the app, so reading and writing can happen in one place.
 PDF highlights and recognized references are stored separately, so the original
 PDF is not modified.
 
-### 4. Search Without Breaking Flow
+### 5. Search Without Breaking Flow
 
 MD Editor has separate search modes for different kinds of work:
 
@@ -88,7 +104,7 @@ MD Editor has separate search modes for different kinds of work:
 - `Ctrl+F` in the PDF pane searches the active PDF.
 - Split view keeps Markdown and PDF search behavior tied to the active pane.
 
-### 5. Track Study Progress
+### 6. Track Study Progress
 
 The built-in tracker helps you record sessions, reading, project stages, gates,
 and configuration. It is useful when your notes are not just reference material,

@@ -1,8 +1,12 @@
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{
+    Mutex, MutexGuard,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 
 use crate::file_index::FileIndex;
 use crate::pdf::{
@@ -18,7 +22,22 @@ pub struct AppState {
     pub db: Mutex<Connection>,
     pub pdf_state: Mutex<PdfState>,
     pub pdf_renderer: Option<PdfRenderer>,
+    pub(crate) vault_generation: AtomicU64,
+    pub(crate) vault_publish_lock: Mutex<()>,
+    vault_content_revision: AtomicU64,
+    vault_mutation_lock: Mutex<()>,
     startup_notice: Mutex<Option<String>>,
+}
+
+pub(crate) struct VaultMutationGuard<'a> {
+    _lock: MutexGuard<'a, ()>,
+    revision: &'a AtomicU64,
+}
+
+impl Drop for VaultMutationGuard<'_> {
+    fn drop(&mut self) {
+        self.revision.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 impl AppState {
@@ -64,6 +83,10 @@ impl AppState {
             db: Mutex::new(db),
             pdf_state: Mutex::new(PdfState::new()),
             pdf_renderer: PdfRenderer::new().ok(),
+            vault_generation: AtomicU64::new(0),
+            vault_publish_lock: Mutex::new(()),
+            vault_content_revision: AtomicU64::new(0),
+            vault_mutation_lock: Mutex::new(()),
             startup_notice: Mutex::new(startup_notice),
         }
     }
@@ -79,12 +102,110 @@ impl AppState {
             db: Mutex::new(db),
             pdf_state: Mutex::new(PdfState::new()),
             pdf_renderer: None,
+            vault_generation: AtomicU64::new(0),
+            vault_publish_lock: Mutex::new(()),
+            vault_content_revision: AtomicU64::new(0),
+            vault_mutation_lock: Mutex::new(()),
             startup_notice: Mutex::new(None),
         }
     }
 
     pub fn take_startup_notice(&self) -> Option<String> {
         self.startup_notice.lock().ok()?.take()
+    }
+
+    /// Declare the vault the UI intends to use and invalidate older indexing
+    /// work. Publishing an index uses the same lock, making the generation
+    /// check and the multi-store update atomic with respect to another switch.
+    pub fn begin_vault_change(&self, root: PathBuf) -> Result<u64, String> {
+        let _publish = self.vault_publish_lock.lock().map_err(|e| e.to_string())?;
+        let _mutation = self.vault_mutation_lock.lock().map_err(|e| e.to_string())?;
+        {
+            let db = self.db.lock().map_err(|e| e.to_string())?;
+            db.execute("DELETE FROM file_search", [])
+                .map_err(|e| format!("Failed to clear previous vault search index: {e}"))?;
+        }
+        *self.file_index.lock().map_err(|e| e.to_string())? = FileIndex::new(root.clone());
+        let generation = self
+            .vault_generation
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1);
+        *self.vault_root.lock().map_err(|e| e.to_string())? = Some(root);
+        self.vault_content_revision.fetch_add(1, Ordering::SeqCst);
+        Ok(generation)
+    }
+
+    pub fn current_vault_generation(&self) -> u64 {
+        self.vault_generation.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn current_vault_content_revision(&self) -> u64 {
+        self.vault_content_revision.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn vault_mutation_guard(&self) -> Result<VaultMutationGuard<'_>, String> {
+        Ok(VaultMutationGuard {
+            _lock: self.vault_mutation_lock.lock().map_err(|e| e.to_string())?,
+            revision: &self.vault_content_revision,
+        })
+    }
+
+    pub(crate) fn vault_publish_mutation_lock(&self) -> Result<MutexGuard<'_, ()>, String> {
+        self.vault_mutation_lock.lock().map_err(|e| e.to_string())
+    }
+
+    /// Stable namespace for PDF persistence belonging to the active vault.
+    /// Existing databases used unscoped document IDs; `save_pdf_document`
+    /// adopts those rows once when a PDF is first opened after this change.
+    pub(crate) fn pdf_scope_prefix(&self) -> Result<Option<String>, String> {
+        let root = {
+            let guard = self.vault_root.lock().map_err(|e| e.to_string())?;
+            guard.clone()
+        };
+        let Some(root) = root else {
+            // In-memory unit tests and non-vault callers retain the legacy raw
+            // key behavior. User-facing PDF operations always have a root.
+            return Ok(None);
+        };
+        Ok(Some(Self::pdf_scope_prefix_for_root(&root)))
+    }
+
+    pub(crate) fn pdf_scope_prefix_for_root(root: &Path) -> String {
+        let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let normalized = canonical.to_string_lossy().replace('\\', "/");
+        let mut hasher = Sha256::new();
+        hasher.update(normalized.as_bytes());
+        format!("{:x}:", hasher.finalize())
+    }
+
+    pub(crate) fn pdf_storage_document_id(&self, document_id: &str) -> Result<String, String> {
+        Ok(match self.pdf_scope_prefix()? {
+            Some(prefix) => format!("{prefix}{document_id}"),
+            None => document_id.to_string(),
+        })
+    }
+
+    pub(crate) fn stored_pdf_document_id_for_vault(
+        &self,
+        vault_root: &Path,
+        rel_path: &str,
+        file_size: u64,
+        modified_at: Option<i64>,
+    ) -> Option<String> {
+        let prefix = Self::pdf_scope_prefix_for_root(vault_root);
+        let db = self.db.lock().ok()?;
+        let storage_id: String = db
+            .query_row(
+                "SELECT document_id FROM pdf_documents
+                 WHERE vault_relative_path = ?1 AND file_size = ?2
+                   AND (modified_at = ?3 OR (modified_at IS NULL AND ?3 IS NULL))
+                   AND substr(document_id, 1, length(?4)) = ?4
+                 ORDER BY updated_at DESC LIMIT 1",
+                rusqlite::params![rel_path, file_size as i64, modified_at, &prefix],
+                |row| row.get(0),
+            )
+            .ok()?;
+        storage_id.strip_prefix(&prefix).map(str::to_string)
     }
 
     pub fn save_pdf_document(
@@ -94,6 +215,14 @@ impl AppState {
         file_size: u64,
         modified_at: Option<i64>,
     ) -> Result<(), String> {
+        let scope_prefix = self.pdf_scope_prefix()?;
+        // Derive both values from the same root read. Re-reading the active
+        // vault here would let a concurrent switch combine one vault's storage
+        // namespace with another vault's reconciliation query.
+        let storage_document_id = match scope_prefix.as_deref() {
+            Some(prefix) => format!("{prefix}{document_id}"),
+            None => document_id.to_string(),
+        };
         let db = self.db.lock().map_err(|e| e.to_string())?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
@@ -105,7 +234,7 @@ impl AppState {
         let existing_new: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM pdf_documents WHERE document_id = ?1)",
-                [document_id],
+                [&storage_document_id],
                 |row| row.get(0),
             )
             .map_err(|e| e.to_string())?;
@@ -113,31 +242,55 @@ impl AppState {
             // Path is the durable user-facing identity. Prefer a size match,
             // but adopt the newest same-path row even after a replacement so
             // annotations are preserved instead of silently orphaned.
-            let previous_id: Option<String> = tx
-                .query_row(
+            let previous_id: Option<String> = if let Some(prefix) = scope_prefix.as_deref() {
+                tx.query_row(
+                    "SELECT document_id FROM pdf_documents
+                     WHERE vault_relative_path = ?1 AND document_id != ?2
+                       AND (substr(document_id, 1, length(?4)) = ?4
+                            OR instr(document_id, ':') = 0)
+                     ORDER BY (substr(document_id, 1, length(?4)) = ?4) DESC,
+                              (file_size = ?3) DESC, updated_at DESC
+                     LIMIT 1",
+                    rusqlite::params![
+                        vault_relative_path,
+                        storage_document_id,
+                        file_size as i64,
+                        prefix
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+            } else {
+                tx.query_row(
                     "SELECT document_id FROM pdf_documents
                      WHERE vault_relative_path = ?1 AND document_id != ?2
                      ORDER BY (file_size = ?3) DESC, updated_at DESC
                      LIMIT 1",
-                    rusqlite::params![vault_relative_path, document_id, file_size as i64],
+                    rusqlite::params![
+                        vault_relative_path,
+                        storage_document_id,
+                        file_size as i64
+                    ],
                     |row| row.get(0),
                 )
                 .optional()
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?
+            };
             if let Some(previous_id) = previous_id {
                 tx.execute(
                     "UPDATE pdf_annotations SET document_id = ?1 WHERE document_id = ?2",
-                    rusqlite::params![document_id, previous_id],
+                    rusqlite::params![storage_document_id, previous_id],
                 )
                 .map_err(|e| format!("Failed to reconcile pdf annotations: {e}"))?;
                 tx.execute(
                     "UPDATE pdf_references SET document_id = ?1 WHERE document_id = ?2",
-                    rusqlite::params![document_id, previous_id],
+                    rusqlite::params![storage_document_id, previous_id],
                 )
                 .map_err(|e| format!("Failed to reconcile pdf references: {e}"))?;
                 tx.execute(
                     "UPDATE pdf_documents SET document_id = ?1 WHERE document_id = ?2",
-                    rusqlite::params![document_id, previous_id],
+                    rusqlite::params![storage_document_id, previous_id],
                 )
                 .map_err(|e| format!("Failed to reconcile pdf document: {e}"))?;
             }
@@ -152,7 +305,7 @@ impl AppState {
                 modified_at = excluded.modified_at,
                 updated_at = excluded.updated_at",
             rusqlite::params![
-                document_id,
+                storage_document_id,
                 vault_relative_path,
                 file_size as i64,
                 modified_at,
@@ -167,11 +320,14 @@ impl AppState {
     }
 
     pub fn get_pdf_path_by_id(&self, document_id: &str) -> Result<Option<String>, String> {
+        let storage_document_id = self.pdf_storage_document_id(document_id)?;
         let db = self.db.lock().map_err(|e| e.to_string())?;
         let mut stmt = db
             .prepare("SELECT vault_relative_path FROM pdf_documents WHERE document_id = ?1")
             .map_err(|e| e.to_string())?;
-        let mut rows = stmt.query([document_id]).map_err(|e| e.to_string())?;
+        let mut rows = stmt
+            .query([storage_document_id])
+            .map_err(|e| e.to_string())?;
         if let Some(row) = rows.next().map_err(|e| e.to_string())? {
             let path: String = row.get(0).map_err(|e| e.to_string())?;
             Ok(Some(path))
@@ -181,6 +337,7 @@ impl AppState {
     }
 
     pub fn save_pdf_annotation(&self, ann: &PdfAnnotation) -> Result<(), String> {
+        let storage_document_id = self.pdf_storage_document_id(&ann.document_id)?;
         let db = self.db.lock().map_err(|e| e.to_string())?;
         let ranges_json = serde_json::to_string(&ann.ranges)
             .map_err(|e| format!("Failed to serialize ranges: {e}"))?;
@@ -204,7 +361,7 @@ impl AppState {
                 updated_at = excluded.updated_at",
             rusqlite::params![
                 ann.id,
-                ann.document_id,
+                storage_document_id,
                 ann.page_index as i32,
                 ann.kind.as_str(),
                 ann.color.as_str(),
@@ -224,8 +381,18 @@ impl AppState {
     }
 
     pub fn delete_pdf_annotation(&self, id: &str) -> Result<(), String> {
+        let scope_prefix = self.pdf_scope_prefix()?;
         let db = self.db.lock().map_err(|e| e.to_string())?;
-        db.execute("DELETE FROM pdf_annotations WHERE id = ?1", [id])
+        let deleted = if let Some(prefix) = scope_prefix {
+            db.execute(
+                "DELETE FROM pdf_annotations
+                 WHERE id = ?1 AND substr(document_id, 1, length(?2)) = ?2",
+                rusqlite::params![id, prefix],
+            )
+        } else {
+            db.execute("DELETE FROM pdf_annotations WHERE id = ?1", [id])
+        };
+        deleted
             .map_err(|e| format!("Failed to delete pdf annotation: {e}"))?;
         Ok(())
     }
@@ -237,11 +404,12 @@ impl AppState {
         &self,
         document_id: &str,
     ) -> Option<Vec<crate::references::ReferenceLink>> {
+        let storage_document_id = self.pdf_storage_document_id(document_id).ok()?;
         let db = self.db.lock().ok()?;
         let json: String = db
             .query_row(
                 "SELECT links_json FROM pdf_references WHERE document_id = ?1",
-                [document_id],
+                [storage_document_id],
                 |row| row.get(0),
             )
             .ok()?;
@@ -260,6 +428,9 @@ impl AppState {
         document_id: &str,
         links: &[crate::references::ReferenceLink],
     ) {
+        let Ok(storage_document_id) = self.pdf_storage_document_id(document_id) else {
+            return;
+        };
         let Ok(db) = self.db.lock() else {
             return;
         };
@@ -277,7 +448,7 @@ impl AppState {
              ON CONFLICT(document_id) DO UPDATE SET
                 links_json = excluded.links_json,
                 updated_at = excluded.updated_at",
-            rusqlite::params![document_id, json, now],
+            rusqlite::params![storage_document_id, json, now],
         ) {
             eprintln!("Failed to cache PDF references for {document_id}: {e}");
         }
@@ -292,11 +463,32 @@ impl AppState {
         file_size: u64,
         modified_at: i64,
     ) -> Option<String> {
+        let key = self.pdf_cache_key(rel_path).ok()?;
+        self.get_cached_pdf_text_by_key(&key, file_size, modified_at)
+    }
+
+    pub(crate) fn get_cached_pdf_text_for_vault(
+        &self,
+        vault_root: &Path,
+        rel_path: &str,
+        file_size: u64,
+        modified_at: i64,
+    ) -> Option<String> {
+        let key = format!("{}{}", Self::pdf_scope_prefix_for_root(vault_root), rel_path);
+        self.get_cached_pdf_text_by_key(&key, file_size, modified_at)
+    }
+
+    fn get_cached_pdf_text_by_key(
+        &self,
+        key: &str,
+        file_size: u64,
+        modified_at: i64,
+    ) -> Option<String> {
         let db = self.db.lock().ok()?;
         db.query_row(
             "SELECT content FROM pdf_text_cache
              WHERE path = ?1 AND file_size = ?2 AND modified_at = ?3",
-            rusqlite::params![rel_path, file_size as i64, modified_at],
+            rusqlite::params![key, file_size as i64, modified_at],
             |row| row.get::<_, String>(0),
         )
         .ok()
@@ -311,6 +503,38 @@ impl AppState {
         modified_at: i64,
         content: &str,
     ) {
+        let Ok(key) = self.pdf_cache_key(rel_path) else {
+            return;
+        };
+        self.put_cached_pdf_text_by_key(&key, file_size, modified_at, content);
+    }
+
+    pub(crate) fn put_cached_pdf_text_for_vault(
+        &self,
+        vault_root: &Path,
+        rel_path: &str,
+        file_size: u64,
+        modified_at: i64,
+        content: &str,
+    ) {
+        let key = format!("{}{}", Self::pdf_scope_prefix_for_root(vault_root), rel_path);
+        self.put_cached_pdf_text_by_key(&key, file_size, modified_at, content);
+    }
+
+    fn pdf_cache_key(&self, rel_path: &str) -> Result<String, String> {
+        Ok(match self.pdf_scope_prefix()? {
+            Some(prefix) => format!("{prefix}{rel_path}"),
+            None => rel_path.to_string(),
+        })
+    }
+
+    fn put_cached_pdf_text_by_key(
+        &self,
+        key: &str,
+        file_size: u64,
+        modified_at: i64,
+        content: &str,
+    ) {
         let Ok(db) = self.db.lock() else {
             return;
         };
@@ -321,9 +545,9 @@ impl AppState {
                 file_size = excluded.file_size,
                 modified_at = excluded.modified_at,
                 content = excluded.content",
-            rusqlite::params![rel_path, file_size as i64, modified_at, content],
+            rusqlite::params![key, file_size as i64, modified_at, content],
         ) {
-            eprintln!("Failed to cache PDF text for {rel_path}: {e}");
+            eprintln!("Failed to cache PDF text for {key}: {e}");
         }
     }
 
@@ -332,6 +556,7 @@ impl AppState {
         document_id: &str,
         page_index: Option<u16>,
     ) -> Result<Vec<PdfAnnotation>, String> {
+        let storage_document_id = self.pdf_storage_document_id(document_id)?;
         let db = self.db.lock().map_err(|e| e.to_string())?;
         let query = if page_index.is_some() {
             "SELECT id, document_id, page_index, kind, color, selected_text,
@@ -351,17 +576,17 @@ impl AppState {
 
         let mut stmt = db.prepare(query).map_err(|e| e.to_string())?;
         let mut rows = if let Some(page) = page_index {
-            stmt.query(rusqlite::params![document_id, page as i32])
+            stmt.query(rusqlite::params![storage_document_id, page as i32])
                 .map_err(|e| e.to_string())?
         } else {
-            stmt.query(rusqlite::params![document_id])
+            stmt.query(rusqlite::params![storage_document_id])
                 .map_err(|e| e.to_string())?
         };
 
         let mut annotations = Vec::new();
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
             let id: String = row.get(0).map_err(|e| e.to_string())?;
-            let doc_id: String = row.get(1).map_err(|e| e.to_string())?;
+            let _stored_doc_id: String = row.get(1).map_err(|e| e.to_string())?;
             let page_idx: i32 = row.get(2).map_err(|e| e.to_string())?;
             let kind_str: String = row.get(3).map_err(|e| e.to_string())?;
             let color_str: String = row.get(4).map_err(|e| e.to_string())?;
@@ -383,7 +608,7 @@ impl AppState {
 
             annotations.push(PdfAnnotation {
                 id,
-                document_id: doc_id,
+                document_id: document_id.to_string(),
                 page_index: page_idx as u16,
                 kind,
                 color,
@@ -693,6 +918,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vault_mutation_guard_advances_content_revision() {
+        let state = AppState::new_in_memory();
+        let before = state.current_vault_content_revision();
+        {
+            let _mutation = state.vault_mutation_guard().unwrap();
+            assert_eq!(state.current_vault_content_revision(), before);
+        }
+        assert_eq!(
+            state.current_vault_content_revision(),
+            before.wrapping_add(1)
+        );
+    }
+
+    #[test]
     fn migrates_legacy_db_with_sidecars_when_new_location_empty() {
         let base = std::env::temp_dir().join(format!("md_editor_mig_{}", uuid::Uuid::new_v4()));
         let legacy_dir = base.join("legacy");
@@ -735,6 +974,33 @@ mod tests {
             state.get_cached_pdf_text("a.pdf", 101, 6).as_deref(),
             Some("new text")
         );
+    }
+
+    #[test]
+    fn pdf_text_cache_is_isolated_by_vault() {
+        let base = std::env::temp_dir().join(format!("md_pdf_cache_{}", uuid::Uuid::new_v4()));
+        let first = base.join("first");
+        let second = base.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let state = AppState::new_in_memory();
+
+        state.put_cached_pdf_text_for_vault(&first, "paper.pdf", 10, 1, "first text");
+        assert!(
+            state
+                .get_cached_pdf_text_for_vault(&second, "paper.pdf", 10, 1)
+                .is_none()
+        );
+        state.put_cached_pdf_text_for_vault(&second, "paper.pdf", 10, 1, "second text");
+        assert_eq!(
+            state
+                .get_cached_pdf_text_for_vault(&first, "paper.pdf", 10, 1)
+                .as_deref(),
+            Some("first text")
+        );
+
+        drop(state);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -892,5 +1158,131 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.get_pdf_annotations("new", None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pdf_annotations_are_isolated_between_vaults_with_identical_document_ids() {
+        let base = std::env::temp_dir().join(format!("md_pdf_scopes_{}", uuid::Uuid::new_v4()));
+        let first_root = base.join("first");
+        let second_root = base.join("second");
+        std::fs::create_dir_all(&first_root).unwrap();
+        std::fs::create_dir_all(&second_root).unwrap();
+        let state = AppState::new_in_memory();
+
+        let annotation = |id: &str, text: &str| PdfAnnotation {
+            id: id.to_string(),
+            document_id: "same-content-id".to_string(),
+            page_index: 0,
+            kind: PdfAnnotationKind::Highlight,
+            color: PdfAnnotationColor::Yellow,
+            selected_text: text.to_string(),
+            ranges: vec![],
+            rects: vec![],
+            note: None,
+            linked_note_path: Some(format!("{text}.md")),
+            markdown_anchor: None,
+            created_at: 1,
+            updated_at: 1,
+        };
+
+        *state.vault_root.lock().unwrap() = Some(first_root);
+        state
+            .save_pdf_document("same-content-id", "paper.pdf", 10, Some(1))
+            .unwrap();
+        state
+            .save_pdf_annotation(&annotation("first-annotation", "first-note"))
+            .unwrap();
+
+        *state.vault_root.lock().unwrap() = Some(second_root);
+        state
+            .save_pdf_document("same-content-id", "paper.pdf", 10, Some(1))
+            .unwrap();
+        assert!(
+            state
+                .get_pdf_annotations("same-content-id", None)
+                .unwrap()
+                .is_empty()
+        );
+        state
+            .save_pdf_annotation(&annotation("second-annotation", "second-note"))
+            .unwrap();
+        assert_eq!(
+            state
+                .get_pdf_annotations("same-content-id", None)
+                .unwrap()[0]
+                .id,
+            "second-annotation"
+        );
+
+        *state.vault_root.lock().unwrap() = Some(base.join("first"));
+        let first_annotations = state
+            .get_pdf_annotations("same-content-id", None)
+            .unwrap();
+        assert_eq!(first_annotations.len(), 1);
+        assert_eq!(first_annotations[0].id, "first-annotation");
+
+        let stored_documents: i64 = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM pdf_documents", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored_documents, 2);
+
+        drop(state);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn opening_pdf_adopts_legacy_unscoped_annotations_into_current_vault() {
+        let base = std::env::temp_dir().join(format!("md_pdf_legacy_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let state = AppState::new_in_memory();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO pdf_documents (
+                     document_id, vault_relative_path, file_size, modified_at,
+                     created_at, updated_at
+                 ) VALUES ('legacy-id', 'paper.pdf', 10, 1, 1, 1)",
+                [],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO pdf_annotations (
+                     id, document_id, page_index, kind, color, selected_text,
+                     ranges_json, rects_json, note, linked_note_path,
+                     markdown_anchor, created_at, updated_at
+                 ) VALUES ('legacy-annotation', 'legacy-id', 0, 'Highlight',
+                           'Yellow', 'legacy', '[]', '[]', NULL, 'note.md',
+                           NULL, 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+
+        *state.vault_root.lock().unwrap() = Some(base.clone());
+        state
+            .save_pdf_document("legacy-id", "paper.pdf", 10, Some(1))
+            .unwrap();
+
+        let annotations = state.get_pdf_annotations("legacy-id", None).unwrap();
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].id, "legacy-annotation");
+        assert_eq!(annotations[0].document_id, "legacy-id");
+        let unscoped_documents: i64 = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM pdf_documents WHERE document_id = 'legacy-id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unscoped_documents, 0);
+
+        drop(state);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

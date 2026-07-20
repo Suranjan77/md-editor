@@ -10,7 +10,8 @@ pub fn view<'a>(
     active_pdf_path: Option<&'a str>,
     dirty: bool,
     sidebar_visible: bool,
-    _backlinks_visible: bool,
+    backlinks_visible: bool,
+    graph_visible: bool,
     tracker_visible: bool,
     toc_visible: bool,
     toc_available: bool,
@@ -95,6 +96,32 @@ pub fn view<'a>(
             .on_press(Message::CommandPaletteOpen)
             .padding(8)
             .style(button::text),
+        button(icons::view(
+            Icon::Network,
+            if graph_visible {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            },
+            18.0,
+        ))
+        .on_press(Message::GraphToggle)
+        .padding(8)
+        .style(button::text),
+        button(icons::view(
+            Icon::Link,
+            if backlinks_visible {
+                theme::ACCENT
+            } else {
+                theme::TEXT_MUTED
+            },
+            18.0,
+        ))
+        .on_press(Message::KeyboardShortcut(
+            crate::messages::Shortcut::ToggleBacklinks,
+        ))
+        .padding(8)
+        .style(button::text),
         toc_button,
         split_button,
         button(icons::view(

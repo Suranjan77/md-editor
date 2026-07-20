@@ -38,6 +38,11 @@ pub fn get_commands() -> Vec<Command> {
             icon: "B".to_string(),
         },
         Command {
+            name: "Open Knowledge Graph".to_string(),
+            shortcut: Shortcut::KnowledgeGraph,
+            icon: "G".to_string(),
+        },
+        Command {
             name: "Toggle Table of Contents".to_string(),
             shortcut: Shortcut::TableOfContents,
             icon: "T".to_string(),
@@ -166,6 +171,7 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::CommandPalette => "Ctrl P",
         Shortcut::ToggleSidebar => "Ctrl B",
         Shortcut::ToggleBacklinks => "Backlinks",
+        Shortcut::KnowledgeGraph => "Ctrl G",
         Shortcut::FocusMode => "Focus",
         Shortcut::TableOfContents => "Ctrl T",
         Shortcut::StudyTracker => "Tracker",
@@ -188,5 +194,14 @@ mod tests {
             Some(filtered[1].shortcut)
         );
         assert_eq!(selected_shortcut("missing", &commands, 0), None);
+    }
+
+    #[test]
+    fn knowledge_graph_is_discoverable() {
+        let commands = get_commands();
+        assert_eq!(
+            selected_shortcut("knowledge graph", &commands, 0),
+            Some(Shortcut::KnowledgeGraph)
+        );
     }
 }

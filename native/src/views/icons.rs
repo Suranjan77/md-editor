@@ -12,6 +12,8 @@ pub enum Icon {
     Image,
     LayoutPanelLeft,
     ListTree,
+    Link,
+    Network,
     Search,
     ChevronDown,
     ChevronRight,
@@ -177,6 +179,33 @@ impl<Message> canvas::Program<Message> for IconCanvas {
                 stroke_line(&mut frame, p(13.0, 18.0), p(21.0, 18.0), stroke);
                 stroke_line(&mut frame, p(3.0, 6.0), p(3.0, 18.0), stroke);
                 stroke_line(&mut frame, p(3.0, 18.0), p(9.0, 18.0), stroke);
+            }
+            Icon::Link => {
+                let left = canvas::Path::new(|path| {
+                    path.move_to(p(10.0, 8.0));
+                    path.line_to(p(8.0, 6.0));
+                    path.bezier_curve_to(p(5.5, 3.5), p(1.5, 7.5), p(4.0, 10.0));
+                    path.line_to(p(7.0, 13.0));
+                    path.bezier_curve_to(p(8.5, 14.5), p(11.0, 13.5), p(12.0, 12.0));
+                });
+                let right = canvas::Path::new(|path| {
+                    path.move_to(p(14.0, 16.0));
+                    path.line_to(p(16.0, 18.0));
+                    path.bezier_curve_to(p(18.5, 20.5), p(22.5, 16.5), p(20.0, 14.0));
+                    path.line_to(p(17.0, 11.0));
+                    path.bezier_curve_to(p(15.5, 9.5), p(13.0, 10.5), p(12.0, 12.0));
+                });
+                frame.stroke(&left, stroke);
+                frame.stroke(&right, stroke);
+                stroke_line(&mut frame, p(9.0, 15.0), p(15.0, 9.0), stroke);
+            }
+            Icon::Network => {
+                frame.stroke(&canvas::Path::circle(p(12.0, 5.0), 2.5 * scale), stroke);
+                frame.stroke(&canvas::Path::circle(p(5.0, 18.0), 2.5 * scale), stroke);
+                frame.stroke(&canvas::Path::circle(p(19.0, 18.0), 2.5 * scale), stroke);
+                stroke_line(&mut frame, p(10.8, 7.2), p(6.2, 15.8), stroke);
+                stroke_line(&mut frame, p(13.2, 7.2), p(17.8, 15.8), stroke);
+                stroke_line(&mut frame, p(7.5, 18.0), p(16.5, 18.0), stroke);
             }
             Icon::Split => {
                 let outer = canvas::Path::rounded_rectangle(

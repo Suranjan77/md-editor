@@ -1,9 +1,13 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::file_index::FileIndex;
 use crate::state::AppState;
-use crate::types::{BacklinkItem, BacklinkTarget, FileEntry, SearchResult};
+use crate::types::{
+    BacklinkItem, BacklinkTarget, FileEntry, GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind,
+    GraphSnapshot, SearchResult,
+};
 
 pub const IMAGE_EXTENSIONS: [&str; 8] =
     ["jpeg", "jpg", "png", "gif", "bmp", "svg", "webp", "avif"];
@@ -49,6 +53,33 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
     if !root.is_dir() {
         return Err(format!("Not a directory: {}", path));
     }
+    let generation = state.begin_vault_change(root)?;
+    loop {
+        match index_vault_for_generation(state, path, generation)? {
+            Some(entries) => return Ok(entries),
+            None if state.current_vault_generation() == generation => {
+                // A save, watcher event, or file operation landed while the
+                // snapshot was being built. Rebuild from the newer disk state
+                // instead of publishing the stale snapshot over that mutation.
+            }
+            None => return Err("Vault changed while indexing".to_string()),
+        }
+    }
+}
+
+/// Build and publish an index only if `generation` is still the requested
+/// vault. This lets the UI discard slow A results after the user has opened B,
+/// without stale work mutating the shared root, FTS database, or link index.
+pub fn index_vault_for_generation(
+    state: &AppState,
+    path: &str,
+    generation: u64,
+) -> Result<Option<Vec<FileEntry>>, String> {
+    let root = PathBuf::from(path);
+    if !root.is_dir() {
+        return Err(format!("Not a directory: {}", path));
+    }
+    let content_revision = state.current_vault_content_revision();
 
     // Phase 1: read every file and build the link index into local structures
     // WITHOUT holding any shared lock. The disk I/O here is the slow part; if
@@ -72,48 +103,85 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
     }
     index.rebuild(&for_graph);
 
-    // Phase 1b: extract PDF text for full-text search. Best-effort and done
-    // without holding any lock (pdfium extraction is slow); skipped entirely
-    // when no renderer is available (e.g. headless/test builds).
+    // Phase 1b: identify every PDF so legacy annotation rows can be adopted
+    // into this vault before any rename, and extract searchable text when a
+    // renderer is available. All cache keys use the target root explicitly;
+    // the currently published vault may change while this work is running.
     let mut pdf_indexed: Vec<(String, String)> = Vec::new();
-    if let Some(renderer) = state.pdf_renderer.as_ref() {
-        if let Ok(pdf_files) = list_all_pdf_files(&root) {
-            for pdf_path in pdf_files {
-                let rel_path = pdf_path
-                    .strip_prefix(&root)
-                    .unwrap_or(&pdf_path)
-                    .to_string_lossy()
-                    .to_string();
-                let (file_size, modified_at) = file_size_and_mtime(&pdf_path);
+    let mut pdf_documents: Vec<(String, String, u64, Option<i64>)> = Vec::new();
+    for pdf_path in list_all_pdf_files(&root).unwrap_or_default() {
+        let rel_path = path_to_relative_string(&pdf_path, &root);
+        let (file_size, modified_at) = file_size_and_mtime(&pdf_path);
+        // Reuse the content identity for unchanged, already-scoped PDFs. New,
+        // replaced, or legacy PDFs pay the bounded 1 MiB hash once.
+        let identity = state
+            .stored_pdf_document_id_for_vault(
+                &root,
+                &rel_path,
+                file_size,
+                Some(modified_at),
+            )
+            .map(|document_id| (document_id, file_size, Some(modified_at)))
+            .or_else(|| crate::pdf::compute_provisional_id(&pdf_path).ok());
+        if let Some((document_id, size, modified)) = identity {
+            pdf_documents.push((document_id, rel_path.clone(), size, modified));
+        }
 
-                // Reuse cached text when the PDF is unchanged; only fall back to
-                // the (slow) pdfium extraction when size/mtime differ.
-                let text = if let Some(cached) =
-                    state.get_cached_pdf_text(&rel_path, file_size, modified_at)
-                {
-                    cached
-                } else {
-                    match renderer.extract_document_text(&pdf_path.to_string_lossy()) {
-                        Ok(text) => {
-                            // Cache even empty results (e.g. scanned PDFs) so we
-                            // don't re-extract them on every open.
-                            state.put_cached_pdf_text(&rel_path, file_size, modified_at, &text);
-                            text
-                        }
-                        Err(_) => continue,
+        if let Some(renderer) = state.pdf_renderer.as_ref() {
+            // Reuse cached text when the PDF is unchanged; only fall back to
+            // the (slow) pdfium extraction when size/mtime differ.
+            let text = if let Some(cached) = state.get_cached_pdf_text_for_vault(
+                &root,
+                &rel_path,
+                file_size,
+                modified_at,
+            ) {
+                cached
+            } else {
+                match renderer.extract_document_text(&pdf_path.to_string_lossy()) {
+                    Ok(text) => {
+                        // Cache even empty results (e.g. scanned PDFs) so we
+                        // don't re-extract them on every open.
+                        state.put_cached_pdf_text_for_vault(
+                            &root,
+                            &rel_path,
+                            file_size,
+                            modified_at,
+                            &text,
+                        );
+                        text
                     }
-                };
-                if !text.trim().is_empty() {
-                    pdf_indexed.push((rel_path, text));
+                    Err(_) => continue,
                 }
+            };
+            if !text.trim().is_empty() {
+                pdf_indexed.push((rel_path, text));
             }
         }
     }
+    let entries = list_vault_entries(&root)?;
 
-    // Phase 2: publish results under short-lived locks only.
+    // Phase 2: publish all shared stores while vault switching is excluded.
+    // Slow disk/PDF work above never holds this lock.
+    let _publish = state
+        .vault_publish_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let _mutation = state.vault_publish_mutation_lock()?;
+    if state.current_vault_generation() != generation {
+        return Ok(None);
+    }
+    if state.current_vault_content_revision() != content_revision {
+        return Ok(None);
+    }
+    if state
+        .vault_root
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_ref()
+        != Some(&root)
     {
-        let mut vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-        *vault_root = Some(root.clone());
+        return Ok(None);
     }
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -137,12 +205,20 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
         let mut file_index = state.file_index.lock().map_err(|e| e.to_string())?;
         *file_index = index;
     }
+    for (document_id, rel_path, size, modified_at) in pdf_documents {
+        if let Err(error) =
+            state.save_pdf_document(&document_id, &rel_path, size, modified_at)
+        {
+            eprintln!("Failed to scope PDF document {rel_path}: {error}");
+        }
+    }
 
-    list_vault_entries(&root)
+    Ok(Some(entries))
 }
 
 /// Open a file from the vault. Returns raw bytes.
 pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
+    let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
@@ -159,6 +235,7 @@ pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
 
 /// Save file content.
 pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), String> {
+    let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
@@ -190,6 +267,7 @@ pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), Stri
 /// re-indexed; vanished files are removed from the index and search. Non-
 /// markdown paths are ignored. Safe to call redundantly — it's idempotent.
 pub fn sync_path_from_disk(state: &AppState, rel_path: &str) -> Result<(), String> {
+    let _mutation = state.vault_mutation_guard()?;
     let vault_root = {
         let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
         guard.as_ref().ok_or("No vault root set")?.clone()
@@ -232,17 +310,33 @@ pub fn sync_path_from_disk(state: &AppState, rel_path: &str) -> Result<(), Strin
 
 /// Create a new empty file.
 pub fn create_file(state: &AppState, path: &str) -> Result<(), String> {
+    let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
     if abs_path.exists() {
         return Err(format!("File already exists: {}", abs_path.display()));
     }
-    write_file(&abs_path, "")
+    write_file(&abs_path, "")?;
+
+    // Make a newly-created note visible to backlinks and the knowledge graph
+    // immediately instead of waiting for the filesystem watcher round-trip.
+    if is_markdown_path(&abs_path) {
+        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+        index.update_file(&abs_path, "");
+        drop(index);
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = db.execute(
+            "INSERT INTO file_search (path, content) VALUES (?1, '')",
+            rusqlite::params![path],
+        );
+    }
+    Ok(())
 }
 
 /// Create a new directory.
 pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
+    let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
@@ -255,11 +349,12 @@ pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
 
 /// Rename (or move) a file or directory.
 ///
-/// When a markdown file is renamed, every `[[wikilink]]` that pointed at it is
-/// rewritten in the files that linked to it, so backlinks survive the rename.
-/// The link graph and full-text index are updated for both the renamed file and
-/// each file whose links were rewritten.
+/// When a Markdown or PDF file is renamed, every `[[wikilink]]` that pointed at
+/// it is rewritten in the files that linked to it, so backlinks survive.
+/// PDF annotation links and document identities follow renamed notes/PDFs, and
+/// directory moves rebuild the markdown graph/search index under the new path.
 pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<(), String> {
+    let _mutation = state.vault_mutation_guard()?;
     let vault_root = {
         let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
         guard.as_ref().ok_or("No vault root set")?.clone()
@@ -271,11 +366,19 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
         return Err(format!("Target already exists: {}", abs_new.display()));
     }
 
+    let is_dir = abs_old.is_dir();
     let is_md_file = abs_old.is_file() && is_markdown_path(&abs_old);
+    let is_pdf_file = abs_old.is_file() && is_pdf_path(&abs_old);
+    let old_rel = path_to_relative_string(&abs_old, &vault_root);
+    let new_rel = path_to_relative_string(&abs_new, &vault_root);
+
+    if old_rel.is_empty() || new_rel.is_empty() {
+        return Err("Cannot rename the vault root".to_string());
+    }
 
     // Snapshot the files that link to this note *before* mutating the index —
     // these are the ones whose `[[wikilinks]]` need rewriting.
-    let backlinks: Vec<PathBuf> = if is_md_file {
+    let backlinks: Vec<PathBuf> = if is_md_file || is_pdf_file {
         let index = state.file_index.lock().map_err(|e| e.to_string())?;
         index.get_backlinks(&abs_old)
     } else {
@@ -286,36 +389,50 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
     fs::rename(&abs_old, &abs_new)
         .map_err(|e| format!("Failed to rename {}: {}", abs_old.display(), e))?;
 
-    if !is_md_file {
+    if is_dir {
+        rewrite_persisted_rename_paths(state, &old_rel, &new_rel, true, true, true)?;
+        rebuild_markdown_index_and_search(state, &vault_root)?;
         return Ok(());
     }
 
-    // New link target: vault-relative, forward slashes, no extension.
-    let new_rel = abs_new
-        .strip_prefix(&vault_root)
-        .unwrap_or(&abs_new)
-        .with_extension("");
-    let new_rel_str = new_rel.to_string_lossy().replace('\\', "/");
+    if !is_md_file && !is_pdf_file {
+        return Ok(());
+    }
+
+    // Markdown wikilinks conventionally omit their extension. PDF links keep
+    // it so the resolver does not reinterpret the target as a Markdown note.
+    let relative_target = abs_new.strip_prefix(&vault_root).unwrap_or(&abs_new);
+    let new_link_target = if is_md_file {
+        relative_target.with_extension("")
+    } else {
+        relative_target.to_path_buf()
+    };
+    let new_rel_str = new_link_target.to_string_lossy().replace('\\', "/");
 
     // Rewrite links in each backlinking file that resolved to the old path.
     for bl in &backlinks {
-        if bl == &abs_old {
+        // The renamed Markdown note may link to itself. Resolve its old link
+        // spelling against the old path, but read/write it at the new path.
+        let stored_path = if bl == &abs_old { &abs_new } else { bl };
+        let Ok(content) = read_file(stored_path) else {
             continue;
-        }
-        let Ok(content) = read_file(bl) else { continue };
+        };
         let Some(updated) =
             crate::file_index::rewrite_links_to(&content, &vault_root, bl, &abs_old, &new_rel_str)
         else {
             continue;
         };
-        if write_file(bl, &updated).is_err() {
+        if write_file(stored_path, &updated).is_err() {
             continue;
         }
         {
             let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
-            index.update_file(bl, &updated);
+            if stored_path != bl {
+                index.remove_file(bl);
+            }
+            index.update_file(stored_path, &updated);
         }
-        let bl_rel = path_to_relative_string(bl, &vault_root);
+        let bl_rel = path_to_relative_string(stored_path, &vault_root);
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let _ = db.execute(
             "DELETE FROM file_search WHERE path = ?1",
@@ -329,6 +446,11 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
         }
     }
 
+    if is_pdf_file {
+        rewrite_persisted_rename_paths(state, &old_rel, &new_rel, false, true, false)?;
+        return Ok(());
+    }
+
     // Re-key the renamed file in the link graph and search index.
     {
         let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
@@ -339,26 +461,179 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
             let db = state.db.lock().map_err(|e| e.to_string())?;
             let _ = db.execute(
                 "DELETE FROM file_search WHERE path = ?1",
-                rusqlite::params![old_path],
+                rusqlite::params![old_rel],
             );
             let _ = db.execute(
                 "DELETE FROM file_search WHERE path = ?1",
-                rusqlite::params![new_path],
+                rusqlite::params![new_rel],
             );
             if let Err(e) = db.execute(
                 "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
-                rusqlite::params![new_path, content],
+                rusqlite::params![new_rel, content],
             ) {
-                eprintln!("Failed to index renamed file {new_path}: {e}");
+                eprintln!("Failed to index renamed file {new_rel}: {e}");
             }
         }
     }
 
+    rewrite_persisted_rename_paths(state, &old_rel, &new_rel, false, false, true)?;
+
+    Ok(())
+}
+
+/// Move durable path references after a successful filesystem rename.
+///
+/// `subtree` rewrites both an exact match and every slash-separated descendant.
+/// The remaining flags select PDF source paths and PDF-annotation note targets;
+/// search rows always follow the rename so extracted PDF text is not stranded.
+fn rewrite_persisted_rename_paths(
+    state: &AppState,
+    old_path: &str,
+    new_path: &str,
+    subtree: bool,
+    update_pdf_documents: bool,
+    update_linked_notes: bool,
+) -> Result<(), String> {
+    let scope_prefix = state
+        .pdf_scope_prefix()?
+        .ok_or("No vault root set")?;
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    rewrite_path_column(
+        &tx,
+        "file_search",
+        "path",
+        old_path,
+        new_path,
+        subtree,
+        None,
+    )?;
+    if update_pdf_documents {
+        rewrite_path_column(
+            &tx,
+            "pdf_documents",
+            "vault_relative_path",
+            old_path,
+            new_path,
+            subtree,
+            Some(&scope_prefix),
+        )?;
+    }
+    if update_linked_notes {
+        rewrite_path_column(
+            &tx,
+            "pdf_annotations",
+            "linked_note_path",
+            old_path,
+            new_path,
+            subtree,
+            Some(&scope_prefix),
+        )?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("Failed to persist renamed paths: {e}"))
+}
+
+fn rewrite_path_column(
+    tx: &rusqlite::Transaction<'_>,
+    table: &str,
+    column: &str,
+    old_path: &str,
+    new_path: &str,
+    subtree: bool,
+    document_scope: Option<&str>,
+) -> Result<(), String> {
+    let (sql, changed) = if let Some(scope) = document_scope.filter(|_| subtree) {
+        let prefix = format!("{}/", old_path.trim_end_matches('/'));
+        let sql = format!(
+            "UPDATE {table}
+             SET {column} = ?1 || substr(replace({column}, char(92), '/'), length(?2) + 1)
+             WHERE (replace({column}, char(92), '/') = ?2
+                    OR substr(replace({column}, char(92), '/'), 1, length(?3)) = ?3)
+               AND substr(document_id, 1, length(?4)) = ?4"
+        );
+        let changed = tx.execute(
+            &sql,
+            rusqlite::params![new_path, old_path, prefix, scope],
+        );
+        (sql, changed)
+    } else if subtree {
+        let prefix = format!("{}/", old_path.trim_end_matches('/'));
+        let sql = format!(
+            "UPDATE {table}
+             SET {column} = ?1 || substr(replace({column}, char(92), '/'), length(?2) + 1)
+             WHERE replace({column}, char(92), '/') = ?2
+                OR substr(replace({column}, char(92), '/'), 1, length(?3)) = ?3"
+        );
+        let changed = tx.execute(&sql, rusqlite::params![new_path, old_path, prefix]);
+        (sql, changed)
+    } else if let Some(scope) = document_scope {
+        let sql = format!(
+            "UPDATE {table} SET {column} = ?1
+             WHERE replace({column}, char(92), '/') = ?2
+               AND substr(document_id, 1, length(?3)) = ?3"
+        );
+        let changed = tx.execute(&sql, rusqlite::params![new_path, old_path, scope]);
+        (sql, changed)
+    } else {
+        let sql = format!(
+            "UPDATE {table} SET {column} = ?1
+             WHERE replace({column}, char(92), '/') = ?2"
+        );
+        let changed = tx.execute(&sql, rusqlite::params![new_path, old_path]);
+        (sql, changed)
+    };
+    changed
+        .map(|_| ())
+        .map_err(|e| format!("Failed to update renamed path with `{sql}`: {e}"))
+}
+
+/// Rebuild the markdown graph in two passes after a directory move and replace
+/// only markdown FTS rows, preserving already-extracted PDF search content.
+fn rebuild_markdown_index_and_search(state: &AppState, root: &Path) -> Result<(), String> {
+    let markdown_files = list_all_md_files(root)?;
+    let mut graph_files = Vec::with_capacity(markdown_files.len());
+    let mut search_rows = Vec::with_capacity(markdown_files.len());
+    for path in markdown_files {
+        if let Ok(content) = read_file(&path) {
+            search_rows.push((path_to_relative_string(&path, root), content.clone()));
+            graph_files.push((path, content));
+        }
+    }
+
+    let mut rebuilt = FileIndex::new(root.to_path_buf());
+    rebuilt.rebuild(&graph_files);
+
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM file_search
+             WHERE lower(path) LIKE '%.md' OR lower(path) LIKE '%.markdown'",
+            [],
+        )
+        .map_err(|e| format!("Failed to clear markdown search index after rename: {e}"))?;
+        for (path, content) in search_rows {
+            tx.execute(
+                "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
+                rusqlite::params![path, content],
+            )
+            .map_err(|e| format!("Failed to rebuild search index for {path}: {e}"))?;
+        }
+        tx.commit()
+            .map_err(|e| format!("Failed to commit renamed search index: {e}"))?;
+    }
+
+    let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
+    *index = rebuilt;
     Ok(())
 }
 
 /// Delete a file or directory.
 pub fn delete_entry(state: &AppState, path: &str) -> Result<(), String> {
+    let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
     let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
@@ -462,19 +737,32 @@ pub fn get_backlinks(state: &AppState, path: &str) -> Result<Vec<String>, String
 
 /// Get mixed backlinks (markdown files, PDF documents, and PDF annotations).
 pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkItem>, String> {
-    let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let (vault_root, pdf_scope_prefix, generation) = {
+        let _publish = state
+            .vault_publish_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        let root = state
+            .vault_root
+            .lock()
+            .map_err(|e| e.to_string())?
+            .as_ref()
+            .ok_or("No vault root set")?
+            .clone();
+        let scope_prefix = AppState::pdf_scope_prefix_for_root(&root);
+        (root, scope_prefix, state.current_vault_generation())
+    };
 
     let mut results = Vec::new();
 
     if is_pdf_path(Path::new(path)) {
         // PDF Case:
         // 1. Get incoming backlinks from FileIndex (markdown files linking to this PDF)
-        let abs_path = resolve_vault_path(vault_root, path);
+        let abs_path = resolve_vault_path(&vault_root, path);
         let index = state.file_index.lock().map_err(|e| e.to_string())?;
         let backlinks = index.get_backlinks(&abs_path);
         for bl in backlinks {
-            let rel_path = path_to_relative_string(&bl, vault_root);
+            let rel_path = path_to_relative_string(&bl, &vault_root);
             let name = bl
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -489,9 +777,16 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
         // 2. Query notes linked from PDF annotations of this PDF document
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let mut stmt = db
-            .prepare("SELECT document_id FROM pdf_documents WHERE vault_relative_path = ?1")
+            .prepare(
+                "SELECT document_id FROM pdf_documents
+                 WHERE vault_relative_path = ?1
+                   AND substr(document_id, 1, length(?2)) = ?2
+                 ORDER BY updated_at DESC LIMIT 1",
+            )
             .map_err(|e| e.to_string())?;
-        let mut rows = stmt.query([path]).map_err(|e| e.to_string())?;
+        let mut rows = stmt
+            .query(rusqlite::params![path, &pdf_scope_prefix])
+            .map_err(|e| e.to_string())?;
         if let Some(row) = rows.next().map_err(|e| e.to_string())? {
             let doc_id: String = row.get(0).map_err(|e| e.to_string())?;
 
@@ -521,11 +816,11 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
     } else {
         // Markdown Case:
         // 1. Standard incoming backlinks from FileIndex
-        let abs_path = resolve_vault_path(vault_root, path);
+        let abs_path = resolve_vault_path(&vault_root, path);
         let index = state.file_index.lock().map_err(|e| e.to_string())?;
         let backlinks = index.get_backlinks(&abs_path);
         for bl in backlinks {
-            let rel_path = path_to_relative_string(&bl, vault_root);
+            let rel_path = path_to_relative_string(&bl, &vault_root);
             let name = bl
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -544,10 +839,13 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
                 "SELECT a.id, a.page_index, a.selected_text, d.vault_relative_path
                  FROM pdf_annotations a
                  JOIN pdf_documents d ON a.document_id = d.document_id
-                 WHERE a.linked_note_path = ?1",
+                 WHERE a.linked_note_path = ?1
+                   AND substr(d.document_id, 1, length(?2)) = ?2",
             )
             .map_err(|e| e.to_string())?;
-        let mut rows = stmt.query([path]).map_err(|e| e.to_string())?;
+        let mut rows = stmt
+            .query(rusqlite::params![path, &pdf_scope_prefix])
+            .map_err(|e| e.to_string())?;
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
             let ann_id: String = row.get(0).map_err(|e| e.to_string())?;
             let page_idx: i32 = row.get(1).map_err(|e| e.to_string())?;
@@ -566,7 +864,223 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
         }
     }
 
+    let _publish = state
+        .vault_publish_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    if state.current_vault_generation() != generation
+        || state
+            .vault_root
+            .lock()
+            .map_err(|e| e.to_string())?
+            .as_ref()
+            != Some(&vault_root)
+    {
+        return Err("Vault changed while reading backlinks".to_string());
+    }
+
     Ok(results)
+}
+
+/// Return a deterministic snapshot of the vault's research graph.
+///
+/// Markdown-to-file edges come from the already-maintained [`FileIndex`]. PDF
+/// annotation edges are read from the sidecar database and aggregated by
+/// document/note pair. All indexed markdown files and all PDFs on disk are
+/// included, even when they have no edges; unresolved endpoints are emitted as
+/// [`GraphNodeKind::Missing`] nodes.
+///
+/// The vault-root and file-index locks are held only long enough to clone their
+/// current values. Directory walking and database work happen afterwards, so a
+/// graph refresh cannot hold up editor navigation or incremental indexing.
+pub fn get_graph_snapshot(state: &AppState) -> Result<GraphSnapshot, String> {
+    // Capture the root, vault identity, PDF namespace, and link index under the
+    // same short publication/mutation barrier. A concurrent A -> B switch can
+    // therefore never mix A's filesystem with B's annotations or FileIndex.
+    let (root, pdf_scope_prefix, generation, content_revision, indexed_outgoing) = {
+        let _publish = state
+            .vault_publish_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        let _mutation = state.vault_publish_mutation_lock()?;
+        let root = state
+            .vault_root
+            .lock()
+            .map_err(|e| e.to_string())?
+            .as_ref()
+            .ok_or("No vault root set")?
+            .clone();
+        let pdf_scope_prefix = AppState::pdf_scope_prefix_for_root(&root);
+        let index = state.file_index.lock().map_err(|e| e.to_string())?;
+        let indexed_outgoing: Vec<(PathBuf, Vec<PathBuf>)> = index
+            .outgoing
+            .iter()
+            .map(|(source, targets)| (source.clone(), targets.iter().cloned().collect::<Vec<_>>()))
+            .collect();
+        (
+            root,
+            pdf_scope_prefix,
+            state.current_vault_generation(),
+            state.current_vault_content_revision(),
+            indexed_outgoing,
+        )
+    };
+
+    let markdown_paths: BTreeSet<String> = indexed_outgoing
+        .iter()
+        .filter_map(|(path, _)| graph_relative_path(path, &root))
+        .collect();
+
+    // PDFs are not source keys in FileIndex, so explicitly include all of them
+    // to preserve unconnected reference material in the global graph.
+    let pdf_paths: BTreeSet<String> = list_all_pdf_files(&root)?
+        .into_iter()
+        .filter_map(|path| graph_relative_path(&path, &root))
+        .collect();
+
+    // BTreeMap both aggregates duplicate relationships and establishes the
+    // snapshot's deterministic source/target/kind order.
+    let mut edge_weights: BTreeMap<(String, String, GraphEdgeKind), usize> = BTreeMap::new();
+
+    for (source, targets) in indexed_outgoing {
+        let Some(source) = graph_relative_path(&source, &root) else {
+            continue;
+        };
+        for target in targets {
+            let Some(target) = graph_relative_path(&target, &root) else {
+                continue;
+            };
+            // Images can be valid wikilink targets, but this graph deliberately
+            // models knowledge documents only: markdown, PDFs, and missing
+            // document targets.
+            if is_image_path(Path::new(&target)) {
+                continue;
+            }
+            let weight = edge_weights
+                .entry((source.clone(), target, GraphEdgeKind::WikiLink))
+                .or_default();
+            *weight = weight.saturating_add(1);
+        }
+    }
+
+    // Query grouped rows so the SQLite lock is held for only a compact indexed
+    // read. A second aggregation below also merges legacy slash/path variants
+    // once they are normalized to the same vault-relative identifiers.
+    let annotation_edges: Vec<(String, String, usize)> = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = db
+            .prepare(
+                "SELECT d.vault_relative_path, a.linked_note_path, COUNT(*)
+                 FROM pdf_annotations a
+                 JOIN pdf_documents d ON a.document_id = d.document_id
+                 WHERE a.linked_note_path IS NOT NULL
+                   AND TRIM(a.linked_note_path) != ''
+                   AND substr(d.document_id, 1, length(?1)) = ?1
+                 GROUP BY d.vault_relative_path, a.linked_note_path",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([&pdf_scope_prefix], |row| {
+                let count: i64 = row.get(2)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    usize::try_from(count).unwrap_or(usize::MAX),
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    for (source, target, count) in annotation_edges {
+        let Some(source) = normalize_stored_graph_path(&root, &source) else {
+            continue;
+        };
+        // Ignore deleted sources. Document IDs are already vault-scoped, and
+        // same-path reconciliation intentionally keeps annotation links valid
+        // when a PDF is touched or replaced.
+        if !pdf_paths.contains(&source) {
+            continue;
+        }
+        let Some(target) = normalize_stored_graph_path(&root, &target) else {
+            continue;
+        };
+        if is_image_path(Path::new(&source)) || is_image_path(Path::new(&target)) {
+            continue;
+        }
+        let weight = edge_weights
+            .entry((source, target, GraphEdgeKind::PdfAnnotation))
+            .or_default();
+        *weight = weight.saturating_add(count);
+    }
+
+    let mut node_kinds: BTreeMap<String, GraphNodeKind> = BTreeMap::new();
+    for path in &markdown_paths {
+        node_kinds.insert(path.clone(), GraphNodeKind::Markdown);
+    }
+    for path in &pdf_paths {
+        node_kinds.insert(path.clone(), GraphNodeKind::Pdf);
+    }
+    for (source, target, _) in edge_weights.keys() {
+        for path in [source, target] {
+            node_kinds
+                .entry(path.clone())
+                .or_insert_with(|| graph_node_kind(path, &markdown_paths, &pdf_paths));
+        }
+    }
+
+    let mut incoming: BTreeMap<String, usize> = BTreeMap::new();
+    let mut outgoing: BTreeMap<String, usize> = BTreeMap::new();
+    let edges = edge_weights
+        .into_iter()
+        .map(|((source, target, kind), weight)| {
+            let source_degree = outgoing.entry(source.clone()).or_default();
+            *source_degree = source_degree.saturating_add(weight);
+            let target_degree = incoming.entry(target.clone()).or_default();
+            *target_degree = target_degree.saturating_add(weight);
+            GraphEdge {
+                source,
+                target,
+                kind,
+                weight,
+            }
+        })
+        .collect();
+
+    let nodes = node_kinds
+        .into_iter()
+        .map(|(path, kind)| GraphNode {
+            label: graph_node_label(&path),
+            exists: kind != GraphNodeKind::Missing,
+            incoming: incoming.get(&path).copied().unwrap_or_default(),
+            outgoing: outgoing.get(&path).copied().unwrap_or_default(),
+            path,
+            kind,
+        })
+        .collect();
+
+    // Filesystem/database work above deliberately ran without shared vault
+    // locks. Validate the captured identity under the same barrier before
+    // exposing the snapshot; callers can retry if anything changed meanwhile.
+    let _publish = state
+        .vault_publish_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let _mutation = state.vault_publish_mutation_lock()?;
+    if state.current_vault_generation() != generation
+        || state.current_vault_content_revision() != content_revision
+        || state
+            .vault_root
+            .lock()
+            .map_err(|e| e.to_string())?
+            .as_ref()
+            != Some(&root)
+    {
+        return Err("Vault changed while building graph snapshot".to_string());
+    }
+
+    Ok(GraphSnapshot { nodes, edges })
 }
 
 /// Read raw image bytes from the vault.
@@ -779,6 +1293,61 @@ fn path_to_relative_string(path: &Path, root: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// Convert a FileIndex/disk path to the stable slash-separated graph id.
+/// Paths outside the active vault are ignored rather than leaking an absolute
+/// filesystem path into the snapshot.
+fn graph_relative_path(path: &Path, root: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    if relative.as_os_str().is_empty() {
+        return None;
+    }
+    Some(relative.to_string_lossy().replace('\\', "/"))
+}
+
+/// Normalize paths persisted in SQLite. Current records are vault-relative,
+/// but accepting absolute in-vault paths and legacy backslashes makes graph
+/// snapshots resilient to older sidecars and cross-platform vault moves.
+fn normalize_stored_graph_path(root: &Path, stored: &str) -> Option<String> {
+    let stored = stored.trim().replace('\\', "/");
+    if stored.is_empty() {
+        return None;
+    }
+    let path = Path::new(&stored);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        let (resolved, escaped) = normalize_within_root(root, &stored);
+        if escaped {
+            return None;
+        }
+        resolved
+    };
+    graph_relative_path(&absolute, root)
+}
+
+fn graph_node_kind(
+    path: &str,
+    markdown_paths: &BTreeSet<String>,
+    pdf_paths: &BTreeSet<String>,
+) -> GraphNodeKind {
+    if markdown_paths.contains(path) {
+        GraphNodeKind::Markdown
+    } else if pdf_paths.contains(path) {
+        GraphNodeKind::Pdf
+    } else {
+        GraphNodeKind::Missing
+    }
+}
+
+fn graph_node_label(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .or_else(|| Path::new(path).file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| path.to_string())
+}
+
 pub fn list_all_md_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     list_all_md_files_recursive(root, &mut files, 0)?;
@@ -838,6 +1407,21 @@ fn list_files_matching(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn insert_annotation_link(state: &AppState, id: &str, document_id: &str, note_path: &str) {
+        let storage_document_id = state.pdf_storage_document_id(document_id).unwrap();
+        let db = state.db.lock().unwrap();
+        db.execute(
+            "INSERT INTO pdf_annotations (
+                 id, document_id, page_index, kind, color, selected_text,
+                 ranges_json, rects_json, note, linked_note_path,
+                 markdown_anchor, created_at, updated_at
+             ) VALUES (?1, ?2, 0, 'highlight', 'yellow', 'text',
+                       '[]', '[]', NULL, ?3, NULL, 1, 1)",
+            rusqlite::params![id, storage_document_id, note_path],
+        )
+        .unwrap();
+    }
 
     #[test]
     fn resolve_normal_paths_stay_within_root() {
@@ -1005,10 +1589,325 @@ mod tests {
     }
 
     #[test]
+    fn graph_snapshot_is_sorted_aggregated_and_includes_health_nodes() {
+        let base = std::env::temp_dir().join(format!("md_graph_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("notes")).unwrap();
+        fs::write(
+            base.join("notes/a.md"),
+            "[[notes/b]] [[notes/b|again]] [[paper.pdf]] [[missing]] [[gone.pdf]] [[diagram.png]]",
+        )
+        .unwrap();
+        fs::write(base.join("notes/b.md"), "[[notes/a]]").unwrap();
+        fs::write(base.join("paper.pdf"), b"not parsed by the graph").unwrap();
+        fs::write(base.join("orphan.pdf"), b"unconnected reference").unwrap();
+        fs::write(base.join("diagram.png"), b"image target").unwrap();
+
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+        state
+            .save_pdf_document("paper-doc", "paper.pdf", 23, None)
+            .unwrap();
+        let paper_storage_id = state.pdf_storage_document_id("paper-doc").unwrap();
+
+        // Two path spellings normalize to one weighted PDF -> note edge. The
+        // escaping third path is ignored rather than leaking outside the vault.
+        {
+            let db = state.db.lock().unwrap();
+            for (id, linked_note) in [
+                ("ann-1", "notes/b.md"),
+                ("ann-2", r"notes\b.md"),
+                ("ann-escaped", "../../outside.md"),
+            ] {
+                db.execute(
+                    "INSERT INTO pdf_annotations (
+                         id, document_id, page_index, kind, color, selected_text,
+                         ranges_json, rects_json, note, linked_note_path,
+                         markdown_anchor, created_at, updated_at
+                     ) VALUES (?1, ?2, 0, 'highlight', 'yellow', 'text',
+                               '[]', '[]', NULL, ?3, NULL, 1, 1)",
+                    rusqlite::params![id, &paper_storage_id, linked_note],
+                )
+                .unwrap();
+            }
+            let foreign_document_id = "another-vault:foreign-doc";
+            db.execute(
+                "INSERT INTO pdf_documents (
+                     document_id, vault_relative_path, file_size, modified_at,
+                     created_at, updated_at
+                 ) VALUES (?1, 'foreign.pdf', 17, NULL, 1, 1)",
+                rusqlite::params![foreign_document_id],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO pdf_annotations (
+                     id, document_id, page_index, kind, color, selected_text,
+                     ranges_json, rects_json, note, linked_note_path,
+                     markdown_anchor, created_at, updated_at
+                 ) VALUES (?1, ?2, 0, 'highlight', 'yellow', 'historical',
+                           '[]', '[]', NULL, 'notes/a.md', NULL, 1, 1)",
+                rusqlite::params![
+                    format!("{foreign_document_id}-annotation"),
+                    foreign_document_id
+                ],
+            )
+            .unwrap();
+        }
+
+        let snapshot = get_graph_snapshot(&state).unwrap();
+        assert_eq!(snapshot, get_graph_snapshot(&state).unwrap());
+
+        let node_paths: Vec<&str> = snapshot
+            .nodes
+            .iter()
+            .map(|node| node.path.as_str())
+            .collect();
+        assert_eq!(
+            node_paths,
+            vec![
+                "gone.pdf",
+                "missing.md",
+                "notes/a.md",
+                "notes/b.md",
+                "orphan.pdf",
+                "paper.pdf",
+            ]
+        );
+        assert!(snapshot.edges.windows(2).all(|pair| (
+            &pair[0].source,
+            &pair[0].target,
+            pair[0].kind
+        ) <= (
+            &pair[1].source,
+            &pair[1].target,
+            pair[1].kind
+        )));
+        assert!(
+            snapshot.nodes.iter().all(|node| node.path != "diagram.png"),
+            "existing image wikilinks are outside the knowledge graph"
+        );
+        assert!(
+            snapshot.nodes.iter().all(|node| node.path != "foreign.pdf"),
+            "historical PDF records from another vault must not leak into this graph"
+        );
+
+        let find_node = |path: &str| {
+            snapshot
+                .nodes
+                .iter()
+                .find(|node| node.path == path)
+                .unwrap()
+        };
+        assert_eq!(find_node("notes/a.md").kind, GraphNodeKind::Markdown);
+        assert_eq!(find_node("notes/a.md").incoming, 1);
+        assert_eq!(find_node("notes/a.md").outgoing, 4);
+        assert_eq!(find_node("notes/b.md").incoming, 3);
+        assert_eq!(find_node("notes/b.md").outgoing, 1);
+        assert_eq!(find_node("paper.pdf").kind, GraphNodeKind::Pdf);
+        assert_eq!(find_node("paper.pdf").incoming, 1);
+        assert_eq!(find_node("paper.pdf").outgoing, 2);
+        assert_eq!(find_node("orphan.pdf").kind, GraphNodeKind::Pdf);
+        assert_eq!(find_node("orphan.pdf").incoming, 0);
+        assert_eq!(find_node("orphan.pdf").outgoing, 0);
+        assert_eq!(find_node("missing.md").kind, GraphNodeKind::Missing);
+        assert!(!find_node("missing.md").exists);
+        assert_eq!(find_node("gone.pdf").kind, GraphNodeKind::Missing);
+
+        let annotation_edge = snapshot
+            .edges
+            .iter()
+            .find(|edge| edge.kind == GraphEdgeKind::PdfAnnotation)
+            .unwrap();
+        assert_eq!(annotation_edge.source, "paper.pdf");
+        assert_eq!(annotation_edge.target, "notes/b.md");
+        assert_eq!(annotation_edge.weight, 2);
+        assert_eq!(
+            snapshot
+                .edges
+                .iter()
+                .filter(|edge| edge.kind == GraphEdgeKind::PdfAnnotation)
+                .count(),
+            1,
+            "other-vault PDF identities must not contribute annotation edges"
+        );
+
+        let repeated_wikilink = snapshot
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::WikiLink
+                    && edge.source == "notes/a.md"
+                    && edge.target == "notes/b.md"
+            })
+            .unwrap();
+        assert_eq!(repeated_wikilink.weight, 1);
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn graph_snapshot_requires_an_open_vault() {
+        let state = AppState::new_in_memory();
+        assert_eq!(get_graph_snapshot(&state).unwrap_err(), "No vault root set");
+    }
+
+    #[test]
+    fn graph_pdf_annotation_edges_are_isolated_by_vault() {
+        let base = std::env::temp_dir().join(format!("md_graph_scopes_{}", uuid::Uuid::new_v4()));
+        let first = base.join("first");
+        let second = base.join("second");
+        for (root, note) in [(&first, "first.md"), (&second, "second.md")] {
+            fs::create_dir_all(root).unwrap();
+            fs::write(root.join(note), note).unwrap();
+            fs::write(root.join("paper.pdf"), b"identical paper").unwrap();
+        }
+        let state = AppState::new_in_memory();
+
+        set_vault_root(&state, first.to_str().unwrap()).unwrap();
+        let (first_size, first_mtime) = file_size_and_mtime(&first.join("paper.pdf"));
+        state
+            .save_pdf_document("same-pdf", "paper.pdf", first_size, Some(first_mtime))
+            .unwrap();
+        insert_annotation_link(&state, "first-link", "same-pdf", "first.md");
+
+        set_vault_root(&state, second.to_str().unwrap()).unwrap();
+        let (second_size, second_mtime) = file_size_and_mtime(&second.join("paper.pdf"));
+        state
+            .save_pdf_document("same-pdf", "paper.pdf", second_size, Some(second_mtime))
+            .unwrap();
+        insert_annotation_link(&state, "second-link", "same-pdf", "second.md");
+        let second_snapshot = get_graph_snapshot(&state).unwrap();
+        assert!(second_snapshot.edges.iter().any(|edge| {
+            edge.kind == GraphEdgeKind::PdfAnnotation && edge.target == "second.md"
+        }));
+        assert!(
+            second_snapshot
+                .edges
+                .iter()
+                .all(|edge| edge.target != "first.md")
+        );
+
+        set_vault_root(&state, first.to_str().unwrap()).unwrap();
+        let first_snapshot = get_graph_snapshot(&state).unwrap();
+        assert!(first_snapshot.edges.iter().any(|edge| {
+            edge.kind == GraphEdgeKind::PdfAnnotation && edge.target == "first.md"
+        }));
+        assert!(
+            first_snapshot
+                .edges
+                .iter()
+                .all(|edge| edge.target != "second.md")
+        );
+
+        let paper = fs::OpenOptions::new()
+            .write(true)
+            .open(first.join("paper.pdf"))
+            .unwrap();
+        let bumped = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        paper
+            .set_times(fs::FileTimes::new().set_modified(bumped))
+            .unwrap();
+        let touched_snapshot = get_graph_snapshot(&state).unwrap();
+        assert!(touched_snapshot.edges.iter().any(|edge| {
+            edge.kind == GraphEdgeKind::PdfAnnotation && edge.target == "first.md"
+        }));
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn stale_vault_index_generation_cannot_publish_over_newer_vault() {
+        let base = std::env::temp_dir().join(format!("md_vault_race_{}", uuid::Uuid::new_v4()));
+        let first = base.join("first");
+        let second = base.join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(first.join("a.md"), "first-only-token").unwrap();
+        fs::write(second.join("b.md"), "second-only-token").unwrap();
+        let state = AppState::new_in_memory();
+
+        let first_generation = state.begin_vault_change(first.clone()).unwrap();
+        assert!(
+            index_vault_for_generation(&state, first.to_str().unwrap(), first_generation)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            search_vault(&state, "first-only-token")
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+
+        let second_generation = state.begin_vault_change(second.clone()).unwrap();
+        assert!(
+            search_vault(&state, "first-only-token")
+                .unwrap()
+                .items
+                .is_empty(),
+            "opening a new vault must hide the old vault's search rows before indexing finishes"
+        );
+        assert!(
+            state.file_index.lock().unwrap().outgoing.is_empty(),
+            "opening a new vault must hide the old vault's link index before indexing finishes"
+        );
+        assert!(
+            index_vault_for_generation(&state, first.to_str().unwrap(), first_generation)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            index_vault_for_generation(&state, second.to_str().unwrap(), second_generation)
+                .unwrap()
+                .is_some()
+        );
+
+        assert_eq!(state.vault_root.lock().unwrap().as_ref(), Some(&second));
+        assert!(search_vault(&state, "first-only-token").unwrap().items.is_empty());
+        let results = search_vault(&state, "second-only-token").unwrap();
+        assert_eq!(results.items.len(), 1);
+        assert_eq!(results.items[0].path, "b.md");
+        assert!(
+            state
+                .file_index
+                .lock()
+                .unwrap()
+                .outgoing
+                .contains_key(&second.join("b.md"))
+        );
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn newly_created_note_is_immediately_available_to_graph() {
+        let base = std::env::temp_dir().join(format!("md_graph_new_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+        create_file(&state, "capture.md").unwrap();
+
+        let snapshot = get_graph_snapshot(&state).unwrap();
+        assert!(snapshot.nodes.iter().any(|node| {
+            node.path == "capture.md"
+                && node.kind == GraphNodeKind::Markdown
+                && node.incoming == 0
+                && node.outgoing == 0
+        }));
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn renaming_markdown_extension_rewrites_backlinks() {
         let base = std::env::temp_dir().join(format!("md_rename_markdown_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&base).unwrap();
-        fs::write(base.join("target.markdown"), "target").unwrap();
+        fs::write(base.join("target.markdown"), "target [[target]]").unwrap();
         fs::write(base.join("source.md"), "[[target]]").unwrap();
         let state = AppState::new_in_memory();
         set_vault_root(&state, base.to_str().unwrap()).unwrap();
@@ -1016,8 +1915,231 @@ mod tests {
         rename_entry(&state, "target.markdown", "renamed.markdown").unwrap();
 
         assert_eq!(fs::read_to_string(base.join("source.md")).unwrap(), "[[renamed]]");
+        assert_eq!(
+            fs::read_to_string(base.join("renamed.markdown")).unwrap(),
+            "target [[renamed]]"
+        );
         assert!(base.join("renamed.markdown").exists());
 
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn renaming_markdown_updates_pdf_annotation_note_path() {
+        let base = std::env::temp_dir().join(format!("md_rename_note_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join("old.md"), "linked note").unwrap();
+        fs::write(base.join("paper.pdf"), b"pdf identity").unwrap();
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+        let (size, modified_at) = file_size_and_mtime(&base.join("paper.pdf"));
+        state
+            .save_pdf_document("paper", "paper.pdf", size, Some(modified_at))
+            .unwrap();
+        insert_annotation_link(&state, "annotation", "paper", "old.md");
+
+        rename_entry(&state, "old.md", "renamed.md").unwrap();
+
+        let linked_note: String = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT linked_note_path FROM pdf_annotations WHERE id = 'annotation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked_note, "renamed.md");
+        let snapshot = get_graph_snapshot(&state).unwrap();
+        assert!(snapshot.edges.iter().any(|edge| {
+            edge.kind == GraphEdgeKind::PdfAnnotation
+                && edge.source == "paper.pdf"
+                && edge.target == "renamed.md"
+        }));
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn renaming_pdf_updates_document_and_search_paths() {
+        let base = std::env::temp_dir().join(format!("md_rename_pdf_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("library")).unwrap();
+        fs::write(base.join("note.md"), "[[paper.pdf]] linked note").unwrap();
+        fs::write(base.join("paper.pdf"), b"pdf identity").unwrap();
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+        let (size, modified_at) = file_size_and_mtime(&base.join("paper.pdf"));
+        state
+            .save_pdf_document("paper", "paper.pdf", size, Some(modified_at))
+            .unwrap();
+        insert_annotation_link(&state, "annotation", "paper", "note.md");
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO file_search (path, content) VALUES ('paper.pdf', 'pdf-search-token')",
+                [],
+            )
+            .unwrap();
+
+        rename_entry(&state, "paper.pdf", "library/paper.pdf").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(base.join("note.md")).unwrap(),
+            "[[library/paper.pdf]] linked note"
+        );
+        assert_eq!(
+            state.get_pdf_path_by_id("paper").unwrap().as_deref(),
+            Some("library/paper.pdf")
+        );
+        let search = search_vault(&state, "pdf-search-token").unwrap();
+        assert_eq!(search.items.len(), 1);
+        assert_eq!(search.items[0].path, "library/paper.pdf");
+        let snapshot = get_graph_snapshot(&state).unwrap();
+        assert!(snapshot.nodes.iter().all(|node| node.path != "paper.pdf"));
+        assert!(snapshot.edges.iter().any(|edge| {
+            edge.kind == GraphEdgeKind::WikiLink
+                && edge.source == "note.md"
+                && edge.target == "library/paper.pdf"
+        }));
+        assert!(snapshot.edges.iter().any(|edge| {
+            edge.kind == GraphEdgeKind::PdfAnnotation
+                && edge.source == "library/paper.pdf"
+                && edge.target == "note.md"
+        }));
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn renaming_directory_rebuilds_indexes_and_moves_persisted_paths() {
+        let base = std::env::temp_dir().join(format!("md_rename_dir_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("old")).unwrap();
+        fs::write(
+            base.join("old/note.md"),
+            "directory-search-token [[./peer]]",
+        )
+        .unwrap();
+        fs::write(base.join("old/peer.md"), "peer").unwrap();
+        fs::write(base.join("old/paper.pdf"), b"pdf identity").unwrap();
+        let state = AppState::new_in_memory();
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+        let (size, modified_at) = file_size_and_mtime(&base.join("old/paper.pdf"));
+        state
+            .save_pdf_document("paper", r"old\paper.pdf", size, Some(modified_at))
+            .unwrap();
+        insert_annotation_link(&state, "annotation", "paper", r"old\note.md");
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO file_search (path, content)
+                 VALUES ('old/paper.pdf', 'moved-pdf-search-token')",
+                [],
+            )
+            .unwrap();
+
+        rename_entry(&state, "old", "moved").unwrap();
+
+        {
+            let index = state.file_index.lock().unwrap();
+            assert!(
+                index
+                    .get_outgoing_links(&base.join("old/note.md"))
+                    .is_empty()
+            );
+            assert_eq!(
+                index.get_outgoing_links(&base.join("moved/note.md")),
+                vec![base.join("moved/peer.md")]
+            );
+        }
+        let markdown_search = search_vault(&state, "directory-search-token").unwrap();
+        assert_eq!(markdown_search.items.len(), 1);
+        assert_eq!(markdown_search.items[0].path, "moved/note.md");
+        let pdf_search = search_vault(&state, "moved-pdf-search-token").unwrap();
+        assert_eq!(pdf_search.items.len(), 1);
+        assert_eq!(pdf_search.items[0].path, "moved/paper.pdf");
+        assert_eq!(
+            state.get_pdf_path_by_id("paper").unwrap().as_deref(),
+            Some("moved/paper.pdf")
+        );
+        let linked_note: String = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT linked_note_path FROM pdf_annotations WHERE id = 'annotation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked_note, "moved/note.md");
+        let snapshot = get_graph_snapshot(&state).unwrap();
+        assert!(snapshot.edges.iter().any(|edge| {
+            edge.kind == GraphEdgeKind::PdfAnnotation
+                && edge.source == "moved/paper.pdf"
+                && edge.target == "moved/note.md"
+        }));
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn indexing_adopts_legacy_pdf_rows_before_directory_rename() {
+        let base = std::env::temp_dir().join(format!("md_legacy_rename_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("old")).unwrap();
+        fs::write(base.join("old/note.md"), "linked note").unwrap();
+        fs::write(base.join("old/paper.pdf"), b"legacy pdf identity").unwrap();
+        let (_, size, modified_at) =
+            crate::pdf::compute_provisional_id(&base.join("old/paper.pdf")).unwrap();
+        let state = AppState::new_in_memory();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO pdf_documents (
+                     document_id, vault_relative_path, file_size, modified_at,
+                     created_at, updated_at
+                 ) VALUES ('legacy-document', 'old/paper.pdf', ?1, ?2, 1, 1)",
+                rusqlite::params![size as i64, modified_at],
+            )
+            .unwrap();
+        }
+        insert_annotation_link(
+            &state,
+            "legacy-directory-link",
+            "legacy-document",
+            "old/note.md",
+        );
+
+        set_vault_root(&state, base.to_str().unwrap()).unwrap();
+        rename_entry(&state, "old", "moved").unwrap();
+
+        let snapshot = get_graph_snapshot(&state).unwrap();
+        assert!(snapshot.edges.iter().any(|edge| {
+            edge.kind == GraphEdgeKind::PdfAnnotation
+                && edge.source == "moved/paper.pdf"
+                && edge.target == "moved/note.md"
+        }));
+        let legacy_rows: i64 = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM pdf_documents
+                 WHERE document_id = 'legacy-document'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_rows, 0);
+
+        drop(state);
         let _ = fs::remove_dir_all(&base);
     }
 }

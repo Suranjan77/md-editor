@@ -1,5 +1,7 @@
 pub mod backlinks;
 pub mod command_palette;
+pub mod gpu_graph;
+pub mod graph;
 pub mod icons;
 pub mod interactive_pdf;
 pub mod link_note_picker;

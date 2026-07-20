@@ -164,6 +164,9 @@ pub struct MdEditor {
     // Study tracker
     tracker: crate::tracker_state::TrackerState,
 
+    // Research graph: cached vault topology, layout, filters, and selection
+    graph: crate::graph_state::GraphState,
+
     // Shell UI chrome: modals, command palette, toast, split view, window size
     ui: crate::ui_state::UiState,
 
@@ -188,6 +191,7 @@ impl MdEditor {
             last_file = file;
         }
         let tracker = crate::tracker_state::TrackerState::new(&state);
+        let graph = crate::graph_state::GraphState::new();
 
         let mut app = Self {
             state: state.clone(),
@@ -199,6 +203,7 @@ impl MdEditor {
             active_image: None,
             showing_pdf: false,
             tracker,
+            graph,
             ui: crate::ui_state::UiState::new(),
             search: crate::search_state::SearchState::new(),
             active_panel: ActivePanel::Markdown,
@@ -229,6 +234,12 @@ impl MdEditor {
     }
 
     pub fn title(&self) -> String {
+        if self.graph.visible {
+            return format!(
+                "{}Md-editor — Knowledge Graph",
+                if self.editor.buffer.dirty { "● " } else { "" }
+            );
+        }
         format!(
             "{}Md-editor — {}",
             if self.editor.buffer.dirty { "● " } else { "" },
@@ -277,6 +288,7 @@ impl MdEditor {
                         "c" => Some(Message::PdfCopySelection),
                         "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
                         "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
+                        "g" => Some(Message::KeyboardShortcut(Shortcut::KnowledgeGraph)),
                         "t" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
                         _ => None,
                     };
@@ -300,6 +312,15 @@ impl MdEditor {
         let highlight_debounce = if self.editor.pending_highlight_generation.is_some() {
             iced::time::every(crate::editor_state::HIGHLIGHT_DEBOUNCE)
                 .map(|_| Message::HighlightDebounceElapsed)
+        } else {
+            Subscription::none()
+        };
+
+        // Vault writes and watcher notifications often arrive in bursts. Wait
+        // briefly, then build one graph snapshot away from the UI thread.
+        let graph_refresh = if self.graph.visible && self.graph.refresh_due() {
+            iced::time::every(std::time::Duration::from_millis(200))
+                .map(|_| Message::GraphRefresh)
         } else {
             Subscription::none()
         };
@@ -343,10 +364,19 @@ impl MdEditor {
             None => Subscription::none(),
         };
 
+        let physics_tick = if self.graph.visible && self.graph.physics.running {
+            iced::time::every(std::time::Duration::from_millis(33))
+                .map(|_| Message::GraphPhysicsTick)
+        } else {
+            Subscription::none()
+        };
+
         Subscription::batch(vec![
             keyboard,
             toast,
             highlight_debounce,
+            graph_refresh,
+            physics_tick,
             mouse_drag,
             window_events,
             close_requests,
@@ -388,8 +418,45 @@ impl MdEditor {
                     self.open_vault(&path)
                 }
             }
-            Message::VaultIndexed(entries) => {
+            Message::VaultIndexed(generation, root, result) => {
+                if generation != self.state.current_vault_generation()
+                    || self.vault.root.as_deref() != Some(root.as_str())
+                {
+                    return Task::none();
+                }
+                let entries = match result {
+                    Ok(Some(entries)) => entries,
+                    Ok(None) => {
+                        // The vault is still current, but a save/create/delete
+                        // landed while this snapshot was being assembled. Retry
+                        // from disk so the background build cannot overwrite it.
+                        let state = self.state.clone();
+                        let index_root = root.clone();
+                        let message_root = root.clone();
+                        return Task::perform(
+                            async move {
+                                md_editor_core::vault::index_vault_for_generation(
+                                    &state,
+                                    &index_root,
+                                    generation,
+                                )
+                            },
+                            move |result| {
+                                Message::VaultIndexed(
+                                    generation,
+                                    message_root.clone(),
+                                    result,
+                                )
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        self.ui.toast = Some(format!("Could not index vault: {error}"));
+                        return Task::none();
+                    }
+                };
                 self.vault.entries = entries;
+                self.graph.mark_dirty();
                 // Backlinks for the active file depend on the freshly built
                 // index; refresh them now that indexing has completed.
                 if let Some(path) = self.active_path.clone().or_else(|| self.pdf.active_path.clone())
@@ -413,6 +480,7 @@ impl MdEditor {
                 {
                     return Task::none();
                 }
+                self.graph.visible = false;
                 if path.starts_with("pdf://") {
                     let url_str = &path["pdf://".len()..];
                     let (encoded_pdf_path, query) = if let Some(idx) = url_str.find('?') {
@@ -576,6 +644,123 @@ impl MdEditor {
                     }
                 }
             }
+            Message::GraphToggle => {
+                if self.vault.root.is_none() {
+                    return Task::none();
+                }
+                if self.graph.visible {
+                    self.graph.visible = false;
+                } else {
+                    self.graph.visible = true;
+                    self.tracker.hide();
+                    self.search.visible = false;
+                    self.search.file_visible = false;
+                    self.ui.command_palette_visible = false;
+                    self.graph.retry_refresh();
+                    let active = self.graph.active_path.clone();
+                    self.graph.select(active);
+                }
+                Task::none()
+            }
+            Message::GraphRefresh => {
+                if !self.graph.visible {
+                    return Task::none();
+                }
+                let Some(generation) = self.graph.begin_refresh() else {
+                    return Task::none();
+                };
+                let state = self.state.clone();
+                Task::perform(
+                    async move { md_editor_core::vault::get_graph_snapshot(&state) },
+                    move |result| Message::GraphSnapshotLoaded(generation, result),
+                )
+            }
+            Message::GraphSnapshotLoaded(generation, result) => {
+                match result {
+                    Ok(snapshot) => {
+                        self.graph.complete_refresh(generation, snapshot);
+                    }
+                    Err(error) => {
+                        if self.graph.fail_refresh(generation) && self.graph.visible {
+                            self.ui.toast =
+                                Some(format!("Could not refresh knowledge graph: {error}"));
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::GraphScopeGlobal => {
+                self.graph
+                    .set_scope(crate::graph_state::GraphScope::Global);
+                Task::none()
+            }
+            Message::GraphScopeLocal => {
+                let depth = match self.graph.scope {
+                    crate::graph_state::GraphScope::Local { depth } => depth,
+                    crate::graph_state::GraphScope::Global => 1,
+                };
+                self.graph
+                    .set_scope(crate::graph_state::GraphScope::Local { depth });
+                Task::none()
+            }
+            Message::GraphLocalDepthChanged(depth) => {
+                self.graph
+                    .set_scope(crate::graph_state::GraphScope::Local { depth });
+                Task::none()
+            }
+            Message::GraphQueryChanged(query) => {
+                self.graph.set_query(query);
+                Task::none()
+            }
+            Message::GraphShowPdfsToggled(show) => {
+                self.graph.set_show_pdfs(show);
+                Task::none()
+            }
+            Message::GraphShowMissingToggled(show) => {
+                self.graph.set_show_missing(show);
+                Task::none()
+            }
+            Message::GraphShowOrphansToggled(show) => {
+                self.graph.set_show_orphans(show);
+                Task::none()
+            }
+            Message::GraphNodeSelected(path) => {
+                self.graph.select(path);
+                Task::none()
+            }
+            Message::GraphNodeMoved { path, x, y } => {
+                self.graph.move_node(&path, x, y);
+                Task::none()
+            }
+            Message::GraphNodeOpen(path) => {
+                let exists = self.graph.node(&path).is_some_and(|node| node.exists);
+                if exists {
+                    Task::done(Message::SidebarFileClicked(path))
+                } else {
+                    self.ui.toast = Some("That link target does not exist yet".to_string());
+                    Task::none()
+                }
+            }
+            Message::GraphFitView => {
+                self.graph.fit_revision = self.graph.fit_revision.wrapping_add(1);
+                Task::none()
+            }
+            Message::GraphResetLayout => {
+                self.graph.reset_layout();
+                Task::none()
+            }
+            Message::GraphPhysicsTick => {
+                self.graph.physics_tick();
+                Task::none()
+            }
+            Message::GraphSetView { pan_x, pan_y, zoom } => {
+                self.graph.set_view(pan_x, pan_y, zoom);
+                Task::none()
+            }
+            Message::GraphHovered(path) => {
+                self.graph.set_hovered(path);
+                Task::none()
+            }
             // UI chrome arms that mutate only `self.ui` are routed to
             // `UiState::update`; see ui_state.rs.
             m @ (Message::CreateFileDialog
@@ -636,9 +821,13 @@ impl MdEditor {
                             rename_open_path(&mut self.pdf.active_path, &old_path, &new_path);
                             rename_open_path(&mut self.active_image_path, &old_path, &new_path);
                             rename_open_path(&mut self.vault.selected_path, &old_path, &new_path);
+                            let mut graph_active = self.graph.active_path.clone();
+                            rename_open_path(&mut graph_active, &old_path, &new_path);
+                            self.graph.set_active_path(graph_active);
                             self.ui.active_modal = None;
                             self.ui.modal_input.clear();
                             self.ui.toast = Some("Renamed".to_string());
+                            self.invalidate_graph();
                         }
                         Err(error) => self.ui.toast = Some(error),
                     }
@@ -670,6 +859,7 @@ impl MdEditor {
                         self.ui.modal_input.clear();
                         self.ui.link_note_picker_search.clear();
                         self.ui.toast = Some("Created".to_string());
+                        self.invalidate_graph();
                     }
                     Err(err) => self.ui.toast = Some(err),
                 }
@@ -704,9 +894,18 @@ impl MdEditor {
                             self.pdf.pages.clear();
                             self.pdf.dimensions.clear();
                         }
+                        if self
+                            .graph
+                            .active_path
+                            .as_deref()
+                            .is_some_and(|active| path_is_same_or_descendant(active, &path))
+                        {
+                            self.graph.set_active_path(None);
+                        }
                         self.ui.active_modal = None;
                         self.ui.link_note_picker_search.clear();
                         self.ui.toast = Some("Deleted".to_string());
+                        self.invalidate_graph();
                     }
                     Err(err) => self.ui.toast = Some(err),
                 }
@@ -1443,7 +1642,12 @@ impl MdEditor {
                     AbsoluteOffset { x: 0.0, y },
                 )
             }
-            Message::PdfDocumentIdComputed(Some((path, hash, len, mtime))) => {
+            Message::PdfDocumentIdComputed(generation, Some((path, hash, len, mtime))) => {
+                if generation != self.pdf.render_generation
+                    || self.pdf.active_path.as_deref() != Some(path.as_str())
+                {
+                    return Task::none();
+                }
                 let _ = self.state.save_pdf_document(&hash, &path, len, mtime);
                 self.pdf.document_id = Some(hash.clone());
 
@@ -1545,7 +1749,7 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::PdfDocumentIdComputed(None) => Task::none(),
+            Message::PdfDocumentIdComputed(_, None) => Task::none(),
             Message::PdfSelectionChanged(page, anchor, focus) => {
                 self.active_panel = ActivePanel::Pdf;
                 self.pdf.selection = Some(views::interactive_pdf::PdfSelection {
@@ -1634,6 +1838,7 @@ impl MdEditor {
                             md_editor_core::vault::get_mixed_backlinks(&self.state, path)
                                 .unwrap_or_default();
                     }
+                    self.invalidate_graph();
                 }
                 Task::none()
             }
@@ -1712,6 +1917,7 @@ impl MdEditor {
                         self.vault.entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         self.ui.toast = Some(format!("Linked note: {}", note_path));
+                        self.invalidate_graph();
                         return Task::done(Message::PdfOpenLinkedNote(note_path));
                     }
                 }
@@ -1814,6 +2020,8 @@ impl MdEditor {
                             return self.restore_scroll_positions();
                         } else if self.ui.command_palette_visible {
                             self.ui.command_palette_visible = false;
+                        } else if self.graph.visible {
+                            self.graph.visible = false;
                         } else if self.editor.toc_visible {
                             self.editor.toc_visible = false;
                         }
@@ -1887,6 +2095,7 @@ impl MdEditor {
                         self.vault.backlinks_visible = !self.vault.backlinks_visible;
                         Task::none()
                     }
+                    Shortcut::KnowledgeGraph => Task::done(Message::GraphToggle),
                     Shortcut::TableOfContents => Task::done(Message::ToggleTOC),
                     Shortcut::StudyTracker => {
                         self.tracker.toggle_visible();
@@ -1898,6 +2107,7 @@ impl MdEditor {
                         self.vault.backlinks_visible = false;
                         self.editor.toc_visible = false;
                         self.tracker.hide();
+                        self.graph.visible = false;
                         Task::none()
                     }
                 }
@@ -2003,6 +2213,7 @@ impl MdEditor {
                         md_editor_core::vault::get_mixed_backlinks(&self.state, &active)
                             .unwrap_or_default();
                 }
+                self.invalidate_graph();
                 Task::none()
             }
             Message::ToggleTOC => {
@@ -2033,6 +2244,7 @@ impl MdEditor {
             self.editor.buffer.dirty,
             self.vault.sidebar_visible,
             self.vault.backlinks_visible,
+            self.graph.visible,
             self.tracker.visible,
             self.editor.toc_visible,
             self.pdf.active_path.is_some()
@@ -2187,7 +2399,7 @@ impl MdEditor {
         let pdf_toc_available = self.pdf.active_path.is_some()
             && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()));
         let toc_view: Element<Message, Theme, iced::Renderer> =
-            if self.editor.toc_visible && pdf_toc_available {
+            if self.editor.toc_visible && pdf_toc_available && !self.graph.visible {
                 views::toc::view(&self.editor.toc_entries, self.editor.toc_is_synthetic)
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
@@ -2222,7 +2434,9 @@ impl MdEditor {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
 
-        let main_content: Element<Message, Theme, iced::Renderer> = if self.ui.split_view_active
+        let main_content: Element<Message, Theme, iced::Renderer> = if self.graph.visible {
+            views::graph::view(&self.graph)
+        } else if self.ui.split_view_active
             && self.active_path.is_some()
             && self.pdf.active_path.is_some()
         {
@@ -2269,8 +2483,10 @@ impl MdEditor {
 
         let content = column![toolbar, main_content].height(Length::Fill);
 
-        let backlinks_view: Element<Message, Theme, iced::Renderer> =
-            views::backlinks::view(&self.vault.backlinks, self.vault.backlinks_visible);
+        let backlinks_view: Element<Message, Theme, iced::Renderer> = views::backlinks::view(
+            &self.vault.backlinks,
+            self.vault.backlinks_visible && !self.graph.visible,
+        );
 
         let layout = row![sidebar, content, backlinks_view, toc_view].height(Length::Fill);
 
@@ -2484,7 +2700,15 @@ impl MdEditor {
         } else {
             Err("no markdown file is open".to_string())
         };
-        apply_editor_save_result(&mut self.editor.buffer, &mut self.ui.toast, result)
+        let saved = apply_editor_save_result(&mut self.editor.buffer, &mut self.ui.toast, result);
+        if saved {
+            self.invalidate_graph();
+        }
+        saved
+    }
+
+    fn invalidate_graph(&mut self) {
+        self.graph.mark_dirty();
     }
 
     fn discard_editor_changes(&mut self) {
@@ -2502,8 +2726,21 @@ impl MdEditor {
     }
 
     fn open_vault(&mut self, path: &str) -> Task<Message> {
+        let root_path = std::path::PathBuf::from(path);
+        if !root_path.is_dir() {
+            self.ui.toast = Some(format!("Not a directory: {path}"));
+            return Task::none();
+        }
+        let generation = match self.state.begin_vault_change(root_path) {
+            Ok(generation) => generation,
+            Err(error) => {
+                self.ui.toast = Some(format!("Could not open vault: {error}"));
+                return Task::none();
+            }
+        };
         self.active_path = None;
         self.editor.buffer = DocBuffer::new();
+        self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
         self.editor.highlighted_lines.clear();
         self.editor.toc_entries.clear();
         self.pdf.active_path = None;
@@ -2511,13 +2748,25 @@ impl MdEditor {
         self.active_image_path = None;
         self.active_image = None;
         self.showing_pdf = false;
+        self.graph.visible = false;
+        self.graph.clear_for_vault_change();
+        self.vault.selected_path = None;
+        self.vault.expanded_folders.clear();
+        self.vault.backlinks.clear();
+        self.search.visible = false;
+        self.search.file_visible = false;
+        self.search.query.clear();
+        self.search.replace.clear();
+        self.search.match_index = None;
+        self.search.results.clear();
+        self.search.results_truncated = false;
+        self.search.pdf_results.clear();
+        self.search.pdf_indices_by_page.clear();
+        self.search.pdf_error = None;
         self.vault.root = Some(path.to_string());
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_vault", path);
-        // Publish the root immediately so file opens resolve correctly, and
-        // show the tree right away from a cheap directory listing.
-        if let Ok(mut vault_root) = self.state.vault_root.lock() {
-            vault_root.replace(std::path::PathBuf::from(path));
-        }
+        // `begin_vault_change` publishes the requested root immediately so file
+        // opens resolve correctly; show a cheap tree while indexing continues.
         self.vault.entries = md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
 
         // Build the full-text and backlink indexes off the UI thread; a large
@@ -2525,9 +2774,12 @@ impl MdEditor {
         // lock-free, so the UI stays responsive while it runs.
         let state = self.state.clone();
         let path = path.to_string();
+        let result_path = path.clone();
         Task::perform(
-            async move { md_editor_core::vault::set_vault_root(&state, &path).unwrap_or_default() },
-            Message::VaultIndexed,
+            async move {
+                md_editor_core::vault::index_vault_for_generation(&state, &path, generation)
+            },
+            move |result| Message::VaultIndexed(generation, result_path.clone(), result),
         )
     }
 
@@ -2595,6 +2847,7 @@ impl MdEditor {
                 self.editor.buffer = DocBuffer::from_text(&content);
                 self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
                 self.active_path = Some(path.to_string());
+                self.graph.set_active_path(Some(path.to_string()));
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image_path = None;
                 self.active_image = None;
@@ -2626,6 +2879,7 @@ impl MdEditor {
         };
         let path_str = abs_path.to_string_lossy().to_string();
         self.pdf.active_path = Some(path.to_string());
+        self.graph.set_active_path(Some(path.to_string()));
         self.pdf.load_error = None;
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
@@ -2670,7 +2924,7 @@ impl MdEditor {
                     Err(_) => None,
                 }
             },
-            Message::PdfDocumentIdComputed,
+            move |result| Message::PdfDocumentIdComputed(generation, result),
         );
 
         let _state = self.state.clone();
@@ -2734,6 +2988,7 @@ impl MdEditor {
                     img.into_rgba8().into_raw(),
                 );
                 self.active_image_path = Some(path.to_string());
+                self.graph.set_active_path(None);
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
                 self.active_image = Some((handle, width as f32, height as f32));
                 self.pdf.active_path = None;
@@ -4290,5 +4545,54 @@ mod tests {
         app.active_panel = ActivePanel::Pdf;
         let _ = app.update_inner(Message::EditorCursorMove(0, 0));
         assert_eq!(app.active_panel, ActivePanel::Markdown);
+    }
+
+    #[test]
+    fn graph_toggle_and_escape_preserve_the_open_document_mode() {
+        let mut app = MdEditor::new().0;
+        app.graph.visible = false;
+        app.vault.root = Some("/test-vault".to_string());
+        app.graph
+            .set_snapshot(md_editor_core::types::GraphSnapshot::default());
+        app.active_path = Some("notes/current.md".to_string());
+
+        let _ = app.update_inner(Message::GraphToggle);
+        assert!(app.graph.visible);
+
+        let _ = app.update_inner(Message::KeyboardShortcut(Shortcut::Escape));
+        assert!(!app.graph.visible);
+        assert_eq!(app.active_path.as_deref(), Some("notes/current.md"));
+    }
+
+    #[test]
+    fn graph_shortcut_is_a_noop_without_a_vault() {
+        let mut app = MdEditor::new().0;
+        app.vault.root = None;
+        app.graph.visible = false;
+
+        let _ = app.update_inner(Message::GraphToggle);
+
+        assert!(!app.graph.visible);
+        assert!(!app.title().contains("Knowledge Graph"));
+    }
+
+    #[test]
+    fn stale_pdf_identity_result_cannot_attach_to_another_document() {
+        let mut app = MdEditor::new().0;
+        app.pdf.render_generation = 8;
+        app.pdf.active_path = Some("current.pdf".to_string());
+        app.pdf.document_id = None;
+
+        let _ = app.update_inner(Message::PdfDocumentIdComputed(
+            7,
+            Some(("current.pdf".to_string(), "stale-id".to_string(), 10, Some(1))),
+        ));
+        assert!(app.pdf.document_id.is_none());
+
+        let _ = app.update_inner(Message::PdfDocumentIdComputed(
+            8,
+            Some(("other.pdf".to_string(), "wrong-file".to_string(), 10, Some(1))),
+        ));
+        assert!(app.pdf.document_id.is_none());
     }
 }

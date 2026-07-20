@@ -45,6 +45,34 @@ Additional navigation tools include:
   even when the target lives in a different folder.
 - Command palette for common actions.
 
+### Explore the Knowledge Graph
+
+The Knowledge Graph is a dedicated research workspace for seeing how notes and
+source material connect. Open it from the toolbar, from the command palette, or
+with `Ctrl+G`.
+
+- Global scope shows indexed Markdown notes, PDFs, and unresolved wikilink
+  targets. Local scope requires an active note or PDF and follows connections
+  by one or two hops. Images and ordinary Markdown links are not graph edges.
+- Markdown files, PDFs, and missing link targets are visually distinct nodes.
+  Edges include resolved wikilinks and links from PDF annotations to their
+  linked Markdown notes; repeated annotation relationships are aggregated.
+- The graph canvas supports panning, zoom, dragging individual nodes, selection,
+  direct file opening, and fit-to-view. Dragged positions are session-only.
+- Search narrows the visible graph while retaining immediate neighbours for
+  context. Independent filters control PDFs, unresolved targets, and
+  unconnected nodes without changing any vault files.
+- Selecting a node exposes its incoming and outgoing connections alongside
+  graph-derived related-note suggestions.
+- Vault-health summaries make structural gaps actionable by identifying
+  unconnected notes, unresolved links, highly connected hubs, and a count of
+  disconnected groups.
+
+The graph refreshes from the same live link index used by navigation and
+backlinks, including after saves and external vault changes. Unsaved wikilinks
+appear after the note is saved. It is a derived view only: graph layout and
+filtering never rewrite note content.
+
 ### Work With Reference Material
 
 PDF files open in an integrated viewer with:

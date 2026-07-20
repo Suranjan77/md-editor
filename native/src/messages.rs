@@ -3,7 +3,11 @@ pub enum Message {
     // ── Vault ────────────────────────────────────────────────────
     OpenVaultDialog,
     VaultOpened(Option<String>),
-    VaultIndexed(Vec<md_editor_core::types::FileEntry>),
+    VaultIndexed(
+        u64,
+        String,
+        Result<Option<Vec<md_editor_core::types::FileEntry>>, String>,
+    ),
     CreateFileDialog,
     CreateFolderDialog,
 
@@ -29,6 +33,38 @@ pub enum Message {
     CommandPaletteCommandClicked(Shortcut),
     CommandPaletteMove(i32),
     OverlaySubmitCurrent,
+
+    // ── Research graph ───────────────────────────────────────────
+    GraphToggle,
+    GraphRefresh,
+    GraphSnapshotLoaded(u64, Result<md_editor_core::types::GraphSnapshot, String>),
+    GraphScopeGlobal,
+    GraphScopeLocal,
+    GraphLocalDepthChanged(u8),
+    GraphQueryChanged(String),
+    GraphShowPdfsToggled(bool),
+    GraphShowMissingToggled(bool),
+    GraphShowOrphansToggled(bool),
+    GraphNodeSelected(Option<String>),
+    GraphNodeMoved {
+        path: String,
+        x: f32,
+        y: f32,
+    },
+    GraphNodeOpen(String),
+    GraphFitView,
+    GraphResetLayout,
+    GraphPhysicsTick,
+    /// Pan/zoom committed by the graph canvas (mirrored into `GraphState` so the
+    /// GPU render layer and the label overlay share one transform).
+    GraphSetView {
+        pan_x: f32,
+        pan_y: f32,
+        zoom: f32,
+    },
+    /// Node currently under the cursor, or `None` when the cursor leaves all nodes.
+    GraphHovered(Option<String>),
+
     NameModalInputChanged(String),
     NameModalSubmit(String),
     NameModalSubmitCurrent,
@@ -81,7 +117,7 @@ pub enum Message {
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),
     ClosePdfLinkPreview,
     // ── PDF Study Updates ──────────────────────────────────────────
-    PdfDocumentIdComputed(Option<(String, String, u64, Option<i64>)>),
+    PdfDocumentIdComputed(u64, Option<(String, String, u64, Option<i64>)>),
     PdfPageTextLoaded(u64, u16, Result<md_editor_core::pdf::PdfPageText, String>),
     PdfSelectionChanged(u16, usize, usize),
     PdfSelectionCleared,
@@ -162,6 +198,7 @@ pub enum Shortcut {
     CommandPalette,
     ToggleSidebar,
     ToggleBacklinks,
+    KnowledgeGraph,
     FocusMode,
     TableOfContents,
     StudyTracker,
