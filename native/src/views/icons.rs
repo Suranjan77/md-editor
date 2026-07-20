@@ -21,6 +21,16 @@ pub enum Icon {
     Split,
     Trash,
     X,
+    // ── Graph workspace controls ─────────────────────────────────
+    Plus,
+    Minus,
+    Maximize,
+    Refresh,
+    Play,
+    Pause,
+    Pin,
+    Target,
+    PanelRight,
 }
 
 pub fn view<'a, Message: 'a>(
@@ -220,6 +230,73 @@ impl<Message> canvas::Program<Message> for IconCanvas {
                 frame.stroke(&canvas::Path::circle(p(12.0, 12.0), 8.0 * scale), stroke);
                 stroke_line(&mut frame, p(12.0, 8.0), p(12.0, 12.5), stroke);
                 stroke_line(&mut frame, p(12.0, 12.5), p(15.5, 15.0), stroke);
+            }
+            Icon::Plus => {
+                stroke_line(&mut frame, p(12.0, 5.5), p(12.0, 18.5), stroke);
+                stroke_line(&mut frame, p(5.5, 12.0), p(18.5, 12.0), stroke);
+            }
+            Icon::Minus => {
+                stroke_line(&mut frame, p(5.5, 12.0), p(18.5, 12.0), stroke);
+            }
+            Icon::Maximize => {
+                // Four corner brackets — "frame everything".
+                for (cx, cy, sx, sy) in [
+                    (4.0, 4.0, 1.0, 1.0),
+                    (20.0, 4.0, -1.0, 1.0),
+                    (4.0, 20.0, 1.0, -1.0),
+                    (20.0, 20.0, -1.0, -1.0),
+                ] {
+                    stroke_line(&mut frame, p(cx, cy), p(cx + 5.0 * sx, cy), stroke);
+                    stroke_line(&mut frame, p(cx, cy), p(cx, cy + 5.0 * sy), stroke);
+                }
+            }
+            Icon::Refresh => {
+                let arc = canvas::Path::new(|path| {
+                    path.move_to(p(20.0, 12.0));
+                    path.bezier_curve_to(p(20.0, 18.0), p(14.5, 21.0), p(9.5, 19.0));
+                    path.move_to(p(4.0, 12.0));
+                    path.bezier_curve_to(p(4.0, 6.0), p(9.5, 3.0), p(14.5, 5.0));
+                });
+                frame.stroke(&arc, stroke);
+                stroke_line(&mut frame, p(14.5, 5.0), p(11.0, 4.5), stroke);
+                stroke_line(&mut frame, p(14.5, 5.0), p(14.0, 8.5), stroke);
+                stroke_line(&mut frame, p(9.5, 19.0), p(13.0, 19.5), stroke);
+                stroke_line(&mut frame, p(9.5, 19.0), p(10.0, 15.5), stroke);
+            }
+            Icon::Play => {
+                let triangle = canvas::Path::new(|path| {
+                    path.move_to(p(8.0, 5.0));
+                    path.line_to(p(19.0, 12.0));
+                    path.line_to(p(8.0, 19.0));
+                    path.close();
+                });
+                frame.fill(&triangle, self.color);
+            }
+            Icon::Pause => {
+                stroke_line(&mut frame, p(9.0, 5.5), p(9.0, 18.5), stroke);
+                stroke_line(&mut frame, p(15.0, 5.5), p(15.0, 18.5), stroke);
+            }
+            Icon::Pin => {
+                frame.stroke(&canvas::Path::circle(p(12.0, 9.0), 4.0 * scale), stroke);
+                stroke_line(&mut frame, p(12.0, 13.0), p(12.0, 20.5), stroke);
+                stroke_line(&mut frame, p(6.5, 5.5), p(17.5, 5.5), stroke);
+            }
+            Icon::Target => {
+                frame.stroke(&canvas::Path::circle(p(12.0, 12.0), 7.0 * scale), stroke);
+                frame.fill(&canvas::Path::circle(p(12.0, 12.0), 2.0 * scale), self.color);
+                stroke_line(&mut frame, p(12.0, 2.5), p(12.0, 5.5), stroke);
+                stroke_line(&mut frame, p(12.0, 18.5), p(12.0, 21.5), stroke);
+                stroke_line(&mut frame, p(2.5, 12.0), p(5.5, 12.0), stroke);
+                stroke_line(&mut frame, p(18.5, 12.0), p(21.5, 12.0), stroke);
+            }
+            Icon::PanelRight => {
+                let outer = canvas::Path::rounded_rectangle(
+                    p(3.0, 4.0),
+                    iced::Size::new(18.0 * scale, 16.0 * scale),
+                    (2.0 * scale).into(),
+                );
+                frame.stroke(&outer, stroke);
+                stroke_line(&mut frame, p(15.0, 4.0), p(15.0, 20.0), stroke);
             }
         }
 

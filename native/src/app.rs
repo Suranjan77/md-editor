@@ -735,11 +735,42 @@ impl MdEditor {
             Message::GraphNodeOpen(path) => {
                 let exists = self.graph.node(&path).is_some_and(|node| node.exists);
                 if exists {
+                    // The graph is a full-window workspace, so leaving it up
+                    // would hide the document the user just asked to read.
+                    self.graph.visible = false;
                     Task::done(Message::SidebarFileClicked(path))
                 } else {
                     self.ui.toast = Some("That link target does not exist yet".to_string());
                     Task::none()
                 }
+            }
+            Message::GraphNodeFocused(path) => {
+                self.graph.focus_on(&path);
+                Task::none()
+            }
+            Message::GraphPinToggled(path) => {
+                self.graph.toggle_pin(&path);
+                Task::none()
+            }
+            Message::GraphUnpinAll => {
+                self.graph.unpin_all();
+                Task::none()
+            }
+            Message::GraphZoomBy(factor) => {
+                self.graph.zoom_by(factor);
+                Task::none()
+            }
+            Message::GraphPhysicsToggled => {
+                self.graph.toggle_physics();
+                Task::none()
+            }
+            Message::GraphFiltersReset => {
+                self.graph.reset_filters();
+                Task::none()
+            }
+            Message::GraphInspectorToggled => {
+                self.graph.inspector_visible = !self.graph.inspector_visible;
+                Task::none()
             }
             Message::GraphFitView => {
                 self.graph.fit_revision = self.graph.fit_revision.wrapping_add(1);
@@ -1441,6 +1472,13 @@ impl MdEditor {
                     Task::none()
                 } else if self.search.visible {
                     Task::done(Message::GlobalSearchSubmit)
+                } else if self.graph.visible && self.ui.active_modal.is_none() {
+                    // Enter opens whatever is selected on the canvas, so the
+                    // graph is navigable without reaching for the mouse.
+                    match self.graph.selected_path.clone() {
+                        Some(path) => Task::done(Message::GraphNodeOpen(path)),
+                        None => Task::none(),
+                    }
                 } else {
                     Task::done(Message::NameModalSubmitCurrent)
                 }

@@ -24,8 +24,8 @@ use crate::graph_state::{MAX_ZOOM, MIN_ZOOM};
 use crate::messages::Message;
 use crate::theme;
 use crate::views::graph::{
-    GraphFrame, ViewTransform, distance, fit_transform, kind_color, node_screen_radius,
-    screen_to_world, world_to_screen,
+    GraphFrame, ViewTransform, distance, fit_transform, kind_color, node_magnitude,
+    node_screen_radius, screen_to_world, world_to_screen,
 };
 
 /// Extra pixels added to a node's radius when resolving a pointer hit.
@@ -361,8 +361,12 @@ pub struct Interaction {
     zoom: f32,
     initialized: bool,
     applied_fit: u64,
+    /// Last externally-published transform this widget has adopted.
+    applied_view: u64,
     fitted_size: Option<iced::Size>,
     gesture: Option<Gesture>,
+    /// Node and time of the previous left-press, for double-click detection.
+    last_click: Option<(String, std::time::Instant)>,
 }
 
 impl Default for Interaction {
@@ -372,17 +376,39 @@ impl Default for Interaction {
             zoom: 1.0,
             initialized: false,
             applied_fit: 0,
+            applied_view: 0,
             fitted_size: None,
             gesture: None,
+            last_click: None,
         }
     }
 }
 
+/// Two left-presses on the same node within this window open the document.
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+
 #[derive(Debug, Clone)]
 enum Gesture {
-    Pan { start: Point, initial_pan: Vector },
-    Node { path: String, grab_offset: Vector },
+    Pan {
+        start: Point,
+        initial_pan: Vector,
+    },
+    Node {
+        path: String,
+        grab_offset: Vector,
+        /// Where the press landed, so a click can be told from a drag.
+        origin: Point,
+        /// Set once the pointer has travelled past [`DRAG_THRESHOLD`].
+        dragging: bool,
+    },
 }
+
+/// How far the pointer must travel before a press on a node counts as a drag.
+///
+/// Without this, the jitter between press and release on an ordinary click
+/// emitted a move — which pinned the node, permanently exempting it from the
+/// layout. Selecting a node must not silently pin it.
+const DRAG_THRESHOLD: f32 = 3.0;
 
 /// The interactive GPU program. Constructed fresh from [`GraphState`] each
 /// `view`, so its fields are an immutable snapshot of the current frame.
@@ -396,22 +422,10 @@ impl GpuGraphProgram {
     }
 
     fn fit(&self, bounds: Rectangle) -> ViewTransform {
-        let points: Vec<Point> = self
-            .frame
-            .graph
-            .nodes
-            .iter()
-            .map(|node| self.world_position(&node.path))
+        let points: Vec<Point> = (0..self.frame.nodes().len())
+            .map(|index| self.frame.world(index))
             .collect();
         fit_transform(&points, bounds)
-    }
-
-    fn world_position(&self, path: &str) -> Point {
-        self.frame
-            .positions
-            .get(path)
-            .copied()
-            .unwrap_or(Point::ORIGIN)
     }
 
     /// The transform to render/interact with. Once this widget has applied the
@@ -419,27 +433,34 @@ impl GpuGraphProgram {
     /// freshly computed fit frames the graph so even the very first frame — and
     /// any frame `draw` runs before `update` has committed — is correct.
     fn transform(&self, state: &Interaction, bounds: Rectangle) -> ViewTransform {
-        let applied = state.initialized
+        let fit_applied = state.initialized
             && state.applied_fit == self.frame.fit_revision
             && state.fitted_size == Some(bounds.size());
-        if applied {
-            ViewTransform {
-                pan: state.pan,
-                zoom: state.zoom,
-            }
-        } else {
-            self.fit(bounds)
+        if !fit_applied {
+            return self.fit(bounds);
+        }
+        // A zoom button or "reveal in graph" published a transform this widget
+        // has not adopted yet — honour it now so the frame drawn before the
+        // next `update` already shows the new framing.
+        if state.applied_view != self.frame.view_revision {
+            return ViewTransform {
+                pan: self.frame.pan,
+                zoom: self.frame.zoom,
+            };
+        }
+        ViewTransform {
+            pan: state.pan,
+            zoom: state.zoom,
         }
     }
 
     fn hit_node(&self, bounds: Rectangle, transform: ViewTransform, screen: Point) -> Option<usize> {
         self.frame
-            .graph
-            .nodes
+            .nodes()
             .iter()
             .enumerate()
             .filter_map(|(index, node)| {
-                let center = world_to_screen(self.world_position(&node.path), bounds, transform);
+                let center = world_to_screen(self.frame.world(index), bounds, transform);
                 let radius = node_screen_radius(node, transform.zoom) + HIT_SLOP;
                 let d = distance(screen, center);
                 (d <= radius).then_some((index, d))
@@ -473,6 +494,7 @@ impl shader::Program<Message> for GpuGraphProgram {
             state.zoom = fit.zoom;
             state.initialized = true;
             state.applied_fit = self.frame.fit_revision;
+            state.applied_view = self.frame.view_revision;
             state.fitted_size = Some(bounds.size());
             state.gesture = None;
             // Publishing already schedules a redraw; no capture so a coincident
@@ -482,6 +504,15 @@ impl shader::Program<Message> for GpuGraphProgram {
                 pan_y: fit.pan.y,
                 zoom: fit.zoom,
             }));
+        }
+
+        // Adopt a transform the app published (zoom buttons, reveal-in-graph).
+        // `GraphState` already holds it, so there is nothing to publish back.
+        if state.applied_view != self.frame.view_revision {
+            state.pan = self.frame.pan;
+            state.zoom = self.frame.zoom;
+            state.applied_view = self.frame.view_revision;
+            state.gesture = None;
         }
 
         let transform = ViewTransform {
@@ -494,24 +525,51 @@ impl shader::Program<Message> for GpuGraphProgram {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let point = cursor_pos?;
                 if let Some(index) = self.hit_node(bounds, transform, point) {
-                    let node = &self.frame.graph.nodes[index];
-                    let world = self.world_position(&node.path);
+                    let node = &self.frame.nodes()[index];
+                    let now = std::time::Instant::now();
+                    let double = state.last_click.as_ref().is_some_and(|(path, at)| {
+                        path == &node.path && now.duration_since(*at) <= DOUBLE_CLICK
+                    });
+                    if double {
+                        // Second click of a double: open the note instead of
+                        // starting another drag, and require a fresh pair.
+                        state.last_click = None;
+                        state.gesture = None;
+                        return Some(
+                            shader::Action::publish(Message::GraphNodeOpen(node.path.clone()))
+                                .and_capture(),
+                        );
+                    }
+                    state.last_click = Some((node.path.clone(), now));
+                    let world = self.frame.world(index);
                     let pointer_world = screen_to_world(point, bounds, transform);
                     state.gesture = Some(Gesture::Node {
                         path: node.path.clone(),
                         grab_offset: pointer_world - world,
+                        origin: point,
+                        dragging: false,
                     });
                     Some(
                         shader::Action::publish(Message::GraphNodeSelected(Some(node.path.clone())))
                             .and_capture(),
                     )
                 } else {
+                    state.last_click = None;
                     state.gesture = Some(Gesture::Pan {
                         start: point,
                         initial_pan: transform.pan,
                     });
                     Some(shader::Action::publish(Message::GraphNodeSelected(None)).and_capture())
                 }
+            }
+            // Right-click pins a node where it sits (or releases it) — the fast
+            // path for the arrange-by-hand workflow the inspector button also
+            // offers.
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                let point = cursor_pos?;
+                let index = self.hit_node(bounds, transform, point)?;
+                let path = self.frame.nodes()[index].path.clone();
+                Some(shader::Action::publish(Message::GraphPinToggled(path)).and_capture())
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
                 let point = cursor_pos?;
@@ -521,10 +579,10 @@ impl shader::Program<Message> for GpuGraphProgram {
                 });
                 Some(shader::Action::capture())
             }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => match state.gesture.clone() {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => match &mut state.gesture {
                 Some(Gesture::Pan { start, initial_pan }) => {
                     let point = cursor_pos?;
-                    let pan = initial_pan + (point - start);
+                    let pan = *initial_pan + (point - *start);
                     state.pan = pan;
                     Some(
                         shader::Action::publish(Message::GraphSetView {
@@ -535,9 +593,21 @@ impl shader::Program<Message> for GpuGraphProgram {
                         .and_capture(),
                     )
                 }
-                Some(Gesture::Node { path, grab_offset }) => {
+                Some(Gesture::Node {
+                    path,
+                    grab_offset,
+                    origin,
+                    dragging,
+                }) => {
                     let point = cursor_pos?;
-                    let world = screen_to_world(point, bounds, transform) - grab_offset;
+                    if !*dragging && distance(point, *origin) < DRAG_THRESHOLD {
+                        // Still within click tolerance — swallow the movement
+                        // rather than turning a selection into a pinned node.
+                        return Some(shader::Action::capture());
+                    }
+                    *dragging = true;
+                    let world = screen_to_world(point, bounds, transform) - *grab_offset;
+                    let path = path.clone();
                     Some(
                         shader::Action::publish(Message::GraphNodeMoved {
                             path,
@@ -550,8 +620,12 @@ impl shader::Program<Message> for GpuGraphProgram {
                 None => {
                     let hovered = cursor_pos
                         .and_then(|point| self.hit_node(bounds, transform, point))
-                        .map(|index| self.frame.graph.nodes[index].path.clone());
-                    if hovered != self.frame.hovered {
+                        .map(|index| self.frame.nodes()[index].path.clone());
+                    let current = self
+                        .frame
+                        .hovered
+                        .map(|index| self.frame.nodes()[index].path.clone());
+                    if hovered != current {
                         Some(shader::Action::publish(Message::GraphHovered(hovered)))
                     } else {
                         None
@@ -614,37 +688,52 @@ impl shader::Program<Message> for GpuGraphProgram {
             _pad: 0.0,
         };
 
-        let focus = self.frame.hovered.as_ref().or(self.frame.selected.as_ref());
-        let focus_neighbors = focus.and_then(|path| self.frame.neighbors.get(path));
+        // One allocation up front instead of a set lookup per node per frame.
+        let focus_mask = self.frame.focus_mask();
+        let focus = focus_mask.as_ref().map(|(focus, _)| *focus);
+        let in_focus = |index: usize| {
+            focus_mask
+                .as_ref()
+                .is_some_and(|(_, mask)| mask.get(index).copied().unwrap_or(false))
+        };
 
-        let mut nodes = Vec::with_capacity(self.frame.graph.nodes.len());
-        for node in &self.frame.graph.nodes {
-            let is_focus = focus == Some(&node.path);
-            let is_neighbor = focus_neighbors.is_some_and(|set| set.contains(&node.path));
-            let dim = if focus.is_some() && !is_focus && !is_neighbor {
-                0.28
+        let mut nodes = Vec::with_capacity(self.frame.nodes().len());
+        for (index, node) in self.frame.nodes().iter().enumerate() {
+            let is_focus = focus == Some(index);
+            let is_neighbor = !is_focus && in_focus(index);
+            // Dimming exists to make a neighbourhood pop, not to erase the map
+            // around it — the rest of the graph has to stay readable enough to
+            // aim the next click at.
+            let dim = if focus.is_some() && !in_focus(index) {
+                0.42
             } else {
                 1.0
             };
-            let selected = self.frame.selected.as_deref() == Some(node.path.as_str());
-            let hovered = self.frame.hovered.as_deref() == Some(node.path.as_str());
-            let active = self.frame.active.as_deref() == Some(node.path.as_str());
+            let selected = self.frame.selected == Some(index);
+            let hovered = self.frame.hovered == Some(index);
+            let active = self.frame.active == Some(index);
+            // The open document keeps a quiet ring of its own so "where am I?"
+            // is answerable at a glance without hovering anything.
             let ring = if selected {
                 2.0
             } else if hovered {
                 1.0
+            } else if active {
+                3.0
             } else {
                 0.0
             };
+            // Quiet nodes glow by connectedness, so a zoomed-out vault reads
+            // as a sky of varying magnitudes rather than uniform fill.
             let glow = if selected || hovered {
                 0.95
             } else if is_neighbor || active {
-                0.65
+                0.7
             } else {
-                0.5
+                0.22 + node_magnitude(node) * 0.5
             };
             let color = kind_color(node.kind);
-            let world = self.world_position(&node.path);
+            let world = self.frame.world(index);
             nodes.push(NodeInstance {
                 center: [world.x, world.y],
                 radius: node_screen_radius(node, transform.zoom),
@@ -656,42 +745,31 @@ impl shader::Program<Message> for GpuGraphProgram {
             });
         }
 
-        let index: std::collections::HashMap<&str, usize> = self
+        let mut edges = Vec::with_capacity(self.frame.graph.snapshot.edges.len());
+        for (edge, &(source, target)) in self
             .frame
             .graph
-            .nodes
+            .snapshot
+            .edges
             .iter()
-            .enumerate()
-            .map(|(i, node)| (node.path.as_str(), i))
-            .collect();
-
-        let mut edges = Vec::with_capacity(self.frame.graph.edges.len());
-        for edge in &self.frame.graph.edges {
-            let (Some(&source), Some(&target)) = (
-                index.get(edge.source.as_str()),
-                index.get(edge.target.as_str()),
-            ) else {
+            .zip(&self.frame.graph.edge_pairs)
+        {
+            if source == usize::MAX || target == usize::MAX {
                 continue;
-            };
-            let from = self.world_position(&self.frame.graph.nodes[source].path);
-            let to = self.world_position(&self.frame.graph.nodes[target].path);
-            let focused =
-                focus.is_some_and(|path| &edge.source == path || &edge.target == path);
+            }
+            let from = self.frame.world(source);
+            let to = self.frame.world(target);
+            let focused = focus.is_some_and(|focus| source == focus || target == focus);
             let weight = edge.weight.max(1) as f32;
+            // Links are the whole point of the view, so even the quietest state
+            // stays visible against the near-black canvas.
+            const LINK: iced::Color = iced::Color::from_rgb(0.52, 0.60, 0.62);
             let (color, alpha, thickness) = if focused {
-                (theme::ACCENT_GLOW, 0.85, 1.6 + weight.ln())
+                (theme::ACCENT_GLOW, 0.95, 1.8 + weight.ln() * 0.5)
             } else if focus.is_some() {
-                (
-                    iced::Color::from_rgb(0.45, 0.52, 0.54),
-                    0.10,
-                    0.7 + weight.ln() * 0.35,
-                )
+                (LINK, 0.24, 1.0 + weight.ln() * 0.4)
             } else {
-                (
-                    iced::Color::from_rgb(0.45, 0.52, 0.54),
-                    0.30,
-                    0.7 + weight.ln() * 0.35,
-                )
+                (LINK, 0.48, 1.0 + weight.ln() * 0.4)
             };
             edges.push(EdgeInstance {
                 p0: [from.x, from.y],

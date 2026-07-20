@@ -66,8 +66,15 @@ struct EdgeIn {
 struct EdgeOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) color: vec4<f32>,
-    @location(1) across: f32,
+    // Signed distance from the centerline, in pixels.
+    @location(1) across_px: f32,
+    // Half the requested line width, in pixels.
+    @location(2) half_width: f32,
 };
+
+// Extra pixels of quad on each side of the line, so coverage can fade to zero
+// inside the primitive instead of being clipped at its edge.
+const EDGE_AA_PAD: f32 = 1.0;
 
 @vertex
 fn vs_edge(in: EdgeIn, @builtin(vertex_index) vi: u32) -> EdgeOut {
@@ -80,7 +87,10 @@ fn vs_edge(in: EdgeIn, @builtin(vertex_index) vi: u32) -> EdgeOut {
     let len = max(length(d_px), 0.0001);
     let dir = d_px / len;
     let normal = vec2<f32>(-dir.y, dir.x);
-    let half_off = px_to_clip(normal * (in.thickness * 0.5));
+
+    let half_width = max(in.thickness, 0.5) * 0.5;
+    let extent = half_width + EDGE_AA_PAD;
+    let half_off = px_to_clip(normal * extent);
 
     let corner = quad_corner(vi);
     let base = select(c0, c1, corner.x > 0.0);
@@ -88,15 +98,19 @@ fn vs_edge(in: EdgeIn, @builtin(vertex_index) vi: u32) -> EdgeOut {
     var out: EdgeOut;
     out.pos = vec4<f32>(base + half_off * corner.y, 0.0, 1.0);
     out.color = in.color;
-    out.across = corner.y;
+    out.across_px = corner.y * extent;
+    out.half_width = half_width;
     return out;
 }
 
 @fragment
 fn fs_edge(in: EdgeOut) -> @location(0) vec4<f32> {
-    let aa = fwidth(in.across) * 1.5;
-    let edge = 1.0 - smoothstep(1.0 - aa, 1.0, abs(in.across));
-    return vec4<f32>(encode(in.color.rgb), in.color.a * edge);
+    // Analytic coverage in pixel space. The previous `fwidth`-based smoothstep
+    // measured the fade band as a fraction of the quad, so a sub-pixel-wide
+    // line got a fade band wider than itself and washed out to near-zero alpha
+    // — which is why thin links were invisible no matter how opaque the color.
+    let coverage = clamp(in.half_width - abs(in.across_px) + 0.5, 0.0, 1.0);
+    return vec4<f32>(encode(in.color.rgb), in.color.a * coverage);
 }
 
 // ─────────────────────────────── nodes ───────────────────────────────
@@ -106,7 +120,7 @@ struct NodeIn {
     @location(1) radius: f32,   // core radius, in points
     @location(2) glow: f32,     // outer-halo strength, 0..1
     @location(3) color: vec4<f32>,
-    @location(4) ring: f32,     // 0 none, 1 hover (white), 2 selected (gold)
+    @location(4) ring: f32,     // 0 none, 1 hover, 2 selected, 3 open document
     @location(5) dim: f32,      // alpha multiplier for focus dimming
 };
 
@@ -153,13 +167,20 @@ fn fs_node(in: NodeOut) -> @location(0) vec4<f32> {
     var rgb = in.color.rgb;
     var alpha = max(core, halo);
 
-    // Selection / hover ring: a bright annulus hugging the core edge.
+    // Selection / hover / open-document ring: an annulus hugging the core edge.
+    // Colors stay inside the app's sage-accent palette so the graph reads as
+    // part of the editor rather than a separate toy.
     if (ring > 0.5) {
         let center_r = core_frac + core_frac * 0.34;
         let width = core_frac * 0.30 + aa;
         let ring_a = 1.0 - smoothstep(width, width + aa, abs(d - center_r));
-        if (ring > 1.5) {
-            rgb = mix(rgb, vec3<f32>(1.0, 0.83, 0.35), ring_a);
+        if (ring > 2.5) {
+            // Open document: a quiet, always-on marker.
+            rgb = mix(rgb, vec3<f32>(0.80, 0.91, 0.89), ring_a);
+            alpha = max(alpha, ring_a * 0.55);
+        } else if (ring > 1.5) {
+            // Selected: the brightest state in the scene.
+            rgb = mix(rgb, vec3<f32>(0.94, 0.99, 0.97), ring_a);
             alpha = max(alpha, ring_a);
         } else {
             rgb = mix(rgb, vec3<f32>(1.0, 1.0, 1.0), ring_a * 0.85);

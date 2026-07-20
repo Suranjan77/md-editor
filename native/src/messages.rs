@@ -52,8 +52,22 @@ pub enum Message {
         y: f32,
     },
     GraphNodeOpen(String),
+    /// Select a node *and* recenter the viewport on it ("reveal in graph").
+    GraphNodeFocused(String),
+    /// Pin/unpin a node so the force simulation stops moving it.
+    GraphPinToggled(String),
+    /// Release every pinned node back to the simulation.
+    GraphUnpinAll,
     GraphFitView,
     GraphResetLayout,
+    /// Multiply the zoom about the canvas center (toolbar zoom buttons).
+    GraphZoomBy(f32),
+    /// Pause or resume the force simulation.
+    GraphPhysicsToggled,
+    /// Turn every node/link filter back on.
+    GraphFiltersReset,
+    /// Show or hide the right-hand inspector panel.
+    GraphInspectorToggled,
     GraphPhysicsTick,
     /// Pan/zoom committed by the graph canvas (mirrored into `GraphState` so the
     /// GPU render layer and the label overlay share one transform).
