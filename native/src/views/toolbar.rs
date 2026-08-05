@@ -1,4 +1,4 @@
-use iced::widget::{Button, Space, button, container, row, text};
+use iced::widget::{Button, Space, button, container, row, text, tooltip};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
 use crate::messages::Message;
@@ -16,6 +16,7 @@ pub fn view<'a>(
     toc_available: bool,
     split_view_active: bool,
     split_available: bool,
+    ink_visible: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
     let sidebar_toggle: Button<'_, Message, Theme, Renderer> = button(icons::view(
         Icon::LayoutPanelLeft,
@@ -91,6 +92,32 @@ pub fn view<'a>(
             .style(button::text),
         toc_button,
         split_button,
+        tooltip(
+            button(icons::view(
+                Icon::Pen,
+                if ink_visible {
+                    theme::ACCENT
+                } else {
+                    theme::TEXT_MUTED
+                },
+                18.0,
+            ))
+            .on_press(Message::InkToggle)
+            .padding(8)
+            .style(button::text),
+            container(text("Handwriting  Ctrl I").size(11).color(theme::TEXT_SECONDARY))
+                .padding([4, 8])
+                .style(|_| container::Style {
+                    background: Some(Background::Color(theme::BG_TERTIARY)),
+                    border: Border {
+                        color: theme::BORDER,
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    ..Default::default()
+                }),
+            tooltip::Position::Bottom,
+        ),
         button(icons::view(
             Icon::Clock,
             if tracker_visible {

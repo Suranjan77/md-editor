@@ -29,6 +29,7 @@ const PDF_PAGE_BITMAP_EVICT_MARGIN: u16 = 6;
 enum ActivePanel {
     Markdown,
     Pdf,
+    Ink,
 }
 
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
@@ -93,6 +94,14 @@ pub struct MdEditor {
     // Study tracker
     tracker: crate::tracker_state::TrackerState,
 
+    // Handwritten notes surface, shown in its own window
+    ink: crate::ink::InkState,
+
+    /// The shell window. Closing it exits the app.
+    main_window: Option<iced::window::Id>,
+    /// The handwriting window, while it is open.
+    ink_window: Option<iced::window::Id>,
+
     // Shell UI chrome: modals, command palette, toast, split view, window size
     ui: crate::ui_state::UiState,
 
@@ -102,7 +111,18 @@ pub struct MdEditor {
 }
 
 impl MdEditor {
-    pub fn new() -> (Self, Task<Message>) {
+    /// Build the app and open its shell window.
+    ///
+    /// A daemon starts with no windows at all, so opening the main one is part
+    /// of booting rather than something the runtime does for us.
+    pub fn boot(main_window: iced::window::Settings) -> (Self, Task<Message>) {
+        let (mut app, restore) = Self::new();
+        let (id, open) = iced::window::open(main_window);
+        app.main_window = Some(id);
+        (app, Task::batch(vec![open.discard(), restore]))
+    }
+
+    fn new() -> (Self, Task<Message>) {
         let state = Arc::new(md_editor_core::state::AppState::new());
         let last_vault = md_editor_core::config::get_sys_config(&state, "last_vault")
             .ok()
@@ -122,6 +142,9 @@ impl MdEditor {
             active_image: None,
             showing_pdf: false,
             tracker,
+            ink: crate::ink::InkState::new(),
+            main_window: None,
+            ink_window: None,
             ui: crate::ui_state::UiState::new(),
             search: crate::search_state::SearchState::new(),
             active_panel: ActivePanel::Markdown,
@@ -140,6 +163,8 @@ impl MdEditor {
                     task = app.open_pdf(&file_path);
                 } else if is_supported_image_path(&lower) {
                     task = app.open_image(&file_path);
+                } else if lower.ends_with(".ink") {
+                    task = app.open_ink_page(&file_path);
                 }
             }
             task = Task::batch(vec![index_task, task]);
@@ -148,7 +173,15 @@ impl MdEditor {
         (app, task)
     }
 
-    pub fn title(&self) -> String {
+    pub fn title(&self, window: iced::window::Id) -> String {
+        if Some(window) == self.ink_window {
+            return format!(
+                "{}Handwriting — {}",
+                if self.ink.dirty { "● " } else { "" },
+                self.ink.path.as_deref().unwrap_or("Unsaved page")
+            );
+        }
+
         format!(
             "{}Md-editor — {}",
             if self.editor.buffer.dirty { "● " } else { "" },
@@ -198,9 +231,22 @@ impl MdEditor {
                         "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
                         "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
                         "t" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
+                        "i" => Some(Message::InkToggle),
+                        // Undo/redo for the ink surface. These are no-ops
+                        // while it is hidden, and the listener does not
+                        // capture the event, so the editor's own handling of
+                        // Ctrl+Z is unaffected.
+                        "z" => Some(Message::InkUndo),
+                        "y" => Some(Message::InkRedo),
                         _ => None,
                     };
                 }
+            }
+            // Removes the ink selection; a no-op while the surface is hidden,
+            // and the listener does not capture, so the editor still sees the
+            // keystroke normally.
+            if key == Key::Named(Named::Delete) {
+                return Some(Message::InkDeleteSelection);
             }
             match key {
                 Key::Named(Named::ArrowDown) => Some(Message::PdfScrollBy(64.0)),
@@ -247,8 +293,13 @@ impl MdEditor {
             iced::Event::Window(iced::window::Event::Opened { .. }) => {
                 Some(Message::WindowOpened(window_id))
             }
+            // A daemon keeps running with no windows, so closing has to be
+            // handled explicitly or the process would linger invisibly.
+            iced::Event::Window(iced::window::Event::Closed) => {
+                Some(Message::WindowClosed(window_id))
+            }
             iced::Event::Window(iced::window::Event::Rescaled(factor)) => {
-                Some(Message::WindowRescaled(factor))
+                Some(Message::WindowRescaled(window_id, factor))
             }
             _ => None,
         });
@@ -261,6 +312,13 @@ impl MdEditor {
             None => Subscription::none(),
         };
 
+        // Captured pen samples. Deliberately always-on rather than gated on
+        // the surface being visible: the stream consumes the process-wide
+        // receiver, so tearing it down and rebuilding it would leave the
+        // second instance with nothing to read. Nothing is produced while the
+        // surface is hidden anyway — the window hook stops claiming pen input.
+        let pen_input = Subscription::run_with("ink-pen", |_: &&str| crate::ink::pen::stream());
+
         Subscription::batch(vec![
             keyboard,
             toast,
@@ -268,6 +326,7 @@ impl MdEditor {
             mouse_drag,
             window_events,
             vault_watch,
+            pen_input,
         ])
     }
 
@@ -387,14 +446,7 @@ impl MdEditor {
                         || path.contains("://");
 
                     if is_url {
-                        #[cfg(target_os = "windows")]
-                        let _ = std::process::Command::new("cmd")
-                            .args(["/C", "start", "", &path])
-                            .spawn();
-                        #[cfg(target_os = "macos")]
-                        let _ = std::process::Command::new("open").arg(&path).spawn();
-                        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-                        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                        crate::platform::open_external(&path);
                         Task::none()
                     } else {
                         let (file_part, anchor_part) = if let Some(idx) = path.find('#') {
@@ -476,6 +528,8 @@ impl MdEditor {
                                 self.open_pdf(&resolved_path)
                             } else if is_supported_image_path(&lower) {
                                 self.open_image(&resolved_path)
+                            } else if lower.ends_with(".ink") {
+                                self.open_ink_page(&resolved_path)
                             } else {
                                 Task::none()
                             }
@@ -891,14 +945,7 @@ impl MdEditor {
                         self.navigate_pdf_page(self.pdf.current_page)
                     } else if let Some(uri) = link.uri {
                         if modifiers.control() || modifiers.command() {
-                            #[cfg(target_os = "windows")]
-                            let _ = std::process::Command::new("cmd")
-                                .args(["/C", "start", "", &uri])
-                                .spawn();
-                            #[cfg(target_os = "macos")]
-                            let _ = std::process::Command::new("open").arg(&uri).spawn();
-                            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-                            let _ = std::process::Command::new("xdg-open").arg(&uri).spawn();
+                            crate::platform::open_external(&uri);
                             self.ui.toast = Some(format!("Opening: {}", uri));
                         } else {
                             self.ui.toast =
@@ -1545,7 +1592,12 @@ impl MdEditor {
             Message::KeyboardShortcut(s) => {
                 match s {
                     Shortcut::Escape => {
-                        // Close overlays in priority order
+                        // Close overlays in priority order. The ink surface is
+                        // first: while it is up it owns the screen, and Escape
+                        // should drop its selection before anything else.
+                        if self.ink.is_visible() && self.ink.clear_selection() {
+                            return Task::none();
+                        }
                         if self.pdf.selection.is_some() {
                             self.pdf.selection = None;
                         } else if self.pdf.focused_annotation_id.is_some() {
@@ -1576,6 +1628,9 @@ impl MdEditor {
                         self.vault.sidebar_visible = !self.vault.sidebar_visible;
                         self.refit_pdf_if_needed()
                     }
+                    // Ctrl+S saves whatever surface is in front.
+                    Shortcut::Handwriting => Task::done(Message::InkToggle),
+                    Shortcut::Save if self.ink.is_visible() => Task::done(Message::InkSave),
                     Shortcut::Save => Task::done(Message::EditorSave),
                     Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
                     Shortcut::NewFile => Task::done(Message::CreateFileDialog),
@@ -1698,15 +1753,182 @@ impl MdEditor {
                 }
                 Task::none()
             }
+            // ── Ink (handwritten notes) ──────────────────────────
+            Message::InkPenHookReady(raw_window_id) => {
+                if let Err(e) = crate::ink::pen::install(raw_window_id) {
+                    // Not fatal: the surface still works with a mouse.
+                    eprintln!("Pen input unavailable: {e}");
+                }
+                Task::none()
+            }
+            Message::InkToggle => match self.ink_window {
+                // Already open: closing the window tears down the surface via
+                // the close event, so there is one path for both routes out.
+                Some(id) => iced::window::close(id),
+                None => self.open_ink_window(),
+            },
+            Message::InkPenSamples(samples) => {
+                self.ink.apply_samples(&samples, self.ui.scale_factor);
+                Task::none()
+            }
+            Message::InkPointerDown(x, y) => {
+                // Mouse fallback: no pressure, so use a fixed mid-weight.
+                self.ink.begin(
+                    crate::ink::stroke::Vec2::new(x, y),
+                    crate::ink::canvas::MOUSE_PRESSURE,
+                    false,
+                );
+                Task::none()
+            }
+            Message::InkPointerMove(x, y) => {
+                self.ink.extend(
+                    crate::ink::stroke::Vec2::new(x, y),
+                    crate::ink::canvas::MOUSE_PRESSURE,
+                );
+                Task::none()
+            }
+            Message::InkPointerUp => {
+                self.ink.finish();
+                Task::none()
+            }
+            Message::InkHoverMoved(x, y) => {
+                self.ink.set_hover(crate::ink::stroke::Vec2::new(x, y));
+                Task::none()
+            }
+            Message::InkToolSelected(tool) => {
+                if self.ink.tool != tool {
+                    // Leaving the lasso behind should not leave a selection
+                    // highlighted with no way to act on it.
+                    if tool != crate::ink::Tool::Lasso {
+                        self.ink.clear_selection();
+                    }
+                    self.ink.tool = tool;
+                }
+                Task::none()
+            }
+            Message::InkEraserModeSelected(mode) => {
+                self.ink.eraser_mode = mode;
+                Task::none()
+            }
+            Message::InkPaperSelected(paper) => {
+                self.ink.set_paper(paper);
+                Task::none()
+            }
+            // Colour and width belong to the active tool: switching to the
+            // highlighter and back must not clobber the pen's settings.
+            Message::InkColorSelected(color) => {
+                if self.ink.tool == crate::ink::Tool::Highlighter {
+                    self.ink.highlighter_color = color;
+                } else {
+                    self.ink.color = color;
+                }
+                Task::none()
+            }
+            Message::InkSizeSelected(size) => {
+                if self.ink.tool == crate::ink::Tool::Highlighter {
+                    self.ink.highlighter_size = size;
+                } else {
+                    self.ink.options.size = size;
+                }
+                Task::none()
+            }
+            Message::InkPan { dx, dy } => {
+                self.ink.pan_by(crate::ink::stroke::Vec2::new(dx, dy));
+                Task::none()
+            }
+            Message::InkZoom { x, y, notches } => {
+                self.ink
+                    .zoom_by_wheel(crate::ink::stroke::Vec2::new(x, y), notches);
+                Task::none()
+            }
+            Message::InkZoomStep(notches) => {
+                self.ink.zoom_step(notches);
+                Task::none()
+            }
+            Message::InkResetView => {
+                self.ink.reset_view();
+                Task::none()
+            }
+            Message::InkDeleteSelection => {
+                if self.ink.is_visible() {
+                    self.ink.delete_selection();
+                }
+                Task::none()
+            }
+            // Guarded so the shared Ctrl+Z / Ctrl+Y bindings only reach the ink
+            // surface while it is the one on screen.
+            Message::InkUndo => {
+                if self.ink.is_visible() {
+                    self.ink.undo();
+                }
+                Task::none()
+            }
+            Message::InkRedo => {
+                if self.ink.is_visible() {
+                    self.ink.redo();
+                }
+                Task::none()
+            }
+            Message::InkClear => {
+                self.ink.clear();
+                Task::none()
+            }
+            Message::InkSave => self.save_ink_page(),
+            Message::InkSaved(result) => {
+                match result {
+                    Ok(path) => {
+                        self.ink.dirty = false;
+                        self.ui.toast = Some(format!("Saved {path}"));
+                    }
+                    Err(e) => self.ui.toast = Some(e),
+                }
+                Task::none()
+            }
+
             Message::WindowOpened(id) => {
                 // Pull the real scale factor; a static HiDPI monitor may never
                 // emit a `Rescaled` event, so the listener alone isn't enough.
-                iced::window::scale_factor(id).map(Message::WindowRescaled)
+                let scale = iced::window::scale_factor(id)
+                    .map(move |factor| Message::WindowRescaled(id, factor));
+
+                if Some(id) == self.ink_window {
+                    // The hook attaches to whichever window holds the canvas,
+                    // so it has to move here — and it must re-attach each time
+                    // the window is reopened, since the handle is new.
+                    return Task::batch(vec![
+                        scale,
+                        iced::window::raw_id::<Message>(id).map(Message::InkPenHookReady),
+                    ]);
+                }
+                scale
             }
-            Message::WindowRescaled(factor) => {
+            Message::WindowClosed(id) => {
+                if Some(id) == self.ink_window {
+                    self.ink_window_closed();
+                    return Task::none();
+                }
+                if Some(id) == self.main_window {
+                    // The shell is the app; close it and everything goes.
+                    return iced::exit();
+                }
+                Task::none()
+            }
+            Message::WindowRescaled(id, factor) => {
                 // Clamp: below 1 makes no sense, and capping at 3 bounds the
                 // bitmap cost on unusually high-DPI displays.
                 let factor = factor.clamp(1.0, 3.0);
+
+                // The two windows can sit on monitors with different scaling,
+                // so the pen hook tracks the ink window's factor specifically —
+                // using the shell's would misplace every stroke.
+                if Some(id) == self.ink_window {
+                    crate::ink::set_scale_factor(factor);
+                    return Task::none();
+                }
+                if Some(id) != self.main_window {
+                    return Task::none();
+                }
+
                 if (factor - self.ui.scale_factor).abs() < 0.01 {
                     return Task::none();
                 }
@@ -1760,7 +1982,141 @@ impl MdEditor {
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
+    /// Open the detached handwriting window.
+    fn open_ink_window(&mut self) -> Task<Message> {
+        if let Some(id) = self.ink_window {
+            // Already open — surface it instead of opening a second one.
+            return iced::window::gain_focus(id);
+        }
+
+        let (id, open) = iced::window::open(crate::ink_window_settings());
+        self.ink_window = Some(id);
+        self.ink.set_visible(true);
+        self.active_panel = ActivePanel::Ink;
+        open.discard()
+    }
+
+    /// Tear down the handwriting surface after its window goes away.
+    fn ink_window_closed(&mut self) {
+        self.ink_window = None;
+        // Stops pen capture and drops any half-drawn stroke.
+        self.ink.set_visible(false);
+        self.active_panel = ActivePanel::Markdown;
+    }
+
+    /// Load a handwritten page from the vault and show it in its own window.
+    fn open_ink_page(&mut self, path: &str) -> Task<Message> {
+        let Some(root) = self.vault.root.clone() else {
+            return Task::none();
+        };
+
+        match crate::ink::load_from_vault(&root, path) {
+            Ok(document) => {
+                self.ink.load(document, Some(path.to_string()));
+                self.open_ink_window()
+            }
+            Err(e) => {
+                self.ui.toast = Some(e);
+                Task::none()
+            }
+        }
+    }
+
+    /// Write the handwriting surface to the vault, choosing a path on first
+    /// save from the note being annotated, or the date when none is open.
+    fn save_ink_page(&mut self) -> Task<Message> {
+        let Some(root) = self.vault.root.clone() else {
+            return Task::done(Message::InkSaved(Err(
+                "Open a vault before saving handwritten notes".to_string(),
+            )));
+        };
+
+        let path = match self.ink.path.clone() {
+            Some(path) => path,
+            None => {
+                let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+                let derived = derive_ink_path(self.active_path.as_deref(), &stamp);
+                self.ink.path = Some(derived.clone());
+                derived
+            }
+        };
+
+        let result = crate::ink::save_to_vault(&root, &path, &self.ink.document).map(|()| path);
+        Task::done(Message::InkSaved(result))
+    }
+
+    pub fn view(&self, window: iced::window::Id) -> Element<'_, Message, Theme, iced::Renderer> {
+        if Some(window) == self.ink_window {
+            return self.ink_view();
+        }
+        self.shell_view()
+    }
+
+    /// The handwriting window: toolbar over a canvas that fills the rest.
+    fn ink_view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
+        let (live_options, live_color) = self.ink.live_style();
+
+        column![
+            views::ink::toolbar(views::ink::ToolbarState {
+                tool: self.ink.tool,
+                eraser_mode: self.ink.eraser_mode,
+                paper: self.ink.document.paper,
+                size: if self.ink.tool == crate::ink::Tool::Highlighter {
+                    self.ink.highlighter_size
+                } else {
+                    self.ink.options.size
+                },
+                zoom: self.ink.camera.zoom,
+                can_undo: self.ink.document.can_undo(),
+                can_redo: self.ink.document.can_redo(),
+                has_strokes: !self.ink.document.is_empty(),
+                has_selection: self.ink.has_selection(),
+                dirty: self.ink.dirty,
+                path: self.ink.path.as_deref(),
+                pen_available: crate::ink::pen::is_available(),
+            }),
+            row![
+                container(crate::ink::canvas::view(crate::ink::canvas::InkSurface {
+                    document: &self.ink.document,
+                    live: self.ink.live_points(),
+                    lasso: self.ink.lasso(),
+                    selection: self.ink.selection(),
+                    selection_bounds: self.ink.selection_bounds(),
+                    cache: &self.ink.cache,
+                    camera: self.ink.camera,
+                    options: self.ink.options,
+                    live_options,
+                    color: live_color,
+                    tool: self.ink.tool,
+                    eraser_radius: self.ink.eraser_screen_radius(),
+                    drawing: self.ink.is_drawing(),
+                    hover: self.ink.hover(),
+                    radial: self.ink.radial_menu(),
+                }))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(app_theme::BG_PRIMARY)),
+                    ..Default::default()
+                }),
+                // Its own column rather than an overlay: the canvas claims all
+                // pen input within its bounds, so a panel drawn on top of it
+                // could never be pressed with the pen.
+                views::ink::color_palette(
+                    if self.ink.tool == crate::ink::Tool::Highlighter {
+                        self.ink.highlighter_color
+                    } else {
+                        self.ink.color
+                    }
+                ),
+            ]
+            .height(Length::Fill),
+        ]
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn shell_view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
         if self.vault.root.is_none() {
             return views::welcome::view();
         }
@@ -1779,6 +2135,7 @@ impl MdEditor {
                 && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some())),
             self.ui.split_view_active,
             self.active_path.is_some(),
+            self.ink.is_visible(),
         );
 
         let sidebar = views::sidebar::view(
@@ -1959,6 +2316,7 @@ impl MdEditor {
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
+
 
         let main_content: Element<Message, Theme, iced::Renderer> = if self.ui.split_view_active
             && self.active_path.is_some()
@@ -3322,6 +3680,32 @@ fn focus_pdf_search_input() -> Task<Message> {
     ))
 }
 
+/// Lexically normalize a vault-relative path and render it with forward
+/// slashes. Vault-relative paths are forward-slash separated everywhere else
+/// (see `vault::path_to_relative_string`), so on Windows the `PathBuf`'s native
+/// backslashes have to be converted back or the result stops matching indexed
+/// entries, the active path, and the paths stored in the settings database.
+/// A vault path with its extension removed.
+///
+/// Only a dot in the final component counts: a directory like `course-v1.2/`
+/// must not be truncated.
+fn strip_extension(path: &str) -> &str {
+    match path.rfind('.').filter(|dot| !path[*dot..].contains('/')) {
+        Some(dot) => &path[..dot],
+        None => path,
+    }
+}
+
+/// Vault-relative path for a handwritten page: beside the note it belongs to
+/// when one is open, otherwise a timestamped page at the vault root.
+fn derive_ink_path(active_path: Option<&str>, timestamp: &str) -> String {
+    let extension = crate::ink::INK_EXTENSION;
+    match active_path {
+        Some(path) => format!("{}.{extension}", strip_extension(path)),
+        None => format!("handwritten-{timestamp}.{extension}"),
+    }
+}
+
 fn normalize_path(path: &std::path::Path) -> String {
     let mut components = Vec::new();
     for component in path.components() {
@@ -3339,7 +3723,7 @@ fn normalize_path(path: &std::path::Path) -> String {
         }
     }
     let normalized: std::path::PathBuf = components.into_iter().collect();
-    normalized.to_string_lossy().to_string()
+    normalized.to_string_lossy().replace('\\', "/")
 }
 
 fn resolve_relative_link_path(
@@ -3578,6 +3962,31 @@ mod tests {
         );
         // No match.
         assert_eq!(resolve_vault_note_by_name(&entries, "Missing"), None);
+    }
+
+    #[test]
+    fn ink_path_is_derived_from_the_open_note() {
+        assert_eq!(
+            derive_ink_path(Some("notes/algebra.md"), "20260805-101500"),
+            "notes/algebra.ink"
+        );
+    }
+
+    #[test]
+    fn ink_path_falls_back_to_a_timestamp_with_no_note_open() {
+        assert_eq!(
+            derive_ink_path(None, "20260805-101500"),
+            "handwritten-20260805-101500.ink"
+        );
+    }
+
+    #[test]
+    fn ink_path_only_strips_an_extension_from_the_final_component() {
+        // A dot in a directory name must not be mistaken for the extension.
+        assert_eq!(
+            derive_ink_path(Some("course-v1.2/lecture"), "20260805-101500"),
+            "course-v1.2/lecture.ink"
+        );
     }
 
     #[test]

@@ -10,8 +10,14 @@ pub enum Icon {
     Folder,
     FolderOpen,
     Image,
+    Eraser,
+    Highlighter,
+    Lasso,
     LayoutPanelLeft,
     ListTree,
+    Pen,
+    Redo,
+    Undo,
     Search,
     ChevronDown,
     ChevronRight,
@@ -116,6 +122,73 @@ impl<Message> canvas::Program<Message> for IconCanvas {
                 if matches!(self.icon, Icon::FolderOpen) {
                     stroke_line(&mut frame, p(5.0, 12.0), p(19.0, 12.0), stroke);
                 }
+            }
+            Icon::Pen => {
+                // A nib angled like a held pen, with the barrel running up to
+                // the top-right and a stroke trailing from the tip.
+                let body = canvas::Path::new(|path| {
+                    path.move_to(p(4.0, 20.0));
+                    path.line_to(p(5.5, 15.5));
+                    path.line_to(p(16.0, 5.0));
+                    path.line_to(p(19.0, 8.0));
+                    path.line_to(p(8.5, 18.5));
+                    path.close();
+                });
+                frame.stroke(&body, stroke);
+                // The shoulder where the nib meets the barrel.
+                stroke_line(&mut frame, p(14.0, 7.0), p(17.0, 10.0), stroke);
+            }
+            Icon::Highlighter => {
+                // A broad chisel tip: same angle as the pen, but blunt, with
+                // the laid-down band beneath it.
+                let body = canvas::Path::new(|path| {
+                    path.move_to(p(6.0, 14.0));
+                    path.line_to(p(15.0, 5.0));
+                    path.line_to(p(19.0, 9.0));
+                    path.line_to(p(10.0, 18.0));
+                    path.line_to(p(6.0, 18.0));
+                    path.close();
+                });
+                frame.stroke(&body, stroke);
+                stroke_line(&mut frame, p(4.0, 21.0), p(20.0, 21.0), stroke);
+            }
+            Icon::Eraser => {
+                // An angled block with the rubbed line under it.
+                let block = canvas::Path::new(|path| {
+                    path.move_to(p(7.0, 17.0));
+                    path.line_to(p(15.0, 5.0));
+                    path.line_to(p(20.0, 9.0));
+                    path.line_to(p(13.0, 17.0));
+                    path.close();
+                });
+                frame.stroke(&block, stroke);
+                stroke_line(&mut frame, p(4.0, 20.0), p(20.0, 20.0), stroke);
+            }
+            Icon::Lasso => {
+                // A loop with the tail hanging from where it closes.
+                frame.stroke(&canvas::Path::circle(p(12.0, 10.0), 7.0 * scale), stroke);
+                stroke_line(&mut frame, p(9.0, 16.5), p(7.0, 21.0), stroke);
+                frame.stroke(&canvas::Path::circle(p(7.0, 21.0), 1.2 * scale), stroke);
+            }
+            Icon::Undo | Icon::Redo => {
+                // An arrow curving back on itself; the redo variant is the
+                // same shape mirrored, so both read as a pair.
+                let mirror = |x: f32| if matches!(self.icon, Icon::Redo) { 24.0 - x } else { x };
+                let arc = canvas::Path::new(|path| {
+                    path.move_to(p(mirror(7.0), 9.0));
+                    path.line_to(p(mirror(4.0), 9.0));
+                    path.line_to(p(mirror(4.0), 6.0));
+                });
+                frame.stroke(&arc, stroke);
+                let curve = canvas::Path::new(|path| {
+                    path.move_to(p(mirror(4.0), 9.0));
+                    path.line_to(p(mirror(12.0), 9.0));
+                    path.line_to(p(mirror(16.0), 13.0));
+                    path.line_to(p(mirror(16.0), 15.0));
+                    path.line_to(p(mirror(12.0), 19.0));
+                    path.line_to(p(mirror(6.0), 19.0));
+                });
+                frame.stroke(&curve, stroke);
             }
             Icon::Image => {
                 frame.stroke(

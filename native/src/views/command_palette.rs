@@ -48,6 +48,11 @@ pub fn get_commands() -> Vec<Command> {
             icon: "R".to_string(),
         },
         Command {
+            name: "Handwriting Canvas".to_string(),
+            shortcut: Shortcut::Handwriting,
+            icon: "H".to_string(),
+        },
+        Command {
             name: "Split View".to_string(),
             shortcut: Shortcut::SplitView,
             icon: "|".to_string(),
@@ -151,6 +156,7 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::TableOfContents => "Ctrl T",
         Shortcut::StudyTracker => "Tracker",
         Shortcut::SplitView => "Split",
+        Shortcut::Handwriting => "Ctrl I",
         Shortcut::Escape => "Esc",
     }
 }

@@ -1,9 +1,15 @@
+// Release builds on Windows run as a GUI app so launching the exe does not
+// open a console window. Debug builds keep the console for stdout/stderr.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod editor;
 mod editor_state;
+mod ink;
 mod messages;
 mod pdf_notes;
 mod pdf_pane;
+mod platform;
 mod search;
 mod search_state;
 mod theme;
@@ -179,6 +185,10 @@ fn uninstall_linux_desktop_entry() -> bool {
     }
 }
 
+// `--install`/`--uninstall` manage the freedesktop `.desktop` entry, so both
+// the actions and the parser are Linux-only; gating them keeps other platforms
+// free of dead-code warnings.
+#[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CliAction {
     Install,
@@ -186,6 +196,7 @@ enum CliAction {
     RunApp,
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_cli_args(args: &[String]) -> CliAction {
     if args.len() > 1 {
         let cmd = args[1].as_str();
@@ -240,21 +251,43 @@ fn main() -> iced::Result {
     #[cfg(not(target_os = "linux"))]
     let platform_specific = iced::window::settings::PlatformSpecific::default();
 
-    iced::application(
-        app::MdEditor::new,
+    let main_window = iced::window::Settings {
+        size: iced::Size::new(1200.0, 800.0),
+        icon: icon.clone(),
+        platform_specific: platform_specific.clone(),
+        ..Default::default()
+    };
+
+    // A daemon rather than an application: the handwriting canvas lives in its
+    // own window so it can sit on a second monitor beside the notes. Daemons
+    // own no window by default, so boot opens the main one.
+    iced::daemon(
+        move || app::MdEditor::boot(main_window.clone()),
         app::MdEditor::update,
         app::MdEditor::view,
     )
     .title(app::MdEditor::title)
-    .theme(|state: &app::MdEditor| state.theme())
+    .theme(|state: &app::MdEditor, _window| state.theme())
     .subscription(app::MdEditor::subscription)
-    .window(iced::window::Settings {
-        size: iced::Size::new(1200.0, 800.0),
-        icon,
-        platform_specific,
-        ..Default::default()
-    })
     .run()
+}
+
+/// Settings for the detached handwriting window.
+///
+/// Sized for writing rather than reading, and given the same icon so it is
+/// recognisable when the two windows sit on different monitors.
+pub fn ink_window_settings() -> iced::window::Settings {
+    let icon = iced::window::icon::from_file_data(
+        include_bytes!("../../md-editor.png"),
+        Some(image::ImageFormat::Png),
+    )
+    .ok();
+
+    iced::window::Settings {
+        size: iced::Size::new(1000.0, 760.0),
+        icon,
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
