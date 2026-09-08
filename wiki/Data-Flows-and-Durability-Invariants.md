@@ -1,6 +1,7 @@
 # Data Flows & Durability Invariants
 
-MD Editor is engineered around strict reliability guarantees. This document details the end-to-end data flows and the five non-negotiable durability invariants that every build must satisfy.
+MD Editor is built around reliability guarantees that are checked, not assumed. This page
+traces the end-to-end flows and states the five invariants every build must satisfy.
 
 ---
 
@@ -12,68 +13,82 @@ MD Editor is engineered around strict reliability guarantees. This document deta
 sequenceDiagram
     autonumber
     actor User
-    participant App as Iced Event Loop (app.rs)
-    participant Buf as DocBuffer (buffer.rs)
-    participant Tree as HeightTree (layout_tree.rs)
-    participant Sub as Autosave Subscription
-    participant Vault as vault::save_file (vault.rs)
-    participant SQLite as SQLite Connection (state.rs)
-    participant Disk as Filesystem & Storage
+    participant App as Iced event loop — app.rs
+    participant Buf as DocBuffer — buffer.rs
+    participant Tree as HeightTree — layout_tree.rs
+    participant Sub as Autosave subscription
+    participant Vault as vault::save_file
+    participant SQLite as SQLite connection
+    participant Disk as Filesystem and storage
 
-    User->>App: Types character 'a'
-    App->>Buf: DocBuffer::execute(InsertText("a"))
-    Buf->>Buf: Inserts char into ropey::Rope
-    Buf->>Buf: Appends char to current UndoRun
-    App->>Tree: Invalidate edited line height in Fenwick tree
-    App->>App: Set dirty = true, last_edit = Instant::now()
-    
-    loop Every 100ms
-        Sub->>App: Poll Autosave Tick
-        Note over App,Sub: Check: dirty == true AND (now - last_edit) >= 400ms
+    User->>App: Types a character
+    App->>Buf: execute(TypePaired or InsertText)
+    Buf->>Buf: Insert into the ropey::Rope
+    Buf->>Buf: Coalesce into the current undo run if it continues one
+    App->>App: Re-highlight, synchronously or debounced by document size
+    App->>Tree: Invalidate the edited line's cached height
+    App->>App: Set autosave_pending_since = Instant::now
+
+    loop every AUTOSAVE_POLL — 100ms
+        Sub->>App: AutosaveElapsed
+        Note over App,Sub: Write only once 400ms have passed since the last keystroke
     end
-    
-    App->>Vault: vault::save_file(vault_root, rel_path, content)
-    Vault->>Disk: Write to temporary sibling: .<file>.<uuid>.tmp
-    Vault->>Disk: Copy original permissions (e.g. 0600)
-    Vault->>Disk: Call file.sync_all() (Flush dirty kernel pages)
-    Disk-->>Vault: Confirmed flushed
-    Vault->>Disk: Atomic rename: tmp_path -> target_path
-    Vault->>SQLite: Update FTS5 full-text index in transaction
-    Vault-->>App: Return Result::Ok(())
-    App->>App: Clear dirty flag, schedule toast confirmation
+
+    App->>Vault: save_file(vault_root, rel_path, content)
+    Vault->>Disk: Write to the sibling temp file
+    Vault->>Disk: Copy the destination's permissions
+    Vault->>Disk: file.sync_all
+    Disk-->>Vault: Contents are on stable storage
+    Vault->>Disk: Atomic rename over the destination
+    Vault->>Disk: sync_all on the parent directory, best-effort
+    Vault-->>App: Ok
+    App->>SQLite: Persist scroll and cursor offsets for this path
+    App->>App: Clear the pending flag. Ctrl+S also raises a confirming toast
 ```
 
-### Flow 2: Note Navigation & Undo Retention (32-Buffer LRU)
+An explicit `Ctrl+S` takes the same path but always answers, even when autosave had already
+committed. A **failed** autosave raises a toast the first time it happens in a run of
+failures — a failing write is exactly when the user needs to know — and the title keeps its
+unsaved marker while the debounce restarts.
+
+### Flow 2: Note Navigation & Undo Retention
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User
-    participant UI as Sidebar View
-    participant App as app.rs Update Loop
-    participant LRU as Retained Buffer LRU (32 Notes)
+    participant UI as Sidebar
+    participant App as app.rs
+    participant Retain as Retained buffers — 32, LRU
     participant Vault as vault.rs
 
-    User->>UI: Clicks "Lecture2.md" in file tree
-    UI->>App: Message::SelectFile("Lecture2.md")
-    
-    alt Active Buffer has uncommitted edits
-        App->>Vault: Flush active note to disk immediately
-        Note over App,Vault: If write fails, navigation aborts to protect edits!
+    User->>UI: Clicks Lecture2.md
+    UI->>App: SidebarFileClicked
+
+    alt The active buffer has uncommitted edits
+        App->>Vault: Flush the active note to disk now
+        Note over App,Vault: If the write fails, navigation is refused and reported
     end
-    
-    App->>LRU: Park active DocBuffer (retains undo stack & cursor)
-    
-    alt "Lecture2.md" is already cached in LRU
-        LRU-->>App: Restore existing DocBuffer with full undo history
-    else "Lecture2.md" is not in LRU
-        App->>Vault: Read file bytes from disk
-        Vault-->>App: Raw text content
-        App->>App: Initialize fresh DocBuffer
+
+    App->>Retain: Park the outgoing DocBuffer with its undo stack and scroll offset
+    App->>App: Persist scroll and cursor offsets for the outgoing path
+
+    alt Lecture2.md is retained and its disk content still matches
+        Retain-->>App: Restore the buffer with its full undo history
+    else Not retained, or the file changed on disk
+        App->>Vault: Read the file from disk
+        Vault-->>App: Text content
+        App->>App: Build a fresh DocBuffer
     end
-    
-    App->>App: Restore saved scroll position & cursor offset
+
+    App->>App: Restore the stored scroll and cursor offsets
+    App->>App: Refresh backlinks and the table of contents
 ```
+
+The retained registry holds `MAX_RETAINED_BUFFERS = 32` documents, evicting the least
+recently used. `take_retained_matching(path, disk_text)` only returns a parked buffer when
+the file on disk still matches what the buffer was based on — otherwise the stale buffer is
+dropped, so an external edit is never silently overwritten by a resurrected undo stack.
 
 ### Flow 3: PDF Selection to Sidecar Highlight & Linked Note
 
@@ -81,26 +96,29 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     actor User
-    participant Canvas as Interactive PDF Canvas
-    participant App as app.rs Update
-    participant Core as core::state::AppState
-    participant DB as SQLite (pdf_annotations)
-    participant Modal as Link Note Picker Modal
+    participant Canvas as Interactive PDF widget
+    participant App as app.rs
+    participant Core as AppState
+    participant DB as SQLite — pdf_annotations
+    participant Modal as Link note picker
 
-    User->>Canvas: Drags mouse over text on Page 7
-    Canvas->>Canvas: Hit-test text layer; compute normalized [x,y,w,h]
-    User->>Canvas: Releases mouse; clicks "Highlight"
-    Canvas->>App: Message::AddPdfHighlight(page=7, rects, text)
-    App->>App: Cycle color token (yellow -> green -> blue -> pink -> orange)
-    App->>Core: AppState::save_pdf_annotation(annotation)
-    Core->>DB: INSERT INTO pdf_annotations (...)
-    App->>Canvas: Redraw highlight polygon overlay
-    
-    opt User chooses "Link to Note"
-        App->>Modal: Open Link Note Picker
-        User->>Modal: Selects existing "ResearchNotes.md" (or new note)
-        Modal->>App: Append highlight block with pdf:// URL
-        App->>Core: Update annotation linked_note_path in SQLite
+    User->>Canvas: Drags across text on page 7
+    Canvas->>Canvas: Hit-test the text layer and compute the text-index range
+    Canvas->>App: PdfSelectionChanged, then PdfSelectionFinished
+    User->>App: Chooses Highlight
+    App->>App: Merge character rects into line rectangles in PDF points
+    App->>App: Take next_highlight_color, then advance the palette
+    App->>Core: save_pdf_annotation(annotation)
+    Core->>DB: INSERT INTO pdf_annotations
+    App->>Canvas: Redraw the annotation overlay layer
+
+    opt The user chooses Link to Note
+        App->>Modal: Open the searchable vault picker
+        User->>Modal: Picks an existing note, or a folder plus a new name
+        Modal->>App: NameModalSubmit
+        App->>App: Append a Page N section, or create the note with frontmatter
+        App->>Core: Update the annotation's linked_note_path
+        Core->>DB: UPDATE pdf_annotations
     end
 ```
 
@@ -108,24 +126,52 @@ sequenceDiagram
 
 ## 2. The Five Non-Negotiable Durability Invariants
 
-These invariants are pass/fail engineering requirements. If any invariant fails, a release build is blocked regardless of what other features are functioning:
+These are pass/fail engineering requirements, not judgement calls. **If any one fails, the
+build does not ship, regardless of what else works.**
 
-### Invariant 1: Kill It Mid-Edit
-- **Scenario**: A user types paragraphs into a note. The application process is abruptly terminated with `kill -9` without pressing `Ctrl+S`.
-- **Guarantee**: When the vault is reopened, no characters are corrupted, and no truncated or empty files exist on disk. Atomic sibling temporary files (`.<file>.<uuid>.tmp`) ensure either the pristine previous version or the complete newly flushed version is present on disk.
+### Invariant 1: Kill it mid-edit
 
-### Invariant 2: Switch With Unsaved Edits
-- **Scenario**: A user edits a document, and immediately clicks another file in the sidebar before the 400ms autosave timer fires.
-- **Guarantee**: The navigation handler synchronously flushes the uncommitted buffer to disk **before** switching the active document. If writing to disk fails (e.g. disk full, permission revoked), navigation is refused and an error alert is presented, ensuring unsaved edits are never abandoned.
+- **Scenario** — type paragraphs into a note, then `kill -9` the process without pressing
+  `Ctrl+S`.
+- **Guarantee** — reopening the vault shows no corrupted characters and no truncated or
+  empty file. The sibling-temp-file protocol means the destination holds either the complete
+  previous version or the complete new one, never a mix.
+- **Mechanism** — `vault::write_file`, plus a unit test
+  (`write_file_never_leaves_a_truncated_file`) that asserts it directly.
 
-### Invariant 3: Word-Sized Undo
-- **Scenario**: A user types a multi-word sentence and presses `Ctrl+Z`.
-- **Guarantee**: Undo does not step backward one character at a time. The editor groups consecutive typing into an `UndoRun`, reversing a coherent word or phrase per undo command.
+### Invariant 2: Switch with unsaved edits
 
-### Invariant 4: Navigation Undo Preservation
-- **Scenario**: A user edits `FileA.md`, navigates to `FileB.md`, edits `FileB.md`, and then navigates back to `FileA.md`.
-- **Guarantee**: Pressing `Ctrl+Z` in `FileA.md` steps back through the editing actions taken before navigating away. Up to 32 active document buffers are retained in an in-memory LRU cache.
+- **Scenario** — edit a note and immediately click another file, an image, or close the
+  window, before the 400ms debounce fires.
+- **Guarantee** — the buffer is flushed **before** the view changes. If the write fails —
+  disk full, permission revoked — navigation is refused and the error is surfaced, so
+  unsaved edits are never abandoned. Window close is the one deliberate exception: it flushes
+  best-effort and does not block, because an app that refuses to quit is a worse outcome.
 
-### Invariant 5: Zero Idle CPU
-- **Scenario**: The application is left open on the desktop with no active user typing, mouse movement, or animated panel transitions.
-- **Guarantee**: The application process consumes **0.0% CPU**. The Iced window frame subscription is completely disarmed (`iced::Subscription::none()`) whenever UI animations have settled.
+### Invariant 3: Undo is word-sized
+
+- **Scenario** — type a multi-word sentence, press `Ctrl+Z` once.
+- **Guarantee** — a run of typing disappears, not a single character.
+- **Mechanism** — `UNDO_COALESCE_WINDOW = 300ms` plus `can_coalesce`, which breaks a run at a
+  pause, a newline, a cursor jump, a direction change, or a selection edit.
+
+### Invariant 4: Navigation preserves undo
+
+- **Scenario** — edit `FileA.md`, go to `FileB.md`, edit it, come back to `FileA.md`, press
+  `Ctrl+Z`.
+- **Guarantee** — undo walks back through the edits made before navigating away, and the
+  cursor and scroll position are where you left them.
+- **Mechanism** — the 32-document retained registry, invalidated when the file changed on
+  disk in the meantime.
+
+### Invariant 5: Zero idle CPU
+
+- **Scenario** — leave the app open with no typing, no mouse movement, and no animation in
+  flight.
+- **Guarantee** — the process consumes **0.0% CPU**.
+- **Mechanism** — the per-frame subscription is armed only while `motion.is_animating()`
+  holds; every other subscription (toast, autosave, highlight, search) is likewise armed only
+  when it has pending work. A settled window has no live timers at all.
+
+Each invariant has a manual verification step in the
+[Release Checklist](Release-Checklist.md).

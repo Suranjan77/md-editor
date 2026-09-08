@@ -512,7 +512,7 @@ impl PdfRenderer {
                             // References need the full text layer (for equation
                             // labels and captions) and the outline (for section
                             // targets). The text scan is the one-time cost the
-                            // caller caches; see `pdf-text-scan-costs`.
+                            // caller caches; see the `PDF-Engine-and-Sidecars` wiki page.
                             let page_texts = build_all_page_texts(doc);
                             let embedded = embedded_toc(doc);
                             let toc = if embedded.is_empty() {

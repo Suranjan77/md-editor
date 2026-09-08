@@ -1,50 +1,58 @@
 # MD Editor Wiki
 
-Welcome to the official **MD Editor** Wiki. This wiki serves as the definitive reference manual for users, contributors, and systems architects working with the MD Editor project.
+Welcome to the **MD Editor** wiki — the single, authoritative documentation set for
+the project. Everything that used to live under `docs/` has been folded into these
+pages; there is no other documentation tree to keep in sync.
 
-MD Editor is a calm, native, local-first desktop workspace for notes, PDFs, images, search, backlinks, and study progress. It is written in Rust and powered by the [Iced](https://github.com/iced-rs/iced) graphical user interface library and Google's [PDFium](https://pdfium.googlesource.com/pdfium/) rendering engine.
+MD Editor is a calm, native, local-first desktop workspace for notes, PDFs, images,
+search, backlinks, and study progress. It is written in Rust on top of the
+[Iced](https://github.com/iced-rs/iced) GUI toolkit (0.14) and Google's
+[PDFium](https://pdfium.googlesource.com/pdfium/) rendering engine.
 
 ---
 
 ## System Architecture at a Glance
 
-MD Editor is strictly separated into two crates: a headless engine (`md-editor-core`) and a native graphical desktop interface (`md-editor-native`).
+The workspace is two crates: a headless engine (`md-editor-core`) and a native
+desktop interface (`md-editor-native`).
 
 ```mermaid
 graph TB
-    subgraph UI ["md-editor-native (Iced GUI)"]
-        App["App State & Update Router<br/>(app.rs, messages.rs)"]
-        Canvas["Custom Canvas Markdown Widget<br/>(editor/renderer.rs)"]
-        DocBuf["DocBuffer & Undo Runs<br/>(editor/buffer.rs)"]
-        Fenwick["HeightTree (Fenwick Tree)<br/>(editor/layout_tree.rs)"]
-        Highlighter["Syntax & Typora-style Parser<br/>(editor/highlight.rs)"]
-        PDFViewer["Interactive PDF Canvas<br/>(views/interactive_pdf.rs)"]
-        Palette["Command Palette & Fuzzy Matcher<br/>(fuzzy.rs, command_palette.rs)"]
-        Tokens["Design Tokens & Motion<br/>(theme.rs, motion.rs)"]
+    subgraph UI ["md-editor-native — Iced GUI"]
+        App["Shell: state, update router, subscriptions<br/>app.rs, messages.rs"]
+        Widget["Custom markdown editor widget<br/>editor/renderer.rs"]
+        DocBuf["DocBuffer and undo runs<br/>editor/buffer.rs"]
+        Fenwick["HeightTree — Fenwick tree<br/>editor/layout_tree.rs"]
+        Highlighter["Markdown tokenizer and concealer<br/>editor/highlight.rs"]
+        PDFView["Interactive PDF widget and overlays<br/>views/interactive_pdf.rs, views/pdf_viewer.rs"]
+        Palette["Command palette and fuzzy matcher<br/>fuzzy.rs, views/command_palette.rs"]
+        Tokens["Design tokens and motion<br/>theme.rs, motion.rs"]
     end
 
-    subgraph Core ["md-editor-core (Headless Engine)"]
-        AppState["Shared AppState Context<br/>(state.rs)"]
-        Vault["Vault Traversal & Atomic Writes<br/>(vault.rs)"]
-        Index["Wikilinks & Backlinks Graph<br/>(file_index.rs)"]
-        SQLite["SQLite DB (WAL Mode) & Migrations<br/>(state.rs, config.rs)"]
-        FTS["FTS5 Full-Text Search Engine"]
-        PDFiumWorker["PDFium Worker Thread & Renderer<br/>(pdf.rs)"]
-        RefScanner["Heuristic Reference Scanner<br/>(references.rs)"]
-        StudyTracker["Study Tracker & Milestones<br/>(tracker.rs)"]
+    subgraph Core ["md-editor-core — headless engine"]
+        AppState["Shared AppState context<br/>state.rs"]
+        Vault["Vault traversal and atomic writes<br/>vault.rs"]
+        Index["Wikilink and backlink graph<br/>file_index.rs"]
+        SQLite["SQLite in WAL mode, schema, migrations<br/>state.rs, config.rs"]
+        FTS["FTS5 full-text index<br/>file_search"]
+        PDFWorker["PDFium worker thread and renderer<br/>pdf.rs"]
+        RefScanner["Internal reference resolver<br/>references.rs"]
+        Tracker["Study tracker persistence<br/>tracker.rs"]
     end
 
-    App -->|Requests / State Sync| AppState
-    Canvas -->|Queries Line Offsets| Fenwick
-    DocBuf -->|Markdown Text| Highlighter
-    Highlighter -->|Styled Spans| Canvas
-    PDFViewer -->|Thread Channels| PDFiumWorker
-    Vault -->|Atomic Sync| SQLite
-    Index -->|Resolves [[links]]| Vault
+    App -->|"requests and state sync"| AppState
+    Widget -->|"queries line offsets"| Fenwick
+    DocBuf -->|"markdown text"| Highlighter
+    Highlighter -->|"styled spans"| Widget
+    PDFView -->|"typed tasks over channels"| PDFWorker
+    Vault -->|"rebuilds FTS rows"| SQLite
+    Index -->|"resolves wikilinks"| Vault
     AppState --> SQLite
     AppState --> Vault
     AppState --> Index
-    AppState --> StudyTracker
+    AppState --> Tracker
+    SQLite --- FTS
+    PDFWorker --> RefScanner
 ```
 
 ---
@@ -53,23 +61,41 @@ graph TB
 
 | Topic | Description | Link |
 | :--- | :--- | :--- |
-| **Architecture & Philosophy** | Core tenets: local-first, zero-config portability, atomic durability, non-destructive sidecars | [Architecture & Philosophy](Architecture-and-Philosophy.md) |
-| **Repository Structure** | Workspace layout, crate boundaries, modules, and dependency trees | [Repository Structure](Repository-Structure.md) |
-| **Core Services** | Database schema, portability paths, vault operations, atomic write protocol, wikilink graph | [Core Services](Core-Services.md) |
-| **Native Desktop GUI** | Iced application lifecycle, message loop, state separation, views, and modal overlays | [Native Desktop GUI](Native-Desktop-GUI.md) |
-| **Markdown Pipeline** | Rope text buffer, undo/redo runs, auto-pairing, syntax concealing, Fenwick height tree, custom canvas widget | [Markdown Pipeline](Markdown-Pipeline.md) |
-| **PDF Engine & Sidecars** | Single-worker PDFium thread, loose search, coordinate mapping, TOC recovery, reference preview, sidecar highlights | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) |
-| **Design Tokens & Motion** | 2px spacing grid, strict type scale, single easing curve motion, 0% idle CPU, fuzzy scoring engine | [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md) |
-| **Study Tracker** | Work intervals, pomodoro sessions, reading logs, milestone gates, SQLite domain models | [Study Tracker](Study-Tracker.md) |
-| **Data Flows & Invariants** | Keystroke to atomic save, dirty buffer navigation, 5 non-negotiable durability invariants | [Data Flows & Invariants](Data-Flows-and-Durability-Invariants.md) |
-| **User Guide & Features** | Complete user manual: vaults, markdown formatting, PDF split-view, search modes, keyboard shortcuts | [User Guide & Features](User-Guide-and-Feature-Manual.md) |
-| **Developer Guide & Testing** | Prerequisites, toolchain, PDFium binaries, unit & stress test suites, Linux desktop integration | [Developer Guide & Testing](Developer-Guide-and-Testing.md) |
-| **Contributor Guidelines** | Architectural constraints, design token compliance, PR verification checklist | [Contributor Guidelines](Contributor-Guidelines.md) |
+| **User Guide & Features** | Vaults, markdown editing, PDF reading, split view, search modes, tracker | [User Guide & Feature Manual](User-Guide-and-Feature-Manual.md) |
+| **Keyboard Shortcuts** | Every binding, and which layer owns it | [Keyboard Shortcuts](Keyboard-Shortcuts.md) |
+| **Architecture & Philosophy** | Local-first, portability, durability, non-destructive sidecars, threading | [Architecture & Philosophy](Architecture-and-Philosophy.md) |
+| **Repository Structure** | Workspace layout, crate boundaries, per-file responsibilities | [Repository Structure](Repository-Structure.md) |
+| **Core Services** | SQLite schema, portable paths, vault operations, atomic writes, wikilink graph | [Core Services](Core-Services.md) |
+| **Native Desktop GUI** | Application lifecycle, message enum, sub-state split, subscriptions, views | [Native Desktop GUI](Native-Desktop-GUI.md) |
+| **Markdown Pipeline** | Rope buffer, undo runs, auto-pairing, hybrid preview, Fenwick layout, draw pass | [Markdown Pipeline](Markdown-Pipeline.md) |
+| **PDF Engine & Sidecars** | PDFium worker, TOC recovery, reference resolver, sidecar annotations, linked notes | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) |
+| **PDF Viewer Internals** | Native PDF state, generation and pending invariants, navigation, scroll, zoom | [PDF Viewer Internals](PDF-Viewer-Internals.md) |
+| **Design Tokens & Motion** | Type scale, 2px spacing grid, radii, colors, one easing curve, zero idle CPU | [Design Tokens, Motion & Palette](Design-Tokens-Motion-and-Palette.md) |
+| **Study Tracker** | Timer, sessions, the configurable curriculum, gates, reading, storage | [Study Tracker](Study-Tracker.md) |
+| **Data Flows & Invariants** | Keystroke to atomic save, navigation, highlight creation, durability invariants | [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md) |
+| **Developer Guide & Testing** | Toolchain, build commands, PDFium resolution, test suites, desktop integration | [Developer Guide & Testing](Developer-Guide-and-Testing.md) |
+| **Release Checklist** | Pre-release verification, smoke test, packaging, known constraints | [Release Checklist](Release-Checklist.md) |
+| **Contributor Guidelines** | Architectural rules, design token compliance, PR verification | [Contributor Guidelines](Contributor-Guidelines.md) |
 
 ---
 
 ## Finding What You Need
 
-- **If you are a new user:** Read the [User Guide & Feature Manual](User-Guide-and-Feature-Manual.md) to discover all keyboard shortcuts, split-view reading workflows, search tools, and study tracker features.
-- **If you are a developer looking to contribute:** Review the [Contributor Guidelines](Contributor-Guidelines.md), read the [Developer Guide & Testing](Developer-Guide-and-Testing.md), and make sure you understand the [Data Flows & Invariants](Data-Flows-and-Durability-Invariants.md).
-- **If you are reviewing the code or systems design:** Explore the deep dives into [Markdown Pipeline](Markdown-Pipeline.md), [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md), and [Core Services](Core-Services.md).
+- **New user** — start with the [User Guide & Feature Manual](User-Guide-and-Feature-Manual.md)
+  and keep [Keyboard Shortcuts](Keyboard-Shortcuts.md) open beside it.
+- **New contributor** — read [Contributor Guidelines](Contributor-Guidelines.md), then
+  [Developer Guide & Testing](Developer-Guide-and-Testing.md), then
+  [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md).
+- **Reviewing the design** — the deep dives are [Markdown Pipeline](Markdown-Pipeline.md),
+  [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md),
+  [PDF Viewer Internals](PDF-Viewer-Internals.md), and [Core Services](Core-Services.md).
+- **Preparing a build** — [Release Checklist](Release-Checklist.md).
+
+---
+
+## Documentation Conventions
+
+- Every claim on these pages is meant to be checkable against the source file named
+  beside it. If a page and the code disagree, the code is right and the page is a bug.
+- Line-level details (exact constants, table columns, message variants) are quoted from
+  the modules that define them, so a rename should break a search rather than rot quietly.

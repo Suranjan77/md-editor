@@ -5,7 +5,8 @@
 //! This module is pure: it operates only on [`PdfPageText`] (already extracted
 //! by the single pdfium worker thread) plus the recovered table of contents. It
 //! never touches pdfium, so it is cheap, `Send`, and unit-testable windowlessly.
-//! See `pdf-text-scan-costs` / `pdf-toc-recovery` for the surrounding design.
+//! See the wiki page `PDF-Engine-and-Sidecars` for the surrounding design (text-scan
+//! costs, TOC recovery, and the chunked resolution path).
 //!
 //! Strategy: a one-pass scan builds a *target map* (label → location) for each
 //! reference family, then a second pass over the same text finds *call-sites*

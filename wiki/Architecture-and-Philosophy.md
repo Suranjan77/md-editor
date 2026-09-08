@@ -1,6 +1,8 @@
 # Architecture & Philosophy
 
-MD Editor is designed to be a calm, reliable, local-first desktop environment for technical notes, academic papers, and deep study. The software balances performance, crash resilience, and portability.
+MD Editor is a calm, reliable, local-first desktop environment for technical notes,
+academic papers, and deep study. Its design balances performance, crash resilience,
+and portability, and it deliberately keeps the domain engine free of any GUI toolkit.
 
 ---
 
@@ -8,83 +10,126 @@ MD Editor is designed to be a calm, reliable, local-first desktop environment fo
 
 ### Pillar 1: Local-First & Non-Proprietary Formats
 
-MD Editor does not lock your thoughts inside a proprietary database, an opaque container file, or a closed cloud ecosystem.
-- **The Vault is Just a Directory**: Your workspace is an ordinary folder on your local filesystem.
-- **Plain Files**: Markdown notes (`.md`, `.markdown`), PDF documents (`.pdf`), and media files (`.png`, `.jpg`, `.svg`, etc.) remain accessible to any standard CLI utility, text editor, or backup system (e.g., Git, rsync, Syncthing).
-- **No Cloud Synchronization Lock**: The application does not require user accounts, subscription keys, or continuous network connectivity.
+Nothing is locked inside a proprietary database, an opaque container, or a cloud account.
+
+- **The vault is just a directory.** Your workspace is an ordinary folder on the local
+  filesystem, opened through a native folder picker.
+- **Plain files.** Markdown notes (`.md`, `.markdown`), PDFs (`.pdf`), and images
+  (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`) stay usable by any editor, CLI tool,
+  or backup system — Git, rsync, Syncthing.
+- **No account, no network.** There are no user accounts, licence keys, or telemetry, and
+  the app never requires connectivity. The only network access in the whole project is the
+  *build script* fetching PDFium (see [Developer Guide](Developer-Guide-and-Testing.md)).
 
 ### Pillar 2: Zero-Configuration Portability
 
-Portability is an absolute guarantee. When you download or install MD Editor, it is engineered to run as a fully self-contained unit:
-- **Portable SQLite Database**: All application state, recent files, study tracker history, UI layouts, and PDF sidecar annotations reside in a single SQLite database: `md_editor_settings.sqlite`.
-- **Placement Strategy**: By default, this database is placed **directly beside the executable binary**. The entire application folder can be placed on a portable USB drive or moved across workstations without losing settings or annotations.
-- **Graceful Fallback Hierarchy**: If the application executable directory is read-only (e.g., packaged in a system-wide read-only directory like `/usr/bin`), the system automatically detects write restrictions and falls back gracefully:
-  1. Operating system user data directory:
-     - Linux: `$XDG_DATA_HOME/md-editor/` or `~/.local/share/md-editor/`
-     - Windows: `%APPDATA%\md-editor\`
-     - macOS: `~/Library/Application Support/md-editor/`
-  2. Current working directory fallback if platform directories are unavailable.
-- **Automatic Upstream Migration**: If an interim or legacy installation created a database in the user data directory, and the user subsequently runs a portable copy with write access beside the executable, the engine automatically migrates the database and its WAL/SHM sidecars back beside the executable on launch without data loss.
+- **One SQLite file.** All application state — settings, window size, per-document scroll
+  and cursor positions, PDF sidecar annotations, cached PDF text, resolved references, and
+  study history — lives in a single database, `md_editor_settings.sqlite`.
+- **Placed beside the executable by default.** `core/src/state.rs::data_dir()` puts the
+  database in `current_exe().parent()` whenever that directory is writable, so the whole
+  application travels as one folder on a USB stick or between workstations.
+- **Graceful fallback.** If the executable's directory is read-only (a system install under
+  `/usr/bin`, say), the resolution order continues:
+  1. the per-user platform data directory —
+     `$XDG_DATA_HOME/md-editor/` or `~/.local/share/md-editor/` on Linux,
+     `%APPDATA%\md-editor\` on Windows,
+     `~/Library/Application Support/md-editor/` on macOS;
+  2. the current working directory.
+- **One-time migration back to portable.** An interim version stored the database in the
+  per-user directory. If the portable location has no database yet but that legacy one
+  exists, `migrate_legacy_db()` copies it — along with its `-wal` and `-shm` sidecars —
+  beside the executable on launch. The legacy file is *left in place*, so an interrupted
+  copy loses nothing.
 
-### Pillar 3: Rock-Solid Durability & Continuity
+### Pillar 3: Durability & Continuity
 
-The editor guarantees that work typed into the application will not be lost due to application crashes, power outages, or accidental window termination.
-- **Memory is Transient, Disk is Source of Truth**: User edits are committed to disk via an automated debounce timer (400ms after the last keystroke).
-- **Atomic Save Protocol**: To avoid file truncation or corruption during an interrupted write:
-  1. Content is written to a temporary sibling file in the same directory (`.<filename>.<uuid>.tmp`).
-  2. The operating system kernel is instructed to flush its dirty pages to physical disk via `sync_all()`.
-  3. Existing filesystem permissions (e.g., `0600` on POSIX systems) are copied onto the replacement file.
-  4. The file is atomically renamed over the destination using the operating system's atomic rename primitive.
-- **Flush-Before-Switch Invariant**: Navigating to another note or opening a PDF automatically flushes any uncommitted edits in the active buffer to disk before switching views. If the write fails, navigation aborts to keep the user informed.
-- **Retained Buffer History (LRU)**: Switching between documents does not destroy undo/redo history. An in-memory LRU cache retains up to 32 active document buffers with their full undo stacks and cursor positions. If a file is modified externally while parked, the cache is cleanly invalidated.
-- **Session Restoration**: Application window size, open vault, active file, scroll positions, and cursor offsets are persisted to SQLite on exit and restored on restart.
+Work typed into the app must survive crashes, power loss, and abrupt window termination.
+
+- **Disk is the source of truth.** Edits are committed by an autosave debounce:
+  `AUTOSAVE_DEBOUNCE = 400ms` after the last keystroke, polled every
+  `AUTOSAVE_POLL = 100ms` (`native/src/editor_state.rs`).
+- **Atomic save protocol** (`core/src/vault.rs::write_file`), in the order the code
+  performs it:
+  1. the destination path is canonicalized, so a symlinked note is written *through* to its
+     target rather than replaced by a regular file;
+  2. content is written to a sibling temporary file in the same directory,
+     `.<filename>.<uuid>.tmp`, so the final rename can never cross a filesystem boundary;
+  3. the destination's existing permissions (for example `0600`) are copied onto the
+     temporary file;
+  4. `file.sync_all()` flushes the contents to physical storage;
+  5. `fs::rename()` atomically replaces the destination;
+  6. the parent directory is `sync_all()`ed, best-effort, so the rename itself survives a
+     power loss.
+- **Flush before switching.** Opening another note, a PDF, or an image flushes the active
+  buffer first. If that write fails, navigation is refused and the failure is reported,
+  rather than walking away from work that could not be persisted.
+- **Flush on close.** `Message::WindowCloseRequested` triggers one last save. It is
+  best-effort and does not block the close — an app that refuses to quit because a write is
+  failing is worse than losing the few hundred milliseconds autosave had not yet committed.
+- **Retained buffer history.** Switching documents parks the `DocBuffer` (with its undo
+  stack, cursor, and scroll offset) in an in-memory registry holding
+  `MAX_RETAINED_BUFFERS = 32` documents, evicting least-recently-used. A parked buffer is
+  discarded if the file's on-disk content diverged while it was away.
+- **Session restoration.** Window size (`window_size`), last vault (`last_vault`), last file
+  (`last_file`), and per-document scroll and cursor offsets (`scroll:<path>`,
+  `cursor:<path>`) are persisted to the `settings` table and restored on the next launch.
+  Window *position* is not persisted — only size.
 
 ### Pillar 4: Non-Destructive Sidecar Annotations
 
-Academic papers, technical specifications, and legal briefs are immutable reference materials.
-- **Immutable PDFs**: MD Editor never modifies, rewrites, or inserts proprietary annotation streams into original PDF files.
-- **External SQLite Storage**: All highlights, bookmarks, cross-references, notes, and backlink anchors are stored as sidecar entries in the SQLite database (`pdf_annotations` and `pdf_references`).
-- **Drift & Orphan Detection**: An integrated verification scanner checks whether the text currently under a saved bounding box matches the recorded annotation text, immediately alerting the user if an underlying PDF has been modified externally.
+Academic papers and technical specifications are reference material: the app treats them as
+immutable.
+
+- **PDFs are never rewritten.** MD Editor never modifies, re-saves, or injects annotation
+  streams into a `.pdf` file.
+- **External SQLite storage.** Highlights, quick notes, linked-note paths, and resolved
+  cross-references live in the `pdf_annotations` and `pdf_references` tables, keyed by a
+  content-derived `document_id`.
+- **Drift detection.** `pdf_orphan_report` compares each highlight's stored `selected_text`
+  against the text currently under its saved rectangle and reports how many annotations have
+  drifted. Because page text is loaded lazily, the report also states how many of the
+  annotations were actually checkable.
 
 ---
 
 ## 2. Architectural Boundaries & Crate Topology
 
-The repository is divided into two distinct Rust crates with clear separation of concerns:
-
 ```
 ┌────────────────────────────────────────────────────────┐
 │                   md-editor-native                     │
-│  - Iced 0.14 GUI Application Loop & Subscriptions      │
-│  - Custom Canvas Markdown Editor (DocBuffer, Ropey)    │
-│  - Fenwick HeightTree (O(log N) line height indexing)  │
-│  - Typora-style Hybrid Syntax Highlighter              │
-│  - Design Tokens & Motion Subsystem (0% Idle CPU)      │
-│  - Command Palette & Contextual Fuzzy Matcher          │
-│  - Interactive PDF Canvas & Drag Selection             │
+│  - Iced 0.14 application loop and subscriptions        │
+│  - Custom markdown editor Widget (DocBuffer, ropey)    │
+│  - Fenwick HeightTree for O(log N) line geometry       │
+│  - Hybrid (Typora-style) markdown preview              │
+│  - Design tokens and motion, zero idle CPU             │
+│  - Command palette and fuzzy matcher                   │
+│  - Interactive PDF widget, overlays, drag selection    │
 └───────────────────────────┬────────────────────────────┘
                             │ depends on
 ┌───────────────────────────▼────────────────────────────┐
 │                   md-editor-core                       │
-│  - AppState & Thread-safe Context (Arc, Mutex)         │
-│  - SQLite Engine (WAL mode, migrations, settings)      │
-│  - Vault Traversal & Atomic Write Primitives           │
-│  - Wikilink Resolution Engine & Backlink Graph         │
-│  - Full-Text Search (SQLite FTS5)                      │
-│  - PDFium Rendering Engine & Priority Worker Loop      │
-│  - Heuristic Reference Detection (Equations/Figures)   │
-│  - Study Tracker Domain Logic & Persistence            │
+│  - AppState, thread-safe context (Arc + Mutex)         │
+│  - SQLite engine (WAL, schema, user_version migrations)│
+│  - Vault traversal and atomic write primitives         │
+│  - Wikilink resolution and bidirectional backlinks     │
+│  - Full-text search over SQLite FTS5                   │
+│  - PDFium worker thread with a priority render queue   │
+│  - Internal reference resolver (equations/figures/…)   │
+│  - Study tracker domain logic and persistence          │
 └────────────────────────────────────────────────────────┘
 ```
 
 ### Decoupling Rules
 
-1. **`md-editor-core` is Headless**:
-   - Must never depend on `iced`, `winit`, or any windowing / graphical toolkit.
-   - All core operations must be 100% testable in headless automated test suites and CLI environments.
-2. **`md-editor-native` Owns Presentation**:
-   - Owns user interactions, canvas painting, input routing, and animation loops.
-   - Interacts with core services exclusively via thread-safe `AppState` methods or asynchronous background tasks.
+1. **`md-editor-core` is headless.** It must never depend on `iced`, `winit`,
+   `ratex-render`, or any windowing or graphics toolkit. Every core operation is testable
+   in a headless CI environment; the 56 core tests run without a display server.
+2. **`md-editor-native` owns presentation.** Interaction, painting, input routing, and
+   animation live here, and reach core only through thread-safe `AppState` methods or
+   async tasks.
+3. **PDFium is contained.** `pdfium-render` is interfaced *only* through
+   `core/src/pdf.rs`. Native views deal in safe messages, decoded images, and plain data.
 
 ---
 
@@ -92,24 +137,28 @@ The repository is divided into two distinct Rust crates with clear separation of
 
 ```mermaid
 graph TD
-    User([User Keystroke / Interaction]) --> UIThread[UI Main Thread - Iced Event Loop]
-    UIThread -->|Immediate Edit| LocalBuffer[DocBuffer - in-memory rope]
-    UIThread -->|Dispatches Async Task| TokioPool[Tokio Async Runtime Threadpool]
-    TokioPool -->|Read/Write File| VaultIO[Vault Atomic Disk I/O]
-    TokioPool -->|FTS Search Query| SQLiteThread[SQLite Connection Mutex]
-    UIThread -->|Render PDF Page Message| PriorityChan[Priority Render Channel]
-    UIThread -->|Background Cache Request| NormalChan[Standard Work Channel]
-    PriorityChan --> PDFWorker[Dedicated PDFium Worker Thread]
+    User(["User keystroke or interaction"]) --> UIThread["UI main thread — Iced event loop"]
+    UIThread -->|"immediate edit"| LocalBuffer["DocBuffer — in-memory rope"]
+    UIThread -->|"dispatches iced::Task"| TokioPool["Tokio async runtime"]
+    TokioPool -->|"read / atomic write"| VaultIO["Vault disk I/O"]
+    TokioPool -->|"FTS5 query"| SQLiteThread["SQLite connection behind a Mutex"]
+    UIThread -->|"target page render"| PriorityChan["Priority channel"]
+    UIThread -->|"prefetch, text, links, search"| NormalChan["Standard command channel"]
+    PriorityChan --> PDFWorker["Dedicated PDFium worker thread"]
     NormalChan --> PDFWorker
-    PDFWorker -->|Raw Pixel Buffer Handle| UIThread
+    PDFWorker -->|"decoded image or typed result"| UIThread
 ```
 
-1. **UI Main Thread (Iced Event Loop)**:
-   - Handles OS window events, keyboard typing, mouse clicks, and canvas rendering.
-   - Never blocks on long-running disk operations or PDF rendering.
-2. **Tokio Async Runtime**:
-   - Executes background tasks: autosave flushes, full-text search indexing, and syntax highlighting for large files (> 5,000 lines).
-3. **Dedicated PDFium Worker Thread**:
-   - Google's PDFium library maintains process-global state through internal C++ static structures.
-   - To eliminate race conditions and avoid multi-threading conflicts in PDFium FFI, all PDF operations run on a **single, dedicated background worker thread**.
-   - Communication with the worker uses two prioritized MPSC channels: a **priority channel** for immediately visible pages, and a **normal channel** for background prefetching.
+1. **UI main thread (Iced event loop).** Window events, typing, clicks, layout, and drawing.
+   It never blocks on disk or PDF work.
+2. **Tokio async runtime.** Background tasks dispatched as `iced::Task`: autosave writes,
+   vault indexing, FTS queries, PDF page renders and text extraction, and syntax
+   highlighting for large documents.
+3. **Dedicated PDFium worker thread.** `pdfium-render` stores its bindings in a
+   process-global cell, so exactly one `Pdfium` binding exists per process and *all* PDF
+   work is serialized onto one background thread spawned by `PdfRenderer::new()`. It
+   communicates over two `std::sync::mpsc` channels — a **priority** channel for the page
+   the reader is looking at, and a **standard** channel for everything else. The worker
+   drains the priority channel (keeping only the newest request) before each standard
+   command. It cannot interrupt an operation already in flight; see
+   [PDF Viewer Internals](PDF-Viewer-Internals.md) for the full scheduling rules.

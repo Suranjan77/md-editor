@@ -1,41 +1,54 @@
-# Study Tracker Subsystem
+# Study Tracker
 
-MD Editor includes an integrated study and research tracker designed for deep-work intervals, reading logs, milestone gates, and course progression. Unlike external habit trackers, the tracker runs inside your desktop workspace directly alongside your notes and PDFs.
+MD Editor ships an integrated study tracker: a timer, a session log, and a **configurable
+curriculum** of phases, projects, checkpoint gates, and reading lists. It lives inside the
+workspace, beside the notes and papers it is tracking, and its data is in the same portable
+SQLite database as everything else.
+
+It is opened from the toolbar or from the command palette (`Ctrl+P` → *Study Tracker*), and
+closed with `Escape`.
 
 ---
 
-## 1. Domain Model & SQLite Schema
+## 1. Storage
 
-All tracker data resides in the portable SQLite settings database (`md_editor_settings.sqlite`) across three dedicated tables:
+Three tables in `md_editor_settings.sqlite`, plus one `settings` key:
 
 ```mermaid
 erDiagram
     tracker_sessions {
-        INTEGER id PK
-        TEXT date "ISO date string (YYYY-MM-DD)"
-        REAL hours "Session duration in hours"
-        TEXT activity_type "Reading, Coding, Writing, Review"
-        TEXT phase "Phase 1, Phase 2, etc."
-        TEXT notes "Optional markdown notes"
+        INTEGER id PK "autoincrement"
+        TEXT date "YYYY-MM-DD or YYYY-MM-DD HH:MM"
+        REAL hours "duration in hours"
+        TEXT activity_type "e.g. Study"
+        TEXT phase "e.g. Focus"
+        TEXT notes "optional, nullable"
     }
-
-    tracker_activity {
-        INTEGER id PK
-        TEXT type "Event category"
-        TEXT text "Event description"
-        TEXT time "Timestamp"
-    }
-
     tracker_kv {
-        TEXT key PK "Configuration key"
-        TEXT value "Configuration value"
+        TEXT key PK "proj_<id>, gate_<id>_<n>, read_<section>_<n>"
+        TEXT value "status or checked flag"
+    }
+    tracker_activity {
+        INTEGER id PK "autoincrement"
+        TEXT type
+        TEXT text
+        TEXT time
     }
 ```
 
-### Struct Definitions ([`core/src/tracker.rs`](file:///home/sur/repo/md-editor/core/src/tracker.rs))
+- **`tracker_sessions`** — one row per logged interval, whether timed or entered by hand.
+- **`tracker_kv`** — the checkbox and status state of the curriculum: project statuses, gate
+  item ticks, reading item ticks. Written through
+  `tracker::set_kv(state, key, value)`, an upsert.
+- **`tracker_activity`** — created by the schema and available for an activity feed; the
+  current UI does not write to it.
+- **`settings['tracker_config']`** — the curriculum itself, as JSON. It lives in `settings`
+  rather than `tracker_kv` because it is one document, not a set of flags, and it is only
+  accepted after `parse_config` validates it.
+
+### Domain types (`core/src/tracker.rs`)
 
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StudySession {
     pub id: i64,
     pub date: String,
@@ -45,62 +58,109 @@ pub struct StudySession {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackerKv {
-    pub key: String,
-    pub value: String,
+pub struct TrackerKv { pub key: String, pub value: String }
+```
+
+### Persistence helpers
+
+| Function | Behaviour |
+| :--- | :--- |
+| `save_session(state, session)` | Inserts a row; `id` is assigned by SQLite |
+| `delete_session(state, id)` | Removes one row |
+| `get_sessions(state)` | All sessions, `ORDER BY date DESC`. A malformed row is skipped **and logged** — silently dropping study history would hide corruption |
+| `get_total_hours(state)` | `SELECT SUM(hours) FROM tracker_sessions` |
+| `get_kv(state)` | All key/values, ordered by key |
+| `set_kv(state, key, value)` | Upsert via `ON CONFLICT(key) DO UPDATE` |
+
+---
+
+## 2. The Interface (`views/tracker.rs`, `tracker_state.rs`)
+
+Six tabs: **Dashboard**, **Log**, **Projects**, **Gates**, **Reading**, **Config**.
+
+### Dashboard
+
+Four KPI cards computed from the loaded sessions and the parsed config:
+
+| Card | Value | Caption |
+| :--- | :--- | :--- |
+| `TOTAL TIME` | Sum of every session's hours, one decimal | Accumulated |
+| `SESSIONS` | Session count | Total sessions |
+| `AVERAGE` | Total ÷ count | Per session |
+| `CURRICULUM` | Number of configured phases | Configured roadmap |
+
+Below them: the timer control (*Start Timer* / *Stop Timer*), a summary of projects, gates,
+and reading tracks, and recent history.
+
+### The timer
+
+Deliberately minimal — one button, no dialog:
+
+- **Start** records `Instant::now()` and toasts *"Study timer started"*.
+- **Stop** computes `elapsed.as_secs_f32() / 3600.0`, floored at `0.01` hours so a very short
+  session still records something, and saves a `StudySession` **immediately** with
+  `date` = `chrono::Local::now()` as `"%Y-%m-%d %H:%M"`, `activity_type = "Study"`,
+  `phase = "Focus"`, and no notes. It toasts *"Study session saved"*.
+
+There is no pause, no pomodoro cycle, and no post-stop dialog. To record an activity type or
+notes, use the Log tab's manual entry, which takes a date, an hours value, and free-text
+notes.
+
+### Log
+
+The session history, newest first, with per-row delete, and the manual-entry form described
+above.
+
+### Projects, Gates, Reading
+
+These render whatever the configuration defines:
+
+- **Projects** — each project shows its id, its phase, and a status the user cycles; the
+  choice is stored as `tracker_kv["proj_<id>"]`.
+- **Gates** — checkpoint groups, each a titled list of criteria you tick off. Gates are a
+  *self-assessment checklist*, not an enforcement mechanism: nothing in the app blocks
+  progress on an unticked gate.
+- **Reading** — sections of titles, each carrying a priority (`critical`, `important`), that
+  you tick as you finish them.
+
+### Config
+
+A JSON editor over `TrackerConfig`. `TrackerConfigSave` runs `parse_config` first, which
+requires at least one phase and at least one project; an invalid document is rejected rather
+than saved, and a stored config that fails to parse falls back to the built-in default.
+
+```json
+{
+  "PHASES":   [{ "id": "1A", "title": "Mathematics", "year": "Year 1", "months": "Months 1-4" }],
+  "PROJECTS": [{ "id": "1.1", "phase": "1A", "name": "SVD from scratch" }],
+  "GATES":    [{ "id": "1A", "title": "Gate 1A - Mathematics",
+                 "items": ["Derive SVD from eigendecomposition"] }],
+  "READING":  [{ "section": "Textbooks - Mathematics",
+                 "items": [{ "priority": "critical", "title": "Linear Algebra Done Right" }] }]
 }
 ```
 
 ---
 
-## 2. Core Tracker Operations
+## 3. The Default Curriculum
 
-[`core/src/tracker.rs`](file:///home/sur/repo/md-editor/core/src/tracker.rs) exposes high-level persistence helpers:
+Out of the box the tracker is seeded with a concrete four-year roadmap toward research in
+efficient machine learning — 17 phases (`1A` Mathematics through `4C` Original Research),
+20 projects, 6 checkpoint gates, and a reading list spanning mathematics, systems, deep
+learning, and efficiency papers.
 
-- **`save_session(state, session)`**: Inserts a new study interval.
-- **`delete_session(state, id)`**: Removes an errant or test entry.
-- **`get_sessions(state)`**: Retrieves all logged sessions in descending date order.
-- **`get_total_hours(state)`**: Queries SQLite for cumulative study duration:
-  ```sql
-  SELECT SUM(hours) FROM tracker_sessions;
-  ```
-- **`get_kv(state)` / `set_kv(state, key, value)`**: Manages custom tracker configuration (e.g. daily target hours, active milestone gates, pomodoro interval lengths).
+This is a **starting point, not a fixed structure.** The Config tab replaces it wholesale:
+the tracker itself knows nothing about machine learning, only about phases, projects, gates,
+and reading sections. A language course, a thesis, or a certification path fits the same
+four collections.
 
 ---
 
-## 3. UI State & Workflow ([`views/tracker.rs`](file:///home/sur/repo/md-editor/native/src/views/tracker.rs))
+## 4. Lifecycle Notes
 
-The study tracker is accessible from the top toolbar or via the Command Palette (`Ctrl+P` -> `Open Tracker`).
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  STUDY TRACKER                              [Active: 00:42] │
-├─────────────────────────────────────────────────────────────┤
-│  Today: 2.5 hrs  /  Target: 4.0 hrs  [████████░░░░░] 62%    │
-│  Total Vault Study Time: 124.5 hrs                          │
-├─────────────────────────────────────────────────────────────┤
-│  [ Start Timer ]   [ Pause ]   [ Log Custom Session ]       │
-├─────────────────────────────────────────────────────────────┤
-│  Milestone Gates:                                           │
-│  [x] Complete Chapter 4 Reading                             │
-│  [x] Exercise Proofs 4.1 - 4.8                              │
-│  [ ] Implement Binary Indexed Tree (Fenwick)                │
-├─────────────────────────────────────────────────────────────┤
-│  Recent History:                                            │
-│  • 2026-09-08: 1.5 hrs — Paper Review: Attention Mechanisms │
-│  • 2026-09-07: 2.0 hrs — Core Architecture Implementation   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Key Workflows
-
-1. **Active Interval Timer**:
-   - Starting a timer tracks time elapsed in real-time.
-   - When stopped, opens a session logger pre-filled with the exact duration, prompting for activity type (e.g., *Paper Review*, *Coding*, *Lecture Notes*) and optional summary notes.
-2. **Daily Quotas & Visual Progress**:
-   - Configure your target daily study hours (stored in `tracker_kv` as `daily_target_hours`).
-   - Progress bar visually indicates current progress toward your goal.
-3. **Milestone Gates**:
-   - Establish sequential project or study phases.
-   - Gates ensure prerequisites are completed before progressing to the next stage of research.
+- `TrackerState::new` loads sessions and key/values once at startup, and validates the
+  stored config before adopting it.
+- Opening the panel (`TrackerToggle`) reloads from disk, so an external edit to the database
+  or a change made in another session is picked up.
+- Side effects that belong to the global UI are emitted as `Message::ShowToast` tasks rather
+  than reaching back into the shell — the tracker never touches another pane's state.
