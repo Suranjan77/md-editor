@@ -38,6 +38,18 @@ build does not ship regardless of what else works.
 5. **Session restored.** Quit and relaunch: same window size, same file, same
    scroll offset and cursor position.
 
+## Motion And Palette Checks
+
+- Toggle the sidebar, table of contents and backlinks. Each slides rather than
+  snapping, and the window is idle (no CPU) once the transition finishes.
+- Trigger a toast (save a file). It fades in and out rather than blinking.
+- Press `Ctrl+P` and type immediately, without clicking. The query field
+  already has focus.
+- Type a few letters of a note's name; the note appears among the results.
+  Move the highlight with Up/Down and open it with Enter.
+- Type initials of a command (for example `sv`) and confirm that command ranks
+  first. Press Escape and confirm the palette closes.
+
 ## Smoke Test
 
 Use a fresh temporary vault and verify:

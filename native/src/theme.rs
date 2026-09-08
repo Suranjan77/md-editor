@@ -81,6 +81,18 @@ pub const DANGER: Color = Color::from_rgb8(238, 125, 119); // #ee7d77
 pub const SUCCESS: Color = Color::from_rgb8(217, 242, 210); // #d9f2d2
 pub const WARNING: Color = Color::from_rgb8(191, 218, 212); // #bfdad4
 
+/// `color` at `opacity` of its own alpha.
+///
+/// Fading a whole overlay means scaling every colour it draws by the same
+/// factor; doing it through one helper keeps a half-faded panel internally
+/// consistent instead of some parts leading others.
+pub fn fade(color: Color, opacity: f32) -> Color {
+    Color {
+        a: color.a * opacity.clamp(0.0, 1.0),
+        ..color
+    }
+}
+
 /// Build the custom dark theme.
 pub fn md_editor_theme() -> Theme {
     Theme::custom_with_fn(

@@ -92,6 +92,10 @@ pub struct MdEditor {
     /// Whether the current run of autosave failures has already been reported.
     /// Retries continue quietly; only the first failure raises a toast.
     autosave_failure_reported: bool,
+
+    /// In-flight UI transitions (panels opening, toasts fading). Mirrors the
+    /// visibility flags that live on the sub-states; see [`crate::motion`].
+    motion: crate::motion::Motion,
 }
 
 /// How long a path stays marked as "we just wrote this". Comfortably longer
@@ -132,6 +136,7 @@ impl MdEditor {
             active_panel: ActivePanel::Markdown,
             self_writes: std::collections::HashMap::new(),
             autosave_failure_reported: false,
+            motion: crate::motion::Motion::new(),
         };
 
         // Seed the geometry the window was actually restored at. Without this,
@@ -314,8 +319,17 @@ impl MdEditor {
             None => Subscription::none(),
         };
 
+        // Redraw every frame only while something is actually moving; a
+        // settled UI subscribes to nothing.
+        let animation = if self.motion.is_animating() {
+            iced::window::frames().map(Message::AnimationTick)
+        } else {
+            Subscription::none()
+        };
+
         Subscription::batch(vec![
             keyboard,
+            animation,
             toast,
             highlight_debounce,
             autosave,
@@ -328,6 +342,17 @@ impl MdEditor {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.update_inner(message);
+
+        // Point every transition at the flags that own the real state. Doing
+        // it here, once, means a flag flipped anywhere animates without the
+        // code that flipped it having to know motion exists.
+        self.motion.sync(
+            self.vault.sidebar_visible,
+            self.editor.toc_visible,
+            self.vault.backlinks_visible,
+            self.ui.toast.as_deref(),
+            self.ui.command_palette_visible,
+        );
         // Refresh the memoized search-match cache once per message so the
         // subsequent view() can read it without rescanning the buffer.
         self.search.ensure_matches(
@@ -542,6 +567,18 @@ impl MdEditor {
             }
             // UI chrome arms that mutate only `self.ui` are routed to
             // `UiState::update`; see ui_state.rs.
+            // Opening the palette also puts the caret in its field: a palette
+            // you have to click into first is not reachable from the keyboard,
+            // which is the only reason it exists.
+            Message::CommandPaletteOpen => {
+                let task = self.ui.update(Message::CommandPaletteOpen);
+                Task::batch(vec![
+                    task,
+                    operation::focus(iced::advanced::widget::Id::new(
+                        views::command_palette::PALETTE_INPUT_ID,
+                    )),
+                ])
+            }
             m @ (Message::CreateFileDialog
             | Message::CreateFolderDialog
             | Message::DeleteFileDialog(_)
@@ -550,8 +587,6 @@ impl MdEditor {
             | Message::PdfLinkNoteFileSelected(_)
             | Message::PdfLinkNotePickerSearchChanged(_)
             | Message::NameModalCancel
-            | Message::NameModalSubmitCurrent
-            | Message::CommandPaletteOpen
             | Message::CommandPaletteQueryChanged(_)
             | Message::ShowToast(_)
             | Message::ToastHide
@@ -657,6 +692,10 @@ impl MdEditor {
                     SaveOutcome::NothingToDo => {}
                     SaveOutcome::Failed(err) => self.ui.toast = Some(format!("Save failed: {err}")),
                 }
+                Task::none()
+            }
+            Message::AnimationTick(now) => {
+                self.motion.now = now;
                 Task::none()
             }
             Message::AutosaveElapsed => {
@@ -1145,6 +1184,35 @@ impl MdEditor {
             }
 
             m @ Message::TrackerToggle => self.tracker.update(m, &self.state),
+            Message::NameModalSubmitCurrent => {
+                // Enter belongs to the palette while it is open; otherwise it
+                // falls through to whatever modal is showing.
+                if self.ui.command_palette_visible {
+                    let action = views::command_palette::action_at(
+                        &self.ui.command_palette_query,
+                        &self.ui.commands,
+                        &self.vault.entries,
+                        self.ui.palette_selected,
+                    );
+                    return match action {
+                        Some(views::command_palette::PaletteAction::Command(shortcut)) => {
+                            Task::done(Message::CommandPaletteCommandClicked(shortcut))
+                        }
+                        Some(views::command_palette::PaletteAction::OpenFile(path)) => {
+                            Task::done(Message::CommandPaletteFileClicked(path))
+                        }
+                        None => Task::none(),
+                    };
+                }
+                self.ui.update(Message::NameModalSubmitCurrent)
+            }
+            Message::CommandPaletteFileClicked(path) => {
+                self.ui.command_palette_visible = false;
+                self.ui.command_palette_query.clear();
+                // Reuse the sidebar's open path: it already routes markdown,
+                // PDFs and images to the right viewer.
+                Task::done(Message::SidebarFileClicked(path))
+            }
             Message::CommandPaletteCommandClicked(shortcut) => {
                 self.ui.command_palette_visible = false;
                 self.ui.command_palette_query.clear();
@@ -1336,6 +1404,23 @@ impl MdEditor {
                 }
             }
             Message::PdfScrollBy(delta) => {
+                // The palette owns the arrow keys while it is open.
+                if self.ui.command_palette_visible {
+                    let count = views::command_palette::result_count(
+                        &self.ui.command_palette_query,
+                        &self.ui.commands,
+                        &self.vault.entries,
+                    );
+                    if count > 0 {
+                        let last = count - 1;
+                        self.ui.palette_selected = if delta > 0.0 {
+                            (self.ui.palette_selected + 1).min(last)
+                        } else {
+                            self.ui.palette_selected.saturating_sub(1)
+                        };
+                    }
+                    return Task::none();
+                }
                 if self.pdf.active_path.is_none()
                     || (!self.showing_pdf
                         && !(self.ui.split_view_active && self.active_path.is_some()))
@@ -1782,11 +1867,10 @@ impl MdEditor {
                             focus_global_search_input()
                         }
                     }
-                    Shortcut::CommandPalette => {
-                        self.ui.command_palette_visible = true;
-                        self.ui.command_palette_query.clear();
-                        Task::none()
-                    }
+                    // Routed through the message rather than setting the flag
+                    // here, so the shortcut and any other opener share one
+                    // path — including focusing the query field.
+                    Shortcut::CommandPalette => Task::done(Message::CommandPaletteOpen),
                     Shortcut::ToggleBacklinks => {
                         self.vault.backlinks_visible = !self.vault.backlinks_visible;
                         Task::none()
@@ -1968,7 +2052,12 @@ impl MdEditor {
             self.active_path.is_some(),
         );
 
-        let sidebar = views::sidebar::view(
+        // Panels are clipped to an animated width rather than swapped between
+        // "full" and "absent", so opening and closing them reads as movement.
+        // The content keeps its natural width throughout; only the window onto
+        // it changes, which avoids re-laying-out the tree on every frame.
+        let sidebar_width = self.motion.sidebar_width();
+        let sidebar: Element<Message, Theme, iced::Renderer> = container(views::sidebar::view(
             &self.vault.entries,
             self.vault.selected_path.as_deref(),
             self.active_path
@@ -1976,8 +2065,11 @@ impl MdEditor {
                 .or(self.pdf.active_path.as_deref())
                 .or(self.active_image_path.as_deref()),
             &self.vault.expanded_folders,
-            !self.vault.sidebar_visible,
-        );
+            sidebar_width < 1.0,
+        ))
+        .width(Length::Fixed(sidebar_width))
+        .clip(true)
+        .into();
 
         let editor_search_active = self.editor_search_is_active();
         let pdf_search_active = self.pdf_search_is_active();
@@ -2109,9 +2201,16 @@ impl MdEditor {
 
         let pdf_toc_available = self.pdf.active_path.is_some()
             && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()));
+        let toc_width = self.motion.toc_width();
         let toc_view: Element<Message, Theme, iced::Renderer> =
-            if self.editor.toc_visible && pdf_toc_available {
-                views::toc::view(&self.pdf.toc_entries, self.pdf.toc_is_synthetic)
+            if toc_width >= 1.0 && pdf_toc_available {
+                container(views::toc::view(
+                    &self.pdf.toc_entries,
+                    self.pdf.toc_is_synthetic,
+                ))
+                .width(Length::Fixed(toc_width))
+                .clip(true)
+                .into()
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
@@ -2198,8 +2297,13 @@ impl MdEditor {
 
         let content = column![toolbar, main_content].height(Length::Fill);
 
-        let backlinks_view: Element<Message, Theme, iced::Renderer> =
-            views::backlinks::view(&self.vault.backlinks, self.vault.backlinks_visible);
+        let backlinks_width = self.motion.backlinks_width();
+        let backlinks_view: Element<Message, Theme, iced::Renderer> = container(
+            views::backlinks::view(&self.vault.backlinks, backlinks_width >= 1.0),
+        )
+        .width(Length::Fixed(backlinks_width))
+        .clip(true)
+        .into();
 
         let layout = row![sidebar, content, backlinks_view, toc_view].height(Length::Fill);
 
@@ -2241,19 +2345,28 @@ impl MdEditor {
             );
         }
 
-        if self.ui.command_palette_visible {
+        // Kept mounted through the fade-out, so dismissing the palette is a
+        // transition rather than a cut.
+        let palette_opacity = self.motion.palette_opacity();
+        if palette_opacity > 0.01 {
             layers.push(
                 container(views::command_palette::view(
                     &self.ui.command_palette_query,
                     &self.ui.commands,
+                    &self.vault.entries,
+                    self.ui.palette_selected,
+                    palette_opacity,
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
-                .style(|_| container::Style {
+                .style(move |_| container::Style {
                     background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        0.0, 0.0, 0.0, 0.58,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.58 * palette_opacity,
                     ))),
                     ..Default::default()
                 })
@@ -2343,9 +2456,12 @@ impl MdEditor {
             layers.push(modal.into());
         }
 
-        if let Some(msg) = &self.ui.toast {
+        // Driven by the animation, not by `ui.toast` directly, so the toast
+        // survives long enough to fade out after the message is cleared.
+        let toast_opacity = self.motion.toast_opacity();
+        if toast_opacity > 0.01 {
             layers.push(
-                container(views::toast::view(msg))
+                container(views::toast::view(&self.motion.toast_text, toast_opacity))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .align_x(Alignment::Center)

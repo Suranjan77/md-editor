@@ -1,7 +1,9 @@
 mod app;
 mod editor;
 mod editor_state;
+mod fuzzy;
 mod messages;
+mod motion;
 mod pdf_notes;
 mod pdf_pane;
 mod search;

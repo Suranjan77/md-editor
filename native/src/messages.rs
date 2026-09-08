@@ -27,6 +27,8 @@ pub enum Message {
     CommandPaletteOpen,
     CommandPaletteQueryChanged(String),
     CommandPaletteCommandClicked(Shortcut),
+    /// A vault file picked from the palette's search results.
+    CommandPaletteFileClicked(String),
     NameModalInputChanged(String),
     NameModalSubmit(String),
     NameModalSubmitCurrent,
@@ -53,6 +55,8 @@ pub enum Message {
     HighlightDebounceElapsed,
     /// The autosave debounce window elapsed; write the buffer if still dirty.
     AutosaveElapsed,
+    /// A frame is being prepared; advance in-flight UI transitions.
+    AnimationTick(std::time::Instant),
 
     // ── PDF ──────────────────────────────────────────────────────
     PdfZoomChanged(f32),

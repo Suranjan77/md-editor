@@ -167,6 +167,40 @@ PDF support uses a platform-specific PDFium dynamic library. The application loo
 - PDF: `.pdf`
 - Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`
 
+## Motion
+
+Panels, overlays and toasts move between their states rather than snapping.
+The vocabulary is one easing curve and three durations (120ms for small
+transitions, 180ms for panels, 140ms for overlays), declared in
+`native/src/motion.rs` alongside the animation state.
+
+Side panels animate their width and clip their contents, so opening the file
+tree or the table of contents reads as a reveal instead of a jump. The toast
+fades in and out, and survives the underlying message being cleared so the
+fade-out has something to draw.
+
+The per-frame redraw subscription is armed only while something is actually
+moving; a settled window uses no CPU at all.
+
+## Command Palette
+
+`Ctrl+P` opens a palette that searches commands and vault files together. The
+query field takes focus immediately, so the palette is reachable without the
+mouse.
+
+- Fuzzy matching: characters must appear in order but need not be adjacent, so
+  initials (`sv` for Split View) and partial names both work.
+- Word starts outrank mid-word hits, runs of adjacent characters outrank
+  scattered ones, and a match in a file's own name outranks one in a folder
+  along its path.
+- Commands and files are ranked against each other and interleaved by
+  relevance rather than split into fixed sections.
+- Up and Down move the highlighted row, Enter activates it, Escape closes.
+  Files open in the right viewer for their type.
+
+Commands are declared in one registry in `views/command_palette.rs`, so the
+palette and the shortcut list cannot drift apart.
+
 ## Visual System
 
 Application chrome draws from a single set of design tokens in
