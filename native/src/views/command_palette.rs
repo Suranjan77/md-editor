@@ -175,17 +175,28 @@ fn row_button<'a>(
     )
     .width(Length::Fill)
     .on_press(on_press)
-    .style(move |_, _| button::Style {
-        // The keyboard selection has to be visible, or arrow keys move an
-        // invisible cursor and Enter is a guess.
-        background: is_selected
-            .then(|| iced::Background::Color(theme::fade(theme::BG_TERTIARY, opacity))),
-        text_color: theme::fade(theme::TEXT_PRIMARY, opacity),
-        border: iced::Border {
-            radius: theme::RADIUS_SM.into(),
+    .style(move |_, status| {
+        // The keyboard selection has to be visible, or the arrow keys move an
+        // invisible cursor and Enter is a guess. Hover is shown too, more
+        // faintly, so the pointer and the keyboard agree about what a row is.
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let fill = if is_selected {
+            Some(theme::fade(theme::BG_TERTIARY, opacity))
+        } else if hovered {
+            Some(theme::fade(theme::BG_TERTIARY, opacity * 0.5))
+        } else {
+            None
+        };
+
+        button::Style {
+            background: fill.map(iced::Background::Color),
+            text_color: theme::fade(theme::TEXT_PRIMARY, opacity),
+            border: iced::Border {
+                radius: theme::RADIUS_SM.into(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
+        }
     })
     .into()
 }
