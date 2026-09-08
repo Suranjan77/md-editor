@@ -34,7 +34,7 @@ fn is_excluded_dir(name: &str) -> bool {
 /// Whether a directory entry is a symlink. Symlinked directories are not
 /// followed during walks so a symlink cycle can never make indexing hang.
 fn is_symlink(path: &Path) -> bool {
-    fs::symlink_metadata(path).map_or(false, |m| m.file_type().is_symlink())
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
 }
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -77,36 +77,36 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
     // without holding any lock (pdfium extraction is slow); skipped entirely
     // when no renderer is available (e.g. headless/test builds).
     let mut pdf_indexed: Vec<(String, String)> = Vec::new();
-    if let Some(renderer) = state.pdf_renderer.as_ref() {
-        if let Ok(pdf_files) = list_all_pdf_files(&root) {
-            for pdf_path in pdf_files {
-                let rel_path = pdf_path
-                    .strip_prefix(&root)
-                    .unwrap_or(&pdf_path)
-                    .to_string_lossy()
-                    .to_string();
-                let (file_size, modified_at) = file_size_and_mtime(&pdf_path);
+    if let Some(renderer) = state.pdf_renderer.as_ref()
+        && let Ok(pdf_files) = list_all_pdf_files(&root)
+    {
+        for pdf_path in pdf_files {
+            let rel_path = pdf_path
+                .strip_prefix(&root)
+                .unwrap_or(&pdf_path)
+                .to_string_lossy()
+                .to_string();
+            let (file_size, modified_at) = file_size_and_mtime(&pdf_path);
 
-                // Reuse cached text when the PDF is unchanged; only fall back to
-                // the (slow) pdfium extraction when size/mtime differ.
-                let text = if let Some(cached) =
-                    state.get_cached_pdf_text(&rel_path, file_size, modified_at)
-                {
-                    cached
-                } else {
-                    match renderer.extract_document_text(&pdf_path.to_string_lossy()) {
-                        Ok(text) => {
-                            // Cache even empty results (e.g. scanned PDFs) so we
-                            // don't re-extract them on every open.
-                            state.put_cached_pdf_text(&rel_path, file_size, modified_at, &text);
-                            text
-                        }
-                        Err(_) => continue,
+            // Reuse cached text when the PDF is unchanged; only fall back to
+            // the (slow) pdfium extraction when size/mtime differ.
+            let text = if let Some(cached) =
+                state.get_cached_pdf_text(&rel_path, file_size, modified_at)
+            {
+                cached
+            } else {
+                match renderer.extract_document_text(&pdf_path.to_string_lossy()) {
+                    Ok(text) => {
+                        // Cache even empty results (e.g. scanned PDFs) so we
+                        // don't re-extract them on every open.
+                        state.put_cached_pdf_text(&rel_path, file_size, modified_at, &text);
+                        text
                     }
-                };
-                if !text.trim().is_empty() {
-                    pdf_indexed.push((rel_path, text));
+                    Err(_) => continue,
                 }
+            };
+            if !text.trim().is_empty() {
+                pdf_indexed.push((rel_path, text));
             }
         }
     }
@@ -150,7 +150,7 @@ pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
 
     if abs_path
         .extension()
-        .map_or(false, |e| is_image(e.to_str().unwrap_or("")))
+        .is_some_and(|e| is_image(e.to_str().unwrap_or("")))
     {
         read_image(&abs_path)
     } else {
@@ -199,7 +199,9 @@ pub fn sync_path_from_disk(state: &AppState, rel_path: &str) -> Result<(), Strin
         guard.as_ref().ok_or("No vault root set")?.clone()
     };
     let abs = resolve_vault_path_checked(&vault_root, rel_path)?;
-    let is_md = abs.extension().map_or(false, |e| e == "md" || e == "markdown");
+    let is_md = abs
+        .extension()
+        .is_some_and(|e| e == "md" || e == "markdown");
     if !is_md {
         return Ok(());
     }
@@ -279,7 +281,7 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
     let is_md_file = abs_old.is_file()
         && abs_old
             .extension()
-            .map_or(false, |e| e == "md" || e == "markdown");
+            .is_some_and(|e| e == "md" || e == "markdown");
 
     // Snapshot the files that link to this note *before* mutating the index —
     // these are the ones whose `[[wikilinks]]` need rewriting.
@@ -663,18 +665,90 @@ fn read_file(path: &Path) -> Result<String, String> {
 fn read_image(path: &Path) -> Result<Vec<u8>, String> {
     if !path
         .extension()
-        .map_or(false, |e| is_image(e.to_str().unwrap_or("")))
+        .is_some_and(|e| is_image(e.to_str().unwrap_or("")))
     {
         return Err(format!("Not an image: {}", path.display()));
     }
     fs::read(path).map_err(|e| format!("Failed to read image {}: {}", path.display(), e))
 }
 
+/// Write `content` to `path` atomically.
+///
+/// A plain `fs::write` truncates the destination before it writes, so a crash
+/// or power loss part-way through leaves a half-written note where a good one
+/// used to be. Instead the content goes to a temporary file in the *same*
+/// directory (so the final step is a same-filesystem rename), is flushed to
+/// disk with `sync_all`, and only then replaces the destination. `rename` is
+/// atomic, so a reader either sees the whole old file or the whole new one —
+/// never a truncated mix.
+///
+/// The parent directory is fsynced afterwards where possible so the rename
+/// itself survives a power loss, not just the file contents.
+///
+/// Two properties a plain `fs::write` gave for free have to be restored by
+/// hand, because replacing a directory entry is not the same as writing
+/// through one:
+///
+/// - A symlinked note is resolved first, so the target is rewritten rather
+///   than the link being replaced by a regular file.
+/// - The destination's existing permissions are copied onto the replacement,
+///   so a note kept at `0600` does not come back world-readable.
 fn write_file(path: &Path, content: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+    use std::io::Write;
+
+    // Write through a symlink, not over it.
+    let path = &fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    fs::create_dir_all(&parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    // Same directory as the destination, so the rename below cannot cross a
+    // filesystem boundary. The name is unique per write so concurrent saves of
+    // different files never collide on it.
+    let tmp_path = parent.join(format!(
+        ".{}.{}.tmp",
+        path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unnamed".to_string()),
+        uuid::Uuid::new_v4().simple()
+    ));
+
+    // Inherit the destination's permissions where it already exists; a fresh
+    // file keeps the default the platform would have given it.
+    let existing_permissions = fs::metadata(path).map(|m| m.permissions()).ok();
+
+    let write_result = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(&tmp_path)?;
+        file.write_all(content.as_bytes())?;
+        if let Some(permissions) = existing_permissions.clone() {
+            file.set_permissions(permissions)?;
+        }
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!("Failed to write file {}: {}", path.display(), e));
     }
-    fs::write(path, content).map_err(|e| format!("Failed to write file {}: {}", path.display(), e))
+
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!("Failed to replace file {}: {}", path.display(), e));
+    }
+
+    // Best-effort: persist the directory entry itself. Not all platforms allow
+    // opening a directory for sync, so a failure here is not fatal.
+    if let Ok(dir) = fs::File::open(&parent) {
+        let _ = dir.sync_all();
+    }
+
+    Ok(())
 }
 
 pub fn is_image(ext: &str) -> bool {
@@ -797,7 +871,7 @@ fn list_files_matching(
             list_files_matching(&path, files, depth + 1, keep)?;
         } else if name.starts_with('.') {
             continue;
-        } else if path.extension().and_then(|e| e.to_str()).map_or(false, keep) {
+        } else if path.extension().and_then(|e| e.to_str()).is_some_and(keep) {
             files.push(path);
         }
     }
@@ -809,10 +883,122 @@ mod tests {
     use super::*;
 
     #[test]
+    fn write_file_replaces_content_and_leaves_no_temp_files() {
+        let base = std::env::temp_dir().join(format!("md_atomic_{}", uuid::Uuid::new_v4()));
+        let target = base.join("notes/a.md");
+
+        // Parent directories are created on demand.
+        write_file(&target, "first").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "first");
+
+        // Overwriting replaces the content wholesale.
+        write_file(&target, "second, rather longer than the first").unwrap();
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "second, rather longer than the first"
+        );
+
+        // The temporary file used for the atomic swap must not survive.
+        let leftovers: Vec<_> = fs::read_dir(base.join("notes"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "atomic write left temp files behind: {leftovers:?}"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_file_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("md_perm_{}", uuid::Uuid::new_v4()));
+        let target = base.join("private.md");
+        write_file(&target, "secret").unwrap();
+
+        // Lock the note down, then save over it the way autosave would.
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        write_file(&target, "secret, revised").unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "replacing the file must not widen its permissions"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_file_writes_through_a_symlink() {
+        let base = std::env::temp_dir().join(format!("md_link_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let real = base.join("real.md");
+        let link = base.join("link.md");
+        fs::write(&real, "original").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        write_file(&link, "updated").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&real).unwrap(),
+            "updated",
+            "the symlink target should have been rewritten"
+        );
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the symlink itself must survive, not be replaced by a regular file"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn write_file_never_leaves_a_truncated_file() {
+        // The point of the temp-file-and-rename dance: the destination is only
+        // ever the complete old content or the complete new content, so a
+        // reader between writes can never observe a partial file.
+        let base = std::env::temp_dir().join(format!("md_atomic_{}", uuid::Uuid::new_v4()));
+        let target = base.join("note.md");
+
+        let long = "x".repeat(64 * 1024);
+        write_file(&target, &long).unwrap();
+
+        let short = "y";
+        write_file(&target, short).unwrap();
+
+        let observed = fs::read_to_string(&target).unwrap();
+        assert!(
+            observed == long || observed == short,
+            "observed a partially written file of {} bytes",
+            observed.len()
+        );
+        assert_eq!(observed, short);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn resolve_normal_paths_stay_within_root() {
         let root = Path::new("/vault");
-        assert_eq!(resolve_vault_path(root, "notes/a.md"), PathBuf::from("/vault/notes/a.md"));
-        assert_eq!(resolve_vault_path(root, "./a.md"), PathBuf::from("/vault/a.md"));
+        assert_eq!(
+            resolve_vault_path(root, "notes/a.md"),
+            PathBuf::from("/vault/notes/a.md")
+        );
+        assert_eq!(
+            resolve_vault_path(root, "./a.md"),
+            PathBuf::from("/vault/a.md")
+        );
         // Interior `..` that stays inside the vault is allowed.
         assert_eq!(
             resolve_vault_path(root, "notes/../a.md"),

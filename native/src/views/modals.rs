@@ -32,44 +32,44 @@ pub fn view<'a>(
         ModalType::Delete(path) => column![
             text(format!("Are you sure you want to delete '{}'?", path)).color(theme::TEXT_PRIMARY),
             text("This action cannot be undone.")
-                .size(12)
+                .size(theme::TEXT_SM)
                 .color(theme::TEXT_MUTED),
             row![
-                button(text("Cancel").size(14))
+                button(text("Cancel").size(theme::TEXT_BASE))
                     .on_press(Message::NameModalCancel)
-                    .padding([8, 20])
+                    .padding([theme::SPACE_3, theme::SPACE_6])
                     .style(button::text),
-                button(text("Delete").size(14))
+                button(text("Delete").size(theme::TEXT_BASE))
                     .on_press(Message::DeleteFile(path.clone()))
-                    .padding([8, 20])
+                    .padding([theme::SPACE_3, theme::SPACE_6])
                     .style(button::secondary),
             ]
-            .spacing(10)
+            .spacing(theme::SPACE_4)
             .align_y(Alignment::Center)
         ]
-        .spacing(20)
+        .spacing(theme::SPACE_6)
         .into(),
         ModalType::LinkNote(_) => link_note_picker::view(input_value, picker_search, vault_entries),
         _ => {
             column![
-                text(title).size(18).color(theme::TEXT_PRIMARY),
+                text(title).size(theme::TEXT_LG).color(theme::TEXT_PRIMARY),
                 text_input("Enter name...", input_value)
                     .on_input(Message::NameModalInputChanged)
-                    .padding(10),
+                    .padding(theme::SPACE_4),
                 row![
-                    button(text("Cancel").size(14))
+                    button(text("Cancel").size(theme::TEXT_BASE))
                         .on_press(Message::NameModalCancel)
-                        .padding([8, 20])
+                        .padding([theme::SPACE_3, theme::SPACE_6])
                         .style(button::text),
-                    button(text("Confirm").size(14))
+                    button(text("Confirm").size(theme::TEXT_BASE))
                         .on_press(Message::NameModalSubmit(input_value.to_string())) // This needs a "Submit" message
-                        .padding([8, 20])
+                        .padding([theme::SPACE_3, theme::SPACE_6])
                         .style(button::primary),
                 ]
-                .spacing(10)
+                .spacing(theme::SPACE_4)
                 .align_y(Alignment::Center)
             ]
-            .spacing(20)
+            .spacing(theme::SPACE_6)
             .into()
         }
     };
@@ -80,13 +80,13 @@ pub fn view<'a>(
                 ModalType::LinkNote(_) => 560.0,
                 _ => 400.0,
             }))
-            .padding(30)
+            .padding(theme::SPACE_6)
             .style(|_| container::Style {
                 background: Some(iced::Background::Color(theme::BG_SECONDARY)),
                 border: iced::Border {
                     color: theme::BORDER,
                     width: 1.0,
-                    radius: 8.0.into(),
+                    radius: theme::RADIUS_MD.into(),
                 },
                 ..Default::default()
             }),

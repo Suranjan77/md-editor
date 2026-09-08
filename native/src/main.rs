@@ -261,7 +261,7 @@ fn main() -> iced::Result {
     .theme(|state: &app::MdEditor| state.theme())
     .subscription(app::MdEditor::subscription)
     .window(iced::window::Settings {
-        size: iced::Size::new(1200.0, 800.0),
+        size: restore_window_size(),
         icon,
         platform_specific,
         ..Default::default()
@@ -269,8 +269,77 @@ fn main() -> iced::Result {
     .run()
 }
 
+/// Default window size for a first run, or when the stored geometry is missing
+/// or unusable.
+const DEFAULT_WINDOW_SIZE: iced::Size = iced::Size {
+    width: 1200.0,
+    height: 800.0,
+};
+
+/// The window size from the previous session, clamped to something sane.
+///
+/// A stored size is rejected rather than trusted blindly: a monitor that went
+/// away, or a stray write, should not open the app at 20×8 pixels or larger
+/// than any display the user still owns.
+fn restore_window_size() -> iced::Size {
+    restore_window_size_from(md_editor_core::config::read_startup_value("window_size"))
+}
+
+/// The parsing and clamping half of [`restore_window_size`], split out so it
+/// can be exercised without a settings database.
+fn restore_window_size_from(stored: Option<String>) -> iced::Size {
+    let Some(raw) = stored else {
+        return DEFAULT_WINDOW_SIZE;
+    };
+
+    let Some((w, h)) = raw.split_once('x') else {
+        return DEFAULT_WINDOW_SIZE;
+    };
+
+    match (w.trim().parse::<f32>(), h.trim().parse::<f32>()) {
+        (Ok(width), Ok(height)) if width.is_finite() && height.is_finite() => iced::Size {
+            width: width.clamp(640.0, 16_384.0),
+            height: height.clamp(480.0, 16_384.0),
+        },
+        _ => DEFAULT_WINDOW_SIZE,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{DEFAULT_WINDOW_SIZE, restore_window_size_from};
+
+    #[test]
+    fn window_size_round_trips_and_rejects_nonsense() {
+        // A normal stored value comes back unchanged.
+        let restored = restore_window_size_from(Some("1440x900".to_string()));
+        assert_eq!((restored.width, restored.height), (1440.0, 900.0));
+
+        // Absent, malformed, or non-numeric values fall back rather than
+        // opening the app at some unusable size.
+        for raw in [
+            None,
+            Some(String::new()),
+            Some("wide x tall".to_string()),
+            Some("1200".to_string()),
+            Some("NaNxNaN".to_string()),
+        ] {
+            let restored = restore_window_size_from(raw.clone());
+            assert_eq!(
+                (restored.width, restored.height),
+                (DEFAULT_WINDOW_SIZE.width, DEFAULT_WINDOW_SIZE.height),
+                "expected fallback for {raw:?}"
+            );
+        }
+
+        // A monitor that went away must not leave the window unusably small,
+        // or larger than any display the user still owns.
+        let tiny = restore_window_size_from(Some("20x8".to_string()));
+        assert_eq!((tiny.width, tiny.height), (640.0, 480.0));
+        let huge = restore_window_size_from(Some("999999x999999".to_string()));
+        assert_eq!((huge.width, huge.height), (16_384.0, 16_384.0));
+    }
+
     #[test]
     fn test_load_icon() {
         let res = iced::window::icon::from_file_data(

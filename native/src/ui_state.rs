@@ -6,8 +6,8 @@
 //! behavior beyond living on the shell, so this is a plain field container the
 //! shell reads and writes directly.
 //!
-//! Part of the `MdEditor` decomposition; see
-//! `docs/refactor-mdeditor-decomposition.md`.
+//! Part of the `MdEditor` decomposition: the shell owns cross-pane
+//! coordination, each sub-state owns its own domain.
 
 use iced::Task;
 
@@ -91,7 +91,10 @@ impl UiState {
                 Task::none()
             }
             Message::PdfLinkNoteFolderSelected(folder) => {
-                if matches!(self.active_modal, Some(views::modals::ModalType::LinkNote(_))) {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
                     let filename = note_filename_from_path(&self.modal_input);
                     self.modal_input = if folder.is_empty() {
                         filename
@@ -102,13 +105,19 @@ impl UiState {
                 Task::none()
             }
             Message::PdfLinkNoteFileSelected(path) => {
-                if matches!(self.active_modal, Some(views::modals::ModalType::LinkNote(_))) {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
                     self.modal_input = normalize_note_path(&path);
                 }
                 Task::none()
             }
             Message::PdfLinkNotePickerSearchChanged(query) => {
-                if matches!(self.active_modal, Some(views::modals::ModalType::LinkNote(_))) {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
                     self.link_note_picker_search = query;
                 }
                 Task::none()

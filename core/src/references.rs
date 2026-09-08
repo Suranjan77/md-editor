@@ -13,7 +13,7 @@
 //! target. "No target ⇒ no link" is what keeps precision high and stray numbers
 //! (intervals, quantities, years) from becoming bogus links.
 
-use crate::pdf::{merge_char_rects, PdfPageText, PdfRect, TocEntry};
+use crate::pdf::{PdfPageText, PdfRect, TocEntry, merge_char_rects};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -144,7 +144,9 @@ fn range_left_x(page: &PdfPageText, start: usize, end: usize) -> Option<f32> {
         .iter()
         .filter(|c| c.bbox.width > 0.0)
         .map(|c| c.bbox.x)
-        .fold(None, |acc: Option<f32>, x| Some(acc.map_or(x, |a| a.min(x))))
+        .fold(None, |acc: Option<f32>, x| {
+            Some(acc.map_or(x, |a| a.min(x)))
+        })
 }
 
 /// Top-left-origin Y of the centre of the char range (a target line).
@@ -197,7 +199,9 @@ fn insert_unique(map: &mut HashMap<String, Option<Target>>, label: String, t: Ta
 
 /// Drop ambiguous (`None`) entries, leaving only labels with a unique target.
 fn finalize(map: HashMap<String, Option<Target>>) -> HashMap<String, Target> {
-    map.into_iter().filter_map(|(k, v)| v.map(|t| (k, t))).collect()
+    map.into_iter()
+        .filter_map(|(k, v)| v.map(|t| (k, t)))
+        .collect()
 }
 
 /// Equation labels: a parenthesised dotted number, optionally with a trailing
@@ -218,7 +222,14 @@ fn build_equation_targets(pages: &[PdfPageText]) -> HashMap<String, Target> {
                 continue; // not right-aligned ⇒ not an equation label
             }
             let dest_y = range_center_y_top_left(page, cs, ce);
-            insert_unique(&mut map, label, Target { page: page.page_index, dest_y });
+            insert_unique(
+                &mut map,
+                label,
+                Target {
+                    page: page.page_index,
+                    dest_y,
+                },
+            );
         }
     }
     finalize(map)
@@ -233,12 +244,16 @@ fn build_caption_targets(pages: &[PdfPageText]) -> HashMap<String, Target> {
             let text = line_slice(page, line.start_text_index, line.end_text_index);
             let trimmed = text.trim_start();
             if let Some(label) = caption_label(trimmed) {
-                let dest_y = range_center_y_top_left(
-                    page,
-                    line.start_text_index,
-                    line.end_text_index,
+                let dest_y =
+                    range_center_y_top_left(page, line.start_text_index, line.end_text_index);
+                insert_unique(
+                    &mut map,
+                    label,
+                    Target {
+                        page: page.page_index,
+                        dest_y,
+                    },
                 );
-                insert_unique(&mut map, label, Target { page: page.page_index, dest_y });
             }
         }
     }
@@ -255,17 +270,17 @@ fn build_section_targets(toc: &[TocEntry]) -> HashMap<String, Target> {
 
 fn collect_section_targets(entries: &[TocEntry], map: &mut HashMap<String, Option<Target>>) {
     for e in entries {
-        if let Some(num) = leading_section_number(&e.title) {
-            if let Some(page) = e.page_index {
-                insert_unique(
-                    map,
-                    num,
-                    Target {
-                        page: page as u16,
-                        dest_y: None,
-                    },
-                );
-            }
+        if let Some(num) = leading_section_number(&e.title)
+            && let Some(page) = e.page_index
+        {
+            insert_unique(
+                map,
+                num,
+                Target {
+                    page: page as u16,
+                    dest_y: None,
+                },
+            );
         }
         collect_section_targets(&e.children, map);
     }
@@ -311,10 +326,11 @@ fn scan_equation_callsites(
         let ce = char_index_at_byte(&page.text, e);
         // Skip the label itself (right-aligned occurrence) and any occurrence
         // that *is* the target line.
-        if let Some(x) = range_left_x(page, cs, ce) {
-            if x >= right_min && page.page_index == target.page {
-                continue;
-            }
+        if let Some(x) = range_left_x(page, cs, ce)
+            && x >= right_min
+            && page.page_index == target.page
+        {
+            continue;
         }
         push_link(links, page, cs, ce, target, label, ReferenceKind::Equation);
     }
@@ -400,7 +416,9 @@ fn find_paren_numbers(text: &str) -> Vec<(usize, usize, String)> {
             if ok && saw_digit && j < bytes.len() && bytes[j] == b')' {
                 let inner = &text[start + 1..j];
                 // Strip a trailing variant letter for the lookup key.
-                let label: String = inner.trim_end_matches(|c: char| c.is_ascii_alphabetic()).to_string();
+                let label: String = inner
+                    .trim_end_matches(|c: char| c.is_ascii_alphabetic())
+                    .to_string();
                 // Reject bare 4+-digit numbers: these are years in citations
                 // (`(2003)`), not equation labels. Dotted numbers (`3.14`) and
                 // short ints (`(12)`) are kept.
@@ -493,9 +511,8 @@ fn scan_keyword(text: &str, kw: &str, mut body: impl FnMut(usize, usize) -> Opti
     while i + kb.len() <= lb.len() {
         if &lb[i..i + kb.len()] == kb {
             // Word boundary before the keyword (keywords starting with a letter).
-            let boundary = i == 0
-                || !lb[i - 1].is_ascii_alphanumeric()
-                || !kb[0].is_ascii_alphanumeric();
+            let boundary =
+                i == 0 || !lb[i - 1].is_ascii_alphanumeric() || !kb[0].is_ascii_alphanumeric();
             if boundary {
                 let mut j = i + kb.len();
                 // optional '.' then spaces (and a possible non-breaking space)
@@ -580,7 +597,12 @@ mod tests {
                     char_index: chars.len() as u32,
                     text_index: chars.len(),
                     ch: c,
-                    bbox: PdfRect { x, y: *y, width: CW, height: CH },
+                    bbox: PdfRect {
+                        x,
+                        y: *y,
+                        width: CW,
+                        height: CH,
+                    },
                 });
                 x += CW;
             }
@@ -589,7 +611,12 @@ mod tests {
                 char_index: chars.len() as u32,
                 text_index: chars.len(),
                 ch: '\n',
-                bbox: PdfRect { x, y: *y, width: 0.0, height: 0.0 },
+                bbox: PdfRect {
+                    x,
+                    y: *y,
+                    width: 0.0,
+                    height: 0.0,
+                },
             });
             let end = chars.len();
             text_lines.push(PdfTextLine {
@@ -632,7 +659,11 @@ mod tests {
             .iter()
             .filter(|l| l.kind == ReferenceKind::Equation)
             .collect();
-        assert_eq!(eq.len(), 1, "exactly one call-site link, not the label itself");
+        assert_eq!(
+            eq.len(),
+            1,
+            "exactly one call-site link, not the label itself"
+        );
         assert_eq!(eq[0].src_page, 0);
         assert_eq!(eq[0].dest_page, 1);
         assert_eq!(eq[0].label, "3.14");
@@ -689,7 +720,10 @@ mod tests {
         let p0 = page(0, &[("see Figure 1.2 and Figure 1.1", 50.0, 700.0)]);
         let p1 = page(
             1,
-            &[("Figure 1.1 first", 50.0, 600.0), ("Figure 1.2 second", 50.0, 400.0)],
+            &[
+                ("Figure 1.1 first", 50.0, 600.0),
+                ("Figure 1.2 second", 50.0, 400.0),
+            ],
         );
         let links = resolve_references(&[p0, p1], &[]);
         let labels: std::collections::HashSet<_> = links
@@ -706,7 +740,10 @@ mod tests {
         let p0 = page(0, &[("results in Table 3 confirm", 50.0, 700.0)]);
         let p1 = page(1, &[("Table 3 Summary of results", 50.0, 500.0)]);
         let links = resolve_references(&[p0, p1], &[]);
-        let t: Vec<_> = links.iter().filter(|l| l.kind == ReferenceKind::Table).collect();
+        let t: Vec<_> = links
+            .iter()
+            .filter(|l| l.kind == ReferenceKind::Table)
+            .collect();
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].label, "table 3");
     }
@@ -720,7 +757,10 @@ mod tests {
         }];
         let p0 = page(0, &[("recall Section 3.2 for the method", 50.0, 700.0)]);
         let links = resolve_references(&[p0], &toc);
-        let s: Vec<_> = links.iter().filter(|l| l.kind == ReferenceKind::Section).collect();
+        let s: Vec<_> = links
+            .iter()
+            .filter(|l| l.kind == ReferenceKind::Section)
+            .collect();
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].dest_page, 42);
         assert_eq!(s[0].label, "3.2");
@@ -744,9 +784,16 @@ mod tests {
         let x = PAGE_W * 0.7;
         let p1 = page(1, &[("(1.1)", x, 500.0)]);
         let links = resolve_references(&[p0, p1], &[]);
-        let l = links.iter().find(|l| l.kind == ReferenceKind::Equation).unwrap();
+        let l = links
+            .iter()
+            .find(|l| l.kind == ReferenceKind::Equation)
+            .unwrap();
         // "(1.1)" starts after "xx " = 3 chars ⇒ x ≈ 50 + 3*CW.
-        assert!((l.bbox.x - (50.0 + 3.0 * CW)).abs() < 1.0, "bbox.x={}", l.bbox.x);
+        assert!(
+            (l.bbox.x - (50.0 + 3.0 * CW)).abs() < 1.0,
+            "bbox.x={}",
+            l.bbox.x
+        );
         // top-left y for a line with baseline y=700,h=10 ⇒ 800-(700+10)=90.
         assert!((l.bbox.y - 90.0).abs() < 1.0, "bbox.y={}", l.bbox.y);
     }

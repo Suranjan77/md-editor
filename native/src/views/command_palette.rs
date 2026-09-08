@@ -63,10 +63,10 @@ pub fn get_commands() -> Vec<Command> {
 pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Theme, Renderer> {
     let input = text_input("Type a command...", query)
         .on_input(Message::CommandPaletteQueryChanged)
-        .padding(12)
-        .size(16);
+        .padding(theme::SPACE_4)
+        .size(theme::TEXT_MD);
 
-    let mut list = column![].spacing(5);
+    let mut list = column![].spacing(theme::SPACE_2);
 
     let filtered: Vec<&Command> = if query.is_empty() {
         commands.iter().collect()
@@ -81,29 +81,35 @@ pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Th
         list = list.push(
             button(
                 row![
-                    container(text(&cmd.icon).size(12).color(theme::TEXT_SECONDARY))
-                        .width(Length::Fixed(24.0))
-                        .height(Length::Fixed(24.0))
-                        .center_x(Length::Fixed(24.0))
-                        .center_y(Length::Fixed(24.0))
-                        .style(|_| container::Style {
-                            background: Some(iced::Background::Color(theme::BG_TERTIARY)),
-                            border: iced::Border {
-                                color: theme::BORDER,
-                                width: 1.0,
-                                radius: 6.0.into(),
-                            },
-                            ..Default::default()
-                        }),
-                    text(&cmd.name).size(14).color(theme::TEXT_PRIMARY),
+                    container(
+                        text(&cmd.icon)
+                            .size(theme::TEXT_SM)
+                            .color(theme::TEXT_SECONDARY)
+                    )
+                    .width(Length::Fixed(24.0))
+                    .height(Length::Fixed(24.0))
+                    .center_x(Length::Fixed(24.0))
+                    .center_y(Length::Fixed(24.0))
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(theme::BG_TERTIARY)),
+                        border: iced::Border {
+                            color: theme::BORDER,
+                            width: 1.0,
+                            radius: theme::RADIUS_MD.into(),
+                        },
+                        ..Default::default()
+                    }),
+                    text(&cmd.name)
+                        .size(theme::TEXT_BASE)
+                        .color(theme::TEXT_PRIMARY),
                     Space::new().width(Length::Fill),
                     text(shortcut_label(cmd.shortcut))
-                        .size(11)
+                        .size(theme::TEXT_SM)
                         .color(theme::TEXT_MUTED),
                 ]
-                .spacing(12)
+                .spacing(theme::SPACE_4)
                 .align_y(Alignment::Center)
-                .padding([8, 12]),
+                .padding([theme::SPACE_3, theme::SPACE_4]),
             )
             .width(Length::Fill)
             .on_press(Message::CommandPaletteCommandClicked(cmd.shortcut))
@@ -123,7 +129,7 @@ pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Th
             }),
             scrollable(list).height(Length::Fixed(320.0)),
         ]
-        .spacing(0),
+        .spacing(theme::SPACE_0),
     )
     .width(Length::Fixed(520.0))
     .style(|_| container::Style {
@@ -131,7 +137,7 @@ pub fn view<'a>(query: &str, commands: &'a [Command]) -> Element<'a, Message, Th
         border: iced::Border {
             color: theme::BORDER,
             width: 1.0,
-            radius: 8.0.into(),
+            radius: theme::RADIUS_MD.into(),
         },
         ..Default::default()
     })

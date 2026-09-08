@@ -40,48 +40,48 @@ pub fn view<'a>(
     let list: Element<'a, Message, Theme, Renderer> = if items.is_empty() {
         column![text("No matching folders or markdown notes.").color(theme::TEXT_MUTED)].into()
     } else {
-        Column::with_children(items).spacing(3).into()
+        Column::with_children(items).spacing(theme::SPACE_1).into()
     };
 
     column![
         text("Link PDF Highlight")
-            .size(18)
+            .size(theme::TEXT_LG)
             .color(theme::TEXT_PRIMARY),
         text("Select an existing note, or select a folder and edit the note filename.")
-            .size(12)
+            .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED),
         text_input("Search folders and notes...", search_query)
             .on_input(Message::PdfLinkNotePickerSearchChanged)
-            .padding(10),
+            .padding(theme::SPACE_4),
         container(scrollable(list).height(Length::Fixed(300.0)))
             .height(Length::Fixed(300.0))
-            .padding(8)
+            .padding(theme::SPACE_3)
             .style(|_| container::Style {
                 background: Some(Background::Color(theme::BG_PRIMARY)),
                 border: Border {
                     color: theme::BORDER,
                     width: 1.0,
-                    radius: 6.0.into(),
+                    radius: theme::RADIUS_MD.into(),
                 },
                 ..Default::default()
             }),
         text_input("pdf-notes/example.md", input_value)
             .on_input(Message::NameModalInputChanged)
-            .padding(10),
+            .padding(theme::SPACE_4),
         row![
-            button(text("Cancel").size(14))
+            button(text("Cancel").size(theme::TEXT_BASE))
                 .on_press(Message::NameModalCancel)
-                .padding([8, 20])
+                .padding([theme::SPACE_3, theme::SPACE_6])
                 .style(button::text),
-            button(text("Link Note").size(14))
+            button(text("Link Note").size(theme::TEXT_BASE))
                 .on_press(Message::NameModalSubmit(input_value.to_string()))
-                .padding([8, 20])
+                .padding([theme::SPACE_3, theme::SPACE_6])
                 .style(button::primary),
         ]
-        .spacing(10)
+        .spacing(theme::SPACE_4)
         .align_y(Alignment::Center)
     ]
-    .spacing(14)
+    .spacing(theme::SPACE_4)
     .into()
 }
 
@@ -120,13 +120,13 @@ fn picker_row<'a>(
     let content = row![
         icons::view(icon, color, 15.0),
         text(label)
-            .size(13)
+            .size(theme::TEXT_BASE)
             .color(color)
             .wrapping(Wrapping::WordOrGlyph)
             .width(Length::Fill),
         Space::new().width(Length::Fixed(1.0)),
     ]
-    .spacing(8)
+    .spacing(theme::SPACE_3)
     .align_y(Alignment::Center);
 
     let style = move |theme: &Theme, status: button::Status| {
@@ -144,7 +144,7 @@ fn picker_row<'a>(
 
     button(content)
         .on_press(msg)
-        .padding([7, 10])
+        .padding([theme::SPACE_3, theme::SPACE_4])
         .width(Length::Fill)
         .style(style)
         .into()

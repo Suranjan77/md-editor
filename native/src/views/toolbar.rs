@@ -27,21 +27,27 @@ pub fn view<'a>(
         18.0,
     ))
     .on_press(Message::SidebarToggle)
-    .padding(8)
+    .padding(theme::SPACE_3)
     .style(button::text);
 
     let path_display = if let Some(path) = active_path.or(active_pdf_path) {
         row![
             text(path)
-                .size(13)
+                .size(theme::TEXT_BASE)
                 .color(theme::TEXT_PRIMARY)
                 .font(iced::Font::default()),
-            text(" • Saved").size(11).color(theme::TEXT_MUTED),
+            text(" • Saved")
+                .size(theme::TEXT_SM)
+                .color(theme::TEXT_MUTED),
         ]
-        .spacing(8)
+        .spacing(theme::SPACE_3)
         .align_y(Alignment::Center)
     } else {
-        row![text("No file open").size(13).color(theme::TEXT_MUTED)]
+        row![
+            text("No file open")
+                .size(theme::TEXT_BASE)
+                .color(theme::TEXT_MUTED)
+        ]
     };
 
     let split_button: Element<'_, Message, Theme, Renderer> = if split_available {
@@ -55,7 +61,7 @@ pub fn view<'a>(
             18.0,
         ))
         .on_press(Message::SplitViewToggle)
-        .padding(8)
+        .padding(theme::SPACE_3)
         .style(button::text)
         .into()
     } else {
@@ -73,7 +79,7 @@ pub fn view<'a>(
             18.0,
         ))
         .on_press(Message::ToggleTOC)
-        .padding(8)
+        .padding(theme::SPACE_3)
         .style(button::text)
         .into()
     } else {
@@ -83,11 +89,11 @@ pub fn view<'a>(
     let actions = row![
         button(icons::view(Icon::Search, theme::TEXT_MUTED, 18.0))
             .on_press(Message::GlobalSearchOpen)
-            .padding(8)
+            .padding(theme::SPACE_3)
             .style(button::text),
         button(icons::view(Icon::Command, theme::TEXT_MUTED, 18.0))
             .on_press(Message::CommandPaletteOpen)
-            .padding(8)
+            .padding(theme::SPACE_3)
             .style(button::text),
         toc_button,
         split_button,
@@ -101,10 +107,10 @@ pub fn view<'a>(
             18.0
         ))
         .on_press(Message::TrackerToggle)
-        .padding(8)
+        .padding(theme::SPACE_3)
         .style(button::text),
     ]
-    .spacing(4);
+    .spacing(theme::SPACE_2);
 
     let content = row![
         sidebar_toggle,
@@ -115,7 +121,7 @@ pub fn view<'a>(
         Space::new().width(Length::Fixed(8.0)),
     ]
     .align_y(Alignment::Center)
-    .padding([4, 12]);
+    .padding([theme::SPACE_2, theme::SPACE_4]);
 
     container(content)
         .width(Length::Fill)

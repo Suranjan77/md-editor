@@ -22,14 +22,14 @@ pub fn file_bar<'a>(
         .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
         .on_submit(Message::SearchNext)
-        .padding([8, 12])
-        .size(14)
+        .padding([theme::SPACE_3, theme::SPACE_4])
+        .size(theme::TEXT_BASE)
         .width(Length::FillPortion(3));
 
     let replace_input = text_input("Replace", replace)
         .on_input(Message::SearchReplaceChanged)
-        .padding([8, 12])
-        .size(14)
+        .padding([theme::SPACE_3, theme::SPACE_4])
+        .size(theme::TEXT_BASE)
         .width(Length::FillPortion(2));
 
     container(
@@ -37,41 +37,41 @@ pub fn file_bar<'a>(
             icons::view(Icon::Search, theme::ACCENT, 18.0),
             search_input,
             replace_input,
-            button(text("Replace all").size(12))
+            button(text("Replace all").size(theme::TEXT_SM))
                 .on_press(Message::SearchReplaceAll)
-                .padding([8, 12])
+                .padding([theme::SPACE_3, theme::SPACE_4])
                 .style(button::secondary),
             checkbox(regex)
                 .label("Regex")
                 .on_toggle(Message::SearchRegexToggled)
-                .size(14),
+                .size(theme::TEXT_BASE),
             checkbox(match_case)
                 .label("Case")
                 .on_toggle(Message::SearchMatchCaseToggled)
-                .size(14),
+                .size(theme::TEXT_BASE),
             button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
                 .on_press(Message::SearchPrevious)
-                .padding(8)
+                .padding(theme::SPACE_3)
                 .style(button::text),
             button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
                 .on_press(Message::SearchNext)
-                .padding(8)
+                .padding(theme::SPACE_3)
                 .style(button::text),
             text(match active_match_index {
                 Some(index) if current_match_count > 0 =>
                     format!("{} of {}", index + 1, current_match_count),
                 _ => format!("{} matches", current_match_count),
             })
-            .size(12)
+            .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED),
             button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
                 .on_press(Message::SearchClose)
-                .padding(8)
+                .padding(theme::SPACE_3)
                 .style(button::text),
         ]
-        .spacing(10)
+        .spacing(theme::SPACE_4)
         .align_y(Alignment::Center)
-        .padding([8, 14]),
+        .padding([theme::SPACE_3, theme::SPACE_4]),
     )
     .width(Length::Fill)
     .style(|_| container::Style {
@@ -108,72 +108,78 @@ pub fn view<'a>(
     let search_input = text_input("Search document, vault, or PDF...", query)
         .id(iced::advanced::widget::Id::new(GLOBAL_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
-        .padding([10, 14])
-        .size(15)
+        .padding([theme::SPACE_4, theme::SPACE_4])
+        .size(theme::TEXT_MD)
         .width(Length::Fill);
 
     let replace_input = text_input("Replace in current markdown document...", replace)
         .on_input(Message::SearchReplaceChanged)
-        .padding([8, 12])
-        .size(13)
+        .padding([theme::SPACE_3, theme::SPACE_4])
+        .size(theme::TEXT_BASE)
         .width(Length::Fill);
 
     let close_btn = button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
         .on_press(Message::SearchClose)
-        .padding(8)
+        .padding(theme::SPACE_3)
         .style(button::text);
 
     let header = column![
         row![
             icons::view(Icon::Search, theme::ACCENT, 18.0),
-            text("Global search").size(15).color(theme::ACCENT),
+            text("Global search")
+                .size(theme::TEXT_MD)
+                .color(theme::ACCENT),
             search_input,
             close_btn,
         ]
-        .spacing(10)
+        .spacing(theme::SPACE_4)
         .align_y(Alignment::Center),
         row![
             replace_input,
-            button(text("Replace all").size(12))
+            button(text("Replace all").size(theme::TEXT_SM))
                 .on_press(Message::SearchReplaceAll)
-                .padding([8, 12])
+                .padding([theme::SPACE_3, theme::SPACE_4])
                 .style(button::secondary),
         ]
-        .spacing(10)
+        .spacing(theme::SPACE_4)
         .align_y(Alignment::Center),
         row![
             checkbox(regex)
                 .label("Regex")
                 .on_toggle(Message::SearchRegexToggled)
-                .size(14),
+                .size(theme::TEXT_BASE),
             checkbox(match_case)
                 .label("Match case")
                 .on_toggle(Message::SearchMatchCaseToggled)
-                .size(14),
+                .size(theme::TEXT_BASE),
             text(format!(
                 "{} matches in current document",
                 current_match_count
             ))
-            .size(11)
+            .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED),
         ]
-        .spacing(16)
+        .spacing(theme::SPACE_5)
         .align_y(Alignment::Center),
     ]
-    .spacing(10)
-    .padding(16);
+    .spacing(theme::SPACE_4)
+    .padding(theme::SPACE_5);
 
     let vault_results: Column<'_, Message, Theme, Renderer> =
         results
             .iter()
-            .fold(Column::new().spacing(2), |col, result| {
-                let path_text = text(&result.path).size(13).color(theme::ACCENT);
-                let context_text = text(&result.context).size(12).color(theme::TEXT_SECONDARY);
+            .fold(Column::new().spacing(theme::SPACE_1), |col, result| {
+                let path_text = text(&result.path)
+                    .size(theme::TEXT_BASE)
+                    .color(theme::ACCENT);
+                let context_text = text(&result.context)
+                    .size(theme::TEXT_SM)
+                    .color(theme::TEXT_SECONDARY);
 
                 let item: iced::widget::Button<'_, Message, Theme, Renderer> =
-                    button(column![path_text, context_text].spacing(2))
+                    button(column![path_text, context_text].spacing(theme::SPACE_1))
                         .on_press(Message::SearchResultClicked(result.path.clone()))
-                        .padding([8, 12])
+                        .padding([theme::SPACE_3, theme::SPACE_4])
                         .width(Length::Fill)
                         .style(button::text);
 
@@ -183,18 +189,20 @@ pub fn view<'a>(
     let pdf_result_list: Column<'_, Message, Theme, Renderer> =
         pdf_results
             .iter()
-            .fold(Column::new().spacing(2), |col, result| {
+            .fold(Column::new().spacing(theme::SPACE_1), |col, result| {
                 let item: iced::widget::Button<'_, Message, Theme, Renderer> = button(
                     column![
                         text(format!("PDF page {}", result.page_index + 1))
-                            .size(13)
+                            .size(theme::TEXT_BASE)
                             .color(theme::ACCENT),
-                        text(&result.context).size(12).color(theme::TEXT_SECONDARY),
+                        text(&result.context)
+                            .size(theme::TEXT_SM)
+                            .color(theme::TEXT_SECONDARY),
                     ]
-                    .spacing(2),
+                    .spacing(theme::SPACE_1),
                 )
                 .on_press(Message::PdfSearchResultClicked(result.page_index))
-                .padding([8, 12])
+                .padding([theme::SPACE_3, theme::SPACE_4])
                 .width(Length::Fill)
                 .style(button::text);
 
@@ -202,7 +210,11 @@ pub fn view<'a>(
             });
 
     let empty_state = if results.is_empty() && pdf_results.is_empty() && !query.is_empty() {
-        Some(text("No results found").size(12).color(theme::TEXT_MUTED))
+        Some(
+            text("No results found")
+                .size(theme::TEXT_SM)
+                .color(theme::TEXT_MUTED),
+        )
     } else {
         None
     };
@@ -211,27 +223,35 @@ pub fn view<'a>(
         header,
         scrollable(
             column![
-                text("PDF results").size(11).color(theme::TEXT_MUTED),
+                text("PDF results")
+                    .size(theme::TEXT_SM)
+                    .color(theme::TEXT_MUTED),
                 pdf_result_list,
-                text("Vault results").size(11).color(theme::TEXT_MUTED),
+                text("Vault results")
+                    .size(theme::TEXT_SM)
+                    .color(theme::TEXT_MUTED),
                 vault_results,
             ]
-            .spacing(8)
-            .padding([0, 16])
+            .spacing(theme::SPACE_3)
+            .padding([theme::SPACE_0, theme::SPACE_5])
         )
         .height(Length::Fill),
     ];
 
     if let Some(err) = pdf_error {
         content = content.push(
-            container(text(err).size(11).color(theme::TEXT_MUTED))
-                .padding([0, 16])
+            container(text(err).size(theme::TEXT_SM).color(theme::TEXT_MUTED))
+                .padding([theme::SPACE_0, theme::SPACE_5])
                 .width(Length::Fill),
         );
     }
 
     if let Some(empty) = empty_state {
-        content = content.push(container(empty).padding([16, 16]).width(Length::Fill));
+        content = content.push(
+            container(empty)
+                .padding([theme::SPACE_5, theme::SPACE_5])
+                .width(Length::Fill),
+        );
     }
 
     container(content)
@@ -242,7 +262,7 @@ pub fn view<'a>(
             border: iced::Border {
                 color: theme::BORDER,
                 width: 1.0,
-                radius: 8.0.into(),
+                radius: theme::RADIUS_MD.into(),
             },
             shadow: iced::Shadow {
                 color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5),

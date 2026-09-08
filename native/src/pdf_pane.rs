@@ -7,13 +7,13 @@
 //! geometry/render/navigation methods still live on the shell and read through
 //! `self.pdf`; moving them here is a worthwhile follow-up.
 //!
-//! Part of the `MdEditor` decomposition; see
-//! `docs/refactor-mdeditor-decomposition.md`.
+//! Part of the `MdEditor` decomposition: the shell owns cross-pane
+//! coordination, each sub-state owns its own domain.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use iced::widget::image::Handle;
 use iced::Task;
+use iced::widget::image::Handle;
 
 use md_editor_core::pdf::{
     LinkInfo, PdfAnnotation, PdfAnnotationColor, PdfPageText, PdfSearchMatch,
@@ -159,15 +159,15 @@ impl PdfPane {
             }
             Message::PdfPageTextLoaded(generation, page, res) => {
                 self.pending_text.remove(&page);
-                if generation == self.render_generation {
-                    if let Ok(page_text) = res {
-                        self.page_text.insert(page, page_text);
-                        self.text_lru.push_back(page);
-                        if self.text_lru.len() > 12 {
-                            if let Some(oldest) = self.text_lru.pop_front() {
-                                self.page_text.remove(&oldest);
-                            }
-                        }
+                if generation == self.render_generation
+                    && let Ok(page_text) = res
+                {
+                    self.page_text.insert(page, page_text);
+                    self.text_lru.push_back(page);
+                    if self.text_lru.len() > 12
+                        && let Some(oldest) = self.text_lru.pop_front()
+                    {
+                        self.page_text.remove(&oldest);
                     }
                 }
                 Task::none()

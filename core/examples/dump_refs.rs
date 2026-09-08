@@ -5,7 +5,7 @@
 //! Run: cargo run --release --example dump_refs -- <file.pdf> [more.pdf ...]
 
 use md_editor_core::pdf::PdfRenderer;
-use md_editor_core::references::{resolve_references, ReferenceKind};
+use md_editor_core::references::{ReferenceKind, resolve_references};
 use std::time::Instant;
 
 fn main() {
@@ -54,9 +54,7 @@ fn main() {
                 ReferenceKind::Section => sec += 1,
             }
         }
-        println!(
-            "  pages {pages}, scan {scan_ms:.0} ms, resolve {resolve_ms:.1} ms",
-        );
+        println!("  pages {pages}, scan {scan_ms:.0} ms, resolve {resolve_ms:.1} ms",);
         println!(
             "  links: {} total — {eq} eq, {fig} fig, {tab} tab, {sec} sec",
             links.len()
@@ -96,15 +94,15 @@ fn main() {
 
 /// Grab a short window of text around the first occurrence of `label` on
 /// `page`, for human sanity-checking that the link sits on a real reference.
-fn source_context(
-    pages: &[md_editor_core::pdf::PdfPageText],
-    page: u16,
-    needle: &str,
-) -> String {
+fn source_context(pages: &[md_editor_core::pdf::PdfPageText], page: u16, needle: &str) -> String {
     let Some(pt) = pages.iter().find(|p| p.page_index == page) else {
         return String::new();
     };
-    let flat: String = pt.text.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
+    let flat: String = pt
+        .text
+        .chars()
+        .map(|c| if c == '\n' { ' ' } else { c })
+        .collect();
     let hay = flat.to_lowercase();
     if let Some(byte_pos) = hay.find(&needle.to_lowercase()) {
         let char_pos = hay[..byte_pos].chars().count();

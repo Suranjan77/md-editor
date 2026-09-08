@@ -26,3 +26,19 @@ pub fn set_sys_config(state: &AppState, key: &str, value: &str) -> Result<(), St
     .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// Read a single settings value without constructing a full [`AppState`].
+///
+/// Window geometry has to be known *before* the window is created, which is
+/// before the app (and its `AppState`) exists. This opens the settings
+/// database on its own for that one lookup and closes it again; every other
+/// read goes through [`get_sys_config`].
+pub fn read_startup_value(key: &str) -> Option<String> {
+    let db = rusqlite::Connection::open(crate::state::settings_db_path()).ok()?;
+    db.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        rusqlite::params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}

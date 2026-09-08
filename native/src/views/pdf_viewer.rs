@@ -101,8 +101,8 @@ pub fn search_bar<'a>(
         .id(iced::advanced::widget::Id::new(PDF_SEARCH_INPUT_ID))
         .on_input(Message::SearchQueryChanged)
         .on_submit(Message::SearchNext)
-        .padding([8, 12])
-        .size(14)
+        .padding([theme::SPACE_3, theme::SPACE_4])
+        .size(theme::TEXT_BASE)
         .width(Length::Fill);
 
     container(
@@ -112,38 +112,38 @@ pub fn search_bar<'a>(
             checkbox(regex)
                 .label("Regex")
                 .on_toggle(Message::SearchRegexToggled)
-                .size(14),
+                .size(theme::TEXT_BASE),
             checkbox(match_case)
                 .label("Case")
                 .on_toggle(Message::SearchMatchCaseToggled)
-                .size(14),
+                .size(theme::TEXT_BASE),
             checkbox(loose)
                 .label("Loose WS")
                 .on_toggle(Message::PdfSearchLooseToggled)
-                .size(14),
+                .size(theme::TEXT_BASE),
             button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
                 .on_press(Message::SearchPrevious)
-                .padding(8)
+                .padding(theme::SPACE_3)
                 .style(button::text),
             button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
                 .on_press(Message::SearchNext)
-                .padding(8)
+                .padding(theme::SPACE_3)
                 .style(button::text),
             text(match active_match_index {
                 Some(index) if current_match_count > 0 =>
                     format!("{} of {}", index + 1, current_match_count),
                 _ => format!("{} matches", current_match_count),
             })
-            .size(12)
+            .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED),
             button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
                 .on_press(Message::SearchClose)
-                .padding(8)
+                .padding(theme::SPACE_3)
                 .style(button::text),
         ]
-        .spacing(10)
+        .spacing(theme::SPACE_4)
         .align_y(Alignment::Center)
-        .padding([8, 14]),
+        .padding([theme::SPACE_3, theme::SPACE_4]),
     )
     .width(Length::Fill)
     .style(|_| container::Style {
@@ -196,7 +196,7 @@ pub fn toolbar<'a>(
                 Color::from_rgb8(250, 160, 90),
             ),
         ];
-        let mut color_row = row![].spacing(6).align_y(Alignment::Center);
+        let mut color_row = row![].spacing(theme::SPACE_3).align_y(Alignment::Center);
         for (color_enum, display_color) in colors {
             color_row = color_row.push(
                 button(
@@ -213,41 +213,47 @@ pub fn toolbar<'a>(
                             border: iced::Border {
                                 color: display_color,
                                 width: 1.0,
-                                radius: 5.0.into(),
+                                radius: theme::RADIUS_MD.into(),
                             },
                             ..Default::default()
                         }),
                 )
                 .on_press(Message::PdfCreateHighlight(color_enum))
                 .style(button::text)
-                .padding(0),
+                .padding(theme::SPACE_0),
             );
         }
 
         row![
             container(
                 row![
-                    text("Highlight").size(12).color(theme::TEXT_MUTED),
+                    text("Highlight")
+                        .size(theme::TEXT_SM)
+                        .color(theme::TEXT_MUTED),
                     color_row,
-                    button(text("⟳").size(14).color(theme::TEXT_SECONDARY))
-                        .on_press(Message::PdfQuickHighlight)
-                        .padding(5)
-                        .style(button::text),
+                    button(
+                        text("⟳")
+                            .size(theme::TEXT_BASE)
+                            .color(theme::TEXT_SECONDARY)
+                    )
+                    .on_press(Message::PdfQuickHighlight)
+                    .padding(theme::SPACE_2)
+                    .style(button::text),
                     button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
                         .on_press(Message::PdfSelectionCleared)
-                        .padding(5)
+                        .padding(theme::SPACE_2)
                         .style(button::text),
                 ]
-                .spacing(8)
+                .spacing(theme::SPACE_3)
                 .align_y(Alignment::Center),
             )
-            .padding([4, 8])
+            .padding([theme::SPACE_2, theme::SPACE_3])
             .style(|_| container::Style {
                 background: Some(iced::Background::Color(theme::BG_PRIMARY)),
                 border: iced::Border {
                     color: theme::BORDER,
                     width: 1.0,
-                    radius: 6.0.into(),
+                    radius: theme::RADIUS_MD.into(),
                 },
                 ..Default::default()
             }),
@@ -261,12 +267,14 @@ pub fn toolbar<'a>(
         let note_btn = button(
             row![
                 icons::view(Icon::FileText, theme::TEXT_PRIMARY, 14.0),
-                text(" Note").size(12).color(theme::TEXT_PRIMARY)
+                text(" Note")
+                    .size(theme::TEXT_SM)
+                    .color(theme::TEXT_PRIMARY)
             ]
             .align_y(Alignment::Center),
         )
         .on_press(Message::PdfRightClicked(ann.page_index, -1.0, -1.0))
-        .padding([4, 8])
+        .padding([theme::SPACE_2, theme::SPACE_3])
         .style(button::text);
 
         let link_btn = if let Some(ref path) = ann.linked_note_path {
@@ -274,47 +282,53 @@ pub fn toolbar<'a>(
                 button(
                     row![
                         icons::view(Icon::FolderOpen, theme::ACCENT, 14.0),
-                        text(" Open Note").size(12).color(theme::ACCENT)
+                        text(" Open Note").size(theme::TEXT_SM).color(theme::ACCENT)
                     ]
                     .align_y(Alignment::Center),
                 )
                 .on_press(Message::PdfOpenLinkedNote(path.clone()))
-                .padding([4, 8])
+                .padding([theme::SPACE_2, theme::SPACE_3])
                 .style(button::text)
             } else {
                 button(
                     row![
                         icons::view(Icon::Folder, theme::TEXT_MUTED, 14.0),
-                        text(" Link Note").size(12).color(theme::TEXT_MUTED)
+                        text(" Link Note")
+                            .size(theme::TEXT_SM)
+                            .color(theme::TEXT_MUTED)
                     ]
                     .align_y(Alignment::Center),
                 )
                 .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
-                .padding([4, 8])
+                .padding([theme::SPACE_2, theme::SPACE_3])
                 .style(button::text)
             }
         } else {
             button(
                 row![
                     icons::view(Icon::Folder, theme::TEXT_MUTED, 14.0),
-                    text(" Link Note").size(12).color(theme::TEXT_MUTED)
+                    text(" Link Note")
+                        .size(theme::TEXT_SM)
+                        .color(theme::TEXT_MUTED)
                 ]
                 .align_y(Alignment::Center),
             )
             .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
-            .padding([4, 8])
+            .padding([theme::SPACE_2, theme::SPACE_3])
             .style(button::text)
         };
 
         let copy_btn = button(
             row![
-                text("⧉").size(14).color(theme::TEXT_PRIMARY),
-                text(" Copy").size(12).color(theme::TEXT_PRIMARY)
+                text("⧉").size(theme::TEXT_BASE).color(theme::TEXT_PRIMARY),
+                text(" Copy")
+                    .size(theme::TEXT_SM)
+                    .color(theme::TEXT_PRIMARY)
             ]
             .align_y(Alignment::Center),
         )
         .on_press(Message::PdfCopyAnnotationText(ann.id.clone()))
-        .padding([4, 8])
+        .padding([theme::SPACE_2, theme::SPACE_3])
         .style(button::text);
 
         let delete_btn = button(icons::view(
@@ -323,17 +337,19 @@ pub fn toolbar<'a>(
             14.0,
         ))
         .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
-        .padding([4, 8])
+        .padding([theme::SPACE_2, theme::SPACE_3])
         .style(button::text);
 
         row![
-            text("Highlight:").size(12).color(theme::TEXT_MUTED),
+            text("Highlight:")
+                .size(theme::TEXT_SM)
+                .color(theme::TEXT_MUTED),
             note_btn,
             link_btn,
             copy_btn,
             delete_btn,
         ]
-        .spacing(8)
+        .spacing(theme::SPACE_3)
         .align_y(Alignment::Center)
     } else {
         row![]
@@ -343,51 +359,57 @@ pub fn toolbar<'a>(
     // annotations — otherwise there is nothing to check and a standing
     // warning-styled control just adds noise to every PDF.
     let orphan_btn: Element<'a, Message, Theme, Renderer> = if has_annotations {
-        button(text("Check anchors").size(12).color(theme::TEXT_MUTED))
-            .on_press(Message::PdfOrphanReport)
-            .padding(8)
-            .style(button::text)
-            .into()
+        button(
+            text("Check anchors")
+                .size(theme::TEXT_SM)
+                .color(theme::TEXT_MUTED),
+        )
+        .on_press(Message::PdfOrphanReport)
+        .padding(theme::SPACE_3)
+        .style(button::text)
+        .into()
     } else {
         Space::new().width(Length::Fixed(0.0)).into()
     };
 
     container(
         row![
-            button(text("☰").size(14).color(if toc_visible {
+            button(text("☰").size(theme::TEXT_BASE).color(if toc_visible {
                 theme::ACCENT
             } else {
                 theme::TEXT_MUTED
             }))
             .on_press(Message::ToggleTOC)
-            .padding(8)
+            .padding(theme::SPACE_3)
             .style(button::text),
             orphan_btn,
             Space::new().width(Length::Fill),
             study_controls,
             annotation_controls,
             Space::new().width(Length::Fill),
-            button(text("-").size(16))
+            button(text("-").size(theme::TEXT_MD))
                 .on_press(Message::PdfZoomChanged((zoom - 0.1).max(0.5)))
-                .padding([4, 10])
+                .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
             text(format!("{:.0}%", zoom * 100.0))
-                .size(12)
+                .size(theme::TEXT_SM)
                 .color(theme::TEXT_MUTED),
-            button(text("+").size(16))
+            button(text("+").size(theme::TEXT_MD))
                 .on_press(Message::PdfZoomChanged((zoom + 0.1).min(4.0)))
-                .padding([4, 10])
+                .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
-            button(text("Fit").size(12))
+            button(text("Fit").size(theme::TEXT_SM))
                 .on_press(Message::PdfFitToWidth)
-                .padding([4, 10])
+                .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
             Space::new().width(Length::Fill),
-            text(page_label).size(12).color(theme::TEXT_SECONDARY),
+            text(page_label)
+                .size(theme::TEXT_SM)
+                .color(theme::TEXT_SECONDARY),
         ]
-        .spacing(10)
+        .spacing(theme::SPACE_4)
         .align_y(Alignment::Center)
-        .padding([6, 12]),
+        .padding([theme::SPACE_3, theme::SPACE_4]),
     )
     .width(Length::Fill)
     .style(|_| container::Style {
@@ -417,16 +439,20 @@ pub fn view_continuous<'a>(
     focused_annotation_id: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
     if pages.is_empty() {
-        return container(text("Loading PDF...").color(theme::TEXT_MUTED).size(14))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
-                ..Default::default()
-            })
-            .into();
+        return container(
+            text("Loading PDF...")
+                .color(theme::TEXT_MUTED)
+                .size(theme::TEXT_BASE),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+            ..Default::default()
+        })
+        .into();
     }
 
     let mut page_list = column![]
@@ -537,27 +563,27 @@ pub fn view_continuous<'a>(
                     thin: false,
                 }
             }));
-            if let (Some(sel), Some(page_text)) = (active_selection, page_text) {
-                if sel.page_index == page_index {
-                    let start = sel.anchor_idx.min(sel.focus_idx);
-                    let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-                    let selected_chars = page_text
-                        .chars
-                        .iter()
-                        .filter(|c| c.text_index >= start && c.text_index < end)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    overlay_rects.extend(
-                        md_editor_core::pdf::merge_char_rects(&selected_chars)
-                            .into_iter()
-                            .map(|rect| OverlayRect {
-                                rect: search_rect_to_view_rect(&rect, page_text.page_height, zoom),
-                                color: Color::from_rgba(0.12, 0.53, 0.9, 0.45),
-                                border_color: None,
-                                thin: false,
-                            }),
-                    );
-                }
+            if let (Some(sel), Some(page_text)) = (active_selection, page_text)
+                && sel.page_index == page_index
+            {
+                let start = sel.anchor_idx.min(sel.focus_idx);
+                let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
+                let selected_chars = page_text
+                    .chars
+                    .iter()
+                    .filter(|c| c.text_index >= start && c.text_index < end)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                overlay_rects.extend(
+                    md_editor_core::pdf::merge_char_rects(&selected_chars)
+                        .into_iter()
+                        .map(|rect| OverlayRect {
+                            rect: search_rect_to_view_rect(&rect, page_text.page_height, zoom),
+                            color: Color::from_rgba(0.12, 0.53, 0.9, 0.45),
+                            border_color: None,
+                            thin: false,
+                        }),
+                );
             }
             // Underline recognised internal references so they read as
             // clickable. `LinkInfo.bbox` is already top-left origin in PDF
@@ -576,7 +602,10 @@ pub fn view_continuous<'a>(
                             width: b.width * zoom,
                             height: thickness,
                         },
-                        color: Color { a: 0.5, ..theme::ACCENT },
+                        color: Color {
+                            a: 0.5,
+                            ..theme::ACCENT
+                        },
                         border_color: None,
                         thin: true,
                     });
@@ -597,8 +626,8 @@ pub fn view_continuous<'a>(
                 focused_annotation_id,
                 move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
                 move |x, y| Message::PdfRightClicked(i as u16, x, y),
-                move |page, anchor, focus| Message::PdfSelectionChanged(page, anchor, focus),
-                move |page, anchor, focus| Message::PdfSelectionFinished(page, anchor, focus),
+                Message::PdfSelectionChanged,
+                Message::PdfSelectionFinished,
                 move || Message::PdfSelectionCleared,
                 move || Message::PdfCopySelection,
             );
@@ -619,7 +648,7 @@ pub fn view_continuous<'a>(
                     shadow: iced::Shadow {
                         color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
                         offset: iced::Vector::new(0.0, 4.0),
-                        blur_radius: 10.0,
+                        blur_radius: theme::RADIUS_LG,
                     },
                     ..Default::default()
                 }),

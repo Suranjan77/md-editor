@@ -20,6 +20,24 @@ Expected release artifacts:
 - Linux/macOS: `target/release/md-editor`
 - PDFium shared library copied next to the executable by the build script
 
+## Durability Checks
+
+These are pass/fail, not judgement calls. Run them first: if any fails, the
+build does not ship regardless of what else works.
+
+1. **Kill it mid-edit.** Type into a note, then `kill -9` the process without
+   saving. Reopen the vault: no characters lost.
+2. **Switch with unsaved edits.** Edit a note, click straight to another file
+   in the sidebar, then come back. The edits are on disk, and `Ctrl+Z` still
+   walks back through the history from before the switch.
+3. **Undo is word-sized.** Type a sentence, press `Ctrl+Z` once. A run of
+   typing disappears, not a single character.
+4. **Leave a note by every route.** With unsaved edits, in turn: click another
+   note, click an image, and close the window. In each case the edits reach
+   disk and the undo history survives where the note is reopened.
+5. **Session restored.** Quit and relaunch: same window size, same file, same
+   scroll offset and cursor position.
+
 ## Smoke Test
 
 Use a fresh temporary vault and verify:

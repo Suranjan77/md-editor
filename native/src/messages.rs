@@ -51,6 +51,8 @@ pub enum Message {
     ScrollEditorToTarget(f32),
     HighlightReady(u64, Vec<crate::editor::highlight::StyledLine>),
     HighlightDebounceElapsed,
+    /// The autosave debounce window elapsed; write the buffer if still dirty.
+    AutosaveElapsed,
 
     // ── PDF ──────────────────────────────────────────────────────
     PdfZoomChanged(f32),
@@ -137,6 +139,8 @@ pub enum Message {
     WindowResized(f32, f32),
     WindowOpened(iced::window::Id),
     WindowRescaled(f32),
+    /// The window manager asked to close; flush unsaved work, then exit.
+    WindowCloseRequested,
     /// Vault-relative paths that changed on disk (filesystem watcher), debounced.
     VaultFilesChanged(Vec<String>),
 }

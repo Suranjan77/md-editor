@@ -44,34 +44,35 @@ pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
     toc
 }
 
-pub fn view<'a>(
-    toc: &'a [TocEntry],
-    is_synthetic: bool,
-) -> Element<'a, Message, Theme, Renderer> {
+pub fn view<'a>(toc: &'a [TocEntry], is_synthetic: bool) -> Element<'a, Message, Theme, Renderer> {
     let title = text("Table of Contents")
-        .size(16)
+        .size(theme::TEXT_MD)
         .color(theme::TEXT_PRIMARY);
 
     // Subtle badge so the user knows a bookmark-less PDF's outline was
     // generated heuristically from page text rather than embedded bookmarks.
     let badge: Element<'a, Message, Theme, Renderer> = if is_synthetic {
-        container(text("Generated").size(11).color(theme::TEXT_MUTED))
-            .padding(Padding {
-                top: 2.0,
-                right: 6.0,
-                bottom: 2.0,
-                left: 6.0,
-            })
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
-                border: iced::Border {
-                    color: theme::BORDER,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
+        container(
+            text("Generated")
+                .size(theme::TEXT_SM)
+                .color(theme::TEXT_MUTED),
+        )
+        .padding(Padding {
+            top: 2.0,
+            right: 6.0,
+            bottom: 2.0,
+            left: 6.0,
+        })
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+            border: iced::Border {
+                color: theme::BORDER,
+                width: 1.0,
+                radius: theme::RADIUS_SM.into(),
+            },
+            ..Default::default()
+        })
+        .into()
     } else {
         Space::new().height(Length::Fixed(0.0)).into()
     };
@@ -80,11 +81,15 @@ pub fn view<'a>(
         let indent = (entry.level.saturating_sub(1) as f32) * 15.0;
 
         container(
-            button(text(&entry.text).size(14).color(theme::TEXT_SECONDARY))
-                .on_press(Message::TocClicked(entry.line))
-                .padding([4, 8])
-                .style(button::text)
-                .width(Length::Fill),
+            button(
+                text(&entry.text)
+                    .size(theme::TEXT_BASE)
+                    .color(theme::TEXT_SECONDARY),
+            )
+            .on_press(Message::TocClicked(entry.line))
+            .padding([theme::SPACE_2, theme::SPACE_3])
+            .style(button::text)
+            .width(Length::Fill),
         )
         .padding(Padding {
             top: 0.0,
@@ -100,10 +105,10 @@ pub fn view<'a>(
             title,
             badge,
             Space::new().height(Length::Fixed(10.0)),
-            scrollable(column(items).spacing(2))
+            scrollable(column(items).spacing(theme::SPACE_1))
         ]
-        .spacing(4)
-        .padding(15),
+        .spacing(theme::SPACE_2)
+        .padding(theme::SPACE_5),
     )
     .width(Length::Fixed(250.0))
     .height(Length::Fill)

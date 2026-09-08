@@ -1,5 +1,63 @@
+//! Design tokens for the application chrome.
+//!
+//! Everything the UI draws — sidebar, toolbar, panels, modals, tracker — takes
+//! its colour, text size, spacing, and corner radius from this module. Values
+//! are not chosen per call site: the app had eleven distinct font sizes and
+//! seventeen distinct spacing values before these scales existed, which is the
+//! visual noise that reads as "unpolished" without ever being nameable.
+//!
+//! Document typography (heading sizes, code and math scale inside a note) is a
+//! separate concern and lives with the markdown renderer.
+
 use iced::theme::Palette;
 use iced::{Color, Theme};
+
+// ── Type scale ───────────────────────────────────────────────────────
+//
+// Six steps. Anything the chrome renders picks one of these; there is no
+// in-between size.
+
+/// Fine print: badges, counters, gutter numbers.
+pub const TEXT_XS: f32 = 10.0;
+/// Secondary UI text: captions, metadata, tree affordances.
+pub const TEXT_SM: f32 = 12.0;
+/// Default UI text.
+pub const TEXT_BASE: f32 = 14.0;
+/// Emphasised UI text and section headings.
+pub const TEXT_MD: f32 = 16.0;
+/// Panel and dialog titles.
+pub const TEXT_LG: f32 = 18.0;
+/// The welcome screen wordmark; deliberately the only display-scale text.
+pub const TEXT_DISPLAY: f32 = 42.0;
+
+// ── Spacing scale ────────────────────────────────────────────────────
+//
+// Seven steps on a 2px grid, growing roughly geometrically so adjacent steps
+// stay visibly distinct.
+
+/// Flush; no gap.
+pub const SPACE_0: f32 = 0.0;
+/// Hairline separation between tightly related items.
+pub const SPACE_1: f32 = 2.0;
+/// Within a control: icon to label.
+pub const SPACE_2: f32 = 4.0;
+/// Default gap between siblings, and default control padding.
+pub const SPACE_3: f32 = 8.0;
+/// Between grouped rows; comfortable control padding.
+pub const SPACE_4: f32 = 12.0;
+/// Between groups within a panel.
+pub const SPACE_5: f32 = 16.0;
+/// Between major regions.
+pub const SPACE_6: f32 = 24.0;
+
+// ── Radius ───────────────────────────────────────────────────────────
+
+/// Chips, badges, and inline markers.
+pub const RADIUS_SM: f32 = 3.0;
+/// Buttons, inputs, list rows.
+pub const RADIUS_MD: f32 = 6.0;
+/// Panels, cards, and modals.
+pub const RADIUS_LG: f32 = 10.0;
 
 // ── Premium Dark Theme Tokens ────────────────────────────────────────
 
@@ -35,6 +93,6 @@ pub fn md_editor_theme() -> Theme {
             danger: DANGER,
             warning: WARNING,
         },
-        |palette| iced::theme::palette::Extended::generate(palette),
+        iced::theme::palette::Extended::generate,
     )
 }

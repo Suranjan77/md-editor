@@ -6,9 +6,8 @@
 //! scrolling, launching PDF search tasks) but reads/writes search data through
 //! this struct.
 //!
-//! Per `docs/refactor-mdeditor-decomposition.md`, the buffer revision that
-//! invalidates the match cache stays owned by the editor side and is passed
-//! into [`SearchState::ensure_matches`].
+//! The buffer revision that invalidates the match cache stays owned by the
+//! editor side and is passed into [`SearchState::ensure_matches`].
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -117,8 +116,13 @@ impl SearchState {
             return;
         }
 
-        self.doc_match_cache =
-            compute_matches(buffer, &self.query, self.regex, self.match_case, active_path.is_some());
+        self.doc_match_cache = compute_matches(
+            buffer,
+            &self.query,
+            self.regex,
+            self.match_case,
+            active_path.is_some(),
+        );
         self.doc_match_key = Some(key);
     }
 

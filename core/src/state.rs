@@ -17,6 +17,12 @@ pub struct AppState {
     pub pdf_renderer: Option<PdfRenderer>,
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         let db_path = settings_db_path();
@@ -91,8 +97,11 @@ impl AppState {
                 )
                 .map_err(|e| format!("Failed to re-key pdf annotations: {e}"))?;
                 // The reference cache is derived data; dropping it is enough.
-                tx.execute("DELETE FROM pdf_references WHERE document_id = ?1", [old_id])
-                    .map_err(|e| e.to_string())?;
+                tx.execute(
+                    "DELETE FROM pdf_references WHERE document_id = ?1",
+                    [old_id],
+                )
+                .map_err(|e| e.to_string())?;
                 tx.execute("DELETE FROM pdf_documents WHERE document_id = ?1", [old_id])
                     .map_err(|e| e.to_string())?;
             }
@@ -217,8 +226,7 @@ impl AppState {
         let Ok(db) = self.db.lock() else {
             return;
         };
-        let Ok(json) = serde_json::to_string(&(crate::references::RESOLVER_VERSION, links))
-        else {
+        let Ok(json) = serde_json::to_string(&(crate::references::RESOLVER_VERSION, links)) else {
             return;
         };
         let now = std::time::SystemTime::now()
@@ -474,7 +482,7 @@ fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
 
 const DB_FILE_NAME: &str = "md_editor_settings.sqlite";
 
-fn settings_db_path() -> PathBuf {
+pub fn settings_db_path() -> PathBuf {
     let mut dir = data_dir();
     if let Err(err) = std::fs::create_dir_all(&dir) {
         eprintln!("Failed to create data directory {}: {err}", dir.display());
@@ -486,12 +494,11 @@ fn settings_db_path() -> PathBuf {
     // platform data directory. If the portable location (beside the executable)
     // has no database yet but that one does, copy it back so users keep their
     // settings and study history.
-    if !dir.exists() {
-        if let Some(other) = platform_data_db_path() {
-            if other != dir {
-                migrate_legacy_db(&other, &dir);
-            }
-        }
+    if !dir.exists()
+        && let Some(other) = platform_data_db_path()
+        && other != dir
+    {
+        migrate_legacy_db(&other, &dir);
     }
 
     dir
@@ -544,16 +551,16 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 /// `~/Library/Application Support`, or `$XDG_DATA_HOME`/`~/.local/share`), and
 /// finally the current directory.
 fn data_dir() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if is_writable_dir(dir) {
-                return dir.to_path_buf();
-            }
-            if let Some(base) = platform_data_home() {
-                return base.join("md-editor");
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        if is_writable_dir(dir) {
             return dir.to_path_buf();
         }
+        if let Some(base) = platform_data_home() {
+            return base.join("md-editor");
+        }
+        return dir.to_path_buf();
     }
     if let Some(base) = platform_data_home() {
         return base.join("md-editor");
@@ -577,8 +584,11 @@ fn is_writable_dir(dir: &Path) -> bool {
 
 fn platform_data_home() -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
-        std::env::var_os("HOME")
-            .map(|home| PathBuf::from(home).join("Library").join("Application Support"))
+        std::env::var_os("HOME").map(|home| {
+            PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+        })
     } else if cfg!(target_os = "windows") {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else {
@@ -586,7 +596,8 @@ fn platform_data_home() -> Option<PathBuf> {
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
+                std::env::var_os("HOME")
+                    .map(|home| PathBuf::from(home).join(".local").join("share"))
             })
     }
 }
@@ -674,7 +685,12 @@ mod tests {
         let anns = state.get_pdf_annotations("new-id", None).unwrap();
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].id, "ann-1");
-        assert!(state.get_pdf_annotations("old-id", None).unwrap().is_empty());
+        assert!(
+            state
+                .get_pdf_annotations("old-id", None)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(state.get_pdf_path_by_id("old-id").unwrap(), None);
 
         // Different size at the same path: a genuinely different file, so the

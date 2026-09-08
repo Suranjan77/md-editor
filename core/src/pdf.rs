@@ -150,7 +150,7 @@ pub fn compute_provisional_id(
     // for bookkeeping in `pdf_documents`.
     let mut hasher = Sha256::new();
     hasher.update(&buffer);
-    hasher.update(&file_len.to_be_bytes());
+    hasher.update(file_len.to_be_bytes());
 
     let hash_result = hasher.finalize();
     let id = format!("{:x}", hash_result);
@@ -282,9 +282,7 @@ enum PdfCommand {
     ),
     GetReferences(
         String,
-        std::sync::mpsc::SyncSender<
-            Result<Vec<crate::references::ReferenceLink>, String>,
-        >,
+        std::sync::mpsc::SyncSender<Result<Vec<crate::references::ReferenceLink>, String>>,
     ),
     GetEmbeddedToc(
         String,
@@ -609,13 +607,14 @@ impl PdfRenderer {
                                         _ => {}
                                     }
                                 }
-                                if dest_page.is_none() && uri.is_none() {
-                                    if let Some(dest) = link.destination() {
-                                        let (p, y) = extract_dest(&dest, page_height);
-                                        dest_page = p;
-                                        if dest_y.is_none() {
-                                            dest_y = y;
-                                        }
+                                if dest_page.is_none()
+                                    && uri.is_none()
+                                    && let Some(dest) = link.destination()
+                                {
+                                    let (p, y) = extract_dest(&dest, page_height);
+                                    dest_page = p;
+                                    if dest_y.is_none() {
+                                        dest_y = y;
                                     }
                                 }
                                 links.push(LinkInfo {
@@ -740,12 +739,12 @@ impl PdfRenderer {
                                                             for char in chars.iter() {
                                                                 let idx = char.index();
                                                                 if min_char_index
-                                                                    .map_or(true, |min| idx < min)
+                                                                    .is_none_or(|min| idx < min)
                                                                 {
                                                                     min_char_index = Some(idx);
                                                                 }
                                                                 if max_char_index
-                                                                    .map_or(true, |max| idx > max)
+                                                                    .is_none_or(|max| idx > max)
                                                                 {
                                                                     max_char_index = Some(idx);
                                                                 }
@@ -1368,8 +1367,8 @@ fn numbered_heading_depth(title: &str) -> Option<usize> {
     }
     // The number must be followed by whitespace and real heading text.
     let after = &t[consumed..];
-    let has_text = matches!(after.chars().next(), Some(c) if c.is_whitespace())
-        && !after.trim().is_empty();
+    let has_text =
+        matches!(after.chars().next(), Some(c) if c.is_whitespace()) && !after.trim().is_empty();
     if !has_text {
         return None;
     }
@@ -1381,7 +1380,13 @@ fn numbered_heading_depth(title: &str) -> Option<usize> {
     // plausible section index (<= 2 digits, so years like "2020" are rejected)
     // followed by a capitalized word ("1 Introduction"), which separates real
     // headings from quantities ("1 apple") and sentences ("2020 was a year").
-    if consumed <= 2 && after.trim_start().chars().next().is_some_and(|c| c.is_uppercase()) {
+    if consumed <= 2
+        && after
+            .trim_start()
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_uppercase())
+    {
         return Some(1);
     }
     None
@@ -1411,7 +1416,11 @@ fn is_plausible_title(title: &str) -> bool {
 /// a common heading style that carries no extra glyph height.
 fn is_caps_heading(title: &str) -> bool {
     let letters = title.chars().filter(|c| c.is_alphabetic()).count();
-    letters >= 3 && title.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
+    letters >= 3
+        && title
+            .chars()
+            .filter(|c| c.is_alphabetic())
+            .all(|c| c.is_uppercase())
 }
 
 /// Vertical window, in PDF points, shown around a reference's destination in the
@@ -1682,8 +1691,8 @@ fn extract_toc_entries(page: &PdfPageText) -> Vec<TocRow> {
                 // entry's page so it stays navigable. Inherited entries are
                 // flagged `real = false` so they don't count toward TOC-page
                 // detection (front-matter prose has such subheadings too).
-                let standalone = numbered_heading_depth(&l.text).is_some()
-                    || is_caps_heading(l.text.trim());
+                let standalone =
+                    numbered_heading_depth(&l.text).is_some() || is_caps_heading(l.text.trim());
                 if standalone {
                     let page = pending.as_ref().map(|p| p.page).unwrap_or(0);
                     if let Some(p) = pending.take() {
@@ -1722,10 +1731,7 @@ fn detect_toc_pages(pages: &[PdfPageText]) -> Vec<usize> {
             .any(|l| is_contents_heading(&line_text(page, l)));
         // Count only entries with a genuinely paired page number; inherited
         // standalone headings (common in front-matter prose) don't qualify.
-        let real = extract_toc_entries(page)
-            .iter()
-            .filter(|e| e.real)
-            .count();
+        let real = extract_toc_entries(page).iter().filter(|e| e.real).count();
         if (has_heading && real >= 2) || real >= 5 {
             candidates.insert(i);
             if has_heading && heading_candidate.is_none() {
@@ -1753,17 +1759,18 @@ fn detect_toc_pages(pages: &[PdfPageText]) -> Vec<usize> {
 /// a few TOC titles to headings on the body pages they point at. Returns `None`
 /// unless at least two entries agree, so a single coincidental match cannot
 /// misalign the whole outline.
-fn learn_page_delta(pages: &[PdfPageText], last_toc: usize, entries: &[(&str, u32)]) -> Option<i64> {
+fn learn_page_delta(
+    pages: &[PdfPageText],
+    last_toc: usize,
+    entries: &[(&str, u32)],
+) -> Option<i64> {
     let mut votes: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     for (title, printed) in entries.iter().take(40) {
         let norm = normalize_heading(title);
         if norm.len() < 4 {
             continue;
         }
-        for page in pages
-            .iter()
-            .filter(|p| (p.page_index as usize) > last_toc)
-        {
+        for page in pages.iter().filter(|p| (p.page_index as usize) > last_toc) {
             let matched = page
                 .lines
                 .iter()
@@ -1814,15 +1821,15 @@ fn harvest_linked_toc(
                 Err(_) => continue,
             };
             let mut dest_page: Option<u32> = None;
-            if let Some(PdfAction::LocalDestination(ref local)) = link.action() {
-                if let Ok(dest) = local.destination() {
-                    dest_page = dest.page_index().ok().map(|i| i as u32);
-                }
+            if let Some(PdfAction::LocalDestination(ref local)) = link.action()
+                && let Ok(dest) = local.destination()
+            {
+                dest_page = dest.page_index().ok().map(|i| i as u32);
             }
-            if dest_page.is_none() {
-                if let Some(dest) = link.destination() {
-                    dest_page = dest.page_index().ok().map(|i| i as u32);
-                }
+            if dest_page.is_none()
+                && let Some(dest) = link.destination()
+            {
+                dest_page = dest.page_index().ok().map(|i| i as u32);
             }
             let Some(dest) = dest_page else {
                 continue;
@@ -2002,8 +2009,9 @@ pub fn synthesize_toc(pages: &[PdfPageText]) -> Vec<TocEntry> {
             }
         }
     }
-    let repeat_page_threshold =
-        ((pages.len() as f32) * HEADER_REPEAT_FRACTION).ceil().max(2.0) as usize;
+    let repeat_page_threshold = ((pages.len() as f32) * HEADER_REPEAT_FRACTION)
+        .ceil()
+        .max(2.0) as usize;
     let is_running_header = |title: &str| -> bool {
         text_page_counts
             .get(title)
@@ -2165,11 +2173,11 @@ fn bind_pdfium() -> Result<Pdfium, String> {
         let lib_name = Pdfium::pdfium_platform_library_name();
         let mut candidates = Vec::new();
 
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                candidates.push(dir.join("resources").join(&lib_name));
-                candidates.push(dir.join(&lib_name));
-            }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            candidates.push(dir.join("resources").join(&lib_name));
+            candidates.push(dir.join(&lib_name));
         }
         candidates.push(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2336,10 +2344,7 @@ mod tests {
             ),
             page_fixture(
                 1,
-                &[
-                    ("Big Heading Two", 16.0),
-                    ("yet more body text", 10.0),
-                ],
+                &[("Big Heading Two", 16.0), ("yet more body text", 10.0)],
             ),
         ];
         let toc = synthesize_toc(&pages);
@@ -2615,14 +2620,8 @@ mod tests {
         // one entry per page labeled by its most prominent (tallest) line, with
         // the running header excluded.
         let pages = vec![
-            page_fixture(
-                0,
-                &[("Running Header", 10.0), ("alpha content line", 12.0)],
-            ),
-            page_fixture(
-                1,
-                &[("Running Header", 10.0), ("bravo content line", 12.0)],
-            ),
+            page_fixture(0, &[("Running Header", 10.0), ("alpha content line", 12.0)]),
+            page_fixture(1, &[("Running Header", 10.0), ("bravo content line", 12.0)]),
         ];
         let toc = synthesize_toc(&pages);
         assert_eq!(toc.len(), 2);
@@ -2636,7 +2635,9 @@ mod tests {
     fn test_pdf_search() {
         let _guard = TEST_LOCK.lock().unwrap();
         let pdfium = bind_pdfium().unwrap();
-        let doc = pdfium.load_pdf_from_file("../dummy.pdf", None).unwrap();
+        let doc = pdfium
+            .load_pdf_from_file("../tests-fixtures/pdf/dummy.pdf", None)
+            .unwrap();
         let page = doc.pages().get(0).unwrap();
         let text_page = page.text().unwrap();
         let page_height = page.height().value;
@@ -2670,7 +2671,7 @@ mod tests {
     fn test_pdf_renderer_search() {
         let _guard = TEST_LOCK.lock().unwrap();
         let renderer = PdfRenderer::new().unwrap();
-        let path = "../dummy.pdf";
+        let path = "../tests-fixtures/pdf/dummy.pdf";
 
         // Test non-regex search
         let results = renderer.search_text(path, "dummy", false, false).unwrap();
@@ -2703,7 +2704,7 @@ mod tests {
     #[test]
     fn test_pdf_text_extraction_and_hashing() {
         let _guard = TEST_LOCK.lock().unwrap();
-        let path = "../dummy.pdf";
+        let path = "../tests-fixtures/pdf/dummy.pdf";
         let (id, size, modified) = compute_provisional_id(std::path::Path::new(path)).unwrap();
         assert!(!id.is_empty(), "Document hash must not be empty");
         assert!(size > 0, "Document size must be > 0");

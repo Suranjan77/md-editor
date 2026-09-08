@@ -6,8 +6,7 @@
 //! that belong to the global UI (toasts) are surfaced as
 //! [`Message::ShowToast`] tasks rather than reaching back into the shell.
 //!
-//! This is the first extraction described in
-//! `docs/refactor-mdeditor-decomposition.md`.
+//! The first sub-state extracted from the `MdEditor` shell.
 
 use std::collections::HashMap;
 use std::time::Instant;

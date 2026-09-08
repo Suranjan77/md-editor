@@ -13,20 +13,24 @@ pub fn view<'a>(
         return container(text("")).width(Length::Fixed(0.0)).into();
     }
 
-    let header = text("BACKLINKS").size(10).color(theme::TEXT_MUTED);
+    let header = text("BACKLINKS")
+        .size(theme::TEXT_XS)
+        .color(theme::TEXT_MUTED);
 
     let count_text = if backlinks.is_empty() {
-        text("No backlinks found").size(12).color(theme::TEXT_MUTED)
+        text("No backlinks found")
+            .size(theme::TEXT_SM)
+            .color(theme::TEXT_MUTED)
     } else {
         text(format!("{} links", backlinks.len()))
-            .size(10)
+            .size(theme::TEXT_XS)
             .color(theme::ACCENT)
     };
 
     let list: Column<'_, Message, Theme, Renderer> =
         backlinks
             .iter()
-            .fold(Column::new().spacing(6), |col, item| {
+            .fold(Column::new().spacing(theme::SPACE_3), |col, item| {
                 let msg = match &item.source {
                     md_editor_core::types::BacklinkTarget::MarkdownFile { path } => {
                         Message::SidebarFileClicked(path.clone())
@@ -45,18 +49,23 @@ pub fn view<'a>(
                     },
                 };
 
-                let mut btn_content =
-                    column![text(&item.label).size(12).color(theme::TEXT_SECONDARY)].spacing(2);
+                let mut btn_content = column![
+                    text(&item.label)
+                        .size(theme::TEXT_SM)
+                        .color(theme::TEXT_SECONDARY)
+                ]
+                .spacing(theme::SPACE_1);
 
-                if let Some(ctx) = &item.context {
-                    if !ctx.trim().is_empty() {
-                        btn_content = btn_content.push(text(ctx).size(10).color(theme::TEXT_MUTED));
-                    }
+                if let Some(ctx) = &item.context
+                    && !ctx.trim().is_empty()
+                {
+                    btn_content =
+                        btn_content.push(text(ctx).size(theme::TEXT_XS).color(theme::TEXT_MUTED));
                 }
 
                 let btn: iced::widget::Button<'_, Message, Theme, Renderer> = button(btn_content)
                     .on_press(msg)
-                    .padding([6, 10])
+                    .padding([theme::SPACE_3, theme::SPACE_4])
                     .width(Length::Fill)
                     .style(button::text);
 
@@ -64,8 +73,10 @@ pub fn view<'a>(
             });
 
     let content = column![
-        column![header, count_text].spacing(4).padding([12, 14]),
-        scrollable(list.padding([0, 14])).height(Length::Fill),
+        column![header, count_text]
+            .spacing(theme::SPACE_2)
+            .padding([theme::SPACE_4, theme::SPACE_4]),
+        scrollable(list.padding([theme::SPACE_0, theme::SPACE_4])).height(Length::Fill),
     ]
     .width(Length::Fixed(220.0));
 

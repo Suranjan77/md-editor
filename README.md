@@ -51,6 +51,8 @@ notes.
 
 The editor supports the things you expect in a real Markdown workspace:
 
+- autosave with atomic writes, so work is never held only in memory and a
+  crash cannot truncate a note;
 - headings, emphasis, links, blockquotes, and task checkboxes;
 - fenced code blocks with syntax highlighting;
 - tables, images, and math rendering;

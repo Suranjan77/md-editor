@@ -8,8 +8,8 @@
 //! a cross-cutting "current document" concern shared by the editor, search,
 //! and PDF sides, not vault navigation.
 //!
-//! Part of the `MdEditor` decomposition; see
-//! `docs/refactor-mdeditor-decomposition.md`.
+//! Part of the `MdEditor` decomposition: the shell owns cross-pane
+//! coordination, each sub-state owns its own domain.
 
 use std::collections::BTreeSet;
 
