@@ -5,8 +5,7 @@ use rusqlite::Connection;
 
 use crate::file_index::FileIndex;
 use crate::pdf::{
-    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect, PdfRenderer, PdfState,
-    PdfTextRange,
+    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect, PdfRenderer, PdfTextRange,
 };
 
 /// Application-wide shared state.
@@ -15,7 +14,6 @@ pub struct AppState {
     pub vault_root: Mutex<Option<PathBuf>>,
     pub file_index: Mutex<FileIndex>,
     pub db: Mutex<Connection>,
-    pub pdf_state: Mutex<PdfState>,
     pub pdf_renderer: Option<PdfRenderer>,
 }
 
@@ -34,7 +32,6 @@ impl AppState {
             vault_root: Mutex::new(None),
             file_index: Mutex::new(FileIndex::new(PathBuf::new())),
             db: Mutex::new(db),
-            pdf_state: Mutex::new(PdfState::new()),
             pdf_renderer: PdfRenderer::new().ok(),
         }
     }
@@ -47,7 +44,6 @@ impl AppState {
             vault_root: Mutex::new(None),
             file_index: Mutex::new(FileIndex::new(PathBuf::new())),
             db: Mutex::new(db),
-            pdf_state: Mutex::new(PdfState::new()),
             pdf_renderer: None,
         }
     }
@@ -64,6 +60,44 @@ impl AppState {
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
+
+        // Document ids used to include the file's mtime, so touching/copying a
+        // PDF produced a fresh id and silently orphaned its annotations. Adopt
+        // rows previously recorded for the same vault path under the new id —
+        // but only when the size matches, so annotations from a genuinely
+        // different file that replaced the old one at this path stay orphaned
+        // (their text indices wouldn't apply anyway).
+        let stale_ids: Vec<String> = {
+            let mut stmt = db
+                .prepare(
+                    "SELECT document_id FROM pdf_documents
+                     WHERE vault_relative_path = ?1 AND file_size = ?2 AND document_id != ?3",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(
+                    rusqlite::params![vault_relative_path, file_size as i64, document_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(|e| e.to_string())?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        if !stale_ids.is_empty() {
+            let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+            for old_id in &stale_ids {
+                tx.execute(
+                    "UPDATE pdf_annotations SET document_id = ?1 WHERE document_id = ?2",
+                    rusqlite::params![document_id, old_id],
+                )
+                .map_err(|e| format!("Failed to re-key pdf annotations: {e}"))?;
+                // The reference cache is derived data; dropping it is enough.
+                tx.execute("DELETE FROM pdf_references WHERE document_id = ?1", [old_id])
+                    .map_err(|e| e.to_string())?;
+                tx.execute("DELETE FROM pdf_documents WHERE document_id = ?1", [old_id])
+                    .map_err(|e| e.to_string())?;
+            }
+            tx.commit().map_err(|e| e.to_string())?;
+        }
 
         db.execute(
             "INSERT INTO pdf_documents (document_id, vault_relative_path, file_size, modified_at, created_at, updated_at)
@@ -604,6 +638,57 @@ mod tests {
             state.get_cached_pdf_text("a.pdf", 101, 6).as_deref(),
             Some("new text")
         );
+    }
+
+    #[test]
+    fn annotations_follow_document_id_change_for_same_path_and_size() {
+        use crate::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind};
+
+        let state = AppState::new_in_memory();
+        state
+            .save_pdf_document("old-id", "papers/a.pdf", 1234, Some(100))
+            .unwrap();
+        state
+            .save_pdf_annotation(&PdfAnnotation {
+                id: "ann-1".to_string(),
+                document_id: "old-id".to_string(),
+                page_index: 0,
+                kind: PdfAnnotationKind::Highlight,
+                color: PdfAnnotationColor::Yellow,
+                selected_text: "hello".to_string(),
+                ranges: Vec::new(),
+                rects: Vec::new(),
+                note: None,
+                linked_note_path: None,
+                markdown_anchor: None,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+
+        // Same path and size, new id (e.g. legacy mtime-based id): annotations
+        // are adopted by the new id.
+        state
+            .save_pdf_document("new-id", "papers/a.pdf", 1234, Some(200))
+            .unwrap();
+        let anns = state.get_pdf_annotations("new-id", None).unwrap();
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, "ann-1");
+        assert!(state.get_pdf_annotations("old-id", None).unwrap().is_empty());
+        assert_eq!(state.get_pdf_path_by_id("old-id").unwrap(), None);
+
+        // Different size at the same path: a genuinely different file, so the
+        // old annotations must NOT be adopted.
+        state
+            .save_pdf_document("other-id", "papers/a.pdf", 9999, Some(300))
+            .unwrap();
+        assert!(
+            state
+                .get_pdf_annotations("other-id", None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(state.get_pdf_annotations("new-id", None).unwrap().len(), 1);
     }
 
     #[test]

@@ -179,10 +179,13 @@ fn uninstall_linux_desktop_entry() -> bool {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum CliAction {
     Install,
     Uninstall,
+    /// A file or directory passed by the OS file handler (the desktop entry
+    /// declares `Exec=... %F`) or on the command line.
+    OpenPath(String),
     RunApp,
 }
 
@@ -193,36 +196,45 @@ fn parse_cli_args(args: &[String]) -> CliAction {
             return CliAction::Install;
         } else if cmd == "--uninstall" || cmd == "--uninstall-desktop" {
             return CliAction::Uninstall;
+        } else if !cmd.starts_with('-') {
+            return CliAction::OpenPath(cmd.to_string());
         }
     }
     CliAction::RunApp
 }
 
 fn main() -> iced::Result {
-    #[cfg(target_os = "linux")]
-    {
-        let args: Vec<String> = std::env::args().collect();
-        match parse_cli_args(&args) {
-            CliAction::Install => {
+    let args: Vec<String> = std::env::args().collect();
+    let mut startup_path: Option<std::path::PathBuf> = None;
+    match parse_cli_args(&args) {
+        CliAction::Install => {
+            #[cfg(target_os = "linux")]
+            {
                 if install_linux_desktop_entry() {
                     println!("MD Editor desktop entry and icons installed successfully.");
-                } else {
-                    eprintln!("Failed to install MD Editor desktop entry and icons.");
-                    std::process::exit(1);
+                    std::process::exit(0);
                 }
-                std::process::exit(0);
+                eprintln!("Failed to install MD Editor desktop entry and icons.");
             }
-            CliAction::Uninstall => {
+            #[cfg(not(target_os = "linux"))]
+            eprintln!("--install is only supported on Linux.");
+            std::process::exit(1);
+        }
+        CliAction::Uninstall => {
+            #[cfg(target_os = "linux")]
+            {
                 if uninstall_linux_desktop_entry() {
                     println!("MD Editor desktop entry and icons uninstalled successfully.");
-                } else {
-                    eprintln!("Failed to uninstall MD Editor desktop entry and icons.");
-                    std::process::exit(1);
+                    std::process::exit(0);
                 }
-                std::process::exit(0);
+                eprintln!("Failed to uninstall MD Editor desktop entry and icons.");
             }
-            CliAction::RunApp => {}
+            #[cfg(not(target_os = "linux"))]
+            eprintln!("--uninstall is only supported on Linux.");
+            std::process::exit(1);
         }
+        CliAction::OpenPath(path) => startup_path = Some(path.into()),
+        CliAction::RunApp => {}
     }
 
     let icon = iced::window::icon::from_file_data(
@@ -241,7 +253,7 @@ fn main() -> iced::Result {
     let platform_specific = iced::window::settings::PlatformSpecific::default();
 
     iced::application(
-        app::MdEditor::new,
+        move || app::MdEditor::new_with_startup_file(startup_path.clone()),
         app::MdEditor::update,
         app::MdEditor::view,
     )
@@ -298,13 +310,20 @@ mod tests {
             CliAction::Uninstall
         );
 
-        // Arbitrary args (like opening a file or directory path) -> RunApp
+        // File or directory paths are handed to the app to open (the desktop
+        // entry registers the binary as a markdown/PDF handler with `%F`).
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "notes.md".to_string()]),
-            CliAction::RunApp
+            CliAction::OpenPath("notes.md".to_string())
         );
         assert_eq!(
             parse_cli_args(&["md-editor".to_string(), "/home/user/vault".to_string()]),
+            CliAction::OpenPath("/home/user/vault".to_string())
+        );
+
+        // Unknown flags fall through to a normal app run.
+        assert_eq!(
+            parse_cli_args(&["md-editor".to_string(), "--verbose".to_string()]),
             CliAction::RunApp
         );
     }

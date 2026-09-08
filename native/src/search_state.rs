@@ -11,8 +11,14 @@
 //! into [`SearchState::ensure_matches`].
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use iced::Task;
+
+/// Delay between the last keystroke in a search box and actually running the
+/// vault FTS query / full-document PDF scan. Typing a 10-char query should
+/// trigger one scan, not ten.
+pub const SEARCH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 use crate::editor::buffer::DocBuffer;
 use crate::messages::Message;
@@ -48,6 +54,9 @@ pub struct SearchState {
     pub pdf_results: Vec<PdfSearchMatch>,
     pub pdf_indices_by_page: HashMap<u16, Vec<usize>>,
     pub pdf_error: Option<String>,
+    /// Set on every query keystroke; the debounce subscription fires
+    /// `SearchDebounceElapsed`, which runs the search once this is old enough.
+    pub pending_query_at: Option<std::time::Instant>,
 
     // Memoized in-document matches; rebuilt only when `doc_match_key` changes.
     doc_match_cache: Vec<DocumentMatch>,

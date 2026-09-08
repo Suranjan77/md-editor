@@ -44,15 +44,38 @@ fn content_bounds(raw: Rectangle) -> Rectangle {
 
 // ── Widget ───────────────────────────────────────────────────────────
 
+/// Display-size boost applied to block (`$$`) math relative to inline math.
+/// The rasterizer bakes this into the bitmap's device-pixel ratio (see
+/// `render_latex_task`) so block math is displayed at exactly 1:1 device
+/// pixels instead of being upscaled from a smaller bitmap.
+pub const MATH_BLOCK_SCALE: f32 = 1.2;
+
+/// A rendered equation. Two bitmaps are rasterized per TeX string — one at
+/// inline display scale and one at block display scale (`MATH_BLOCK_SCALE`
+/// larger) — so each context draws its bitmap 1:1 on device pixels instead of
+/// resampling one bitmap at a fractional ratio (which blurs thin strokes).
+/// `width`/`height` are the logical layout size shared by both; block layout
+/// multiplies by `MATH_BLOCK_SCALE`.
+#[derive(Debug, Clone)]
+pub struct MathRender {
+    pub inline_handle: iced::widget::image::Handle,
+    pub block_handle: iced::widget::image::Handle,
+    pub width: f32,
+    pub height: f32,
+}
+
 pub struct Editor<'a, Message> {
     buffer: &'a DocBuffer,
     lines: &'a [StyledLine],
     image_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    math_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    math_cache: &'a HashMap<String, MathRender>,
     search_query: &'a str,
     search_regex: bool,
     search_match_case: bool,
     active_search_match: Option<(usize, usize)>,
+    /// Device pixels per logical unit; used to snap rendered math bitmaps to
+    /// the device-pixel grid so 1-px glyph strokes don't straddle two pixels.
+    scale_factor: f32,
     on_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_pointer_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
@@ -96,7 +119,7 @@ impl<'a, Message> Editor<'a, Message> {
         buffer: &'a DocBuffer,
         lines: &'a [StyledLine],
         image_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-        math_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+        math_cache: &'a HashMap<String, MathRender>,
         on_command: impl Fn(EditorCommand) -> Message + 'a,
         on_pointer_command: impl Fn(EditorCommand) -> Message + 'a,
         on_link_click: impl Fn(String) -> Message + 'a,
@@ -111,6 +134,7 @@ impl<'a, Message> Editor<'a, Message> {
             search_regex: false,
             search_match_case: false,
             active_search_match: None,
+            scale_factor: 1.0,
             on_command: Box::new(on_command),
             on_pointer_command: Box::new(on_pointer_command),
             on_link_click: Box::new(on_link_click),
@@ -131,6 +155,11 @@ impl<'a, Message> Editor<'a, Message> {
         self.active_search_match = active_match;
         self
     }
+
+    pub fn scale_factor(mut self, factor: f32) -> Self {
+        self.scale_factor = factor.max(1.0);
+        self
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -138,7 +167,7 @@ impl<'a, Message> Editor<'a, Message> {
 fn line_height_for<R>(
     line: &StyledLine,
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    math_cache: &HashMap<String, MathRender>,
     available_width: f32,
     is_editing: bool,
     active_col: Option<usize>,
@@ -173,8 +202,8 @@ where
                 let mut max_h: f32 = 72.0;
                 for span in &line.spans {
                     let tex = span.visible_text(false).trim_matches('$').trim();
-                    if let Some((_, _, h)) = math_cache.get(tex) {
-                        max_h = max_h.max(*h * 1.2 + 48.0);
+                    if let Some(m) = math_cache.get(tex) {
+                        max_h = max_h.max(m.height * MATH_BLOCK_SCALE + 48.0);
                     } else if !tex.is_empty() {
                         let visual_lines = tex
                             .lines()
@@ -354,7 +383,7 @@ where
 
 fn measured_inline_height<R>(
     line: &StyledLine,
-    math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    math_cache: &HashMap<String, MathRender>,
     available_width: f32,
     is_editing: bool,
     active_col: Option<usize>,
@@ -393,7 +422,7 @@ where
             }
             let (width, height) = math_cache
                 .get(tex)
-                .map(|(_, w, h)| (*w, *h))
+                .map(|m| (m.width, m.height))
                 .unwrap_or_else(|| {
                     (
                         measure_width::<R>(tex, fs, span_font(span, line)),
@@ -823,7 +852,7 @@ fn normalized_selection(
 fn total_height<R>(
     lines: &[StyledLine],
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    math_cache: &HashMap<String, MathRender>,
     width: f32,
     active_block_id: Option<usize>,
     active_cursor: Option<(usize, usize)>,
@@ -866,7 +895,7 @@ where
 pub fn line_visual_y<R>(
     lines: &[StyledLine],
     image_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-    math_cache: &HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+    math_cache: &HashMap<String, MathRender>,
     available_width: f32,
     active_line: usize,
     active_col: usize,
@@ -1148,7 +1177,7 @@ where
                             let tex = span.visible_text(false).trim_matches('$').trim();
                             self.math_cache
                                 .get(tex)
-                                .map(|(_, w, _)| *w * 1.2 + 48.0)
+                                .map(|m| m.width * MATH_BLOCK_SCALE + 48.0)
                                 .unwrap_or_else(|| {
                                     measure_width::<R>(tex, 16.0, iced::Font::MONOSPACE) + 48.0
                                 })
@@ -1950,12 +1979,24 @@ where
                     }
 
                     let tex = span.visible_text(false).trim_matches('$').trim();
-                    let scale: f32 = if line.is_math_block { 1.2 } else { 1.0 };
+                    let scale: f32 = if line.is_math_block {
+                        MATH_BLOCK_SCALE
+                    } else {
+                        1.0
+                    };
                     let mut drawn_w = 0.0;
                     let mut image_rendered = false;
 
                     if !tex.is_empty() {
-                        if let Some((handle, w, h)) = self.math_cache.get(tex) {
+                        if let Some(math) = self.math_cache.get(tex) {
+                            // Each context has a bitmap rasterized for exactly
+                            // this display scale (see MathRender).
+                            let handle = if line.is_math_block {
+                                &math.block_handle
+                            } else {
+                                &math.inline_handle
+                            };
+                            let (w, h) = (math.width, math.height);
                             let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
                             let block_max_w = (available_w - 48.0).max(80.0);
                             let fit_scale = if line.is_math_block { scale } else { scale };
@@ -2037,19 +2078,28 @@ where
                                     *viewport
                                 };
 
+                                let draw_y = if line.is_math_block {
+                                    line_draw_y + (lh - draw_h) / 2.0
+                                } else {
+                                    let margin_top = (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
+                                    line_draw_y + margin_top
+                                };
+                                // Snap the rect to the device-pixel grid. The
+                                // centering math above yields fractional
+                                // positions with a different sub-pixel phase
+                                // per axis, which makes the horizontal and
+                                // vertical strokes of the same glyph sample
+                                // differently (one crisp, one split across two
+                                // dim pixels).
+                                let sf = self.scale_factor;
+                                let snap = |v: f32| (v * sf).round() / sf;
                                 renderer.draw_image(
                                     iced::advanced::image::Image::new(handle.clone()),
                                     Rectangle {
-                                        x: draw_x,
-                                        y: if line.is_math_block {
-                                            line_draw_y + (lh - draw_h) / 2.0
-                                        } else {
-                                            let margin_top =
-                                                (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
-                                            line_draw_y + margin_top
-                                        },
-                                        width: draw_w,
-                                        height: draw_h,
+                                        x: snap(draw_x),
+                                        y: snap(draw_y),
+                                        width: snap(draw_w),
+                                        height: snap(draw_h),
                                     },
                                     math_viewport,
                                 );
@@ -2988,7 +3038,7 @@ impl<'a, Message> Editor<'a, Message> {
                         let (width, _) = self
                             .math_cache
                             .get(tex)
-                            .map(|(_, w, h)| (*w, *h))
+                            .map(|m| (m.width, m.height))
                             .unwrap_or_else(|| {
                                 (
                                     measure_width::<R>(tex, span.font_size, font),
@@ -3176,7 +3226,7 @@ impl<'a, Message> Editor<'a, Message> {
                         let (width, height) = self
                             .math_cache
                             .get(tex)
-                            .map(|(_, w, h)| (*w, *h))
+                            .map(|m| (m.width, m.height))
                             .unwrap_or_else(|| {
                                 (
                                     measure_width::<R>(tex, span.font_size, font),
@@ -3382,7 +3432,7 @@ impl<'a, Message> Editor<'a, Message> {
                     let width = self
                         .math_cache
                         .get(tex)
-                        .map(|(_, w, _)| *w * 1.2 + 72.0)
+                        .map(|m| m.width * MATH_BLOCK_SCALE + 72.0)
                         .unwrap_or_else(|| measure_width::<R>(tex, 16.0, iced::Font::MONOSPACE));
                     max_width = max_width.max(width);
                 }
@@ -3640,7 +3690,7 @@ mod tests {
         buffer: &'a DocBuffer,
         lines: &'a [StyledLine],
         image_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
-        math_cache: &'a HashMap<String, (iced::widget::image::Handle, f32, f32)>,
+        math_cache: &'a HashMap<String, MathRender>,
     ) -> Editor<'a, ()> {
         Editor::new(
             buffer,
@@ -4067,11 +4117,12 @@ mod tests {
         );
         math_cache.insert(
             "E = mc^2".to_string(),
-            (
-                iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]),
-                200.0,
-                50.0,
-            ),
+            MathRender {
+                inline_handle: iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]),
+                block_handle: iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]),
+                width: 200.0,
+                height: 50.0,
+            },
         );
 
         let widths = vec![100.0, 200.0, 400.0, 600.0, 800.0, 1000.0, 1200.0];

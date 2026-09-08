@@ -276,7 +276,10 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
         return Err(format!("Target already exists: {}", abs_new.display()));
     }
 
-    let is_md_file = abs_old.is_file() && abs_old.extension().map_or(false, |e| e == "md");
+    let is_md_file = abs_old.is_file()
+        && abs_old
+            .extension()
+            .map_or(false, |e| e == "md" || e == "markdown");
 
     // Snapshot the files that link to this note *before* mutating the index —
     // these are the ones whose `[[wikilinks]]` need rewriting.
@@ -419,8 +422,9 @@ pub fn search_vault(state: &AppState, query: &str) -> Result<Vec<SearchResult>, 
 
     let mut results = Vec::new();
     for row in rows {
-        if let Ok(r) = row {
-            results.push(r);
+        match row {
+            Ok(r) => results.push(r),
+            Err(e) => eprintln!("Skipping malformed file_search row: {e}"),
         }
     }
     Ok(results)
@@ -547,6 +551,25 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
             });
         }
     }
+
+    // A note that both wikilinks a PDF and is linked from one of its
+    // annotations shows up twice; drop the plain file-index entry and keep the
+    // annotation-derived one (it carries the highlighted text as context).
+    let annotation_note_paths: std::collections::HashSet<String> = results
+        .iter()
+        .filter(|item| item.context.is_some())
+        .filter_map(|item| match &item.source {
+            BacklinkTarget::MarkdownFile { path } => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    results.retain(|item| {
+        item.context.is_some()
+            || match &item.source {
+                BacklinkTarget::MarkdownFile { path } => !annotation_note_paths.contains(path),
+                _ => true,
+            }
+    });
 
     Ok(results)
 }

@@ -56,8 +56,11 @@ pub fn get_sessions(state: &AppState) -> Result<Vec<StudySession>, String> {
 
     let mut results = Vec::new();
     for row in rows {
-        if let Ok(r) = row {
-            results.push(r);
+        match row {
+            Ok(r) => results.push(r),
+            // A malformed row is skipped but logged — silently dropping
+            // tracker sessions would hide data corruption.
+            Err(e) => eprintln!("Skipping malformed tracker_sessions row: {e}"),
         }
     }
     Ok(results)

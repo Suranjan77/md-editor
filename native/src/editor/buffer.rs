@@ -842,27 +842,24 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
     let rest = line_text[indent_len..].trim_end_matches(&['\r', '\n'][..]);
 
     // Check Checklist: e.g. "- [ ] ", "* [ ] ", "- [x] ", etc.
-    if (rest.starts_with("- [") || rest.starts_with("* [") || rest.starts_with("+ ["))
-        && rest.len() >= 5
-    {
-        let has_space_after = rest.len() >= 6 && &rest[5..6] == " ";
-        let bracket_end = rest.find(']');
-        if bracket_end == Some(4) {
-            let box_char = &rest[3..4];
-            if box_char == " " || box_char == "x" || box_char == "X" {
-                let marker_len = if has_space_after { 6 } else { 5 };
-                let marker = rest[..marker_len].to_string();
-                let content = &rest[marker_len..];
-                let is_empty = content.trim().is_empty();
-                let bullet = &rest[..1];
-                let next_marker = format!("{} [ ] ", bullet);
-                return Some(ListItem {
-                    indent,
-                    marker,
-                    next_marker,
-                    is_empty,
-                });
-            }
+    // Index by char, not byte: the char after the marker may be multibyte.
+    if rest.starts_with("- [") || rest.starts_with("* [") || rest.starts_with("+ [") {
+        let head: Vec<char> = rest.chars().take(6).collect();
+        if head.len() >= 5 && head[4] == ']' && matches!(head[3], ' ' | 'x' | 'X') {
+            let has_space_after = head.len() >= 6 && head[5] == ' ';
+            // The marker "- [x] " is all ASCII, so char count == byte count here.
+            let marker_len = if has_space_after { 6 } else { 5 };
+            let marker = rest[..marker_len].to_string();
+            let content = &rest[marker_len..];
+            let is_empty = content.trim().is_empty();
+            let bullet = &rest[..1];
+            let next_marker = format!("{} [ ] ", bullet);
+            return Some(ListItem {
+                indent,
+                marker,
+                next_marker,
+                is_empty,
+            });
         }
     }
 
@@ -901,8 +898,11 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
     }
     if let Some(dot) = dot_idx {
         if dot > 0 {
-            let is_at_end = rest.len() == dot + 1;
-            let has_space_after = rest.len() >= dot + 2 && &rest[dot + 1..dot + 2] == " ";
+            // `dot` only follows ASCII digits, so dot + 1 is a char boundary; the
+            // char after it may be multibyte, so inspect it via chars() not slicing.
+            let after_dot = rest[dot + 1..].chars().next();
+            let is_at_end = after_dot.is_none();
+            let has_space_after = after_dot == Some(' ');
             if is_at_end || has_space_after {
                 let marker_len = if has_space_after { dot + 2 } else { dot + 1 };
                 let marker = rest[..marker_len].to_string();
@@ -1312,5 +1312,25 @@ mod tests {
         buffer.insert_at_cursor("\n");
         assert_eq!(buffer.text(), "1. Step one\n");
         assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 0));
+    }
+
+    #[test]
+    fn list_parsing_survives_multibyte_chars_near_marker() {
+        // Regression: parse_list_item used to byte-slice at fixed offsets and
+        // panic when a multibyte char sat right after the marker.
+        let mut buffer = DocBuffer::from_text("- [xλ");
+        buffer.set_cursor(0, 5);
+        buffer.insert_at_cursor("\n");
+        assert_eq!(buffer.text(), "- [xλ\n- ");
+
+        let mut buffer = DocBuffer::from_text("- [ ]λ");
+        buffer.set_cursor(0, 6);
+        buffer.insert_at_cursor("\n");
+        assert_eq!(buffer.text(), "- [ ]λ\n- [ ] ");
+
+        let mut buffer = DocBuffer::from_text("1.λ");
+        buffer.set_cursor(0, 3);
+        buffer.insert_at_cursor("\n");
+        assert_eq!(buffer.text(), "1.λ\n");
     }
 }

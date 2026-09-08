@@ -60,7 +60,9 @@ pub struct EditorPane {
     pub viewport_height: f32,
 
     pub image_cache: HashMap<String, (Handle, f32, f32)>,
-    pub math_cache: HashMap<String, (Handle, f32, f32)>,
+    pub math_cache: HashMap<String, crate::editor::renderer::MathRender>,
+    /// Display scale the current math_cache contents were rasterized for.
+    math_scale_factor: f32,
 }
 
 impl EditorPane {
@@ -81,6 +83,7 @@ impl EditorPane {
             viewport_height: 720.0,
             image_cache: HashMap::new(),
             math_cache: HashMap::new(),
+            math_scale_factor: 1.0,
         }
     }
 
@@ -133,9 +136,14 @@ impl EditorPane {
     /// shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::MathRendered(tex, res) => {
-                if let Ok(tuple) = res {
-                    self.math_cache.insert(tex, tuple);
+            Message::MathRendered(tex, scale, res) => {
+                // Drop results rasterized for a display scale we've since
+                // moved away from (the cache was flushed on rescale; a stale
+                // insert would stay blurry until the next flush).
+                if (scale - self.math_scale_factor).abs() < 0.01 {
+                    if let Ok(render) = res {
+                        self.math_cache.insert(tex, render);
+                    }
                 }
                 Task::none()
             }
@@ -200,8 +208,14 @@ impl EditorPane {
         }
     }
 
-    /// Spawn render tasks for any not-yet-cached math spans.
-    pub fn load_math(&self) -> Task<Message> {
+    /// Spawn render tasks for any not-yet-cached math spans. `scale_factor` is
+    /// the window's device-pixel ratio; the cache must be flushed when it
+    /// changes (see the WindowRescaled handler) since it is not part of the
+    /// key. Results carry the scale they were rendered for, so renders still
+    /// in flight across a rescale are dropped instead of re-populating the
+    /// cache with stale-density bitmaps.
+    pub fn load_math(&mut self, scale_factor: f32) -> Task<Message> {
+        self.math_scale_factor = scale_factor;
         let mut tasks = Vec::new();
         for line in &self.highlighted_lines {
             for span in &line.spans {
@@ -210,8 +224,13 @@ impl EditorPane {
                     if !tex.is_empty() && !self.math_cache.contains_key(&tex) {
                         let tex_clone = tex.clone();
                         tasks.push(Task::perform(
-                            async move { (tex_clone.clone(), render_latex_task(&tex_clone)) },
-                            |(t, r)| Message::MathRendered(t, r),
+                            async move {
+                                (
+                                    tex_clone.clone(),
+                                    render_latex_task(&tex_clone, scale_factor),
+                                )
+                            },
+                            move |(t, r)| Message::MathRendered(t, scale_factor, r),
                         ));
                     }
                 }
@@ -237,42 +256,71 @@ pub(crate) fn plain_highlight_placeholders(text: &str) -> Vec<StyledLine> {
         .collect()
 }
 
-fn render_latex_task(tex: &str) -> Result<(Handle, f32, f32), String> {
+fn render_latex_task(
+    tex: &str,
+    scale_factor: f32,
+) -> Result<crate::editor::renderer::MathRender, String> {
     use ratex_layout::{LayoutOptions, layout, to_display_list};
     use ratex_parser::parser::parse;
     use ratex_render::{RenderOptions, render_to_png};
     use ratex_types::color::Color as RatexColor;
     use ratex_types::math_style::MathStyle;
 
-    let options = RenderOptions {
-        font_size: 24.0,
-        padding: 4.0,
-        background_color: RatexColor {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 0.0,
-        },
-        font_dir: String::new(),
-        device_pixel_ratio: 2.0,
+    // Rasterize twice: inline math is displayed at 1.0× logical size, block
+    // math at MATH_BLOCK_SCALE×. Giving each context a bitmap whose pixel
+    // density matches its display size exactly (logical × scale_factor device
+    // pixels) means both draw 1:1 on the device grid — resampling at a
+    // fractional ratio renders thin glyph strokes alternately crisp and
+    // blurry.
+    let render_at = |device_pixel_ratio: f32| -> Result<(Handle, f32, f32), String> {
+        let options = RenderOptions {
+            font_size: 24.0,
+            padding: 4.0,
+            background_color: RatexColor {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 0.0,
+            },
+            font_dir: String::new(),
+            device_pixel_ratio,
+        };
+
+        let layout_opts = LayoutOptions::default()
+            .with_style(MathStyle::Display)
+            .with_color(RatexColor {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            });
+
+        let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
+        let lbox = layout(&ast, &layout_opts);
+        let display_list = to_display_list(&lbox);
+        let bytes = render_to_png(&display_list, &options)
+            .map_err(|e| format!("Render error: {:?}", e))?;
+
+        let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+        let (w, h) = img.dimensions();
+        // Logical size = bitmap pixels / raster DPR; layout works in logical
+        // units, so this is DPR-invariant.
+        Ok((
+            Handle::from_bytes(bytes),
+            w as f32 / device_pixel_ratio,
+            h as f32 / device_pixel_ratio,
+        ))
     };
 
-    let layout_opts = LayoutOptions::default()
-        .with_style(MathStyle::Display)
-        .with_color(RatexColor {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        });
-
-    let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
-    let lbox = layout(&ast, &layout_opts);
-    let display_list = to_display_list(&lbox);
-    let bytes =
-        render_to_png(&display_list, &options).map_err(|e| format!("Render error: {:?}", e))?;
-
-    let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-    let (w, h) = img.dimensions();
-    Ok((Handle::from_bytes(bytes), w as f32 / 2.0, h as f32 / 2.0))
+    let scale = scale_factor.clamp(1.0, 6.0);
+    let (inline_handle, width, height) = render_at(scale)?;
+    let (block_handle, _, _) = render_at(
+        (crate::editor::renderer::MATH_BLOCK_SCALE * scale).min(6.0),
+    )?;
+    Ok(crate::editor::renderer::MathRender {
+        inline_handle,
+        block_handle,
+        width,
+        height,
+    })
 }
