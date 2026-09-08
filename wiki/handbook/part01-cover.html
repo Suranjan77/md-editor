@@ -1,0 +1,157 @@
+<!-- ================= COVER ================= -->
+<section class="cover">
+  <div class="top">
+    <div class="mark">MD Editor · Rust · Iced · PDFium</div>
+  </div>
+
+  <div class="art">
+    <svg viewBox="0 0 620 300" role="img" aria-label="Schematic of the MD Editor workspace: a markdown pane and a PDF pane above the two crates that serve them">
+      <!-- window frame -->
+      <rect x="10" y="10" width="600" height="180" rx="6" class="s-box" stroke-width="1.2"/>
+      <line x1="10" y1="34" x2="610" y2="34" class="s-line" stroke-width="1.2"/>
+      <circle cx="24" cy="22" r="3.2" fill="#22665c"/>
+      <circle cx="35" cy="22" r="3.2" fill="#d5dcda"/>
+      <circle cx="46" cy="22" r="3.2" fill="#d5dcda"/>
+      <text x="70" y="26" class="t-xs">Chapter 4 review.md  ·  Attention Is All You Need.pdf</text>
+
+      <!-- sidebar -->
+      <rect x="10" y="34" width="72" height="156" fill="#f6f8f7"/>
+      <line x1="82" y1="34" x2="82" y2="190" class="s-line-2"/>
+      <g class="s-line-2">
+        <line x1="22" y1="50" x2="62" y2="50"/><line x1="28" y1="63" x2="70" y2="63"/>
+        <line x1="28" y1="76" x2="66" y2="76"/><line x1="22" y1="89" x2="58" y2="89"/>
+        <line x1="28" y1="102" x2="72" y2="102"/><line x1="28" y1="115" x2="60" y2="115"/>
+        <line x1="22" y1="128" x2="64" y2="128"/>
+      </g>
+      <rect x="18" y="95" width="58" height="13" fill="#edf4f2" stroke="#22665c" stroke-width=".8" rx="2"/>
+
+      <!-- markdown pane -->
+      <text x="96" y="52" class="t-b t-sm">Markdown — hybrid preview</text>
+      <g class="s-line-2">
+        <line x1="96" y1="66" x2="300" y2="66"/><line x1="96" y1="78" x2="288" y2="78"/>
+        <line x1="96" y1="90" x2="304" y2="90"/>
+      </g>
+      <rect x="96" y="100" width="208" height="20" fill="#f6f8f7" stroke="#d5dcda" stroke-width=".7" rx="2"/>
+      <text x="103" y="114" class="t-mono-sm">$ E = mc^2 $</text>
+      <g class="s-line-2">
+        <line x1="96" y1="132" x2="296" y2="132"/><line x1="96" y1="144" x2="270" y2="144"/>
+      </g>
+      <text x="96" y="168" class="t-mono-sm" fill="#22665c">[Open highlight in PDF](pdf://…)</text>
+
+      <!-- divider -->
+      <line x1="318" y1="34" x2="318" y2="190" class="s-line" stroke-width="1.2"/>
+      <rect x="315" y="100" width="6" height="24" rx="3" fill="#22665c"/>
+
+      <!-- pdf pane -->
+      <text x="332" y="52" class="t-b t-sm">PDF — sidecar annotations</text>
+      <rect x="332" y="60" width="264" height="120" fill="#fff" stroke="#d5dcda" stroke-width=".8"/>
+      <g class="s-line-2">
+        <line x1="344" y1="76" x2="584" y2="76"/><line x1="344" y1="88" x2="576" y2="88"/>
+      </g>
+      <rect x="344" y="96" width="180" height="11" fill="#f7e9a8" opacity=".75"/>
+      <rect x="344" y="110" width="120" height="11" fill="#f7e9a8" opacity=".75"/>
+      <g class="s-line-2">
+        <line x1="344" y1="132" x2="580" y2="132"/><line x1="344" y1="144" x2="560" y2="144"/>
+      </g>
+      <line x1="404" y1="150" x2="452" y2="150" stroke="#22665c" stroke-width="1.2"/>
+      <text x="404" y="164" class="t-xs" fill="#22665c">equation (3.14)</text>
+
+      <!-- crates below -->
+      <rect x="10" y="212" width="600" height="34" rx="4" class="s-fill"/>
+      <text x="24" y="233" class="t t-b" fill="#11342f">md-editor-native</text>
+      <text x="180" y="233" class="t-sm">iced widgets · DocBuffer · Fenwick heights · overlays · motion</text>
+
+      <rect x="10" y="254" width="600" height="34" rx="4" class="s-fill2"/>
+      <text x="24" y="275" class="t t-b">md-editor-core</text>
+      <text x="180" y="275" class="t-sm">SQLite · vault I/O · wikilink graph · PDFium worker · references</text>
+
+      <path d="M310 246 L310 254" class="s-line" stroke-width="1.2" marker-end="url(#cvArrow)"/>
+      <defs>
+        <marker id="cvArrow" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+          <polygon points="0,1 7,4 0,7" fill="currentColor"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+
+  <div>
+    <h1>MD&nbsp;Editor</h1>
+    <div class="tagline">The Field Handbook — a guided tour of the codebase for the developer who just cloned it.</div>
+    <div class="meta">
+      <b>Audience</b> — new contributors; junior developers with some Rust and no prior knowledge of this repository.<br>
+      <b>Source</b> — generated from the project wiki (17 pages) and verified against the source tree at <code>Suranjan77/md-editor</code>.<br>
+      <b>Covers</b> — architecture, the core engine, the markdown editor, the PDF subsystem, design systems, testing, and the rules that keep it all standing up.<br>
+      <b>Licence</b> — the project is GPL-3.0. This handbook ships with it.
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOW TO USE ================= -->
+<section class="page-break">
+  <h1>How to use this handbook</h1>
+  <p class="lead">This is not a reference manual you look things up in. It is a book you read in order,
+  with the repository open beside it, running the commands as they appear.</p>
+
+  <p>MD Editor is roughly 26,000 lines of Rust across two crates. That is small enough to hold in your head
+  eventually and large enough to be intimidating on day one. The path through it that this book takes is
+  deliberate: <em>outside in</em>. You will see what the program does for a person, then the shape of the two
+  crates, then the engine that owns the disk, then the editor that owns the screen, then the PDF machinery,
+  and only at the end the rules that a contributor is expected to keep. By that point every rule will already
+  have a story attached to it — which is the only way rules survive.</p>
+
+  <h2>Reading paths</h2>
+  <table>
+    <thead><tr><th style="width:34%">If you are…</th><th>Read</th></tr></thead>
+    <tbody>
+      <tr><td><b>New to the project, and want to ship a first change this week</b></td>
+          <td>Part I in full, then Chapter 30 (tests), Chapter 31 (invariants) and Appendix D (starter tasks). Come back for the deep parts when a task drags you into them.</td></tr>
+      <tr><td><b>Fixing something in the editor</b></td>
+          <td>Chapters 11–17. The layout and draw contract in Chapters 15–17 is where most performance regressions are born.</td></tr>
+      <tr><td><b>Fixing something in the PDF pane</b></td>
+          <td>Chapters 18–25, and then Chapter 32's rule 7. Read Chapter 23 twice; it is the bug this subsystem keeps trying to have.</td></tr>
+      <tr><td><b>Reviewing someone else's change</b></td>
+          <td>Chapter 31 (the five durability invariants) and Chapter 32 (the rules and the bug behind each one).</td></tr>
+      <tr><td><b>Preparing a release</b></td>
+          <td>Chapter 29 (build &amp; PDFium), Chapter 33 (shipping), and the checklists inside them.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Conventions</h2>
+
+  <p>Five kinds of aside appear throughout. They are worth learning to recognise, because each one is
+  making a different kind of promise to you.</p>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  The reasoning behind a decision that looks arbitrary. If you ever want to change the code these
+  describe, you have to defeat the argument in the box first.</div>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  A mistake this codebase has actually made, or one it is shaped to invite. These are the paragraphs that
+  save you an afternoon.</div>
+
+  <div class="box try"><span class="tag">Try it</span>
+  Something to run or change right now, in the checkout in front of you. Reading about a Fenwick tree
+  is not the same as watching one stop your editor from stalling.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  A question with an answer directly underneath. If the answer surprises you, re-read the section — the
+  material after it assumes you got this one.</div>
+
+  <div class="box plain"><span class="tag">Note</span>
+  Context, history, or a pointer somewhere else in the book.</div>
+
+  <p>Source references look like <span class="fileref">core/src/vault.rs::write_file</span> — a path relative
+  to the repository root, and where useful the function inside it. Every factual claim in this book is meant to be
+  checkable against the file named beside it. Where a claim and the code disagree, <b>the code is right and this
+  book has a bug</b>; the same rule the wiki holds itself to.</p>
+
+  <h2>What you need in front of you</h2>
+  <ul>
+    <li>A clone of the repository, on the default branch.</li>
+    <li>A stable Rust toolchain, 1.85 or newer — the workspace is on the 2024 edition.</li>
+    <li>A C compiler, because <code>rusqlite</code> builds SQLite from source.</li>
+    <li>Network access for the first build only, so the build script can fetch PDFium.</li>
+    <li>A desktop session, if you want to <em>run</em> the app. The core crate's tests need no display at all.</li>
+  </ul>
+  <p>Chapter 3 walks the whole setup. If a command in this book fails, that chapter is where the fix lives.</p>
+</section>

@@ -1,0 +1,438 @@
+<!-- ---------- CH 15 ---------- -->
+<section class="chapter" id="ch15">
+  <div class="chead">
+    <div class="num">Chapter 15<span class="pm">PMK-ch15-</span></div>
+    <h1>The Fenwick height tree</h1>
+    <div class="sub">Turning “which line is at this y?” from O(N) into O(log N)</div>
+  </div>
+
+  <p class="lead">In a document where every line is the same height, finding the line at a scroll position is
+  a division. In this editor lines are not the same height — a heading is taller, an image line is much
+  taller, a wrapped paragraph is taller still, and a line's height changes when a LaTeX bitmap arrives. So
+  the editor keeps a spatial index.</p>
+
+  <h2>15.1 The problem</h2>
+
+  <p>Three questions get asked constantly, on every scroll and every draw:</p>
+  <ul class="tight">
+    <li>How tall is the whole document? (for the scrollbar)</li>
+    <li>What is the y offset of line <i>L</i>? (to draw it)</li>
+    <li>Which line is at y? (for culling, and for every click)</li>
+  </ul>
+  <p>Answering any of them by summing an array of heights is O(N) — and it happens per frame. On a
+  10,000-line document that is a stall you can feel.</p>
+
+  <h2>15.2 The structure</h2>
+
+  <div class="srcref">native/src/editor/layout_tree.rs</div>
+<pre>pub struct HeightTree { tree: Vec&lt;f32&gt;, heights: Vec&lt;f32&gt; }
+
+pub fn update_height(&amp;mut self, idx: usize, new_height: f32); <span class="cmt">// O(log N)</span>
+pub fn prefix_sum(&amp;self, idx: usize) -&gt; f32;                  <span class="cmt">// O(log N)</span>
+pub fn find_line_at_y(&amp;self, y: f32) -&gt; usize;                <span class="cmt">// O(log N), binary lifting</span>
+pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class="cmt">// O(1)</span></pre>
+
+  <p>A <b>Fenwick tree</b> (binary indexed tree) stores partial sums in a flat array. Cell <i>i</i> holds the
+  sum of a range whose length is the lowest set bit of <i>i</i>. That single rule gives you prefix sums and
+  point updates in logarithmic time with no pointers, no rebalancing, and one allocation.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 434" role="img" aria-label="A worked example of the height tree over eight lines: the document strip on the left with cumulative offsets, the Fenwick array in the middle, and traces of a prefix sum query and a find-line-at-y query">
+      <defs>
+        <marker id="a15" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- document strip -->
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">THE DOCUMENT</text>
+      <text x="16" y="28" class="t-xs">eight lines, unequal heights</text>
+
+      <g>
+        <rect x="16" y="40" width="104" height="14" class="s-box"/>
+        <rect x="16" y="54" width="104" height="14" class="s-box"/>
+        <rect x="16" y="68" width="104" height="31" class="s-fill2"/>
+        <rect x="16" y="99" width="104" height="14" class="s-box"/>
+        <rect x="16" y="113" width="104" height="42" class="s-fill"/>
+        <rect x="16" y="155" width="104" height="14" class="s-box"/>
+        <rect x="16" y="169" width="104" height="14" class="s-box"/>
+        <rect x="16" y="183" width="104" height="14" class="s-box"/>
+      </g>
+      <g class="t-xs">
+        <text x="126" y="51">L0 · 20</text><text x="126" y="65">L1 · 20</text>
+        <text x="126" y="87">L2 · 44 (heading)</text><text x="126" y="110">L3 · 20</text>
+        <text x="126" y="139">L4 · 60 (image)</text><text x="126" y="166">L5 · 20</text>
+        <text x="126" y="180">L6 · 20</text><text x="126" y="194">L7 · 20</text>
+      </g>
+      <!-- y = 150 marker -->
+      <path d="M10 145 L232 145" class="s-red"/>
+      <text x="238" y="149" class="t-xs t-b t-red">y = 150</text>
+      <text x="16" y="216" class="t-xs">total height = 224</text>
+
+      <rect x="16" y="230" width="266" height="188" rx="3" class="s-fill2"/>
+      <text x="28" y="248" class="t-xs t-b">Where each line starts — what prefix_sum returns</text>
+      <g class="t-mono-sm">
+        <text x="28" y="270">L0</text><text x="80" y="270" class="t-end">0</text>
+        <text x="28" y="286">L1</text><text x="80" y="286" class="t-end">20</text>
+        <text x="28" y="302">L2</text><text x="80" y="302" class="t-end">40</text>
+        <text x="28" y="318">L3</text><text x="80" y="318" class="t-end">84</text>
+        <text x="28" y="334">L4</text><text x="80" y="334" class="t-end">104</text>
+        <text x="28" y="350">L5</text><text x="80" y="350" class="t-end">164</text>
+        <text x="28" y="366">L6</text><text x="80" y="366" class="t-end">184</text>
+        <text x="28" y="382">L7</text><text x="80" y="382" class="t-end">204</text>
+      </g>
+      <path d="M96 330 L150 330" class="s-red"/>
+      <text x="156" y="334" class="t-xs t-red">y = 150 lands here</text>
+      <text x="28" y="404" class="t-xs">the array is never materialised — these are computed on demand</text>
+
+      <!-- fenwick array -->
+      <text x="300" y="14" class="t-xs t-b" fill="#22665c">THE FENWICK ARRAY</text>
+      <text x="300" y="28" class="t-xs">cell i holds the sum of the last lsb(i) heights</text>
+
+      <g>
+        <rect x="300" y="40" width="48" height="30" rx="2" class="s-box"/>
+        <text x="324" y="60" class="t-mono-sm t-mid">20</text>
+        <rect x="350" y="40" width="48" height="30" rx="2" class="s-box"/>
+        <text x="374" y="60" class="t-mono-sm t-mid">40</text>
+        <rect x="400" y="40" width="48" height="30" rx="2" class="s-box"/>
+        <text x="424" y="60" class="t-mono-sm t-mid">44</text>
+        <rect x="450" y="40" width="48" height="30" rx="2" class="s-fill"/>
+        <text x="474" y="60" class="t-mono-sm t-mid">104</text>
+        <rect x="500" y="40" width="48" height="30" rx="2" class="s-box"/>
+        <text x="524" y="60" class="t-mono-sm t-mid">60</text>
+        <rect x="550" y="40" width="48" height="30" rx="2" class="s-box"/>
+        <text x="574" y="60" class="t-mono-sm t-mid">80</text>
+        <rect x="600" y="40" width="48" height="30" rx="2" class="s-box"/>
+        <text x="624" y="60" class="t-mono-sm t-mid">20</text>
+        <rect x="650" y="40" width="48" height="30" rx="2" class="s-box"/>
+        <text x="674" y="60" class="t-mono-sm t-mid">224</text>
+      </g>
+      <g class="t-xs t-mid" fill="#727b7e">
+        <text x="324" y="82">1</text><text x="374" y="82">2</text><text x="424" y="82">3</text>
+        <text x="474" y="82">4</text><text x="524" y="82">5</text><text x="574" y="82">6</text>
+        <text x="624" y="82">7</text><text x="674" y="82">8</text>
+      </g>
+      <!-- coverage brackets -->
+      <g class="s-line-2">
+        <path d="M300 96 L348 96"/><path d="M300 106 L398 106"/><path d="M400 96 L448 96"/>
+        <path d="M300 116 L498 116"/><path d="M500 96 L548 96"/><path d="M500 106 L598 106"/>
+        <path d="M600 96 L648 96"/><path d="M300 126 L698 126"/>
+      </g>
+      <g class="t-xs" fill="#727b7e">
+        <text x="354" y="99">L0</text><text x="404" y="109">L0–L1</text><text x="454" y="99">L2</text>
+        <text x="504" y="119">L0–L3</text><text x="554" y="99">L4</text><text x="604" y="109">L4–L5</text>
+        <text x="654" y="99">L6</text><text x="600" y="136">L0–L7 (everything)</text>
+      </g>
+
+      <!-- query A -->
+      <rect x="300" y="152" width="404" height="106" rx="3" class="s-fill2"/>
+      <text x="312" y="170" class="t-sm t-b">Query A · prefix_sum(6) — where does line 6 start?</text>
+      <text x="312" y="188" class="t-xs">walk down by clearing the lowest set bit: 6 → 4 → 0</text>
+      <g class="t-mono-sm">
+        <text x="312" y="208">i = 6</text><text x="372" y="208">sum += tree[6] = 80</text><text x="524" y="208">→ sum = 80</text>
+        <text x="312" y="224">i = 4</text><text x="372" y="224">sum += tree[4] = 104</text><text x="524" y="224">→ sum = 184</text>
+        <text x="312" y="240">i = 0</text><text x="372" y="240">stop</text>
+      </g>
+      <text x="312" y="254" class="t-xs t-b">line 6 begins at y = 184 ✓ (20+20+44+20+60+20) — two array reads, not six additions</text>
+
+      <!-- query B -->
+      <rect x="300" y="266" width="404" height="152" rx="3" class="s-fill"/>
+      <text x="312" y="284" class="t-sm t-b" fill="#11342f">Query B · find_line_at_y(150) — which line is under the cursor?</text>
+      <text x="312" y="302" class="t-xs">binary lifting: try the biggest power of two first, take the step if the sum still fits</text>
+      <g class="t-mono-sm">
+        <text x="312" y="322">step 8</text><text x="374" y="322">tree[8] = 224</text><text x="482" y="322">0 + 224 &gt; 150</text><text x="608" y="322">✗ skip</text>
+        <text x="312" y="338">step 4</text><text x="374" y="338">tree[4] = 104</text><text x="482" y="338">0 + 104 ≤ 150</text><text x="608" y="338">✓ take</text>
+        <text x="312" y="354">step 2</text><text x="374" y="354">tree[6] = 80</text><text x="482" y="354">104 + 80 &gt; 150</text><text x="608" y="354">✗ skip</text>
+        <text x="312" y="370">step 1</text><text x="374" y="370">tree[5] = 60</text><text x="482" y="370">104 + 60 &gt; 150</text><text x="608" y="370">✗ skip</text>
+      </g>
+      <text x="312" y="392" class="t-xs t-b">answer: line 4, which spans y 104–164 — and 150 is inside it ✓</text>
+      <text x="312" y="408" class="t-xs">four probes for eight lines; seventeen for a 100,000-line document</text>
+    </svg>
+    <figcaption><b>Figure 15.1 — The same eight lines, two queries.</b> Query A walks <em>down</em> the tree
+    by clearing the lowest set bit; query B walks <em>across</em> it by trying powers of two from the top.
+    Both touch O(log N) cells. The highlighted cell 4 is the one both queries happen to need — it covers
+    lines 0–3 because 4's lowest set bit is 4.</figcaption>
+  </figure>
+
+  <h2>15.3 What it buys</h2>
+
+  <table class="compact">
+    <thead><tr><th style="width:36%">Operation</th><th style="width:22%">Brute-force scan</th><th><code>HeightTree</code></th></tr></thead>
+    <tbody>
+      <tr><td>Total document height</td><td>O(N)</td><td>O(log N) — one <code>prefix_sum(n)</code></td></tr>
+      <tr><td>Y offset of line <i>L</i></td><td>O(L)</td><td>O(log N)</td></tr>
+      <tr><td>Line at a Y coordinate</td><td>O(N)</td><td>O(log N), binary lifting on prefix sums</td></tr>
+      <tr><td>Update one line's height</td><td>O(1)</td><td>O(log N)</td></tr>
+    </tbody>
+  </table>
+
+  <p>Note the one row where the tree is <em>worse</em>: updating a single height. That is the trade, and it
+  is obviously worth it — updates happen when a line is remeasured, queries happen several times per frame.</p>
+
+  <p>Two implementation details in <code>update_height</code> are worth copying:</p>
+  <ul>
+    <li>It <b>short-circuits when the delta is below <code>1e-5</code></b>, so remeasuring a line to the same
+    height costs nothing at all. Given that most remeasures produce the identical number, this removes most
+    of the update traffic.</li>
+    <li>Each stored height is not just the text height: it is the sum of an optional block-top spacer (24px
+    before an inactive code or table block), the measured line height, and a table scrollbar gutter where
+    applicable. The tree's unit is “vertical space this line occupies”, not “font metrics”.</li>
+  </ul>
+
+  <div class="box try"><span class="tag">Try it</span>
+  Open <span class="fileref">native/src/editor/layout_tree.rs</span> and read the tests at the bottom. They
+  assert two things: that <code>prefix_sum</code> agrees with a brute-force sum for random height vectors,
+  and that <code>find_line_at_y</code> is monotonic and correct at boundaries. That is exactly the right pair
+  of properties for a structure like this — an oracle test and an edge test — and it is a good template if
+  you ever add a similar index.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>An image finishes loading and line 4 grows from 60 to 300 pixels. What has to happen?</p>
+  <p class="answer"><b>Answer:</b> <code>update_height(4, 300)</code>, which adds the delta of 240 to
+  O(log N) cells — cells 5, 6 and 8 in our example. Every subsequent <code>prefix_sum</code> and
+  <code>find_line_at_y</code> is then correct, with no rebuild. The <em>separate</em> question of how the
+  editor knew to remeasure that line at all is Chapter 16.</p></div>
+</section>
+
+<!-- ---------- CH 16 ---------- -->
+<section class="chapter" id="ch16">
+  <div class="chead">
+    <div class="num">Chapter 16<span class="pm">PMK-ch16-</span></div>
+    <h1>Measure once: the line cache</h1>
+    <div class="sub">Text shaping is the expensive part, so the answer is remembered — carefully</div>
+  </div>
+
+  <p class="lead">Measuring a line means shaping glyphs: resolving the font, applying metrics, and doing word
+  wrap at the current width. It is the dominant cost of a layout pass, and in debug builds it is brutally
+  slow. <code>LineHeightCache</code> memoizes it per line.</p>
+
+  <div class="srcref">native/src/editor/layout_cache.rs</div>
+<pre>pub struct LineHeightCache {
+    pub hash: u64,               <span class="cmt">// line_hash ^ resource_hash</span>
+    pub is_editing: bool,
+    pub active_col: Option&lt;usize&gt;,
+    pub height: f32,
+    pub valid: bool,
+}</pre>
+
+  <p>A cached height is reused only when <b>all four</b> of <code>valid</code>, the combined hash,
+  <code>is_editing</code> and <code>active_col</code> match. Miss any one and the line is remeasured.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 320" role="img" aria-label="What feeds the line cache key: content hash, resource hash, editing state and active column combine into one entry, with layout width handled separately by invalidating every entry at once">
+      <defs>
+        <marker id="a16" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- inputs -->
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">WHAT GOES INTO THE KEY</text>
+
+      <rect x="16" y="24" width="230" height="80" rx="3" class="s-box"/>
+      <text x="28" y="42" class="t-sm t-b">line_hash(line)</text>
+      <text x="28" y="58" class="t-xs">block flags · block_id · and for every span:</text>
+      <text x="28" y="72" class="t-xs">text · display_text · style flags · font size</text>
+      <text x="28" y="86" class="t-xs">link / image / math metadata · id</text>
+      <text x="28" y="100" class="t-xs" fill="#727b7e">“has anything about this line changed?”</text>
+
+      <rect x="16" y="116" width="230" height="80" rx="3" class="s-fill"/>
+      <text x="28" y="134" class="t-sm t-b" fill="#11342f">resource_hash(line, caches)</text>
+      <text x="28" y="150" class="t-xs">the <tspan class="t-b">current dimensions</tspan> of any image or</text>
+      <text x="28" y="164" class="t-xs">LaTeX bitmap this line depends on</text>
+      <text x="28" y="180" class="t-xs" fill="#727b7e">“has anything this line <tspan font-style="italic">draws</tspan> changed size?”</text>
+
+      <rect x="16" y="208" width="230" height="62" rx="3" class="s-box"/>
+      <text x="28" y="226" class="t-sm t-b">is_editing · active_col</text>
+      <text x="28" y="242" class="t-xs">a revealed line is a different line: its</text>
+      <text x="28" y="256" class="t-xs">markers are visible and may re-wrap</text>
+
+      <!-- combine -->
+      <path d="M246 64 L286 64 L286 148" class="s-line-2" marker-end="url(#a16)"/>
+      <path d="M246 156 L286 156" class="s-line-2" marker-end="url(#a16)"/>
+      <path d="M246 238 L286 238 L286 172" class="s-line-2" marker-end="url(#a16)"/>
+
+      <rect x="292" y="132" width="150" height="48" rx="3" class="s-fill"/>
+      <text x="367" y="152" class="t-sm t-b t-mid" fill="#11342f">cache entry</text>
+      <text x="367" y="168" class="t-mono-sm t-mid">line_hash ^ resource_hash</text>
+
+      <path d="M442 156 L482 156" class="s-accent" marker-end="url(#a16)"/>
+      <rect x="488" y="132" width="216" height="48" rx="3" class="s-box"/>
+      <text x="596" y="152" class="t-sm t-b t-mid">all four match?</text>
+      <text x="596" y="168" class="t-xs t-mid">reuse the height · otherwise reshape</text>
+
+      <!-- width path -->
+      <rect x="292" y="24" width="412" height="62" rx="3" class="s-amber"/>
+      <text x="304" y="42" class="t-sm t-b" fill="#8a5c07">Layout width is handled separately</text>
+      <text x="304" y="58" class="t-xs">when max_width moves by more than 0.5 px, <tspan class="t-b">every</tspan> entry's valid flag is cleared</text>
+      <text x="304" y="74" class="t-xs">— because word wrap changes everywhere at once, so per-line comparison would be waste</text>
+
+      <!-- the trap -->
+      <rect x="292" y="208" width="412" height="62" rx="3" class="s-warn"/>
+      <text x="304" y="226" class="t-xs t-b" fill="#a03730">The failure this prevents</text>
+      <text x="304" y="242" class="t-xs">A LaTeX bitmap arrives 200 ms after the line was first measured. Without</text>
+      <text x="304" y="256" class="t-xs">resource_hash the entry still “matches”, the stale height is reused, and the</text>
+      <text x="304" y="268" class="t-xs">equation overlaps the paragraph below it — permanently.</text>
+
+      <text x="16" y="292" class="t-xs">The hash is a <tspan class="t-mono-sm">DefaultHasher</tspan>, chosen for speed. It is a cache key, not a cryptographic digest — collisions are a correctness</text>
+      <text x="16" y="306" class="t-xs">risk in principle and an accepted one in practice, exactly as they are in every layout cache of this shape.</text>
+    </svg>
+    <figcaption><b>Figure 16.1 — Four inputs, one entry, plus a global reset for width.</b> The
+    <code>resource_hash</code> half is the non-obvious one: it exists because asynchronous media changes a
+    line's height <em>after</em> the line itself has stopped changing.</figcaption>
+  </figure>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  <b>If you add state that affects a line's height, add it to <code>line_hash</code> or
+  <code>resource_hash</code>.</b> Otherwise you have silently made the layout pass do a full shaping call for
+  every line on every frame — or, worse, kept a stale height forever. Neither failure produces an error
+  message; the first shows up as “debug builds crawl” and the second as “the layout is subtly wrong
+  sometimes”.</div>
+</section>
+
+<!-- ---------- CH 17 ---------- -->
+<section class="chapter" id="ch17">
+  <div class="chead">
+    <div class="num">Chapter 17<span class="pm">PMK-ch17-</span></div>
+    <h1>The draw pass</h1>
+    <div class="sub">The one rule that keeps a 10,000-line note scrolling: draw only what is visible</div>
+  </div>
+
+  <p class="lead"><code>Editor</code> implements <code>iced::advanced::Widget</code> — not
+  <code>canvas::Program</code>, because it needs its own layout, hit testing and event handling, which the
+  canvas abstraction does not provide. Content is capped at <code>MAX_CONTENT_WIDTH = 880.0</code> so prose
+  keeps a readable measure in a wide window.</p>
+
+  <h2>17.1 Two passes with different budgets</h2>
+
+  <p><b>Layout</b> walks every line once — but every line is a cache hit unless something about it actually
+  changed (Chapter 16), and the walk maintains <code>block_ranges</code> for O(1) block lookups. Total height
+  is <code>TOP_PAD + prefix_sum(n) + 80.0</code>.</p>
+
+  <p><b>Draw</b> must never walk the document. It walks the viewport:</p>
+  <ol class="tight">
+    <li><code>find_line_at_y(viewport.y - bounds.y - TOP_PAD)</code> gives <code>visible_start</code>; the
+    same call at the viewport's bottom edge gives <code>visible_end</code>;</li>
+    <li>block backgrounds are built only for blocks intersecting that range;</li>
+    <li>lines are drawn starting at <code>prefix_sum(visible_start)</code> and stop once the y position
+    passes the viewport bottom.</li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 720 316" role="img" aria-label="A tall document column with a small viewport window over it, showing that only the lines intersecting the viewport are drawn, located by two height-tree lookups">
+      <defs>
+        <marker id="a17" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- document column -->
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">THE DOCUMENT</text>
+      <rect x="40" y="24" width="70" height="268" rx="2" class="s-fill2"/>
+      <text x="75" y="306" class="t-xs t-mid">10,000 lines</text>
+      <g class="s-line-2">
+        <line x1="40" y1="44" x2="110" y2="44"/><line x1="40" y1="64" x2="110" y2="64"/>
+        <line x1="40" y1="84" x2="110" y2="84"/><line x1="40" y1="104" x2="110" y2="104"/>
+        <line x1="40" y1="124" x2="110" y2="124"/><line x1="40" y1="144" x2="110" y2="144"/>
+        <line x1="40" y1="164" x2="110" y2="164"/><line x1="40" y1="184" x2="110" y2="184"/>
+        <line x1="40" y1="204" x2="110" y2="204"/><line x1="40" y1="224" x2="110" y2="224"/>
+        <line x1="40" y1="244" x2="110" y2="244"/><line x1="40" y1="264" x2="110" y2="264"/>
+      </g>
+
+      <!-- viewport -->
+      <rect x="34" y="128" width="82" height="62" rx="2" fill="none" stroke="#22665c" stroke-width="2"/>
+      <text x="122" y="146" class="t-xs t-b" fill="#22665c">viewport</text>
+      <text x="122" y="160" class="t-xs">the window</text>
+      <text x="122" y="172" class="t-xs">you can see</text>
+
+      <!-- lookups -->
+      <path d="M200 134 L118 134" class="s-accent" marker-end="url(#a17)"/>
+      <text x="206" y="130" class="t-mono-sm">find_line_at_y(top)</text>
+      <text x="206" y="144" class="t-xs">→ visible_start</text>
+
+      <path d="M200 184 L118 184" class="s-accent" marker-end="url(#a17)"/>
+      <text x="206" y="180" class="t-mono-sm">find_line_at_y(bottom)</text>
+      <text x="206" y="194" class="t-xs">→ visible_end</text>
+
+      <path d="M200 234 L118 234" class="s-line-2" marker-end="url(#a17)"/>
+      <text x="206" y="230" class="t-mono-sm">prefix_sum(visible_start)</text>
+      <text x="206" y="244" class="t-xs">→ where to start painting</text>
+
+      <!-- work comparison -->
+      <text x="400" y="14" class="t-xs t-b" fill="#22665c">WORK PER FRAME</text>
+
+      <rect x="400" y="24" width="304" height="80" rx="3" class="s-warn"/>
+      <text x="412" y="42" class="t-sm t-b" fill="#a03730">if draw iterated the document</text>
+      <text x="412" y="60" class="t-xs">10,000 line iterations, 10,000 style resolutions,</text>
+      <text x="412" y="74" class="t-xs">block backgrounds computed for every block —</text>
+      <text x="412" y="88" class="t-xs">every frame, at 60 fps, to paint ~40 visible lines.</text>
+
+      <rect x="400" y="116" width="304" height="80" rx="3" class="s-fill"/>
+      <text x="412" y="134" class="t-sm t-b" fill="#11342f">what it actually does</text>
+      <text x="412" y="152" class="t-xs">2 tree lookups + ~40 line draws, and it stops as</text>
+      <text x="412" y="166" class="t-xs">soon as y passes the viewport bottom.</text>
+      <text x="412" y="182" class="t-xs">Cost is proportional to the <tspan class="t-b">window</tspan>, not the file.</text>
+
+      <rect x="400" y="208" width="304" height="86" rx="3" class="s-fill2"/>
+      <text x="412" y="226" class="t-xs t-b">Still O(N), and that is fine:</text>
+      <text x="412" y="242" class="t-xs">the <tspan class="t-b">layout</tspan> pass does walk every line — but each one is</text>
+      <text x="412" y="256" class="t-xs">a cache hit, so it is 10,000 hash comparisons rather</text>
+      <text x="412" y="270" class="t-xs">than 10,000 glyph-shaping calls. Two orders of</text>
+      <text x="412" y="284" class="t-xs">magnitude apart, and only one of them is per-frame.</text>
+    </svg>
+    <figcaption><b>Figure 17.1 — Culling.</b> The draw pass never learns how long the document is. This is
+    the rule stated in the contributor guidelines as “full-document work in the draw pass is a performance
+    regression”, and it is the single easiest thing to break by accident when adding a new block type.</figcaption>
+  </figure>
+
+  <h2>17.2 Four more things the widget does</h2>
+
+  <h3>Inline and display LaTeX</h3>
+  <p><code>$...$</code> and <code>$$...$$</code> are rendered by <code>ratex-render</code> into bitmaps,
+  cached on <span class="fileref">app.rs</span> by <code>(tex, scale_factor)</code> and delivered back
+  through <code>Message::MathRendered</code>. Display math is centred with its own background padding;
+  inline math sits on the text baseline. Because the render is asynchronous, its arrival changes
+  <code>resource_hash</code> and the affected lines are remeasured — the loop closed in Chapter 16.</p>
+
+  <h3>Wide blocks scroll independently</h3>
+  <p>Tables, code blocks and wide equations neither wrap awkwardly nor stretch the layout. Each block keeps
+  <b>its own horizontal scroll offset</b>, clamped to its own content width, so a wide table scrolls sideways
+  under the mouse wheel while vertical document scrolling is unaffected.</p>
+
+  <h3>Hit testing and visual movement</h3>
+  <ul>
+    <li>Click and drag y positions map to line indices through <code>HeightTree</code>.</li>
+    <li>Horizontal wheel and scrollbar interaction resolve the target block via <code>block_ranges</code>
+    plus prefix sums.</li>
+    <li>Visual up/down computes the current visual y from the tree, hit-tests the target y, and preserves a
+    <code>desired_visual_x</code> across consecutive arrow presses — so the caret does not drift left while
+    moving through a run of short lines.</li>
+    <li><b>Horizontal</b> placement still walks the visible spans, because column mapping depends on inline
+    wrapping, font metrics, math and image widths, and hidden markers. To make that affordable the renderer
+    caches single-character width measurements by character, font and size.</li>
+  </ul>
+
+  <h2>17.3 The maintenance contract</h2>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  <p>The five rules below are stated in the module and repeated in the contributor guidelines, and they are
+  really one rule seen from five angles: <em>the pieces of the layout system only work together</em>.</p>
+  <ul class="tight" style="margin-top:2mm;margin-bottom:0">
+    <li>Keep parsing in <code>highlight.rs</code>; do not add markdown rules to the renderer.</li>
+    <li>Keep height and invalidation logic in <code>layout_tree.rs</code> and <code>layout_cache.rs</code>.</li>
+    <li>Keep the draw pass proportional to visible content, never to document length.</li>
+    <li>When adding media that can affect layout height, include its dimensions in
+    <code>resource_hash</code>.</li>
+    <li>When adding a block type, update block-range tracking, height measurement, draw metadata and hit
+    testing <b>together</b> — they are one contract split across four call sites.</li>
+  </ul></div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>You add a “callout” block type that draws a coloured background and an icon. Which four places change?</p>
+  <p class="answer"><b>Answer:</b> (1) <code>highlight.rs</code>, to parse it and assign a
+  <code>block_id</code>; (2) the layout pass's block-range tracking and height measurement, including any
+  spacer the block adds; (3) the draw pass's block-background construction, clamped to the visible range;
+  (4) hit testing, so clicking inside the callout maps to the right line and column. Miss the fourth and
+  clicks land one line off — which is exactly the kind of bug that gets reported as “the editor feels
+  weird”.</p></div>
+</section>

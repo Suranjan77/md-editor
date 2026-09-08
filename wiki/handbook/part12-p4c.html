@@ -1,0 +1,400 @@
+<!-- ---------- CH 23 ---------- -->
+<section class="chapter" id="ch23">
+  <div class="chead">
+    <div class="num">Chapter 23<span class="pm">PMK-ch23-</span></div>
+    <h1>Generations, pending sets, and the stranded page</h1>
+    <div class="sub">The bug this subsystem keeps trying to have, and the three-line shape that prevents it</div>
+  </div>
+
+  <p class="lead">If you read one chapter of Part IV twice, make it this one. Everything here is about
+  asynchronous results arriving after the world has moved on, and the failure mode is a page that shows a
+  loading state for ever.</p>
+
+  <h2>23.1 The state involved</h2>
+
+  <p><code>PdfPane</code> (<span class="fileref">native/src/pdf_pane.rs</span>) carries three in-flight
+  request sets and one counter:</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:26%">Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>pending_pages</code></td><td>page images currently requested</td></tr>
+      <tr><td><code>pending_links</code></td><td>link metadata currently requested</td></tr>
+      <tr><td><code>pending_text</code></td><td>text geometry currently requested; bounded by
+        <code>text_lru</code> to 12 pages</td></tr>
+      <tr><td><code>render_generation</code></td><td>bumped on a document change, a zoom change, or a
+        navigation — so results from before the change can be recognised as stale</td></tr>
+    </tbody>
+  </table>
+
+  <p>A pending set is not an optimisation. It is what stops the app requesting the same page fifty times
+  while the first request is still in flight, so a page is scheduled only when the image is missing
+  <em>and</em> the page is not already pending.</p>
+
+  <h2>23.2 The invariant</h2>
+
+  <div class="srcref">native/src/app.rs — the shape every async PDF handler must have</div>
+<pre>Message::PdfRendered(generation, page, img) =&gt; {
+    self.pdf.pending_pages.remove(&amp;page);          <span class="cmt">// 1. always clean up first</span>
+
+    if generation != self.pdf.render_generation {  <span class="cmt">// 2. then discard if stale</span>
+        return Task::none();
+    }
+
+    <span class="cmt">// 3. only now touch the cache</span>
+}</pre>
+
+  <p>The same shape applies to <code>PdfRenderFailed</code>, <code>PdfPageLinksLoaded</code> and
+  <code>PdfPageTextLoaded</code>. Swap steps 1 and 2 — the ordering a normal person would write, because
+  “ignore stale results” feels like the first thing to do — and you get Figure 23.1.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 342" role="img" aria-label="Two traces of the same events: gating on the generation before cleaning up the pending set leaves the page permanently pending and never re-requested, while cleaning up first allows the page to be scheduled again">
+      <defs>
+        <marker id="a23" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- shared events -->
+      <rect x="16" y="16" width="688" height="46" rx="3" class="s-fill2"/>
+      <text x="28" y="34" class="t-xs t-b">THE SAME FOUR EVENTS IN BOTH COLUMNS</text>
+      <text x="28" y="52" class="t-xs">① page 14 is requested — pending_pages = {14}, generation = 7&#160;&#160;&#160;② the reader zooms — generation becomes 8&#160;&#160;&#160;③ the old render finishes and arrives stamped 7&#160;&#160;&#160;④ page 14 scrolls back into view</text>
+
+      <!-- wrong -->
+      <text x="16" y="86" class="t-xs t-b" fill="#a03730">GATE FIRST, CLEAN UP LATER — WRONG</text>
+      <rect x="16" y="94" width="336" height="230" rx="3" class="s-warn"/>
+      <g class="t-xs">
+        <text x="28" y="116" class="t-b">③ the result arrives</text>
+        <text x="28" y="132" class="t-mono-sm">if generation != current { return }</text>
+        <text x="28" y="148">7 ≠ 8 → returns immediately</text>
+      </g>
+      <rect x="28" y="158" width="312" height="26" rx="2" fill="#ffffff" stroke="#a03730" stroke-width=".8"/>
+      <text x="184" y="175" class="t-mono-sm t-mid" fill="#a03730">pending_pages = {14}  ← never removed</text>
+      <g class="t-xs">
+        <text x="28" y="204" class="t-b">④ the page scrolls back into view</text>
+        <text x="28" y="220" class="t-mono-sm">if missing &amp;&amp; !pending { request }</text>
+        <text x="28" y="236">the image is missing … but 14 <tspan class="t-b">is</tspan> pending,</text>
+        <text x="28" y="250">so nothing is ever requested again.</text>
+      </g>
+      <rect x="28" y="262" width="312" height="48" rx="2" fill="#ffffff" stroke="#a03730" stroke-width=".8"/>
+      <text x="184" y="282" class="t-sm t-b t-mid" fill="#a03730">page 14 loads for ever</text>
+      <text x="184" y="298" class="t-xs t-mid">and only a zoom or a re-open clears it</text>
+
+      <!-- right -->
+      <text x="368" y="86" class="t-xs t-b" fill="#22665c">CLEAN UP FIRST, THEN GATE — RIGHT</text>
+      <rect x="368" y="94" width="336" height="230" rx="3" class="s-fill"/>
+      <g class="t-xs">
+        <text x="380" y="116" class="t-b">③ the result arrives</text>
+        <text x="380" y="132" class="t-mono-sm">pending_pages.remove(&amp;14);</text>
+        <text x="380" y="148">then: 7 ≠ 8 → discard the image</text>
+      </g>
+      <rect x="380" y="158" width="312" height="26" rx="2" fill="#ffffff" stroke="#22665c" stroke-width=".8"/>
+      <text x="536" y="175" class="t-mono-sm t-mid" fill="#22665c">pending_pages = { }  ← the slot is free</text>
+      <g class="t-xs">
+        <text x="380" y="204" class="t-b">④ the page scrolls back into view</text>
+        <text x="380" y="220" class="t-mono-sm">if missing &amp;&amp; !pending { request }</text>
+        <text x="380" y="236">missing, not pending → requested again,</text>
+        <text x="380" y="250">this time at the correct zoom.</text>
+      </g>
+      <rect x="380" y="262" width="312" height="48" rx="2" fill="#ffffff" stroke="#22665c" stroke-width=".8"/>
+      <text x="536" y="282" class="t-sm t-b t-mid" fill="#22665c">page 14 renders</text>
+      <text x="536" y="298" class="t-xs t-mid">one wasted render, no stuck state</text>
+
+      <path d="M352 175 L364 175" class="s-line-2" marker-end="url(#a23)"/>
+    </svg>
+    <figcaption><b>Figure 23.1 — The stranded page.</b> Both columns discard the stale image; only one frees
+    the pending slot. <code>render_generation</code> exists to ignore stale <em>results</em> and must never
+    be used to skip <em>cleanup</em> — that is the single easiest way to strand a page in a permanent loading
+    state.</figcaption>
+  </figure>
+
+  <p>The corollary is just as important: <b>any code path that increments <code>render_generation</code> must
+  also clear the in-flight state belonging to the previous generation</b> — <code>pending_pages.clear()</code>
+  and <code>pending_links.clear()</code> — and a document change additionally clears <code>page_links</code>,
+  <code>pages</code>, <code>dimensions</code> and <code>page_sizes</code>.</p>
+
+  <h2>23.3 The deliberate exception</h2>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  <p><code>PdfReferencesLoaded</code> is gated on <code>document_id</code>, <b>never</b> on
+  <code>render_generation</code>. References are a document-level artifact, and the chunked scan routinely
+  outlives the fit-to-width zoom change that bumps the generation when a document opens.</p>
+  <p>Generation-gating them silently dropped every reference on first open. The tell was diagnostic gold: a
+  <em>reopened</em> PDF worked — because it took the synchronous cache path — while a fresh one did not.
+  <code>PdfTocLoaded</code> is gated on the document path for exactly the same reason.</p></div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>You add “extract the annotations layer” as a new async PDF result. What are the two questions to answer
+  before writing the handler?</p>
+  <p class="answer"><b>Answer:</b> (1) Which pending set does it belong to, and is it removed <em>first</em>?
+  (2) Is this a per-render artifact (gate on <code>render_generation</code>) or a document-level one (gate on
+  <code>document_id</code>)? Getting question 2 wrong is the references bug again; getting question 1 wrong is
+  the stranded page again.</p></div>
+</section>
+
+<!-- ---------- CH 24 ---------- -->
+<section class="chapter" id="ch24">
+  <div class="chead">
+    <div class="num">Chapter 24<span class="pm">PMK-ch24-</span></div>
+    <h1>Stable page slots</h1>
+    <div class="sub">Why a rendered page must not change the space it occupies</div>
+  </div>
+
+  <p class="lead">A continuous PDF viewer has to answer “what is the scroll offset of page 300?” before page
+  300 has been rendered — and it has to give the same answer afterwards. Getting that wrong produces a bug
+  that only appears deep in long documents, which is the worst kind.</p>
+
+  <h2>24.1 The mechanism</h2>
+
+  <p>Every page's unscaled size is loaded once with <code>page_sizes(path)</code> when the PDF opens — far
+  cheaper than rendering, and available long before most pages enter the render queue. One of them (normally
+  page 1) becomes <code>placeholder_page_size</code>. Then:</p>
+
+<pre>slot = (placeholder_width * zoom, placeholder_height * zoom)</pre>
+
+  <p><b>Every page occupies that same outer slot while scrolling — including pages whose bitmaps have already
+  rendered.</b> Rendered bitmap dimensions are cached for image data and link maths, but they never change
+  scroll geometry.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 330" role="img" aria-label="Two scroll models compared: sizing each page by its rendered bitmap makes the model and the layout disagree page by page so a jump lands in the wrong place, while a fixed slot per page keeps them identical">
+      <defs>
+        <marker id="a24" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- wrong -->
+      <text x="16" y="14" class="t-xs t-b" fill="#a03730">SLOT = WHATEVER THAT PAGE CURRENTLY IS</text>
+      <text x="16" y="28" class="t-xs">rendered pages use their bitmap size, unrendered ones use the placeholder</text>
+
+      <g>
+        <rect x="24" y="40" width="90" height="30" class="s-fill2"/><text x="122" y="60" class="t-xs">p1 rendered · 30</text>
+        <rect x="24" y="72" width="90" height="26" class="s-box"/><text x="122" y="90" class="t-xs">p2 blank · 26</text>
+        <rect x="24" y="100" width="90" height="34" class="s-fill2"/><text x="122" y="121" class="t-xs">p3 rendered · 34</text>
+        <rect x="24" y="136" width="90" height="26" class="s-box"/><text x="122" y="154" class="t-xs">p4 blank · 26</text>
+        <rect x="24" y="164" width="90" height="30" class="s-fill2"/><text x="122" y="183" class="t-xs">p5 rendered · 30</text>
+      </g>
+      <text x="24" y="214" class="t-xs t-b" fill="#a03730">the model and the layout disagree by a few px per page</text>
+      <text x="24" y="230" class="t-xs">and the error <tspan class="t-b">accumulates</tspan> — it is a running sum</text>
+
+      <rect x="24" y="244" width="300" height="70" rx="3" class="s-warn"/>
+      <text x="36" y="262" class="t-xs t-b" fill="#a03730">jump to page 300</text>
+      <text x="36" y="278" class="t-xs">the computed offset is off by hundreds of pixels;</text>
+      <text x="36" y="292" class="t-xs">the reader lands on page 297, or mid-page, and the</text>
+      <text x="36" y="306" class="t-xs">viewer “corrects” itself with a visible jerk</text>
+
+      <!-- divider -->
+      <line x1="360" y1="16" x2="360" y2="316" class="s-dash"/>
+
+      <!-- right -->
+      <text x="384" y="14" class="t-xs t-b" fill="#22665c">SLOT = PLACEHOLDER SIZE × ZOOM, ALWAYS</text>
+      <text x="384" y="28" class="t-xs">the bitmap is drawn <tspan class="t-b">inside</tspan> the slot; the slot never moves</text>
+
+      <g>
+        <rect x="392" y="40" width="90" height="28" class="s-fill"/><text x="490" y="59" class="t-xs">p1 rendered · 28</text>
+        <rect x="392" y="70" width="90" height="28" class="s-box"/><text x="490" y="89" class="t-xs">p2 blank · 28</text>
+        <rect x="392" y="100" width="90" height="28" class="s-fill"/><text x="490" y="119" class="t-xs">p3 rendered · 28</text>
+        <rect x="392" y="130" width="90" height="28" class="s-box"/><text x="490" y="149" class="t-xs">p4 blank · 28</text>
+        <rect x="392" y="160" width="90" height="28" class="s-fill"/><text x="490" y="179" class="t-xs">p5 rendered · 28</text>
+      </g>
+      <text x="392" y="214" class="t-xs t-b" fill="#22665c">the model and the layout are the same arithmetic</text>
+      <text x="392" y="230" class="t-xs">so there is nothing to accumulate</text>
+
+      <rect x="392" y="244" width="300" height="70" rx="3" class="s-fill"/>
+      <text x="404" y="262" class="t-xs t-b" fill="#11342f">jump to page 300</text>
+      <text x="404" y="278" class="t-xs">offset = 299 × slot_height — exact, whether or not</text>
+      <text x="404" y="292" class="t-xs">any of those 299 pages has ever been rendered.</text>
+      <text x="404" y="306" class="t-xs">Rendering later changes nothing about where things are.</text>
+    </svg>
+    <figcaption><b>Figure 24.1 — Geometry that does not depend on what has loaded.</b> The rule is not
+    “placeholders are the same size”; it is that a page's <em>outer slot</em> is fixed, so scroll position is
+    a function of the page index and the zoom alone. The unit tests in <span class="fileref">app.rs</span>
+    assert exactly this: target offsets map back to the same page, blank pages reserve space in the total
+    height, and placeholder slots scale with zoom.</figcaption>
+  </figure>
+
+  <p>Page-size metadata drives loading placeholder dimensions, <code>pdf_page_offset(page)</code>,
+  <code>pdf_page_at_scroll(scroll_y)</code>, viewport range detection, and the fit-to-width calculation — one
+  source of truth feeding five consumers.</p>
+
+  <h2>24.2 Rendering, supersampled</h2>
+
+  <p><code>render_pdf_page()</code> renders <b>only</b> the page image; it never extracts links. The PDFium
+  render scale is <em>supersampled</em> relative to the displayed zoom — factoring in
+  <code>ui.scale_factor</code>, the OS display scale — so a narrow split-view page stays sharp on HiDPI and
+  fractional-scale displays without over-rendering on a 1× screen.</p>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  Cached <code>dimensions</code> remain <b>logical display</b> dimensions, not raw bitmap dimensions. That
+  distinction is what keeps link hit-testing and placeholder maths working in PDF-space/display-space
+  geometry. Store the supersampled bitmap size there and every click lands in the wrong place on a HiDPI
+  screen — and nowhere else, so you will not reproduce it.</div>
+
+  <p>On a successful <code>PdfRendered</code>: remove the page from <code>pending_pages</code>; discard if
+  the generation is stale; store the handle in <code>pages</code> and <code>(width, height)</code> in
+  <code>dimensions</code>; schedule low-priority link and text extraction for that page; and if the page is
+  the active navigation target, compute the scroll offset and issue the programmatic scroll. A failure
+  returns <code>PdfRenderFailed</code> rather than being swallowed by a generic tick.</p>
+
+  <h2>24.3 Navigation and scrolling</h2>
+
+  <p>TOC clicks, internal link clicks and PDF search-result clicks all funnel through
+  <code>navigate_pdf_page(page)</code>:</p>
+  <ol class="tight">
+    <li>clamp and store <code>current_page</code>;</li>
+    <li>clear <code>pending_pages</code> and <code>pending_links</code>;</li>
+    <li>increment <code>render_generation</code>;</li>
+    <li>store <code>toc_target_page</code>;</li>
+    <li>schedule link loading if the target page is already cached, otherwise request it through
+    <code>render_pdf_page_direct()</code> — the <b>priority</b> channel;</li>
+    <li>compute the target offset from the same stable slot geometry the view uses;</li>
+    <li>set <code>programmatic_scroll = true</code> and issue <code>scroll_to</code>.</li>
+  </ol>
+
+  <p>Scrolling then behaves differently depending on who caused it. <b>User scrolling</b> updates
+  <code>scroll_y</code>, estimates the current page from <code>y + viewport_height * 0.33</code>, clears
+  pending work if the page jump was large, and schedules viewport pages. <b>Programmatic scrolling</b> is
+  acknowledged by the first matching <code>PdfScrolled</code>, which suppresses normal viewport scheduling
+  for that event and schedules only a small range around the target.</p>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  Without that suppression, one TOC click would schedule the target page, its neighbours, the whole viewport
+  <em>and</em> link extraction, all at once — on a single-threaded worker. The jump would be slower than
+  scrolling there by hand.</div>
+
+  <p>The viewport window itself is deliberately generous but bounded:</p>
+<pre>first = page_at(scroll_y - estimated_page_height)
+last  = page_at(scroll_y + viewport_height + estimated_page_height)
+range = (first - 2) ..= (last + 2)</pre>
+
+  <p>Search navigation is the one exception to the page-top model: <code>navigate_pdf_search_to_index()</code>
+  computes the offset from the <em>active match rectangle</em>, priority-renders the match page, schedules a
+  small nearby range, and scrolls the match into view. It deliberately leaves <code>toc_target_page</code>
+  unset, because the render-completion page-top scroll would otherwise override the match-precise offset.</p>
+</section>
+
+<!-- ---------- CH 25 ---------- -->
+<section class="chapter" id="ch25">
+  <div class="chead">
+    <div class="num">Chapter 25<span class="pm">PMK-ch25-</span></div>
+    <h1>From highlight to note and back</h1>
+    <div class="sub">The <code>pdf://</code> deep link, and the loop it closes</div>
+  </div>
+
+  <p class="lead">This is the feature the whole PDF subsystem exists to support: select a passage in a paper,
+  attach it to a note, and be able to walk the connection in both directions afterwards.</p>
+
+  <h2>25.1 What gets written</h2>
+
+  <p>Selecting text and choosing <b>Link to Note</b> opens a searchable in-app vault picker
+  (<span class="fileref">views/link_note_picker.rs</span>): pick an existing note, or pick a folder and type
+  a new note name. <span class="fileref">native/src/pdf_notes.rs</span> generates the markdown.</p>
+
+<pre>---
+type: pdf-note
+source_pdf: papers/Introduction to Algorithms.pdf
+---
+
+# Divide and conquer
+
+## Page 42
+
+&gt; A divide-and-conquer algorithm breaks down a problem into two or more
+&gt; sub-problems of the same or related type...
+
+[Open highlight in PDF](pdf://papers/Introduction to Algorithms.pdf?page=42&amp;annotation=abcdef123456)
+
+### Notes
+
+This definition connects to [[Lecture 3 Notes]].</pre>
+
+  <p>Six behaviours are worth knowing before you touch this file:</p>
+  <ul>
+    <li>A <b>new</b> note gets <code>type: pdf-note</code> / <code>source_pdf:</code> frontmatter and an
+    <code># H1</code> title derived from its filename (<code>shared pdf note.md</code> becomes
+    <code># Shared pdf note</code>).</li>
+    <li>Reusing an <b>existing</b> note <b>appends</b> another <code>## Page N</code> section after a
+    <code>---</code> rule, rather than overwriting the file.</li>
+    <li>Re-linking the same highlight is <b>idempotent</b> — <code>append_linked_pdf_note_section</code>
+    checks for the generated link and returns the file unchanged if it is already there.</li>
+    <li>Page numbers in the heading and the link are <b>1-based</b>, while <code>page_index</code> is
+    0-based. Off-by-one bugs here are visible to the user, so the convention is worth internalising.</li>
+    <li>The link target is the <b>vault-relative PDF path</b>, not the <code>document_id</code>; relative
+    paths are resolved against the note's own location.</li>
+    <li>The visible markdown carries <b>no debug identifiers</b>. The annotation id lives only inside the
+    <code>pdf://</code> link, where it is needed for exact navigation.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 720 300" role="img" aria-label="The round trip: a PDF selection becomes a sidecar annotation and a markdown section with a pdf link, and the annotation's linked note path makes the note's backlinks panel show the highlight">
+      <defs>
+        <marker id="a25" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="6" markerHeight="6" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- pdf -->
+      <rect x="16" y="40" width="180" height="120" rx="3" class="s-box"/>
+      <text x="106" y="60" class="t-sm t-b t-mid">the PDF, page 42</text>
+      <g class="s-line-2"><line x1="30" y1="74" x2="182" y2="74"/><line x1="30" y1="86" x2="176" y2="86"/></g>
+      <rect x="30" y="94" width="152" height="12" fill="#f7e9a8"/>
+      <rect x="30" y="110" width="96" height="12" fill="#f7e9a8"/>
+      <text x="30" y="142" class="t-xs">drag-select → Highlight</text>
+      <text x="30" y="154" class="t-xs">→ Link to Note</text>
+
+      <!-- db -->
+      <rect x="266" y="16" width="188" height="86" rx="3" class="s-fill"/>
+      <text x="360" y="36" class="t-sm t-b t-mid" fill="#11342f">pdf_annotations</text>
+      <text x="278" y="56" class="t-mono-sm">id · document_id · page_index</text>
+      <text x="278" y="72" class="t-mono-sm">rects · selected_text</text>
+      <text x="278" y="90" class="t-mono-sm" fill="#22665c">linked_note_path ←</text>
+
+      <!-- note -->
+      <rect x="524" y="40" width="180" height="120" rx="3" class="s-box"/>
+      <text x="614" y="60" class="t-sm t-b t-mid">Divide and conquer.md</text>
+      <text x="536" y="80" class="t-mono-sm">## Page 42</text>
+      <text x="536" y="96" class="t-mono-sm">&gt; the quoted passage…</text>
+      <text x="536" y="116" class="t-mono-sm" fill="#22665c">[Open highlight](pdf://…)</text>
+      <text x="536" y="136" class="t-mono-sm">### Notes</text>
+      <text x="536" y="152" class="t-xs">your own writing goes here</text>
+
+      <!-- arrows -->
+      <path d="M202 84 L262 60" class="s-accent" marker-end="url(#a25)"/>
+      <text x="232" y="110" class="t-xs t-mid">saved as a</text>
+      <text x="232" y="122" class="t-xs t-mid">sidecar row</text>
+
+      <path d="M458 60 L518 84" class="s-accent" marker-end="url(#a25)"/>
+      <text x="490" y="110" class="t-xs t-mid">section</text>
+      <text x="490" y="122" class="t-xs t-mid">appended</text>
+
+      <!-- return path: the note links back to the exact page -->
+      <path d="M560 168 L204 168" class="s-line-2" marker-end="url(#a25)"/>
+      <text x="382" y="162" class="t-xs t-mid">Ctrl+click the pdf:// link — back to page 42, that highlight focused</text>
+
+      <!-- what ctrl+click does -->
+      <rect x="16" y="184" width="336" height="100" rx="3" class="s-fill2"/>
+      <text x="28" y="202" class="t-xs t-b">Ctrl+click on the pdf:// link does four things</text>
+      <text x="28" y="220" class="t-xs">1 · turns on split view</text>
+      <text x="28" y="236" class="t-xs">2 · opens the document</text>
+      <text x="28" y="252" class="t-xs">3 · scrolls to the page</text>
+      <text x="28" y="268" class="t-xs">4 · focuses that exact annotation</text>
+
+      <rect x="368" y="184" width="336" height="100" rx="3" class="s-fill"/>
+      <text x="380" y="202" class="t-xs t-b" fill="#11342f">and the reverse direction is free</text>
+      <text x="380" y="220" class="t-xs">the note's Backlinks panel lists the highlight, because</text>
+      <text x="380" y="236" class="t-xs">linked_note_path points at it (Chapter 10's join)</text>
+      <text x="380" y="258" class="t-xs">Opening a linked note from a PDF switches to split view</text>
+      <text x="380" y="274" class="t-xs"><tspan class="t-b">without</tspan> resetting the PDF to page 1.</text>
+    </svg>
+    <figcaption><b>Figure 25.1 — A round trip with no central index.</b> The forward direction is a link in
+    the markdown; the reverse is a column in SQLite. Neither is derived from the other, which is why both keep
+    working when you edit the note by hand or move the PDF.</figcaption>
+  </figure>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  Linked-note writes must <b>append</b> to an existing note unless the exact highlight link is already
+  present. Overwriting is the obvious implementation and it silently destroys a user's notes on the second
+  highlight they link to the same file. The idempotency check exists for the third one.</div>
+</section>

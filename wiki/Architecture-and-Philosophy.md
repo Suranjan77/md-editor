@@ -15,7 +15,8 @@ Nothing is locked inside a proprietary database, an opaque container, or a cloud
 - **The vault is just a directory.** Your workspace is an ordinary folder on the local
   filesystem, opened through a native folder picker.
 - **Plain files.** Markdown notes (`.md`, `.markdown`), PDFs (`.pdf`), and images
-  (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`) stay usable by any editor, CLI tool,
+  (`.jpeg`, `.jpg`, `.png`, `.svg`, `.webp`, `.avif` — `IMAGE_EXTENSIONS` in `core/src/vault.rs`)
+  stay usable by any editor, CLI tool,
   or backup system — Git, rsync, Syncthing.
 - **No account, no network.** There are no user accounts, licence keys, or telemetry, and
   the app never requires connectivity. The only network access in the whole project is the

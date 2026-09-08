@@ -1,0 +1,325 @@
+<!-- ---------- CH 13 ---------- -->
+<section class="chapter" id="ch13">
+  <div class="chead">
+    <div class="num">Chapter 13<span class="pm">PMK-ch13-</span></div>
+    <h1>DocBuffer, transactions, and word-sized undo</h1>
+    <div class="sub">Why one <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back a word, and how a quote knows it is an apostrophe</div>
+  </div>
+
+  <p class="lead"><code>DocBuffer</code> is the text model: a <code>ropey::Rope</code>, a cursor, a
+  selection, and an undo stack of transactions. Everything the editor can do to text is an
+  <code>EditorCommand</code> applied through <code>DocBuffer::execute()</code>.</p>
+
+  <div class="srcref">native/src/editor/buffer.rs</div>
+<pre>pub enum EditorCommand {
+    InsertText(String), DeleteSelection, DeleteBackward, DeleteForward,
+    MoveCursor { movement: Movement, extend: bool },
+    SetCursor { line: usize, col: usize },
+    SetSelection { anchor_line: usize, anchor_col: usize, focus_line: usize, focus_col: usize },
+    SelectAll, ToggleCheckbox { line: usize },
+    FormatBold, FormatItalic, FormatInlineCode, InsertLink,
+    TypePaired(char), Undo, Redo,
+}</pre>
+
+  <p><code>execute()</code> returns a <code>CommandResult { text_changed, projection_changed,
+  media_changed }</code>, so the shell knows whether to re-parse the document, refresh the image and math
+  caches, or merely rescroll. Three booleans, and they save an enormous amount of unnecessary work: moving
+  the cursor changes the projection but not the text, so nothing is re-highlighted.</p>
+
+  <div class="box"><span class="tag">Why a rope</span>
+  A <code>String</code> is one contiguous allocation. Inserting a character in the middle of a 2&nbsp;MB note
+  memmoves the tail — every keystroke. <code>ropey</code> stores the text as a tree of chunks, so an insert
+  touches one chunk, and it also gives O(log n) conversion between character offsets and line/column, which
+  the editor asks for constantly.</div>
+
+  <h2>13.1 Human-sized undo</h2>
+
+  <p>A keystroke-by-keystroke undo stack is technically correct and miserable to use: taking back one
+  sentence costs a dozen presses. <code>commit_transaction</code> therefore <em>coalesces</em> consecutive
+  edits into one undo step.</p>
+
+<pre>const UNDO_COALESCE_WINDOW: Duration = Duration::from_millis(300);</pre>
+
+  <p><code>can_coalesce(prev, next)</code> merges only when <b>every one</b> of these holds:</p>
+  <ul class="tight">
+    <li>the new transaction is a single operation;</li>
+    <li>it is the same kind as the previous one — an insert continues inserts, a delete continues deletes;</li>
+    <li>neither text contains a newline, so a run always breaks at a line boundary at the latest;</li>
+    <li>the new character lands exactly where the previous one ended, so a cursor jump breaks the run;</li>
+    <li>there was no active selection, so a selection-replacing edit is always its own step;</li>
+    <li>less than <code>UNDO_COALESCE_WINDOW</code> has passed, so a deliberate pause starts a new step.</li>
+  </ul>
+
+  <div class="srcref">native/src/editor/buffer.rs — the insert arm, lightly trimmed</div>
+<pre>(EditOp::Insert { char_offset: prev_at, text: prev_text },
+ EditOp::Insert { char_offset: next_at, text: next_text }) =&gt; {
+    next_text.chars().count() == 1
+        &amp;&amp; !next_text.contains('\n')
+        &amp;&amp; !prev_text.contains('\n')
+        <span class="cmt">// The new character lands exactly where the previous one ended.</span>
+        &amp;&amp; *next_at == prev_at + prev_text.chars().count()
+}</pre>
+
+  <figure>
+    <svg viewBox="0 0 720 244" role="img" aria-label="A typing timeline in which consecutive keystrokes merge into undo runs, with each run boundary labelled by the rule that caused the break">
+      <defs>
+        <marker id="a13" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <text x="16" y="16" class="t-xs t-b">KEYSTROKES →</text>
+
+      <!-- keys -->
+      <g class="t-mono-sm t-mid">
+        <text x="34" y="44">t</text><text x="52" y="44">h</text><text x="70" y="44">e</text>
+        <text x="96" y="44">␣</text><text x="118" y="44">c</text><text x="136" y="44">a</text>
+        <text x="154" y="44">t</text>
+        <text x="212" y="44">s</text><text x="230" y="44">a</text><text x="248" y="44">t</text>
+        <text x="316" y="44">⏎</text>
+        <text x="368" y="44">o</text><text x="386" y="44">n</text>
+        <text x="440" y="44">[click]</text>
+        <text x="516" y="44">m</text><text x="534" y="44">a</text><text x="552" y="44">t</text>
+        <text x="620" y="44">⌫</text><text x="640" y="44">⌫</text><text x="660" y="44">⌫</text>
+      </g>
+
+      <!-- runs -->
+      <rect x="24" y="58" width="142" height="24" rx="3" class="s-fill"/>
+      <text x="95" y="74" class="t-xs t-mid" fill="#11342f">undo run 1</text>
+
+      <rect x="202" y="58" width="58" height="24" rx="3" class="s-fill"/>
+      <text x="231" y="74" class="t-xs t-mid" fill="#11342f">run 2</text>
+
+      <rect x="306" y="58" width="26" height="24" rx="3" class="s-fill2"/>
+      <text x="319" y="74" class="t-xs t-mid">3</text>
+
+      <rect x="358" y="58" width="40" height="24" rx="3" class="s-fill"/>
+      <text x="378" y="74" class="t-xs t-mid" fill="#11342f">run 4</text>
+
+      <rect x="506" y="58" width="58" height="24" rx="3" class="s-fill"/>
+      <text x="535" y="74" class="t-xs t-mid" fill="#11342f">run 5</text>
+
+      <rect x="610" y="58" width="60" height="24" rx="3" class="s-fill"/>
+      <text x="640" y="74" class="t-xs t-mid" fill="#11342f">run 6</text>
+
+      <!-- break markers -->
+      <g class="s-red">
+        <path d="M184 52 L184 96"/><path d="M283 52 L283 96"/><path d="M345 52 L345 96"/>
+        <path d="M419 52 L419 96"/><path d="M587 52 L587 96"/>
+      </g>
+
+      <!-- reasons -->
+      <g class="t-xs t-mid" fill="#a03730">
+        <text x="184" y="112">pause</text><text x="184" y="124">&gt; 300 ms</text>
+        <text x="283" y="112">newline</text><text x="283" y="124">ends a run</text>
+        <text x="345" y="112">newline</text><text x="345" y="124">starts one</text>
+        <text x="419" y="112">cursor</text><text x="419" y="124">jumped</text>
+        <text x="587" y="112">kind changed</text><text x="587" y="124">insert → delete</text>
+      </g>
+
+      <!-- result -->
+      <rect x="16" y="146" width="336" height="82" rx="3" class="s-warn"/>
+      <text x="28" y="164" class="t-xs t-b" fill="#a03730">Without coalescing</text>
+      <text x="28" y="182" class="t-xs">21 keystrokes → 21 undo steps.</text>
+      <text x="28" y="198" class="t-xs">Taking back “the cat sat” costs eleven presses,</text>
+      <text x="28" y="214" class="t-xs">and each one redraws.</text>
+
+      <rect x="368" y="146" width="336" height="82" rx="3" class="s-fill"/>
+      <text x="380" y="164" class="t-xs t-b" fill="#11342f">With coalescing</text>
+      <text x="380" y="182" class="t-xs">21 keystrokes → 6 undo steps.</text>
+      <text x="380" y="198" class="t-xs">One press takes back a word-sized burst, and the</text>
+      <text x="380" y="214" class="t-xs">breaks land where a person would expect them to.</text>
+    </svg>
+    <figcaption><b>Figure 13.1 — Where a run breaks, and why.</b> Every red bar is one of the six conditions
+    in <code>can_coalesce</code> failing. Deletes coalesce by the same rules, which is why holding backspace
+    is also a single undo step rather than forty.</figcaption>
+  </figure>
+
+  <h2>13.2 Smart auto-pairing</h2>
+
+  <p>Bracket and quote characters route through <code>TypePaired</code>; everything else inserts verbatim.
+  Four behaviours, and the fourth is the one people notice when it is missing.</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:24%">Behaviour</th><th>Rule</th></tr></thead>
+    <tbody>
+      <tr><td><b>Brackets</b></td><td><code>PAIRS = [('(', ')'), ('[', ']'), ('{', '}')]</code>. Typing an
+        opener inserts the pair and places the cursor between them.</td></tr>
+      <tr><td><b>Selection wrapping</b></td><td>With a selection active, typing <code>(</code>,
+        <code>[</code>, <code>{</code>, <code>"</code>, <code>'</code> or <code>`</code> wraps the selection
+        rather than replacing it.</td></tr>
+      <tr><td><b>Skip-over</b></td><td>Typing a closer that already sits at the cursor steps over it instead
+        of inserting a duplicate. Same for an identical quote directly ahead.</td></tr>
+      <tr><td><b>Contraction preservation</b></td><td><code>"</code>, <code>'</code> and <code>`</code> pair
+        by default — but a quote typed immediately after an alphanumeric character is left <em>single</em>,
+        so <code>don't</code>, <code>it's</code> and <code>users'</code> do not sprout stray closers.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>13.3 List continuation</h2>
+
+  <table class="compact">
+    <thead><tr><th style="width:34%">Source line</th><th>After <kbd>Enter</kbd></th></tr></thead>
+    <tbody>
+      <tr><td><code>- Buy milk</code></td><td><code>- Buy milk\n- </code></td></tr>
+      <tr><td><code>* [ ] Code task</code></td><td><code>* [ ] Code task\n* [ ] </code></td></tr>
+      <tr><td><code>1. Step one</code></td><td><code>1. Step one\n2. </code> — the number increments</td></tr>
+      <tr><td><code>- </code> (an empty item)</td><td>the marker is removed and list mode ends</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  The list parser works on <b>character offsets, not byte slices</b>. Slicing a Rust <code>String</code> at a
+  byte index that falls inside a multibyte character panics — and a list marker followed by an accented
+  letter or an emoji is not a hypothetical document. There is a regression test for exactly this. Any new
+  text-scanning code in this file should use <code>chars()</code> and character indices for the same
+  reason.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>You type <code>hello</code>, wait two seconds, type <code>world</code>, then press
+  <kbd>Ctrl</kbd>+<kbd>Z</kbd> twice. What is on screen after each press?</p>
+  <p class="answer"><b>Answer:</b> <code>hello</code>, then empty. The two-second pause exceeded
+  <code>UNDO_COALESCE_WINDOW</code>, so there are exactly two runs.</p></div>
+</section>
+
+<!-- ---------- CH 14 ---------- -->
+<section class="chapter" id="ch14">
+  <div class="chead">
+    <div class="num">Chapter 14<span class="pm">PMK-ch14-</span></div>
+    <h1>Hybrid preview: conceal and reveal</h1>
+    <div class="sub">One data structure that holds both the source and what you see</div>
+  </div>
+
+  <p class="lead">There is no preview mode and no edit mode. The document renders as formatted typography,
+  and the line your cursor is on shows its raw markdown in place. The whole trick is that a span carries two
+  strings.</p>
+
+  <h2>14.1 The data structures</h2>
+
+  <div class="srcref">native/src/editor/highlight.rs</div>
+<pre>pub struct StyledLine {
+    pub spans: Vec&lt;StyledSpan&gt;,
+    pub is_code_block: bool,
+    pub is_math_block: bool,
+    pub code_block_lang: Option&lt;String&gt;,
+    pub is_blockquote: bool,
+    pub block_id: usize,      <span class="cmt">// consecutive lines of one block share this</span>
+    pub is_block_fence: bool, <span class="cmt">// ``` or $$ — hidden in preview</span>
+    pub is_table_row: bool,
+    pub table_cells: Vec&lt;Vec&lt;StyledSpan&gt;&gt;,
+}
+
+pub struct StyledSpan {
+    pub text: String,                  <span class="cmt">// the raw markdown source for this span</span>
+    pub display_text: Option&lt;String&gt;,  <span class="cmt">// what preview shows; Some("") hides a marker</span>
+    pub color: Color,
+    pub bold: bool, pub italic: bool, pub font_size: f32,
+    pub is_code: bool,
+    pub is_link: bool, pub link_target: Option&lt;String&gt;,
+    pub is_heading: bool, pub heading_level: u8,
+    pub is_checkbox: bool, pub is_checked: bool,
+    pub is_rule: bool,
+    pub is_image: bool, pub image_path: Option&lt;String&gt;, pub image_alt: Option&lt;String&gt;,
+    pub is_math: bool,
+    pub is_syntax: bool,               <span class="cmt">// this span is a marker like ** or $ or ```</span>
+    pub id: Option&lt;String&gt;,
+}</pre>
+
+  <p><code>text</code> <em>always</em> holds the exact source. Nothing is lost by concealing — the renderer
+  simply chooses <code>display_text</code> instead. That is why editing works normally on a concealed line:
+  the characters are still there, they are just drawn as nothing.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 250" role="img" aria-label="The same markdown line shown twice: with the cursor elsewhere the marker spans render as empty strings, and with the cursor on the line the raw asterisks and dollar signs reappear in place">
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">THE SPANS — PARSED ONCE, THE SAME IN BOTH STATES</text>
+      <g>
+        <rect x="16" y="22" width="52" height="30" rx="2" class="s-fill2"/>
+        <text x="42" y="36" class="t-mono-sm t-mid">The</text>
+        <text x="42" y="47" class="t-xs t-mid">text</text>
+
+        <rect x="72" y="22" width="40" height="30" rx="2" class="s-amber"/>
+        <text x="92" y="36" class="t-mono-sm t-mid">**</text>
+        <text x="92" y="47" class="t-xs t-mid">syntax</text>
+
+        <rect x="116" y="22" width="70" height="30" rx="2" class="s-fill2"/>
+        <text x="151" y="36" class="t-mono-sm t-mid">energy</text>
+        <text x="151" y="47" class="t-xs t-mid">bold</text>
+
+        <rect x="190" y="22" width="40" height="30" rx="2" class="s-amber"/>
+        <text x="210" y="36" class="t-mono-sm t-mid">**</text>
+        <text x="210" y="47" class="t-xs t-mid">syntax</text>
+
+        <rect x="234" y="22" width="34" height="30" rx="2" class="s-fill2"/>
+        <text x="251" y="36" class="t-mono-sm t-mid">is</text>
+
+        <rect x="272" y="22" width="26" height="30" rx="2" class="s-amber"/>
+        <text x="285" y="36" class="t-mono-sm t-mid">$</text>
+        <text x="285" y="47" class="t-xs t-mid">syn</text>
+
+        <rect x="302" y="22" width="86" height="30" rx="2" class="s-fill2"/>
+        <text x="345" y="36" class="t-mono-sm t-mid">E = mc^2</text>
+        <text x="345" y="47" class="t-xs t-mid">math</text>
+
+        <rect x="392" y="22" width="26" height="30" rx="2" class="s-amber"/>
+        <text x="405" y="36" class="t-mono-sm t-mid">$</text>
+        <text x="405" y="47" class="t-xs t-mid">syn</text>
+      </g>
+      <text x="432" y="34" class="t-xs">amber spans carry <tspan class="t-mono-sm">is_syntax = true</tspan></text>
+      <text x="432" y="48" class="t-xs">and <tspan class="t-mono-sm">display_text = Some("")</tspan></text>
+
+      <!-- state A -->
+      <rect x="16" y="80" width="336" height="72" rx="3" class="s-box"/>
+      <rect x="16" y="80" width="336" height="20" rx="3" class="s-fill"/>
+      <text x="28" y="94" class="t-xs t-b" fill="#11342f">cursor elsewhere — CONCEALED</text>
+      <text x="28" y="122" class="t" >The <tspan class="t-b">energy</tspan> is <tspan font-style="italic">E = mc²</tspan></text>
+      <text x="28" y="142" class="t-xs">markers render as empty; the reader sees typography</text>
+
+      <!-- state B -->
+      <rect x="368" y="80" width="336" height="72" rx="3" class="s-box"/>
+      <rect x="368" y="80" width="336" height="20" rx="3" class="s-amber"/>
+      <text x="380" y="94" class="t-xs t-b" fill="#8a5c07">cursor on the line — REVEALED</text>
+      <text x="380" y="122" class="t-mono-sm">The **energy** is $E = mc^2$</text>
+      <text x="380" y="142" class="t-xs">the exact source, editable in place — no mode switch</text>
+
+      <!-- the toggle -->
+      <rect x="16" y="180" width="688" height="56" rx="3" class="s-fill2"/>
+      <text x="28" y="198" class="t-xs t-b">What actually changes between the two panels:</text>
+      <text x="28" y="214" class="t-xs">nothing in the parse. The renderer reads <tspan class="t-mono-sm">display_text</tspan> for lines away from the cursor and <tspan class="t-mono-sm">text</tspan> for the active one.</text>
+      <text x="28" y="228" class="t-xs">For code, math and table <tspan class="t-b">blocks</tspan> the reveal covers the whole block — every line sharing that <tspan class="t-mono-sm">block_id</tspan>.</text>
+    </svg>
+    <figcaption><b>Figure 14.1 — One parse, two projections.</b> Concealment is a rendering decision, not a
+    parsing one. That is what makes it cheap enough to do on every cursor move, and what makes editing a
+    “preview” line behave exactly like editing source.</figcaption>
+  </figure>
+
+  <h2>14.2 Scheduling: three document sizes</h2>
+
+  <p>Highlighting a 20-line note is instant. Highlighting a 20,000-line one is not, and the app must stay
+  responsive during it. <span class="fileref">app.rs</span> therefore has three regimes:</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:28%">Document size</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>below 1,000 lines</td><td>highlighted <b>synchronously</b> after a text change</td></tr>
+      <tr><td>above <code>LARGE_DOC_LINE_THRESHOLD</code> (1,000)</td>
+        <td>debounced by <code>HIGHLIGHT_DEBOUNCE</code> (80&nbsp;ms) while typing</td></tr>
+      <tr><td>above <code>HUGE_DOC_LINE_THRESHOLD</code> (5,000)</td>
+        <td>a file opened from disk gets plain <b>placeholder lines</b> immediately and a background task
+        replaces them when ready — the document is editable from the first frame</td></tr>
+    </tbody>
+  </table>
+
+  <p>Every highlight task carries a <b>generation id</b>. A result whose generation no longer matches the
+  current one is discarded, so a slow parse of old text can never overwrite newer text. This is the same
+  pattern the PDF pane uses for renders (Chapter 23), and it is worth recognising as a pattern rather than
+  learning twice.</p>
+
+  <p>After highlighting completes, <code>app.rs</code> refreshes image discovery and queues LaTeX renders —
+  which is how a late-arriving image changes a line's height, and why Chapter 16 has to fold media
+  dimensions into its cache key.</p>
+
+  <div class="box plain"><span class="tag">Note</span>
+  Fenced code is coloured by <code>syntect</code>, and there is a unit test asserting that highlighting
+  <b>preserves the full source text character for character</b>. A syntax highlighter that quietly drops a
+  character is a data-loss bug wearing a cosmetic disguise.</div>
+</section>

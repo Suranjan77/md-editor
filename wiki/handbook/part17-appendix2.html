@@ -1,0 +1,243 @@
+<!-- ---------- APPENDIX C ---------- -->
+<section class="chapter" id="apC">
+  <div class="chead">
+    <div class="num">Appendix C<span class="pm">PMK-apC-</span></div>
+    <h1>The message vocabulary</h1>
+    <div class="sub">Everything the application can be asked to do, in one enum</div>
+  </div>
+
+  <p><code>Message</code> in <span class="fileref">native/src/messages.rs</span> is the complete event
+  vocabulary. Reading it top to bottom is the fastest orientation available in this codebase, because a
+  program's message enum is the honest version of its feature list.</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:18%">Group</th><th>Variants</th></tr></thead>
+    <tbody>
+      <tr><td><b>Vault</b></td><td><code>OpenVaultDialog</code>, <code>VaultOpened</code>,
+        <code>VaultIndexed</code>, <code>CreateFileDialog</code>, <code>CreateFolderDialog</code></td></tr>
+      <tr><td><b>Sidebar</b></td><td><code>SidebarToggle</code>, <code>SidebarFileClicked</code>,
+        <code>SidebarFolderToggled</code></td></tr>
+      <tr><td><b>Navigation</b></td><td><code>GlobalSearchOpen</code>, <code>SearchQueryChanged</code>,
+        <code>SearchDebounceElapsed</code>, <code>SearchRegexToggled</code>,
+        <code>SearchMatchCaseToggled</code>, <code>SearchReplaceAll</code>, <code>CommandPaletteOpen</code>,
+        <code>NameModalSubmit</code>, <code>DeleteFileDialog</code></td></tr>
+      <tr><td><b>Editor</b></td><td><code>EditorCommand</code>, <code>EditorCommandNoScroll</code>,
+        <code>EditorSave</code>, <code>EditorCheckboxToggle</code>, <code>EditorCursorMove</code>,
+        <code>EditorScrolled</code>, <code>HighlightReady</code>, <code>HighlightDebounceElapsed</code>,
+        <code>AutosaveElapsed</code>, <code>AnimationTick</code></td></tr>
+      <tr><td><b>PDF</b></td><td><code>PdfZoomChanged</code>, <code>PdfFitToWidth</code>,
+        <code>PdfLoaded</code>, <code>PdfPageSizesLoaded</code>, <code>PdfRendered</code>,
+        <code>PdfRenderFailed</code>, <code>PdfRenderSkipped</code>, <code>PdfScrolled</code>,
+        <code>PdfLeftClicked</code>, <code>PdfRightClicked</code>, <code>PdfTocLoaded</code>,
+        <code>PdfPageLinksLoaded</code>, <code>PdfReferencesLoaded</code>, <code>PdfSearchResult</code>,
+        <code>PdfLinkPreviewResult</code></td></tr>
+      <tr><td><b>PDF study</b></td><td><code>PdfDocumentIdComputed</code>, <code>PdfPageTextLoaded</code>,
+        <code>PdfSelectionChanged</code>, <code>PdfSelectionFinished</code>, <code>PdfCopySelection</code>,
+        <code>PdfCreateHighlight</code>, <code>PdfQuickHighlight</code>, <code>PdfDeleteHighlight</code>,
+        <code>PdfSearchLooseToggled</code>, <code>PdfOrphanReport</code>, <code>PdfAddQuickNote</code>,
+        <code>PdfLinkNote</code>, <code>PdfOpenLinkedNote</code>, <code>PdfAnnotationFocused</code></td></tr>
+      <tr><td><b>Tracker</b></td><td><code>TrackerToggle</code>, <code>TrackerStart</code>,
+        <code>TrackerStop</code>, <code>TrackerTabSelected</code>, <code>TrackerGateToggled</code>,
+        <code>TrackerReadingToggled</code>, <code>TrackerProjectStatusChanged</code>,
+        <code>TrackerConfigEdited</code>, <code>TrackerConfigSave</code>, <code>TrackerManualAdd</code>,
+        <code>TrackerSessionDelete</code></td></tr>
+      <tr><td><b>Toast &amp; media</b></td><td><code>ShowToast</code>, <code>ToastHide</code>,
+        <code>MathRendered</code></td></tr>
+      <tr><td><b>System</b></td><td><code>KeyboardShortcut(Shortcut)</code>, <code>ToggleTOC</code>,
+        <code>TocClicked</code>, <code>SplitViewToggle</code>, <code>SplitViewDragStart</code>,
+        <code>SplitViewDragging</code>, <code>SplitViewDragEnd</code>, <code>WindowResized</code>,
+        <code>WindowOpened</code>, <code>WindowRescaled</code>, <code>WindowCloseRequested</code>,
+        <code>VaultFilesChanged</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>Two supporting enums live beside it:</p>
+
+<pre>pub enum Shortcut {
+    Save, OpenVault, NewFile, Search, CommandPalette,
+    ToggleSidebar, ToggleBacklinks, FocusMode,
+    TableOfContents, StudyTracker, SplitView, Escape,
+}
+
+pub enum TrackerTab { Dashboard, Log, Projects, Gates, Reading, Config }</pre>
+
+  <div class="box plain"><span class="tag">Reading the enum for clues</span>
+  <p>Three details in that list are worth noticing, because each is a design decision made visible:</p>
+  <p><code>EditorCommand</code> <em>and</em> <code>EditorCommandNoScroll</code> — some edits should not move
+  the viewport, and that is expressed as a separate message rather than a boolean parameter.</p>
+  <p><code>PdfRendered</code>, <code>PdfRenderFailed</code> <em>and</em> <code>PdfRenderSkipped</code> — three
+  distinct outcomes, so a failure is never silently indistinguishable from a deliberate skip (Chapter 23).</p>
+  <p><code>KeyboardShortcut(Shortcut)</code> rather than one variant per binding — the indirection that lets
+  the keyboard subscription and the command palette trigger the same handler (Chapter 27).</p></div>
+</section>
+
+<!-- ---------- APPENDIX D ---------- -->
+<section class="chapter" id="apD">
+  <div class="chead">
+    <div class="num">Appendix D<span class="pm">PMK-apD-</span></div>
+    <h1>Starter tasks, graded</h1>
+    <div class="sub">Six ways in, roughly in order of difficulty</div>
+  </div>
+
+  <p class="lead">Each of these is a real, self-contained piece of work in this codebase. For each one:
+  the files you will touch, the tests you should add, and the rules from Chapter 32 that apply. None of them
+  is busywork — they are all things the program would genuinely be better for.</p>
+
+  <h2>1 · Add a command to the palette <span class="kicker-inline">warm-up</span></h2>
+  <p>Something small and useful: <em>Copy File Path</em>, which puts the active document's vault-relative path
+  on the clipboard and raises a toast.</p>
+  <table class="compact">
+    <tbody>
+      <tr><td style="width:22%"><b>Touch</b></td><td><span class="fileref">messages.rs</span> (a
+        <code>Shortcut</code> variant), <span class="fileref">views/command_palette.rs</span> (the registry),
+        <span class="fileref">app.rs</span> (the handler)</td></tr>
+      <tr><td><b>Test</b></td><td>extend the palette ranking tests so the new command is findable by its
+        initials</td></tr>
+      <tr><td><b>Rules</b></td><td>one registry, one code path; the toast uses the existing
+        <code>Message::ShowToast</code></td></tr>
+      <tr><td><b>Why it teaches</b></td><td>you will touch the message enum, the router, a sub-state and a
+        view in one change — the whole shape of Chapter 11 in twenty lines</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2 · Decide what the image list should be <span class="kicker-inline">judgement, small</span></h2>
+  <p>Appendix B's trap: the wiki and README used to claim <code>.gif</code> and <code>.bmp</code> were
+  supported and did not mention <code>.svg</code> or <code>.avif</code>. Those pages have been corrected to
+  match <code>IMAGE_EXTENSIONS</code> — but the interesting half of the question is still open. The docs
+  promised GIF and BMP for a reason; should the code deliver them, or was dropping them deliberate?</p>
+  <table class="compact">
+    <tbody>
+      <tr><td style="width:22%"><b>Touch</b></td><td><span class="fileref">core/src/vault.rs</span> — and, if
+        you change it, <span class="fileref">wiki/User-Guide-and-Feature-Manual.md</span>,
+        <span class="fileref">wiki/Architecture-and-Philosophy.md</span> and
+        <span class="fileref">README.md</span> in the same pull request</td></tr>
+      <tr><td><b>Test</b></td><td>if you extend the list, a test that a file with each extension is indexed as
+        an image — and check the renderer actually draws it before you promise it</td></tr>
+      <tr><td><b>Why it teaches</b></td><td>the documentation rule is not decoration, and “make the docs
+        true” is only half a fix when the docs described something a user reasonably wanted</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3 · Rejoin hyphenated words in PDF search <span class="kicker-inline">small feature</span></h2>
+  <p>Loose whitespace mode (Chapter 22) matches a phrase across a line break, but a word split as
+  <code>algo-</code> / <code>rithm</code> still fails. Extend the generated pattern so an optional
+  hyphen-plus-whitespace can appear <em>inside</em> a word.</p>
+  <table class="compact">
+    <tbody>
+      <tr><td style="width:22%"><b>Touch</b></td><td><span class="fileref">app.rs::search_pdf</span></td></tr>
+      <tr><td><b>Test</b></td><td>a core test over synthetic page text containing a hyphenated break</td></tr>
+      <tr><td><b>Watch out</b></td><td>do not break genuinely hyphenated words (<code>state-of-the-art</code>)
+        and do not make the pattern quadratic; the constraint is precision, exactly as in Chapter 21</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4 · Give <code>tracker_activity</code> a producer, or remove it <span class="kicker-inline">judgement</span></h2>
+  <p>The table is created by the schema and written by nothing (Chapter 28). Either wire an activity feed to
+  it — session started, session saved, gate ticked — or make the case for dropping it. Both are legitimate;
+  the work is in arguing for one.</p>
+  <table class="compact">
+    <tbody>
+      <tr><td style="width:22%"><b>Touch</b></td><td><span class="fileref">core/src/tracker.rs</span>,
+        <span class="fileref">views/tracker.rs</span>, and — if you remove it — <code>apply_migrations()</code>
+        rather than the base DDL</td></tr>
+      <tr><td><b>Why it teaches</b></td><td>Chapter 6's migration rule, and the discipline of deciding whether
+        unused code is a plan or a leftover</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5 · Add a block type to the editor <span class="kicker-inline">the four-call-site contract</span></h2>
+  <p>A callout / admonition block (<code>&gt; [!note]</code>) that draws a tinted background and a label.
+  This is the task that teaches the layout system properly.</p>
+  <table class="compact">
+    <tbody>
+      <tr><td style="width:22%"><b>Touch, together</b></td><td>(1) <span class="fileref">editor/highlight.rs</span>
+        — parse it, assign a <code>block_id</code>; (2) the layout pass — block-range tracking and height
+        measurement including any spacer; (3) the draw pass — block backgrounds, clamped to the visible range;
+        (4) hit testing</td></tr>
+      <tr><td><b>Test</b></td><td>height permutations in <span class="fileref">editor/renderer.rs</span>, and a
+        highlighter test that the source text is preserved character for character</td></tr>
+      <tr><td><b>Rules</b></td><td>Chapter 32 rule 3, all of it. If the new block's height depends on anything
+        new, it goes into <code>line_hash</code> or <code>resource_hash</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>6 · Make the FTS index incremental <span class="kicker-inline">engine, hard</span></h2>
+  <p>Today <code>file_search</code> is rebuilt wholesale when a vault opens (Chapter 10). On a very large
+  vault that is the slowest part of opening. Update rows from the filesystem watcher instead, keeping the
+  wholesale rebuild as a fallback.</p>
+  <table class="compact">
+    <tbody>
+      <tr><td style="width:22%"><b>Touch</b></td><td><span class="fileref">core/src/vault.rs</span>,
+        <span class="fileref">app.rs</span>'s <code>VaultFilesChanged</code> handler</td></tr>
+      <tr><td><b>Test</b></td><td>extend the FTS suite in <span class="fileref">core/src/massive_tests.rs</span>:
+        create, edit, rename, delete — and assert the index matches a full rebuild afterwards</td></tr>
+      <tr><td><b>Watch out</b></td><td>the current design's virtue is that the index <em>cannot</em> drift out
+        of sync. Any incremental scheme has to be at least as trustworthy, or it needs a “rebuild index”
+        command — which is a feature admitting a bug</td></tr>
+      <tr><td><b>Rules</b></td><td>Chapter 5's lock discipline: compute into a local, then lock, then
+        assign</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box try"><span class="tag">Whichever you pick</span>
+  Run the four pre-PR commands (Chapter 32.2), compare the clippy count before and after, and if your change
+  touches saving, navigation, animation or the PDF pane, walk the relevant items in Chapter 33 — particularly
+  the durability checks, which no automated test fully replaces.</div>
+</section>
+
+<!-- ---------- APPENDIX E ---------- -->
+<section class="chapter" id="apE">
+  <div class="chead">
+    <div class="num">Appendix E<span class="pm">PMK-apE-</span></div>
+    <h1>Where to go next</h1>
+    <div class="sub">Five things to remember, and what to read when you forget the rest</div>
+  </div>
+
+  <h2>If you remember only five things</h2>
+  <ol>
+    <li><b>The engine is headless and the interface owns the screen.</b> When you cannot decide where code
+    goes, ask whether it can be tested without a window. That answer is almost always the right one.</li>
+    <li><b>Slow work happens before the lock, never inside it.</b> Compute into a local, then lock, then
+    assign.</li>
+    <li><b>Writes are atomic and navigation flushes first.</b> Never replace the temp-file-and-rename protocol
+    with a truncating write, and never navigate away from a failed save.</li>
+    <li><b>The draw pass is proportional to the viewport, not the document.</b> Everything in Chapters 15–17
+    exists to keep that true.</li>
+    <li><b>Async results clean up before they are gated.</b> Remove from the pending set, <em>then</em> check
+    the generation — and gate document-level artifacts on the document, not the generation.</li>
+  </ol>
+
+  <h2>Reading order, when you come back</h2>
+  <table class="compact">
+    <thead><tr><th style="width:34%">When you need to…</th><th>Read</th></tr></thead>
+    <tbody>
+      <tr><td>understand a failure in saving or navigation</td><td>Chapters 8, 31 · <span class="fileref">core/src/vault.rs</span></td></tr>
+      <tr><td>make the editor faster, or stop making it slower</td><td>Chapters 15–17 · <span class="fileref">editor/layout_tree.rs</span>, <span class="fileref">layout_cache.rs</span>, <span class="fileref">renderer.rs</span></td></tr>
+      <tr><td>debug a PDF page that will not load</td><td>Chapter 23 · the pending sets in <span class="fileref">pdf_pane.rs</span></td></tr>
+      <tr><td>debug a PDF jump that lands in the wrong place</td><td>Chapter 24 · the page-slot tests in <span class="fileref">app.rs</span></td></tr>
+      <tr><td>work on cross-reference recognition</td><td>Chapter 21 · <span class="fileref">core/src/references.rs</span>, and <code>cargo run --example dump_refs</code></td></tr>
+      <tr><td>add anything to the UI</td><td>Chapter 26 · <span class="fileref">theme.rs</span>, <span class="fileref">motion.rs</span></td></tr>
+      <tr><td>review someone else's pull request</td><td>Chapters 31 and 32</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The habit worth copying</h2>
+  <p>The most transferable thing in this repository is not the Fenwick tree or the priority channel. It is
+  that almost every non-obvious decision carries its reasoning next to it — in a module comment, in a test
+  name, in a wiki page. <code>write_file_never_leaves_a_truncated_file</code> is a better specification than
+  three paragraphs of prose, and it fails loudly when someone stops believing it.</p>
+  <p>When you add something here, add the <em>why</em> with it. That is the practice this handbook is trying
+  to hand on more than any particular fact inside it.</p>
+
+  <hr class="rule-soft">
+
+  <h2>Colophon</h2>
+  <p class="fileref" style="line-height:1.7">
+  Written from the seventeen pages of the project wiki and verified against the source tree.<br>
+  Set in Bitstream Charter, with Liberation Sans for headings and DejaVu Sans Mono for code.<br>
+  Every figure was drawn for this book as hand-authored SVG; none is a generated graph.<br>
+  Built by <span class="fileref">wiki/handbook/build.py</span> — edit the HTML in
+  <span class="fileref">wiki/handbook/</span> and re-run it to regenerate this PDF.<br>
+  MD Editor is licensed under GPL-3.0; this handbook ships with it.
+  </p>
+</section>

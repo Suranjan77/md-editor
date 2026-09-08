@@ -1,0 +1,562 @@
+<!-- ---------- CH 2 ---------- -->
+<section class="chapter" id="ch02">
+  <div class="chead">
+    <div class="num">Chapter 2<span class="pm">PMK-ch02-</span></div>
+    <h1>The map: two crates, three kinds of thread</h1>
+    <div class="sub">The one structural picture the rest of the book assumes</div>
+  </div>
+
+  <p class="lead">MD Editor is a Cargo workspace with exactly two members. Almost every question of the
+  form “where does this belong?” is answered by which of the two it is, and by which thread it is allowed
+  to run on. Learn this chapter properly and the other thirty-one become local details.</p>
+
+  <h2>2.1 The two crates</h2>
+
+  <dl>
+    <dt><code>md-editor-core</code> — the headless engine</dt>
+    <dd>Owns the disk and the database. Vault traversal, atomic writes, the SQLite schema, the full-text
+    index, the wikilink graph, the PDFium worker thread, the cross-reference resolver, and the study
+    tracker's persistence. It has no idea a window exists. All 56 of its tests run in a container with no
+    display server.</dd>
+    <dt><code>md-editor-native</code> — the desktop interface</dt>
+    <dd>Owns the screen. The Iced application loop, the custom markdown editor widget, the PDF page widget
+    and its overlays, design tokens, motion, the command palette. It reaches the engine only through
+    thread-safe methods on a shared <code>Arc&lt;AppState&gt;</code>, or through async tasks.</dd>
+  </dl>
+
+  <p>The dependency arrow points one way: <code>native</code> depends on <code>core</code>, and
+  <code>core</code> must never learn about <code>native</code>. Three rules make that concrete, and they
+  are the first three things a reviewer will check:</p>
+
+  <ol>
+    <li><b>No circular dependency.</b> <code>md-editor-core</code> never depends on
+    <code>md-editor-native</code>.</li>
+    <li><b>No UI in core.</b> The core crate must not take a dependency on a GUI or text-shaping
+    toolkit — not <code>iced</code>, not <code>winit</code>, not <code>ratex-render</code>.</li>
+    <li><b>Pure FFI containment.</b> <code>pdfium-render</code> is reachable only through
+    <span class="fileref">core/src/pdf.rs</span>, and exactly one <code>Pdfium</code> binding may exist per
+    process.</li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 720 404" role="img" aria-label="The native crate above the core crate, with the three kinds of traffic that cross between them and the two dependencies that are forbidden from crossing">
+      <defs>
+        <marker id="a2" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="6" markerHeight="6" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- native band -->
+      <rect x="10" y="14" width="700" height="112" rx="5" class="s-fill"/>
+      <text x="24" y="34" class="t-sm t-b" fill="#11342f">md-editor-native — owns the screen</text>
+      <g>
+        <rect x="24" y="44" width="158" height="66" rx="3" class="s-box"/>
+        <text x="103" y="66" class="t-sm t-b t-mid">Shell &amp; router</text>
+        <text x="103" y="82" class="t-xs t-mid">app.rs · messages.rs</text>
+        <text x="103" y="96" class="t-xs t-mid">update / view / subscribe</text>
+
+        <rect x="196" y="44" width="158" height="66" rx="3" class="s-box"/>
+        <text x="275" y="66" class="t-sm t-b t-mid">Editor widget</text>
+        <text x="275" y="82" class="t-xs t-mid">buffer · highlight</text>
+        <text x="275" y="96" class="t-xs t-mid">layout_tree · renderer</text>
+
+        <rect x="368" y="44" width="158" height="66" rx="3" class="s-box"/>
+        <text x="447" y="66" class="t-sm t-b t-mid">PDF pane</text>
+        <text x="447" y="82" class="t-xs t-mid">pdf_pane.rs</text>
+        <text x="447" y="96" class="t-xs t-mid">views/interactive_pdf.rs</text>
+
+        <rect x="540" y="44" width="158" height="66" rx="3" class="s-box"/>
+        <text x="619" y="66" class="t-sm t-b t-mid">Tokens &amp; motion</text>
+        <text x="619" y="82" class="t-xs t-mid">theme.rs · motion.rs</text>
+        <text x="619" y="96" class="t-xs t-mid">fuzzy.rs · views/</text>
+      </g>
+
+      <!-- boundary -->
+      <line x1="10" y1="207" x2="710" y2="207" class="s-dash"/>
+      <text x="710" y="202" class="t-xs t-end">crate boundary</text>
+
+      <!-- crossing 1 -->
+      <path d="M92 128 L92 268" class="s-accent" marker-end="url(#a2)"/>
+      <path d="M116 268 L116 128" class="s-line-2" marker-end="url(#a2)"/>
+      <text x="104" y="150" class="t-xs t-mid t-b" fill="#22665c">1 · direct calls</text>
+      <text x="104" y="166" class="t-xs t-mid">state.set_vault_root(..)</text>
+      <text x="104" y="182" class="t-xs t-mid">short-lived locks</text>
+      <text x="104" y="240" class="t-xs t-mid">plain data back</text>
+
+      <!-- crossing 2 -->
+      <path d="M336 128 L336 268" class="s-accent" marker-end="url(#a2)"/>
+      <path d="M360 268 L360 128" class="s-line-2" marker-end="url(#a2)"/>
+      <text x="348" y="150" class="t-xs t-mid t-b" fill="#22665c">2 · iced::Task</text>
+      <text x="348" y="166" class="t-xs t-mid">work moved to Tokio</text>
+      <text x="348" y="182" class="t-xs t-mid">save, index, highlight</text>
+      <text x="348" y="240" class="t-xs t-mid">a typed Message</text>
+
+      <!-- crossing 3 -->
+      <path d="M580 128 L580 268" class="s-accent" marker-end="url(#a2)"/>
+      <path d="M604 268 L604 128" class="s-line-2" marker-end="url(#a2)"/>
+      <text x="592" y="150" class="t-xs t-mid t-b" fill="#22665c">3 · PdfCommand</text>
+      <text x="592" y="166" class="t-xs t-mid">mpsc to the worker</text>
+      <text x="592" y="182" class="t-xs t-mid">+ a priority channel</text>
+      <text x="592" y="240" class="t-xs t-mid">DynamicImage / typed result</text>
+
+      <!-- core band -->
+      <rect x="10" y="268" width="700" height="112" rx="5" class="s-fill2"/>
+      <text x="24" y="288" class="t-sm t-b">md-editor-core — owns the disk</text>
+      <g>
+        <rect x="24" y="298" width="158" height="66" rx="3" class="s-box"/>
+        <text x="103" y="320" class="t-sm t-b t-mid">AppState + SQLite</text>
+        <text x="103" y="336" class="t-xs t-mid">state.rs · config.rs</text>
+        <text x="103" y="350" class="t-xs t-mid">schema · WAL · migrations</text>
+
+        <rect x="196" y="298" width="158" height="66" rx="3" class="s-box"/>
+        <text x="275" y="320" class="t-sm t-b t-mid">Vault I/O</text>
+        <text x="275" y="336" class="t-xs t-mid">vault.rs</text>
+        <text x="275" y="350" class="t-xs t-mid">jailing · atomic write · FTS</text>
+
+        <rect x="368" y="298" width="158" height="66" rx="3" class="s-box"/>
+        <text x="447" y="320" class="t-sm t-b t-mid">Link graph</text>
+        <text x="447" y="336" class="t-xs t-mid">file_index.rs</text>
+        <text x="447" y="350" class="t-xs t-mid">outgoing + incoming</text>
+
+        <rect x="540" y="298" width="158" height="66" rx="3" class="s-box"/>
+        <text x="619" y="320" class="t-sm t-b t-mid">PDFium worker</text>
+        <text x="619" y="336" class="t-xs t-mid">pdf.rs · references.rs</text>
+        <text x="619" y="350" class="t-xs t-mid">the only FFI in the tree</text>
+      </g>
+
+      <!-- forbidden -->
+      <rect x="10" y="386" width="700" height="18" rx="3" class="s-warn"/>
+      <text x="22" y="399" class="t-xs t-b" fill="#a03730">Never crosses upward:</text>
+      <text x="140" y="399" class="t-xs">core importing iced / winit / ratex-render&#160;&#160;·&#160;&#160;a second Pdfium binding&#160;&#160;·&#160;&#160;a PDFium handle leaving the worker thread</text>
+    </svg>
+    <figcaption><b>Figure 2.1 — What actually crosses the crate boundary.</b> Three kinds of traffic, and
+    nothing else. Sage arrows go down (a request), grey arrows come back (a result). Notice that the return
+    path is never a PDFium handle or an iced type — it is decoded image data, plain structs, or a
+    <code>Message</code>. That is what makes the engine testable without a window.</figcaption>
+  </figure>
+
+  <h2>2.2 Three kinds of thread</h2>
+
+  <p>Threading is where a desktop app is won or lost. MD Editor has three execution contexts and a strict
+  rule about each.</p>
+
+  <ol>
+    <li><b>The UI main thread</b> — the Iced event loop. Window events, typing, clicks, layout, drawing.
+    <em>It never blocks on disk or on PDF work.</em></li>
+    <li><b>The Tokio async runtime</b> — background work dispatched as <code>iced::Task</code>: autosave
+    writes, vault indexing, FTS queries, PDF page renders, and syntax highlighting for large documents.
+    Results come back as ordinary <code>Message</code> values.</li>
+    <li><b>One dedicated PDFium worker thread</b> — spawned by <code>PdfRenderer::new()</code>. Because
+    <code>pdfium-render</code> keeps its bindings in a process-global cell, <em>all</em> PDF work is
+    serialized onto this single thread. It is fed by two <code>std::sync::mpsc</code> channels: a
+    <b>priority</b> channel for the page the reader is actually looking at, and a <b>standard</b> channel
+    for everything else.</li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 720 268" role="img" aria-label="A timeline with three lanes showing that while a PDF page rasterizes for 120 milliseconds on the worker thread and an atomic save runs on the Tokio pool, the UI thread continues to accept keystrokes and draw frames">
+      <defs>
+        <marker id="a3" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- time axis -->
+      <line x1="150" y1="240" x2="700" y2="240" class="s-line-2"/>
+      <text x="150" y="256" class="t-xs">0 ms</text>
+      <text x="425" y="256" class="t-xs t-mid">time →</text>
+      <text x="700" y="256" class="t-xs t-end">~150 ms</text>
+
+      <!-- lanes -->
+      <text x="140" y="46" class="t-sm t-b t-end">UI main thread</text>
+      <text x="140" y="60" class="t-xs t-end">iced event loop</text>
+      <line x1="150" y1="52" x2="700" y2="52" class="s-line-2"/>
+
+      <text x="140" y="126" class="t-sm t-b t-end">Tokio pool</text>
+      <text x="140" y="140" class="t-xs t-end">iced::Task</text>
+      <line x1="150" y1="132" x2="700" y2="132" class="s-line-2"/>
+
+      <text x="140" y="196" class="t-sm t-b t-end">PDFium worker</text>
+      <text x="140" y="210" class="t-xs t-end">exactly one thread</text>
+      <line x1="150" y1="202" x2="700" y2="202" class="s-line-2"/>
+
+      <!-- UI blocks: many small frames -->
+      <g class="s-fill">
+        <rect x="152" y="38" width="26" height="28" rx="2"/>
+        <rect x="188" y="38" width="14" height="28" rx="2"/>
+        <rect x="212" y="38" width="14" height="28" rx="2"/>
+        <rect x="290" y="38" width="14" height="28" rx="2"/>
+        <rect x="360" y="38" width="14" height="28" rx="2"/>
+        <rect x="440" y="38" width="14" height="28" rx="2"/>
+        <rect x="520" y="38" width="14" height="28" rx="2"/>
+        <rect x="600" y="38" width="30" height="28" rx="2"/>
+      </g>
+      <text x="165" y="30" class="t-xs t-mid">keystroke</text>
+      <text x="330" y="30" class="t-xs t-mid">frames keep drawing — nothing is waiting</text>
+      <text x="615" y="30" class="t-xs t-mid">result</text>
+
+      <!-- Tokio block -->
+      <rect x="196" y="118" width="150" height="28" rx="2" class="s-amber"/>
+      <text x="271" y="136" class="t-xs t-mid" fill="#8a5c07">atomic save — temp, fsync, rename</text>
+
+      <!-- worker block -->
+      <rect x="230" y="188" width="240" height="28" rx="2" class="s-fill2"/>
+      <text x="350" y="206" class="t-xs t-mid">rasterize page 14 (priority) — ~120 ms</text>
+      <rect x="480" y="188" width="120" height="28" rx="2" class="s-fill2"/>
+      <text x="540" y="206" class="t-xs t-mid">prefetch page 15</text>
+
+      <!-- dispatch arrows -->
+      <path d="M195 66 L200 116" class="s-accent" marker-end="url(#a3)"/>
+      <path d="M222 66 L232 186" class="s-accent" marker-end="url(#a3)"/>
+      <path d="M470 202 L604 68" class="s-line-2" marker-end="url(#a3)"/>
+      <text x="560" y="120" class="t-xs t-mid">PdfRendered(gen, 14, img)</text>
+    </svg>
+    <figcaption><b>Figure 2.2 — Nobody waits.</b> One keystroke fans out into two background jobs, and the
+    UI lane keeps producing frames the whole time. The worker lane is the interesting one: it is a
+    <em>single</em> lane by necessity, which is why Chapter 18 has to talk about queue priority rather than
+    parallelism.</figcaption>
+  </figure>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  The PDFium worker <b>cannot interrupt an operation already in flight</b>. Priority only decides what runs
+  <em>next</em>. If you add a worker command that takes half a second — say, extracting text for a whole
+  500-page document in one go — every page render queues behind it and the reader watches a blank page.
+  Chapter 21 shows the chunking pattern that exists precisely to avoid this.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>You want to add “export the current note to HTML”. Which crate, and which thread?</p>
+  <p class="answer"><b>Answer:</b> the conversion itself is pure text-to-text with no GUI dependency, so it
+  belongs in <code>md-editor-core</code> where it can be unit-tested headlessly. The file write goes through
+  the existing atomic-write path in <span class="fileref">core/src/vault.rs</span>. The native side
+  contributes a menu entry and an <code>iced::Task</code> so the work runs on Tokio rather than on the UI
+  thread — even though it is fast, because “it is fast” is how every stall starts.</p></div>
+</section>
+
+<!-- ---------- CH 3 ---------- -->
+<section class="chapter" id="ch03">
+  <div class="chead">
+    <div class="num">Chapter 3<span class="pm">PMK-ch03-</span></div>
+    <h1>Your first hour</h1>
+    <div class="sub">Build it, run it, and learn where the code actually is</div>
+  </div>
+
+  <p class="lead">Everything in this chapter is meant to be typed, not read. If a command fails, the fix is
+  almost always in the prerequisites list — this is a project with a C compiler and a downloaded native
+  library in its build path, and both can bite on a fresh machine.</p>
+
+  <h2>3.1 Prerequisites</h2>
+  <ul>
+    <li><b>Rust</b> — stable 1.85 or newer, because the workspace is on the <b>2024 edition</b>.</li>
+    <li><b>A C compiler</b> — <code>gcc</code> or <code>clang</code>. <code>rusqlite</code> compiles a
+    bundled SQLite from source, so there is no system SQLite to install and no version skew to debug.</li>
+    <li><b>Network access, once</b> — <span class="fileref">core/build_pdfium.rs</span> downloads a
+    prebuilt PDFium for your platform on the first build and caches it under <code>target/pdfium/</code>.</li>
+    <li><b>A desktop session</b> — only to <em>run</em> the app. Tests do not need one.</li>
+  </ul>
+
+  <div class="srcref">Debian / Ubuntu</div>
+<pre>sudo apt update
+sudo apt install -y build-essential pkg-config libxkbcommon-dev libfontconfig1-dev
+sudo apt install -y libwayland-dev libx11-dev   <span class="cmt"># windowing</span></pre>
+
+  <div class="srcref">Arch</div>
+<pre>sudo pacman -S --needed base-devel pkgconf libxkbcommon fontconfig</pre>
+
+  <h2>3.2 The commands you will use every day</h2>
+
+<pre>cargo fmt --check            <span class="cmt"># formatting — must be clean</span>
+cargo check --workspace      <span class="cmt"># fast typecheck</span>
+cargo test --workspace       <span class="cmt"># 158 tests: 56 core + 102 native</span>
+cargo clippy --workspace     <span class="cmt"># see the warning below</span>
+cargo run                    <span class="cmt"># launch a debug build</span>
+cargo build --release        <span class="cmt"># optimized binary</span></pre>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  <code>cargo fmt --check</code> and <code>cargo test --workspace</code> pass cleanly on <code>main</code>.
+  <b>Clippy does not.</b> The tree carries 34 warnings (2 in core, 32 in native), mostly
+  <code>too_many_arguments</code>, <code>redundant_guard</code>, and <code>if_same_then_else</code>, so
+  <code>-D warnings</code> fails on a fresh checkout. Treat 34 as the baseline: compare the count before and
+  after your change and fix anything <em>your</em> code adds. Do not open a pull request that raises it, and
+  do not be alarmed when it is not zero.</div>
+
+  <p>The first build is slow — SQLite compiles from source and PDFium downloads — and every build after that
+  is normal. The binary lands at <code>target/release/md-editor</code>
+  (<code>target\release\md-editor.exe</code> on Windows) with the PDFium shared library copied beside it.
+  It accepts a single path argument, which is how the Linux desktop entry hands it a file:</p>
+
+<pre>./target/release/md-editor ~/vault/Summary.md</pre>
+
+  <h2>3.3 Where the code actually is</h2>
+
+  <p>The repository has 49 Rust files and about 26,000 lines. That distribution is very uneven, and knowing
+  the shape of it is worth more than memorising the tree.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 330" role="img" aria-label="Horizontal bar chart of the twelve largest Rust files by line count, showing that renderer.rs and app.rs dominate at about 4,400 lines each">
+      <!-- gridlines -->
+      <g class="s-line-2" stroke-dasharray="2 3">
+        <line x1="238" y1="18" x2="238" y2="296"/>
+        <line x1="326" y1="18" x2="326" y2="296"/>
+        <line x1="414" y1="18" x2="414" y2="296"/>
+        <line x1="502" y1="18" x2="502" y2="296"/>
+        <line x1="590" y1="18" x2="590" y2="296"/>
+      </g>
+      <g class="t-xs t-mid" fill="#727b7e">
+        <text x="238" y="312">1,000</text><text x="326" y="312">2,000</text>
+        <text x="414" y="312">3,000</text><text x="502" y="312">4,000</text>
+        <text x="590" y="312">5,000</text>
+      </g>
+      <line x1="150" y1="296" x2="700" y2="296" class="s-line-2"/>
+      <text x="150" y="14" class="t-xs">lines of Rust, including inline <tspan class="t-mono-sm">#[cfg(test)]</tspan> modules</text>
+
+      <!-- bars: x0=150, scale .088 px per line -->
+      <g fill="#22665c">
+        <rect x="150" y="24" width="387" height="14" rx="2"/>
+        <rect x="150" y="46" width="382" height="14" rx="2"/>
+        <rect x="150" y="68" width="243" height="14" rx="2"/>
+        <rect x="150" y="90" width="139" height="14" rx="2"/>
+        <rect x="150" y="112" width="123" height="14" rx="2"/>
+        <rect x="150" y="134" width="105" height="14" rx="2"/>
+        <rect x="150" y="156" width="93" height="14" rx="2"/>
+        <rect x="150" y="178" width="70" height="14" rx="2"/>
+        <rect x="150" y="200" width="64" height="14" rx="2"/>
+        <rect x="150" y="222" width="60" height="14" rx="2"/>
+        <rect x="150" y="244" width="54" height="14" rx="2"/>
+        <rect x="150" y="266" width="43" height="14" rx="2"/>
+      </g>
+      <g class="t-mono-sm t-end">
+        <text x="142" y="35">editor/renderer.rs</text>
+        <text x="142" y="57">app.rs</text>
+        <text x="142" y="79">core/pdf.rs</text>
+        <text x="142" y="101">editor/buffer.rs</text>
+        <text x="142" y="123">editor/highlight.rs</text>
+        <text x="142" y="145">views/tracker.rs</text>
+        <text x="142" y="167">core/vault.rs</text>
+        <text x="142" y="189">core/references.rs</text>
+        <text x="142" y="211">core/state.rs</text>
+        <text x="142" y="233">views/pdf_viewer.rs</text>
+        <text x="142" y="255">core/massive_tests.rs</text>
+        <text x="142" y="277">views/interactive_pdf.rs</text>
+      </g>
+      <g class="t-xs" fill="#3d4548">
+        <text x="545" y="35">4,399</text><text x="540" y="57">4,344</text><text x="401" y="79">2,764</text>
+        <text x="297" y="101">1,577</text><text x="281" y="123">1,400</text><text x="263" y="145">1,192</text>
+        <text x="251" y="167">1,060</text><text x="228" y="189">801</text><text x="222" y="211">724</text>
+        <text x="218" y="233">682</text><text x="212" y="255">618</text><text x="201" y="277">490</text>
+      </g>
+
+      <line x1="150" y1="286" x2="700" y2="286" class="s-line-2"/>
+      <text x="150" y="300" class="t-xs" fill="#22665c" opacity="0">.</text>
+    </svg>
+    <figcaption><b>Figure 3.1 — Where the mass is.</b> The eight largest files are about two thirds of the
+    codebase. <code>renderer.rs</code> and <code>app.rs</code> alone are a third. That is not an accusation —
+    a custom text widget and an Elm-style router are both naturally large — but it tells you where to spend
+    your reading time, and it explains why Chapters 11 and 17 both spend their length on a single file.</figcaption>
+  </figure>
+
+  <h2>3.4 A first walk through the tree</h2>
+
+  <p>Read these seven files, in this order, before you try to change anything. Skim; do not study. The goal
+  is to have seen the names once.</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:6%">#</th><th style="width:32%">File</th><th>Why it is on the list</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><span class="fileref">native/src/messages.rs</span></td>
+        <td>The complete event vocabulary of the application in one enum. Reading it is the fastest way to
+        learn what the program can be asked to do.</td></tr>
+      <tr><td>2</td><td><span class="fileref">native/src/main.rs</span></td>
+        <td>Short. CLI arguments, window geometry restore, the Linux desktop entry, and the call that starts
+        the Iced application.</td></tr>
+      <tr><td>3</td><td><span class="fileref">core/src/lib.rs</span></td>
+        <td>Ten lines. Tells you exactly which modules the engine has.</td></tr>
+      <tr><td>4</td><td><span class="fileref">core/src/state.rs</span></td>
+        <td>The <code>AppState</code> struct, the whole SQL schema, and the database path logic. Chapters 5–7.</td></tr>
+      <tr><td>5</td><td><span class="fileref">core/src/vault.rs</span></td>
+        <td>Find <code>write_file</code> and read it twice. Chapter 8 is about those forty lines.</td></tr>
+      <tr><td>6</td><td><span class="fileref">native/src/theme.rs</span></td>
+        <td>Every colour, size, spacing step and radius the UI is allowed to use. Small, and it will stop you
+        writing a hardcoded <code>12.0</code> in your first pull request.</td></tr>
+      <tr><td>7</td><td><span class="fileref">native/src/app.rs</span> — the <code>update</code> signature and
+        the <code>subscription</code> function only</td>
+        <td>Do not read all 4,344 lines. Read the shape: a match over <code>Message</code>, returning
+        <code>Task&lt;Message&gt;</code>. Chapter 11.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box try"><span class="tag">Try it</span>
+  <p>Run the test suite and read its output rather than just its exit code:</p>
+  <pre style="margin-top:2mm">cargo test --workspace 2&gt;&amp;1 | grep -E "^test |test result"</pre>
+  <p>158 test names is a surprisingly good table of contents for a codebase. Names like
+  <code>write_file_never_leaves_a_truncated_file</code> and
+  <code>blank_pages_reserve_space_in_total_height</code> tell you what the authors were afraid of, which is
+  usually the most useful thing to know about a program.</p></div>
+
+  <h2>3.5 Optional: desktop integration on Linux</h2>
+  <p>Linux builds are portable by default and integration is explicitly opt-in:</p>
+<pre>./target/release/md-editor --install      <span class="cmt"># or --install-desktop</span>
+./target/release/md-editor --uninstall    <span class="cmt"># or --uninstall-desktop</span></pre>
+  <p><code>--install</code> writes <code>~/.local/share/applications/md-editor.desktop</code>, installs the
+  icon at seven sizes under <code>~/.local/share/icons/hicolor/</code>, and refreshes the desktop and icon
+  caches where those tools exist. Both flags exit non-zero with a message on other platforms. The whole
+  round-trip has a test — <code>tests::test_linux_desktop_installation_roundtrip</code> — which runs against
+  a temporary <code>$HOME</code>, so it is safe on your machine.</p>
+</section>
+
+<!-- ---------- CH 4 ---------- -->
+<section class="chapter" id="ch04">
+  <div class="chead">
+    <div class="num">Chapter 4<span class="pm">PMK-ch04-</span></div>
+    <h1>The language of this codebase</h1>
+    <div class="sub">Twenty words you need, and the journey of one keystroke that uses all of them</div>
+  </div>
+
+  <p class="lead">Every codebase has private vocabulary, and misreading one word costs an hour. Here are the
+  terms this one uses, roughly in the order you will meet them.</p>
+
+  <h2>4.1 Vocabulary</h2>
+
+  <table class="compact">
+    <thead><tr><th style="width:24%">Term</th><th>What it means <em>here</em></th></tr></thead>
+    <tbody>
+      <tr><td><b>Vault</b></td><td>The open folder. Not a container, not a database — a directory you chose
+        with a folder picker. All paths in the app are relative to its root.</td></tr>
+      <tr><td><b>Path jailing</b></td><td>Canonicalising a path and refusing it if it does not lie strictly
+        inside the vault root. <code>resolve_vault_path_checked()</code> in <span class="fileref">vault.rs</span>.</td></tr>
+      <tr><td><b>Atomic write</b></td><td>Write to a sibling temp file, fsync, rename over the target. A reader
+        sees the whole old file or the whole new one. Chapter 8.</td></tr>
+      <tr><td><b>Sidecar</b></td><td>Data <em>about</em> a file, stored outside it. Every PDF highlight is a
+        sidecar record in SQLite.</td></tr>
+      <tr><td><b><code>document_id</code></b></td><td>SHA-256 of a PDF's first 1&nbsp;MiB plus its length. The
+        identity a highlight is attached to. Deliberately excludes mtime. Chapter 22.</td></tr>
+      <tr><td><b>Rope</b></td><td>The <code>ropey::Rope</code> data structure behind <code>DocBuffer</code>.
+        Makes inserts and line lookups cheap on large files.</td></tr>
+      <tr><td><b>Transaction</b> (editor)</td><td>A group of edit operations plus their inverses, so undo is a
+        replay rather than a snapshot. Not a database transaction.</td></tr>
+      <tr><td><b>Undo run</b></td><td>Several consecutive keystrokes coalesced into one undo step, so
+        <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back a word. Chapter 13.</td></tr>
+      <tr><td><b>Retained buffer</b></td><td>A parked <code>DocBuffer</code> — with undo stack, cursor and
+        scroll — kept in an LRU registry of 32 when you navigate away from a note.</td></tr>
+      <tr><td><b>Conceal / reveal</b></td><td>Hiding markdown syntax markers when the cursor is elsewhere and
+        showing them when it is on the line. The whole “hybrid preview” idea. Chapter 14.</td></tr>
+      <tr><td><b><code>StyledSpan</code></b></td><td>A run of characters with style, carrying both the raw
+        <code>text</code> and an optional <code>display_text</code>. Concealing sets
+        <code>display_text = Some("")</code>.</td></tr>
+      <tr><td><b>Fenwick / <code>HeightTree</code></b></td><td>A binary indexed tree over per-line visual
+        heights. Turns “which line is at y?” from O(N) into O(log N). Chapter 15.</td></tr>
+      <tr><td><b>Culling</b></td><td>Drawing only the lines inside the viewport. The draw pass must never
+        iterate the whole document. Chapter 17.</td></tr>
+      <tr><td><b>Generation</b></td><td>A monotonically increasing id stamped on async work. A result whose
+        generation no longer matches is discarded. Used for both highlighting and PDF rendering. Chapter 23.</td></tr>
+      <tr><td><b>Pending set</b></td><td>The set of in-flight requests of one kind
+        (<code>pending_pages</code>, <code>pending_links</code>, <code>pending_text</code>). Cleaned up
+        <em>before</em> the generation check, always.</td></tr>
+      <tr><td><b>Priority channel</b></td><td>The second mpsc channel into the PDFium worker, drained before
+        each standard command, keeping only the newest request. Chapter 18.</td></tr>
+      <tr><td><b>Page slot</b></td><td>The fixed outer rectangle every PDF page occupies while scrolling,
+        whether or not its bitmap has arrived. Chapter 24.</td></tr>
+      <tr><td><b>Synthetic TOC</b></td><td>An outline recovered from a PDF that has no embedded bookmarks,
+        and marked as recovered in the UI. Chapter 20.</td></tr>
+      <tr><td><b>Reference link</b></td><td>A recognised in-prose mention like “Figure 1.1” turned into a
+        clickable target, but only when the label matches exactly one target. Chapter 21.</td></tr>
+      <tr><td><b>Design token</b></td><td>A named constant in <span class="fileref">theme.rs</span> or
+        <span class="fileref">motion.rs</span>. Views are not allowed to use anything else. Chapter 26.</td></tr>
+      <tr><td><b>Subscription</b></td><td>An Iced stream of events the app opts into — and, in this codebase,
+        one it opts <em>out</em> of the moment it has nothing to do. Chapter 12.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4.2 One keystroke, end to end</h2>
+
+  <p>Here is the whole vocabulary doing its job at once. You press <kbd>e</kbd> in a note.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 300" role="img" aria-label="The path of a single keystroke: through the editor widget into the rope buffer, then branching into highlighting, layout invalidation, redraw, and after 400 milliseconds an atomic write to disk">
+      <defs>
+        <marker id="a4" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="6" markerHeight="6" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- spine -->
+      <rect x="12" y="20" width="96" height="40" rx="3" class="s-fill"/>
+      <text x="60" y="38" class="t-sm t-b t-mid">keystroke</text>
+      <text x="60" y="52" class="t-xs t-mid">‘e’</text>
+
+      <rect x="132" y="20" width="118" height="40" rx="3" class="s-box"/>
+      <text x="191" y="38" class="t-sm t-b t-mid">Editor widget</text>
+      <text x="191" y="52" class="t-xs t-mid">renderer.rs · focused</text>
+
+      <rect x="274" y="20" width="130" height="40" rx="3" class="s-box"/>
+      <text x="339" y="38" class="t-sm t-b t-mid">EditorCommand</text>
+      <text x="339" y="52" class="t-xs t-mid">TypePaired(‘e’)</text>
+
+      <rect x="428" y="20" width="130" height="40" rx="3" class="s-box"/>
+      <text x="493" y="38" class="t-sm t-b t-mid">DocBuffer</text>
+      <text x="493" y="52" class="t-xs t-mid">rope insert + undo run</text>
+
+      <rect x="582" y="20" width="126" height="40" rx="3" class="s-fill"/>
+      <text x="645" y="38" class="t-sm t-b t-mid">CommandResult</text>
+      <text x="645" y="52" class="t-xs t-mid">what changed?</text>
+
+      <path d="M108 40 L128 40" class="s-line" marker-end="url(#a4)"/>
+      <path d="M250 40 L270 40" class="s-line" marker-end="url(#a4)"/>
+      <path d="M404 40 L424 40" class="s-line" marker-end="url(#a4)"/>
+      <path d="M558 40 L578 40" class="s-line" marker-end="url(#a4)"/>
+
+      <!-- fan-out -->
+      <path d="M645 60 L645 84 L120 84 L120 108" class="s-line-2" marker-end="url(#a4)"/>
+      <path d="M400 84 L400 108" class="s-line-2" marker-end="url(#a4)"/>
+      <path d="M645 84 L645 108" class="s-line-2" marker-end="url(#a4)"/>
+
+      <rect x="30" y="108" width="180" height="52" rx="3" class="s-box"/>
+      <text x="120" y="127" class="t-sm t-b t-mid">re-highlight</text>
+      <text x="120" y="141" class="t-xs t-mid">sync if small; debounced 80 ms</text>
+      <text x="120" y="153" class="t-xs t-mid">above 1,000 lines</text>
+
+      <rect x="310" y="108" width="180" height="52" rx="3" class="s-box"/>
+      <text x="400" y="127" class="t-sm t-b t-mid">invalidate the line</text>
+      <text x="400" y="141" class="t-xs t-mid">LineHeightCache entry drops</text>
+      <text x="400" y="153" class="t-xs t-mid">HeightTree updated O(log N)</text>
+
+      <rect x="555" y="108" width="150" height="52" rx="3" class="s-box"/>
+      <text x="630" y="127" class="t-sm t-b t-mid">arm autosave</text>
+      <text x="630" y="141" class="t-xs t-mid">autosave_pending_since</text>
+      <text x="630" y="153" class="t-xs t-mid">= Instant::now()</text>
+
+      <!-- second row -->
+      <path d="M120 160 L120 186" class="s-line-2" marker-end="url(#a4)"/>
+      <path d="M400 160 L400 186" class="s-line-2" marker-end="url(#a4)"/>
+      <path d="M630 160 L630 186" class="s-line-2" marker-end="url(#a4)"/>
+
+      <rect x="30" y="186" width="180" height="44" rx="3" class="s-fill2"/>
+      <text x="120" y="205" class="t-sm t-b t-mid">Vec&lt;StyledLine&gt;</text>
+      <text x="120" y="219" class="t-xs t-mid">generation-stamped</text>
+
+      <rect x="310" y="186" width="180" height="44" rx="3" class="s-fill2"/>
+      <text x="400" y="205" class="t-sm t-b t-mid">culled draw pass</text>
+      <text x="400" y="219" class="t-xs t-mid">visible lines only</text>
+
+      <rect x="555" y="186" width="150" height="44" rx="3" class="s-amber"/>
+      <text x="630" y="205" class="t-sm t-b t-mid" fill="#8a5c07">poll every 100 ms</text>
+      <text x="630" y="219" class="t-xs t-mid">until 400 ms of quiet</text>
+
+      <path d="M630 230 L630 254" class="s-accent" marker-end="url(#a4)"/>
+      <rect x="440" y="254" width="266" height="34" rx="3" class="s-fill"/>
+      <text x="573" y="270" class="t-sm t-b t-mid" fill="#11342f">vault::write_file — temp · fsync · rename</text>
+      <text x="573" y="283" class="t-xs t-mid">on Tokio, never on the UI thread</text>
+
+      <text x="30" y="272" class="t-xs">Everything above the sage arrow happened in under a millisecond.</text>
+      <text x="30" y="286" class="t-xs">Only the last step touches the disk — and only after you stop typing.</text>
+    </svg>
+    <figcaption><b>Figure 4.1 — The life of one character.</b> Nine subsystems, one keypress. Notice the
+    asymmetry: the immediate work is all in memory and the only I/O is deferred behind a debounce. Every
+    chapter in Parts II and III is a zoom into one box of this figure.</figcaption>
+  </figure>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  Notice what the diagram does <em>not</em> contain: a re-parse of the whole document, a full-document
+  layout pass, or a synchronous write. Each of those would be the obvious first implementation, and each was
+  deliberately replaced. The generation stamp, the height tree, and the autosave debounce are the three
+  replacements, and they are Chapters 14, 15 and 12 respectively.</div>
+</section>

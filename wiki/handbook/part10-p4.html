@@ -1,0 +1,318 @@
+<!-- ================= PART IV ================= -->
+<section class="part-opener">
+  <div class="kicker">Part IV</div>
+  <div class="rule"></div>
+  <h1>The PDF subsystem</h1>
+  <div class="blurb">A single-threaded C library, a file format with an upside-down coordinate system, and
+  documents that reference their own equations without linking to them. This is the most constrained part of
+  the codebase, and the part with the most rules.</div>
+  <ol>
+    <li>One thread, two queues</li>
+    <li>Two coordinate systems</li>
+    <li>Finding a table of contents that isn't there</li>
+    <li>Resolving “see equation (3.14)”</li>
+    <li>Sidecar annotations and document identity</li>
+    <li>Generations, pending sets, and the stranded page</li>
+    <li>Stable page slots</li>
+    <li>From highlight to note and back</li>
+  </ol>
+</section>
+
+<!-- ---------- CH 18 ---------- -->
+<section class="chapter" id="ch18">
+  <div class="chead">
+    <div class="num">Chapter 18<span class="pm">PMK-ch18-</span></div>
+    <h1>One thread, two queues</h1>
+    <div class="sub">Scheduling around a library that cannot be parallelised or interrupted</div>
+  </div>
+
+  <p class="lead"><code>pdfium-render</code> stores its bindings in a process-global cell. The application
+  must never create a second <code>Pdfium</code> binding, and PDFium handles must not be shared across
+  threads. Everything in this chapter follows from those two sentences.</p>
+
+  <div class="srcref">core/src/pdf.rs</div>
+<pre>pub struct PdfRenderer {
+    sender: Sender&lt;PdfCommand&gt;,               <span class="cmt">// standard work</span>
+    priority_sender: Sender&lt;PriorityRender&gt;,  <span class="cmt">// the page the reader is looking at</span>
+    visible_range: Arc&lt;Mutex&lt;Option&lt;(u16, u16, String)&gt;&gt;&gt;,
+}</pre>
+
+  <p><code>PdfRenderer::new()</code> spawns <b>one</b> worker thread that owns the binding and one cached
+  open document. Every PDF operation in the process is serialized onto it. Since parallelism is off the
+  table, the only lever left is <em>ordering</em> — and the design spends it entirely on one thing: the page
+  the reader is looking at right now.</p>
+
+  <h2>18.1 The scheduling rules</h2>
+  <ol>
+    <li>Receive a standard command; drain any others already available into
+    <code>pending_commands</code>.</li>
+    <li><b>Before each standard command, drain the priority channel.</b> If several priority requests are
+    queued, only the newest is rendered — the reader has already scrolled past the others.</li>
+    <li>Process exactly one standard command, then repeat.</li>
+  </ol>
+
+  <p><code>PdfCommand::Wake</code> exists solely to unblock <code>receiver.recv()</code> after a priority
+  request is sent; it performs no work of its own.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 342" role="img" aria-label="The two channels feeding the PDFium worker, and a trace showing that when three priority page requests queue up only the newest is rendered while the older two are dropped">
+      <defs>
+        <marker id="a18" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">THE READER SCROLLS FAST: 3 → 14 → 20 → 26</text>
+
+      <!-- priority channel -->
+      <text x="16" y="38" class="t-sm t-b">priority channel</text>
+      <text x="16" y="52" class="t-xs">latest request wins</text>
+      <g>
+        <rect x="16" y="60" width="60" height="26" rx="2" class="s-fill2"/>
+        <text x="46" y="77" class="t-mono-sm t-mid">p14</text>
+        <rect x="82" y="60" width="60" height="26" rx="2" class="s-fill2"/>
+        <text x="112" y="77" class="t-mono-sm t-mid">p20</text>
+        <rect x="148" y="60" width="60" height="26" rx="2" class="s-fill"/>
+        <text x="178" y="77" class="t-mono-sm t-mid">p26</text>
+      </g>
+      <path d="M22 66 L70 80" class="s-red"/><path d="M22 80 L70 66" class="s-red"/>
+      <path d="M88 66 L136 80" class="s-red"/><path d="M88 80 L136 66" class="s-red"/>
+      <text x="16" y="102" class="t-xs t-red">dropped — the reader is not there any more</text>
+      <text x="148" y="102" class="t-xs" fill="#22665c">rendered</text>
+
+      <!-- standard channel -->
+      <text x="16" y="132" class="t-sm t-b">standard channel</text>
+      <text x="16" y="146" class="t-xs">everything else, in order</text>
+      <g class="t-mono-sm">
+        <rect x="16" y="154" width="192" height="22" rx="2" class="s-box"/>
+        <text x="26" y="169">RenderPage 15 (prefetch)</text>
+        <rect x="16" y="180" width="192" height="22" rx="2" class="s-box"/>
+        <text x="26" y="195">GetPageText 14</text>
+        <rect x="16" y="206" width="192" height="22" rx="2" class="s-box"/>
+        <text x="26" y="221">GetLinks 14</text>
+        <rect x="16" y="232" width="192" height="22" rx="2" class="s-box"/>
+        <text x="26" y="247">SearchText "attention"</text>
+      </g>
+
+      <path d="M212 74 L252 74" class="s-accent" marker-end="url(#a18)"/>
+      <path d="M212 200 L252 200" class="s-line-2" marker-end="url(#a18)"/>
+
+      <!-- worker trace -->
+      <text x="258" y="14" class="t-xs t-b" fill="#22665c">THE WORKER LOOP, IN ORDER</text>
+      <rect x="258" y="22" width="446" height="36" rx="3" class="s-warn"/>
+      <text x="270" y="40" class="t-xs t-b" fill="#a03730">already in flight — cannot be interrupted</text>
+      <text x="270" y="52" class="t-xs">GetToc on a 500-page textbook · the priority request waits for it</text>
+
+      <rect x="258" y="66" width="446" height="42" rx="3" class="s-fill"/>
+      <text x="270" y="84" class="t-xs t-b" fill="#11342f">1 · drain the priority channel</text>
+      <text x="270" y="98" class="t-xs">take p14, overwrite with p20, overwrite with p26 → render page 26 only</text>
+
+      <rect x="258" y="116" width="446" height="30" rx="3" class="s-box"/>
+      <text x="270" y="135" class="t-xs"><tspan class="t-b">2 · one</tspan> standard command — RenderPage 15</text>
+
+      <rect x="258" y="154" width="446" height="30" rx="3" class="s-fill"/>
+      <text x="270" y="173" class="t-xs" fill="#11342f"><tspan class="t-b">3 · drain priority again</tspan> — empty this time, so nothing happens</text>
+
+      <rect x="258" y="192" width="446" height="30" rx="3" class="s-box"/>
+      <text x="270" y="211" class="t-xs"><tspan class="t-b">4 · one</tspan> standard command — GetPageText 14</text>
+
+      <rect x="258" y="230" width="446" height="24" rx="3" class="s-fill2"/>
+      <text x="481" y="246" class="t-xs t-mid">… and so on, alternating for ever</text>
+
+      <!-- guarantee -->
+      <rect x="16" y="272" width="688" height="30" rx="3" class="s-fill"/>
+      <text x="30" y="291" class="t-sm t-b" fill="#11342f">What this guarantees:</text>
+      <text x="176" y="291" class="t-sm">the target page never queues behind a backlog of prefetches, link extractions and searches.</text>
+
+      <rect x="16" y="308" width="688" height="30" rx="3" class="s-warn"/>
+      <text x="30" y="327" class="t-sm t-b" fill="#a03730">What it does not:</text>
+      <text x="160" y="327" class="t-sm">interrupt work already running. A slow command still delays the next page by its full duration.</text>
+    </svg>
+    <figcaption><b>Figure 18.1 — Latest request wins.</b> Priority does not mean pre-emption; it means the
+    queue is drained newest-first before every standard command, and stale requests are discarded rather than
+    rendered. That is why fast scrolling produces one render instead of twelve.</figcaption>
+  </figure>
+
+  <h2>18.2 The command surface</h2>
+  <p><b>Standard channel:</b> <code>PageCount</code>, <code>ExtractText</code>, <code>PageSizes</code>,
+  <code>RenderPage</code>, <code>GetToc</code>, <code>GetReferences</code>, <code>GetEmbeddedToc</code>,
+  <code>GetLinks</code>, <code>SearchText</code>, <code>RenderLinkPreview</code>, <code>GetPageText</code>,
+  <code>Wake</code>.<br>
+  <b>Priority channel:</b> <code>PriorityRender { path, page_index, scale, resp }</code>.</p>
+
+  <p>Every command carries a <code>SyncSender</code> for its reply, so the async caller on the Tokio side
+  blocks on a channel rather than on PDFium. That is the seam that keeps the FFI on one thread while still
+  letting the rest of the app <code>await</code> results normally.</p>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  Because a command cannot be interrupted, <b>the duration of the slowest command is the worst-case latency
+  of every page render</b>. This is not theoretical: extracting the text of a whole textbook in one
+  <code>ExtractText</code> takes hundreds of milliseconds, and while it runs the reader is looking at a blank
+  page. Chapter 21 shows the fix — chunk the work into per-page commands so priority renders interleave.</div>
+</section>
+
+<!-- ---------- CH 19 ---------- -->
+<section class="chapter" id="ch19">
+  <div class="chead">
+    <div class="num">Chapter 19<span class="pm">PMK-ch19-</span></div>
+    <h1>Two coordinate systems</h1>
+    <div class="sub">PDF measures from the bottom; screens measure from the top</div>
+  </div>
+
+  <p class="lead">Half the confusing bugs in a PDF viewer are one of these two conventions applied in the
+  other one's space. The codebase's answer is not “convert everything” but “know which space each thing lives
+  in, and convert at exactly one place”.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 300" role="img" aria-label="The same rectangle expressed in PDF space with the origin at the bottom left and in screen space with the origin at the top left, with the conversion formula between them">
+      <defs>
+        <marker id="a19" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- pdf space -->
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">PDF SPACE</text>
+      <text x="16" y="28" class="t-xs">origin bottom-left · units are points (1/72 inch)</text>
+      <rect x="40" y="40" width="180" height="220" class="s-box"/>
+      <text x="130" y="60" class="t-xs t-mid" fill="#727b7e">page, 612 × 792 pt</text>
+      <rect x="70" y="120" width="120" height="24" class="s-fill"/>
+      <text x="130" y="136" class="t-xs t-mid" fill="#11342f">a line of text</text>
+      <!-- axes -->
+      <path d="M40 260 L232 260" class="s-accent" marker-end="url(#a19)"/>
+      <path d="M40 260 L40 32" class="s-accent" marker-end="url(#a19)"/>
+      <circle cx="40" cy="260" r="3" fill="#22665c"/>
+      <text x="46" y="274" class="t-xs" fill="#22665c">(0, 0)</text>
+      <text x="236" y="264" class="t-xs" fill="#22665c">x</text>
+      <text x="30" y="40" class="t-xs t-end" fill="#22665c">y</text>
+      <path d="M56 144 L56 258" class="s-dash"/>
+      <text x="62" y="200" class="t-xs">y = 648 (measuring up)</text>
+
+      <!-- conversion -->
+      <path d="M238 119 L252 119" class="s-accent" marker-end="url(#a19)"/>
+      <path d="M456 119 L488 119" class="s-accent" marker-end="url(#a19)"/>
+      <rect x="256" y="96" width="196" height="46" rx="3" class="s-amber"/>
+      <text x="354" y="114" class="t-xs t-b t-mid" fill="#8a5c07">to_top_left(rect, page_height)</text>
+      <text x="354" y="130" class="t-mono-sm t-mid">top = page_height − y_upper</text>
+      <text x="354" y="158" class="t-xs t-mid">the only place the flip happens</text>
+
+      <!-- screen space -->
+      <text x="470" y="14" class="t-xs t-b" fill="#22665c">SCREEN SPACE</text>
+      <text x="470" y="28" class="t-xs">origin top-left · units are logical pixels</text>
+      <rect x="494" y="40" width="180" height="220" class="s-box"/>
+      <rect x="524" y="156" width="120" height="24" class="s-fill"/>
+      <text x="584" y="172" class="t-xs t-mid" fill="#11342f">the same line</text>
+      <path d="M494 40 L686 40" class="s-accent" marker-end="url(#a19)"/>
+      <path d="M494 40 L494 268" class="s-accent" marker-end="url(#a19)"/>
+      <circle cx="494" cy="40" r="3" fill="#22665c"/>
+      <text x="502" y="58" class="t-xs" fill="#22665c">(0, 0)</text>
+      <text x="690" y="44" class="t-xs" fill="#22665c">x</text>
+      <text x="486" y="272" class="t-xs t-end" fill="#22665c">y</text>
+      <path d="M510 42 L510 156" class="s-dash"/>
+      <text x="516" y="104" class="t-xs">y = 144 (measuring down)</text>
+
+      <!-- who lives where -->
+      <rect x="16" y="284" width="336" height="0"/>
+      <text x="16" y="292" class="t-xs"><tspan class="t-b">stay in PDF space:</tspan> annotation rects, search rects — converted at draw time</text>
+      <text x="380" y="292" class="t-xs"><tspan class="t-b">already top-left:</tspan> LinkInfo, ReferenceLink.bbox, the preview crop</text>
+    </svg>
+    <figcaption><b>Figure 19.1 — One flip, in one function.</b> Character bounding boxes arrive from PDFium
+    in bottom-left origin; <code>to_top_left(rect, page_height)</code> is the single conversion, so hit
+    testing has one convention to reason about.</figcaption>
+  </figure>
+
+  <h2>19.1 Which space, and why it matters</h2>
+  <ul>
+    <li><b>Annotation and search rectangles stay in bottom-left PDF points</b>, and are converted at draw
+    time by <code>search_rect_to_view_rect</code>.</li>
+    <li><b>Reference underlines are already top-left</b> and convert with a plain <code>* zoom</code>.</li>
+    <li><b>Page text geometry</b> is stored in PDF space, so it survives zoom changes.</li>
+  </ul>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  Rectangles are stored in <em>PDF points</em> rather than pixels, and that one decision is why a highlight
+  you made last month at 100% zoom on a 1× display still lands on the right words today at 175% zoom on a
+  HiDPI screen in a narrow split pane. Store a pixel rectangle and you have stored an accident of the window
+  you happened to have open.</div>
+</section>
+
+<!-- ---------- CH 20 ---------- -->
+<section class="chapter" id="ch20">
+  <div class="chead">
+    <div class="num">Chapter 20<span class="pm">PMK-ch20-</span></div>
+    <h1>Finding a table of contents that isn't there</h1>
+    <div class="sub">Four sources, in order of trustworthiness, and two guards against inventing one</div>
+  </div>
+
+  <p class="lead">Many PDFs — especially preprints and scanned books — carry no embedded bookmarks at all,
+  and a reader without an outline is a reader who scrolls. <code>get_toc(path)</code> returns
+  <code>(Vec&lt;TocEntry&gt;, synthetic)</code> and works down a cascade of increasingly speculative
+  sources.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 372" role="img" aria-label="The table of contents recovery cascade: embedded bookmarks, then link annotations on a printed contents page, then dot-leader text parsing, then a font-size heuristic, with two guards that reject a fabricated outline">
+      <defs>
+        <marker id="a20" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- confidence axis -->
+      <text x="16" y="16" class="t-xs t-b" fill="#22665c">MOST TRUSTWORTHY</text>
+      <text x="16" y="300" class="t-xs t-b" fill="#a03730">MOST SPECULATIVE</text>
+      <path d="M8 24 L8 292" class="s-line-2"/>
+
+      <rect x="24" y="24" width="440" height="52" rx="3" class="s-fill"/>
+      <text x="36" y="42" class="t-sm t-b" fill="#11342f">1 · embedded bookmarks</text>
+      <text x="36" y="58" class="t-xs">the document's own outline tree, authored by whoever made the PDF</text>
+      <text x="36" y="70" class="t-xs">→ used as-is, <tspan class="t-mono-sm">synthetic = false</tspan></text>
+      <path d="M480 50 L560 50" class="s-accent" marker-end="url(#a20)"/>
+
+      <path d="M244 76 L244 92" class="s-line-2" marker-end="url(#a20)"/>
+      <text x="252" y="88" class="t-xs">none →  detect_toc_pages() finds the printed contents pages</text>
+
+      <rect x="24" y="92" width="440" height="52" rx="3" class="s-box"/>
+      <text x="36" y="110" class="t-sm t-b">2 · harvest_linked_toc</text>
+      <text x="36" y="126" class="t-xs">the contents page's own link annotations give <tspan class="t-b">exact</tspan> destination pages</text>
+      <text x="36" y="138" class="t-xs">→ taken when it yields 2 or more entries</text>
+      <path d="M480 118 L560 118" class="s-accent" marker-end="url(#a20)"/>
+
+      <path d="M244 144 L244 160" class="s-line-2" marker-end="url(#a20)"/>
+      <text x="252" y="156" class="t-xs">fewer than 2 →</text>
+
+      <rect x="24" y="160" width="440" height="52" rx="3" class="s-box"/>
+      <text x="36" y="178" class="t-sm t-b">3 · parse_printed_toc</text>
+      <text x="36" y="194" class="t-xs">read the text: dot leaders and two-column layouts — “Chapter 3 …… 47”</text>
+      <text x="36" y="206" class="t-xs">→ taken when it parses 2 or more entries</text>
+      <path d="M480 186 L560 186" class="s-accent" marker-end="url(#a20)"/>
+
+      <path d="M244 212 L244 228" class="s-line-2" marker-end="url(#a20)"/>
+      <text x="252" y="224" class="t-xs">fewer than 2 →</text>
+
+      <rect x="24" y="228" width="440" height="56" rx="3" class="s-amber"/>
+      <text x="36" y="246" class="t-sm t-b" fill="#8a5c07">4 · synthesize_toc</text>
+      <text x="36" y="262" class="t-xs">a typographic heuristic over font sizes and numbering — no contents page at all</text>
+      <text x="36" y="276" class="t-xs">→ marked <tspan class="t-mono-sm">synthetic = true</tspan> in the TOC panel</text>
+      <path d="M480 254 L560 254" class="s-accent" marker-end="url(#a20)"/>
+
+      <rect x="560" y="24" width="144" height="260" rx="3" class="s-fill2"/>
+      <text x="632" y="140" class="t-sm t-b t-mid">the TOC panel</text>
+      <text x="632" y="158" class="t-xs t-mid">recovered outlines are</text>
+      <text x="632" y="172" class="t-xs t-mid">labelled as such</text>
+
+      <!-- guards -->
+      <rect x="24" y="300" width="680" height="62" rx="3" class="s-warn"/>
+      <text x="36" y="318" class="t-xs t-b" fill="#a03730">Two guards stop step 4 from fabricating junk</text>
+      <text x="36" y="334" class="t-xs">· titles dominated by symbols or Private-Use-Area maths glyphs are rejected outright;</text>
+      <text x="36" y="350" class="t-xs">· a synthesized outline is discarded when its candidates cluster onto too few pages (an index or bibliography) or appear too densely (equation noise).</text>
+    </svg>
+    <figcaption><b>Figure 20.1 — Falling back, never fabricating.</b> The cascade only descends when the
+    level above produces too little, and the last level is allowed to produce <em>nothing</em>. A scanned or
+    structureless PDF correctly yields an empty outline rather than a dump of page content — an empty panel
+    is honest, a wrong outline is worse than none.</figcaption>
+  </figure>
+
+  <p>Two entry points exist: <code>recover_toc(doc, &amp;pages)</code> runs the whole chain, and
+  <code>recover_toc_from_texts(&amp;pages)</code> runs the text-only subset with no document handle — which
+  is what the reference resolver uses (Chapter 21), so it does not have to scan the document twice.</p>
+</section>

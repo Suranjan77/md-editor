@@ -1,0 +1,76 @@
+<!-- ================= CONTENTS ================= -->
+<section class="page-break toc">
+  <h1>Contents</h1>
+
+  <h2 class="partline">Part I · Orientation</h2>
+  <ol>
+    <li><a href="#ch01"><span class="cn">1</span><span class="ct">What you are looking at</span><span class="dots"></span><span class="pg" data-ref="ch01">00</span></a></li>
+    <li><a href="#ch02"><span class="cn">2</span><span class="ct">The map: two crates, three kinds of thread</span><span class="dots"></span><span class="pg" data-ref="ch02">00</span></a></li>
+    <li><a href="#ch03"><span class="cn">3</span><span class="ct">Your first hour</span><span class="dots"></span><span class="pg" data-ref="ch03">00</span></a></li>
+    <li><a href="#ch04"><span class="cn">4</span><span class="ct">The language of this codebase</span><span class="dots"></span><span class="pg" data-ref="ch04">00</span></a></li>
+  </ol>
+
+  <h2 class="partline">Part II · The engine — <code>md-editor-core</code></h2>
+  <ol>
+    <li><a href="#ch05"><span class="cn">5</span><span class="ct">AppState and the lock discipline</span><span class="dots"></span><span class="pg" data-ref="ch05">00</span></a></li>
+    <li><a href="#ch06"><span class="cn">6</span><span class="ct">The database</span><span class="dots"></span><span class="pg" data-ref="ch06">00</span></a></li>
+    <li><a href="#ch07"><span class="cn">7</span><span class="ct">Where the database lives</span><span class="dots"></span><span class="pg" data-ref="ch07">00</span></a></li>
+    <li><a href="#ch08"><span class="cn">8</span><span class="ct">The atomic save</span><span class="dots"></span><span class="pg" data-ref="ch08">00</span></a></li>
+    <li><a href="#ch09"><span class="cn">9</span><span class="ct">Wikilinks and the backlink graph</span><span class="dots"></span><span class="pg" data-ref="ch09">00</span></a></li>
+    <li><a href="#ch10"><span class="cn">10</span><span class="ct">Full-text search</span><span class="dots"></span><span class="pg" data-ref="ch10">00</span></a></li>
+  </ol>
+
+  <h2 class="partline">Part III · The markdown editor</h2>
+  <ol>
+    <li><a href="#ch11"><span class="cn">11</span><span class="ct">The shell: one loop, one router</span><span class="dots"></span><span class="pg" data-ref="ch11">00</span></a></li>
+    <li><a href="#ch12"><span class="cn">12</span><span class="ct">Subscriptions and the zero-idle-CPU rule</span><span class="dots"></span><span class="pg" data-ref="ch12">00</span></a></li>
+    <li><a href="#ch13"><span class="cn">13</span><span class="ct">DocBuffer, transactions, and word-sized undo</span><span class="dots"></span><span class="pg" data-ref="ch13">00</span></a></li>
+    <li><a href="#ch14"><span class="cn">14</span><span class="ct">Hybrid preview: conceal and reveal</span><span class="dots"></span><span class="pg" data-ref="ch14">00</span></a></li>
+    <li><a href="#ch15"><span class="cn">15</span><span class="ct">The Fenwick height tree</span><span class="dots"></span><span class="pg" data-ref="ch15">00</span></a></li>
+    <li><a href="#ch16"><span class="cn">16</span><span class="ct">Measure once: the line cache</span><span class="dots"></span><span class="pg" data-ref="ch16">00</span></a></li>
+    <li><a href="#ch17"><span class="cn">17</span><span class="ct">The draw pass</span><span class="dots"></span><span class="pg" data-ref="ch17">00</span></a></li>
+  </ol>
+
+  <h2 class="partline">Part IV · The PDF subsystem</h2>
+  <ol>
+    <li><a href="#ch18"><span class="cn">18</span><span class="ct">One thread, two queues</span><span class="dots"></span><span class="pg" data-ref="ch18">00</span></a></li>
+    <li><a href="#ch19"><span class="cn">19</span><span class="ct">Two coordinate systems</span><span class="dots"></span><span class="pg" data-ref="ch19">00</span></a></li>
+    <li><a href="#ch20"><span class="cn">20</span><span class="ct">Finding a table of contents that isn't there</span><span class="dots"></span><span class="pg" data-ref="ch20">00</span></a></li>
+    <li><a href="#ch21"><span class="cn">21</span><span class="ct">Resolving “see equation (3.14)”</span><span class="dots"></span><span class="pg" data-ref="ch21">00</span></a></li>
+    <li><a href="#ch22"><span class="cn">22</span><span class="ct">Sidecar annotations and document identity</span><span class="dots"></span><span class="pg" data-ref="ch22">00</span></a></li>
+    <li><a href="#ch23"><span class="cn">23</span><span class="ct">Generations, pending sets, and the stranded page</span><span class="dots"></span><span class="pg" data-ref="ch23">00</span></a></li>
+    <li><a href="#ch24"><span class="cn">24</span><span class="ct">Stable page slots</span><span class="dots"></span><span class="pg" data-ref="ch24">00</span></a></li>
+    <li><a href="#ch25"><span class="cn">25</span><span class="ct">From highlight to note and back</span><span class="dots"></span><span class="pg" data-ref="ch25">00</span></a></li>
+  </ol>
+
+  <h2 class="partline">Part V · The surface</h2>
+  <ol>
+    <li><a href="#ch26"><span class="cn">26</span><span class="ct">Tokens and motion</span><span class="dots"></span><span class="pg" data-ref="ch26">00</span></a></li>
+    <li><a href="#ch27"><span class="cn">27</span><span class="ct">The command palette and the fuzzy scorer</span><span class="dots"></span><span class="pg" data-ref="ch27">00</span></a></li>
+    <li><a href="#ch28"><span class="cn">28</span><span class="ct">The study tracker</span><span class="dots"></span><span class="pg" data-ref="ch28">00</span></a></li>
+  </ol>
+
+  <h2 class="partline">Part VI · Working here</h2>
+  <ol>
+    <li><a href="#ch29"><span class="cn">29</span><span class="ct">The build system and PDFium</span><span class="dots"></span><span class="pg" data-ref="ch29">00</span></a></li>
+    <li><a href="#ch30"><span class="cn">30</span><span class="ct">The test suite, and what each part protects</span><span class="dots"></span><span class="pg" data-ref="ch30">00</span></a></li>
+    <li><a href="#ch31"><span class="cn">31</span><span class="ct">The five durability invariants</span><span class="dots"></span><span class="pg" data-ref="ch31">00</span></a></li>
+    <li><a href="#ch32"><span class="cn">32</span><span class="ct">The rules, and the bug behind each one</span><span class="dots"></span><span class="pg" data-ref="ch32">00</span></a></li>
+    <li><a href="#ch33"><span class="cn">33</span><span class="ct">Shipping a build</span><span class="dots"></span><span class="pg" data-ref="ch33">00</span></a></li>
+  </ol>
+
+  <h2 class="partline">Appendices</h2>
+  <ol>
+    <li><a href="#apA"><span class="cn">A</span><span class="ct">Keyboard shortcuts</span><span class="dots"></span><span class="pg" data-ref="apA">00</span></a></li>
+    <li><a href="#apB"><span class="cn">B</span><span class="ct">Every named constant</span><span class="dots"></span><span class="pg" data-ref="apB">00</span></a></li>
+    <li><a href="#apC"><span class="cn">C</span><span class="ct">The message vocabulary</span><span class="dots"></span><span class="pg" data-ref="apC">00</span></a></li>
+    <li><a href="#apD"><span class="cn">D</span><span class="ct">Starter tasks, graded</span><span class="dots"></span><span class="pg" data-ref="apD">00</span></a></li>
+    <li><a href="#apE"><span class="cn">E</span><span class="ct">Where to go next</span><span class="dots"></span><span class="pg" data-ref="apE">00</span></a></li>
+  </ol>
+
+  <div class="box plain" style="margin-top:8mm"><span class="tag">A note on figures</span>
+  Every diagram in this book was drawn for it. Where the wiki carried a generic box-and-arrow graph, the
+  figure here tries instead to show the <em>mechanism</em> — the thing that actually moves, the state that
+  actually changes, the failure the design is holding off. If a figure does not tell you something the
+  surrounding prose left out, it has not earned its ink.</div>
+</section>

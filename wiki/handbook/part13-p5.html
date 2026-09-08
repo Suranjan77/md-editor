@@ -1,0 +1,408 @@
+<!-- ================= PART V ================= -->
+<section class="part-opener">
+  <div class="kicker">Part V</div>
+  <div class="rule"></div>
+  <h1>The surface</h1>
+  <div class="blurb">Three small, strict systems that decide how the application feels: a token set that
+  leaves no room for arbitrary numbers, a motion vocabulary of one curve and three durations, and a fuzzy
+  matcher whose scores are comparable across commands and files.</div>
+  <ol>
+    <li>Tokens and motion</li>
+    <li>The command palette and the fuzzy scorer</li>
+    <li>The study tracker</li>
+  </ol>
+</section>
+
+<!-- ---------- CH 26 ---------- -->
+<section class="chapter" id="ch26">
+  <div class="chead">
+    <div class="num">Chapter 26<span class="pm">PMK-ch26-</span></div>
+    <h1>Tokens and motion</h1>
+    <div class="sub">Six sizes, seven spacings, three radii, one curve — and the reason the list is short</div>
+  </div>
+
+  <p class="lead">Everything the chrome draws — sidebar, toolbar, panels, modals, tracker — takes its colour,
+  size, spacing and radius from <span class="fileref">native/src/theme.rs</span>. The module's own comment
+  records why: before the scales existed the app had <b>eleven</b> distinct font sizes and <b>seventeen</b>
+  distinct spacing values.</p>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  Eleven font sizes is the visual noise that reads as “unpolished” without ever being nameable. Nobody looks
+  at a screen and thinks “that label is 13px and this one is 14px”; they think “this feels amateur”. A short
+  scale removes the decision <em>and</em> the defect at once, and it makes review mechanical: a hardcoded
+  number in a view module is wrong on sight, with no taste required.</div>
+
+  <p>Document typography — heading sizes and code or math scale <em>inside</em> a note — is a separate
+  concern owned by the markdown renderer. Do not import <code>theme.rs</code> sizes into
+  <code>highlight.rs</code>.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 366" role="img" aria-label="A specimen sheet of the design tokens: the six-step type scale, the seven-step spacing grid drawn to scale, the three corner radii, and the colour palette">
+      <!-- type scale -->
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">TYPE SCALE — SIX STEPS</text>
+      <g>
+        <text x="16" y="36" class="t-mono-sm">TEXT_XS · 10</text>
+        <text x="140" y="36" style="font-size:10px" class="t">Fine print: badges, counters, gutter numbers</text>
+        <text x="16" y="56" class="t-mono-sm">TEXT_SM · 12</text>
+        <text x="140" y="56" style="font-size:12px" class="t">Secondary: captions, metadata, tree affordances</text>
+        <text x="16" y="78" class="t-mono-sm">TEXT_BASE · 14</text>
+        <text x="140" y="78" style="font-size:14px" class="t">Default UI text: controls, buttons, palette rows</text>
+        <text x="16" y="102" class="t-mono-sm">TEXT_MD · 16</text>
+        <text x="140" y="102" style="font-size:16px" class="t">Emphasised UI text and section headings</text>
+        <text x="16" y="128" class="t-mono-sm">TEXT_LG · 18</text>
+        <text x="140" y="128" style="font-size:18px" class="t">Panel and dialog titles</text>
+        <text x="16" y="162" class="t-mono-sm">TEXT_DISPLAY · 42</text>
+        <text x="140" y="166" style="font-size:30px" class="t">MD Editor</text>
+        <text x="330" y="166" class="t-xs">— the welcome wordmark, deliberately the only display size</text>
+      </g>
+
+      <line x1="16" y1="184" x2="704" y2="184" class="s-line-2"/>
+
+      <!-- spacing -->
+      <text x="16" y="204" class="t-xs t-b" fill="#22665c">SPACING — A 2 PX GRID, DRAWN TO SCALE</text>
+      <g>
+        <text x="16" y="226" class="t-mono-sm">SPACE_0</text>
+        <rect x="96" y="217" width="0" height="10" fill="#22665c"/>
+        <text x="200" y="226" class="t-xs">0 — flush, no gap</text>
+
+        <text x="16" y="242" class="t-mono-sm">SPACE_1</text>
+        <rect x="96" y="233" width="2" height="10" fill="#22665c"/>
+        <text x="200" y="242" class="t-xs">2 — hairline separation between tightly related items</text>
+
+        <text x="16" y="258" class="t-mono-sm">SPACE_2</text>
+        <rect x="96" y="249" width="4" height="10" fill="#22665c"/>
+        <text x="200" y="258" class="t-xs">4 — within a control: icon to label</text>
+
+        <text x="16" y="274" class="t-mono-sm">SPACE_3</text>
+        <rect x="96" y="265" width="8" height="10" fill="#22665c"/>
+        <text x="200" y="274" class="t-xs">8 — default gap between siblings; default control padding</text>
+
+        <text x="16" y="290" class="t-mono-sm">SPACE_4</text>
+        <rect x="96" y="281" width="12" height="10" fill="#22665c"/>
+        <text x="200" y="290" class="t-xs">12 — between grouped rows; comfortable control padding</text>
+
+        <text x="16" y="306" class="t-mono-sm">SPACE_5</text>
+        <rect x="96" y="297" width="16" height="10" fill="#22665c"/>
+        <text x="200" y="306" class="t-xs">16 — between groups within a panel</text>
+
+        <text x="16" y="322" class="t-mono-sm">SPACE_6</text>
+        <rect x="96" y="313" width="24" height="10" fill="#22665c"/>
+        <text x="200" y="322" class="t-xs">24 — between major regions</text>
+      </g>
+
+      <!-- radii -->
+      <text x="470" y="204" class="t-xs t-b" fill="#22665c">RADII — THREE</text>
+      <rect x="470" y="214" width="60" height="34" rx="3" class="s-box"/>
+      <text x="500" y="235" class="t-xs t-mid">3 · SM</text>
+      <text x="540" y="235" class="t-xs">chips, badges, inline markers</text>
+      <rect x="470" y="256" width="60" height="34" rx="6" class="s-box"/>
+      <text x="500" y="277" class="t-xs t-mid">6 · MD</text>
+      <text x="540" y="277" class="t-xs">buttons, inputs, list rows</text>
+      <rect x="470" y="298" width="60" height="34" rx="10" class="s-box"/>
+      <text x="500" y="319" class="t-xs t-mid">10 · LG</text>
+      <text x="540" y="319" class="t-xs">panels, cards, modals</text>
+
+      <text x="16" y="352" class="t-xs">The palette is one dark theme registered with iced as <tspan class="t-mono-sm">“MD Editor Premium Dark”</tspan> — ground <tspan class="t-mono-sm">#0d0e10</tspan>, text <tspan class="t-mono-sm">#e3e5ed</tspan>, accent <tspan class="t-mono-sm">#b1ccc6</tspan>,</text>
+      <text x="16" y="364" class="t-xs">danger <tspan class="t-mono-sm">#ee7d77</tspan>. <tspan class="t-b">fade(color, opacity)</tspan> scales a colour's own alpha, so a half-faded overlay stays internally consistent instead of some parts leading others.</text>
+    </svg>
+    <figcaption><b>Figure 26.1 — The whole vocabulary on one page.</b> Sizes are shown at the figure's own scale, so
+    read the ratios rather than the millimetres. The steps grow roughly geometrically so that adjacent steps stay visibly distinct — a scale where 10 and 12
+    both exist is a scale that gets used inconsistently.</figcaption>
+  </figure>
+
+  <h2>26.1 Motion</h2>
+
+  <p>Before <span class="fileref">native/src/motion.rs</span> the app had no motion at all: panels appeared
+  and vanished between one frame and the next. Nothing is <em>missing</em> from a snapshot of an instant UI —
+  it just feels abrupt, because the eye gets no continuity between the two states.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 236" role="img" aria-label="The EaseOutQuad curve plotted against linear motion, the three durations, and the loop that arms the per-frame subscription only while something is animating">
+      <defs>
+        <marker id="a26" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">ONE CURVE — EASE_OUT_QUAD</text>
+      <!-- plot -->
+      <line x1="30" y1="160" x2="240" y2="160" class="s-line-2"/>
+      <line x1="30" y1="160" x2="30" y2="34" class="s-line-2"/>
+      <text x="16" y="38" class="t-xs t-end">1</text>
+      <text x="16" y="164" class="t-xs t-end">0</text>
+      <text x="30" y="176" class="t-xs">start</text>
+      <text x="230" y="176" class="t-xs t-end">end</text>
+      <path d="M30 160 L230 40" class="s-dash"/>
+      <text x="160" y="106" class="t-xs" fill="#727b7e">linear</text>
+      <polyline points="30,160 50,137 70,117 90,99 110,83 130,70 150,59 170,51 190,45 210,41 230,40" class="s-accent"/>
+      <text x="120" y="60" class="t-xs t-b" fill="#22665c">EaseOutQuad</text>
+      <text x="30" y="196" class="t-xs">decelerating motion reads as a thing coming to rest —</text>
+      <text x="30" y="210" class="t-xs">which is what opening a panel or landing a toast is</text>
+
+      <!-- durations -->
+      <text x="290" y="14" class="t-xs t-b" fill="#22665c">THREE DURATIONS</text>
+      <rect x="290" y="24" width="60" height="18" rx="2" fill="#22665c"/>
+      <text x="356" y="37" class="t-xs"><tspan class="t-mono-sm">FAST</tspan> 120 ms — toasts, chips changing state</text>
+      <rect x="290" y="48" width="70" height="18" rx="2" fill="#22665c"/>
+      <text x="366" y="61" class="t-xs"><tspan class="t-mono-sm">OVERLAY</tspan> 140 ms — palette, modals</text>
+      <rect x="290" y="72" width="90" height="18" rx="2" fill="#22665c"/>
+      <text x="386" y="85" class="t-xs"><tspan class="t-mono-sm">PANEL</tspan> 180 ms — a side panel opening</text>
+
+      <text x="290" y="112" class="t-xs t-b" fill="#22665c">PANEL WIDTHS MUST MATCH THE LAYOUT</text>
+      <text x="290" y="128" class="t-xs"><tspan class="t-mono-sm">SIDEBAR_WIDTH 260 · TOC_WIDTH 250 · BACKLINKS_WIDTH 220</tspan></text>
+      <text x="290" y="144" class="t-xs">an animated width that differs from the laid-out width means the</text>
+      <text x="290" y="158" class="t-xs">clip producing the slide crops the panel <tspan class="t-b">permanently</tspan></text>
+
+      <!-- arm/disarm loop -->
+      <rect x="290" y="176" width="126" height="34" rx="3" class="s-box"/>
+      <text x="353" y="196" class="t-xs t-mid">toggle a panel →</text>
+      <text x="353" y="206" class="t-xs t-mid">set the target</text>
+      <path d="M420 193 L444 193" class="s-line" marker-end="url(#a26)"/>
+      <rect x="448" y="176" width="120" height="34" rx="3" class="s-fill"/>
+      <text x="508" y="190" class="t-xs t-mid" fill="#11342f">is_animating()?</text>
+      <text x="508" y="203" class="t-xs t-mid">draw a frame</text>
+      <path d="M508 176 L508 164 L353 164 L353 174" class="s-line-2" marker-end="url(#a26)"/>
+      <text x="430" y="160" class="t-xs t-mid">yes</text>
+      <path d="M572 193 L596 193" class="s-line" marker-end="url(#a26)"/>
+      <rect x="600" y="176" width="104" height="34" rx="3" class="s-fill2"/>
+      <text x="652" y="190" class="t-xs t-mid">no → none()</text>
+      <text x="652" y="203" class="t-xs t-mid">idle, 0.0% CPU</text>
+    </svg>
+    <figcaption><b>Figure 26.2 — One curve, three durations, and a loop that ends.</b> The per-frame redraw
+    subscription is armed <em>strictly</em> while <code>motion.is_animating()</code> holds; the moment every
+    transition settles it returns <code>Subscription::none()</code> and the process sleeps.</figcaption>
+  </figure>
+
+  <p><code>Motion</code> holds an <code>iced::Animation&lt;bool&gt;</code> mirroring each visibility flag —
+  <code>sidebar</code>, <code>toc</code>, <code>backlinks</code>, <code>toast</code>, <code>palette</code> —
+  plus two things worth noticing:</p>
+  <ul>
+    <li><code>now: Instant</code>, the timestamp the current frame is drawn for. <code>view</code> reads
+    <em>this</em> rather than calling <code>Instant::now()</code> itself, so every animation in a frame is
+    sampled at the same moment. Without it, panels drift out of step within a single frame.</li>
+    <li><code>toast_text: String</code>, retained after <code>ui.toast</code> clears — so the toast has
+    something to draw <em>while it fades out</em>. An animation that outlives its data needs somewhere to
+    keep it.</li>
+  </ul>
+
+  <p>The booleans themselves stay where they live (sidebar visibility on the vault state, TOC on the editor
+  pane); <code>Motion</code> only tracks how far each has travelled.</p>
+</section>
+
+<!-- ---------- CH 27 ---------- -->
+<section class="chapter" id="ch27">
+  <div class="chead">
+    <div class="num">Chapter 27<span class="pm">PMK-ch27-</span></div>
+    <h1>The command palette and the fuzzy scorer</h1>
+    <div class="sub">Making a command and a file comparable on one numeric scale</div>
+  </div>
+
+  <p class="lead"><kbd>Ctrl</kbd>+<kbd>P</kbd> opens a palette that searches commands and vault files
+  <em>together</em>. That is only possible if both can be scored on the same scale — which is what
+  <span class="fileref">native/src/fuzzy.rs</span> is for.</p>
+
+  <div class="srcref">native/src/fuzzy.rs</div>
+<pre>pub fn score(haystack: &amp;str, query: &amp;str) -&gt; Option&lt;i32&gt;
+pub fn score_path(path: &amp;str, query: &amp;str) -&gt; Option&lt;i32&gt;</pre>
+
+  <p><code>score</code> walks the query left to right, advancing through the haystack to each next matching
+  character, case-insensitively. <code>None</code> means the query does not appear in order at all —
+  characters must be in order, but need not be adjacent, which is what makes initials work.</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:26%">Rule</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td>Base</td><td><code>+10</code> per matched character</td></tr>
+      <tr><td><b>Word start</b></td><td><code>+18</code> when the character is at index 0 or follows a
+        boundary — <code>space / \ - _ . ( [</code></td></tr>
+      <tr><td><b>CamelCase</b></td><td><code>+10</code> for an uppercase letter inside a word (mutually
+        exclusive with the word-start bonus)</td></tr>
+      <tr><td><b>Adjacency</b></td><td><code>+12</code> when it directly follows the previous match,
+        rewarding runs</td></tr>
+      <tr><td><b>Distance penalty</b></td><td><code>-min(gap, 8)</code> for characters skipped since the
+        previous match</td></tr>
+      <tr><td><b>Length normalization</b></td><td><code>-(haystack.len() / 12)</code> overall, preferring the
+        tighter of two otherwise-equal matches</td></tr>
+    </tbody>
+  </table>
+
+  <figure>
+    <svg viewBox="0 0 720 288" role="img" aria-label="Scoring the query s v against the command Split View and against two file paths, showing the per-character bonuses that make the command rank first">
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">QUERY: “sv”</text>
+
+      <!-- candidate 1 -->
+      <rect x="16" y="24" width="688" height="72" rx="3" class="s-fill"/>
+      <text x="28" y="42" class="t-sm t-b" fill="#11342f">command · “Split View”</text>
+      <text x="28" y="60" class="t-mono-sm"><tspan fill="#22665c" class="t-b">S</tspan>plit <tspan fill="#22665c" class="t-b">V</tspan>iew</text>
+      <g class="t-xs">
+        <text x="140" y="60">s → index 0, a word start</text>
+        <text x="330" y="60">+10 base +18 word start</text>
+        <text x="530" y="60" class="t-b">= 28</text>
+      </g>
+      <g class="t-xs">
+        <text x="140" y="78">v → index 6, follows a space</text>
+        <text x="330" y="78">+10 base +18 word start −5 gap</text>
+        <text x="530" y="78" class="t-b">= 23</text>
+      </g>
+      <text x="600" y="70" class="t-sm t-b" fill="#11342f">≈ 51 − 0 length</text>
+      <text x="600" y="86" class="t-xs" fill="#22665c">+ 8 command bonus</text>
+
+      <!-- candidate 2 -->
+      <rect x="16" y="106" width="688" height="56" rx="3" class="s-box"/>
+      <text x="28" y="124" class="t-sm t-b">file · “Systems/vector-notes.md”</text>
+      <text x="28" y="142" class="t-mono-sm"><tspan fill="#22665c" class="t-b">S</tspan>ystems/<tspan fill="#22665c" class="t-b">v</tspan>ector-notes.md</text>
+      <g class="t-xs">
+        <text x="240" y="142">both are word starts, but the path is long: the length penalty and the</text>
+        <text x="240" y="156">gap penalty both bite, and there is no command bonus</text>
+      </g>
+
+      <!-- candidate 3 -->
+      <rect x="16" y="172" width="688" height="56" rx="3" class="s-box"/>
+      <text x="28" y="190" class="t-sm t-b">file · “notes/archive/sv-draft.md”</text>
+      <text x="28" y="208" class="t-mono-sm">notes/archive/<tspan fill="#22665c" class="t-b">sv</tspan>-draft.md</text>
+      <g class="t-xs">
+        <text x="240" y="208">adjacency (+12) helps a lot — but score_path also scores the <tspan class="t-b">filename alone</tspan></text>
+        <text x="240" y="222">with a <tspan class="t-b">+24</tspan> bonus and takes the better of the two, which is what lifts it above the path match</text>
+      </g>
+
+      <rect x="16" y="240" width="688" height="40" rx="3" class="s-fill2"/>
+      <text x="28" y="258" class="t-xs t-b">The two thumb-scales that make the ranking feel right</text>
+      <text x="28" y="274" class="t-xs"><tspan class="t-b">+24</tspan> for matching a file's own name rather than a folder on its path&#160;&#160;·&#160;&#160;<tspan class="t-b">+8</tspan> for a command at equal relevance, because the palette is primarily a way to <tspan font-style="italic">act</tspan></text>
+    </svg>
+    <figcaption><b>Figure 27.1 — Why <code>sv</code> finds Split View.</b> The bonuses are small integers
+    chosen so that intuitive expectations win: initials beat substrings, filenames beat folders, and actions
+    beat documents when everything else is equal. Concretely, <code>tocfg</code> finds
+    <em>Tracker Configuration</em>.</figcaption>
+  </figure>
+
+  <h2>27.1 The command registry</h2>
+
+  <p>Every action the palette can run is declared in <b>one</b> registry in
+  <span class="fileref">views/command_palette.rs</span>, so a command exists in exactly one place and the
+  palette and the shortcut list cannot drift apart.</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:34%">Command</th><th style="width:33%"><code>Shortcut</code></th><th>Direct key binding?</th></tr></thead>
+    <tbody>
+      <tr><td>New File</td><td><code>NewFile</code></td><td>Ctrl+N</td></tr>
+      <tr><td>Open Vault</td><td><code>OpenVault</code></td><td>Ctrl+O</td></tr>
+      <tr><td>Save File</td><td><code>Save</code></td><td>Ctrl+S</td></tr>
+      <tr><td>Search Vault</td><td><code>Search</code></td><td>Ctrl+F</td></tr>
+      <tr><td>Toggle Sidebar</td><td><code>ToggleSidebar</code></td><td>Ctrl+B</td></tr>
+      <tr><td>Table of Contents</td><td><code>TableOfContents</code></td><td>Ctrl+T</td></tr>
+      <tr><td>Toggle Backlinks</td><td><code>ToggleBacklinks</code></td><td><b>none</b> — palette only</td></tr>
+      <tr><td>Study Tracker</td><td><code>StudyTracker</code></td><td><b>none</b> — palette or toolbar</td></tr>
+      <tr><td>Split View</td><td><code>SplitView</code></td><td><b>none</b> — palette or toolbar</td></tr>
+      <tr><td>Focus Mode</td><td><code>FocusMode</code></td><td><b>none</b> — palette only</td></tr>
+    </tbody>
+  </table>
+
+  <p><code>Shortcut</code> is the indirection that lets the keyboard subscription and the command palette
+  trigger exactly the same handler. Add a command by adding a <code>Shortcut</code> variant and a registry
+  entry; do not add a second code path.</p>
+
+  <h2>27.2 Ranking and interleaving</h2>
+  <ul>
+    <li>With an <b>empty query</b> the palette lists commands only — a menu of what the app can do. Files
+    would just be an arbitrary slice of the vault.</li>
+    <li>With a query, commands are scored with <code>fuzzy::score</code> and files with
+    <code>fuzzy::score_path</code>, then <b>interleaved by relevance</b> rather than split into fixed
+    sections.</li>
+    <li>Directories are never offered as results.</li>
+    <li>The list is capped at <code>MAX_RESULTS = 40</code> — past that the answer is a longer query, not
+    more scrolling.</li>
+    <li><kbd>↑</kbd>/<kbd>↓</kbd> move the highlighted row, <kbd>Enter</kbd> activates it,
+    <kbd>Escape</kbd> closes. Changing the query resets the highlight to the first row, since keeping the old
+    index would leave it on an unrelated result.</li>
+  </ul>
+
+  <p>The palette's ranking is covered by eight unit tests, including that <kbd>Enter</kbd> activates exactly
+  the highlighted row and that <code>result_count</code> matches what is rendered — the two properties a
+  keyboard-driven list can silently get wrong.</p>
+</section>
+
+<!-- ---------- CH 28 ---------- -->
+<section class="chapter" id="ch28">
+  <div class="chead">
+    <div class="num">Chapter 28<span class="pm">PMK-ch28-</span></div>
+    <h1>The study tracker</h1>
+    <div class="sub">A timer, a log, and a curriculum the app knows nothing about</div>
+  </div>
+
+  <p class="lead">The tracker is the most self-contained feature in the app: three tables, one settings key,
+  six tabs, and a deliberate refusal to model any particular subject.</p>
+
+  <h2>28.1 Storage</h2>
+
+  <table class="compact">
+    <thead><tr><th style="width:26%">Where</th><th>What</th></tr></thead>
+    <tbody>
+      <tr><td><code>tracker_sessions</code></td><td>one row per logged interval, whether timed or entered by
+        hand: <code>id</code>, <code>date</code>, <code>hours</code>, <code>activity_type</code>,
+        <code>phase</code>, <code>notes</code></td></tr>
+      <tr><td><code>tracker_kv</code></td><td>the checkbox and status state of the curriculum — project
+        statuses (<code>proj_&lt;id&gt;</code>), gate ticks (<code>gate_&lt;id&gt;_&lt;n&gt;</code>), reading
+        ticks (<code>read_&lt;section&gt;_&lt;n&gt;</code>). Written through <code>tracker::set_kv</code>, an
+        upsert.</td></tr>
+      <tr><td><code>tracker_activity</code></td><td>created by the schema, available for an activity feed;
+        the current UI does not write to it.</td></tr>
+      <tr><td><code>settings['tracker_config']</code></td><td>the curriculum itself, as JSON. It lives in
+        <code>settings</code> rather than <code>tracker_kv</code> because it is <em>one document, not a set
+        of flags</em>, and it is only accepted after <code>parse_config</code> validates it.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box plain"><span class="tag">Note</span>
+  <code>get_sessions</code> skips a malformed row <b>and logs it</b>. Silently dropping study history would
+  hide corruption — and a tracker whose totals quietly shrink is worse than one that complains.</div>
+
+  <h2>28.2 The timer, and what it refuses to be</h2>
+
+  <p>One button. <b>Start</b> records <code>Instant::now()</code> and toasts <em>“Study timer started”</em>.
+  <b>Stop</b> computes <code>elapsed.as_secs_f32() / 3600.0</code>, floors it at <code>0.01</code> hours so a
+  very short session still records something, and saves a <code>StudySession</code> <b>immediately</b> —
+  <code>date</code> from <code>chrono::Local::now()</code> as <code>"%Y-%m-%d %H:%M"</code>,
+  <code>activity_type = "Study"</code>, <code>phase = "Focus"</code>, no notes.</p>
+
+  <p>There is no pause, no pomodoro cycle, and no post-stop dialog. To record an activity type or notes you
+  use the Log tab's manual entry, which takes a date, an hours value and free text.</p>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  A dialog after every session is a tax on the behaviour the feature is trying to encourage. Saving
+  immediately with defaults means the worst case is a row with a generic label — recoverable — rather than a
+  session you abandoned because you did not want to fill in a form.</div>
+
+  <h2>28.3 The configurable curriculum</h2>
+
+  <p>Four collections, and the tracker understands nothing beyond their shape:</p>
+
+<pre>{
+  "PHASES":   [{ "id": "1A", "title": "Mathematics", "year": "Year 1", "months": "Months 1-4" }],
+  "PROJECTS": [{ "id": "1.1", "phase": "1A", "name": "SVD from scratch" }],
+  "GATES":    [{ "id": "1A", "title": "Gate 1A - Mathematics",
+                 "items": ["Derive SVD from eigendecomposition"] }],
+  "READING":  [{ "section": "Textbooks - Mathematics",
+                 "items": [{ "priority": "critical", "title": "Linear Algebra Done Right" }] }]
+}</pre>
+
+  <p>Out of the box it is seeded with a concrete four-year roadmap toward research in efficient machine
+  learning — 17 phases (<code>1A</code> Mathematics through <code>4C</code> Original Research), 20 projects,
+  6 checkpoint gates, and a reading list. <b>That is a starting point, not a structure.</b> The Config tab
+  replaces it wholesale, and a language course, a thesis, or a certification path fits the same four
+  collections exactly as well.</p>
+
+  <p><code>TrackerConfigSave</code> runs <code>parse_config</code> first, which requires at least one phase
+  and at least one project. An invalid document is rejected rather than saved, and a stored config that fails
+  to parse falls back to the built-in default — so a bad edit costs you the edit, never the app.</p>
+
+  <p>Two lifecycle details: <code>TrackerState::new</code> loads sessions and key-values once at startup and
+  validates the stored config before adopting it; opening the panel (<code>TrackerToggle</code>) reloads from
+  disk, so an external change is picked up. Side effects that belong to the global UI are emitted as
+  <code>Message::ShowToast</code> tasks rather than reaching back into the shell — the tracker never touches
+  another pane's state, which is the sub-state rule from Chapter 11 in practice.</p>
+
+  <div class="box plain"><span class="tag">Note</span>
+  Gates are a <b>self-assessment checklist</b>, not an enforcement mechanism. Nothing in the app blocks
+  progress on an unticked gate, and nothing should — the tracker's job is to show you where you are, not to
+  hold a door shut.</div>
+</section>

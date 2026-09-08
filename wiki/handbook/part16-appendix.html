@@ -1,0 +1,232 @@
+<!-- ================= APPENDICES ================= -->
+<section class="part-opener">
+  <div class="kicker">Appendices</div>
+  <div class="rule"></div>
+  <h1>Reference</h1>
+  <div class="blurb">The lookup material: every binding, every named constant, the complete message
+  vocabulary, a graded list of first tasks, and a short note on where to go next.</div>
+  <ol style="list-style:none;padding-left:0">
+    <li><b>A</b> &nbsp;Keyboard shortcuts</li>
+    <li><b>B</b> &nbsp;Every named constant</li>
+    <li><b>C</b> &nbsp;The message vocabulary</li>
+    <li><b>D</b> &nbsp;Starter tasks, graded</li>
+    <li><b>E</b> &nbsp;Where to go next</li>
+  </ol>
+</section>
+
+<!-- ---------- APPENDIX A ---------- -->
+<section class="chapter" id="apA">
+  <div class="chead">
+    <div class="num">Appendix A<span class="pm">PMK-apA-</span></div>
+    <h1>Keyboard shortcuts</h1>
+    <div class="sub">Two layers, and knowing which is which explains the behaviour</div>
+  </div>
+
+  <p>Shortcuts are handled in two places. The <b>application layer</b>
+  (<span class="fileref">app.rs::subscription</span>) sees every key press regardless of focus and returns
+  <code>None</code> for anything it does not act on, so ordinary typing does not spawn a redundant update
+  cycle. The <b>editor layer</b> (<span class="fileref">editor/renderer.rs</span>) only fires while the
+  markdown editor widget is focused. On macOS, <kbd>Cmd</kbd> works everywhere <kbd>Ctrl</kbd> does — both
+  layers test <code>modifiers.command() || modifiers.control()</code>.</p>
+
+  <h2>Application layer</h2>
+  <table class="compact">
+    <thead><tr><th style="width:26%">Shortcut</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>P</kbd></td><td>Open the command palette</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>Open a folder as a vault</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td><td>New file</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Save the active note immediately, with a confirming toast</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>Search — routed to the active pane, see below</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Toggle the sidebar</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>T</kbd></td><td>Toggle the table of contents</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Copy the PDF text selection, when the PDF pane holds one</td></tr>
+      <tr><td><kbd>Escape</kbd></td><td>Close the topmost overlay, in priority order</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>Submit the open name modal</td></tr>
+      <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Scroll the PDF pane by 64&nbsp;px</td></tr>
+      <tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>Scroll the PDF pane by 520&nbsp;px</td></tr>
+    </tbody>
+  </table>
+
+  <h3>What <kbd>Ctrl</kbd>+<kbd>F</kbd> does</h3>
+  <p>It follows the active pane rather than opening one fixed panel:</p>
+  <ol class="tight">
+    <li><b>Split view with a file open</b> — if the PDF pane was the last one you interacted with (by
+    scrolling, clicking, or selecting text) it opens PDF search; otherwise in-note search.</li>
+    <li><b>PDF only</b> — PDF search.</li>
+    <li><b>A note open</b> — in-note search.</li>
+    <li><b>Nothing open</b> — global vault search.</li>
+  </ol>
+
+  <h3>What <kbd>Escape</kbd> closes</h3>
+  <p>In order, closing exactly one thing per press: the PDF text selection → the focused annotation → the PDF
+  link preview → the open modal → the study tracker → in-file search → global search → the command palette →
+  the table of contents.</p>
+
+  <h2>Editor layer</h2>
+  <table class="compact">
+    <thead><tr><th style="width:26%">Shortcut</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo one word-sized run</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Redo</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select the whole document</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></td><td>Copy / cut / paste</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Toggle <b>bold</b> around the selection</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td><td>Toggle <em>italic</em></td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Toggle <code>inline code</code></td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Insert a link</td></tr>
+      <tr><td><kbd>Tab</kbd></td><td>Insert four spaces</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>New line, continuing a list marker where applicable</td></tr>
+      <tr><td><kbd>Backspace</kbd> / <kbd>Delete</kbd></td><td>Delete backward / forward</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Move the cursor; hold
+        <kbd>Shift</kbd> to extend the selection</td></tr>
+      <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>Start / end of line; <kbd>Shift</kbd> extends</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+click</td><td>Follow a link, including a <code>pdf://</code> deep link</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box plain"><span class="tag">Two things that surprise people</span>
+  <p><kbd>Ctrl</kbd>+<kbd>B</kbd> is bound on <b>both</b> layers. With the editor focused it also formats the
+  selection bold; the sidebar toggle fires regardless.</p>
+  <p><kbd>Ctrl</kbd>+<kbd>Y</kbd> is the <b>only</b> redo binding. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>
+  is not bound.</p></div>
+
+  <h2>Palette-only commands</h2>
+  <table class="compact">
+    <thead><tr><th style="width:34%">Command</th><th>Also on the toolbar?</th></tr></thead>
+    <tbody>
+      <tr><td>Toggle Backlinks</td><td>no</td></tr>
+      <tr><td>Study Tracker</td><td>yes</td></tr>
+      <tr><td>Split View</td><td>yes</td></tr>
+      <tr><td>Focus Mode</td><td>no</td></tr>
+    </tbody>
+  </table>
+  <p><b>Focus Mode</b> is a one-shot action, not a toggle: it hides the sidebar, the backlinks panel and the
+  table of contents, and closes the tracker, leaving just the document. <b>Split View</b> requires both a note
+  and a PDF to be open; otherwise it raises a toast explaining why.</p>
+
+  <h2>Mouse and trackpad</h2>
+  <table class="compact">
+    <thead><tr><th style="width:24%">Gesture</th><th style="width:16%">Context</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>Wheel</td><td>Editor / PDF</td><td>Scroll vertically</td></tr>
+      <tr><td>Wheel over a wide block</td><td>Editor</td><td>Scroll that table or code block horizontally,
+        independently of the page</td></tr>
+      <tr><td>Click and drag</td><td>Editor</td><td>Select text</td></tr>
+      <tr><td>Click and drag</td><td>PDF</td><td>Select PDF text</td></tr>
+      <tr><td>Right-click a reference</td><td>PDF</td><td>Preview the target equation, figure, table or
+        section in place</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+click a link</td><td>Editor</td><td>Follow a wikilink, a file link, or a
+        <code>pdf://</code> deep link</td></tr>
+      <tr><td>Drag the divider</td><td>Split view</td><td>Resize the panes</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ---------- APPENDIX B ---------- -->
+<section class="chapter" id="apB">
+  <div class="chead">
+    <div class="num">Appendix B<span class="pm">PMK-apB-</span></div>
+    <h1>Every named constant</h1>
+    <div class="sub">Read once; grep when you need it</div>
+  </div>
+
+  <p>Values below were read from the source tree. If one disagrees with the code, the code is right.</p>
+
+  <h2>Timing</h2>
+  <table class="compact">
+    <thead><tr><th style="width:30%">Constant</th><th style="width:14%">Value</th><th>Where · what it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>AUTOSAVE_DEBOUNCE</code></td><td class="num">400 ms</td><td><span class="fileref">editor_state.rs</span> — quiet time before a write</td></tr>
+      <tr><td><code>AUTOSAVE_POLL</code></td><td class="num">100 ms</td><td><span class="fileref">editor_state.rs</span> — poll interval, finer than the debounce on purpose</td></tr>
+      <tr><td><code>HIGHLIGHT_DEBOUNCE</code></td><td class="num">80 ms</td><td><span class="fileref">editor_state.rs</span> — re-parse delay for large documents</td></tr>
+      <tr><td><code>SEARCH_DEBOUNCE</code></td><td class="num">200 ms</td><td><span class="fileref">search_state.rs</span> — one scan per query, not one per keystroke</td></tr>
+      <tr><td><code>UNDO_COALESCE_WINDOW</code></td><td class="num">300 ms</td><td><span class="fileref">editor/buffer.rs</span> — a pause longer than this starts a new undo run</td></tr>
+      <tr><td><code>VAULT_WATCH_DEBOUNCE</code></td><td class="num">300 ms</td><td><span class="fileref">app.rs</span> — filesystem watcher coalescing</td></tr>
+      <tr><td><code>SELF_WRITE_GRACE</code></td><td class="num">3 s</td><td><span class="fileref">app.rs</span> — suppresses watcher events caused by the app's own saves</td></tr>
+      <tr><td><code>FAST</code></td><td class="num">120 ms</td><td><span class="fileref">motion.rs</span> — toasts, chips</td></tr>
+      <tr><td><code>OVERLAY</code></td><td class="num">140 ms</td><td><span class="fileref">motion.rs</span> — palette, modals</td></tr>
+      <tr><td><code>PANEL</code></td><td class="num">180 ms</td><td><span class="fileref">motion.rs</span> — side panels</td></tr>
+      <tr><td><code>EASE</code></td><td class="num">EaseOutQuad</td><td><span class="fileref">motion.rs</span> — the only easing curve</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Limits and thresholds</h2>
+  <table class="compact">
+    <thead><tr><th style="width:30%">Constant</th><th style="width:14%">Value</th><th>Where · what it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>MAX_RETAINED_BUFFERS</code></td><td class="num">32</td><td><span class="fileref">editor_state.rs</span> — parked documents with their undo stacks</td></tr>
+      <tr><td><code>LARGE_DOC_LINE_THRESHOLD</code></td><td class="num">1 000</td><td><span class="fileref">editor_state.rs</span> — above this, highlighting is debounced</td></tr>
+      <tr><td><code>HUGE_DOC_LINE_THRESHOLD</code></td><td class="num">5 000</td><td><span class="fileref">editor_state.rs</span> — above this, open with placeholder lines</td></tr>
+      <tr><td><code>MAX_WALK_DEPTH</code></td><td class="num">32</td><td><span class="fileref">core/vault.rs</span> — directory recursion cap</td></tr>
+      <tr><td><code>MAX_RESULTS</code></td><td class="num">40</td><td><span class="fileref">views/command_palette.rs</span> — palette result cap</td></tr>
+      <tr><td><code>MAX_CONTENT_WIDTH</code></td><td class="num">880.0</td><td><span class="fileref">editor/renderer.rs</span> — readable measure for prose</td></tr>
+      <tr><td><code>SPAN_WIDTH_CACHE_CAP</code></td><td class="num">8 192</td><td><span class="fileref">editor/renderer.rs</span> — character-width measurement cache</td></tr>
+      <tr><td><code>PDF_SUPERSAMPLE_MAX</code></td><td class="num">3.0</td><td><span class="fileref">app.rs</span> — ceiling on PDF render oversampling</td></tr>
+      <tr><td><code>PDF_PAGE_BITMAP_EVICT_MARGIN</code></td><td class="num">6</td><td><span class="fileref">pdf_pane.rs</span> — pages kept either side of the viewport</td></tr>
+    </tbody>
+  </table>
+
+  <h2>PDF and references</h2>
+  <table class="compact">
+    <thead><tr><th style="width:30%">Constant</th><th style="width:14%">Value</th><th>Where · what it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>RESOLVER_VERSION</code></td><td class="num">2</td><td><span class="fileref">core/references.rs</span> — <b>bump whenever resolver output changes</b></td></tr>
+      <tr><td><code>RIGHT_MARGIN_FRAC</code></td><td class="num">0.62</td><td><span class="fileref">core/references.rs</span> — past this fraction of page width, a number is a label</td></tr>
+      <tr><td><code>CAPTION_PREVIEW_SHIFT</code></td><td class="num">110.0 pt</td><td><span class="fileref">core/references.rs</span> — nudge the preview off the caption onto the artwork</td></tr>
+      <tr><td><code>PREVIEW_WINDOW_PT</code></td><td class="num">300.0 pt</td><td><span class="fileref">core/pdf.rs</span> — the right-click preview crop</td></tr>
+      <tr><td><code>MAX_TOC_SCAN</code></td><td class="num">24</td><td><span class="fileref">core/pdf.rs</span> — pages examined when looking for a printed contents page</td></tr>
+      <tr><td><code>MAX_TOC_LEVELS</code> / <code>MAX_LEVELS</code></td><td class="num">4</td><td>outline depth caps</td></tr>
+      <tr><td><code>PDF_PAGE_SPACING</code></td><td class="num">20.0</td><td><span class="fileref">views/pdf_viewer.rs</span> — gap between page slots</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Design tokens</h2>
+  <table class="compact">
+    <thead><tr><th style="width:38%">Type scale</th><th style="width:30%">Spacing (2 px grid)</th><th>Radii</th></tr></thead>
+    <tbody>
+      <tr><td><code>TEXT_XS</code> 10 · <code>TEXT_SM</code> 12 · <code>TEXT_BASE</code> 14<br>
+        <code>TEXT_MD</code> 16 · <code>TEXT_LG</code> 18 · <code>TEXT_DISPLAY</code> 42</td>
+        <td><code>SPACE_0</code> 0 · <code>SPACE_1</code> 2 · <code>SPACE_2</code> 4<br>
+        <code>SPACE_3</code> 8 · <code>SPACE_4</code> 12 · <code>SPACE_5</code> 16 · <code>SPACE_6</code> 24</td>
+        <td><code>RADIUS_SM</code> 3<br><code>RADIUS_MD</code> 6<br><code>RADIUS_LG</code> 10</td></tr>
+    </tbody>
+  </table>
+
+  <table class="compact">
+    <thead><tr><th style="width:26%">Colour</th><th style="width:16%">Hex</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>BG_PRIMARY</code></td><td><code>#0d0e10</code></td><td>Window and panel ground</td></tr>
+      <tr><td><code>BG_SECONDARY</code></td><td><code>#181a1d</code></td><td>Raised surfaces</td></tr>
+      <tr><td><code>BG_TERTIARY</code></td><td><code>#23262b</code></td><td>Inputs, hovered rows</td></tr>
+      <tr><td><code>BG_SURFACE</code></td><td><code>#334b47</code></td><td>Selected / active surface</td></tr>
+      <tr><td><code>BORDER</code> · <code>BORDER_SUBTLE</code></td><td><code>#45484e</code> · <code>#1d2024</code></td><td>Standard borders · hairline dividers</td></tr>
+      <tr><td><code>TEXT_PRIMARY</code></td><td><code>#e3e5ed</code></td><td>Body and default UI text</td></tr>
+      <tr><td><code>TEXT_SECONDARY</code> · <code>TEXT_MUTED</code></td><td><code>#a9abb2</code> · <code>#9d9ea3</code></td><td>Secondary · captions, placeholders, disabled</td></tr>
+      <tr><td><code>ACCENT</code> · <code>ACCENT_SECONDARY</code></td><td><code>#b1ccc6</code> · <code>#cde8e2</code></td><td>Primary accent · lighter accent</td></tr>
+      <tr><td><code>ACCENT_GLOW</code> · <code>ACCENT_DIM</code></td><td>accent @ 50% · @ 20%</td><td>Focus rings, rules · subtle fills</td></tr>
+      <tr><td><code>DANGER</code> · <code>SUCCESS</code> · <code>WARNING</code></td><td><code>#ee7d77</code> · <code>#d9f2d2</code> · <code>#bfdad4</code></td><td>Destructive · confirmations · cautions</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Panel widths and file names</h2>
+  <table class="compact">
+    <tbody>
+      <tr><td style="width:34%"><code>SIDEBAR_WIDTH</code> / <code>TOC_WIDTH</code> / <code>BACKLINKS_WIDTH</code></td>
+        <td>260.0 / 250.0 / 220.0 — <b>must match the width the panel lays out at</b></td></tr>
+      <tr><td><code>DB_FILE_NAME</code></td><td><code>md_editor_settings.sqlite</code></td></tr>
+      <tr><td><code>PAIRS</code></td><td><code>[('(', ')'), ('[', ']'), ('{', '}')]</code> — quotes are handled separately, so contractions survive</td></tr>
+      <tr><td><code>IMAGE_EXTENSIONS</code><br><span class="fileref">core/src/vault.rs</span></td>
+        <td><code>["jpeg", "jpg", "png", "svg", "webp", "avif"]</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="box trap"><span class="tag">Trap — and a worked example of “the code is right”</span>
+  <p>The wiki's user guide and the project README both list the supported image types as
+  <code>.png .jpg .jpeg .gif .bmp .webp</code>. The single source of truth,
+  <span class="fileref">core/src/vault.rs:8</span>, says
+  <code>["jpeg", "jpg", "png", "svg", "webp", "avif"]</code> — so <code>.gif</code> and <code>.bmp</code> are
+  <em>not</em> indexed, and <code>.svg</code> and <code>.avif</code> <em>are</em>.</p>
+  <p>This is exactly the drift the documentation convention is meant to catch: when a page and the code
+  disagree, the code is right and the page is the bug. Check the constant before you trust a list.</p></div>
+</section>

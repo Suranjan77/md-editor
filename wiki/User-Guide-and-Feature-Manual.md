@@ -41,7 +41,7 @@ The last vault and last open file are restored the next time you launch.
 | :--- | :--- |
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
-| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp` |
+| Images | `.jpeg`, `.jpg`, `.png`, `.svg`, `.webp`, `.avif` |
 
 Images open in a dedicated preview pane.
 
