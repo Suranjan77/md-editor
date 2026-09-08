@@ -245,10 +245,10 @@ cargo test -p md-editor-native
 
 ## Documentation
 
-- [Feature document](docs/FEATURES.md) covers the version 1 feature set,
-  platform notes, and architecture summary.
-- [Launch checklist](docs/LAUNCH.md) covers release checks, smoke testing,
-  PDFium packaging, and known constraints.
+- [**Project Wiki**](wiki/Home.md) — Comprehensive GitHub Wiki covering architecture, subsystems, markdown pipeline, PDF engine, and full user & developer manuals.
+- [Contributor & Architecture Guide](guide.md) — Quick architectural summary and contributor handbook.
+- [Feature document](docs/FEATURES.md) — Complete version 1 feature set, platform notes, and architecture summary.
+- [Launch checklist](docs/LAUNCH.md) — Release checks, smoke testing, durability invariants, and packaging notes.
 
 ## License
 
