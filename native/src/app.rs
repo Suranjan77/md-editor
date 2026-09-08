@@ -12,7 +12,7 @@ use crate::pdf_notes::{
 };
 use crate::theme as app_theme;
 use crate::views;
-use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
+use crate::views::pdf_viewer::PDF_PAGE_LIST_PADDING;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
@@ -29,6 +29,17 @@ const PDF_PAGE_BITMAP_EVICT_MARGIN: u16 = 6;
 enum ActivePanel {
     Markdown,
     Pdf,
+}
+
+/// Result of attempting to persist the active document. Callers decide how
+/// loudly to report each case: an explicit `Ctrl+S` confirms success, autosave
+/// stays silent unless it fails, and a file switch refuses to proceed on
+/// failure rather than navigating away from unsaved work.
+enum SaveOutcome {
+    Saved,
+    /// Nothing was dirty, or no document is open.
+    NothingToDo,
+    Failed(String),
 }
 
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
@@ -74,13 +85,25 @@ pub struct MdEditor {
     // Search (query/replace, vault + PDF results, in-document match cache)
     search: crate::search_state::SearchState,
     active_panel: ActivePanel,
+
+    /// Paths this app wrote very recently, so the vault watcher can tell our
+    /// own saves apart from genuine external edits.
+    self_writes: std::collections::HashMap<String, std::time::Instant>,
+    /// Whether the current run of autosave failures has already been reported.
+    /// Retries continue quietly; only the first failure raises a toast.
+    autosave_failure_reported: bool,
+
+    /// In-flight UI transitions (panels opening, toasts fading). Mirrors the
+    /// visibility flags that live on the sub-states; see [`crate::motion`].
+    motion: crate::motion::Motion,
 }
 
-impl MdEditor {
-    pub fn new() -> (Self, Task<Message>) {
-        Self::new_with_startup_file(None)
-    }
+/// How long a path stays marked as "we just wrote this". Comfortably longer
+/// than the vault watcher's debounce, short enough that a real external edit
+/// arriving later is never mistaken for our own.
+const SELF_WRITE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
+impl MdEditor {
     /// `startup_file` is a path passed on the command line (typically by the
     /// OS "open with" handler). When set it overrides the remembered
     /// last-vault/last-file: a file inside the last vault opens in that vault,
@@ -111,7 +134,18 @@ impl MdEditor {
             ui: crate::ui_state::UiState::new(),
             search: crate::search_state::SearchState::new(),
             active_panel: ActivePanel::Markdown,
+            self_writes: std::collections::HashMap::new(),
+            autosave_failure_reported: false,
+            motion: crate::motion::Motion::new(),
         };
+
+        // Seed the geometry the window was actually restored at. Without this,
+        // every layout computation (PDF fit-to-width, editor viewport, modal
+        // sizing) would use the 1200x800 default until the first resize event
+        // arrived — and on a platform that emits none, forever.
+        let restored = crate::restore_window_size();
+        app.ui.window_width = restored.width;
+        app.ui.window_height = restored.height;
 
         let startup = startup_file.and_then(|p| resolve_startup_target(&p, last_vault.as_deref()));
 
@@ -189,20 +223,20 @@ impl MdEditor {
             if key == Key::Named(Named::Enter) {
                 return Some(Message::NameModalSubmitCurrent);
             }
-            if modifiers.command() || modifiers.control() {
-                if let Key::Character(c) = key.as_ref() {
-                    return match c {
-                        "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
-                        "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
-                        "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
-                        "f" => Some(Message::KeyboardShortcut(Shortcut::Search)),
-                        "c" => Some(Message::PdfCopySelection),
-                        "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
-                        "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
-                        "t" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
-                        _ => None,
-                    };
-                }
+            if (modifiers.command() || modifiers.control())
+                && let Key::Character(c) = key.as_ref()
+            {
+                return match c {
+                    "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
+                    "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
+                    "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
+                    "f" => Some(Message::KeyboardShortcut(Shortcut::Search)),
+                    "c" => Some(Message::PdfCopySelection),
+                    "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
+                    "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
+                    "t" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
+                    _ => None,
+                };
             }
             match key {
                 Key::Named(Named::ArrowDown) => Some(Message::PdfScrollBy(64.0)),
@@ -222,6 +256,16 @@ impl MdEditor {
         let highlight_debounce = if self.editor.pending_highlight_generation.is_some() {
             iced::time::every(crate::editor_state::HIGHLIGHT_DEBOUNCE)
                 .map(|_| Message::HighlightDebounceElapsed)
+        } else {
+            Subscription::none()
+        };
+
+        // Armed only while there are unwritten edits, so an idle app ticks for
+        // nothing. The tick is finer than the debounce because its phase is
+        // independent of the last keystroke: polling at the debounce itself
+        // would let a write land up to two windows after typing stopped.
+        let autosave = if self.editor.autosave_pending_since.is_some() {
+            iced::time::every(crate::editor_state::AUTOSAVE_POLL).map(|_| Message::AutosaveElapsed)
         } else {
             Subscription::none()
         };
@@ -249,7 +293,7 @@ impl MdEditor {
 
         let window_events = iced::event::listen_with(|event, _status, window_id| match event {
             iced::Event::Window(iced::window::Event::Resized(size)) => {
-                Some(Message::WindowResized(size.width as f32, size.height as f32))
+                Some(Message::WindowResized(size.width, size.height))
             }
             // Captured so we can query the initial scale factor — a static
             // HiDPI monitor may never emit `Rescaled`.
@@ -258,6 +302,11 @@ impl MdEditor {
             }
             iced::Event::Window(iced::window::Event::Rescaled(factor)) => {
                 Some(Message::WindowRescaled(factor))
+            }
+            // Intercepted rather than letting the window close directly, so the
+            // last few hundred milliseconds of typing are written before exit.
+            iced::Event::Window(iced::window::Event::CloseRequested) => {
+                Some(Message::WindowCloseRequested)
             }
             _ => None,
         });
@@ -270,10 +319,20 @@ impl MdEditor {
             None => Subscription::none(),
         };
 
+        // Redraw every frame only while something is actually moving; a
+        // settled UI subscribes to nothing.
+        let animation = if self.motion.is_animating() {
+            iced::window::frames().map(Message::AnimationTick)
+        } else {
+            Subscription::none()
+        };
+
         Subscription::batch(vec![
             keyboard,
+            animation,
             toast,
             highlight_debounce,
+            autosave,
             search_debounce,
             mouse_drag,
             window_events,
@@ -283,6 +342,17 @@ impl MdEditor {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.update_inner(message);
+
+        // Point every transition at the flags that own the real state. Doing
+        // it here, once, means a flag flipped anywhere animates without the
+        // code that flipped it having to know motion exists.
+        self.motion.sync(
+            self.vault.sidebar_visible,
+            self.editor.toc_visible,
+            self.vault.backlinks_visible,
+            self.ui.toast.as_deref(),
+            self.ui.command_palette_visible,
+        );
         // Refresh the memoized search-match cache once per message so the
         // subsequent view() can read it without rescanning the buffer.
         self.search.ensure_matches(
@@ -310,7 +380,10 @@ impl MdEditor {
                 self.vault.entries = entries;
                 // Backlinks for the active file depend on the freshly built
                 // index; refresh them now that indexing has completed.
-                if let Some(path) = self.active_path.clone().or_else(|| self.pdf.active_path.clone())
+                if let Some(path) = self
+                    .active_path
+                    .clone()
+                    .or_else(|| self.pdf.active_path.clone())
                 {
                     self.vault.backlinks =
                         md_editor_core::vault::get_mixed_backlinks(&self.state, &path)
@@ -323,8 +396,7 @@ impl MdEditor {
             m @ (Message::SidebarToggle | Message::SidebarFolderToggled(_)) => self.vault.update(m),
             Message::SidebarFileClicked(path) => {
                 let path = path.trim().to_string();
-                if path.starts_with("pdf://") {
-                    let url_str = &path["pdf://".len()..];
+                if let Some(url_str) = path.strip_prefix("pdf://") {
                     let (pdf_path, query) = if let Some(idx) = url_str.find('?') {
                         (&url_str[..idx], Some(&url_str[idx + 1..]))
                     } else {
@@ -495,6 +567,18 @@ impl MdEditor {
             }
             // UI chrome arms that mutate only `self.ui` are routed to
             // `UiState::update`; see ui_state.rs.
+            // Opening the palette also puts the caret in its field: a palette
+            // you have to click into first is not reachable from the keyboard,
+            // which is the only reason it exists.
+            Message::CommandPaletteOpen => {
+                let task = self.ui.update(Message::CommandPaletteOpen);
+                Task::batch(vec![
+                    task,
+                    operation::focus(iced::advanced::widget::Id::new(
+                        views::command_palette::PALETTE_INPUT_ID,
+                    )),
+                ])
+            }
             m @ (Message::CreateFileDialog
             | Message::CreateFolderDialog
             | Message::DeleteFileDialog(_)
@@ -503,14 +587,13 @@ impl MdEditor {
             | Message::PdfLinkNoteFileSelected(_)
             | Message::PdfLinkNotePickerSearchChanged(_)
             | Message::NameModalCancel
-            | Message::NameModalSubmitCurrent
-            | Message::CommandPaletteOpen
             | Message::CommandPaletteQueryChanged(_)
             | Message::ShowToast(_)
             | Message::ToastHide
             | Message::SplitViewDragStart) => self.ui.update(m),
             Message::NameModalSubmit(input) => {
-                if let Some(views::modals::ModalType::QuickNote(id)) = self.ui.active_modal.clone() {
+                if let Some(views::modals::ModalType::QuickNote(id)) = self.ui.active_modal.clone()
+                {
                     self.ui.active_modal = None;
                     self.ui.modal_input.clear();
                     self.ui.link_note_picker_search.clear();
@@ -564,9 +647,14 @@ impl MdEditor {
                     Ok(()) => {
                         self.vault.entries =
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+                        // Drop any parked buffer for the deleted path so a new
+                        // file created under the same name cannot inherit the
+                        // old document's undo history.
+                        self.editor.forget_retained(&path);
                         if self.active_path.as_deref() == Some(path.as_str()) {
                             self.active_path = None;
                             self.editor.buffer = DocBuffer::new();
+                            self.editor.autosave_pending_since = None;
                             self.editor.highlighted_lines.clear();
                         }
                         if self.pdf.active_path.as_deref() == Some(path.as_str()) {
@@ -593,16 +681,36 @@ impl MdEditor {
                 self.editor.update(m)
             }
             Message::EditorSave => {
-                if let Some(path) = &self.active_path {
-                    let content = self.editor.buffer.text();
-                    match md_editor_core::vault::save_file(&self.state, path, &content) {
-                        Ok(()) => {
-                            self.editor.buffer.dirty = false;
-                            self.ui.toast = Some("File saved".to_string());
-                        }
-                        Err(err) => {
-                            self.ui.toast = Some(format!("Save failed: {err}"));
-                        }
+                match self.save_active_document() {
+                    SaveOutcome::Saved => self.ui.toast = Some("File saved".to_string()),
+                    // An explicit save always answers, even when autosave got
+                    // there first — pressing Ctrl+S and seeing nothing happen
+                    // reads as the keystroke having been swallowed.
+                    SaveOutcome::NothingToDo if self.active_path.is_some() => {
+                        self.ui.toast = Some("No unsaved changes".to_string())
+                    }
+                    SaveOutcome::NothingToDo => {}
+                    SaveOutcome::Failed(err) => self.ui.toast = Some(format!("Save failed: {err}")),
+                }
+                Task::none()
+            }
+            Message::AnimationTick(now) => {
+                self.motion.now = now;
+                Task::none()
+            }
+            Message::AutosaveElapsed => {
+                if self.editor.autosave_due() {
+                    // Autosave is silent on success — a toast on every pause in
+                    // typing would be noise. Failures still surface, because a
+                    // failed autosave is exactly when the user needs to know.
+                    // Only the first failure in a run speaks up, though: the
+                    // retry keeps going in the background, and a toast every
+                    // few hundred milliseconds would bury the rest of the UI.
+                    if let SaveOutcome::Failed(err) = self.save_active_document()
+                        && !self.autosave_failure_reported
+                    {
+                        self.autosave_failure_reported = true;
+                        self.ui.toast = Some(format!("Autosave failed: {err}"));
                     }
                 }
                 Task::none()
@@ -679,7 +787,8 @@ impl MdEditor {
                 };
                 let layout_task = if self.pdf.fit_to_width
                     && self
-                        .pdf.page_sizes
+                        .pdf
+                        .page_sizes
                         .iter()
                         .take(pages as usize)
                         .any(Option::is_some)
@@ -770,13 +879,15 @@ impl MdEditor {
                 self.pdf.fit_to_width = true;
                 let available_width = self.pdf_available_width();
                 let page_width = self
-                    .pdf.page_sizes
+                    .pdf
+                    .page_sizes
                     .iter()
                     .flatten()
                     .next()
                     .map(|(w, _)| (*w).max(1.0))
                     .or_else(|| {
-                        self.pdf.dimensions
+                        self.pdf
+                            .dimensions
                             .iter()
                             .flatten()
                             .next()
@@ -1073,24 +1184,53 @@ impl MdEditor {
             }
 
             m @ Message::TrackerToggle => self.tracker.update(m, &self.state),
+            Message::NameModalSubmitCurrent => {
+                // Enter belongs to the palette while it is open; otherwise it
+                // falls through to whatever modal is showing.
+                if self.ui.command_palette_visible {
+                    let action = views::command_palette::action_at(
+                        &self.ui.command_palette_query,
+                        &self.ui.commands,
+                        &self.vault.entries,
+                        self.ui.palette_selected,
+                    );
+                    return match action {
+                        Some(views::command_palette::PaletteAction::Command(shortcut)) => {
+                            Task::done(Message::CommandPaletteCommandClicked(shortcut))
+                        }
+                        Some(views::command_palette::PaletteAction::OpenFile(path)) => {
+                            Task::done(Message::CommandPaletteFileClicked(path))
+                        }
+                        None => Task::none(),
+                    };
+                }
+                self.ui.update(Message::NameModalSubmitCurrent)
+            }
+            Message::CommandPaletteFileClicked(path) => {
+                self.ui.command_palette_visible = false;
+                self.ui.command_palette_query.clear();
+                // Reuse the sidebar's open path: it already routes markdown,
+                // PDFs and images to the right viewer.
+                Task::done(Message::SidebarFileClicked(path))
+            }
             Message::CommandPaletteCommandClicked(shortcut) => {
                 self.ui.command_palette_visible = false;
                 self.ui.command_palette_query.clear();
                 Task::done(Message::KeyboardShortcut(shortcut))
             }
             m @ (Message::TrackerStart
-                | Message::TrackerStop
-                | Message::TrackerTabSelected(_)
-                | Message::TrackerProjectStatusChanged(..)
-                | Message::TrackerGateToggled(..)
-                | Message::TrackerReadingToggled(..)
-                | Message::TrackerConfigEdited(_)
-                | Message::TrackerConfigSave
-                | Message::TrackerManualDateChanged(_)
-                | Message::TrackerManualHoursChanged(_)
-                | Message::TrackerManualNotesChanged(_)
-                | Message::TrackerManualAdd
-                | Message::TrackerSessionDelete(_)) => self.tracker.update(m, &self.state),
+            | Message::TrackerStop
+            | Message::TrackerTabSelected(_)
+            | Message::TrackerProjectStatusChanged(..)
+            | Message::TrackerGateToggled(..)
+            | Message::TrackerReadingToggled(..)
+            | Message::TrackerConfigEdited(_)
+            | Message::TrackerConfigSave
+            | Message::TrackerManualDateChanged(_)
+            | Message::TrackerManualHoursChanged(_)
+            | Message::TrackerManualNotesChanged(_)
+            | Message::TrackerManualAdd
+            | Message::TrackerSessionDelete(_)) => self.tracker.update(m, &self.state),
 
             Message::GlobalSearchOpen => {
                 self.search.visible = true;
@@ -1138,10 +1278,11 @@ impl MdEditor {
                     return Task::none();
                 }
                 let q = self.search.query.clone();
-                if q.len() > 2 && !self.search.regex {
-                    if let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q) {
-                        self.search.results = res;
-                    }
+                if q.len() > 2
+                    && !self.search.regex
+                    && let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q)
+                {
+                    self.search.results = res;
                 }
                 if (self.search.visible || self.pdf_search_is_active())
                     && self.pdf.active_path.is_some()
@@ -1263,6 +1404,23 @@ impl MdEditor {
                 }
             }
             Message::PdfScrollBy(delta) => {
+                // The palette owns the arrow keys while it is open.
+                if self.ui.command_palette_visible {
+                    let count = views::command_palette::result_count(
+                        &self.ui.command_palette_query,
+                        &self.ui.commands,
+                        &self.vault.entries,
+                    );
+                    if count > 0 {
+                        let last = count - 1;
+                        self.ui.palette_selected = if delta > 0.0 {
+                            (self.ui.palette_selected + 1).min(last)
+                        } else {
+                            self.ui.palette_selected.saturating_sub(1)
+                        };
+                    }
+                    return Task::none();
+                }
                 if self.pdf.active_path.is_none()
                     || (!self.showing_pdf
                         && !(self.ui.split_view_active && self.active_path.is_some()))
@@ -1293,7 +1451,8 @@ impl MdEditor {
                     .unwrap_or_default();
                 self.pdf.annotations.clear();
                 for ann in annotations {
-                    self.pdf.annotations
+                    self.pdf
+                        .annotations
                         .entry(ann.page_index)
                         .or_default()
                         .push(ann);
@@ -1357,8 +1516,7 @@ impl MdEditor {
                         async move {
                             let renderer = state_refs.pdf_renderer.as_ref()?;
                             // Embedded outline first (cheap, no scan).
-                            let mut toc =
-                                renderer.get_embedded_toc(&abs).unwrap_or_default();
+                            let mut toc = renderer.get_embedded_toc(&abs).unwrap_or_default();
                             let n = renderer.page_count(&abs).ok()?;
                             let mut pages = Vec::with_capacity(n as usize);
                             for i in 0..n {
@@ -1371,9 +1529,8 @@ impl MdEditor {
                             if toc.is_empty() {
                                 toc = md_editor_core::pdf::recover_toc_from_texts(&pages);
                             }
-                            let links = md_editor_core::references::resolve_references(
-                                &pages, &toc,
-                            );
+                            let links =
+                                md_editor_core::references::resolve_references(&pages, &toc);
                             state_refs.put_pdf_references(&doc_id, &links);
                             Some(links)
                         },
@@ -1421,14 +1578,14 @@ impl MdEditor {
                 if !self.pdf_copy_shortcut_is_active() {
                     return Task::none();
                 }
-                if let Some(sel) = &self.pdf.selection {
-                    if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
-                        let start = sel.anchor_idx.min(sel.focus_idx);
-                        let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-                        let selected = text_by_char_range(&page_text.text, start, end);
-                        if !selected.is_empty() {
-                            return iced::clipboard::write(selected);
-                        }
+                if let Some(sel) = &self.pdf.selection
+                    && let Some(page_text) = self.pdf.page_text.get(&sel.page_index)
+                {
+                    let start = sel.anchor_idx.min(sel.focus_idx);
+                    let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
+                    let selected = text_by_char_range(&page_text.text, start, end);
+                    if !selected.is_empty() {
+                        return iced::clipboard::write(selected);
                     }
                 }
                 Task::none()
@@ -1476,11 +1633,11 @@ impl MdEditor {
                     if self.pdf.focused_annotation_id.as_ref() == Some(&id) {
                         self.pdf.focused_annotation_id = None;
                     }
-                    if let Some(views::modals::ModalType::QuickNote(ref mid)) = self.ui.active_modal {
-                        if mid == &id {
-                            self.ui.active_modal = None;
-                            self.ui.modal_input.clear();
-                        }
+                    if let Some(views::modals::ModalType::QuickNote(ref mid)) = self.ui.active_modal
+                        && mid == &id
+                    {
+                        self.ui.active_modal = None;
+                        self.ui.modal_input.clear();
                     }
                     if let Some(ref path) = self.pdf.active_path {
                         self.vault.backlinks =
@@ -1528,7 +1685,8 @@ impl MdEditor {
                     if note_path.is_empty() {
                         self.ui.modal_input = self.default_pdf_note_path(&ann);
                         self.ui.link_note_picker_search.clear();
-                        self.ui.active_modal = Some(views::modals::ModalType::LinkNote(annotation_id));
+                        self.ui.active_modal =
+                            Some(views::modals::ModalType::LinkNote(annotation_id));
                         return Task::none();
                     }
 
@@ -1709,11 +1867,10 @@ impl MdEditor {
                             focus_global_search_input()
                         }
                     }
-                    Shortcut::CommandPalette => {
-                        self.ui.command_palette_visible = true;
-                        self.ui.command_palette_query.clear();
-                        Task::none()
-                    }
+                    // Routed through the message rather than setting the flag
+                    // here, so the shortcut and any other opener share one
+                    // path — including focusing the query field.
+                    Shortcut::CommandPalette => Task::done(Message::CommandPaletteOpen),
                     Shortcut::ToggleBacklinks => {
                         self.vault.backlinks_visible = !self.vault.backlinks_visible;
                         Task::none()
@@ -1749,8 +1906,11 @@ impl MdEditor {
                 if !self.ui.is_resizing_split {
                     return Task::none();
                 }
-                let side_width = if self.vault.sidebar_visible { 250.0 } else { 0.0 }
-                    + if self.tracker.visible { 300.0 } else { 0.0 }
+                let side_width = if self.vault.sidebar_visible {
+                    250.0
+                } else {
+                    0.0
+                } + if self.tracker.visible { 300.0 } else { 0.0 }
                     + if self.editor.toc_visible { 250.0 } else { 0.0 };
                 let content_width = (self.ui.window_width - side_width).max(480.0);
                 let x_min = side_width + 240.0;
@@ -1771,6 +1931,7 @@ impl MdEditor {
             Message::WindowResized(width, height) => {
                 self.ui.window_width = width;
                 self.ui.window_height = height;
+                self.persist_window_size();
                 if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
                     return Task::done(Message::PdfFitToWidth);
                 }
@@ -1780,6 +1941,16 @@ impl MdEditor {
                 // Pull the real scale factor; a static HiDPI monitor may never
                 // emit a `Rescaled` event, so the listener alone isn't enough.
                 iced::window::scale_factor(id).map(Message::WindowRescaled)
+            }
+            Message::WindowCloseRequested => {
+                // Best-effort flush on the way out; the close is deliberately
+                // *not* intercepted. Holding the window open on a failed write
+                // would risk an app that cannot be closed at all, which is a
+                // worse failure than the few hundred milliseconds of typing
+                // that autosave has not yet committed.
+                let _ = self.save_active_document();
+                self.persist_session();
+                Task::none()
             }
             Message::WindowRescaled(factor) => {
                 // Clamp: below 1 makes no sense, and capping at 3 bounds the
@@ -1812,6 +1983,20 @@ impl MdEditor {
                 // Reconcile the index/search for changed markdown files. The
                 // open editor buffer is intentionally NOT reloaded — that would
                 // clobber unsaved edits and fire on our own saves.
+                //
+                // Our own saves are filtered out entirely: `save_file` already
+                // updated the index and the search row, and the tree structure
+                // cannot have changed. Without this, every autosave triggered a
+                // full `list_vault` walk plus a backlink rebuild — a hitch on
+                // every pause in typing, on a large vault.
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|path| !self.is_recent_self_write(path))
+                    .collect();
+                if paths.is_empty() {
+                    return Task::none();
+                }
+
                 for path in &paths {
                     let _ = md_editor_core::vault::sync_path_from_disk(&self.state, path);
                 }
@@ -1831,7 +2016,8 @@ impl MdEditor {
             }
             Message::ToggleTOC => {
                 if self.pdf.active_path.is_some()
-                    && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()))
+                    && (self.showing_pdf
+                        || (self.ui.split_view_active && self.active_path.is_some()))
                 {
                     self.editor.toc_visible = !self.editor.toc_visible;
                     // The TOC panel changes the PDF pane width — re-fit so pages
@@ -1851,7 +2037,8 @@ impl MdEditor {
 
         let toolbar = views::toolbar::view(
             self.active_path.as_deref(),
-            self.pdf.active_path
+            self.pdf
+                .active_path
                 .as_deref()
                 .or(self.active_image_path.as_deref()),
             None,
@@ -1865,7 +2052,12 @@ impl MdEditor {
             self.active_path.is_some(),
         );
 
-        let sidebar = views::sidebar::view(
+        // Panels are clipped to an animated width rather than swapped between
+        // "full" and "absent", so opening and closing them reads as movement.
+        // The content keeps its natural width throughout; only the window onto
+        // it changes, which avoids re-laying-out the tree on every frame.
+        let sidebar_width = self.motion.sidebar_width();
+        let sidebar: Element<Message, Theme, iced::Renderer> = container(views::sidebar::view(
             &self.vault.entries,
             self.vault.selected_path.as_deref(),
             self.active_path
@@ -1873,8 +2065,11 @@ impl MdEditor {
                 .or(self.pdf.active_path.as_deref())
                 .or(self.active_image_path.as_deref()),
             &self.vault.expanded_folders,
-            !self.vault.sidebar_visible,
-        );
+            sidebar_width < 1.0,
+        ))
+        .width(Length::Fixed(sidebar_width))
+        .clip(true)
+        .into();
 
         let editor_search_active = self.editor_search_is_active();
         let pdf_search_active = self.pdf_search_is_active();
@@ -1909,7 +2104,7 @@ impl MdEditor {
                 )
                 .scale_factor(self.ui.scale_factor),
             )
-            .padding(20)
+            .padding(app_theme::SPACE_6)
             .width(Length::Fill),
         )
         .id(iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID))
@@ -1930,7 +2125,6 @@ impl MdEditor {
                     self.search.match_count(),
                     self.search.match_index,
                 )
-                .into()
             } else {
                 container(Space::new())
                     .height(Length::Fixed(0.0))
@@ -1940,77 +2134,83 @@ impl MdEditor {
             column![file_bar, editor_scroll].height(Length::Fill).into()
         };
 
-        let pdf_view: Element<Message, Theme, iced::Renderer> =
-            if let Some(_) = &self.pdf.active_path {
-                let focused_ann = self.pdf.focused_annotation_id.as_ref().and_then(|ann_id| {
-                    self.pdf.annotations
-                        .values()
-                        .flatten()
-                        .find(|a| &a.id == ann_id)
-                });
-                let pdf_toolbar = views::pdf_viewer::toolbar(
-                    self.pdf.current_page,
-                    self.pdf.total_pages,
-                    self.pdf.zoom,
-                    self.editor.toc_visible,
-                    self.pdf.selection.is_some(),
-                    self.pdf.annotations.values().any(|v| !v.is_empty()),
-                    focused_ann,
-                );
-                let pdf_pages = scrollable(views::pdf_viewer::view_continuous(
-                    &self.pdf.pages,
-                    self.pdf.zoom,
-                    &self.pdf.dimensions,
-                    &self.pdf.page_sizes,
-                    self.pdf.placeholder_page_size,
-                    if pdf_search_active || self.search.visible || self.search.file_visible {
-                        &self.search.pdf_results
-                    } else {
-                        &[]
-                    },
-                    self.search.match_index,
-                    &self.pdf.page_text,
-                    &self.pdf.annotations,
-                    &self.pdf.references,
-                    self.pdf.selection,
-                    self.pdf.focused_annotation_id.as_deref(),
-                ))
-                .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
-                .on_scroll(|vp| Message::PdfScrolled {
-                    y: vp.absolute_offset().y,
-                    viewport_height: vp.bounds().height,
-                })
-                .height(Length::Fill);
-
-                let search_bar: Element<'_, Message, Theme, iced::Renderer> = if pdf_search_active {
-                    views::pdf_viewer::search_bar(
-                        &self.search.query,
-                        self.search.regex,
-                        self.search.match_case,
-                        self.search.loose,
-                        self.search.pdf_results.len(),
-                        self.search.match_index,
-                    )
-                    .into()
+        let pdf_view: Element<Message, Theme, iced::Renderer> = if self.pdf.active_path.is_some() {
+            let focused_ann = self.pdf.focused_annotation_id.as_ref().and_then(|ann_id| {
+                self.pdf
+                    .annotations
+                    .values()
+                    .flatten()
+                    .find(|a| &a.id == ann_id)
+            });
+            let pdf_toolbar = views::pdf_viewer::toolbar(
+                self.pdf.current_page,
+                self.pdf.total_pages,
+                self.pdf.zoom,
+                self.editor.toc_visible,
+                self.pdf.selection.is_some(),
+                self.pdf.annotations.values().any(|v| !v.is_empty()),
+                focused_ann,
+            );
+            let pdf_pages = scrollable(views::pdf_viewer::view_continuous(
+                &self.pdf.pages,
+                self.pdf.zoom,
+                &self.pdf.dimensions,
+                &self.pdf.page_sizes,
+                self.pdf.placeholder_page_size,
+                if pdf_search_active || self.search.visible || self.search.file_visible {
+                    &self.search.pdf_results
                 } else {
-                    container(Space::new())
-                        .height(Length::Fixed(0.0))
-                        .width(Length::Fill)
-                        .into()
-                };
+                    &[]
+                },
+                self.search.match_index,
+                &self.pdf.page_text,
+                &self.pdf.annotations,
+                &self.pdf.references,
+                self.pdf.selection,
+                self.pdf.focused_annotation_id.as_deref(),
+            ))
+            .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
+            .on_scroll(|vp| Message::PdfScrolled {
+                y: vp.absolute_offset().y,
+                viewport_height: vp.bounds().height,
+            })
+            .height(Length::Fill);
 
-                column![search_bar, pdf_pages, pdf_toolbar]
-                    .height(Length::Fill)
-                    .into()
+            let search_bar: Element<'_, Message, Theme, iced::Renderer> = if pdf_search_active {
+                views::pdf_viewer::search_bar(
+                    &self.search.query,
+                    self.search.regex,
+                    self.search.match_case,
+                    self.search.loose,
+                    self.search.pdf_results.len(),
+                    self.search.match_index,
+                )
             } else {
-                container(Space::new()).width(Length::Fixed(0.0)).into()
+                container(Space::new())
+                    .height(Length::Fixed(0.0))
+                    .width(Length::Fill)
+                    .into()
             };
+
+            column![search_bar, pdf_pages, pdf_toolbar]
+                .height(Length::Fill)
+                .into()
+        } else {
+            container(Space::new()).width(Length::Fixed(0.0)).into()
+        };
 
         let pdf_toc_available = self.pdf.active_path.is_some()
             && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some()));
+        let toc_width = self.motion.toc_width();
         let toc_view: Element<Message, Theme, iced::Renderer> =
-            if self.editor.toc_visible && pdf_toc_available {
-                views::toc::view(&self.pdf.toc_entries, self.pdf.toc_is_synthetic)
+            if toc_width >= 1.0 && pdf_toc_available {
+                container(views::toc::view(
+                    &self.pdf.toc_entries,
+                    self.pdf.toc_is_synthetic,
+                ))
+                .width(Length::Fixed(toc_width))
+                .clip(true)
+                .into()
             } else {
                 container(Space::new()).width(Length::Fixed(0.0)).into()
             };
@@ -2020,16 +2220,18 @@ impl MdEditor {
                 let label = self.active_image_path.as_deref().unwrap_or("Image");
                 container(
                     column![
-                        text(label).size(13).color(app_theme::TEXT_MUTED),
+                        text(label)
+                            .size(app_theme::TEXT_BASE)
+                            .color(app_theme::TEXT_MUTED),
                         iced::widget::image(handle.clone())
                             .width(Length::Fill)
                             .height(Length::Fill)
                             .content_fit(iced::ContentFit::Contain),
                         text(format!("{:.0} x {:.0}", width, height))
-                            .size(11)
+                            .size(app_theme::TEXT_SM)
                             .color(app_theme::TEXT_MUTED),
                     ]
-                    .spacing(12)
+                    .spacing(app_theme::SPACE_4)
                     .align_x(Alignment::Center)
                     .padding(24),
                 )
@@ -2052,15 +2254,19 @@ impl MdEditor {
             let right_portion = ((1.0 - self.ui.split_ratio) * 1000.0) as u16;
 
             let divider = mouse_area(
-                container(text("⋮").size(14).color(app_theme::TEXT_MUTED))
-                    .width(Length::Fixed(10.0))
-                    .height(Length::Fill)
-                    .center_x(Length::Fixed(10.0))
-                    .center_y(Length::Fill)
-                    .style(|_| container::Style {
-                        background: Some(iced::Background::Color(app_theme::BG_TERTIARY)),
-                        ..Default::default()
-                    }),
+                container(
+                    text("⋮")
+                        .size(app_theme::TEXT_BASE)
+                        .color(app_theme::TEXT_MUTED),
+                )
+                .width(Length::Fixed(10.0))
+                .height(Length::Fill)
+                .center_x(Length::Fixed(10.0))
+                .center_y(Length::Fill)
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(app_theme::BG_TERTIARY)),
+                    ..Default::default()
+                }),
             )
             .on_press(Message::SplitViewDragStart)
             .on_release(Message::SplitViewDragEnd)
@@ -2086,13 +2292,18 @@ impl MdEditor {
         } else if self.active_image.is_some() {
             image_view
         } else {
-            editor_view.into()
+            editor_view
         };
 
         let content = column![toolbar, main_content].height(Length::Fill);
 
-        let backlinks_view: Element<Message, Theme, iced::Renderer> =
-            views::backlinks::view(&self.vault.backlinks, self.vault.backlinks_visible);
+        let backlinks_width = self.motion.backlinks_width();
+        let backlinks_view: Element<Message, Theme, iced::Renderer> = container(
+            views::backlinks::view(&self.vault.backlinks, backlinks_width >= 1.0),
+        )
+        .width(Length::Fixed(backlinks_width))
+        .clip(true)
+        .into();
 
         let layout = row![sidebar, content, backlinks_view, toc_view].height(Length::Fill);
 
@@ -2134,19 +2345,28 @@ impl MdEditor {
             );
         }
 
-        if self.ui.command_palette_visible {
+        // Kept mounted through the fade-out, so dismissing the palette is a
+        // transition rather than a cut.
+        let palette_opacity = self.motion.palette_opacity();
+        if palette_opacity > 0.01 {
             layers.push(
                 container(views::command_palette::view(
                     &self.ui.command_palette_query,
                     &self.ui.commands,
+                    &self.vault.entries,
+                    self.ui.palette_selected,
+                    palette_opacity,
                 ))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
-                .style(|_| container::Style {
+                .style(move |_| container::Style {
                     background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        0.0, 0.0, 0.0, 0.58,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.58 * palette_opacity,
                     ))),
                     ..Default::default()
                 })
@@ -2166,16 +2386,16 @@ impl MdEditor {
         if self.tracker.visible {
             layers.push(
                 container(self.tracker.view())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(28)
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        0.0, 0.0, 0.0, 0.55,
-                    ))),
-                    ..Default::default()
-                })
-                .into(),
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(28)
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(iced::Color::from_rgba(
+                            0.0, 0.0, 0.0, 0.55,
+                        ))),
+                        ..Default::default()
+                    })
+                    .into(),
             );
         }
 
@@ -2207,7 +2427,7 @@ impl MdEditor {
                         Space::new().width(Length::Fill),
                         iced::widget::button("✕")
                             .on_press(Message::ClosePdfLinkPreview)
-                            .padding(8)
+                            .padding(app_theme::SPACE_3)
                     ],
                     container(img)
                         .width(Length::Fixed(preview_box_w))
@@ -2215,7 +2435,7 @@ impl MdEditor {
                         .style(|_| container::Style {
                             background: Some(iced::Background::Color(iced::Color::WHITE)),
                             border: iced::Border {
-                                radius: 8.0.into(),
+                                radius: app_theme::RADIUS_MD.into(),
                                 ..Default::default()
                             },
                             ..Default::default()
@@ -2236,9 +2456,12 @@ impl MdEditor {
             layers.push(modal.into());
         }
 
-        if let Some(msg) = &self.ui.toast {
+        // Driven by the animation, not by `ui.toast` directly, so the toast
+        // survives long enough to fade out after the message is cleared.
+        let toast_opacity = self.motion.toast_opacity();
+        if toast_opacity > 0.01 {
             layers.push(
-                container(views::toast::view(msg))
+                container(views::toast::view(&self.motion.toast_text, toast_opacity))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .align_x(Alignment::Center)
@@ -2302,6 +2525,147 @@ impl MdEditor {
         self.open_file_extended(path, true)
     }
 
+    /// Write the active markdown document to disk if it has unsaved edits.
+    ///
+    /// The single funnel for every write: `Ctrl+S`, the autosave debounce, and
+    /// the flush before a file switch or quit all land here, so durability is
+    /// decided in one place rather than at each call site.
+    fn save_active_document(&mut self) -> SaveOutcome {
+        if !self.editor.buffer.dirty {
+            self.editor.autosave_pending_since = None;
+            return SaveOutcome::NothingToDo;
+        }
+
+        // No document is open (an image or PDF is showing), so there is nothing
+        // this buffer belongs to. Disarm, or the autosave subscription would
+        // poll forever on a pending flag that can never be satisfied.
+        let Some(path) = self.active_path.clone() else {
+            self.editor.autosave_pending_since = None;
+            return SaveOutcome::NothingToDo;
+        };
+
+        let content = self.editor.buffer.text();
+        match md_editor_core::vault::save_file(&self.state, &path, &content) {
+            Ok(()) => {
+                self.editor.buffer.dirty = false;
+                self.editor.autosave_pending_since = None;
+                self.autosave_failure_reported = false;
+                self.note_self_write(&path);
+                self.persist_document_position();
+                SaveOutcome::Saved
+            }
+            Err(err) => {
+                // Leave `dirty` set — the edits are still only in memory, so
+                // the title keeps its unsaved marker. Restart the debounce
+                // rather than leaving it elapsed: otherwise every poll tick
+                // would retry a failing write (a full create/write/fsync/rename
+                // attempt) ten times a second for the rest of the session.
+                self.editor.mark_dirty_now();
+                SaveOutcome::Failed(err)
+            }
+        }
+    }
+
+    /// Save and park the active document before something replaces it.
+    ///
+    /// Every path that changes what the editor is showing — opening another
+    /// note, an image, or clearing the pane — goes through here, so unsaved
+    /// edits and undo history cannot be dropped by a code path that forgot to
+    /// think about them. Returns the write error if the document could not be
+    /// persisted, in which case the caller must not proceed.
+    fn leave_active_document(&mut self) -> Result<(), String> {
+        if let SaveOutcome::Failed(err) = self.save_active_document() {
+            return Err(err);
+        }
+        self.park_active_buffer();
+        Ok(())
+    }
+
+    /// Remember that we just wrote this path, so the vault watcher can ignore
+    /// the change notification our own save is about to produce.
+    fn note_self_write(&mut self, path: &str) {
+        let now = std::time::Instant::now();
+        self.self_writes
+            .retain(|_, at| now.duration_since(*at) < SELF_WRITE_GRACE);
+        self.self_writes.insert(path.to_string(), now);
+    }
+
+    /// Whether `path` was written by this app moments ago.
+    fn is_recent_self_write(&self, path: &str) -> bool {
+        self.self_writes
+            .get(path)
+            .is_some_and(|at| at.elapsed() < SELF_WRITE_GRACE)
+    }
+
+    /// Record where this session left off: window geometry, and the scroll and
+    /// cursor position of the open document.
+    ///
+    /// Written once on exit rather than on every resize or scroll event, so
+    /// dragging a window edge or flicking through a long note does not turn
+    /// into a stream of database writes.
+    fn persist_session(&self) {
+        self.persist_window_size();
+        self.persist_document_position();
+    }
+
+    /// Record the window geometry. Called as the window resizes rather than
+    /// only at exit, because the app does not intercept its own close and so
+    /// cannot rely on running code on the way out.
+    fn persist_window_size(&self) {
+        let _ = md_editor_core::config::set_sys_config(
+            &self.state,
+            "window_size",
+            &format!("{}x{}", self.ui.window_width, self.ui.window_height),
+        );
+    }
+
+    /// Record where the reader is in the active document. Rides along with
+    /// each save, so it is written on the same schedule as the content it
+    /// describes.
+    fn persist_document_position(&self) {
+        let Some(path) = self.active_path.as_deref() else {
+            return;
+        };
+        let _ = md_editor_core::config::set_sys_config(
+            &self.state,
+            &format!("scroll:{path}"),
+            &self.editor.scroll_y.to_string(),
+        );
+        let _ = md_editor_core::config::set_sys_config(
+            &self.state,
+            &format!("cursor:{path}"),
+            &self.editor.buffer.cursor_offset().to_string(),
+        );
+    }
+
+    /// Scroll offset stored for `path` by a previous session, if any.
+    fn stored_scroll_for(&self, path: &str) -> Option<f32> {
+        md_editor_core::config::get_sys_config(&self.state, &format!("scroll:{path}"))
+            .ok()
+            .flatten()
+            .and_then(|raw| raw.parse::<f32>().ok())
+            .filter(|y| y.is_finite() && *y >= 0.0)
+    }
+
+    /// Cursor offset stored for `path` by a previous session, if any.
+    fn stored_cursor_for(&self, path: &str) -> Option<usize> {
+        md_editor_core::config::get_sys_config(&self.state, &format!("cursor:{path}"))
+            .ok()
+            .flatten()
+            .and_then(|raw| raw.parse::<usize>().ok())
+    }
+
+    /// Move the active buffer into the retained registry so a later visit to
+    /// the same file resumes its undo history.
+    fn park_active_buffer(&mut self) {
+        let Some(path) = self.active_path.clone() else {
+            return;
+        };
+        let outgoing = std::mem::replace(&mut self.editor.buffer, DocBuffer::new());
+        let scroll_y = self.editor.scroll_y;
+        self.editor.retain_buffer(path, outgoing, scroll_y);
+    }
+
     /// Resolve an internal link target (wikilink / relative markdown link) to a
     /// vault file path. Tries the existing relative-path resolution first, then
     /// falls back to a vault-wide basename lookup so `[[NoteName]]` resolves to
@@ -2321,56 +2685,94 @@ impl MdEditor {
             .as_deref()
             .map(|root| std::path::Path::new(root).join(&resolved).exists())
             .unwrap_or(false);
-        if !exists {
-            if let Some(found) = resolve_vault_note_by_name(&self.vault.entries, link_path) {
-                return found;
-            }
+        if !exists && let Some(found) = resolve_vault_note_by_name(&self.vault.entries, link_path) {
+            return found;
         }
         resolved
     }
 
     fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
         let is_different = self.active_path.as_deref() != Some(path);
-        match md_editor_core::vault::open_file(&self.state, path) {
+
+        // Read the incoming file *first*. Parking the outgoing buffer before
+        // knowing the open will succeed would leave an empty buffer bound to
+        // the still-active path, and the next autosave would write that empty
+        // buffer over the previous note.
+        let incoming = match md_editor_core::vault::open_file(&self.state, path) {
             Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(content) => {
-                    self.editor.buffer = DocBuffer::from_text(&content);
-                    self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
-                    self.active_path = Some(path.to_string());
-                    let _ =
-                        md_editor_core::config::set_sys_config(&self.state, "last_file", path);
-                    self.active_image_path = None;
-                    self.active_image = None;
-                    self.showing_pdf = false;
-                    self.active_panel = ActivePanel::Markdown;
-                    self.editor.toc_entries = views::toc::get_toc(&content);
-                    self.editor.toc_is_synthetic = false;
-                    let highlight_task = self.refresh_highlighting_for_current_buffer(true);
-                    self.vault.backlinks =
-                        md_editor_core::vault::get_mixed_backlinks(&self.state, path)
-                            .unwrap_or_default();
-                    if is_different && reset_scroll {
-                        self.editor.scroll_y = 0.0;
-                        let scroll_task = operation::scroll_to(
-                            iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
-                            AbsoluteOffset { x: 0.0, y: 0.0 },
-                        );
-                        return Task::batch(vec![highlight_task, scroll_task]);
-                    }
-                    highlight_task
-                }
+                Ok(content) => content,
                 Err(_) => {
                     self.ui.toast = Some(format!(
                         "Cannot open {path}: not valid UTF-8 text (unsupported encoding?)"
                     ));
-                    Task::none()
+                    return Task::none();
                 }
             },
             Err(err) => {
                 self.ui.toast = Some(format!("Cannot open {path}: {err}"));
-                Task::none()
+                return Task::none();
             }
+        };
+
+        // Only now is it safe to flush and park what is currently open.
+        // Without this, switching files silently discarded both the unsaved
+        // edits and the undo stack that could have recovered them.
+        if is_different && let Err(err) = self.leave_active_document() {
+            // Refuse to navigate away from work we could not persist.
+            self.ui.toast = Some(format!(
+                "Not switching files: {err}. Your edits are still open here."
+            ));
+            return Task::none();
         }
+
+        let content = incoming;
+        // Resume the parked buffer when it still matches disk, so
+        // undo history and cursor survive a round trip; otherwise
+        // the file changed underneath us and a fresh buffer is the
+        // only honest option.
+        let resumed = self.editor.take_retained_matching(path, &content);
+        let resumed_scroll = resumed.as_ref().map(|(_, y)| *y);
+        let is_resumed = resumed.is_some();
+        self.editor.buffer = resumed
+            .map(|(buffer, _)| buffer)
+            .unwrap_or_else(|| DocBuffer::from_text(&content));
+
+        // A buffer built fresh from disk starts at the top. If a
+        // previous session left a cursor here, put it back.
+        if !is_resumed && let Some(offset) = self.stored_cursor_for(path) {
+            self.editor.buffer.set_cursor_offset(offset);
+        }
+        self.editor.autosave_pending_since = None;
+        self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+        self.active_path = Some(path.to_string());
+        let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
+        self.active_image_path = None;
+        self.active_image = None;
+        self.showing_pdf = false;
+        self.active_panel = ActivePanel::Markdown;
+        self.editor.toc_entries = views::toc::get_toc(&content);
+        self.editor.toc_is_synthetic = false;
+        let highlight_task = self.refresh_highlighting_for_current_buffer(true);
+        self.vault.backlinks =
+            md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
+        if is_different && reset_scroll {
+            // Return to where this file was last left, rather than
+            // always to the top — finding your place again by hand
+            // in a long note is the whole cost this avoids.
+            let target_y = resumed_scroll
+                .or_else(|| self.stored_scroll_for(path))
+                .unwrap_or(0.0);
+            self.editor.scroll_y = target_y;
+            let scroll_task = operation::scroll_to(
+                iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                AbsoluteOffset {
+                    x: 0.0,
+                    y: target_y,
+                },
+            );
+            return Task::batch(vec![highlight_task, scroll_task]);
+        }
+        highlight_task
     }
 
     fn open_pdf(&mut self, path: &str) -> Task<Message> {
@@ -2480,6 +2882,16 @@ impl MdEditor {
 
         match image::open(&abs_path) {
             Ok(img) => {
+                // Showing an image clears `active_path`, which detaches the
+                // open note from the buffer holding it. Flush and park it
+                // first, or those edits have nowhere left to be written to.
+                if let Err(err) = self.leave_active_document() {
+                    self.ui.toast = Some(format!(
+                        "Not opening the image: {err}. Your edits are still open."
+                    ));
+                    return Task::none();
+                }
+
                 let (width, height) = img.dimensions();
                 let handle = iced::widget::image::Handle::from_rgba(
                     width,
@@ -2514,8 +2926,7 @@ impl MdEditor {
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
-        let zoom =
-            md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * self.pdf_supersample();
+        let zoom = md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * self.pdf_supersample();
         let generation = self.pdf.render_generation;
         let _state = self.state.clone();
 
@@ -2549,14 +2960,14 @@ impl MdEditor {
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
-        let zoom =
-            md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * self.pdf_supersample();
+        let zoom = md_editor_core::pdf::pdf_render_bucket(self.pdf.zoom) * self.pdf_supersample();
         let generation = self.pdf.render_generation;
         let _state = self.state.clone();
         if self
-            .pdf.pages
+            .pdf
+            .pages
             .get(page as usize)
-            .map_or(true, |p| p.is_none())
+            .is_none_or(|p| p.is_none())
         {
             self.pdf.pending_pages.insert(page);
         }
@@ -2647,12 +3058,12 @@ impl MdEditor {
         let last_visible =
             (first_visible + pages_in_view).min(self.pdf.total_pages.saturating_sub(1));
 
-        if let Some(path) = &self.pdf.active_path {
-            if let Some(abs_path) = self.resolve_active_path(path) {
-                let path_str = abs_path.to_string_lossy().to_string();
-                if let Some(renderer) = self.state.pdf_renderer.as_ref() {
-                    renderer.set_visible_range(first_visible, last_visible, &path_str);
-                }
+        if let Some(path) = &self.pdf.active_path
+            && let Some(abs_path) = self.resolve_active_path(path)
+        {
+            let path_str = abs_path.to_string_lossy().to_string();
+            if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+                renderer.set_visible_range(first_visible, last_visible, &path_str);
             }
         }
 
@@ -2674,18 +3085,21 @@ impl MdEditor {
         let first_visible = self.pdf.page_at_scroll(scroll_y);
         let last_visible = self.pdf.page_at_scroll(scroll_y + viewport_height);
 
-        if let Some(path) = &self.pdf.active_path {
-            if let Some(abs_path) = self.resolve_active_path(path) {
-                let path_str = abs_path.to_string_lossy().to_string();
-                if let Some(renderer) = self.state.pdf_renderer.as_ref() {
-                    renderer.set_visible_range(first_visible, last_visible, &path_str);
-                }
+        if let Some(path) = &self.pdf.active_path
+            && let Some(abs_path) = self.resolve_active_path(path)
+        {
+            let path_str = abs_path.to_string_lossy().to_string();
+            if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+                renderer.set_visible_range(first_visible, last_visible, &path_str);
             }
         }
 
-        let first = self.pdf.page_at_scroll((scroll_y - self.pdf.estimated_page_height()).max(0.0));
-        let last =
-            self.pdf.page_at_scroll(scroll_y + viewport_height + self.pdf.estimated_page_height());
+        let first = self
+            .pdf
+            .page_at_scroll((scroll_y - self.pdf.estimated_page_height()).max(0.0));
+        let last = self
+            .pdf
+            .page_at_scroll(scroll_y + viewport_height + self.pdf.estimated_page_height());
         self.render_pdf_page_range(
             first.saturating_sub(2),
             (last + 2).min(self.pdf.total_pages.saturating_sub(1)),
@@ -2696,9 +3110,10 @@ impl MdEditor {
         let mut tasks = Vec::new();
         for page_idx in start..=end {
             if self
-                .pdf.pages
+                .pdf
+                .pages
                 .get(page_idx as usize)
-                .map_or(true, |p| p.is_none())
+                .is_none_or(|p| p.is_none())
                 && !self.pdf.pending_pages.contains(&page_idx)
             {
                 self.pdf.pending_pages.insert(page_idx);
@@ -2772,13 +3187,22 @@ impl MdEditor {
     }
 
     fn pdf_available_width(&self) -> f32 {
-        let sidebar_width = if self.vault.sidebar_visible { 260.0 } else { 0.0 };
+        let sidebar_width = if self.vault.sidebar_visible {
+            260.0
+        } else {
+            0.0
+        };
         let toc_width = if self.editor.toc_visible { 260.0 } else { 0.0 };
-        let backlinks_width = if self.vault.backlinks_visible { 260.0 } else { 0.0 };
+        let backlinks_width = if self.vault.backlinks_visible {
+            260.0
+        } else {
+            0.0
+        };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
-        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some() {
+        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some()
+        {
             (content_width * (1.0 - self.ui.split_ratio)).max(280.0)
         } else {
             content_width
@@ -2795,7 +3219,8 @@ impl MdEditor {
 
     fn default_pdf_note_path(&self, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
         let pdf_filename = self
-            .pdf.active_path
+            .pdf
+            .active_path
             .as_deref()
             .and_then(|pdf_path| std::path::Path::new(pdf_path).file_stem())
             .and_then(|s| s.to_str())
@@ -2846,7 +3271,6 @@ impl MdEditor {
         }
         self.editor.load_math(self.ui.scale_factor)
     }
-
 
     fn navigate_file_search(&mut self, forward: bool) -> Task<Message> {
         self.search.ensure_matches(
@@ -2909,16 +3333,16 @@ impl MdEditor {
         self.pdf.toc_target_page = None;
 
         let scroll_y = self.pdf.search_match_scroll_y(&result);
-        if let Some(path) = &self.pdf.active_path {
-            if let Some(abs_path) = self.resolve_active_path(path) {
-                let path_str = abs_path.to_string_lossy().to_string();
-                if let Some(renderer) = self.state.pdf_renderer.as_ref() {
-                    renderer.set_visible_range(
-                        target_page.saturating_sub(1),
-                        (target_page + 1).min(self.pdf.total_pages.saturating_sub(1)),
-                        &path_str,
-                    );
-                }
+        if let Some(path) = &self.pdf.active_path
+            && let Some(abs_path) = self.resolve_active_path(path)
+        {
+            let path_str = abs_path.to_string_lossy().to_string();
+            if let Some(renderer) = self.state.pdf_renderer.as_ref() {
+                renderer.set_visible_range(
+                    target_page.saturating_sub(1),
+                    (target_page + 1).min(self.pdf.total_pages.saturating_sub(1)),
+                    &path_str,
+                );
             }
         }
 
@@ -2949,12 +3373,14 @@ impl MdEditor {
         self.pdf.toc_target_page = Some(target_page);
 
         let target_dimensions_ready = self
-            .pdf.dimensions
+            .pdf
+            .dimensions
             .get(target_page as usize)
             .and_then(|d| *d)
             .is_some();
         let target_image_ready = self
-            .pdf.pages
+            .pdf
+            .pages
             .get(target_page as usize)
             .is_some_and(|page| page.is_some());
 
@@ -2978,13 +3404,22 @@ impl MdEditor {
     }
 
     fn estimated_editor_viewport_width(&self) -> f32 {
-        let sidebar_width = if self.vault.sidebar_visible { 260.0 } else { 0.0 };
+        let sidebar_width = if self.vault.sidebar_visible {
+            260.0
+        } else {
+            0.0
+        };
         let toc_width = if self.editor.toc_visible { 260.0 } else { 0.0 };
-        let backlinks_width = if self.vault.backlinks_visible { 260.0 } else { 0.0 };
+        let backlinks_width = if self.vault.backlinks_visible {
+            260.0
+        } else {
+            0.0
+        };
         let chrome_width = sidebar_width + toc_width + backlinks_width;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
-        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some() {
+        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some()
+        {
             (content_width * self.ui.split_ratio).max(280.0)
         } else {
             content_width
@@ -3108,7 +3543,11 @@ impl MdEditor {
         };
 
         if count > 0 {
-            self.editor.buffer.set_text(&new_text);
+            self.editor.buffer.replace_all_text(&new_text);
+            self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+            // Replace-all is an edit like any other: it arms autosave, so the
+            // result reaches disk without waiting for an explicit save.
+            self.editor.mark_dirty_now();
             self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
             let task = self.highlight_all();
             return Ok((count, task));
@@ -3122,61 +3561,61 @@ impl MdEditor {
         &mut self,
         color: md_editor_core::pdf::PdfAnnotationColor,
     ) -> Task<Message> {
-        if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id) {
-            if let Some(page_text) = self.pdf.page_text.get(&sel.page_index) {
-                let start = sel.anchor_idx.min(sel.focus_idx);
-                let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
+        if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id)
+            && let Some(page_text) = self.pdf.page_text.get(&sel.page_index)
+        {
+            let start = sel.anchor_idx.min(sel.focus_idx);
+            let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
 
-                let mut selected_chars = Vec::new();
-                for c in &page_text.chars {
-                    if c.text_index >= start && c.text_index < end {
-                        selected_chars.push(c.clone());
-                    }
+            let mut selected_chars = Vec::new();
+            for c in &page_text.chars {
+                if c.text_index >= start && c.text_index < end {
+                    selected_chars.push(c.clone());
                 }
+            }
 
-                let selected_text = text_by_char_range(&page_text.text, start, end);
+            let selected_text = text_by_char_range(&page_text.text, start, end);
 
-                let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
+            let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
 
-                let id = uuid::Uuid::new_v4().to_string();
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64;
+            let id = uuid::Uuid::new_v4().to_string();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
 
-                let ann = md_editor_core::pdf::PdfAnnotation {
-                    id: id.clone(),
-                    document_id: doc_id.clone(),
-                    page_index: sel.page_index,
-                    kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-                    color,
-                    selected_text,
-                    ranges: vec![md_editor_core::pdf::PdfTextRange {
-                        start_text_index: start,
-                        end_text_index: end,
-                    }],
-                    rects,
-                    note: None,
-                    linked_note_path: None,
-                    markdown_anchor: None,
-                    created_at: now,
-                    updated_at: now,
-                };
+            let ann = md_editor_core::pdf::PdfAnnotation {
+                id: id.clone(),
+                document_id: doc_id.clone(),
+                page_index: sel.page_index,
+                kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
+                color,
+                selected_text,
+                ranges: vec![md_editor_core::pdf::PdfTextRange {
+                    start_text_index: start,
+                    end_text_index: end,
+                }],
+                rects,
+                note: None,
+                linked_note_path: None,
+                markdown_anchor: None,
+                created_at: now,
+                updated_at: now,
+            };
 
-                if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                    self.ui.toast = Some(format!("Failed to save highlight: {}", e));
-                } else {
-                    self.pdf
-                        .annotations
-                        .entry(sel.page_index)
-                        .or_default()
-                        .push(ann);
-                    self.pdf.selection = None;
-                    if let Some(ref path) = self.pdf.active_path {
-                        self.vault.backlinks =
-                            md_editor_core::vault::get_mixed_backlinks(&self.state, path)
-                                .unwrap_or_default();
-                    }
+            if let Err(e) = self.state.save_pdf_annotation(&ann) {
+                self.ui.toast = Some(format!("Failed to save highlight: {}", e));
+            } else {
+                self.pdf
+                    .annotations
+                    .entry(sel.page_index)
+                    .or_default()
+                    .push(ann);
+                self.pdf.selection = None;
+                if let Some(ref path) = self.pdf.active_path {
+                    self.vault.backlinks =
+                        md_editor_core::vault::get_mixed_backlinks(&self.state, path)
+                            .unwrap_or_default();
                 }
             }
         }
@@ -3269,6 +3708,9 @@ impl MdEditor {
         let result = self.editor.buffer.execute(command);
         if result.text_changed {
             self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+            // Restart the autosave countdown on every edit, so a write happens
+            // once typing pauses rather than on each keystroke.
+            self.editor.mark_dirty_now();
         }
         let content_task = if result.projection_changed {
             if result.text_changed {
@@ -3291,7 +3733,6 @@ impl MdEditor {
             content_task
         }
     }
-
 }
 
 fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
@@ -3340,48 +3781,55 @@ fn vault_watch_stream(
     Box::pin(iced::stream::channel(
         64,
         move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
-        let root_path = std::path::PathBuf::from(&root);
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Event>();
+            let root_path = std::path::PathBuf::from(&root);
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Event>();
 
-        let mut watcher = match notify::recommended_watcher(
-            move |res: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let _ = tx.send(event);
+            let mut watcher = match notify::recommended_watcher(
+                move |res: Result<notify::Event, notify::Error>| {
+                    if let Ok(event) = res {
+                        let _ = tx.send(event);
+                    }
+                },
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("Failed to create vault watcher: {e}");
+                    return;
                 }
-            },
-        ) {
-            Ok(w) => w,
-            Err(e) => {
-                eprintln!("Failed to create vault watcher: {e}");
+            };
+            if let Err(e) = watcher.watch(&root_path, RecursiveMode::Recursive) {
+                eprintln!("Failed to watch vault root {}: {e}", root_path.display());
                 return;
             }
-        };
-        if let Err(e) = watcher.watch(&root_path, RecursiveMode::Recursive) {
-            eprintln!("Failed to watch vault root {}: {e}", root_path.display());
-            return;
-        }
-        // Hold the watcher for the lifetime of this stream; dropping it stops
-        // delivery.
-        let _watcher = watcher;
+            // Hold the watcher for the lifetime of this stream; dropping it stops
+            // delivery.
+            let _watcher = watcher;
 
-        loop {
-            let Some(first) = rx.recv().await else {
-                break; // sender dropped — watcher gone
-            };
-            let mut changed = std::collections::BTreeSet::new();
-            collect_changed_paths(&first, &root_path, &mut changed);
-            // Drain the burst within the debounce window.
-            while let Ok(Some(event)) = tokio::time::timeout(VAULT_WATCH_DEBOUNCE, rx.recv()).await {
-                collect_changed_paths(&event, &root_path, &mut changed);
-            }
-            if !changed.is_empty() {
-                let paths: Vec<String> = changed.into_iter().collect();
-                if output.send(Message::VaultFilesChanged(paths)).await.is_err() {
-                    break; // receiver dropped — subscription ended
+            loop {
+                let Some(first) = rx.recv().await else {
+                    break; // sender dropped — watcher gone
+                };
+                let mut changed = std::collections::BTreeSet::new();
+                collect_changed_paths(&first, &root_path, &mut changed);
+                // Drain the burst within the debounce window.
+                while let Ok(Some(event)) =
+                    tokio::time::timeout(VAULT_WATCH_DEBOUNCE, rx.recv()).await
+                {
+                    collect_changed_paths(&event, &root_path, &mut changed);
+                }
+                if !changed.is_empty() {
+                    let paths: Vec<String> = changed.into_iter().collect();
+                    if output
+                        .send(Message::VaultFilesChanged(paths))
+                        .await
+                        .is_err()
+                    {
+                        break; // receiver dropped — subscription ended
+                    }
                 }
             }
-        }
-    }))
+        },
+    ))
 }
 
 /// Collect the vault-relative paths touched by a watcher `event`, skipping
@@ -3446,8 +3894,11 @@ fn resolve_startup_target(
     let (root, rel) = match last_vault
         .map(std::path::Path::new)
         .and_then(|v| std::path::absolute(v).ok())
-        .and_then(|v| abs.strip_prefix(&v).ok().map(|rel| (v.clone(), rel.to_path_buf())))
-    {
+        .and_then(|v| {
+            abs.strip_prefix(&v)
+                .ok()
+                .map(|rel| (v.clone(), rel.to_path_buf()))
+        }) {
         Some((vault, rel)) => (vault, rel),
         None => {
             let parent = abs.parent()?.to_path_buf();
@@ -3488,13 +3939,13 @@ fn resolve_relative_link_path(
     active_path: Option<&str>,
     link_path: &str,
 ) -> String {
-    if link_path.starts_with('.') {
-        if let Some(active_file) = active_path {
-            let active_path_buf = std::path::Path::new(active_file);
-            if let Some(parent) = active_path_buf.parent() {
-                let resolved = parent.join(link_path);
-                return normalize_path(&resolved);
-            }
+    if link_path.starts_with('.')
+        && let Some(active_file) = active_path
+    {
+        let active_path_buf = std::path::Path::new(active_file);
+        if let Some(parent) = active_path_buf.parent() {
+            let resolved = parent.join(link_path);
+            return normalize_path(&resolved);
         }
     }
     // If it doesn't start with '.', check if there is an existing file relative to the active path's parent.
@@ -3566,11 +4017,9 @@ fn slugify(s: &str) -> String {
         if c.is_alphanumeric() || c == '_' {
             result.push(c);
             last_was_hyphen = false;
-        } else if c.is_whitespace() || c == '-' {
-            if !last_was_hyphen {
-                result.push('-');
-                last_was_hyphen = true;
-            }
+        } else if (c.is_whitespace() || c == '-') && !last_was_hyphen {
+            result.push('-');
+            last_was_hyphen = true;
         }
     }
     result.trim_matches('-').to_string()
@@ -3615,10 +4064,10 @@ fn find_heading_or_widget_line(
     // If target_slug is "listing-N", we also want to look for "code-N", and vice-versa
     let alternative_slug = if let Some(num_str) = target_slug.strip_prefix("listing-") {
         Some(format!("code-{}", num_str))
-    } else if let Some(num_str) = target_slug.strip_prefix("code-") {
-        Some(format!("listing-{}", num_str))
     } else {
-        None
+        target_slug
+            .strip_prefix("code-")
+            .map(|num_str| format!("listing-{}", num_str))
     };
 
     for (line_idx, line) in highlighted_lines.iter().enumerate() {
@@ -3627,10 +4076,10 @@ fn find_heading_or_widget_line(
                 if span_id.eq_ignore_ascii_case(target_slug) {
                     return Some(line_idx);
                 }
-                if let Some(ref alt) = alternative_slug {
-                    if span_id.eq_ignore_ascii_case(alt) {
-                        return Some(line_idx);
-                    }
+                if let Some(ref alt) = alternative_slug
+                    && span_id.eq_ignore_ascii_case(alt)
+                {
+                    return Some(line_idx);
                 }
             }
         }
@@ -3823,11 +4272,25 @@ mod tests {
     #[test]
     fn pdf_search_scroll_targets_match_rect_not_just_page_top() {
         assert_eq!(
-            crate::pdf_pane::search_match_scroll_y_from(1000.0, Some(250.0), 20.0, 792.0, 2.0, 5000.0),
+            crate::pdf_pane::search_match_scroll_y_from(
+                1000.0,
+                Some(250.0),
+                20.0,
+                792.0,
+                2.0,
+                5000.0
+            ),
             1948.0
         );
         assert_eq!(
-            crate::pdf_pane::search_match_scroll_y_from(20.0, Some(780.0), 10.0, 792.0, 1.0, 5000.0),
+            crate::pdf_pane::search_match_scroll_y_from(
+                20.0,
+                Some(780.0),
+                10.0,
+                792.0,
+                1.0,
+                5000.0
+            ),
             0.0
         );
     }
@@ -3871,7 +4334,7 @@ mod tests {
             updated_at: 0,
         };
 
-        let mut app = MdEditor::new().0;
+        let mut app = MdEditor::new_with_startup_file(None).0;
         app.pdf.active_path = Some("papers/My PDF File.pdf".to_string());
         assert_eq!(
             app.default_pdf_note_path(&ann),

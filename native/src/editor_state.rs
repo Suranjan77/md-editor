@@ -9,14 +9,13 @@
 //! The editing/highlighting methods still live on the shell and read through
 //! `self.editor`; moving them here is a sensible follow-up.
 //!
-//! Final domain in the `MdEditor` decomposition; see
-//! `docs/refactor-mdeditor-decomposition.md`.
+//! Final domain in the `MdEditor` decomposition.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use iced::widget::image::Handle;
 use iced::Task;
+use iced::widget::image::Handle;
 use image::GenericImageView;
 
 use crate::editor::buffer::DocBuffer;
@@ -35,6 +34,20 @@ pub const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
 /// Above this line count, edits debounce re-highlighting onto a background task
 /// instead of highlighting synchronously.
 pub const LARGE_DOC_LINE_THRESHOLD: usize = 1_000;
+
+/// Idle time after the last edit before the document is written to disk.
+/// Short enough that the unsaved window is never meaningful, long enough that
+/// continuous typing does not write on every keystroke.
+pub const AUTOSAVE_DEBOUNCE: Duration = Duration::from_millis(400);
+
+/// How often the autosave subscription checks whether the debounce has
+/// elapsed, while there are unwritten edits. Finer than the debounce so the
+/// actual write lands close to it rather than up to a full window late.
+pub const AUTOSAVE_POLL: Duration = Duration::from_millis(100);
+
+/// How many visited documents keep their buffer (and undo history) parked in
+/// memory. Bounds session memory on a large vault.
+const MAX_RETAINED_BUFFERS: usize = 32;
 
 pub struct EditorPane {
     pub buffer: DocBuffer,
@@ -63,6 +76,19 @@ pub struct EditorPane {
     pub math_cache: HashMap<String, crate::editor::renderer::MathRender>,
     /// Display scale the current math_cache contents were rasterized for.
     math_scale_factor: f32,
+
+    /// Buffers for documents visited earlier in this session, keyed by
+    /// vault-relative path, each with the scroll offset it was left at.
+    /// Switching files parks the outgoing buffer here rather than dropping it,
+    /// so its undo history, cursor, and reading position all survive a round
+    /// trip back to the file.
+    retained: HashMap<String, (DocBuffer, f32)>,
+    /// Recency order for `retained`, least recent first.
+    retained_order: Vec<String>,
+
+    /// When the buffer last changed with edits still unwritten. The autosave
+    /// subscription is armed while this is set.
+    pub autosave_pending_since: Option<Instant>,
 }
 
 impl EditorPane {
@@ -84,7 +110,68 @@ impl EditorPane {
             image_cache: HashMap::new(),
             math_cache: HashMap::new(),
             math_scale_factor: 1.0,
+            retained: HashMap::new(),
+            retained_order: Vec::new(),
+            autosave_pending_since: None,
         }
+    }
+
+    // ── Retained buffers ─────────────────────────────────────────────
+
+    /// Park `buffer` under `path` so a later visit can resume its undo history.
+    ///
+    /// Callers must flush unsaved edits before parking; the registry exists to
+    /// preserve *history*, not to stand in for saving.
+    pub fn retain_buffer(&mut self, path: String, buffer: DocBuffer, scroll_y: f32) {
+        self.retained_order.retain(|p| p != &path);
+        self.retained_order.push(path.clone());
+        self.retained.insert(path, (buffer, scroll_y));
+
+        while self.retained_order.len() > MAX_RETAINED_BUFFERS {
+            let evicted = self.retained_order.remove(0);
+            self.retained.remove(&evicted);
+        }
+    }
+
+    /// Reclaim the parked buffer for `path`, but only when it still matches
+    /// what is on disk. A file edited outside the app invalidates the parked
+    /// history, so in that case the caller falls back to a fresh buffer.
+    pub fn take_retained_matching(
+        &mut self,
+        path: &str,
+        disk_text: &str,
+    ) -> Option<(DocBuffer, f32)> {
+        let matches = self
+            .retained
+            .get(path)
+            .is_some_and(|(buffer, _)| buffer.text() == disk_text);
+
+        if !matches {
+            self.retained.remove(path);
+            self.retained_order.retain(|p| p != path);
+            return None;
+        }
+
+        self.retained_order.retain(|p| p != path);
+        self.retained.remove(path)
+    }
+
+    /// Drop the parked buffer for `path`, if any. Used when a file is deleted
+    /// or renamed so stale history cannot be resurrected under a new file.
+    pub fn forget_retained(&mut self, path: &str) {
+        self.retained.remove(path);
+        self.retained_order.retain(|p| p != path);
+    }
+
+    /// Arm the autosave debounce. Called whenever buffer text changes.
+    pub fn mark_dirty_now(&mut self) {
+        self.autosave_pending_since = Some(Instant::now());
+    }
+
+    /// True when the debounce window has elapsed and a write should happen.
+    pub fn autosave_due(&self) -> bool {
+        self.autosave_pending_since
+            .is_some_and(|since| since.elapsed() >= AUTOSAVE_DEBOUNCE)
     }
 
     // ── Highlighting ─────────────────────────────────────────────────
@@ -140,10 +227,10 @@ impl EditorPane {
                 // Drop results rasterized for a display scale we've since
                 // moved away from (the cache was flushed on rescale; a stale
                 // insert would stay blurry until the next flush).
-                if (scale - self.math_scale_factor).abs() < 0.01 {
-                    if let Ok(render) = res {
-                        self.math_cache.insert(tex, render);
-                    }
+                if (scale - self.math_scale_factor).abs() < 0.01
+                    && let Ok(render) = res
+                {
+                    self.math_cache.insert(tex, render);
                 }
                 Task::none()
             }
@@ -185,23 +272,16 @@ impl EditorPane {
 
         for line in &self.highlighted_lines {
             for span in &line.spans {
-                if span.is_image {
-                    if let Some(path) = &span.image_path {
-                        if !self.image_cache.contains_key(path) {
-                            let img_path = base_path.join(path);
-                            if let Ok(img) = image::open(&img_path) {
-                                let (width, height) = img.dimensions();
-                                let handle = Handle::from_rgba(
-                                    width,
-                                    height,
-                                    img.into_rgba8().into_raw(),
-                                );
-                                self.image_cache.insert(
-                                    path.clone(),
-                                    (handle, width as f32, height as f32),
-                                );
-                            }
-                        }
+                if span.is_image
+                    && let Some(path) = &span.image_path
+                    && !self.image_cache.contains_key(path)
+                {
+                    let img_path = base_path.join(path);
+                    if let Ok(img) = image::open(&img_path) {
+                        let (width, height) = img.dimensions();
+                        let handle = Handle::from_rgba(width, height, img.into_rgba8().into_raw());
+                        self.image_cache
+                            .insert(path.clone(), (handle, width as f32, height as f32));
                     }
                 }
             }
@@ -220,7 +300,11 @@ impl EditorPane {
         for line in &self.highlighted_lines {
             for span in &line.spans {
                 if span.is_math {
-                    let tex = span.visible_text(false).trim_matches('$').trim().to_string();
+                    let tex = span
+                        .visible_text(false)
+                        .trim_matches('$')
+                        .trim()
+                        .to_string();
                     if !tex.is_empty() && !self.math_cache.contains_key(&tex) {
                         let tex_clone = tex.clone();
                         tasks.push(Task::perform(
@@ -298,8 +382,8 @@ fn render_latex_task(
         let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
         let lbox = layout(&ast, &layout_opts);
         let display_list = to_display_list(&lbox);
-        let bytes = render_to_png(&display_list, &options)
-            .map_err(|e| format!("Render error: {:?}", e))?;
+        let bytes =
+            render_to_png(&display_list, &options).map_err(|e| format!("Render error: {:?}", e))?;
 
         let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
         let (w, h) = img.dimensions();
@@ -314,13 +398,88 @@ fn render_latex_task(
 
     let scale = scale_factor.clamp(1.0, 6.0);
     let (inline_handle, width, height) = render_at(scale)?;
-    let (block_handle, _, _) = render_at(
-        (crate::editor::renderer::MATH_BLOCK_SCALE * scale).min(6.0),
-    )?;
+    let (block_handle, _, _) =
+        render_at((crate::editor::renderer::MATH_BLOCK_SCALE * scale).min(6.0))?;
     Ok(crate::editor::renderer::MathRender {
         inline_handle,
         block_handle,
         width,
         height,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::buffer::EditorCommand;
+
+    fn edited(text: &str) -> DocBuffer {
+        let mut buffer = DocBuffer::from_text(text);
+        buffer.execute(EditorCommand::InsertText("!".to_string()));
+        buffer
+    }
+
+    /// Parking a buffer and picking it up again must return the same document
+    /// *with its history* — that is the whole point of the registry.
+    #[test]
+    fn retained_buffer_round_trip_keeps_undo_history() {
+        let mut pane = EditorPane::new();
+        let buffer = edited("hello");
+        let text = buffer.text();
+
+        pane.retain_buffer("notes/a.md".to_string(), buffer, 128.0);
+
+        let (mut resumed, scroll) = pane
+            .take_retained_matching("notes/a.md", &text)
+            .expect("buffer matching disk should be resumable");
+        assert_eq!(scroll, 128.0, "scroll position comes back with the buffer");
+
+        assert!(resumed.execute(EditorCommand::Undo).text_changed);
+        assert_eq!(
+            resumed.text(),
+            "hello",
+            "undo history survived the round trip"
+        );
+    }
+
+    /// If the file changed on disk while parked, the history no longer
+    /// describes that file and must be discarded rather than replayed onto it.
+    #[test]
+    fn retained_buffer_is_dropped_when_disk_content_diverges() {
+        let mut pane = EditorPane::new();
+        pane.retain_buffer("notes/a.md".to_string(), DocBuffer::from_text("old"), 0.0);
+
+        assert!(
+            pane.take_retained_matching("notes/a.md", "changed elsewhere")
+                .is_none(),
+            "a diverged file must not resume stale history"
+        );
+        // The stale entry is evicted, not left to match a later coincidence.
+        assert!(pane.take_retained_matching("notes/a.md", "old").is_none());
+    }
+
+    /// A deleted file must not hand its history to a new file of the same name.
+    #[test]
+    fn forgetting_a_path_drops_its_buffer() {
+        let mut pane = EditorPane::new();
+        pane.retain_buffer("notes/a.md".to_string(), DocBuffer::from_text("x"), 0.0);
+        pane.forget_retained("notes/a.md");
+        assert!(pane.take_retained_matching("notes/a.md", "x").is_none());
+    }
+
+    /// Session memory stays bounded on a large vault.
+    #[test]
+    fn registry_evicts_least_recently_used() {
+        let mut pane = EditorPane::new();
+        for i in 0..(MAX_RETAINED_BUFFERS + 5) {
+            pane.retain_buffer(format!("n{i}.md"), DocBuffer::from_text("x"), 0.0);
+        }
+        assert_eq!(pane.retained.len(), MAX_RETAINED_BUFFERS);
+        assert!(
+            pane.take_retained_matching("n0.md", "x").is_none(),
+            "oldest entry should have been evicted"
+        );
+        let newest = format!("n{}.md", MAX_RETAINED_BUFFERS + 4);
+        assert!(pane.take_retained_matching(&newest, "x").is_some());
+    }
 }

@@ -268,20 +268,26 @@ fn kpi_card<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     container(
         column![
-            text(title).size(9).color(theme::TEXT_MUTED).font(BOLD),
-            text(value).size(18).color(theme::ACCENT).font(BOLD),
-            text(sub).size(8).color(theme::TEXT_MUTED),
+            text(title)
+                .size(theme::TEXT_XS)
+                .color(theme::TEXT_MUTED)
+                .font(BOLD),
+            text(value)
+                .size(theme::TEXT_LG)
+                .color(theme::ACCENT)
+                .font(BOLD),
+            text(sub).size(theme::TEXT_XS).color(theme::TEXT_MUTED),
         ]
-        .spacing(2),
+        .spacing(theme::SPACE_1),
     )
-    .padding(10)
+    .padding(theme::SPACE_4)
     .width(Length::FillPortion(1))
     .style(|_| container::Style {
         background: Some(Background::Color(theme::BG_SECONDARY)),
         border: iced::Border {
             color: theme::BORDER_SUBTLE,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: theme::RADIUS_MD.into(),
         },
         ..Default::default()
     })
@@ -305,7 +311,7 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
 
     let max_hours = days.iter().map(|(_, hours)| *hours).fold(4.0_f32, f32::max);
     let mut bars = row![]
-        .spacing(4)
+        .spacing(theme::SPACE_2)
         .align_y(Alignment::End)
         .height(Length::Fixed(120.0));
 
@@ -326,7 +332,7 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
                     .style(move |_| container::Style {
                         background: Some(Background::Color(color)),
                         border: iced::Border {
-                            radius: 3.0.into(),
+                            radius: theme::RADIUS_SM.into(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -339,14 +345,14 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
                         .unwrap_or(' ')
                         .to_string()
                 )
-                .size(9)
+                .size(theme::TEXT_XS)
                 .color(if is_today {
                     theme::ACCENT_SECONDARY
                 } else {
                     theme::TEXT_MUTED
                 }),
             ]
-            .spacing(5)
+            .spacing(theme::SPACE_2)
             .align_x(Alignment::Center)
             .width(Length::FillPortion(1)),
         );
@@ -355,21 +361,21 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
     container(
         column![
             text("Weekly Activity")
-                .size(13)
+                .size(theme::TEXT_BASE)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
             bars,
         ]
-        .spacing(10),
+        .spacing(theme::SPACE_4),
     )
-    .padding(12)
+    .padding(theme::SPACE_4)
     .width(Length::Fill)
     .style(|_| container::Style {
         background: Some(Background::Color(theme::BG_SECONDARY)),
         border: iced::Border {
             color: theme::BORDER_SUBTLE,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: theme::RADIUS_MD.into(),
         },
         ..Default::default()
     })
@@ -377,34 +383,37 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
 }
 
 fn curriculum_panel<'a>(phases: Vec<PhaseConfig>) -> Element<'a, Message, Theme, Renderer> {
-    let mut phase_list = column![].spacing(6);
+    let mut phase_list = column![].spacing(theme::SPACE_3);
     for phase in phases {
         phase_list = phase_list.push(
             container(
                 row![
-                    text(phase.id).size(12).color(theme::ACCENT).font(BOLD),
+                    text(phase.id)
+                        .size(theme::TEXT_SM)
+                        .color(theme::ACCENT)
+                        .font(BOLD),
                     column![
                         text(phase.title)
-                            .size(13)
+                            .size(theme::TEXT_BASE)
                             .color(theme::TEXT_PRIMARY)
                             .font(BOLD),
                         text(format!("{} - {}", phase.year, phase.months))
-                            .size(10)
+                            .size(theme::TEXT_XS)
                             .color(theme::TEXT_MUTED),
                     ]
-                    .spacing(1)
+                    .spacing(theme::SPACE_1)
                     .width(Length::Fill),
                 ]
-                .spacing(10)
+                .spacing(theme::SPACE_4)
                 .align_y(Alignment::Center),
             )
-            .padding(8)
+            .padding(theme::SPACE_3)
             .style(|_| container::Style {
                 background: Some(Background::Color(theme::BG_SECONDARY)),
                 border: iced::Border {
                     color: theme::BORDER_SUBTLE,
                     width: 1.0,
-                    radius: 6.0.into(),
+                    radius: theme::RADIUS_MD.into(),
                 },
                 ..Default::default()
             }),
@@ -414,14 +423,14 @@ fn curriculum_panel<'a>(phases: Vec<PhaseConfig>) -> Element<'a, Message, Theme,
     container(
         column![
             text("Curriculum Roadmap")
-                .size(14)
+                .size(theme::TEXT_BASE)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
             scrollable(phase_list).height(Length::Fill),
         ]
-        .spacing(10),
+        .spacing(theme::SPACE_4),
     )
-    .padding(14)
+    .padding(theme::SPACE_4)
     .height(Length::Fill)
     .style(|_| panel_style())
     .into()
@@ -432,34 +441,33 @@ fn milestones_panel<'a>(
     gate_count: usize,
     reading_sections: Vec<ReadingSectionConfig>,
 ) -> Element<'a, Message, Theme, Renderer> {
-    let reading =
-        reading_sections
-            .into_iter()
-            .take(4)
-            .fold(column![].spacing(8), |col, section| {
-                let body = section
-                    .items
-                    .into_iter()
-                    .take(4)
-                    .map(|item| item.title)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                col.push(
-                    column![
-                        text(section.section)
-                            .size(12)
-                            .color(theme::ACCENT)
-                            .font(BOLD),
-                        text(body).size(11).color(theme::TEXT_MUTED),
-                    ]
-                    .spacing(2),
-                )
-            });
+    let reading = reading_sections.into_iter().take(4).fold(
+        column![].spacing(theme::SPACE_3),
+        |col, section| {
+            let body = section
+                .items
+                .into_iter()
+                .take(4)
+                .map(|item| item.title)
+                .collect::<Vec<_>>()
+                .join(", ");
+            col.push(
+                column![
+                    text(section.section)
+                        .size(theme::TEXT_SM)
+                        .color(theme::ACCENT)
+                        .font(BOLD),
+                    text(body).size(theme::TEXT_SM).color(theme::TEXT_MUTED),
+                ]
+                .spacing(theme::SPACE_1),
+            )
+        },
+    );
 
     container(
         column![
             text("Projects, Gates, Reading")
-                .size(14)
+                .size(theme::TEXT_BASE)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
             row![
@@ -470,16 +478,16 @@ fn milestones_panel<'a>(
                 ),
                 kpi_card("GATES", gate_count.to_string(), "Checkpoint gates"),
             ]
-            .spacing(8),
+            .spacing(theme::SPACE_3),
             text("Reading Tracks")
-                .size(13)
+                .size(theme::TEXT_BASE)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
             reading,
         ]
-        .spacing(12),
+        .spacing(theme::SPACE_4),
     )
-    .padding(14)
+    .padding(theme::SPACE_4)
     .height(Length::Fill)
     .style(|_| panel_style())
     .into()
@@ -491,7 +499,7 @@ fn panel_style() -> container::Style {
         border: iced::Border {
             color: theme::BORDER,
             width: 1.0,
-            radius: 8.0.into(),
+            radius: theme::RADIUS_MD.into(),
         },
         ..Default::default()
     }
@@ -513,7 +521,7 @@ pub fn view<'a>(
     }
 
     let title = text("Study Tracker")
-        .size(18)
+        .size(theme::TEXT_LG)
         .color(theme::ACCENT)
         .font(BOLD);
 
@@ -537,31 +545,31 @@ pub fn view<'a>(
             "Configured roadmap"
         ),
     ]
-    .spacing(6)
+    .spacing(theme::SPACE_3)
     .width(Length::Fill);
 
     let controls = row![if running {
         button(
-            container(text("Stop Timer").size(13).font(BOLD))
+            container(text("Stop Timer").size(theme::TEXT_BASE).font(BOLD))
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
         )
         .on_press(Message::TrackerStop)
-        .padding(10)
+        .padding(theme::SPACE_4)
         .width(Length::Fill)
         .style(button::secondary)
     } else {
         button(
-            container(text("Start Timer").size(13).font(BOLD))
+            container(text("Start Timer").size(theme::TEXT_BASE).font(BOLD))
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
         )
         .on_press(Message::TrackerStart)
-        .padding(10)
+        .padding(theme::SPACE_4)
         .width(Length::Fill)
         .style(button::primary)
     },]
-    .spacing(10)
+    .spacing(theme::SPACE_4)
     .width(Length::Fill)
     .align_y(Alignment::Center);
 
@@ -569,21 +577,23 @@ pub fn view<'a>(
         container(
             row![
                 text("Timer running")
-                    .size(12)
+                    .size(theme::TEXT_SM)
                     .color(theme::ACCENT_SECONDARY)
                     .font(BOLD),
                 Space::new().width(Length::Fill),
-                text("Focus session").size(10).color(theme::TEXT_MUTED),
+                text("Focus session")
+                    .size(theme::TEXT_XS)
+                    .color(theme::TEXT_MUTED),
             ]
             .align_y(Alignment::Center),
         )
-        .padding(10)
+        .padding(theme::SPACE_4)
         .style(|_: &Theme| container::Style {
             background: Some(Background::Color(theme::BG_SURFACE)),
             border: iced::Border {
                 color: theme::ACCENT,
                 width: 1.0,
-                radius: 6.0.into(),
+                radius: theme::RADIUS_MD.into(),
             },
             ..Default::default()
         })
@@ -591,16 +601,16 @@ pub fn view<'a>(
     } else {
         container(
             text("Ready to log focused study time")
-                .size(12)
+                .size(theme::TEXT_SM)
                 .color(theme::TEXT_MUTED),
         )
-        .padding(10)
+        .padding(theme::SPACE_4)
         .style(|_: &Theme| container::Style {
             background: Some(Background::Color(theme::BG_SECONDARY)),
             border: iced::Border {
                 color: theme::BORDER_SUBTLE,
                 width: 1.0,
-                radius: 6.0.into(),
+                radius: theme::RADIUS_MD.into(),
             },
             ..Default::default()
         })
@@ -615,7 +625,7 @@ pub fn view<'a>(
         tab_button("Reading", TrackerTab::Reading, active_tab),
         tab_button("Config", TrackerTab::Config, active_tab),
     ]
-    .spacing(6);
+    .spacing(theme::SPACE_3);
 
     let body = match active_tab {
         TrackerTab::Dashboard => dashboard_body(sessions, running_status, controls, tracker_config),
@@ -630,7 +640,7 @@ pub fn view<'a>(
         row![
             title,
             Space::new().width(Length::Fill),
-            button(text("✕").size(16).font(BOLD))
+            button(text("✕").size(theme::TEXT_MD).font(BOLD))
                 .on_press(Message::TrackerToggle)
                 .style(button::text),
         ]
@@ -639,8 +649,8 @@ pub fn view<'a>(
         kpis,
         body,
     ]
-    .spacing(16)
-    .padding(18);
+    .spacing(theme::SPACE_5)
+    .padding(theme::SPACE_5);
 
     container(dashboard)
         .width(Length::Fill)
@@ -656,7 +666,7 @@ fn tab_button<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     button(
         text(label)
-            .size(12)
+            .size(theme::TEXT_SM)
             .color(if tab == active {
                 theme::ACCENT
             } else {
@@ -665,7 +675,7 @@ fn tab_button<'a>(
             .font(BOLD),
     )
     .on_press(Message::TrackerTabSelected(tab))
-    .padding([8, 12])
+    .padding([theme::SPACE_3, theme::SPACE_4])
     .style(button::text)
     .into()
 }
@@ -685,17 +695,17 @@ fn dashboard_body<'a>(
             running_status,
             activity_chart(sessions),
             text("Recent Sessions")
-                .size(14)
+                .size(theme::TEXT_BASE)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
             sessions_list,
         ]
-        .spacing(12)
+        .spacing(theme::SPACE_4)
         .width(Length::FillPortion(2)),
         curriculum_panel(config.phases),
         milestones_panel(project_count, gate_count, config.reading),
     ]
-    .spacing(14)
+    .spacing(theme::SPACE_4)
     .height(Length::Fill)
     .into()
 }
@@ -709,34 +719,34 @@ fn log_body<'a>(
     container(
         column![
             text("Session Log")
-                .size(15)
+                .size(theme::TEXT_MD)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
             row![
                 text_input("YYYY-MM-DD", manual_date)
                     .on_input(Message::TrackerManualDateChanged)
-                    .padding(8)
+                    .padding(theme::SPACE_3)
                     .width(Length::FillPortion(2)),
                 text_input("Hours", manual_hours)
                     .on_input(Message::TrackerManualHoursChanged)
-                    .padding(8)
+                    .padding(theme::SPACE_3)
                     .width(Length::FillPortion(1)),
                 text_input("Notes", manual_notes)
                     .on_input(Message::TrackerManualNotesChanged)
-                    .padding(8)
+                    .padding(theme::SPACE_3)
                     .width(Length::FillPortion(3)),
-                button(text("Add").size(12).font(BOLD))
+                button(text("Add").size(theme::TEXT_SM).font(BOLD))
                     .on_press(Message::TrackerManualAdd)
-                    .padding([8, 12])
+                    .padding([theme::SPACE_3, theme::SPACE_4])
                     .style(button::primary),
             ]
-            .spacing(8)
+            .spacing(theme::SPACE_3)
             .align_y(Alignment::Center),
             sessions_list(sessions),
         ]
-        .spacing(12),
+        .spacing(theme::SPACE_4),
     )
-    .padding(14)
+    .padding(theme::SPACE_4)
     .height(Length::Fill)
     .style(|_| panel_style())
     .into()
@@ -747,7 +757,7 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme
         return container(
             text("No sessions yet. Start studying!")
                 .color(theme::TEXT_MUTED)
-                .size(13),
+                .size(theme::TEXT_BASE),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -756,41 +766,43 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme
         .into();
     }
 
-    let mut col = column![].spacing(8);
+    let mut col = column![].spacing(theme::SPACE_3);
     for session in sessions {
         col = col.push(
             container(
                 row![
                     column![
-                        text(&session.date).size(10).color(theme::TEXT_MUTED),
+                        text(&session.date)
+                            .size(theme::TEXT_XS)
+                            .color(theme::TEXT_MUTED),
                         text(format!("{:.1} hours", session.hours))
-                            .size(14)
+                            .size(theme::TEXT_BASE)
                             .color(theme::TEXT_PRIMARY)
                             .font(BOLD),
                         text(session.notes.as_deref().unwrap_or(&session.phase))
-                            .size(11)
+                            .size(theme::TEXT_SM)
                             .color(theme::TEXT_MUTED),
                     ]
                     .width(Length::Fill),
                     text(&session.activity_type)
-                        .size(11)
+                        .size(theme::TEXT_SM)
                         .color(theme::ACCENT)
                         .font(BOLD),
-                    button(text("Delete").size(11).color(theme::TEXT_MUTED))
+                    button(text("Delete").size(theme::TEXT_SM).color(theme::TEXT_MUTED))
                         .on_press(Message::TrackerSessionDelete(session.id))
-                        .padding([5, 8])
+                        .padding([theme::SPACE_2, theme::SPACE_3])
                         .style(button::text),
                 ]
-                .spacing(8)
+                .spacing(theme::SPACE_3)
                 .align_y(Alignment::Center)
-                .padding(8),
+                .padding(theme::SPACE_3),
             )
             .style(|_| container::Style {
                 background: Some(Background::Color(theme::BG_SECONDARY)),
                 border: iced::Border {
                     color: theme::BORDER_SUBTLE,
                     width: 1.0,
-                    radius: 6.0.into(),
+                    radius: theme::RADIUS_MD.into(),
                 },
                 ..Default::default()
             }),
@@ -831,7 +843,7 @@ fn projects_body<'a>(
         complete,
         projects.len(),
     )]
-    .spacing(10);
+    .spacing(theme::SPACE_4);
 
     for project in projects {
         let status = kv
@@ -845,7 +857,7 @@ fn projects_body<'a>(
                     status_dot(status),
                     column![
                         text(format!("{} - {}", project.id, project.name))
-                            .size(13)
+                            .size(theme::TEXT_BASE)
                             .color(theme::TEXT_PRIMARY)
                             .font(BOLD),
                         text(format!(
@@ -853,7 +865,7 @@ fn projects_body<'a>(
                             project.phase,
                             status_label(status)
                         ))
-                        .size(10)
+                        .size(theme::TEXT_XS)
                         .color(theme::TEXT_MUTED),
                     ]
                     .width(Length::Fill),
@@ -861,10 +873,10 @@ fn projects_body<'a>(
                     status_button(project_id.clone(), "in_progress", "Doing", status),
                     status_button(project_id, "complete", "Done", status),
                 ]
-                .spacing(10)
+                .spacing(theme::SPACE_4)
                 .align_y(Alignment::Center),
             )
-            .padding(10)
+            .padding(theme::SPACE_4)
             .style(|_| panel_style()),
         );
     }
@@ -878,13 +890,13 @@ fn status_button<'a>(
     current: &str,
 ) -> Element<'a, Message, Theme, Renderer> {
     let active = current == value;
-    button(text(label).size(11).color(if active {
+    button(text(label).size(theme::TEXT_SM).color(if active {
         theme::BG_PRIMARY
     } else {
         theme::TEXT_MUTED
     }))
     .on_press(Message::TrackerProjectStatusChanged(id, value.to_string()))
-    .padding([6, 10])
+    .padding([theme::SPACE_3, theme::SPACE_4])
     .style(if active {
         button::primary
     } else {
@@ -927,7 +939,7 @@ fn gates_body<'a>(
         completed_items,
         total_items,
     )]
-    .spacing(12);
+    .spacing(theme::SPACE_4);
 
     for gate in gates {
         let completed = gate
@@ -942,12 +954,12 @@ fn gates_body<'a>(
             .count();
         let mut item_col = column![
             text(gate.title)
-                .size(14)
+                .size(theme::TEXT_BASE)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
             progress_bar(completed, gate.items.len())
         ]
-        .spacing(8);
+        .spacing(theme::SPACE_3);
         for (idx, item) in gate.items.into_iter().enumerate() {
             let checked = kv
                 .get(&format!("gate_{}_{}", gate.id, idx))
@@ -958,10 +970,14 @@ fn gates_body<'a>(
                 checkbox(checked)
                     .label(item)
                     .on_toggle(move |_| Message::TrackerGateToggled(gate_id.clone(), idx))
-                    .size(15),
+                    .size(theme::TEXT_MD),
             );
         }
-        grid = grid.push(container(item_col).padding(12).style(|_| panel_style()));
+        grid = grid.push(
+            container(item_col)
+                .padding(theme::SPACE_4)
+                .style(|_| panel_style()),
+        );
     }
     scrollable(grid).height(Length::Fill).into()
 }
@@ -997,7 +1013,7 @@ fn reading_body<'a>(
         completed_items,
         total_items,
     )]
-    .spacing(12);
+    .spacing(theme::SPACE_4);
 
     for section in sections {
         let key_section = section.section.replace(' ', "");
@@ -1013,12 +1029,12 @@ fn reading_body<'a>(
             .count();
         let mut item_col = column![
             text(section.section)
-                .size(14)
+                .size(theme::TEXT_BASE)
                 .color(theme::TEXT_PRIMARY)
                 .font(BOLD),
             progress_bar(completed, section.items.len())
         ]
-        .spacing(8);
+        .spacing(theme::SPACE_3);
         for (idx, item) in section.items.into_iter().enumerate() {
             let checked = kv
                 .get(&format!("read_{key_section}_{idx}"))
@@ -1030,32 +1046,36 @@ fn reading_body<'a>(
                 checkbox(checked)
                     .label(label)
                     .on_toggle(move |_| Message::TrackerReadingToggled(section_clone.clone(), idx))
-                    .size(15),
+                    .size(theme::TEXT_MD),
             );
         }
-        grid = grid.push(container(item_col).padding(12).style(|_| panel_style()));
+        grid = grid.push(
+            container(item_col)
+                .padding(theme::SPACE_4)
+                .style(|_| panel_style()),
+        );
     }
     scrollable(grid).height(Length::Fill).into()
 }
 
 fn config_body<'a>(config_json: &'a text_editor::Content) -> Element<'a, Message, Theme, Renderer> {
     container(column![
-        text("Tracker JSON Configuration").size(15).color(theme::TEXT_PRIMARY).font(BOLD),
-        text("Projects, gates, reading lists, and phases are read from this JSON. Save to apply it to every tracker tab.").size(12).color(theme::TEXT_MUTED),
+        text("Tracker JSON Configuration").size(theme::TEXT_MD).color(theme::TEXT_PRIMARY).font(BOLD),
+        text("Projects, gates, reading lists, and phases are read from this JSON. Save to apply it to every tracker tab.").size(theme::TEXT_SM).color(theme::TEXT_MUTED),
         text_editor(config_json)
             .placeholder("Tracker JSON")
             .on_action(Message::TrackerConfigEdited)
-            .padding(10)
-            .size(12)
+            .padding(theme::SPACE_4)
+            .size(theme::TEXT_SM)
             .height(Length::Fixed(260.0))
             .wrapping(Wrapping::WordOrGlyph)
             .font(iced::Font::MONOSPACE),
-        button(text("Save Configuration").size(12).font(BOLD))
+        button(text("Save Configuration").size(theme::TEXT_SM).font(BOLD))
             .on_press(Message::TrackerConfigSave)
-            .padding([8, 12])
+            .padding([theme::SPACE_3, theme::SPACE_4])
             .style(button::primary),
-    ].spacing(12))
-        .padding(14)
+    ].spacing(theme::SPACE_4))
+        .padding(theme::SPACE_4)
         .height(Length::Fill)
         .style(|_| panel_style())
         .into()
@@ -1071,22 +1091,25 @@ fn section_summary<'a>(
         column![
             row![
                 column![
-                    text(title).size(15).color(theme::TEXT_PRIMARY).font(BOLD),
-                    text(subtitle).size(11).color(theme::TEXT_MUTED),
+                    text(title)
+                        .size(theme::TEXT_MD)
+                        .color(theme::TEXT_PRIMARY)
+                        .font(BOLD),
+                    text(subtitle).size(theme::TEXT_SM).color(theme::TEXT_MUTED),
                 ]
-                .spacing(2)
+                .spacing(theme::SPACE_1)
                 .width(Length::Fill),
                 text(format!("{}/{}", done, total))
-                    .size(14)
+                    .size(theme::TEXT_BASE)
                     .color(theme::ACCENT)
                     .font(BOLD),
             ]
             .align_y(Alignment::Center),
             progress_bar(done, total),
         ]
-        .spacing(10),
+        .spacing(theme::SPACE_4),
     )
-    .padding(12)
+    .padding(theme::SPACE_4)
     .style(|_| panel_style())
     .into()
 }
@@ -1104,7 +1127,7 @@ fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message, Theme, Re
             .style(|_| container::Style {
                 background: Some(Background::Color(theme::BG_TERTIARY)),
                 border: iced::Border {
-                    radius: 3.0.into(),
+                    radius: theme::RADIUS_SM.into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -1123,7 +1146,7 @@ fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message, Theme, Re
                 .style(|_| container::Style {
                     background: Some(Background::Color(theme::ACCENT)),
                     border: iced::Border {
-                        radius: 3.0.into(),
+                        radius: theme::RADIUS_SM.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -1134,13 +1157,13 @@ fn progress_bar<'a>(done: usize, total: usize) -> Element<'a, Message, Theme, Re
                 .style(|_| container::Style {
                     background: Some(Background::Color(theme::BG_TERTIARY)),
                     border: iced::Border {
-                        radius: 3.0.into(),
+                        radius: theme::RADIUS_SM.into(),
                         ..Default::default()
                     },
                     ..Default::default()
                 }),
         ]
-        .spacing(0),
+        .spacing(theme::SPACE_0),
     )
     .height(Length::Fixed(6.0))
     .width(Length::Fill)
@@ -1160,7 +1183,7 @@ fn status_dot<'a>(status: &str) -> Element<'a, Message, Theme, Renderer> {
         .style(move |_| container::Style {
             background: Some(Background::Color(color)),
             border: iced::Border {
-                radius: 4.0.into(),
+                radius: theme::RADIUS_SM.into(),
                 ..Default::default()
             },
             ..Default::default()

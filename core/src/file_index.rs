@@ -101,10 +101,10 @@ impl FileIndex {
     fn extract_targets(&self, content: &str, file_path: &Path) -> HashSet<PathBuf> {
         let mut set = HashSet::new();
         for cap in WIKILINK_RE.captures_iter(content) {
-            if let Some(target) = cap.get(1) {
-                if let Some(resolved) = self.resolve_link(target.as_str(), file_path) {
-                    set.insert(resolved);
-                }
+            if let Some(target) = cap.get(1)
+                && let Some(resolved) = self.resolve_link(target.as_str(), file_path)
+            {
+                set.insert(resolved);
             }
         }
         set
@@ -121,7 +121,10 @@ impl FileIndex {
     /// that a later-created file at that location inherits.
     fn resolve_link(&self, target: &str, file_path: &Path) -> Option<PathBuf> {
         let candidate = resolve_wikilink_target(target, &self.vault_root, file_path)?;
-        let Some(stem) = candidate.file_stem().map(|s| s.to_string_lossy().to_lowercase()) else {
+        let Some(stem) = candidate
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_lowercase())
+        else {
             return Some(candidate);
         };
         match self.names.get(&stem) {
@@ -137,17 +140,20 @@ impl FileIndex {
 
     fn add_name(&mut self, path: &Path) {
         if let Some(stem) = stem_lower(path) {
-            self.names.entry(stem).or_default().insert(path.to_path_buf());
+            self.names
+                .entry(stem)
+                .or_default()
+                .insert(path.to_path_buf());
         }
     }
 
     fn remove_name(&mut self, path: &Path) {
-        if let Some(stem) = stem_lower(path) {
-            if let Some(set) = self.names.get_mut(&stem) {
-                set.remove(path);
-                if set.is_empty() {
-                    self.names.remove(&stem);
-                }
+        if let Some(stem) = stem_lower(path)
+            && let Some(set) = self.names.get_mut(&stem)
+        {
+            set.remove(path);
+            if set.is_empty() {
+                self.names.remove(&stem);
             }
         }
     }
@@ -179,10 +185,10 @@ fn stem_lower(path: &Path) -> Option<String> {
 fn extract_wikilinks(content: &str, vault_root: &Path, file_path: &Path) -> Vec<PathBuf> {
     let mut links = Vec::new();
     for cap in WIKILINK_RE.captures_iter(content) {
-        if let Some(target) = cap.get(1) {
-            if let Some(resolved) = resolve_wikilink_target(target.as_str(), vault_root, file_path) {
-                links.push(resolved);
-            }
+        if let Some(target) = cap.get(1)
+            && let Some(resolved) = resolve_wikilink_target(target.as_str(), vault_root, file_path)
+        {
+            links.push(resolved);
         }
     }
     links
@@ -376,7 +382,11 @@ mod tests {
         ]);
 
         let backlinks = index.get_backlinks(&target);
-        assert_eq!(backlinks, vec![file_a], "bare link should backlink the subfolder file");
+        assert_eq!(
+            backlinks,
+            vec![file_a],
+            "bare link should backlink the subfolder file"
+        );
     }
 
     #[test]

@@ -1,5 +1,60 @@
+use std::time::{Duration, Instant};
+
 use ropey::Rope;
 use serde::{Deserialize, Serialize};
+
+/// Consecutive single-character edits committed within this window merge into
+/// one undo step. Long enough to swallow a burst of typing, short enough that a
+/// deliberate pause reliably starts a new step.
+const UNDO_COALESCE_WINDOW: Duration = Duration::from_millis(300);
+
+/// Whether `next` continues the run of typing (or deleting) recorded in `prev`,
+/// and so belongs in the same undo step.
+///
+/// Only single-character, same-direction, adjacent edits merge. A newline ends
+/// a run, so undo always stops at a line boundary at the latest.
+fn can_coalesce(prev: &[EditOp], next: &[EditOp]) -> bool {
+    let (Some(last), 1) = (prev.last(), next.len()) else {
+        return false;
+    };
+
+    match (last, &next[0]) {
+        (
+            EditOp::Insert {
+                char_offset: prev_at,
+                text: prev_text,
+            },
+            EditOp::Insert {
+                char_offset: next_at,
+                text: next_text,
+            },
+        ) => {
+            next_text.chars().count() == 1
+                && !next_text.contains('\n')
+                && !prev_text.contains('\n')
+                // The new character lands exactly where the previous one ended.
+                && *next_at == prev_at + prev_text.chars().count()
+        }
+        (
+            EditOp::Delete {
+                char_offset: prev_at,
+                text: prev_text,
+            },
+            EditOp::Delete {
+                char_offset: next_at,
+                text: next_text,
+            },
+        ) => {
+            next_text.chars().count() == 1
+                && !next_text.contains('\n')
+                && !prev_text.contains('\n')
+                // Backspace: each delete removes the character just before the
+                // previous one. Forward-delete repeats at the same offset.
+                && (*next_at + next_text.chars().count() == *prev_at || next_at == prev_at)
+        }
+        _ => false,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection {
@@ -130,6 +185,9 @@ pub struct DocBuffer {
 
     undo_stack: Vec<EditTransaction>,
     redo_stack: Vec<EditTransaction>,
+    /// When the newest undo transaction was recorded, for coalescing runs of
+    /// typing into a single step.
+    last_commit_at: Option<Instant>,
 }
 
 impl DocBuffer {
@@ -149,6 +207,7 @@ impl DocBuffer {
             dirty: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            last_commit_at: None,
         };
         buffer.sync_public_state();
         buffer
@@ -158,6 +217,11 @@ impl DocBuffer {
         self.rope.to_string()
     }
 
+    /// Replace the whole document, discarding undo history.
+    ///
+    /// Only for loading a different document into an existing buffer. To
+    /// rewrite the text of the *current* document — replace-all, for instance —
+    /// use [`DocBuffer::replace_all_text`], which stays undoable.
     pub fn set_text(&mut self, text: &str) {
         self.rope = Rope::from_str(text);
         self.cursor_offset = self.cursor_offset.min(self.rope.len_chars());
@@ -165,8 +229,46 @@ impl DocBuffer {
         self.desired_col = None;
         self.undo_stack.clear();
         self.redo_stack.clear();
+        self.last_commit_at = None;
         self.dirty = true;
         self.sync_public_state();
+    }
+
+    /// Rewrite the entire document as one undoable edit.
+    ///
+    /// A bulk rewrite is exactly the edit a user is most likely to want back,
+    /// so it is recorded as a single transaction rather than clearing the undo
+    /// stack the way [`DocBuffer::set_text`] does.
+    pub fn replace_all_text(&mut self, text: &str) -> CommandResult {
+        let old_text = self.rope.to_string();
+        if old_text == text {
+            return CommandResult::default();
+        }
+
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+
+        let ops = vec![
+            EditOp::Delete {
+                char_offset: 0,
+                text: old_text,
+            },
+            EditOp::Insert {
+                char_offset: 0,
+                text: text.to_string(),
+            },
+        ];
+        for op in &ops {
+            self.apply_op(op);
+        }
+
+        self.cursor_offset = before_cursor.min(self.rope.len_chars());
+        self.selection_offsets = None;
+        // A bulk rewrite is never part of a typing run.
+        self.last_commit_at = None;
+        self.commit_transaction(ops, before_cursor, before_selection);
+        self.last_commit_at = None;
+        CommandResult::changed()
     }
 
     pub fn line_count(&self) -> usize {
@@ -296,6 +398,9 @@ impl DocBuffer {
         self.redo_stack.push(transaction);
         self.dirty = true;
         self.desired_col = None;
+        // An edit made right after undoing starts its own step rather than
+        // merging into the transaction we just moved off the stack.
+        self.last_commit_at = None;
         self.sync_public_state();
         true
     }
@@ -312,12 +417,26 @@ impl DocBuffer {
         self.undo_stack.push(transaction);
         self.dirty = true;
         self.desired_col = None;
+        // Likewise after redo: the restored transaction is closed to further
+        // coalescing.
+        self.last_commit_at = None;
         self.sync_public_state();
         true
     }
 
     pub fn set_cursor(&mut self, line: usize, col: usize) {
         self.cursor_offset = self.line_col_to_offset(line, col);
+        self.selection_offsets = None;
+        self.desired_col = None;
+        self.sync_public_state();
+    }
+
+    /// Place the cursor at a raw character offset, clamped to the document.
+    ///
+    /// Used when restoring a position recorded in a previous session, where the
+    /// file may since have been edited elsewhere and grown shorter.
+    pub fn set_cursor_offset(&mut self, offset: usize) {
+        self.cursor_offset = offset.min(self.rope.len_chars());
         self.selection_offsets = None;
         self.desired_col = None;
         self.sync_public_state();
@@ -766,6 +885,32 @@ impl DocBuffer {
     ) {
         self.dirty = true;
         self.desired_col = None;
+
+        let now = Instant::now();
+        let recent = self
+            .last_commit_at
+            .is_some_and(|at| now.duration_since(at) <= UNDO_COALESCE_WINDOW);
+
+        // Fold a continuing run of typing (or of backspaces) into the previous
+        // transaction, so one Ctrl+Z takes back a word-sized burst instead of a
+        // single character. Anything that is not a direct continuation — a
+        // pause, a caret jump, a newline, a selection edit — starts a new step.
+        if recent
+            && before_selection.is_none()
+            && let Some(previous) = self.undo_stack.last_mut()
+            && previous.after_selection.is_none()
+            && previous.after_cursor == before_cursor
+            && can_coalesce(&previous.ops, &ops)
+        {
+            previous.ops.extend(ops);
+            previous.after_cursor = self.cursor_offset;
+            previous.after_selection = self.selection_offsets;
+            self.last_commit_at = Some(now);
+            self.redo_stack.clear();
+            self.sync_public_state();
+            return;
+        }
+
         self.undo_stack.push(EditTransaction {
             ops,
             before_cursor,
@@ -773,6 +918,7 @@ impl DocBuffer {
             before_selection,
             after_selection: self.selection_offsets,
         });
+        self.last_commit_at = Some(now);
         self.redo_stack.clear();
         self.sync_public_state();
     }
@@ -896,27 +1042,27 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
             break;
         }
     }
-    if let Some(dot) = dot_idx {
-        if dot > 0 {
-            // `dot` only follows ASCII digits, so dot + 1 is a char boundary; the
-            // char after it may be multibyte, so inspect it via chars() not slicing.
-            let after_dot = rest[dot + 1..].chars().next();
-            let is_at_end = after_dot.is_none();
-            let has_space_after = after_dot == Some(' ');
-            if is_at_end || has_space_after {
-                let marker_len = if has_space_after { dot + 2 } else { dot + 1 };
-                let marker = rest[..marker_len].to_string();
-                let content = &rest[marker_len..];
-                let is_empty = content.trim().is_empty();
-                if let Ok(num) = rest[..dot].parse::<usize>() {
-                    let next_marker = format!("{}. ", num + 1);
-                    return Some(ListItem {
-                        indent,
-                        marker,
-                        next_marker,
-                        is_empty,
-                    });
-                }
+    if let Some(dot) = dot_idx
+        && dot > 0
+    {
+        // `dot` only follows ASCII digits, so dot + 1 is a char boundary; the
+        // char after it may be multibyte, so inspect it via chars() not slicing.
+        let after_dot = rest[dot + 1..].chars().next();
+        let is_at_end = after_dot.is_none();
+        let has_space_after = after_dot == Some(' ');
+        if is_at_end || has_space_after {
+            let marker_len = if has_space_after { dot + 2 } else { dot + 1 };
+            let marker = rest[..marker_len].to_string();
+            let content = &rest[marker_len..];
+            let is_empty = content.trim().is_empty();
+            if let Ok(num) = rest[..dot].parse::<usize>() {
+                let next_marker = format!("{}. ", num + 1);
+                return Some(ListItem {
+                    indent,
+                    marker,
+                    next_marker,
+                    is_empty,
+                });
             }
         }
     }
@@ -927,6 +1073,104 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
 #[cfg(test)]
 mod tests {
     use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
+
+    /// A bulk rewrite (replace-all) must be undoable — it is the edit a user is
+    /// most likely to want back, and autosave commits it within 400ms.
+    #[test]
+    fn replace_all_text_is_a_single_undoable_step() {
+        let mut buffer = DocBuffer::from_text("cat cat cat");
+        buffer.replace_all_text("dog dog dog");
+        assert_eq!(buffer.text(), "dog dog dog");
+
+        assert!(buffer.execute(EditorCommand::Undo).text_changed);
+        assert_eq!(buffer.text(), "cat cat cat", "replace-all is undoable");
+
+        assert!(buffer.execute(EditorCommand::Redo).text_changed);
+        assert_eq!(buffer.text(), "dog dog dog");
+    }
+
+    /// A no-op rewrite must not push an empty step onto the undo stack.
+    #[test]
+    fn replace_all_text_with_identical_content_is_not_an_edit() {
+        let mut buffer = DocBuffer::from_text("same");
+        let result = buffer.replace_all_text("same");
+        assert!(!result.text_changed);
+        assert!(
+            !buffer.execute(EditorCommand::Undo).text_changed,
+            "nothing should have been recorded to undo"
+        );
+    }
+
+    /// Typing a run of characters is one undo step, not one per keystroke.
+    #[test]
+    fn typing_a_run_coalesces_into_a_single_undo_step() {
+        let mut buffer = DocBuffer::from_text("");
+        for ch in "hello".chars() {
+            buffer.execute(EditorCommand::InsertText(ch.to_string()));
+        }
+        assert_eq!(buffer.text(), "hello");
+
+        assert!(buffer.execute(EditorCommand::Undo).text_changed);
+        assert_eq!(
+            buffer.text(),
+            "",
+            "one undo should take back the whole typed run"
+        );
+
+        assert!(buffer.execute(EditorCommand::Redo).text_changed);
+        assert_eq!(buffer.text(), "hello", "redo restores the merged run");
+    }
+
+    /// A newline closes the run, so undo never jumps across a line boundary.
+    #[test]
+    fn newline_breaks_the_undo_run() {
+        let mut buffer = DocBuffer::from_text("");
+        for ch in "ab".chars() {
+            buffer.execute(EditorCommand::InsertText(ch.to_string()));
+        }
+        buffer.execute(EditorCommand::InsertText("\n".to_string()));
+        for ch in "cd".chars() {
+            buffer.execute(EditorCommand::InsertText(ch.to_string()));
+        }
+        assert_eq!(buffer.text(), "ab\ncd");
+
+        buffer.execute(EditorCommand::Undo);
+        assert_eq!(buffer.text(), "ab\n", "second line's run undone on its own");
+        buffer.execute(EditorCommand::Undo);
+        assert_eq!(buffer.text(), "ab", "the newline is its own step");
+        buffer.execute(EditorCommand::Undo);
+        assert_eq!(buffer.text(), "");
+    }
+
+    /// Backspacing a word is one undo step too.
+    #[test]
+    fn backspace_run_coalesces() {
+        let mut buffer = DocBuffer::from_text("hello");
+        buffer.set_cursor(0, 5);
+        for _ in 0..5 {
+            buffer.execute(EditorCommand::DeleteBackward);
+        }
+        assert_eq!(buffer.text(), "");
+
+        buffer.execute(EditorCommand::Undo);
+        assert_eq!(buffer.text(), "hello", "one undo restores the deleted run");
+    }
+
+    /// A non-adjacent edit must start a new step, or undo would rewrite text
+    /// the user never typed in that burst.
+    #[test]
+    fn cursor_jump_breaks_the_undo_run() {
+        let mut buffer = DocBuffer::from_text("XY");
+        buffer.set_cursor(0, 0);
+        buffer.execute(EditorCommand::InsertText("a".to_string()));
+        // Jump elsewhere, then type again.
+        buffer.set_cursor(0, 3);
+        buffer.execute(EditorCommand::InsertText("b".to_string()));
+        assert_eq!(buffer.text(), "aXYb");
+
+        buffer.execute(EditorCommand::Undo);
+        assert_eq!(buffer.text(), "aXY", "only the second insert is undone");
+    }
 
     #[test]
     fn inserts_at_cursor_and_updates_offset_cursor() {
@@ -1136,10 +1380,7 @@ mod tests {
         let original = "one\n\nthree\n四";
         let mut buffer = DocBuffer::from_text(original);
         buffer.execute(EditorCommand::SelectAll);
-        assert_eq!(
-            buffer.execute(EditorCommand::DeleteSelection).text_changed,
-            true
-        );
+        assert!(buffer.execute(EditorCommand::DeleteSelection).text_changed);
         assert_eq!(buffer.text(), "");
         assert!(buffer.undo());
         assert_eq!(buffer.text(), original);

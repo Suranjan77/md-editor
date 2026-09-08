@@ -177,12 +177,12 @@ where
     R: iced::advanced::text::Renderer<Font = iced::Font>,
 {
     if let Some(span) = line.spans.iter().find(|s| s.is_image) {
-        if let Some(path) = &span.image_path {
-            if let Some((_, w, h)) = image_cache.get(path) {
-                let max_w = available_width - TEXT_X_OFFSET - MARGIN_RIGHT;
-                let scale = if *w > max_w { max_w / w } else { 1.0 };
-                return (h * scale) + 40.0; // Extra padding for caption
-            }
+        if let Some(path) = &span.image_path
+            && let Some((_, w, h)) = image_cache.get(path)
+        {
+            let max_w = available_width - TEXT_X_OFFSET - MARGIN_RIGHT;
+            let scale = if *w > max_w { max_w / w } else { 1.0 };
+            return (h * scale) + 40.0; // Extra padding for caption
         }
         return IMAGE_HEIGHT;
     }
@@ -254,16 +254,13 @@ fn get_table_number(
     lines: &[crate::editor::highlight::StyledLine],
     block_id: usize,
 ) -> Option<usize> {
-    if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id) {
-        if let Some(first_span) = first_line.spans.first() {
-            if let Some(ref id) = first_span.id {
-                if let Some(num_str) = id.strip_prefix("table-") {
-                    if let Ok(num) = num_str.parse::<usize>() {
-                        return Some(num);
-                    }
-                }
-            }
-        }
+    if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id)
+        && let Some(first_span) = first_line.spans.first()
+        && let Some(ref id) = first_span.id
+        && let Some(num_str) = id.strip_prefix("table-")
+        && let Ok(num) = num_str.parse::<usize>()
+    {
+        return Some(num);
     }
     None
 }
@@ -272,16 +269,13 @@ fn get_code_number(
     lines: &[crate::editor::highlight::StyledLine],
     block_id: usize,
 ) -> Option<usize> {
-    if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id) {
-        if let Some(first_span) = first_line.spans.first() {
-            if let Some(ref id) = first_span.id {
-                if let Some(num_str) = id.strip_prefix("code-") {
-                    if let Ok(num) = num_str.parse::<usize>() {
-                        return Some(num);
-                    }
-                }
-            }
-        }
+    if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id)
+        && let Some(first_span) = first_line.spans.first()
+        && let Some(ref id) = first_span.id
+        && let Some(num_str) = id.strip_prefix("code-")
+        && let Ok(num) = num_str.parse::<usize>()
+    {
+        return Some(num);
     }
     None
 }
@@ -290,27 +284,23 @@ fn get_equation_number(
     lines: &[crate::editor::highlight::StyledLine],
     block_id: usize,
 ) -> Option<usize> {
-    if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id) {
-        if let Some(first_span) = first_line.spans.first() {
-            if let Some(ref id) = first_span.id {
-                if let Some(num_str) = id.strip_prefix("equation-") {
-                    if let Ok(num) = num_str.parse::<usize>() {
-                        return Some(num);
-                    }
-                }
-            }
-        }
+    if let Some(first_line) = lines.iter().find(|l| l.block_id == block_id)
+        && let Some(first_span) = first_line.spans.first()
+        && let Some(ref id) = first_span.id
+        && let Some(num_str) = id.strip_prefix("equation-")
+        && let Ok(num) = num_str.parse::<usize>()
+    {
+        return Some(num);
     }
     None
 }
 
 fn get_image_number(span: &crate::editor::highlight::StyledSpan) -> Option<usize> {
-    if let Some(ref id) = span.id {
-        if let Some(num_str) = id.strip_prefix("figure-") {
-            if let Ok(num) = num_str.parse::<usize>() {
-                return Some(num);
-            }
-        }
+    if let Some(ref id) = span.id
+        && let Some(num_str) = id.strip_prefix("figure-")
+        && let Ok(num) = num_str.parse::<usize>()
+    {
+        return Some(num);
     }
     None
 }
@@ -335,14 +325,14 @@ fn span_font(span: &crate::editor::highlight::StyledSpan, line: &StyledLine) -> 
 }
 
 /// Measure the width of a string at a given font size + font.
-fn measure_width<R>(content: &str, size: f32, font: iced::Font) -> f32
+/// Shape `content` and return its advance width. This is the expensive call —
+/// it builds a fresh paragraph and runs the text shaper — so everything goes
+/// through the memoized [`measure_width`] instead of calling this directly.
+fn shape_width<R>(content: &str, size: f32, font: iced::Font) -> f32
 where
     R: iced::advanced::text::Renderer<Font = iced::Font>,
 {
     use iced::advanced::text::Paragraph;
-    if content.is_empty() {
-        return 0.0;
-    }
     let paragraph = R::Paragraph::with_text(iced::advanced::text::Text {
         content,
         bounds: Size::new(f32::INFINITY, f32::INFINITY),
@@ -350,11 +340,65 @@ where
         line_height: iced::advanced::text::LineHeight::default(),
         font,
         align_x: iced::alignment::Horizontal::Left.into(),
-        align_y: iced::alignment::Vertical::Top.into(),
+        align_y: iced::alignment::Vertical::Top,
         shaping: iced::advanced::text::Shaping::Basic,
         wrapping: iced::advanced::text::Wrapping::None,
     });
     paragraph.min_bounds().width
+}
+
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+struct SpanCacheKey {
+    content: Box<str>,
+    font: iced::Font,
+    size_bits: u32,
+}
+
+/// Above this many entries the span-width cache is dropped wholesale. Layout
+/// and drawing touch a bounded working set (the visible lines), so a periodic
+/// reset costs one re-shape per live span and keeps a long session from
+/// accumulating every string the document ever contained.
+const SPAN_WIDTH_CACHE_CAP: usize = 8192;
+
+/// Width of `content` when shaped at `size` in `font`, memoized.
+///
+/// Layout, drawing, and hit-testing all measure the same spans repeatedly —
+/// once per frame, per visible line — and shaping dominates that work. The
+/// width of a given string at a given size and font never changes, so it is
+/// computed once and reused.
+fn measure_width<R>(content: &str, size: f32, font: iced::Font) -> f32
+where
+    R: iced::advanced::text::Renderer<Font = iced::Font>,
+{
+    if content.is_empty() {
+        return 0.0;
+    }
+
+    static CACHE: OnceLock<Mutex<HashMap<SpanCacheKey, f32>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    let key = SpanCacheKey {
+        content: content.into(),
+        font,
+        size_bits: size.to_bits(),
+    };
+
+    if let Ok(cache) = cache.lock()
+        && let Some(width) = cache.get(&key)
+    {
+        return *width;
+    }
+
+    let width = shape_width::<R>(content, size, font);
+
+    if let Ok(mut cache) = cache.lock() {
+        if cache.len() >= SPAN_WIDTH_CACHE_CAP {
+            cache.clear();
+        }
+        cache.insert(key, width);
+    }
+
+    width
 }
 
 fn measure_char_width<R>(ch: char, size: f32, font: iced::Font) -> f32
@@ -368,13 +412,16 @@ where
         size_bits: size.to_bits(),
     };
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(cache) = cache.lock() {
-        if let Some(width) = cache.get(&key) {
-            return *width;
-        }
+    if let Ok(cache) = cache.lock()
+        && let Some(width) = cache.get(&key)
+    {
+        return *width;
     }
 
-    let width = measure_width::<R>(&ch.to_string(), size, font);
+    // Straight to the shaper: this cache is the char-level one, so going
+    // through `measure_width` would only add a second lookup and a redundant
+    // entry in the span cache.
+    let width = shape_width::<R>(&ch.to_string(), size, font);
     if let Ok(mut cache) = cache.lock() {
         cache.insert(key, width);
     }
@@ -577,12 +624,12 @@ fn span_is_inline_edit_target(line: &StyledLine, span_idx: usize, active_col: us
     false
 }
 
-fn span_visible_text<'a>(
-    line: &'a StyledLine,
+fn span_visible_text(
+    line: &StyledLine,
     span_idx: usize,
     block_editing: bool,
     active_col: Option<usize>,
-) -> &'a str {
+) -> &str {
     let Some(span) = line.spans.get(span_idx) else {
         return "";
     };
@@ -644,7 +691,7 @@ fn draw_text_chunk<R>(
             line_height: iced::advanced::text::LineHeight::default(),
             font,
             align_x: iced::alignment::Horizontal::Left.into(),
-            align_y: iced::alignment::Vertical::Top.into(),
+            align_y: iced::alignment::Vertical::Top,
             shaping: iced::advanced::text::Shaping::Basic,
             wrapping: iced::advanced::text::Wrapping::None,
         },
@@ -750,7 +797,7 @@ fn draw_nowrap_text<R>(
             line_height: iced::advanced::text::LineHeight::default(),
             font,
             align_x: iced::alignment::Horizontal::Left.into(),
-            align_y: iced::alignment::Vertical::Top.into(),
+            align_y: iced::alignment::Vertical::Top,
             shaping: iced::advanced::text::Shaping::Basic,
             wrapping: iced::advanced::text::Wrapping::None,
         },
@@ -1290,7 +1337,7 @@ where
                         line_height: iced::advanced::text::LineHeight::default(),
                         font: caption_font,
                         align_x: iced::alignment::Horizontal::Center.into(),
-                        align_y: iced::alignment::Vertical::Center.into(),
+                        align_y: iced::alignment::Vertical::Center,
                         shaping: iced::advanced::text::Shaping::Basic,
                         wrapping: iced::advanced::text::Wrapping::None,
                     },
@@ -1354,7 +1401,7 @@ where
                                 line_height: iced::advanced::text::LineHeight::default(),
                                 font: caption_font,
                                 align_x: iced::alignment::Horizontal::Center.into(),
-                                align_y: iced::alignment::Vertical::Center.into(),
+                                align_y: iced::alignment::Vertical::Center,
                                 shaping: iced::advanced::text::Shaping::Basic,
                                 wrapping: iced::advanced::text::Wrapping::None,
                             },
@@ -1400,7 +1447,7 @@ where
                                         line_height: iced::advanced::text::LineHeight::default(),
                                         font: badge_font,
                                         align_x: iced::alignment::Horizontal::Center.into(),
-                                        align_y: iced::alignment::Vertical::Center.into(),
+                                        align_y: iced::alignment::Vertical::Center,
                                         shaping: iced::advanced::text::Shaping::Basic,
                                         wrapping: iced::advanced::text::Wrapping::None,
                                     },
@@ -1465,58 +1512,54 @@ where
                     })
                 });
 
-            if let Some(((start_line, start_col), (end_line, end_col))) = selection {
-                if i >= start_line && i <= end_line {
-                    let line_len = self.buffer.line_text(i).chars().count();
-                    let from_col = if i == start_line {
-                        start_col.min(line_len)
-                    } else {
-                        0
-                    };
-                    let to_col = if i == end_line {
-                        end_col.min(line_len)
-                    } else {
-                        line_len
-                    };
+            if let Some(((start_line, start_col), (end_line, end_col))) = selection
+                && i >= start_line
+                && i <= end_line
+            {
+                let line_len = self.buffer.line_text(i).chars().count();
+                let from_col = if i == start_line {
+                    start_col.min(line_len)
+                } else {
+                    0
+                };
+                let to_col = if i == end_line {
+                    end_col.min(line_len)
+                } else {
+                    line_len
+                };
 
-                    if from_col < to_col {
-                        let (from_x, from_y) = self.position_for_col::<R>(
-                            i,
-                            from_col,
-                            bounds.width,
-                            is_editing,
-                            active_col,
-                        );
-                        let (to_x, to_y) = self.position_for_col::<R>(
-                            i,
-                            to_col,
-                            bounds.width,
-                            is_editing,
-                            active_col,
-                        );
-                        let select_x = bounds.x + TEXT_X_OFFSET + from_x;
-                        let select_w = if (to_y - from_y).abs() < 1.0 {
-                            (to_x - from_x).max(3.0)
-                        } else {
-                            (bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - from_x).max(3.0)
-                        };
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: Rectangle {
-                                    x: select_x,
-                                    y: y + from_y + 4.0,
-                                    width: select_w,
-                                    height: (BASE_LINE_HEIGHT - 8.0).max(16.0),
-                                },
-                                border: iced::Border {
-                                    radius: 3.0.into(),
-                                    ..Default::default()
-                                },
+                if from_col < to_col {
+                    let (from_x, from_y) = self.position_for_col::<R>(
+                        i,
+                        from_col,
+                        bounds.width,
+                        is_editing,
+                        active_col,
+                    );
+                    let (to_x, to_y) =
+                        self.position_for_col::<R>(i, to_col, bounds.width, is_editing, active_col);
+                    let select_x = bounds.x + TEXT_X_OFFSET + from_x;
+                    let select_w = if (to_y - from_y).abs() < 1.0 {
+                        (to_x - from_x).max(3.0)
+                    } else {
+                        (bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT - from_x).max(3.0)
+                    };
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: select_x,
+                                y: y + from_y + 4.0,
+                                width: select_w,
+                                height: (BASE_LINE_HEIGHT - 8.0).max(16.0),
+                            },
+                            border: iced::Border {
+                                radius: 3.0.into(),
                                 ..Default::default()
                             },
-                            Color::from_rgba(0.69, 0.80, 0.78, 0.24),
-                        );
-                    }
+                            ..Default::default()
+                        },
+                        Color::from_rgba(0.69, 0.80, 0.78, 0.24),
+                    );
                 }
             }
 
@@ -1644,7 +1687,7 @@ where
                             line_height: iced::advanced::text::LineHeight::default(),
                             font,
                             align_x: iced::alignment::Horizontal::Left.into(),
-                            align_y: iced::alignment::Vertical::Top.into(),
+                            align_y: iced::alignment::Vertical::Top,
                             shaping: iced::advanced::text::Shaping::Basic,
                             wrapping: iced::advanced::text::Wrapping::WordOrGlyph,
                         },
@@ -1863,7 +1906,7 @@ where
                                     line_height: iced::advanced::text::LineHeight::default(),
                                     font,
                                     align_x: iced::alignment::Horizontal::Left.into(),
-                                    align_y: iced::alignment::Vertical::Top.into(),
+                                    align_y: iced::alignment::Vertical::Top,
                                     shaping: iced::advanced::text::Shaping::Basic,
                                     wrapping: iced::advanced::text::Wrapping::None,
                                 },
@@ -1913,56 +1956,56 @@ where
                 // ── image ────────────────────────────────────────
                 if span.is_image && !span_editing {
                     image_counter += 1;
-                    if let Some(path) = &span.image_path {
-                        if let Some((handle, w, h)) = self.image_cache.get(path) {
-                            let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
-                            let scale = if *w > available_w {
-                                available_w / w
-                            } else {
-                                1.0
-                            };
-                            let draw_w = w * scale;
-                            let draw_h = h * scale;
-                            let draw_x = bounds.x + TEXT_X_OFFSET + (available_w - draw_w) / 2.0;
+                    if let Some(path) = &span.image_path
+                        && let Some((handle, w, h)) = self.image_cache.get(path)
+                    {
+                        let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
+                        let scale = if *w > available_w {
+                            available_w / w
+                        } else {
+                            1.0
+                        };
+                        let draw_w = w * scale;
+                        let draw_h = h * scale;
+                        let draw_x = bounds.x + TEXT_X_OFFSET + (available_w - draw_w) / 2.0;
 
-                            renderer.draw_image(
-                                iced::advanced::image::Image::new(handle.clone()),
-                                Rectangle {
-                                    x: draw_x,
-                                    y: y + 5.0,
-                                    width: draw_w,
-                                    height: draw_h,
-                                },
-                                *viewport,
-                            );
+                        renderer.draw_image(
+                            iced::advanced::image::Image::new(handle.clone()),
+                            Rectangle {
+                                x: draw_x,
+                                y: y + 5.0,
+                                width: draw_w,
+                                height: draw_h,
+                            },
+                            *viewport,
+                        );
 
-                            // Draw caption
-                            let fig_num = get_image_number(span).unwrap_or(image_counter);
-                            let caption = format!(
-                                "Figure {}: {}",
-                                fig_num,
-                                span.image_alt.as_deref().unwrap_or("")
-                            );
-                            renderer.fill_text(
-                                iced::advanced::text::Text {
-                                    content: caption,
-                                    bounds: Size::new(draw_w, 20.0),
-                                    size: 13.0.into(),
-                                    line_height: iced::advanced::text::LineHeight::default(),
-                                    font: iced::Font::DEFAULT,
-                                    align_x: iced::alignment::Horizontal::Center.into(),
-                                    align_y: iced::alignment::Vertical::Top.into(),
-                                    shaping: iced::advanced::text::Shaping::Basic,
-                                    wrapping: iced::advanced::text::Wrapping::WordOrGlyph,
-                                },
-                                Point::new(draw_x + draw_w / 2.0, y + draw_h + 12.0),
-                                theme::TEXT_MUTED,
-                                *viewport,
-                            );
+                        // Draw caption
+                        let fig_num = get_image_number(span).unwrap_or(image_counter);
+                        let caption = format!(
+                            "Figure {}: {}",
+                            fig_num,
+                            span.image_alt.as_deref().unwrap_or("")
+                        );
+                        renderer.fill_text(
+                            iced::advanced::text::Text {
+                                content: caption,
+                                bounds: Size::new(draw_w, 20.0),
+                                size: 13.0.into(),
+                                line_height: iced::advanced::text::LineHeight::default(),
+                                font: iced::Font::DEFAULT,
+                                align_x: iced::alignment::Horizontal::Center.into(),
+                                align_y: iced::alignment::Vertical::Top,
+                                shaping: iced::advanced::text::Shaping::Basic,
+                                wrapping: iced::advanced::text::Wrapping::WordOrGlyph,
+                            },
+                            Point::new(draw_x + draw_w / 2.0, y + draw_h + 12.0),
+                            theme::TEXT_MUTED,
+                            *viewport,
+                        );
 
-                            x += draw_w + 10.0;
-                            continue;
-                        }
+                        x += draw_w + 10.0;
+                        continue;
                     }
                 }
 
@@ -1987,135 +2030,133 @@ where
                     let mut drawn_w = 0.0;
                     let mut image_rendered = false;
 
-                    if !tex.is_empty() {
-                        if let Some(math) = self.math_cache.get(tex) {
-                            // Each context has a bitmap rasterized for exactly
-                            // this display scale (see MathRender).
-                            let handle = if line.is_math_block {
-                                &math.block_handle
-                            } else {
-                                &math.inline_handle
-                            };
-                            let (w, h) = (math.width, math.height);
-                            let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
-                            let block_max_w = (available_w - 48.0).max(80.0);
-                            let fit_scale = if line.is_math_block { scale } else { scale };
-                            let draw_w = w * fit_scale;
-                            let draw_h = h * fit_scale;
-                            drawn_w = draw_w;
+                    if !tex.is_empty()
+                        && let Some(math) = self.math_cache.get(tex)
+                    {
+                        // Each context has a bitmap rasterized for exactly
+                        // this display scale (see MathRender).
+                        let handle = if line.is_math_block {
+                            &math.block_handle
+                        } else {
+                            &math.inline_handle
+                        };
+                        let (w, h) = (math.width, math.height);
+                        let available_w = bounds.width - TEXT_X_OFFSET - MARGIN_RIGHT;
+                        let block_max_w = (available_w - 48.0).max(80.0);
+                        let fit_scale = if line.is_math_block { scale } else { scale };
+                        let draw_w = w * fit_scale;
+                        let draw_h = h * fit_scale;
+                        drawn_w = draw_w;
 
-                            // While editing math, show the source text only. Drawing the rendered
-                            // image behind/above the source makes the edit target unreadable.
-                            if span_editing {
-                                // Skip drawing image, will draw text
-                            } else {
-                                let line_start_x = bounds.x + TEXT_X_OFFSET;
-                                let line_right_x = bounds.x + bounds.width - MARGIN_RIGHT;
-                                let mut draw_x = x;
-                                if line.is_math_block {
-                                    equation_counter += 1;
-                                    let max_scroll = (draw_w - block_max_w).max(0.0);
-                                    let scroll_x = state
-                                        .block_scroll_x
-                                        .get(&line.block_id)
-                                        .copied()
-                                        .unwrap_or(0.0)
-                                        .clamp(0.0, max_scroll);
-                                    draw_x = bounds.x
-                                        + TEXT_X_OFFSET
-                                        + if draw_w <= block_max_w {
-                                            (block_max_w - draw_w) / 2.0
-                                        } else {
-                                            -scroll_x
-                                        };
-                                } else if draw_x > line_start_x && draw_x + draw_w > line_right_x {
-                                    line_draw_y += BASE_LINE_HEIGHT;
-                                    draw_x = line_start_x;
-                                    x = line_start_x;
-                                }
-
-                                if line.is_math_block {
-                                    // Equation number right aligned
-                                    let eq_val = get_equation_number(self.lines, line.block_id)
-                                        .unwrap_or(equation_counter);
-                                    let eq_num = format!("({})", eq_val);
-                                    let eq_w =
-                                        measure_width::<R>(&eq_num, 14.0, iced::Font::DEFAULT);
-                                    let eq_y = line_draw_y + (lh - draw_h) / 2.0; // center with the equation
-                                    renderer.fill_text(
-                                        iced::advanced::text::Text {
-                                            content: eq_num,
-                                            bounds: Size::new(eq_w, draw_h),
-                                            size: 14.0.into(),
-                                            line_height: iced::advanced::text::LineHeight::default(
-                                            ),
-                                            font: iced::Font::DEFAULT,
-                                            align_x: iced::alignment::Horizontal::Left.into(),
-                                            align_y: iced::alignment::Vertical::Center.into(),
-                                            shaping: iced::advanced::text::Shaping::Basic,
-                                            wrapping: iced::advanced::text::Wrapping::None,
-                                        },
-                                        Point::new(
-                                            bounds.x + TEXT_X_OFFSET + available_w - eq_w,
-                                            eq_y + draw_h / 2.0,
-                                        ),
-                                        theme::TEXT_MUTED,
-                                        *viewport,
-                                    );
-                                }
-
-                                let math_viewport = if line.is_math_block {
-                                    clip_viewport(
-                                        *viewport,
-                                        Rectangle {
-                                            x: bounds.x + TEXT_X_OFFSET,
-                                            y: line_draw_y,
-                                            width: block_max_w,
-                                            height: lh,
-                                        },
-                                    )
-                                } else {
-                                    *viewport
-                                };
-
-                                let draw_y = if line.is_math_block {
-                                    line_draw_y + (lh - draw_h) / 2.0
-                                } else {
-                                    let margin_top = (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
-                                    line_draw_y + margin_top
-                                };
-                                // Snap the rect to the device-pixel grid. The
-                                // centering math above yields fractional
-                                // positions with a different sub-pixel phase
-                                // per axis, which makes the horizontal and
-                                // vertical strokes of the same glyph sample
-                                // differently (one crisp, one split across two
-                                // dim pixels).
-                                let sf = self.scale_factor;
-                                let snap = |v: f32| (v * sf).round() / sf;
-                                renderer.draw_image(
-                                    iced::advanced::image::Image::new(handle.clone()),
-                                    Rectangle {
-                                        x: snap(draw_x),
-                                        y: snap(draw_y),
-                                        width: snap(draw_w),
-                                        height: snap(draw_h),
-                                    },
-                                    math_viewport,
-                                );
-                                if line.is_math_block {
-                                    draw_horizontal_scrollbar::<R>(
-                                        renderer,
-                                        line.block_id,
-                                        state,
-                                        bounds.x + TEXT_X_OFFSET,
-                                        block_max_w,
-                                        y + lh - 7.0,
-                                        draw_w,
-                                    );
-                                }
-                                image_rendered = true;
+                        // While editing math, show the source text only. Drawing the rendered
+                        // image behind/above the source makes the edit target unreadable.
+                        if span_editing {
+                            // Skip drawing image, will draw text
+                        } else {
+                            let line_start_x = bounds.x + TEXT_X_OFFSET;
+                            let line_right_x = bounds.x + bounds.width - MARGIN_RIGHT;
+                            let mut draw_x = x;
+                            if line.is_math_block {
+                                equation_counter += 1;
+                                let max_scroll = (draw_w - block_max_w).max(0.0);
+                                let scroll_x = state
+                                    .block_scroll_x
+                                    .get(&line.block_id)
+                                    .copied()
+                                    .unwrap_or(0.0)
+                                    .clamp(0.0, max_scroll);
+                                draw_x = bounds.x
+                                    + TEXT_X_OFFSET
+                                    + if draw_w <= block_max_w {
+                                        (block_max_w - draw_w) / 2.0
+                                    } else {
+                                        -scroll_x
+                                    };
+                            } else if draw_x > line_start_x && draw_x + draw_w > line_right_x {
+                                line_draw_y += BASE_LINE_HEIGHT;
+                                draw_x = line_start_x;
+                                x = line_start_x;
                             }
+
+                            if line.is_math_block {
+                                // Equation number right aligned
+                                let eq_val = get_equation_number(self.lines, line.block_id)
+                                    .unwrap_or(equation_counter);
+                                let eq_num = format!("({})", eq_val);
+                                let eq_w = measure_width::<R>(&eq_num, 14.0, iced::Font::DEFAULT);
+                                let eq_y = line_draw_y + (lh - draw_h) / 2.0; // center with the equation
+                                renderer.fill_text(
+                                    iced::advanced::text::Text {
+                                        content: eq_num,
+                                        bounds: Size::new(eq_w, draw_h),
+                                        size: 14.0.into(),
+                                        line_height: iced::advanced::text::LineHeight::default(),
+                                        font: iced::Font::DEFAULT,
+                                        align_x: iced::alignment::Horizontal::Left.into(),
+                                        align_y: iced::alignment::Vertical::Center,
+                                        shaping: iced::advanced::text::Shaping::Basic,
+                                        wrapping: iced::advanced::text::Wrapping::None,
+                                    },
+                                    Point::new(
+                                        bounds.x + TEXT_X_OFFSET + available_w - eq_w,
+                                        eq_y + draw_h / 2.0,
+                                    ),
+                                    theme::TEXT_MUTED,
+                                    *viewport,
+                                );
+                            }
+
+                            let math_viewport = if line.is_math_block {
+                                clip_viewport(
+                                    *viewport,
+                                    Rectangle {
+                                        x: bounds.x + TEXT_X_OFFSET,
+                                        y: line_draw_y,
+                                        width: block_max_w,
+                                        height: lh,
+                                    },
+                                )
+                            } else {
+                                *viewport
+                            };
+
+                            let draw_y = if line.is_math_block {
+                                line_draw_y + (lh - draw_h) / 2.0
+                            } else {
+                                let margin_top = (BASE_LINE_HEIGHT - draw_h).max(0.0) / 2.0;
+                                line_draw_y + margin_top
+                            };
+                            // Snap the rect to the device-pixel grid. The
+                            // centering math above yields fractional
+                            // positions with a different sub-pixel phase
+                            // per axis, which makes the horizontal and
+                            // vertical strokes of the same glyph sample
+                            // differently (one crisp, one split across two
+                            // dim pixels).
+                            let sf = self.scale_factor;
+                            let snap = |v: f32| (v * sf).round() / sf;
+                            renderer.draw_image(
+                                iced::advanced::image::Image::new(handle.clone()),
+                                Rectangle {
+                                    x: snap(draw_x),
+                                    y: snap(draw_y),
+                                    width: snap(draw_w),
+                                    height: snap(draw_h),
+                                },
+                                math_viewport,
+                            );
+                            if line.is_math_block {
+                                draw_horizontal_scrollbar::<R>(
+                                    renderer,
+                                    line.block_id,
+                                    state,
+                                    bounds.x + TEXT_X_OFFSET,
+                                    block_max_w,
+                                    y + lh - 7.0,
+                                    draw_w,
+                                );
+                            }
+                            image_rendered = true;
                         }
                     }
 
@@ -2163,7 +2204,7 @@ where
                                     line_height: iced::advanced::text::LineHeight::default(),
                                     font: iced::Font::MONOSPACE,
                                     align_x: iced::alignment::Horizontal::Left.into(),
-                                    align_y: iced::alignment::Vertical::Top.into(),
+                                    align_y: iced::alignment::Vertical::Top,
                                     shaping: iced::advanced::text::Shaping::Basic,
                                     wrapping: iced::advanced::text::Wrapping::None,
                                 },
@@ -2194,7 +2235,7 @@ where
                                 line_height: iced::advanced::text::LineHeight::default(),
                                 font: iced::Font::DEFAULT,
                                 align_x: iced::alignment::Horizontal::Left.into(),
-                                align_y: iced::alignment::Vertical::Center.into(),
+                                align_y: iced::alignment::Vertical::Center,
                                 shaping: iced::advanced::text::Shaping::Basic,
                                 wrapping: iced::advanced::text::Wrapping::None,
                             },
@@ -2251,7 +2292,7 @@ where
                                 line_height: iced::advanced::text::LineHeight::default(),
                                 font: check_font,
                                 align_x: iced::alignment::Horizontal::Left.into(),
-                                align_y: iced::alignment::Vertical::Top.into(),
+                                align_y: iced::alignment::Vertical::Top,
                                 shaping: iced::advanced::text::Shaping::Basic,
                                 wrapping: iced::advanced::text::Wrapping::None,
                             },
@@ -2322,8 +2363,7 @@ where
             // ── mouse click ──────────────────────────────────────
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = _cursor.position_in(bounds) {
-                    if let Some(drag) =
-                        self.horizontal_scrollbar_hit::<R>(pos, bounds.width, state)
+                    if let Some(drag) = self.horizontal_scrollbar_hit::<R>(pos, bounds.width, state)
                     {
                         state.horizontal_scroll_drag = Some(drag);
                         state.is_dragging = false;
@@ -2376,13 +2416,12 @@ where
                                     shell.publish((self.on_checkbox_toggle)(line_idx));
                                     return;
                                 }
-                                if span.is_link {
-                                    if let Some(target) = &span.link_target {
-                                        if state.modifiers.control() || state.modifiers.command() {
-                                            shell.publish((self.on_link_click)(target.clone()));
-                                            return;
-                                        }
-                                    }
+                                if span.is_link
+                                    && let Some(target) = &span.link_target
+                                    && (state.modifiers.control() || state.modifiers.command())
+                                {
+                                    shell.publish((self.on_link_click)(target.clone()));
+                                    return;
                                 }
                             }
                             x_acc += w;
@@ -2419,10 +2458,9 @@ where
             Event::Mouse(mouse::Event::CursorMoved { .. })
                 if state.horizontal_scroll_drag.is_some() =>
             {
-                if let (Some(pos), Some(drag)) = (
-                    _cursor.position_in(bounds),
-                    state.horizontal_scroll_drag,
-                ) {
+                if let (Some(pos), Some(drag)) =
+                    (_cursor.position_in(bounds), state.horizontal_scroll_drag)
+                {
                     let track_w = drag.viewport_w.max(1.0);
                     let thumb_w =
                         (track_w * (drag.viewport_w / drag.content_w)).clamp(32.0, track_w);
@@ -2469,11 +2507,8 @@ where
                     available_w - 24.0
                 }
                 .max(80.0);
-                let content_w = self.block_content_width::<R>(
-                    block_id,
-                    bounds.width,
-                    state.is_focused,
-                );
+                let content_w =
+                    self.block_content_width::<R>(block_id, bounds.width, state.is_focused);
                 let max_scroll = (content_w - viewport_w).max(0.0);
                 if max_scroll <= 0.0 {
                     return;
@@ -2557,8 +2592,7 @@ where
                         return;
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-                        let (new_line, new_col) =
-                            self.move_visual::<R>(state, -1.0, bounds.width);
+                        let (new_line, new_col) = self.move_visual::<R>(state, -1.0, bounds.width);
                         if modifiers.shift() {
                             let (a_l, a_c) = state
                                 .selection_anchor
@@ -2583,8 +2617,7 @@ where
                         return;
                     }
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-                        let (new_line, new_col) =
-                            self.move_visual::<R>(state, 1.0, bounds.width);
+                        let (new_line, new_col) = self.move_visual::<R>(state, 1.0, bounds.width);
                         if modifiers.shift() {
                             let (a_l, a_c) = state
                                 .selection_anchor
@@ -2713,34 +2746,23 @@ where
                 }
 
                 // Printable character input
-                if let Some(t) = text {
-                    if let Some(c) = t.chars().next() {
-                        if !c.is_control() {
-                            // Route bracket/quote characters through auto-pairing
-                            // (single-char input only); everything else inserts
-                            // verbatim.
-                            let command = if t.chars().count() == 1
-                                && matches!(
-                                    c,
-                                    '(' | ')'
-                                        | '['
-                                        | ']'
-                                        | '{'
-                                        | '}'
-                                        | '"'
-                                        | '\''
-                                        | '`'
-                                )
-                            {
-                                EditorCommand::TypePaired(c)
-                            } else {
-                                EditorCommand::InsertText(t.to_string())
-                            };
-                            shell.publish((self.on_command)(command));
-                            state.selection_anchor = None;
-                            state.selection_focus = None;
-                        }
-                    }
+                if let Some(t) = text
+                    && let Some(c) = t.chars().next()
+                    && !c.is_control()
+                {
+                    // Route bracket/quote characters through auto-pairing
+                    // (single-char input only); everything else inserts
+                    // verbatim.
+                    let command = if t.chars().count() == 1
+                        && matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\'' | '`')
+                    {
+                        EditorCommand::TypePaired(c)
+                    } else {
+                        EditorCommand::InsertText(t.to_string())
+                    };
+                    shell.publish((self.on_command)(command));
+                    state.selection_anchor = None;
+                    state.selection_focus = None;
                 }
             }
             _ => {}
@@ -2768,36 +2790,35 @@ where
             let active_block_id = self.lines.get(self.buffer.cursor_line).map(|l| l.block_id);
             let line_idx = self.line_at_widget_y(pos.y, state);
 
-            if let Some(line_idx) = line_idx {
-                if let Some(line) = self.lines.get(line_idx) {
-                    let is_editing = is_block_editing_line(line, active_block_id, state.is_focused);
-                    let mut x_acc = 0.0_f32;
-                    let active_col =
-                        (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
-                    for (span_idx, span) in line.spans.iter().enumerate() {
-                        let font = span_font(span, line);
-                        let w = if span.is_checkbox && !is_editing {
-                            26.0
-                        } else {
-                            measure_width::<R>(
-                                span_visible_text(line, span_idx, is_editing, active_col),
-                                span.font_size,
-                                font,
-                            )
-                        };
-                        let click_x = pos.x - TEXT_X_OFFSET;
-                        if click_x >= x_acc && click_x < x_acc + w {
-                            if span.is_checkbox {
-                                return mouse::Interaction::Pointer;
-                            }
-                            if span.is_link
-                                && (state.modifiers.control() || state.modifiers.command())
-                            {
-                                return mouse::Interaction::Pointer;
-                            }
+            if let Some(line_idx) = line_idx
+                && let Some(line) = self.lines.get(line_idx)
+            {
+                let is_editing = is_block_editing_line(line, active_block_id, state.is_focused);
+                let mut x_acc = 0.0_f32;
+                let active_col =
+                    (line_idx == self.buffer.cursor_line).then_some(self.buffer.cursor_col);
+                for (span_idx, span) in line.spans.iter().enumerate() {
+                    let font = span_font(span, line);
+                    let w = if span.is_checkbox && !is_editing {
+                        26.0
+                    } else {
+                        measure_width::<R>(
+                            span_visible_text(line, span_idx, is_editing, active_col),
+                            span.font_size,
+                            font,
+                        )
+                    };
+                    let click_x = pos.x - TEXT_X_OFFSET;
+                    if click_x >= x_acc && click_x < x_acc + w {
+                        if span.is_checkbox {
+                            return mouse::Interaction::Pointer;
                         }
-                        x_acc += w;
+                        if span.is_link && (state.modifiers.control() || state.modifiers.command())
+                        {
+                            return mouse::Interaction::Pointer;
+                        }
                     }
+                    x_acc += w;
                 }
             }
             return mouse::Interaction::Text;
@@ -2896,10 +2917,8 @@ impl<'a, Message> Editor<'a, Message> {
                 }
                 char_count = next_char_count;
             }
-            if !found {
-                if let Some(first_span) = styled_line.spans.first() {
-                    font_size = first_span.font_size;
-                }
+            if !found && let Some(first_span) = styled_line.spans.first() {
+                font_size = first_span.font_size;
             }
         }
 
@@ -3065,10 +3084,10 @@ impl<'a, Message> Editor<'a, Message> {
                 }
                 token.push((ch, source_col));
                 source_col += 1;
-                if ch.is_whitespace() {
-                    if let Some(pos) = flush_token(&mut token, &mut x, &mut y) {
-                        return pos;
-                    }
+                if ch.is_whitespace()
+                    && let Some(pos) = flush_token(&mut token, &mut x, &mut y)
+                {
+                    return pos;
                 }
             }
             if let Some(pos) = flush_token(&mut token, &mut x, &mut y) {
@@ -3261,17 +3280,17 @@ impl<'a, Message> Editor<'a, Message> {
                 }
                 token.push((ch, source_col));
                 source_col += 1;
-                if ch.is_whitespace() {
-                    if let Some(col) = flush_token(
+                if ch.is_whitespace()
+                    && let Some(col) = flush_token(
                         &mut token,
                         &mut x_acc,
                         &mut row_y,
                         &mut row_start_col,
                         &mut row_end_col,
                         &mut row_step,
-                    ) {
-                        return col;
-                    }
+                    )
+                {
+                    return col;
                 }
             }
             if let Some(col) = flush_token(
@@ -4317,7 +4336,7 @@ mod tests {
         let lines = highlight_markdown(md);
 
         // The first line should have the language
-        assert_eq!(lines[0].is_code_block, true);
+        assert!(lines[0].is_code_block);
         assert_eq!(lines[0].code_block_lang.as_deref(), Some("rust"));
 
         // Check badge_w calculation logic

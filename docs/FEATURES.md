@@ -22,8 +22,43 @@ Markdown files open in the main editor. The editor supports:
   typing a closer that already sits at the cursor skips over it; `"`, `'`, and
   `` ` `` pair the same way, except a quote following a word character is left
   single so apostrophes in contractions are unaffected.
-- Save, undo/redo, selection editing, and common keyboard shortcuts.
-- Large-document rendering optimizations using cached line heights, viewport culling, and debounced highlighting.
+- Selection editing and common keyboard shortcuts.
+- Undo and redo grouped into human-sized steps: a run of typing (or of
+  backspaces) collapses into one undo, breaking at a pause, a newline, or a
+  cursor jump, so `Ctrl+Z` takes back a word rather than a character.
+- Large-document rendering optimizations using cached line heights, memoized
+  text measurement, viewport culling, and debounced highlighting.
+
+#### Saving And Durability
+
+Work is never held only in memory:
+
+- **Autosave.** The document is written 400ms after typing stops. `Ctrl+S`
+  still forces an immediate save and confirms it.
+- **Atomic writes.** Content is written to a temporary file in the same
+  directory, flushed to disk, and then renamed over the destination. A crash or
+  power loss leaves either the complete old file or the complete new one, never
+  a truncated mix. Symlinked notes are written through to their target, and the
+  destination's existing permissions are preserved, so a note kept at `0600`
+  stays private.
+- **Flush before switching.** Opening another file saves the current one first.
+  If that write fails the app stays on the current file and says so, rather than
+  navigating away from work it could not persist.
+- **Flush on close.** Closing the window triggers one last save. This is
+  best-effort and does not block the close: an app that refuses to close
+  because a write is failing is a worse outcome than the few hundred
+  milliseconds autosave has not yet committed.
+- **Undo history survives navigation.** Switching away parks the document's
+  buffer, so returning to a file resumes its undo stack and cursor rather than
+  starting from a blank history. Up to 32 documents are kept this way per
+  session, and a buffer is discarded if the file changed on disk meanwhile.
+
+#### Session Continuity
+
+Window size, and the scroll offset and cursor position of the open document,
+are recorded on exit and restored on the next launch. A stored window size that
+is malformed or no longer fits any display falls back to the default rather
+than opening the app unusably small or large.
 
 ### Search and Navigate
 
@@ -131,6 +166,49 @@ PDF support uses a platform-specific PDFium dynamic library. The application loo
 - Markdown: `.md`, `.markdown`
 - PDF: `.pdf`
 - Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`
+
+## Motion
+
+Panels, overlays and toasts move between their states rather than snapping.
+The vocabulary is one easing curve and three durations (120ms for small
+transitions, 180ms for panels, 140ms for overlays), declared in
+`native/src/motion.rs` alongside the animation state.
+
+Side panels animate their width and clip their contents, so opening the file
+tree or the table of contents reads as a reveal instead of a jump. The toast
+fades in and out, and survives the underlying message being cleared so the
+fade-out has something to draw.
+
+The per-frame redraw subscription is armed only while something is actually
+moving; a settled window uses no CPU at all.
+
+## Command Palette
+
+`Ctrl+P` opens a palette that searches commands and vault files together. The
+query field takes focus immediately, so the palette is reachable without the
+mouse.
+
+- Fuzzy matching: characters must appear in order but need not be adjacent, so
+  initials (`sv` for Split View) and partial names both work.
+- Word starts outrank mid-word hits, runs of adjacent characters outrank
+  scattered ones, and a match in a file's own name outranks one in a folder
+  along its path.
+- Commands and files are ranked against each other and interleaved by
+  relevance rather than split into fixed sections.
+- Up and Down move the highlighted row, Enter activates it, Escape closes.
+  Files open in the right viewer for their type.
+
+Commands are declared in one registry in `views/command_palette.rs`, so the
+palette and the shortcut list cannot drift apart.
+
+## Visual System
+
+Application chrome draws from a single set of design tokens in
+`native/src/theme.rs`: a six-step type scale, a seven-step spacing scale on a
+2px grid, three corner radii, and the colour palette. View code selects a token
+rather than a literal, so sizes and gaps stay consistent across panels instead
+of drifting per call site. Document typography — heading sizes and code/math
+scale inside a note — is governed separately by the markdown renderer.
 
 ## Architecture
 

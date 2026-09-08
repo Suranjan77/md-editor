@@ -6,9 +6,10 @@ use crate::theme;
 
 /// Render a premium welcome screen.
 pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
-    let open_btn = button(container(text("Open Existing Vault").size(16)).padding([12, 24]))
-        .on_press(Message::OpenVaultDialog)
-        .style(button::primary);
+    let open_btn =
+        button(container(text("Open Existing Vault").size(theme::TEXT_MD)).padding([12, 24]))
+            .on_press(Message::OpenVaultDialog)
+            .style(button::primary);
 
     let app_icon_handle =
         iced::widget::image::Handle::from_bytes(include_bytes!("../../../md-editor.png").to_vec());
@@ -16,18 +17,20 @@ pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
 
     let content = column![
         logo,
-        text("Md-editor").size(42).color(theme::TEXT_PRIMARY),
+        text("Md-editor")
+            .size(theme::TEXT_DISPLAY)
+            .color(theme::TEXT_PRIMARY),
         text("The ultimate markdown workspace")
-            .size(16)
+            .size(theme::TEXT_MD)
             .color(theme::TEXT_MUTED),
         Space::new().height(Length::Fixed(40.0)),
         open_btn,
         Space::new().height(Length::Fixed(20.0)),
         text("Press Ctrl+O to open a folder")
-            .size(12)
+            .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED),
     ]
-    .spacing(16)
+    .spacing(theme::SPACE_5)
     .align_x(Alignment::Center);
 
     container(content)

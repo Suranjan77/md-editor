@@ -370,13 +370,13 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             // Consolidate the math lines
             let consolidated_math = math_lines.join("\n");
 
-            if !consolidated_math.is_empty() {
-                if let Some(span) = lines[idx].spans.first_mut() {
-                    span.display_text = Some(consolidated_math);
-                    span.is_syntax = false;
-                    span.is_math = true;
-                    span.font_size = 16.0;
-                }
+            if !consolidated_math.is_empty()
+                && let Some(span) = lines[idx].spans.first_mut()
+            {
+                span.display_text = Some(consolidated_math);
+                span.is_syntax = false;
+                span.is_math = true;
+                span.font_size = 16.0;
             }
 
             for hidden_idx in idx + 1..j {
@@ -402,28 +402,22 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
     let mut seen_code_block_ids = std::collections::HashSet::new();
 
     for line in &mut lines {
-        if line.is_math_block && line.block_id > 0 {
-            if seen_math_block_ids.insert(line.block_id) {
-                equation_counter += 1;
-                if let Some(first_span) = line.spans.first_mut() {
-                    first_span.id = Some(format!("equation-{}", equation_counter));
-                }
+        if line.is_math_block && line.block_id > 0 && seen_math_block_ids.insert(line.block_id) {
+            equation_counter += 1;
+            if let Some(first_span) = line.spans.first_mut() {
+                first_span.id = Some(format!("equation-{}", equation_counter));
             }
         }
-        if line.is_table_row && line.block_id > 0 {
-            if seen_table_block_ids.insert(line.block_id) {
-                table_counter += 1;
-                if let Some(first_span) = line.spans.first_mut() {
-                    first_span.id = Some(format!("table-{}", table_counter));
-                }
+        if line.is_table_row && line.block_id > 0 && seen_table_block_ids.insert(line.block_id) {
+            table_counter += 1;
+            if let Some(first_span) = line.spans.first_mut() {
+                first_span.id = Some(format!("table-{}", table_counter));
             }
         }
-        if line.is_code_block && line.block_id > 0 {
-            if seen_code_block_ids.insert(line.block_id) {
-                code_counter += 1;
-                if let Some(first_span) = line.spans.first_mut() {
-                    first_span.id = Some(format!("code-{}", code_counter));
-                }
+        if line.is_code_block && line.block_id > 0 && seen_code_block_ids.insert(line.block_id) {
+            code_counter += 1;
+            if let Some(first_span) = line.spans.first_mut() {
+                first_span.id = Some(format!("code-{}", code_counter));
             }
         }
         for span in &mut line.spans {
@@ -711,25 +705,25 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end_text) = find_char(&chars, i + 1, ']') {
-                if end_text + 1 < len && chars[end_text + 1] == '(' {
-                    if let Some(end_url) = find_char(&chars, end_text + 2, ')') {
-                        let link_display: String = chars[i + 1..end_text].iter().collect();
-                        let url: String = chars[end_text + 2..end_url].iter().collect();
-                        // Full raw: [text](url), display just the text
-                        let raw: String = chars[i..=end_url].iter().collect();
-                        spans.push(StyledSpan {
-                            text: raw,
-                            display_text: Some(link_display.clone()),
-                            color: theme::ACCENT,
-                            is_link: true,
-                            link_target: Some(url),
-                            ..StyledSpan::plain("")
-                        });
-                        i = end_url + 1;
-                        continue;
-                    }
-                }
+            if let Some(end_text) = find_char(&chars, i + 1, ']')
+                && end_text + 1 < len
+                && chars[end_text + 1] == '('
+                && let Some(end_url) = find_char(&chars, end_text + 2, ')')
+            {
+                let link_display: String = chars[i + 1..end_text].iter().collect();
+                let url: String = chars[end_text + 2..end_url].iter().collect();
+                // Full raw: [text](url), display just the text
+                let raw: String = chars[i..=end_url].iter().collect();
+                spans.push(StyledSpan {
+                    text: raw,
+                    display_text: Some(link_display.clone()),
+                    color: theme::ACCENT,
+                    is_link: true,
+                    link_target: Some(url),
+                    ..StyledSpan::plain("")
+                });
+                i = end_url + 1;
+                continue;
             }
         }
 
@@ -760,27 +754,27 @@ fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan::plain(&current));
                 current.clear();
             }
-            if let Some(end_alt) = find_char(&chars, i + 2, ']') {
-                if end_alt + 1 < len && chars[end_alt + 1] == '(' {
-                    if let Some(end_url) = find_char(&chars, end_alt + 2, ')') {
-                        let alt_text: String = chars[i + 2..end_alt].iter().collect();
-                        let url: String = chars[end_alt + 2..end_url].iter().collect();
-                        let raw: String = chars[i..=end_url].iter().collect();
-                        spans.push(StyledSpan {
-                            text: raw,
-                            display_text: Some(String::new()), // hidden in preview, image is drawn separately
-                            color: theme::WARNING,
-                            italic: true,
-                            font_size: 14.0,
-                            is_image: true,
-                            image_path: Some(url),
-                            image_alt: Some(alt_text),
-                            ..StyledSpan::plain("")
-                        });
-                        i = end_url + 1;
-                        continue;
-                    }
-                }
+            if let Some(end_alt) = find_char(&chars, i + 2, ']')
+                && end_alt + 1 < len
+                && chars[end_alt + 1] == '('
+                && let Some(end_url) = find_char(&chars, end_alt + 2, ')')
+            {
+                let alt_text: String = chars[i + 2..end_alt].iter().collect();
+                let url: String = chars[end_alt + 2..end_url].iter().collect();
+                let raw: String = chars[i..=end_url].iter().collect();
+                spans.push(StyledSpan {
+                    text: raw,
+                    display_text: Some(String::new()), // hidden in preview, image is drawn separately
+                    color: theme::WARNING,
+                    italic: true,
+                    font_size: 14.0,
+                    is_image: true,
+                    image_path: Some(url),
+                    image_alt: Some(alt_text),
+                    ..StyledSpan::plain("")
+                });
+                i = end_url + 1;
+                continue;
             }
         }
 
@@ -888,10 +882,8 @@ fn detect_numbered_list(trimmed: &str) -> Option<usize> {
     while i < bytes.len() && bytes[i].is_ascii_digit() {
         i += 1;
     }
-    if i > 0 && i < bytes.len() && bytes[i] == b'.' {
-        if i + 1 < bytes.len() && bytes[i + 1] == b' ' {
-            return Some(i + 2);
-        }
+    if i > 0 && i < bytes.len() && bytes[i] == b'.' && i + 1 < bytes.len() && bytes[i + 1] == b' ' {
+        return Some(i + 2);
     }
     None
 }
@@ -950,8 +942,8 @@ fn extract_display_name(target: &str) -> String {
 
     let file_name = path_part
         .split('/')
-        .last()
-        .and_then(|s| s.split('\\').last())
+        .next_back()
+        .and_then(|s| s.split('\\').next_back())
         .unwrap_or(path_part)
         .trim();
 

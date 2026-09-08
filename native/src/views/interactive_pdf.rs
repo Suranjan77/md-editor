@@ -6,6 +6,8 @@ use iced::advanced::{Clipboard, Shell};
 use iced::mouse;
 use iced::{Color, Element, Length, Rectangle, Size};
 
+use crate::theme;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdfSelection {
     pub page_index: u16,
@@ -139,7 +141,7 @@ fn draw_view_highlight<R>(
                 height: rect.height.max(8.0),
             },
             border: iced::Border {
-                radius: 2.0.into(),
+                radius: theme::RADIUS_SM.into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -316,29 +318,28 @@ where
         }
 
         // 3. Draw active selection highlight
-        if let Some(page_text) = self.page_text {
-            if let Some(sel) = self.active_selection {
-                if sel.page_index == self.page_index {
-                    let start = sel.anchor_idx.min(sel.focus_idx);
-                    let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-                    let selected_chars: Vec<md_editor_core::pdf::PdfTextChar> = page_text
-                        .chars
-                        .iter()
-                        .filter(|c| c.text_index >= start && c.text_index < end)
-                        .cloned()
-                        .collect();
-                    let selection_rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
-                    for r in selection_rects {
-                        let screen_rect = to_screen_rect(&r, page_text.page_height, zoom, bounds);
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: screen_rect,
-                                ..Default::default()
-                            },
-                            Color::from_rgba(0.12, 0.53, 0.9, 0.45),
-                        );
-                    }
-                }
+        if let Some(page_text) = self.page_text
+            && let Some(sel) = self.active_selection
+            && sel.page_index == self.page_index
+        {
+            let start = sel.anchor_idx.min(sel.focus_idx);
+            let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
+            let selected_chars: Vec<md_editor_core::pdf::PdfTextChar> = page_text
+                .chars
+                .iter()
+                .filter(|c| c.text_index >= start && c.text_index < end)
+                .cloned()
+                .collect();
+            let selection_rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
+            for r in selection_rects {
+                let screen_rect = to_screen_rect(&r, page_text.page_height, zoom, bounds);
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: screen_rect,
+                        ..Default::default()
+                    },
+                    Color::from_rgba(0.12, 0.53, 0.9, 0.45),
+                );
             }
         }
     }
@@ -386,55 +387,55 @@ where
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let Some(start_pos) = state.drag_start {
-                    if let Some(current_pos) = cursor.position() {
-                        let current_rel =
-                            iced::Point::new(current_pos.x - bounds.x, current_pos.y - bounds.y);
-                        let dx = current_rel.x - start_pos.x;
-                        let dy = current_rel.y - start_pos.y;
-                        let dist_sq = dx * dx + dy * dy;
-                        if dist_sq > 4.0 {
-                            state.is_dragging = true;
-                            if let Some(page_text) = self.page_text {
-                                let zoom = self.width / page_text.page_width;
-                                let start_rel = start_pos;
-                                if let (Some(anchor), Some(focus)) = (
-                                    hit_test(page_text, start_rel, zoom),
-                                    hit_test(page_text, current_rel, zoom),
-                                ) {
-                                    shell.publish((self.on_selection_changed)(
-                                        self.page_index,
-                                        anchor,
-                                        focus,
-                                    ));
-                                }
+                if let Some(start_pos) = state.drag_start
+                    && let Some(current_pos) = cursor.position()
+                {
+                    let current_rel =
+                        iced::Point::new(current_pos.x - bounds.x, current_pos.y - bounds.y);
+                    let dx = current_rel.x - start_pos.x;
+                    let dy = current_rel.y - start_pos.y;
+                    let dist_sq = dx * dx + dy * dy;
+                    if dist_sq > 4.0 {
+                        state.is_dragging = true;
+                        if let Some(page_text) = self.page_text {
+                            let zoom = self.width / page_text.page_width;
+                            let start_rel = start_pos;
+                            if let (Some(anchor), Some(focus)) = (
+                                hit_test(page_text, start_rel, zoom),
+                                hit_test(page_text, current_rel, zoom),
+                            ) {
+                                shell.publish((self.on_selection_changed)(
+                                    self.page_index,
+                                    anchor,
+                                    focus,
+                                ));
                             }
-                            shell.capture_event();
                         }
+                        shell.capture_event();
                     }
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if let Some(start_pos) = state.drag_start {
                     if state.is_dragging {
-                        if let Some(page_text) = self.page_text {
-                            if let Some(current_pos) = cursor.position() {
-                                let current_rel = iced::Point::new(
-                                    current_pos.x - bounds.x,
-                                    current_pos.y - bounds.y,
-                                );
-                                let zoom = self.width / page_text.page_width;
-                                let start_rel = start_pos;
-                                if let (Some(anchor), Some(focus)) = (
-                                    hit_test(page_text, start_rel, zoom),
-                                    hit_test(page_text, current_rel, zoom),
-                                ) {
-                                    shell.publish((self.on_selection_finished)(
-                                        self.page_index,
-                                        anchor,
-                                        focus,
-                                    ));
-                                }
+                        if let Some(page_text) = self.page_text
+                            && let Some(current_pos) = cursor.position()
+                        {
+                            let current_rel = iced::Point::new(
+                                current_pos.x - bounds.x,
+                                current_pos.y - bounds.y,
+                            );
+                            let zoom = self.width / page_text.page_width;
+                            let start_rel = start_pos;
+                            if let (Some(anchor), Some(focus)) = (
+                                hit_test(page_text, start_rel, zoom),
+                                hit_test(page_text, current_rel, zoom),
+                            ) {
+                                shell.publish((self.on_selection_finished)(
+                                    self.page_index,
+                                    anchor,
+                                    focus,
+                                ));
                             }
                         }
                     } else {

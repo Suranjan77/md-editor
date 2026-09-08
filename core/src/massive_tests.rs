@@ -40,14 +40,14 @@ fn test_file_index_wikilink_combinatorics() {
         "accented-éàçè",
     ];
 
-    let alias_options = vec![
+    let alias_options = [
         None,
         Some("simple_alias"),
         Some("spaced alias name"),
         Some("unicode-🔥"),
     ];
 
-    let space_variations = vec![("", ""), (" ", " "), ("  ", ""), ("", "  "), ("   ", "   ")];
+    let space_variations = [("", ""), (" ", " "), ("  ", ""), ("", "  "), ("   ", "   ")];
 
     let mut content = String::new();
     let mut expected_targets = std::collections::HashSet::new();

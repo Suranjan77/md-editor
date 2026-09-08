@@ -50,7 +50,11 @@ fn main() {
         };
         println!(
             "  get_toc:               {toc_ms:8.1} ms   ({n_toc} entries, {})",
-            if synthetic { "RECOVERED (full scan)" } else { "embedded (early-out)" }
+            if synthetic {
+                "RECOVERED (full scan)"
+            } else {
+                "embedded (early-out)"
+            }
         );
 
         // Dominant extraction cost: full per-page text WITH bboxes.
@@ -65,20 +69,28 @@ fn main() {
         println!(
             "  get_page_text x{pages:<4}    {pt_ms:8.1} ms   ({:.2} ms/page, {chars_total} glyphs, {:.1} us/glyph)",
             pt_ms / pages as f64,
-            if chars_total > 0 { pt_ms * 1e3 / chars_total as f64 } else { 0.0 }
+            if chars_total > 0 {
+                pt_ms * 1e3 / chars_total as f64
+            } else {
+                0.0
+            }
         );
 
         // Floor: full text, no bboxes (isolates the loose_bounds overhead).
         let t = Instant::now();
-        let txt_len = renderer.extract_document_text(path).map(|s| s.len()).unwrap_or(0);
+        let txt_len = renderer
+            .extract_document_text(path)
+            .map(|s| s.len())
+            .unwrap_or(0);
         let txt_ms = t.elapsed().as_secs_f64() * 1e3;
-        println!(
-            "  extract_document_text: {txt_ms:8.1} ms   ({txt_len} bytes, no bboxes)"
-        );
+        println!("  extract_document_text: {txt_ms:8.1} ms   ({txt_len} bytes, no bboxes)");
 
         // Tier-A on-demand cost: one native search for an equation-style token.
         let t = Instant::now();
-        let hits = renderer.search_text(path, "(1.1)", false, false).map(|m| m.len()).unwrap_or(0);
+        let hits = renderer
+            .search_text(path, "(1.1)", false, false)
+            .map(|m| m.len())
+            .unwrap_or(0);
         let search_ms = t.elapsed().as_secs_f64() * 1e3;
         println!(
             "  search_text \"(1.1)\":   {search_ms:8.1} ms   ({hits} hits) [Tier-A per-click]"

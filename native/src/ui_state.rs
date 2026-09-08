@@ -6,8 +6,8 @@
 //! behavior beyond living on the shell, so this is a plain field container the
 //! shell reads and writes directly.
 //!
-//! Part of the `MdEditor` decomposition; see
-//! `docs/refactor-mdeditor-decomposition.md`.
+//! Part of the `MdEditor` decomposition: the shell owns cross-pane
+//! coordination, each sub-state owns its own domain.
 
 use iced::Task;
 
@@ -25,6 +25,9 @@ pub struct UiState {
     pub command_palette_visible: bool,
     pub command_palette_query: String,
     pub commands: Vec<views::command_palette::Command>,
+    /// Index of the highlighted palette row, moved with the arrow keys and
+    /// activated with Enter.
+    pub palette_selected: usize,
 
     // Transient toast
     pub toast: Option<String>,
@@ -53,6 +56,7 @@ impl UiState {
             command_palette_visible: false,
             command_palette_query: String::new(),
             commands: views::command_palette::get_commands(),
+            palette_selected: 0,
             toast: None,
             split_view_active: false,
             split_ratio: 0.5,
@@ -91,7 +95,10 @@ impl UiState {
                 Task::none()
             }
             Message::PdfLinkNoteFolderSelected(folder) => {
-                if matches!(self.active_modal, Some(views::modals::ModalType::LinkNote(_))) {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
                     let filename = note_filename_from_path(&self.modal_input);
                     self.modal_input = if folder.is_empty() {
                         filename
@@ -102,13 +109,19 @@ impl UiState {
                 Task::none()
             }
             Message::PdfLinkNoteFileSelected(path) => {
-                if matches!(self.active_modal, Some(views::modals::ModalType::LinkNote(_))) {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
                     self.modal_input = normalize_note_path(&path);
                 }
                 Task::none()
             }
             Message::PdfLinkNotePickerSearchChanged(query) => {
-                if matches!(self.active_modal, Some(views::modals::ModalType::LinkNote(_))) {
+                if matches!(
+                    self.active_modal,
+                    Some(views::modals::ModalType::LinkNote(_))
+                ) {
                     self.link_note_picker_search = query;
                 }
                 Task::none()
@@ -137,10 +150,14 @@ impl UiState {
             Message::CommandPaletteOpen => {
                 self.command_palette_visible = true;
                 self.command_palette_query.clear();
+                self.palette_selected = 0;
                 Task::none()
             }
             Message::CommandPaletteQueryChanged(query) => {
                 self.command_palette_query = query;
+                // A new query means a new result list; keeping the old index
+                // would leave the highlight on an unrelated row.
+                self.palette_selected = 0;
                 Task::none()
             }
 

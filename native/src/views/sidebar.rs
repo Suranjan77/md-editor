@@ -64,8 +64,8 @@ fn render_tree_level<'a>(
     });
 
     for (name, path, is_dir) in immediate_children {
-        let is_selected = selected_path.map_or(false, |s| s == path);
-        let is_active = active_path.map_or(false, |s| s == path);
+        let is_selected = selected_path.is_some_and(|s| s == path);
+        let is_active = active_path.is_some_and(|s| s == path);
         let indent = depth as f32 * 14.0;
         let lower_name = name.to_lowercase();
         let disclosure: Element<'_, Message, Theme, Renderer> = if is_dir {
@@ -106,12 +106,12 @@ fn render_tree_level<'a>(
             disclosure,
             icons::view(file_icon, name_color, 15.0),
             text(name)
-                .size(13)
+                .size(theme::TEXT_BASE)
                 .color(name_color)
                 .wrapping(Wrapping::WordOrGlyph)
                 .width(Length::Fill),
         ]
-        .spacing(8)
+        .spacing(theme::SPACE_3)
         .align_y(Alignment::Center);
 
         let msg = if is_dir {
@@ -137,13 +137,13 @@ fn render_tree_level<'a>(
 
         let btn = button(content)
             .on_press(msg)
-            .padding([7, 10])
+            .padding([theme::SPACE_3, theme::SPACE_4])
             .width(Length::Fill)
             .style(style);
 
         let delete_btn = button(icons::view(Icon::Trash, theme::TEXT_MUTED, 14.0))
             .on_press(Message::DeleteFileDialog(path.clone()))
-            .padding(7)
+            .padding(theme::SPACE_3)
             .style(button::text);
 
         // Add a small indicator for active file
@@ -157,7 +157,7 @@ fn render_tree_level<'a>(
                 .style(|_| container::Style {
                     background: Some(Background::Color(theme::ACCENT)),
                     border: Border {
-                        radius: 1.0.into(),
+                        radius: theme::RADIUS_SM.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -165,12 +165,12 @@ fn render_tree_level<'a>(
                 container(btn).width(Length::Fill),
                 delete_btn
             ]
-            .spacing(4)
+            .spacing(theme::SPACE_2)
             .align_y(Alignment::Center)
             .into()
         } else {
             row![btn, delete_btn]
-                .spacing(4)
+                .spacing(theme::SPACE_2)
                 .align_y(Alignment::Center)
                 .into()
         };
@@ -207,36 +207,38 @@ pub fn view<'a>(
 
     let header = row![
         text("FILES")
-            .size(11)
+            .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED)
             .font(iced::Font::default()),
         Space::new().width(Length::Fill),
         button(icons::view(Icon::FolderOpen, theme::TEXT_MUTED, 16.0))
             .on_press(Message::OpenVaultDialog)
-            .padding(8)
+            .padding(theme::SPACE_3)
             .style(button::text),
         button(icons::view(Icon::FileText, theme::TEXT_MUTED, 16.0))
             .on_press(Message::CreateFileDialog)
-            .padding(8)
+            .padding(theme::SPACE_3)
             .style(button::text),
         button(icons::view(Icon::Folder, theme::TEXT_MUTED, 16.0))
             .on_press(Message::CreateFolderDialog)
-            .padding(8)
+            .padding(theme::SPACE_3)
             .style(button::text),
     ]
-    .spacing(8)
+    .spacing(theme::SPACE_3)
     .align_y(Alignment::Center)
-    .padding([12, 16]);
+    .padding([theme::SPACE_4, theme::SPACE_5]);
 
     let tree_elements =
         render_tree_level(entries, "", 0, selected_path, active_path, expanded_folders);
-    let file_list = Column::with_children(tree_elements).spacing(3);
+    let file_list = Column::with_children(tree_elements).spacing(theme::SPACE_1);
 
     let content = column![
         header,
-        container(scrollable(file_list.padding([0, 8])).height(Length::Fill))
-            .padding([0, 8])
-            .height(Length::Fill)
+        container(
+            scrollable(file_list.padding([theme::SPACE_0, theme::SPACE_3])).height(Length::Fill)
+        )
+        .padding([theme::SPACE_0, theme::SPACE_3])
+        .height(Length::Fill)
     ]
     .width(Length::Fixed(260.0));
 

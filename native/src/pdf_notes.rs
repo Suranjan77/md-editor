@@ -66,11 +66,9 @@ fn slugify(s: &str) -> String {
         if c.is_alphanumeric() || c == '_' {
             result.push(c);
             last_was_hyphen = false;
-        } else if c.is_whitespace() || c == '-' {
-            if !last_was_hyphen {
-                result.push('-');
-                last_was_hyphen = true;
-            }
+        } else if (c.is_whitespace() || c == '-') && !last_was_hyphen {
+            result.push('-');
+            last_was_hyphen = true;
         }
     }
     result.trim_matches('-').to_string()
