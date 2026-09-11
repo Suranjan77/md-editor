@@ -6,7 +6,7 @@ see:
 - **Application layer** — `app.rs::subscription`. Sees every key press regardless of focus,
   and returns `None` for anything it does not act on, so ordinary typing does not spawn a
   redundant update cycle.
-- **Editor layer** — `editor/renderer.rs`. Only fires while the markdown editor widget is
+- **Editor layer** — `editor/renderer/events.rs`. Only fires while the markdown editor widget is
   focused, and handles text editing and formatting.
 
 On macOS, `Cmd` works everywhere `Ctrl` does — both layers test

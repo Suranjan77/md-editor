@@ -12,7 +12,7 @@ renderer stalls.
 ```mermaid
 graph TD
     A["DocBuffer — ropey::Rope"] -->|"raw document text"| B["highlight_markdown"]
-    B -->|"Vec&lt;StyledLine&gt;"| C["Editor widget — editor/renderer.rs"]
+    B -->|"Vec&lt;StyledLine&gt;"| C["Editor widget — editor/renderer/"]
     C -->|"measured heights"| D["HeightTree — Fenwick tree"]
     C -->|"content and resource hashes"| E["LineHeightCache"]
     D -->|"O(log N) visible range"| F["Viewport-culled draw pass"]
@@ -27,8 +27,9 @@ Four modules under `native/src/editor/` plus the shell:
    styling, and marker concealing.
 3. **`layout_tree.rs` + `layout_cache.rs`** — the Fenwick spatial index and per-line
    measurement memoization.
-4. **`renderer.rs`** — the `iced::advanced::Widget`: layout, drawing, hit testing, selection
-   painting, and per-block horizontal scrolling.
+4. **`renderer/`** — the `iced::advanced::Widget`: layout, drawing, hit testing, selection
+   painting, and per-block horizontal scrolling, split into one module per concern (see
+   [§5](#5-the-widget-layout-draw-and-culling-renderer)).
 
 `app.rs` coordinates the pipeline. It owns `highlighted_lines`, the image and math render
 caches, scroll state, and the background highlight tasks.
@@ -243,26 +244,83 @@ collision-resistance-free hash for cache keying, not a cryptographic digest.)
 
 ---
 
-## 5. The Widget: Layout, Draw, and Culling (`renderer.rs`)
+## 5. The Widget: Layout, Draw, and Culling (`renderer/`)
 
 `Editor` implements `iced::advanced::Widget`, not `canvas::Program` — it needs its own
 layout, hit testing, and event handling, which the canvas abstraction does not provide.
 Content is capped at `MAX_CONTENT_WIDTH = 880.0` so prose keeps a readable measure in a wide
 window.
 
+### Module map
+
+The `Widget` methods in `renderer/mod.rs` are one-line delegations; the work lives in a
+module per concern.
+
+```mermaid
+graph TD
+    Widget["mod.rs — Widget impl"] -->|layout| Layout["layout.rs — heights, HeightWalk"]
+    Widget -->|draw| Draw["draw/ — painting"]
+    Widget -->|"update, mouse_interaction"| Events["events.rs — input"]
+    Events --> Caret["caret.rs — column ⇄ position"]
+    Events --> Scroll["scroll.rs — block scrolling"]
+    Events --> Selection["selection.rs"]
+    Draw --> Caret
+    Draw --> Scroll
+    Draw --> Selection
+    Layout --> Spans["spans.rs — reveal rules"]
+    Caret --> Spans
+    Draw --> Spans
+    Layout --> Measure["measure.rs — cached shaping"]
+    Caret --> Measure
+    Draw --> Measure
+    Metrics["metrics.rs — shared constants"] -.-> Layout
+    Metrics -.-> Caret
+    Metrics -.-> Draw
+    Metrics -.-> Scroll
+```
+
+| To change… | Look in |
+| :--- | :--- |
+| How tall a line or block is | `layout.rs` — `line_height_for()` |
+| A margin, row height, or any size two passes must agree on | `metrics.rs` |
+| When a span reveals its markdown source | `spans.rs` |
+| Where the caret lands, or what a click selects | `caret.rs` |
+| Block cards, captions, code lines, table rows | `draw/blocks.rs`, `draw/captions.rs` |
+| Paragraph text, images, equations, checkboxes | `draw/inline.rs` |
+| Selection or search highlight, caret appearance | `draw/overlays.rs` |
+| A key binding inside the editor | `events.rs` |
+| Horizontal scrolling of code, tables, or math | `scroll.rs` |
+
+Wrapping is implemented in more than one place — `layout.rs` (`RowFill`) measures it,
+`draw/primitives.rs` (`WrapPen`) paints it, and `caret.rs` (`Pen`, `RowScan`) maps columns
+through it. They must break rows identically for the caret to sit on the text, so a change
+to one is a change to all three. Unstyled paragraphs are the exception today:
+`paint_plain_line()` hands the whole line to the text shaper's own wrapping, which can break
+rows differently from the other three.
+
 ### Layout pass
 
 Walks all lines once, but each line is a cache hit unless something about it actually
-changed, and the walk maintains `block_ranges` for O(1) block lookups. Total height is
-`TOP_PAD + prefix_sum(n) + 80.0`.
+changed, and the walk maintains `block_ranges` for O(1) block lookups. A line's extent is
+its body plus a caption band above the first line of a code block or table
+(`BLOCK_CAPTION_HEIGHT`) and a scrollbar gutter below a table's last row. Total height is
+`TOP_PAD + prefix_sum(n) + BOTTOM_PAD`.
+
+`HeightWalk` carries the per-block memory that makes a line's height depend on earlier
+lines — which code blocks and tables have opened, and which math block already took its
+height — and is the one implementation behind `layout_lines()`, `total_height()`, and
+`line_visual_y()`.
 
 ### Draw pass — the culled one
 
 1. `find_line_at_y(viewport.y - bounds.y - TOP_PAD)` gives `visible_start`;
    the same call at the viewport's bottom edge gives `visible_end`.
-2. Block backgrounds are built only for blocks intersecting that range.
+2. `measure_blocks()` measures only blocks with a line in that range, and their chrome
+   (cards, captions, language badges) is painted first.
 3. Lines are drawn starting at `prefix_sum(visible_start)` and stop once the y position
-   passes the viewport bottom.
+   passes the viewport bottom. Each line gets its selection and search highlights, then one
+   painter chosen by kind — rule, plain paragraph, code line, table row, or spans — then the
+   caret.
 
 **Full-document work in the draw pass is a performance regression**, and the rule is called
 out again in [Contributor Guidelines](Contributor-Guidelines.md).
@@ -300,9 +358,14 @@ unaffected.
 ## 6. Maintenance Notes
 
 - Keep parsing in `highlight.rs`; do not add markdown rules to the renderer.
-- Keep height and invalidation logic in `layout_tree.rs` and `layout_cache.rs`.
+- Keep height and invalidation logic in `layout_tree.rs`, `layout_cache.rs`, and
+  `renderer/layout.rs`.
+- Put any size that layout, painting, and hit testing must agree on in
+  `renderer/metrics.rs`, never as a literal at one call site.
 - Keep the draw pass proportional to visible content, never to document length.
 - When adding media that can affect layout height, include its dimensions in
   `resource_hash`.
-- When adding a block type, update block-range tracking, height measurement, draw metadata,
-  and hit testing together — they are one contract split across four call sites.
+- When adding a block type, update block-range tracking (`layout.rs::record_block_range`),
+  height measurement (`layout.rs::line_height_for`), draw metadata
+  (`draw/blocks.rs::measure_blocks`), and hit testing and scrolling (`scroll.rs`) together —
+  they are one contract split across four call sites.

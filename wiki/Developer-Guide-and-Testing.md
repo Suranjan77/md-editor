@@ -142,7 +142,7 @@ graph TD
 
     NativeTests --> BufferT["editor/buffer.rs — undo runs, auto-pairing, list continuation"]
     NativeTests --> HighlightT["editor/highlight.rs — concealing, fences, permutations"]
-    NativeTests --> RendererT["editor/renderer.rs — heights, visual movement, extremes"]
+    NativeTests --> RendererT["editor/renderer/ — heights, caret movement, selection, captions"]
     NativeTests --> TreeT["editor/layout_tree.rs — prefix sums and find_line_at_y"]
     NativeTests --> FuzzyT["fuzzy.rs — ordering, word starts, initials"]
     NativeTests --> PaletteT["views/command_palette.rs — ranking, caps, activation"]
@@ -168,14 +168,44 @@ graph TD
    source text.
 5. **Fenwick invariants** (`native/src/editor/layout_tree.rs`) — prefix sums match brute-force
    sums, and `find_line_at_y` is monotonic and correct at boundaries.
-6. **Renderer geometry** (`native/src/editor/renderer.rs`) — line-height permutations, total
-   height accumulation, visual down-movement through empty and wrapped lines, and extreme
+6. **Renderer geometry** (`native/src/editor/renderer/`) — line-height permutations, total
+   height accumulation and table gutters (`layout.rs`), visual down-movement through empty and
+   wrapped lines (`caret.rs`), selection extraction (`selection.rs`), inline reveal rules
+   (`spans.rs`), caption numbering and badge placement (`draw/captions.rs`), and extreme
    dimensions.
 7. **PDF page geometry** (`native/src/app.rs`) — target offsets map back to the same page,
    blank pages reserve space, and placeholder slots scale with zoom.
 8. **Platform integration** (`native/src/main.rs`) — CLI argument parsing, window-size
    round-tripping and rejection of nonsense values, and a full Linux desktop install and
    uninstall round-trip against a temporary `$HOME`.
+
+### Render transcript harness
+
+`native/src/editor/render_snapshot_tests.rs` is an opt-in test (`#[ignore]`, so
+`cargo test` skips it) for changes to the editor renderer. It drives the `Editor` widget
+purely through its `Widget` API — layout, draw, update, and mouse interaction — against a
+document that exercises every block and inline kind, at three widths. It records every
+quad, text run, and image the widget draws, every message it publishes, clipboard writes,
+and mouse-cursor shapes, into a plain-text transcript. Drawing goes to a recording renderer
+that borrows the real renderer's text measurement, so no window or GPU is needed.
+
+```bash
+# Before the change: write a baseline transcript
+RENDER_SNAPSHOT=/tmp/render.txt RENDER_SNAPSHOT_WRITE=1 \
+  cargo test -p md-editor-native render_snapshot -- --ignored
+
+# After the change: compare (writes /tmp/render.txt.actual on mismatch)
+RENDER_SNAPSHOT=/tmp/render.txt cargo test -p md-editor-native render_snapshot -- --ignored
+diff /tmp/render.txt /tmp/render.txt.actual | less
+```
+
+- **For a refactor**, the comparison must pass. That is how the split of `renderer.rs` into
+  `renderer/` was verified to change nothing.
+- **For a visual fix**, the diff should contain the draw calls you meant to change, and
+  nothing else.
+
+The transcript is large (tens of MB) and pins current behaviour, including known bugs, so
+keep it out of the repository.
 
 ### Reference-resolver tools
 

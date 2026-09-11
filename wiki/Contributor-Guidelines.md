@@ -27,15 +27,21 @@ rediscover — each exists because something concrete broke without it.
 
 ### Rule 3: Keep the draw pass proportional to what is visible
 
-- In `native/src/editor/renderer.rs`, the **draw** pass must never iterate the whole document.
-  Clamp strictly between `visible_start` and `visible_end` from
+- In `native/src/editor/renderer/draw/`, the **draw** pass must never iterate the whole
+  document. Clamp strictly between `visible_start` and `visible_end` from
   `HeightTree::find_line_at_y()`, and stop once the y position passes the viewport.
-- The **layout** pass does walk every line, but every line must be a cache hit unless
-  something about it actually changed. If you add state that affects a line's height, add it
-  to `line_hash` or `resource_hash` — otherwise you have silently made layout O(N) shaping
-  calls per frame, and debug builds will crawl.
+- The **layout** pass (`renderer/layout.rs`) does walk every line, but every line must be a
+  cache hit unless something about it actually changed. If you add state that affects a
+  line's height, add it to `line_hash` or `resource_hash` — otherwise you have silently made
+  layout O(N) shaping calls per frame, and debug builds will crawl.
 - When adding a block type, update block-range tracking, height measurement, draw metadata,
-  and hit testing **together**. They are one contract split across four call sites.
+  and hit testing **together**. They are one contract split across four call sites — see the
+  maintenance notes in [Markdown Pipeline](Markdown-Pipeline.md).
+- A size that layout, painting, and hit testing must agree on goes in
+  `renderer/metrics.rs`. A literal repeated at two call sites is how the caret drifts off the
+  text.
+- Renderer changes are checked with the render transcript harness described in
+  [Developer Guide & Testing](Developer-Guide-and-Testing.md).
 
 ### Rule 4: PDFs are immutable
 

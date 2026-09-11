@@ -20,7 +20,7 @@ desktop interface (`md-editor-native`).
 graph TB
     subgraph UI ["md-editor-native — Iced GUI"]
         App["Shell: state, update router, subscriptions<br/>app.rs, messages.rs"]
-        Widget["Custom markdown editor widget<br/>editor/renderer.rs"]
+        Widget["Custom markdown editor widget<br/>editor/renderer/"]
         DocBuf["DocBuffer and undo runs<br/>editor/buffer.rs"]
         Fenwick["HeightTree — Fenwick tree<br/>editor/layout_tree.rs"]
         Highlighter["Markdown tokenizer and concealer<br/>editor/highlight.rs"]
