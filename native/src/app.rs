@@ -613,7 +613,7 @@ impl MdEditor {
                 }
 
                 let target_path = self.new_entry_path(name);
-                let result = match self.ui.active_modal.as_ref() {
+                match self.ui.active_modal.as_ref() {
                     Some(views::modals::ModalType::CreateFile) => {
                         let path =
                             if target_path.ends_with(".md") || target_path.ends_with(".markdown") {
@@ -621,26 +621,23 @@ impl MdEditor {
                             } else {
                                 format!("{}.md", target_path)
                             };
-                        md_editor_core::vault::create_file(&self.state, &path)
+                        let result = md_editor_core::vault::create_file(&self.state, &path);
+                        if !self.reset_vault_ui(result) {
+                            return Task::none();
+                        }
+                        // A note you just named is the note you mean to write
+                        // in: reveal it in the tree and open it straight away.
+                        self.reveal_in_sidebar(&path);
+                        self.showing_pdf = false;
+                        self.open_file(&path)
                     }
                     Some(views::modals::ModalType::CreateFolder) => {
-                        md_editor_core::vault::create_dir(&self.state, &target_path)
+                        let result = md_editor_core::vault::create_dir(&self.state, &target_path);
+                        self.reset_vault_ui(result);
+                        Task::none()
                     }
-                    _ => Ok(()),
-                };
-
-                match result {
-                    Ok(()) => {
-                        self.vault.entries =
-                            md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                        self.ui.active_modal = None;
-                        self.ui.modal_input.clear();
-                        self.ui.link_note_picker_search.clear();
-                        self.ui.toast = Some("Created".to_string());
-                    }
-                    Err(err) => self.ui.toast = Some(err),
+                    _ => Task::none(),
                 }
-                Task::none()
             }
             Message::DeleteFile(path) => {
                 match md_editor_core::vault::delete_entry(&self.state, &path) {
@@ -2028,6 +2025,38 @@ impl MdEditor {
             }
             _ => Task::none(),
         }
+    }
+
+    /// Settle the vault UI after a create: on success refresh the tree and
+    /// close the modal, on failure surface the error and keep the modal open
+    /// so the name can be corrected. Returns whether the create succeeded.
+    fn reset_vault_ui(&mut self, result: Result<(), String>) -> bool {
+        match result {
+            Ok(()) => {
+                self.vault.entries =
+                    md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+                self.ui.active_modal = None;
+                self.ui.modal_input.clear();
+                self.ui.link_note_picker_search.clear();
+                self.ui.toast = Some("Created".to_string());
+                true
+            }
+            Err(err) => {
+                self.ui.toast = Some(err);
+                false
+            }
+        }
+    }
+
+    /// Select `path` in the sidebar and expand every folder above it, so the
+    /// row is actually visible rather than selected inside a collapsed folder.
+    fn reveal_in_sidebar(&mut self, path: &str) {
+        let mut ancestor = path;
+        while let Some(idx) = ancestor.rfind('/') {
+            ancestor = &ancestor[..idx];
+            self.vault.expanded_folders.insert(ancestor.to_string());
+        }
+        self.vault.selected_path = Some(path.to_string());
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {

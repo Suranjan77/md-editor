@@ -66,7 +66,7 @@ fn render_tree_level<'a>(
     for (name, path, is_dir) in immediate_children {
         let is_selected = selected_path.is_some_and(|s| s == path);
         let is_active = active_path.is_some_and(|s| s == path);
-        let indent = depth as f32 * 14.0;
+        let indent = depth as f32 * 13.0;
         let lower_name = name.to_lowercase();
         let disclosure: Element<'_, Message, Theme, Renderer> = if is_dir {
             icons::view(
@@ -76,10 +76,10 @@ fn render_tree_level<'a>(
                     Icon::ChevronRight
                 },
                 theme::TEXT_MUTED,
-                13.0,
+                12.0,
             )
         } else {
-            Space::new().width(Length::Fixed(13.0)).into()
+            Space::new().width(Length::Fixed(12.0)).into()
         };
         let file_icon = if is_dir && expanded.contains(&path) {
             Icon::FolderOpen
@@ -104,14 +104,14 @@ fn render_tree_level<'a>(
         let content = row![
             Space::new().width(Length::Fixed(indent)),
             disclosure,
-            icons::view(file_icon, name_color, 15.0),
+            icons::view(file_icon, name_color, 14.0),
             text(name)
                 .size(theme::TEXT_BASE)
                 .color(name_color)
-                .wrapping(Wrapping::WordOrGlyph)
+                .wrapping(Wrapping::None)
                 .width(Length::Fill),
         ]
-        .spacing(theme::SPACE_3)
+        .spacing(theme::SPACE_2)
         .align_y(Alignment::Center);
 
         let msg = if is_dir {
@@ -122,14 +122,7 @@ fn render_tree_level<'a>(
 
         let style = move |theme: &Theme, status: button::Status| {
             let mut style = button::text(theme, status);
-            style.border.radius = 6.0.into();
-            if is_active {
-                style.background = Some(Background::Color(theme::ACCENT_DIM));
-                style.border.color = theme::ACCENT;
-                style.border.width = 1.0;
-            } else if is_selected {
-                style.background = Some(Background::Color(theme::BG_TERTIARY));
-            } else if status == button::Status::Hovered {
+            if status == button::Status::Hovered {
                 style.background = Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)));
             }
             style
@@ -137,13 +130,14 @@ fn render_tree_level<'a>(
 
         let btn = button(content)
             .on_press(msg)
-            .padding([theme::SPACE_3, theme::SPACE_4])
+            .padding(theme::SPACE_2)
             .width(Length::Fill)
+            .clip(true)
             .style(style);
 
-        let delete_btn = button(icons::view(Icon::Trash, theme::TEXT_MUTED, 14.0))
+        let delete_btn = button(icons::view(Icon::Trash, theme::DANGER, 13.0))
             .on_press(Message::DeleteFileDialog(path.clone()))
-            .padding(theme::SPACE_3)
+            .padding(theme::SPACE_2)
             .style(button::text);
 
         // Add a small indicator for active file
@@ -151,8 +145,8 @@ fn render_tree_level<'a>(
             row![
                 container(
                     Space::new()
-                        .width(Length::Fixed(3.0))
-                        .height(Length::Fixed(22.0))
+                        .width(Length::Fixed(2.0))
+                        .height(Length::Fixed(18.0))
                 )
                 .style(|_| container::Style {
                     background: Some(Background::Color(theme::ACCENT)),
@@ -165,14 +159,10 @@ fn render_tree_level<'a>(
                 container(btn).width(Length::Fill),
                 delete_btn
             ]
-            .spacing(theme::SPACE_2)
             .align_y(Alignment::Center)
             .into()
         } else {
-            row![btn, delete_btn]
-                .spacing(theme::SPACE_2)
-                .align_y(Alignment::Center)
-                .into()
+            row![btn].align_y(Alignment::Center).into()
         };
 
         elements.push(item);

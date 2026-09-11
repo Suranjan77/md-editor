@@ -21,11 +21,11 @@ concern owned by the markdown renderer.
 
 | Token | Size | Intended use |
 | :--- | :--- | :--- |
-| `TEXT_XS` | 10.0 | Fine print: badges, counters, gutter numbers |
-| `TEXT_SM` | 12.0 | Secondary text: captions, metadata, tree affordances |
-| `TEXT_BASE` | 14.0 | Default UI text: controls, button labels, palette rows |
-| `TEXT_MD` | 16.0 | Emphasised UI text and section headings |
-| `TEXT_LG` | 18.0 | Panel and dialog titles |
+| `TEXT_XS` | 8.0 | Fine print: badges, counters, gutter numbers |
+| `TEXT_SM` | 10.0 | Secondary text: captions, metadata, tree affordances |
+| `TEXT_BASE` | 11.0 | Default UI text: controls, button labels, palette rows |
+| `TEXT_MD` | 14.0 | Emphasised UI text and section headings |
+| `TEXT_LG` | 16.0 | Panel and dialog titles |
 | `TEXT_DISPLAY` | 42.0 | The welcome-screen wordmark — deliberately the only display size |
 
 ### The seven-step spacing scale
@@ -36,7 +36,7 @@ A 2px grid, growing roughly geometrically so adjacent steps stay visibly distinc
 SPACE_0  (0px)  ─── flush, no gap
 SPACE_1  (2px)  ─── hairline separation between tightly related items
 SPACE_2  (4px)  ─── within a control: icon to label
-SPACE_3  (8px)  ─── default gap between siblings; default control padding
+SPACE_3  (6px)  ─── default gap between siblings; default control padding
 SPACE_4 (12px)  ─── between grouped rows; comfortable control padding
 SPACE_5 (16px)  ─── between groups within a panel
 SPACE_6 (24px)  ─── between major regions
@@ -44,7 +44,7 @@ SPACE_6 (24px)  ─── between major regions
 
 ### Corner radii
 
-- `RADIUS_SM` (3.0) — chips, badges, inline markers.
+- `RADIUS_SM` (2.0) — chips, badges, inline markers.
 - `RADIUS_MD` (6.0) — buttons, inputs, list rows.
 - `RADIUS_LG` (10.0) — panels, cards, modals.
 
@@ -52,24 +52,24 @@ SPACE_6 (24px)  ─── between major regions
 
 The app ships one theme, a dark palette registered with iced as *"MD Editor Premium Dark"*.
 
-| Token | Hex | Role |
-| :--- | :--- | :--- |
-| `BG_PRIMARY` | `#0d0e10` | Window and panel ground |
-| `BG_SECONDARY` | `#181a1d` | Raised surfaces |
-| `BG_TERTIARY` | `#23262b` | Inputs, hovered rows |
-| `BG_SURFACE` | `#334b47` | Selected/active surface |
-| `BORDER` | `#45484e` | Standard borders |
-| `BORDER_SUBTLE` | `#1d2024` | Hairline dividers |
-| `TEXT_PRIMARY` | `#e3e5ed` | Body and default UI text |
-| `TEXT_SECONDARY` | `#a9abb2` | Secondary text |
-| `TEXT_MUTED` | `#9d9ea3` | Captions, placeholders, disabled |
-| `ACCENT` | `#b1ccc6` | Primary accent, active state |
-| `ACCENT_SECONDARY` | `#cde8e2` | Lighter accent |
-| `ACCENT_GLOW` | `#b1ccc6` @ 50% | Focus rings, rules |
-| `ACCENT_DIM` | `#b1ccc6` @ 20% | Subtle accent fills |
-| `DANGER` | `#ee7d77` | Destructive actions, errors |
-| `SUCCESS` | `#d9f2d2` | Confirmations |
-| `WARNING` | `#bfdad4` | Cautions |
+| Swatch | Token | Hex | Role |
+| :---: | :--- | :--- | :--- |
+| ![#0d0e10](https://dummyimage.com/16x16/0d0e10/0d0e10.png) | `BG_PRIMARY` | `#0d0e10` | Window and panel ground |
+| ![#181a1d](https://dummyimage.com/16x16/181a1d/181a1d.png) | `BG_SECONDARY` | `#181a1d` | Raised surfaces |
+| ![#23262b](https://dummyimage.com/16x16/23262b/23262b.png) | `BG_TERTIARY` | `#23262b` | Inputs, hovered rows |
+| ![#334b47](https://dummyimage.com/16x16/334b47/334b47.png) | `BG_SURFACE` | `#334b47` | Selected/active surface |
+| ![#45484e](https://dummyimage.com/16x16/45484e/45484e.png) | `BORDER` | `#45484e` | Standard borders |
+| ![#1d2024](https://dummyimage.com/16x16/1d2024/1d2024.png) | `BORDER_SUBTLE` | `#1d2024` | Hairline dividers |
+| ![#e3e5ed](https://dummyimage.com/16x16/e3e5ed/e3e5ed.png) | `TEXT_PRIMARY` | `#e3e5ed` | Body and default UI text |
+| ![#a9abb2](https://dummyimage.com/16x16/a9abb2/a9abb2.png) | `TEXT_SECONDARY` | `#a9abb2` | Secondary text |
+| ![#9d9ea3](https://dummyimage.com/16x16/9d9ea3/9d9ea3.png) | `TEXT_MUTED` | `#9d9ea3` | Captions, placeholders, disabled |
+| ![#b1ccc6](https://dummyimage.com/16x16/b1ccc6/b1ccc6.png) | `ACCENT` | `#b1ccc6` | Primary accent, active state |
+| ![#cde8e2](https://dummyimage.com/16x16/cde8e2/cde8e2.png) | `ACCENT_SECONDARY` | `#cde8e2` | Lighter accent |
+| ![#b1ccc6](https://dummyimage.com/16x16/b1ccc6/b1ccc6.png) | `ACCENT_GLOW` | `#b1ccc6` @ 50% | Focus rings, rules |
+| ![#b1ccc6](https://dummyimage.com/16x16/b1ccc6/b1ccc6.png) | `ACCENT_DIM` | `#b1ccc6` @ 20% | Subtle accent fills |
+| ![#ee7d77](https://dummyimage.com/16x16/ee7d77/ee7d77.png) | `DANGER` | `#ee7d77` | Destructive actions, errors |
+| ![#d9f2d2](https://dummyimage.com/16x16/d9f2d2/d9f2d2.png) | `SUCCESS` | `#d9f2d2` | Confirmations |
+| ![#bfdad4](https://dummyimage.com/16x16/bfdad4/bfdad4.png) | `WARNING` | `#bfdad4` | Cautions |
 
 `fade(color, opacity)` scales a colour's own alpha. Fading a whole overlay means scaling
 every colour it draws by the same factor, and routing that through one helper is what keeps

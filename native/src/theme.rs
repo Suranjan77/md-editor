@@ -18,15 +18,15 @@ use iced::{Color, Theme};
 // in-between size.
 
 /// Fine print: badges, counters, gutter numbers.
-pub const TEXT_XS: f32 = 10.0;
+pub const TEXT_XS: f32 = 8.0;
 /// Secondary UI text: captions, metadata, tree affordances.
-pub const TEXT_SM: f32 = 12.0;
+pub const TEXT_SM: f32 = 10.0;
 /// Default UI text.
-pub const TEXT_BASE: f32 = 14.0;
+pub const TEXT_BASE: f32 = 11.0;
 /// Emphasised UI text and section headings.
-pub const TEXT_MD: f32 = 16.0;
+pub const TEXT_MD: f32 = 14.0;
 /// Panel and dialog titles.
-pub const TEXT_LG: f32 = 18.0;
+pub const TEXT_LG: f32 = 16.0;
 /// The welcome screen wordmark; deliberately the only display-scale text.
 pub const TEXT_DISPLAY: f32 = 42.0;
 
@@ -42,7 +42,7 @@ pub const SPACE_1: f32 = 2.0;
 /// Within a control: icon to label.
 pub const SPACE_2: f32 = 4.0;
 /// Default gap between siblings, and default control padding.
-pub const SPACE_3: f32 = 8.0;
+pub const SPACE_3: f32 = 6.0;
 /// Between grouped rows; comfortable control padding.
 pub const SPACE_4: f32 = 12.0;
 /// Between groups within a panel.
@@ -53,7 +53,7 @@ pub const SPACE_6: f32 = 24.0;
 // ── Radius ───────────────────────────────────────────────────────────
 
 /// Chips, badges, and inline markers.
-pub const RADIUS_SM: f32 = 3.0;
+pub const RADIUS_SM: f32 = 2.0;
 /// Buttons, inputs, list rows.
 pub const RADIUS_MD: f32 = 6.0;
 /// Panels, cards, and modals.
