@@ -65,23 +65,27 @@ md-editor/
         │   ├── layout_cache.rs # Per-line measurement cache keys and hashing helpers
         │   ├── layout_tree.rs  # HeightTree — Fenwick tree over visual line heights
         │   ├── render_snapshot_tests.rs # Opt-in draw-call transcript for renderer changes
+        │   ├── render_preview.rs # Opt-in PNG previews through the software renderer
         │   └── renderer/       # The iced Widget, split by concern
         │       ├── mod.rs      # Editor, State, and a thin Widget impl that delegates
         │       ├── metrics.rs  # Constants layout, painting, and hit testing must share
         │       ├── measure.rs  # Memoized text shaping and span fonts
         │       ├── spans.rs    # When a span shows its source instead of its rendering
+        │       ├── flow.rs     # Inline layout: rows, baselines, column ⇄ x — the only wrapper
         │       ├── layout.rs   # Line heights, HeightWalk, height tree, line_visual_y
-        │       ├── caret.rs    # Column ⇄ position mapping, hit testing, visual up/down
+        │       ├── caret.rs    # Caret boxes, hit testing, visual up/down, code columns
         │       ├── selection.rs # Selection ordering and text extraction
         │       ├── scroll.rs   # Per-block horizontal scroll and scrollbar geometry
         │       ├── events.rs   # Mouse and keyboard handling
+        │       ├── testing.rs  # Test support: recording renderer and a widget driver
+        │       ├── tests.rs    # Behavioral tests through the Widget API
         │       └── draw/       # Painting
         │           ├── mod.rs  # Frame setup, culling, per-line dispatch
         │           ├── blocks.rs # Block cards and captions, code lines, table rows
-        │           ├── inline.rs # Rules, plain lines, spans, images, math, checkboxes
+        │           ├── inline.rs # Flow lines, images, inline and block math, rules
         │           ├── overlays.rs # Selection and search highlights, the caret
         │           ├── captions.rs # Table, Listing, Figure, and equation numbering
-        │           └── primitives.rs # Quads, text runs, the wrapping pen, scrollbars
+        │           └── primitives.rs # Quads, text runs, clipping, scrollbars
         └── views/              # View-layer components
             ├── mod.rs          # Module declarations
             ├── backlinks.rs    # Incoming connections pane (notes, PDFs, highlights)
@@ -140,12 +144,15 @@ md-editor/
 | `editor/renderer/metrics.rs` | Every layout constant that more than one pass depends on — margins, row heights, caption bands, code and table metrics, checkbox advance — plus `content_bounds()`, `visual_line_step()`, and `wrap_width()`. |
 | `editor/renderer/measure.rs` | `measure_width()` and `measure_char_width()` over process-wide width caches, and `span_font()`. |
 | `editor/renderer/spans.rs` | Typora-style reveal rules: which spans show markdown source for a given caret column, and whether a whole block is being edited. |
+| `editor/renderer/flow.rs` | `Flow`, the inline layout of one line: greedy word breaking with hanging whitespace, per-row height and baseline, and the queries everything else uses — `caret()`, `col_at()`, `span_at()`, and `range_extents()`. |
 | `editor/renderer/layout.rs` | `line_height_for()`, the `HeightWalk` document pass, `total_height()`, the public `line_visual_y()`, and `layout_lines()`, which fills the height tree and block ranges using `LineHeightCache`. |
-| `editor/renderer/caret.rs` | `position_for_col()` and `col_for_visual_point()` (the two directions of column ⇄ position), `hit_test()`, and visual up/down movement. |
+| `editor/renderer/caret.rs` | `caret_box()`, `hit_test()`, and visual up/down movement over a line's `Flow`, plus column ⇄ x for unwrapped code lines. |
 | `editor/renderer/selection.rs` | Selection normalization, the selection to paint, and pointer-selection text for copy and cut. |
-| `editor/renderer/scroll.rs` | Per-block horizontal scroll offsets, scrollbar geometry and hit testing, drag and wheel handling, and block content widths. |
+| `editor/renderer/scroll.rs` | `scroll_extent()` — the one answer to how wide a code block, table, or equation is and how much of it shows — plus scroll offsets, scrollbar geometry and hit testing, and drag and wheel handling. |
 | `editor/renderer/events.rs` | Mouse press, drag, wheel, and keyboard handling; every edit leaves as an `EditorCommand` message. |
 | `editor/renderer/draw/` | Painting: frame setup and culling (`mod.rs`), block chrome, code lines, and table rows (`blocks.rs`), inline content (`inline.rs`), highlights and the caret (`overlays.rs`), numbered captions (`captions.rs`), and shared primitives (`primitives.rs`). |
+| `editor/renderer/testing.rs`, `tests.rs` | A recording renderer and a `View` driver that feeds the widget real layout, draw, and input calls, and the behavioral tests built on them. |
+| `editor/render_preview.rs` | An ignored-by-default test that renders sample scenes to PNG with iced's tiny-skia software renderer. See [Developer Guide & Testing](Developer-Guide-and-Testing.md). |
 | `editor/render_snapshot_tests.rs` | An ignored-by-default harness that drives the widget through its `Widget` API and records every draw call, message, and cursor shape to a transcript. See [Developer Guide & Testing](Developer-Guide-and-Testing.md). |
 
 ---

@@ -40,6 +40,8 @@ rediscover — each exists because something concrete broke without it.
 - A size that layout, painting, and hit testing must agree on goes in
   `renderer/metrics.rs`. A literal repeated at two call sites is how the caret drifts off the
   text.
+- Inline text is measured and broken into rows only in `renderer/flow.rs`. Painting, the
+  caret, highlights, and hit testing read a line's `Flow`; they never wrap text themselves.
 - Renderer changes are checked with the render transcript harness described in
   [Developer Guide & Testing](Developer-Guide-and-Testing.md).
 
@@ -94,6 +96,9 @@ The full set of PDF rules is in [PDF Viewer Internals](PDF-Viewer-Internals.md#1
   `references::RESOLVER_VERSION`, or users will be served stale cached results.
 - A change to PDF scroll or page geometry needs coverage in the page-slot tests in
   `native/src/app.rs`.
+- A rendering, caret, or hit-testing bug in the editor needs a test in
+  `native/src/editor/renderer/tests.rs`, written against the draw calls and messages the widget
+  produces rather than its internals, and seen failing before the fix.
 - New core functionality belongs behind a headless test. If it cannot be tested without a
   window, it probably belongs in `md-editor-native`.
 
@@ -121,14 +126,15 @@ CI builds and packages, but does **not** run the tests or the lints. Run them lo
 ```bash
 cargo fmt --check
 cargo check --workspace
-cargo test --workspace           # 158 tests, all passing
+cargo test --workspace           # 171 tests, all passing
 cargo clippy --workspace
 ```
 
 `cargo fmt --check` and `cargo test` must pass cleanly.
 
-**Clippy is not yet warning-clean**: the tree currently carries 34 warnings (2 in core, 32 in
-native), mostly `too_many_arguments`, `redundant_guard`, and `if_same_then_else`. So
+**Clippy is not yet warning-clean**: the tree currently carries 15 warnings (2 in core, 13 in
+native), mostly `too_many_arguments` in view functions and `needless_range_loop` in the
+highlighter. The editor renderer is warning-clean. So
 `-D warnings` does not pass on a fresh checkout. The rule is therefore *do not add new ones*:
 compare the count before and after your change, and fix any warning your own code introduces.
 

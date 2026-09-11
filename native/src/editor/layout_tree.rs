@@ -12,13 +12,6 @@ impl HeightTree {
         }
     }
 
-    pub fn resize(&mut self, len: usize) {
-        self.tree.resize(len + 1, 0.0);
-        self.heights.resize(len, 0.0);
-        self.tree.fill(0.0);
-        self.heights.fill(0.0);
-    }
-
     pub fn len(&self) -> usize {
         self.heights.len()
     }

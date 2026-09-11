@@ -9,7 +9,7 @@ Everything to verify before packaging an MD Editor build.
 ```bash
 cargo fmt --check               # must be clean
 cargo check --workspace
-cargo test --workspace          # expect 158 passing: 56 core + 102 native
+cargo test --workspace          # expect 171 passing: 56 core + 115 native
 cargo clippy --workspace        # baseline is 34 warnings; confirm it has not grown
 cargo build --release
 ```

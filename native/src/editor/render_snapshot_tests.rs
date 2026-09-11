@@ -8,146 +8,24 @@
 //! Run with `RENDER_SNAPSHOT=<path> cargo test -p md-editor-native render_snapshot -- --ignored`.
 //! Set `RENDER_SNAPSHOT_WRITE=1` to (re)write the golden file.
 
-use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::ops::{Deref, DerefMut};
 
 use iced::advanced::graphics::core::event::Event;
-use iced::advanced::layout::{Layout, Limits};
-use iced::advanced::renderer::{self, Quad};
-use iced::advanced::widget::{Tree, Widget};
-use iced::advanced::{Clipboard, Shell, clipboard, image, text};
+use iced::advanced::image;
+use iced::advanced::widget::Widget;
 use iced::keyboard::{self, Key, key};
 use iced::mouse;
-use iced::{Background, Color, Point, Rectangle, Size};
+use iced::{Point, Rectangle, Size};
 
-use crate::editor::buffer::{DocBuffer, EditorCommand};
+use std::collections::HashMap;
+
+use crate::editor::buffer::EditorCommand;
 use crate::editor::highlight::highlight_markdown;
+use crate::editor::renderer::testing::{Recorder, View};
 use crate::editor::renderer::{Editor, ImageCache, MathCache, MathRender, line_visual_y};
 
 type Real = iced::Renderer;
-
-/// Renders nothing; logs every primitive. Measurement types are borrowed from
-/// the real renderer so text metrics match production exactly.
-#[derive(Default)]
-struct Recorder {
-    calls: Vec<String>,
-}
-
-impl renderer::Renderer for Recorder {
-    fn start_layer(&mut self, bounds: Rectangle) {
-        self.calls.push(format!("layer {:?}", bounds));
-    }
-    fn end_layer(&mut self) {
-        self.calls.push("end_layer".into());
-    }
-    fn start_transformation(&mut self, _t: iced::Transformation) {
-        self.calls.push("transform".into());
-    }
-    fn end_transformation(&mut self) {
-        self.calls.push("end_transform".into());
-    }
-    fn fill_quad(&mut self, quad: Quad, background: impl Into<Background>) {
-        let bg: Background = background.into();
-        self.calls.push(format!(
-            "quad {:?} border={:?} shadow={:?} snap={} bg={:?}",
-            quad.bounds, quad.border, quad.shadow, quad.snap, bg
-        ));
-    }
-    fn reset(&mut self, _new_bounds: Rectangle) {}
-    fn allocate_image(
-        &mut self,
-        _handle: &image::Handle,
-        _callback: impl FnOnce(Result<image::Allocation, image::Error>) + Send + 'static,
-    ) {
-    }
-}
-
-impl text::Renderer for Recorder {
-    type Font = iced::Font;
-    type Paragraph = <Real as text::Renderer>::Paragraph;
-    type Editor = <Real as text::Renderer>::Editor;
-
-    const ICON_FONT: Self::Font = <Real as text::Renderer>::ICON_FONT;
-    const CHECKMARK_ICON: char = <Real as text::Renderer>::CHECKMARK_ICON;
-    const ARROW_DOWN_ICON: char = <Real as text::Renderer>::ARROW_DOWN_ICON;
-    const SCROLL_UP_ICON: char = <Real as text::Renderer>::SCROLL_UP_ICON;
-    const SCROLL_DOWN_ICON: char = <Real as text::Renderer>::SCROLL_DOWN_ICON;
-    const SCROLL_LEFT_ICON: char = <Real as text::Renderer>::SCROLL_LEFT_ICON;
-    const SCROLL_RIGHT_ICON: char = <Real as text::Renderer>::SCROLL_RIGHT_ICON;
-    const ICED_LOGO: char = <Real as text::Renderer>::ICED_LOGO;
-
-    fn default_font(&self) -> Self::Font {
-        iced::Font::DEFAULT
-    }
-    fn default_size(&self) -> iced::Pixels {
-        16.0.into()
-    }
-    fn fill_paragraph(&mut self, _t: &Self::Paragraph, _p: Point, _c: Color, _clip: Rectangle) {
-        self.calls.push("paragraph".into());
-    }
-    fn fill_editor(&mut self, _e: &Self::Editor, _p: Point, _c: Color, _clip: Rectangle) {
-        self.calls.push("editor".into());
-    }
-    fn fill_text(
-        &mut self,
-        t: text::Text<String, Self::Font>,
-        position: Point,
-        color: Color,
-        clip_bounds: Rectangle,
-    ) {
-        self.calls.push(format!(
-            "text {:?} bounds={:?} size={:?} lh={:?} font={:?} ax={:?} ay={:?} shaping={:?} wrap={:?} at={:?} color={:?} clip={:?}",
-            t.content,
-            t.bounds,
-            t.size,
-            t.line_height,
-            t.font,
-            t.align_x,
-            t.align_y,
-            t.shaping,
-            t.wrapping,
-            position,
-            color,
-            clip_bounds
-        ));
-    }
-}
-
-impl image::Renderer for Recorder {
-    type Handle = image::Handle;
-    fn load_image(&self, _h: &Self::Handle) -> Result<image::Allocation, image::Error> {
-        Err(image::Error::Unsupported)
-    }
-    fn measure_image(&self, _h: &Self::Handle) -> Option<Size<u32>> {
-        None
-    }
-    fn draw_image(&mut self, img: image::Image<Self::Handle>, bounds: Rectangle, clip: Rectangle) {
-        self.calls.push(format!(
-            "image {:?} filter={:?} rot={:?} opacity={} snap={} bounds={:?} clip={:?}",
-            img.handle.id(),
-            img.filter_method,
-            img.rotation,
-            img.opacity,
-            img.snap,
-            bounds,
-            clip
-        ));
-    }
-}
-
-#[derive(Default)]
-struct RecordingClipboard {
-    writes: Vec<String>,
-}
-
-impl Clipboard for RecordingClipboard {
-    fn read(&self, _kind: clipboard::Kind) -> Option<String> {
-        Some("PASTED".into())
-    }
-    fn write(&mut self, _kind: clipboard::Kind, contents: String) {
-        self.writes.push(contents);
-    }
-}
 
 /// Round every float literal in a debug string so harmless reassociation of
 /// float arithmetic during a refactor doesn't register as a difference.
@@ -266,94 +144,73 @@ fn caches() -> (ImageCache, MathCache) {
     (images, math)
 }
 
-fn msg(c: EditorCommand) -> String {
-    format!("{c:?}")
-}
-
+/// A [`View`] that writes everything it does to a transcript.
 struct Harness<'a> {
     out: &'a mut String,
-    buffer: DocBuffer,
-    lines: Vec<crate::editor::highlight::StyledLine>,
-    images: ImageCache,
-    math: MathCache,
-    tree: Tree,
-    width: f32,
-    search: (&'static str, bool, bool, Option<(usize, usize)>),
+    view: View,
+}
+
+impl Deref for Harness<'_> {
+    type Target = View;
+    fn deref(&self) -> &View {
+        &self.view
+    }
+}
+
+impl DerefMut for Harness<'_> {
+    fn deref_mut(&mut self) -> &mut View {
+        &mut self.view
+    }
 }
 
 impl Harness<'_> {
-    fn editor(&self) -> Editor<'_, String> {
-        Editor::new(
-            &self.buffer,
-            &self.lines,
-            &self.images,
-            &self.math,
-            |c| format!("cmd {}", msg(c)),
-            |c| format!("ptr {}", msg(c)),
-            |t| format!("link {t}"),
-            |l| format!("check {l}"),
-        )
-        .search(self.search.0, self.search.1, self.search.2, self.search.3)
-        .scale_factor(1.5)
-    }
-
-    fn layout(&mut self) -> iced::advanced::layout::Node {
-        let width = self.width;
-        let mut tree = std::mem::replace(&mut self.tree, Tree::empty());
-        let node = {
-            let mut editor = self.editor();
-            <Editor<'_, String> as Widget<String, iced::Theme, Recorder>>::layout(
-                &mut editor,
-                &mut tree,
-                &Recorder::default(),
-                &Limits::new(Size::ZERO, Size::new(width, f32::INFINITY)),
-            )
-        };
-        self.tree = tree;
-        node
-    }
-
     fn frame(&mut self, label: &str, viewport: Option<Rectangle>) {
-        let node = self.layout();
-        let bounds = node.bounds();
-        let viewport = viewport.unwrap_or(bounds);
-        let mut rec = Recorder::default();
-        {
-            let editor = self.editor();
-            <Editor<'_, String> as Widget<String, iced::Theme, Recorder>>::draw(
-                &editor,
-                &self.tree,
-                &mut rec,
-                &iced::Theme::Dark,
-                &renderer::Style::default(),
-                Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &viewport,
-            );
-        }
+        let bounds = self.view.layout().bounds();
+        let viewport_used = viewport.unwrap_or(bounds);
+        let mut calls: Vec<String> = self
+            .view
+            .draw_in(viewport)
+            .iter()
+            .map(|call| call.describe().to_string())
+            .collect();
         // Block chrome is emitted in HashMap order; compare as a multiset.
-        rec.calls.sort();
+        calls.sort();
         let _ = writeln!(
             self.out,
             "== frame {label} w={} cursor=({},{}) sel={:?} bounds={:?} vp={:?}",
-            self.width,
-            self.buffer.cursor_line,
-            self.buffer.cursor_col,
-            self.buffer.selection,
+            self.view.width,
+            self.view.buffer.cursor_line,
+            self.view.buffer.cursor_col,
+            self.view.buffer.selection,
             bounds,
-            viewport
+            viewport_used
         );
-        for call in rec.calls {
+        for call in calls {
             let _ = writeln!(self.out, "  {}", round_floats(&call));
         }
     }
 
-    fn event(&mut self, label: &str, event: Event, cursor: Option<Point>) {
-        let node = self.layout();
-        self.event_on(label, event, cursor, node);
+    fn log_event(
+        &mut self,
+        label: &str,
+        cursor: Option<Point>,
+        outcome: crate::editor::renderer::testing::EventOutcome,
+    ) {
+        let _ = writeln!(
+            self.out,
+            "{}",
+            round_floats(&format!(
+                "-- event {label} at={cursor:?} captured={} msgs={:?} clip={:?}",
+                outcome.captured, outcome.messages, outcome.clipboard_writes
+            ))
+        );
     }
 
-    /// Deliver an event against `node` without running widget layout first.
+    fn event(&mut self, label: &str, event: Event, cursor: Option<Point>) {
+        let outcome = self.view.event(event, cursor);
+        self.log_event(label, cursor, outcome);
+    }
+
     fn event_on(
         &mut self,
         label: &str,
@@ -361,63 +218,8 @@ impl Harness<'_> {
         cursor: Option<Point>,
         node: iced::advanced::layout::Node,
     ) {
-        let mut messages = Vec::new();
-        let mut clip = RecordingClipboard::default();
-        let captured;
-        let mut tree = std::mem::replace(&mut self.tree, Tree::empty());
-        {
-            let mut editor = self.editor();
-            let mut shell = Shell::new(&mut messages);
-            let cursor = cursor.map_or(mouse::Cursor::Unavailable, mouse::Cursor::Available);
-            <Editor<'_, String> as Widget<String, iced::Theme, Recorder>>::update(
-                &mut editor,
-                &mut tree,
-                &event,
-                Layout::new(&node),
-                cursor,
-                &Recorder::default(),
-                &mut clip,
-                &mut shell,
-                &node.bounds(),
-            );
-            captured = shell.is_event_captured();
-        }
-        self.tree = tree;
-        let _ = writeln!(
-            self.out,
-            "{}",
-            round_floats(&format!(
-                "-- event {label} at={cursor:?} captured={captured} msgs={messages:?} clip={:?}",
-                clip.writes
-            ))
-        );
-    }
-
-    fn interaction(&mut self, p: Point) -> mouse::Interaction {
-        let node = self.layout();
-        let editor = self.editor();
-        <Editor<'_, String> as Widget<String, iced::Theme, Recorder>>::mouse_interaction(
-            &editor,
-            &self.tree,
-            Layout::new(&node),
-            mouse::Cursor::Available(p),
-            &node.bounds(),
-            &Recorder::default(),
-        )
-    }
-
-    fn reset_tree(&mut self) {
-        let state =
-            <Editor<'_, String> as Widget<String, iced::Theme, Recorder>>::state(&self.editor());
-        self.tree = Tree {
-            tag: self.tree.tag,
-            state,
-            children: Vec::new(),
-        };
-    }
-
-    fn set_cursor(&mut self, line: usize, col: usize) {
-        self.buffer.execute(EditorCommand::SetCursor { line, col });
+        let outcome = self.view.event_on(event, cursor, node);
+        self.log_event(label, cursor, outcome);
     }
 
     fn click(&mut self, label: &str, p: Point) {
@@ -434,27 +236,13 @@ impl Harness<'_> {
     }
 
     fn key(&mut self, label: &str, k: Key, modifiers: keyboard::Modifiers, text: Option<&str>) {
-        self.event(
-            label,
-            Event::Keyboard(keyboard::Event::KeyPressed {
-                key: k.clone(),
-                modified_key: k,
-                physical_key: key::Physical::Unidentified(key::NativeCode::Unidentified),
-                location: keyboard::Location::Standard,
-                modifiers,
-                text: text.map(Into::into),
-                repeat: false,
-            }),
-            None,
-        );
+        let outcome = self.view.key(k, modifiers, text);
+        self.log_event(label, None, outcome);
     }
 
     fn modifiers(&mut self, m: keyboard::Modifiers) {
-        self.event(
-            "modifiers",
-            Event::Keyboard(keyboard::Event::ModifiersChanged(m)),
-            None,
-        );
+        let outcome = self.view.modifiers(m);
+        self.log_event("modifiers", None, outcome);
     }
 }
 
@@ -478,37 +266,10 @@ fn run_scenarios(out: &mut String) {
     }
 
     for &width in &[300.0_f32, 760.0, 1300.0] {
-        let empty = DocBuffer::from_text("");
-        let (tag, editor_state) = {
-            let e = Editor::<String>::new(
-                &empty,
-                &[],
-                &images,
-                &math,
-                |_| String::new(),
-                |_| String::new(),
-                |_| String::new(),
-                |_| String::new(),
-            );
-            (
-                <Editor<'_, String> as Widget<String, iced::Theme, Recorder>>::tag(&e),
-                <Editor<'_, String> as Widget<String, iced::Theme, Recorder>>::state(&e),
-            )
-        };
-        let mut h = Harness {
-            out,
-            buffer: DocBuffer::from_text(DOC),
-            lines: lines.clone(),
-            images: images.clone(),
-            math: math.clone(),
-            tree: Tree {
-                tag,
-                state: editor_state,
-                children: Vec::new(),
-            },
-            width,
-            search: ("", false, false, None),
-        };
+        let mut view = View::new(DOC, width);
+        view.images = images.clone();
+        view.math = math.clone();
+        let mut h = Harness { out, view };
 
         let size = <Editor<'_, String> as Widget<String, iced::Theme, Recorder>>::size(&h.editor());
         let _ = writeln!(h.out, "#### width {width} size={size:?}");

@@ -29,6 +29,11 @@ pub(super) const MAX_CONTENT_WIDTH: f32 = 880.0;
 pub(super) const BASE_LINE_HEIGHT: f32 = 36.0;
 /// Rows grow with their font size by this factor.
 const LINE_STEP_FACTOR: f32 = 1.45;
+/// Height of a line of text relative to its font size (iced's default).
+pub(super) const LINE_BOX_FACTOR: f32 = 1.3;
+/// Distance from the top of a line of text to its baseline, relative to its
+/// font size. Common UI fonts put the baseline within a few percent of this.
+pub(super) const BASELINE_FACTOR: f32 = 1.0;
 /// Font size assumed when a line gives no better answer.
 pub(super) const DEFAULT_FONT_SIZE: f32 = 17.0;
 /// Narrowest width text is allowed to wrap at.
@@ -66,8 +71,11 @@ pub(super) const MATH_BLOCK_MIN_HEIGHT: f32 = 72.0;
 pub(super) const MATH_BLOCK_PADDING: f32 = 48.0;
 /// Characters per row assumed when estimating unrendered block math height.
 pub(super) const MATH_SOURCE_CHARS_PER_ROW: f32 = 72.0;
-/// Extra height given to a text line containing inline math.
-pub(super) const INLINE_MATH_EXTRA_HEIGHT: f32 = 10.0;
+/// Extra height given to a row holding a rendered inline equation.
+pub(super) const INLINE_MATH_ROW_PADDING: f32 = 10.0;
+/// Height above the baseline that inline equations and checkboxes are centred
+/// on, roughly where a minus sign sits.
+pub(super) const MATH_AXIS_HEIGHT: f32 = 5.0;
 /// Gap after an inline equation.
 pub(super) const INLINE_MATH_GAP: f32 = 4.0;
 

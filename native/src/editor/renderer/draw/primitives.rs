@@ -5,9 +5,8 @@ use iced::advanced::text;
 use iced::alignment::{Horizontal, Vertical};
 use iced::{Border, Color, Point, Rectangle, Size};
 
-use super::super::measure::{measure_char_width, measure_width};
-use super::super::metrics::{BASE_LINE_HEIGHT, visual_line_step};
-use super::super::scroll::{overflows, scrollbar_geometry};
+use super::super::metrics::visual_line_step;
+use super::super::scroll::{ScrollExtent, scrollbar_geometry};
 use super::super::{Measure, State};
 use crate::theme;
 
@@ -118,101 +117,6 @@ pub(super) fn draw_nowrap_text<R: Measure>(
     .draw(renderer, Point::new(x, y), color, viewport);
 }
 
-/// Pen that lays text out left to right, wrapping at word boundaries.
-pub(super) struct WrapPen {
-    pub x: f32,
-    pub y: f32,
-    pub left: f32,
-    pub right: f32,
-}
-
-impl WrapPen {
-    /// Draw `text`, breaking before a word that would cross `right` and inside
-    /// a word only if it is wider than a whole row.
-    ///
-    /// NOTE: rows advance by this span's own step, while layout advances by
-    /// the tallest step on the row, so mixed font sizes on one wrapped line
-    /// can paint outside the height layout reserved.
-    pub fn draw_wrapped<R: Measure>(
-        &mut self,
-        renderer: &mut R,
-        text: &str,
-        font_size: f32,
-        font: iced::Font,
-        color: Color,
-        viewport: Rectangle,
-    ) {
-        let mut token = String::new();
-        for ch in text.chars() {
-            token.push(ch);
-            if ch.is_whitespace() {
-                self.draw_token(renderer, &token, font_size, font, color, viewport);
-                token.clear();
-            }
-        }
-        self.draw_token(renderer, &token, font_size, font, color, viewport);
-    }
-
-    fn draw_token<R: Measure>(
-        &mut self,
-        renderer: &mut R,
-        token: &str,
-        font_size: f32,
-        font: iced::Font,
-        color: Color,
-        viewport: Rectangle,
-    ) {
-        if token.is_empty() {
-            return;
-        }
-        let step = visual_line_step(font_size);
-        let width = measure_width::<R>(token, font_size, font);
-        self.fit(width, step);
-        if width <= (self.right - self.left).max(1.0) {
-            self.draw_chunk(renderer, token, font_size, font, color, viewport);
-            self.x += width;
-        } else {
-            for ch in token.chars() {
-                let ch_w = measure_char_width::<R>(ch, font_size, font);
-                self.fit(ch_w, step);
-                self.draw_chunk(renderer, &ch.to_string(), font_size, font, color, viewport);
-                self.x += ch_w;
-            }
-        }
-    }
-
-    fn fit(&mut self, width: f32, step: f32) {
-        if self.x > self.left && self.x + width > self.right {
-            self.y += step;
-            self.x = self.left;
-        }
-    }
-
-    /// Draw text at the pen, vertically centered in a base-height row.
-    fn draw_chunk<R: Measure>(
-        &self,
-        renderer: &mut R,
-        content: &str,
-        font_size: f32,
-        font: iced::Font,
-        color: Color,
-        viewport: Rectangle,
-    ) {
-        TextRun::new(
-            content,
-            font_size,
-            Size::new((self.right - self.x).max(1.0), visual_line_step(font_size)),
-        )
-        .font(font)
-        .draw(
-            renderer,
-            Point::new(self.x, self.y + (BASE_LINE_HEIGHT - font_size) / 2.0),
-            color,
-            viewport,
-        );
-    }
-}
-
 /// Intersection of two rectangles (zero-sized when they don't overlap).
 pub(super) fn clip_viewport(viewport: Rectangle, clip: Rectangle) -> Rectangle {
     let x1 = viewport.x.max(clip.x);
@@ -227,22 +131,16 @@ pub(super) fn clip_viewport(viewport: Rectangle, clip: Rectangle) -> Rectangle {
     }
 }
 
-/// Paint a block's horizontal scrollbar, if its content overflows.
+/// Paint a block's horizontal scrollbar.
 pub(super) fn paint_scrollbar<R: Measure>(
     renderer: &mut R,
     state: &State,
     block_id: usize,
     viewport_x: f32,
-    viewport_w: f32,
+    extent: &ScrollExtent,
     y: f32,
-    content_w: f32,
 ) {
-    if !overflows(content_w, viewport_w) {
-        return;
-    }
-
-    let scroll = state.block_scroll(block_id, content_w, viewport_w);
-    let bar = scrollbar_geometry(viewport_x, viewport_w, content_w, scroll);
+    let bar = scrollbar_geometry(viewport_x, extent, state.block_scroll(block_id, extent));
     let radius = rounded(SCROLLBAR_THICKNESS / 2.0);
 
     fill(

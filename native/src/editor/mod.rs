@@ -6,3 +6,6 @@ pub mod renderer;
 
 #[cfg(test)]
 mod render_snapshot_tests;
+
+#[cfg(test)]
+mod render_preview;

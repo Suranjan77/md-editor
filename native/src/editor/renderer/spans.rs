@@ -29,19 +29,6 @@ pub(super) fn span_is_editing(
     block_editing || active_col.is_some_and(|col| span_is_inline_edit_target(line, span_idx, col))
 }
 
-/// The text span `span_idx` currently displays.
-pub(super) fn span_visible_text(
-    line: &StyledLine,
-    span_idx: usize,
-    block_editing: bool,
-    active_col: Option<usize>,
-) -> &str {
-    let Some(span) = line.spans.get(span_idx) else {
-        return "";
-    };
-    span.visible_text(span_is_editing(line, span_idx, block_editing, active_col))
-}
-
 /// TeX source of a math span, with `$` delimiters stripped.
 pub(super) fn math_source(span: &StyledSpan) -> &str {
     span.visible_text(false).trim_matches('$').trim()
@@ -146,7 +133,9 @@ mod tests {
         let line = &lines[0];
         let shown = |active_col: Option<usize>| {
             (0..line.spans.len())
-                .map(|idx| span_visible_text(line, idx, false, active_col))
+                .map(|idx| {
+                    line.spans[idx].visible_text(span_is_editing(line, idx, false, active_col))
+                })
                 .collect::<Vec<_>>()
         };
 

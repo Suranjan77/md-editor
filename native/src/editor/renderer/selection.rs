@@ -77,7 +77,7 @@ impl<Message> Editor<'_, Message> {
 mod tests {
     use std::collections::HashMap;
 
-    use super::super::test_support::make_line;
+    use super::super::testing::make_line;
     use super::*;
     use crate::editor::buffer::DocBuffer;
     use crate::editor::highlight::{StyledLine, StyledSpan};
@@ -131,8 +131,7 @@ mod tests {
 
         let image_cache = HashMap::new();
         let math_cache = HashMap::new();
-        let editor =
-            super::super::test_support::editor_for(&buffer, &lines, &image_cache, &math_cache);
+        let editor = super::super::testing::editor_for(&buffer, &lines, &image_cache, &math_cache);
 
         // Perform combinatorial selections over the entire document
         for start_line in 0..4 {

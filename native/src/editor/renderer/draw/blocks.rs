@@ -1,20 +1,21 @@
 //! Multi-line blocks: blockquotes, code blocks, tables and block math.
 //!
-//! Blocks are measured once per frame, then painted in two passes: their
-//! chrome (card, caption, badge) behind everything, and their rows as part of
-//! the line pass.
+//! Blocks are measured once per frame, then painted in passes: their chrome
+//! (card, caption, badge) behind everything, their rows as part of the line
+//! pass, and their scrollbars last.
 
 use std::collections::{HashMap, HashSet};
 
 use iced::border::Radius;
 use iced::{Border, Color, Point, Rectangle, Size};
 
+use super::super::caret::code_x_for_col;
 use super::super::measure::{measure_width, span_font};
 use super::super::metrics::*;
-use super::super::spans::math_source;
-use super::super::{Editor, MATH_BLOCK_SCALE, Measure, Paint, State};
+use super::super::scroll::{ScrollExtent, table_columns};
+use super::super::{Editor, Measure, Paint, State};
 use super::captions::{block_ordinal, paint_block_caption, paint_language_badge};
-use super::primitives::{TextRun, draw_nowrap_text, fill, paint_scrollbar, rounded};
+use super::primitives::{TextRun, draw_nowrap_text, fill, rounded};
 use super::{Frame, LineBox};
 use crate::theme;
 
@@ -24,10 +25,10 @@ const CARD_OUTSET: f32 = 16.0;
 const QUOTE_BAR_WIDTH: f32 = 4.0;
 /// Code text sits this far below the top of its row.
 const CODE_TEXT_TOP: f32 = 10.0;
-const MIN_COLUMN_WIDTH: f32 = 42.0;
 /// Cell text starts this far right of its column's left edge.
 const CELL_TEXT_INSET: f32 = 7.0;
 
+#[derive(PartialEq)]
 pub(super) enum BlockKind {
     Quote,
     Table,
@@ -37,15 +38,17 @@ pub(super) enum BlockKind {
 
 /// Per-frame measurements of a block.
 pub(super) struct BlockMeta {
+    /// Index of the block's first line.
+    pub start: usize,
     /// Top of the block, including any caption band, in window coordinates.
     pub y: f32,
     pub height: f32,
     pub kind: BlockKind,
     pub is_editing: bool,
     /// Width of each table column, padding included.
-    pub col_widths: Vec<f32>,
-    /// Scrollable width of code, table or math content.
-    pub content_width: f32,
+    pub columns: Vec<f32>,
+    /// Horizontal extent, for blocks that scroll.
+    pub scroll: Option<ScrollExtent>,
     pub code_lang: Option<String>,
 }
 
@@ -89,74 +92,22 @@ impl<Message> Editor<'_, Message> {
             } else {
                 BlockKind::Math
             };
-            let mut meta = BlockMeta {
+            let is_editing = self.is_block_editing(first_line, focused);
+            let lines = &self.lines[start..=end];
+            let meta = BlockMeta {
+                start,
                 y: block_y,
                 height: block_height,
+                columns: if kind == BlockKind::Table && !is_editing {
+                    table_columns::<R>(lines)
+                } else {
+                    Vec::new()
+                },
                 kind,
-                is_editing: self.is_block_editing(first_line, focused),
-                col_widths: Vec::new(),
-                content_width: 0.0,
-                code_lang: first_line.code_block_lang.clone(),
+                is_editing,
+                scroll: self.scroll_extent::<R>(state, block_id, bounds.width, focused),
+                code_lang: lines.iter().find_map(|line| line.code_block_lang.clone()),
             };
-
-            for line in &self.lines[start..=end] {
-                if meta.code_lang.is_none() && line.code_block_lang.is_some() {
-                    meta.code_lang = line.code_block_lang.clone();
-                }
-                if line.is_code_block {
-                    let width = line
-                        .spans
-                        .iter()
-                        .map(|span| {
-                            measure_width::<R>(
-                                span.visible_text(meta.is_editing),
-                                CODE_FONT_SIZE,
-                                iced::Font::MONOSPACE,
-                            )
-                        })
-                        .sum::<f32>();
-                    meta.content_width = meta.content_width.max(width + CODE_CONTENT_PADDING);
-                } else if line.is_math_block {
-                    let width = line
-                        .spans
-                        .iter()
-                        .map(|span| {
-                            let tex = math_source(span);
-                            self.math_cache
-                                .get(tex)
-                                .map(|m| m.width * MATH_BLOCK_SCALE + MATH_BLOCK_PADDING)
-                                .unwrap_or_else(|| {
-                                    measure_width::<R>(
-                                        tex,
-                                        MATH_SOURCE_FONT_SIZE,
-                                        iced::Font::MONOSPACE,
-                                    ) + MATH_BLOCK_PADDING
-                                })
-                        })
-                        .fold(0.0_f32, f32::max);
-                    meta.content_width = meta.content_width.max(width);
-                } else if line.is_table_row && !meta.is_editing {
-                    for (c_idx, cell) in line.table_cells.iter().enumerate() {
-                        let w = cell
-                            .iter()
-                            .map(|span| {
-                                measure_width::<R>(
-                                    span.visible_text(false),
-                                    span.font_size,
-                                    span_font(span, line),
-                                )
-                            })
-                            .fold(0.0, |acc, w| acc + w);
-                        let padded = w + TABLE_CELL_PADDING;
-                        if c_idx >= meta.col_widths.len() {
-                            meta.col_widths.push(padded);
-                        } else if padded > meta.col_widths[c_idx] {
-                            meta.col_widths[c_idx] = padded;
-                        }
-                    }
-                    meta.content_width = meta.col_widths.iter().sum::<f32>() + TABLE_EDGE_PADDING;
-                }
-            }
             blocks.insert(block_id, meta);
         }
         blocks
@@ -212,7 +163,9 @@ impl<Message> Editor<'_, Message> {
             }
             BlockKind::Table if !meta.is_editing => {
                 let table_x = bounds.x + TEXT_X_OFFSET;
-                let table_width = text_column_width(bounds.width);
+                let table_width = meta
+                    .scroll
+                    .map_or(text_column_width(bounds.width), |extent| extent.viewport_w);
                 fill(
                     renderer,
                     Rectangle {
@@ -251,7 +204,7 @@ impl<Message> Editor<'_, Message> {
                     theme::BG_SECONDARY,
                 );
 
-                if matches!(meta.kind, BlockKind::Code) && !meta.is_editing {
+                if meta.kind == BlockKind::Code && !meta.is_editing {
                     let number = block_ordinal(self.lines, block_id, "code-").unwrap_or(1);
                     paint_block_caption(
                         renderer,
@@ -269,8 +222,45 @@ impl<Message> Editor<'_, Message> {
         }
     }
 
+    /// Horizontal extent and current offset of the block `row` belongs to.
+    pub(super) fn row_scroll<R: Measure>(
+        &self,
+        frame: &Frame<'_>,
+        row: &LineBox<'_>,
+    ) -> (ScrollExtent, f32) {
+        let block_id = row.line.block_id;
+        let extent = frame
+            .blocks
+            .get(&block_id)
+            .and_then(|meta| meta.scroll)
+            .or_else(|| {
+                self.scroll_extent::<R>(frame.state, block_id, frame.bounds.width, frame.focused)
+            })
+            .unwrap_or(ScrollExtent {
+                viewport_w: text_column_width(frame.bounds.width).max(MIN_TEXT_WIDTH),
+                content_w: 0.0,
+            });
+        (extent, frame.state.block_scroll(block_id, &extent))
+    }
+
+    /// Visible x range, relative to the text column, of source columns
+    /// `from..to` in a code line, after scrolling and clipping.
+    pub(super) fn code_range_x<R: Measure>(
+        &self,
+        frame: &Frame<'_>,
+        row: &LineBox<'_>,
+        from: usize,
+        to: usize,
+    ) -> Option<(f32, f32)> {
+        let (extent, scroll_x) = self.row_scroll::<R>(frame, row);
+        let x0 = (code_x_for_col::<R>(row.line, from, row.is_editing) - scroll_x).max(0.0);
+        let x1 =
+            (code_x_for_col::<R>(row.line, to, row.is_editing) - scroll_x).min(extent.viewport_w);
+        (x1 > x0).then_some((x0, x1))
+    }
+
     /// One line of a code block: unwrapped, clipped to the block's viewport
-    /// and shifted by its horizontal scroll.
+    /// and shifted by its horizontal scroll. Draws its own caret.
     pub(super) fn paint_code_line<R: Paint>(
         &self,
         renderer: &mut R,
@@ -278,17 +268,11 @@ impl<Message> Editor<'_, Message> {
         row: &LineBox<'_>,
     ) {
         let (bounds, line) = (frame.bounds, row.line);
-        let viewport_w =
-            (text_column_width(bounds.width) - CODE_VIEWPORT_INSET).max(MIN_TEXT_WIDTH);
-        let meta = frame.blocks.get(&line.block_id);
-        let content_w = meta.map(|meta| meta.content_width).unwrap_or(viewport_w);
-        let scroll_x = frame
-            .state
-            .block_scroll(line.block_id, content_w, viewport_w);
+        let (extent, scroll_x) = self.row_scroll::<R>(frame, row);
         let code_left = bounds.x + TEXT_X_OFFSET;
-        let code_right = code_left + viewport_w;
+        let code_right = code_left + extent.viewport_w;
 
-        let mut code_x = bounds.x + TEXT_X_OFFSET - scroll_x;
+        let mut code_x = code_left - scroll_x;
         for span in &line.spans {
             let text = span.visible_text(row.is_editing);
             if text.is_empty() {
@@ -312,30 +296,23 @@ impl<Message> Editor<'_, Message> {
         }
 
         if frame.focused && row.idx == self.buffer.cursor_line {
-            let (cx, _) = self.cursor_position::<R>(row.idx, bounds.width);
+            let caret = self.caret_box::<R>(
+                row.idx,
+                self.buffer.cursor_col,
+                bounds.width,
+                row.is_editing,
+                row.active_col,
+            );
             fill(
                 renderer,
                 Rectangle {
-                    x: bounds.x + TEXT_X_OFFSET + cx - scroll_x,
-                    y: row.y + 12.0,
+                    x: code_left + caret.x - scroll_x,
+                    y: row.y + caret.y,
                     width: 2.0,
-                    height: 22.0,
+                    height: caret.height,
                 },
                 rounded(1.0),
                 theme::ACCENT_SECONDARY,
-            );
-        }
-
-        // NOTE: repainted by every visible line of the block.
-        if let Some(meta) = meta {
-            paint_scrollbar(
-                renderer,
-                frame.state,
-                line.block_id,
-                code_left,
-                viewport_w,
-                meta.y + meta.height - SCROLLBAR_BOTTOM_OFFSET,
-                content_w,
             );
         }
     }
@@ -352,12 +329,8 @@ impl<Message> Editor<'_, Message> {
             return;
         };
 
-        let table_width = text_column_width(bounds.width);
-        let raw_table_width: f32 = meta.col_widths.iter().sum();
-        let scroll_content_width = raw_table_width.max(table_width);
-        let scroll_x = frame
-            .state
-            .block_scroll(line.block_id, scroll_content_width, table_width);
+        let (extent, scroll_x) = self.row_scroll::<R>(frame, row);
+        let table_width = extent.viewport_w;
         let table_x = bounds.x + TEXT_X_OFFSET;
         let (row_y, row_h) = (row.y, row.height);
         let full_row = Rectangle {
@@ -381,37 +354,24 @@ impl<Message> Editor<'_, Message> {
             return;
         }
 
-        // NOTE: `meta.y` includes the caption band and `row_y` does not, so
-        // this never holds and headers render as body rows.
-        let is_header = meta.y == row_y;
-        let is_last_row = !self.lines[row.idx + 1..].iter().any(|next| {
-            next.is_table_row && next.block_id == line.block_id && !next.table_cells.is_empty()
-        });
-
+        // Rows before this one that have cells: 0 for the header.
+        let ordinal = self.lines[meta.start..row.idx]
+            .iter()
+            .filter(|l| l.is_table_row && !l.table_cells.is_empty())
+            .count();
+        let is_header = ordinal == 0;
         let row_bg = if is_header {
             Some(theme::BG_TERTIARY)
-        } else if ((row_y - meta.y) / row_h).round() as usize % 2 == 1 {
+        } else if ordinal % 2 == 0 {
+            // Every second body row.
             Some(Color::from_rgba(1.0, 1.0, 1.0, 0.025))
         } else {
             None
         };
         if let Some(bg) = row_bg {
-            let top = if is_header { CARD_RADIUS } else { 0.0 };
-            let bottom = if is_last_row { CARD_RADIUS } else { 0.0 };
-            fill(
-                renderer,
-                full_row,
-                Border {
-                    radius: Radius {
-                        top_left: top,
-                        top_right: top,
-                        bottom_left: bottom,
-                        bottom_right: bottom,
-                    },
-                    ..Default::default()
-                },
-                bg,
-            );
+            // Rows sit between the caption band and the scrollbar gutter, clear
+            // of the card's rounded corners, so they are square.
+            fill(renderer, full_row, Border::default(), bg);
         }
 
         let table_right = table_x + table_width;
@@ -423,7 +383,7 @@ impl<Message> Editor<'_, Message> {
         };
         let mut cx = table_x - scroll_x;
         for (c_idx, cell) in line.table_cells.iter().enumerate() {
-            let Some(&col_width) = meta.col_widths.get(c_idx) else {
+            let Some(&col_width) = meta.columns.get(c_idx) else {
                 break;
             };
 
@@ -474,17 +434,7 @@ impl<Message> Editor<'_, Message> {
                 );
                 px += width;
             }
-            cx += col_width.max(MIN_COLUMN_WIDTH);
+            cx += col_width;
         }
-
-        paint_scrollbar(
-            renderer,
-            frame.state,
-            line.block_id,
-            table_x,
-            table_width,
-            meta.y + meta.height - HORIZONTAL_SCROLLBAR_GUTTER + 5.0,
-            scroll_content_width,
-        );
     }
 }

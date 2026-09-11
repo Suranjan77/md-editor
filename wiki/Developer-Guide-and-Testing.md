@@ -126,13 +126,14 @@ executable, or directly beside it.
 cargo test --workspace
 ```
 
-The suite is **158 tests**: 56 in `md-editor-core` and 102 in `md-editor-native`. They run in
+The suite is **171 tests**: 56 in `md-editor-core` and 115 in `md-editor-native`, plus two
+opt-in renderer tools that are ignored by default (below). They run in
 a few seconds and need no display server.
 
 ```mermaid
 graph TD
     Runner["cargo test --workspace"] --> CoreTests["md-editor-core — 56 tests"]
-    Runner --> NativeTests["md-editor-native — 102 tests"]
+    Runner --> NativeTests["md-editor-native — 115 tests"]
 
     CoreTests --> VaultT["vault.rs — atomic writes, symlinks, permissions, exclusions"]
     CoreTests --> PdfT["pdf.rs — page count, text, search, TOC recovery"]
@@ -142,7 +143,7 @@ graph TD
 
     NativeTests --> BufferT["editor/buffer.rs — undo runs, auto-pairing, list continuation"]
     NativeTests --> HighlightT["editor/highlight.rs — concealing, fences, permutations"]
-    NativeTests --> RendererT["editor/renderer/ — heights, caret movement, selection, captions"]
+    NativeTests --> RendererT["editor/renderer/ — heights, caret, hit testing, scrolling, painting"]
     NativeTests --> TreeT["editor/layout_tree.rs — prefix sums and find_line_at_y"]
     NativeTests --> FuzzyT["fuzzy.rs — ordering, word starts, initials"]
     NativeTests --> PaletteT["views/command_palette.rs — ranking, caps, activation"]
@@ -173,9 +174,16 @@ graph TD
    wrapped lines (`caret.rs`), selection extraction (`selection.rs`), inline reveal rules
    (`spans.rs`), caption numbering and badge placement (`draw/captions.rs`), and extreme
    dimensions.
-7. **PDF page geometry** (`native/src/app.rs`) — target offsets map back to the same page,
+7. **Renderer behaviour** (`native/src/editor/renderer/tests.rs`) — driven only through the
+   `Widget` API and checked against the draw calls and messages that come out: the caret sits
+   on painted text at every column of wrapped lines, clicking where the caret is drawn puts it
+   back there, links on wrapped rows are clickable, selections highlight every row, table
+   headers and stripes, scrollbar thumbs follow the pointer with no dead zone, one scrollbar
+   per block, clicks in scrolled code hit the character under the pointer, narrow tables
+   scroll to their last column, and no widths from 40 to 260px panic.
+8. **PDF page geometry** (`native/src/app.rs`) — target offsets map back to the same page,
    blank pages reserve space, and placeholder slots scale with zoom.
-8. **Platform integration** (`native/src/main.rs`) — CLI argument parsing, window-size
+9. **Platform integration** (`native/src/main.rs`) — CLI argument parsing, window-size
    round-tripping and rejection of nonsense values, and a full Linux desktop install and
    uninstall round-trip against a temporary `$HOME`.
 
@@ -206,6 +214,22 @@ diff /tmp/render.txt /tmp/render.txt.actual | less
 
 The transcript is large (tens of MB) and pins current behaviour, including known bugs, so
 keep it out of the repository.
+
+### Render previews
+
+`native/src/editor/render_preview.rs` renders a sample document — wrapped styled and plain
+paragraphs, tasks, a quote, inline and block math, a code block, a table — to PNG files
+using iced's tiny-skia software renderer, so rendering can be looked at without opening a
+window. Scenes cover a caret mid-paragraph, a caret after a checkbox, a selection across
+wrapped rows, and a wide unfocused view.
+
+```bash
+RENDER_PREVIEW_DIR=/tmp/previews cargo test -p md-editor-native render_preview -- --ignored
+```
+
+It uses only the widget's public API, so the same file can be dropped into an older
+checkout to render a before/after pair. Text is shaped with system fonts, so glyphs the
+software renderer's fonts lack (the task checkmark, for one) may show as boxes.
 
 ### Reference-resolver tools
 

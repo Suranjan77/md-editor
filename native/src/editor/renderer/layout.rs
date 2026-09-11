@@ -10,9 +10,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::measure::{measure_char_width, measure_width, span_font};
+use super::flow::Flow;
 use super::metrics::*;
-use super::spans::{is_block_editing_line, math_source, span_is_editing, span_visible_text};
+use super::spans::{is_block_editing_line, math_source, span_is_editing};
 use super::{Editor, ImageCache, MATH_BLOCK_SCALE, MathCache, Measure, State};
 use crate::editor::highlight::StyledLine;
 use crate::editor::layout_cache::{LineHeightCache, line_hash, resource_hash};
@@ -31,35 +31,39 @@ pub(super) fn line_height_for<R: Measure>(
     active_col: Option<usize>,
     seen_math_blocks: &mut HashSet<usize>,
 ) -> f32 {
-    if let Some(span) = line.spans.iter().find(|s| s.is_image) {
-        if let Some(path) = &span.image_path
-            && let Some((_, w, h)) = image_cache.get(path)
-        {
-            let max_w = text_column_width(available_width);
-            let scale = if *w > max_w { max_w / w } else { 1.0 };
-            return (h * scale) + IMAGE_CAPTION_SPACE;
-        }
-        return IMAGE_PLACEHOLDER_HEIGHT;
+    let flow_height =
+        || Flow::build::<R>(line, math_cache, available_width, is_editing, active_col).height();
+
+    if let Some((idx, span)) = line.spans.iter().enumerate().find(|(_, s)| s.is_image) {
+        let image_height = match span.image_path.as_ref().and_then(|p| image_cache.get(p)) {
+            Some((_, w, h)) => {
+                let max_w = text_column_width(available_width);
+                let scale = if *w > max_w { max_w / w } else { 1.0 };
+                (h * scale) + IMAGE_CAPTION_SPACE
+            }
+            None => IMAGE_PLACEHOLDER_HEIGHT,
+        };
+        // While its source is showing the line keeps the image's height, so
+        // moving the caret onto it doesn't make the document jump.
+        return if span_is_editing(line, idx, is_editing, active_col) {
+            image_height.max(flow_height())
+        } else {
+            image_height
+        };
     }
 
     if line.is_math_block {
-        return math_block_line_height(line, math_cache, is_editing, seen_math_blocks);
+        if is_editing {
+            return flow_height();
+        }
+        return math_block_line_height(line, math_cache, seen_math_blocks);
     }
 
     if line.is_code_block {
         return CODE_LINE_HEIGHT;
     }
 
-    if line.is_table_row {
-        if is_editing {
-            return measured_inline_height::<R>(
-                line,
-                math_cache,
-                available_width,
-                is_editing,
-                active_col,
-            );
-        }
+    if line.is_table_row && !is_editing {
         // Separator rows (`|---|`) have no cells and collapse.
         return if line.table_cells.is_empty() {
             0.0
@@ -68,25 +72,15 @@ pub(super) fn line_height_for<R: Measure>(
         };
     }
 
-    let height =
-        measured_inline_height::<R>(line, math_cache, available_width, is_editing, active_col);
-    if line.spans.iter().any(|s| s.is_math) {
-        height + INLINE_MATH_EXTRA_HEIGHT
-    } else {
-        height
-    }
+    flow_height()
 }
 
+/// Height of a line of block math that is not being edited.
 fn math_block_line_height(
     line: &StyledLine,
     math_cache: &MathCache,
-    is_editing: bool,
     seen_math_blocks: &mut HashSet<usize>,
 ) -> f32 {
-    if is_editing {
-        return BASE_LINE_HEIGHT;
-    }
-
     let has_visible_math = line.spans.iter().any(|span| !math_source(span).is_empty());
     if !has_visible_math || !seen_math_blocks.insert(line.block_id) {
         return 0.0;
@@ -112,122 +106,6 @@ fn math_block_line_height(
         }
     }
     max_h
-}
-
-/// Greedy row filling for measuring a wrapped line. Rows start at x = 0.
-struct RowFill {
-    x: f32,
-    y: f32,
-    /// Height of the current row: the tallest step placed on it so far.
-    row_step: f32,
-    right: f32,
-}
-
-impl RowFill {
-    /// Start a new row first if `width` does not fit on the current one.
-    fn fit(&mut self, width: f32, step: f32) {
-        if self.x > 0.0 && self.x + width > self.right {
-            self.y += self.row_step;
-            self.x = 0.0;
-            self.row_step = step;
-        }
-    }
-
-    /// Place a whitespace-delimited token, breaking inside it only when it is
-    /// wider than a whole row.
-    fn place_token<R: Measure>(
-        &mut self,
-        token: &str,
-        font_size: f32,
-        font: iced::Font,
-        step: f32,
-    ) {
-        if token.is_empty() {
-            return;
-        }
-
-        let width = measure_width::<R>(token, font_size, font);
-        self.fit(width, step);
-
-        if width <= self.right.max(1.0) {
-            self.x += width;
-        } else {
-            for ch in token.chars() {
-                let ch_w = measure_char_width::<R>(ch, font_size, font);
-                self.fit(ch_w, step);
-                self.x += ch_w;
-            }
-        }
-        self.row_step = self.row_step.max(step);
-    }
-}
-
-/// Height of an inline line after wrapping its spans at the text column.
-fn measured_inline_height<R: Measure>(
-    line: &StyledLine,
-    math_cache: &MathCache,
-    available_width: f32,
-    is_editing: bool,
-    active_col: Option<usize>,
-) -> f32 {
-    let mut fill = RowFill {
-        x: 0.0,
-        y: 0.0,
-        row_step: BASE_LINE_HEIGHT,
-        right: wrap_width(available_width),
-    };
-
-    for (span_idx, span) in line.spans.iter().enumerate() {
-        let fs = span.font_size;
-        let step = visual_line_step(fs);
-        fill.row_step = fill.row_step.max(step);
-        let span_editing = span_is_editing(line, span_idx, is_editing, active_col);
-
-        if span.is_checkbox && !span_editing {
-            fill.fit(CHECKBOX_ADVANCE, step);
-            fill.x += CHECKBOX_ADVANCE;
-            continue;
-        }
-
-        if span.is_math && !span_editing {
-            let tex = math_source(span);
-            if tex.is_empty() || span.is_syntax {
-                continue;
-            }
-            let (width, height) = math_cache
-                .get(tex)
-                .map(|m| (m.width, m.height))
-                .unwrap_or_else(|| {
-                    (
-                        measure_width::<R>(tex, fs, span_font(span, line)),
-                        BASE_LINE_HEIGHT,
-                    )
-                });
-            let extra_h = (height - BASE_LINE_HEIGHT).max(0.0);
-            fill.row_step = fill.row_step.max(BASE_LINE_HEIGHT + extra_h);
-            fill.fit(width, step);
-            fill.x += width + INLINE_MATH_GAP;
-            continue;
-        }
-
-        let display = span_visible_text(line, span_idx, is_editing, active_col);
-        if display.is_empty() {
-            continue;
-        }
-
-        let font = span_font(span, line);
-        let mut token = String::new();
-        for ch in display.chars() {
-            token.push(ch);
-            if ch.is_whitespace() {
-                fill.place_token::<R>(&token, fs, font, step);
-                token.clear();
-            }
-        }
-        fill.place_token::<R>(&token, fs, font, step);
-    }
-
-    (fill.y + fill.row_step).max(BASE_LINE_HEIGHT)
 }
 
 /// Scrollbar gutter reserved below line `line_idx`: only after the last row of
@@ -478,22 +356,32 @@ impl<Message> Editor<'_, Message> {
         TOP_PAD + state.layout_tree.prefix_sum(n) + BOTTOM_PAD
     }
 
-    /// Rebuild the height tree from scratch, bypassing the height cache. For
-    /// callers that may run before the first layout.
-    pub(super) fn rebuild_layout_tree<R: Measure>(&self, state: &mut State, available_width: f32) {
-        state.layout_tree.resize(self.lines.len());
-        state.block_ranges.clear();
-        let mut walk = HeightWalk::new(self.image_cache, self.math_cache, available_width);
+    /// The inline layout of line `line_idx`.
+    pub(super) fn flow<R: Measure>(
+        &self,
+        line_idx: usize,
+        available_width: f32,
+        is_editing: bool,
+        active_col: Option<usize>,
+    ) -> Flow<'_> {
+        Flow::build::<R>(
+            &self.lines[line_idx],
+            self.math_cache,
+            available_width,
+            is_editing,
+            active_col,
+        )
+    }
 
-        for (i, line) in self.lines.iter().enumerate() {
-            let is_editing = self.is_block_editing(line, state.is_focused);
-            let active_col = self.active_col(i, state.is_focused);
-            let extent = walk.extent::<R>(self.lines, i, is_editing, active_col);
-            state
-                .layout_tree
-                .update_height(i, extent.caption + extent.body + extent.gutter);
-            record_block_range(&mut state.block_ranges, line, i);
-        }
+    /// Widget-relative y of the top of a line's body, below its caption band.
+    pub(super) fn line_body_top(&self, line_idx: usize, state: &State, focused: bool) -> f32 {
+        let top = self.widget_y_for_line(line_idx, state);
+        let Some(line) = self.lines.get(line_idx) else {
+            return top;
+        };
+        let opens_block =
+            (line.is_code_block || line.is_table_row) && is_first_block_line(self.lines, line_idx);
+        top + caption_band(opens_block, self.is_block_editing(line, focused))
     }
 
     /// Line under a widget-relative y.
@@ -521,7 +409,7 @@ pub(super) fn lines_extent(state: &State, start: usize, end: usize) -> (f32, f32
 #[cfg(test)]
 mod tests {
     use super::super::MathRender;
-    use super::super::test_support::make_line;
+    use super::super::testing::make_line;
     use super::*;
     use crate::editor::highlight::StyledSpan;
 
@@ -700,7 +588,11 @@ mod tests {
                             assert_eq!(h, TABLE_ROW_HEIGHT);
                         }
                     } else if line.is_math_block && is_editing {
-                        assert_eq!(h, BASE_LINE_HEIGHT);
+                        // Source being edited wraps like any other text.
+                        assert!(h >= BASE_LINE_HEIGHT);
+                        if width >= 400.0 {
+                            assert_eq!(h, BASE_LINE_HEIGHT);
+                        }
                     } else if line.is_blockquote {
                         assert!(h > 0.0);
                     }

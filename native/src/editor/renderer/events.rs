@@ -9,9 +9,7 @@ use iced::advanced::{Clipboard, Shell, clipboard};
 use iced::keyboard::{self, key::Named};
 use iced::{Point, Rectangle, mouse};
 
-use super::measure::{measure_width, span_font};
-use super::metrics::{CHECKBOX_ADVANCE, TEXT_X_OFFSET};
-use super::spans::span_visible_text;
+use super::metrics::TEXT_X_OFFSET;
 use super::{Editor, Measure, State};
 use crate::editor::buffer::{EditorCommand, Movement};
 use crate::editor::highlight::StyledSpan;
@@ -105,9 +103,7 @@ impl<Message> Editor<'_, Message> {
             return mouse::Interaction::Pointer;
         }
 
-        let span = self
-            .line_at_widget_y(pos.y, state)
-            .and_then(|line_idx| self.span_at_x::<R>(line_idx, pos.x, state.is_focused));
+        let span = self.span_at_point::<R>(pos, bounds.width, state);
         let ctrl = state.modifiers.control() || state.modifiers.command();
         match span {
             Some(span) if span.is_checkbox || (span.is_link && ctrl) => mouse::Interaction::Pointer,
@@ -129,7 +125,10 @@ impl<Message> Editor<'_, Message> {
             return;
         }
 
+        // Resolve what was clicked against the layout that was on screen,
+        // before focusing can change which spans show their source.
         let (line_idx, col) = self.hit_test::<R>(pos, available_width, state.is_focused, state);
+        let span = self.span_at_point::<R>(pos, available_width, state);
         state.is_focused = true;
         state.selection_anchor = Some((line_idx, col));
         state.selection_focus = Some((line_idx, col));
@@ -140,7 +139,7 @@ impl<Message> Editor<'_, Message> {
         }));
         state.is_dragging = true;
 
-        let Some(span) = self.span_at_x::<R>(line_idx, pos.x, state.is_focused) else {
+        let Some(span) = span else {
             return;
         };
         if span.is_checkbox {
@@ -172,33 +171,33 @@ impl<Message> Editor<'_, Message> {
         }
     }
 
-    /// The span under x on the first visual row of line `line_idx`.
-    ///
-    /// NOTE: ignores wrapping, so spans on later rows of a wrapped line are
-    /// matched as if they were on the first.
-    fn span_at_x<R: Measure>(&self, line_idx: usize, x: f32, focused: bool) -> Option<&StyledSpan> {
+    /// The inline span under a point relative to the content bounds. Code,
+    /// rendered tables and rendered block math have none.
+    fn span_at_point<R: Measure>(
+        &self,
+        pos: Point,
+        available_width: f32,
+        state: &State,
+    ) -> Option<&StyledSpan> {
+        let focused = state.is_focused;
+        let line_idx = self.line_at_widget_y(pos.y, state)?;
         let line = self.lines.get(line_idx)?;
         let is_editing = self.is_block_editing(line, focused);
-        let active_col = self.active_col(line_idx, true);
-        let click_x = x - TEXT_X_OFFSET;
-
-        let mut x_acc = 0.0_f32;
-        for (span_idx, span) in line.spans.iter().enumerate() {
-            let w = if span.is_checkbox && !is_editing {
-                CHECKBOX_ADVANCE
-            } else {
-                measure_width::<R>(
-                    span_visible_text(line, span_idx, is_editing, active_col),
-                    span.font_size,
-                    span_font(span, line),
-                )
-            };
-            if click_x >= x_acc && click_x < x_acc + w {
-                return Some(span);
-            }
-            x_acc += w;
+        if line.is_code_block || ((line.is_table_row || line.is_math_block) && !is_editing) {
+            return None;
         }
-        None
+
+        let flow = self.flow::<R>(
+            line_idx,
+            available_width,
+            is_editing,
+            self.active_col(line_idx, focused),
+        );
+        let span_idx = flow.span_at(
+            pos.x - TEXT_X_OFFSET,
+            pos.y - self.line_body_top(line_idx, state, focused),
+        )?;
+        line.spans.get(span_idx)
     }
 
     #[allow(clippy::too_many_arguments)]

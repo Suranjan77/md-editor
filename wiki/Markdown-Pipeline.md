@@ -259,22 +259,22 @@ module per concern.
 ```mermaid
 graph TD
     Widget["mod.rs — Widget impl"] -->|layout| Layout["layout.rs — heights, HeightWalk"]
-    Widget -->|draw| Draw["draw/ — painting"]
+    Layout --> Flow["flow.rs — rows, baselines, column ⇄ x"]
+    Caret["caret.rs — caret, hit testing, up/down"] --> Flow
+    Draw["draw/ — painting"] --> Flow
+    Widget -->|draw| Draw
     Widget -->|"update, mouse_interaction"| Events["events.rs — input"]
-    Events --> Caret["caret.rs — column ⇄ position"]
+    Events --> Caret
     Events --> Scroll["scroll.rs — block scrolling"]
     Events --> Selection["selection.rs"]
     Draw --> Caret
     Draw --> Scroll
     Draw --> Selection
-    Layout --> Spans["spans.rs — reveal rules"]
-    Caret --> Spans
-    Draw --> Spans
-    Layout --> Measure["measure.rs — cached shaping"]
-    Caret --> Measure
+    Flow --> Spans["spans.rs — reveal rules"]
+    Flow --> Measure["measure.rs — cached shaping"]
     Draw --> Measure
     Metrics["metrics.rs — shared constants"] -.-> Layout
-    Metrics -.-> Caret
+    Metrics -.-> Flow
     Metrics -.-> Draw
     Metrics -.-> Scroll
 ```
@@ -282,21 +282,41 @@ graph TD
 | To change… | Look in |
 | :--- | :--- |
 | How tall a line or block is | `layout.rs` — `line_height_for()` |
+| Where rows break, row height, baseline alignment | `flow.rs` |
 | A margin, row height, or any size two passes must agree on | `metrics.rs` |
 | When a span reveals its markdown source | `spans.rs` |
-| Where the caret lands, or what a click selects | `caret.rs` |
+| Where the caret lands, or what a click selects | `flow.rs` (inline lines), `caret.rs` (code lines, up/down) |
 | Block cards, captions, code lines, table rows | `draw/blocks.rs`, `draw/captions.rs` |
 | Paragraph text, images, equations, checkboxes | `draw/inline.rs` |
 | Selection or search highlight, caret appearance | `draw/overlays.rs` |
 | A key binding inside the editor | `events.rs` |
-| Horizontal scrolling of code, tables, or math | `scroll.rs` |
+| Horizontal scrolling of code, tables, or math | `scroll.rs` — `scroll_extent()` |
 
-Wrapping is implemented in more than one place — `layout.rs` (`RowFill`) measures it,
-`draw/primitives.rs` (`WrapPen`) paints it, and `caret.rs` (`Pen`, `RowScan`) maps columns
-through it. They must break rows identically for the caret to sit on the text, so a change
-to one is a change to all three. Unstyled paragraphs are the exception today:
-`paint_plain_line()` hands the whole line to the text shaper's own wrapping, which can break
-rows differently from the other three.
+### Inline layout (`flow.rs`)
+
+Every line that isn't a code line, a rendered table row, or rendered block math is laid out
+by `Flow::build`, and **that is the only place rows are broken**. Line heights, painting, the
+caret, selection and search highlights, and click and hover hit testing all read the same
+`Flow`, so the caret always sits on the painted text and a click lands where it is drawn.
+
+A `Flow` is a list of rows and a list of items in source order. An item is a run of a
+span's visible text (one word plus its trailing whitespace, or a piece of a word too long
+for a row), a concealed marker with no width, a checkbox, or a rendered inline equation.
+Each item records its x, its row, and the source columns it covers.
+
+- **Breaking** is greedy by word. Trailing whitespace hangs past the right edge rather than
+  forcing a break, and zero-width items never break a row.
+- **Row height** is the larger of the tallest font's `visual_line_step()` and the row's
+  content (ascent plus descent), plus `INLINE_MATH_ROW_PADDING` when an equation is on it.
+- **Vertical alignment** is by baseline. Text of size `s` has its baseline `s ×
+  BASELINE_FACTOR` below the top of its `s × LINE_BOX_FACTOR` line box; equations and
+  checkboxes are centred on an axis `MATH_AXIS_HEIGHT` above the baseline. The content is
+  centred in the row, so a single row of body text sits in the middle of its 36px.
+- **Columns ⇄ x** use per-character advances. With `Shaping::Basic` they sum exactly to the
+  width of the painted run, so offsets inside a word match the glyphs.
+
+Painting merges a span's consecutive items on one row into a single text run, so a
+paragraph costs a few `fill_text` calls per row, not one per word.
 
 ### Layout pass
 
@@ -358,6 +378,8 @@ unaffected.
 ## 6. Maintenance Notes
 
 - Keep parsing in `highlight.rs`; do not add markdown rules to the renderer.
+- Never measure or break inline text outside `flow.rs`. If painting, the caret, or hit
+  testing needs to know where text is, ask the line's `Flow`.
 - Keep height and invalidation logic in `layout_tree.rs`, `layout_cache.rs`, and
   `renderer/layout.rs`.
 - Put any size that layout, painting, and hit testing must agree on in
@@ -367,5 +389,6 @@ unaffected.
   `resource_hash`.
 - When adding a block type, update block-range tracking (`layout.rs::record_block_range`),
   height measurement (`layout.rs::line_height_for`), draw metadata
-  (`draw/blocks.rs::measure_blocks`), and hit testing and scrolling (`scroll.rs`) together —
+  (`draw/blocks.rs::measure_blocks`), and hit testing and scrolling
+  (`scroll.rs::scroll_extent`) together —
   they are one contract split across four call sites.

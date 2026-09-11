@@ -8,6 +8,7 @@
 //!   agree on
 //! - `measure`: memoized text shaping
 //! - `spans`: which spans reveal their markdown source while being edited
+//! - `flow`: breaking a line into visual rows — the one wrapping implementation
 //! - `layout`: per-line heights and the height tree
 //! - `caret`: mapping between source columns and visual positions
 //! - `selection`: selection normalization and extraction
@@ -31,6 +32,7 @@ use crate::editor::layout_tree::HeightTree;
 mod caret;
 mod draw;
 mod events;
+mod flow;
 mod layout;
 mod measure;
 mod metrics;
@@ -277,39 +279,7 @@ where
 }
 
 #[cfg(test)]
-mod test_support {
-    use super::*;
-    use crate::editor::highlight::StyledSpan;
+pub(crate) mod testing;
 
-    pub fn make_line(block_id: usize, spans: Vec<StyledSpan>) -> StyledLine {
-        let mut line = StyledLine::new();
-        line.block_id = block_id;
-        line.spans = spans;
-        line
-    }
-
-    pub fn editor_for<'a>(
-        buffer: &'a DocBuffer,
-        lines: &'a [StyledLine],
-        image_cache: &'a ImageCache,
-        math_cache: &'a MathCache,
-    ) -> Editor<'a, ()> {
-        Editor::new(
-            buffer,
-            lines,
-            image_cache,
-            math_cache,
-            |_| (),
-            |_| (),
-            |_| (),
-            |_| (),
-        )
-    }
-
-    pub fn focused_state() -> State {
-        State {
-            is_focused: true,
-            ..Default::default()
-        }
-    }
-}
+#[cfg(test)]
+mod tests;

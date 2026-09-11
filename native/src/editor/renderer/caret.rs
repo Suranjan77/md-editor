@@ -1,383 +1,56 @@
 //! Mapping between source columns and visual positions.
 //!
-//! Positions are relative to the top-left of a line's text column. Both
-//! directions re-run the line's word wrapping, so they must wrap exactly the
-//! way painting does for the caret to land on the text.
+//! Positions are relative to a line's text origin: the left edge of the text
+//! column and the top of the line's body. Inline lines read their [`Flow`];
+//! code lines never wrap and are measured directly.
 
 use iced::Point;
 
-use super::measure::{measure_char_width, measure_width, span_font};
+use super::flow::Flow;
+use super::measure::measure_char_width;
 use super::metrics::*;
-use super::spans::{math_source, source_col_after_span, span_is_editing, span_visible_text};
 use super::{Editor, Measure, State};
 use crate::editor::highlight::StyledLine;
 
-/// Pen for walking a wrapped line towards a source column.
-struct Pen {
-    x: f32,
-    y: f32,
-    max_w: f32,
+/// The caret's rectangle within its line.
+pub(super) struct CaretBox {
+    pub x: f32,
+    pub y: f32,
+    pub height: f32,
 }
 
-impl Pen {
-    /// Move to the next row if `width` doesn't fit on this one.
-    fn fit(&mut self, width: f32, step: f32) {
-        if self.x > 0.0 && self.x + width > self.max_w {
-            self.y += step;
-            self.x = 0.0;
-        }
-    }
-
-    /// Advance over a token of (char, source column) pairs, stopping at the
-    /// first character at or past `col`.
-    fn advance_token<R: Measure>(
-        &mut self,
-        token: &[(char, usize)],
-        col: usize,
-        font_size: f32,
-        font: iced::Font,
-        step: f32,
-    ) -> Option<(f32, f32)> {
-        if token.is_empty() {
-            return None;
-        }
-
-        let token_width = token
-            .iter()
-            .map(|(ch, _)| measure_char_width::<R>(*ch, font_size, font))
-            .sum::<f32>();
-        self.fit(token_width, step);
-
-        let breaks_inside = token_width > self.max_w;
-        for (ch, ch_col) in token {
-            let ch_w = measure_char_width::<R>(*ch, font_size, font);
-            if breaks_inside {
-                self.fit(ch_w, step);
-            }
-            if *ch_col >= col {
-                return Some((self.x, self.y));
-            }
-            self.x += ch_w;
-        }
-        None
-    }
-}
-
-/// Scan state for mapping a point back to a source column.
-struct RowScan {
-    x: f32,
-    row_y: f32,
-    row_start_col: usize,
-    /// Column just past the last character placed on the current row.
-    row_end_col: usize,
-    row_step: f32,
-    /// Y being hit, relative to the line top.
-    target_y: f32,
-    max_w: f32,
-}
-
-impl RowScan {
-    fn on_target_row(&self) -> bool {
-        self.target_y < self.row_y + self.row_step
-    }
-
-    /// Start a new row at `col` if `width` doesn't fit. If the row being left
-    /// is the one hit, the answer is its end, returned as `Some`.
-    fn fit(&mut self, width: f32, col: usize, step: f32) -> Option<usize> {
-        if self.x > 0.0 && self.x + width > self.max_w {
-            if self.on_target_row() {
-                return Some(self.row_end_col);
-            }
-            self.row_y += self.row_step;
-            self.x = 0.0;
-            self.row_start_col = col;
-            self.row_end_col = col;
-            self.row_step = step;
-        }
-        None
-    }
-
-    /// Scan a token of (char, source column) pairs for `click_x`. A character
-    /// is hit when the click lands left of 60% of its width.
-    fn scan_token<R: Measure>(
-        &mut self,
-        token: &[(char, usize)],
-        click_x: f32,
-        font_size: f32,
-        font: iced::Font,
-        step: f32,
-    ) -> Option<usize> {
-        let (&(_, first_col), &(_, last_col)) = (token.first()?, token.last()?);
-
-        let token_width = token
-            .iter()
-            .map(|(ch, _)| measure_char_width::<R>(*ch, font_size, font))
-            .sum::<f32>();
-        if let Some(col) = self.fit(token_width, first_col, step) {
-            return Some(col);
-        }
-
-        if token_width <= self.max_w {
-            if !self.on_target_row() {
-                self.x += token_width;
-                self.row_end_col = last_col + 1;
-                return None;
-            }
-            for (ch, ch_col) in token {
-                let cw = measure_char_width::<R>(*ch, font_size, font);
-                if click_x < self.x + cw * 0.6 {
-                    return Some(*ch_col);
-                }
-                self.row_end_col = *ch_col + 1;
-                self.x += cw;
-            }
-        } else {
-            for (ch, ch_col) in token {
-                let cw = measure_char_width::<R>(*ch, font_size, font);
-                if let Some(col) = self.fit(cw, *ch_col, step) {
-                    return Some(col);
-                }
-                if self.on_target_row() {
-                    if click_x < self.x + cw * 0.6 {
-                        return Some(*ch_col);
-                    }
-                    self.row_end_col = *ch_col + 1;
-                }
-                self.x += cw;
-            }
-        }
-        None
-    }
-}
+/// Caret rectangle in a code line, whose rows are all one height.
+const CODE_CARET_TOP: f32 = 12.0;
+const CODE_CARET_HEIGHT: f32 = 22.0;
 
 impl<Message> Editor<'_, Message> {
-    /// Visual (x, y) of source column `col` on line `line_idx`.
-    pub(super) fn position_for_col<R: Measure>(
+    /// Where the caret for column `col` of line `line_idx` is drawn. Code
+    /// lines are positioned as if unscrolled.
+    pub(super) fn caret_box<R: Measure>(
         &self,
         line_idx: usize,
         col: usize,
         available_width: f32,
         is_editing: bool,
         active_col: Option<usize>,
-    ) -> (f32, f32) {
+    ) -> CaretBox {
         let Some(line) = self.lines.get(line_idx) else {
-            return (0.0, 0.0);
+            return CaretBox {
+                x: 0.0,
+                y: 0.0,
+                height: 0.0,
+            };
         };
         if line.is_code_block {
-            return (code_x_for_col::<R>(line, col, is_editing), 0.0);
+            return CaretBox {
+                x: code_x_for_col::<R>(line, col, is_editing),
+                y: CODE_CARET_TOP,
+                height: CODE_CARET_HEIGHT,
+            };
         }
 
-        let mut pen = Pen {
-            x: 0.0,
-            y: 0.0,
-            max_w: wrap_width(available_width),
-        };
-        let mut source_col = 0usize;
-
-        for (span_idx, span) in line.spans.iter().enumerate() {
-            let font = span_font(span, line);
-            let span_editing = span_is_editing(line, span_idx, is_editing, active_col);
-            let display = span_visible_text(line, span_idx, is_editing, active_col);
-            let span_end_col = source_col_after_span(span, source_col);
-            if display.is_empty() {
-                if col <= span_end_col {
-                    return (pen.x, pen.y);
-                }
-                source_col = span_end_col;
-                continue;
-            }
-
-            let step = visual_line_step(span.font_size);
-            let mut token = Vec::new();
-
-            for ch in display.chars() {
-                if span.is_checkbox && !is_editing {
-                    if source_col >= col {
-                        return (pen.x, pen.y);
-                    }
-                    pen.x += CHECKBOX_ADVANCE;
-                    source_col += 1;
-                    continue;
-                }
-
-                if span.is_math && !span_editing {
-                    let tex = math_source(span);
-                    if !tex.is_empty() && !span.is_syntax {
-                        // Rendered math is one atomic box.
-                        let width = self
-                            .math_cache
-                            .get(tex)
-                            .map(|m| m.width)
-                            .unwrap_or_else(|| measure_width::<R>(tex, span.font_size, font));
-                        pen.fit(width, step);
-                        if source_col >= col {
-                            return (pen.x, pen.y);
-                        }
-                        pen.x += width + INLINE_MATH_GAP;
-                        if col <= span_end_col {
-                            return (pen.x, pen.y);
-                        }
-                        break;
-                    }
-                }
-
-                token.push((ch, source_col));
-                source_col += 1;
-                if ch.is_whitespace() {
-                    if let Some(pos) =
-                        pen.advance_token::<R>(&token, col, span.font_size, font, step)
-                    {
-                        return pos;
-                    }
-                    token.clear();
-                }
-            }
-            if let Some(pos) = pen.advance_token::<R>(&token, col, span.font_size, font, step) {
-                return pos;
-            }
-            if col <= span_end_col {
-                return (pen.x, pen.y);
-            }
-            source_col = span_end_col;
-        }
-        (pen.x, pen.y)
-    }
-
-    /// Source column at `click_x` on the visual row containing `line_y`, both
-    /// relative to the line's text origin.
-    pub(super) fn col_for_visual_point<R: Measure>(
-        &self,
-        line: &StyledLine,
-        click_x: f32,
-        line_y: f32,
-        available_width: f32,
-        is_editing: bool,
-        active_col: Option<usize>,
-    ) -> usize {
-        if click_x <= 0.0 {
-            return 0;
-        }
-
-        let mut scan = RowScan {
-            x: 0.0,
-            row_y: 0.0,
-            row_start_col: 0,
-            row_end_col: 0,
-            row_step: BASE_LINE_HEIGHT,
-            target_y: line_y,
-            max_w: wrap_width(available_width),
-        };
-        let mut source_col = 0usize;
-
-        for (span_idx, span) in line.spans.iter().enumerate() {
-            let font = span_font(span, line);
-            let span_editing = span_is_editing(line, span_idx, is_editing, active_col);
-            let display = span_visible_text(line, span_idx, is_editing, active_col);
-            let span_end_col = source_col_after_span(span, source_col);
-
-            if display.is_empty() {
-                source_col = span_end_col;
-                scan.row_end_col = source_col;
-                continue;
-            }
-
-            let step = visual_line_step(span.font_size);
-            scan.row_step = scan.row_step.max(step);
-            let mut token = Vec::new();
-
-            for ch in display.chars() {
-                if span.is_checkbox && !is_editing {
-                    let cw = CHECKBOX_ADVANCE;
-                    if let Some(col) = scan.fit(cw, source_col, step) {
-                        return col;
-                    }
-                    if scan.on_target_row() {
-                        if click_x < scan.x + cw * 0.6 {
-                            return source_col;
-                        }
-                        scan.row_end_col = source_col + 1;
-                    }
-                    scan.x += cw;
-                    source_col += 1;
-                    continue;
-                }
-
-                if span.is_math && !span_editing {
-                    let tex = math_source(span);
-                    if !tex.is_empty() && !span.is_syntax {
-                        let (width, height) = self
-                            .math_cache
-                            .get(tex)
-                            .map(|m| (m.width, m.height))
-                            .unwrap_or_else(|| {
-                                (
-                                    measure_width::<R>(tex, span.font_size, font),
-                                    BASE_LINE_HEIGHT,
-                                )
-                            });
-
-                        let extra_h = (height - BASE_LINE_HEIGHT).max(0.0);
-                        scan.row_step = scan.row_step.max(BASE_LINE_HEIGHT + extra_h);
-
-                        if let Some(col) = scan.fit(width, source_col, step) {
-                            return col;
-                        }
-                        if scan.on_target_row() {
-                            if click_x < scan.x + width {
-                                return source_col;
-                            }
-                            scan.row_end_col = span_end_col;
-                        }
-
-                        scan.x += width + INLINE_MATH_GAP;
-                        break;
-                    }
-                }
-
-                token.push((ch, source_col));
-                source_col += 1;
-                if ch.is_whitespace() {
-                    if let Some(col) =
-                        scan.scan_token::<R>(&token, click_x, span.font_size, font, step)
-                    {
-                        return col;
-                    }
-                    token.clear();
-                }
-            }
-            if let Some(col) = scan.scan_token::<R>(&token, click_x, span.font_size, font, step) {
-                return col;
-            }
-
-            source_col = span_end_col;
-            if scan.on_target_row() {
-                scan.row_end_col = source_col;
-            }
-        }
-
-        if scan.on_target_row() {
-            scan.row_end_col.max(scan.row_start_col)
-        } else {
-            source_col
-        }
-    }
-
-    /// Visual position of the caret within its line.
-    pub(super) fn cursor_position<R: Measure>(
-        &self,
-        line_idx: usize,
-        available_width: f32,
-    ) -> (f32, f32) {
-        let Some(line) = self.lines.get(line_idx) else {
-            return (0.0, 0.0);
-        };
-        self.position_for_col::<R>(
-            line_idx,
-            self.buffer.cursor_col,
-            available_width,
-            self.is_block_editing(line, true),
-            self.active_col(line_idx, true),
-        )
+        let flow = self.flow::<R>(line_idx, available_width, is_editing, active_col);
+        caret_in_flow::<R>(&flow, col)
     }
 
     /// Convert a position relative to the content bounds into (line, col).
@@ -389,25 +62,27 @@ impl<Message> Editor<'_, Message> {
         state: &State,
     ) -> (usize, usize) {
         let line_idx = self.line_at_widget_y(pos.y, state).unwrap_or(0);
-        let line_top = self.widget_y_for_line(line_idx, state);
-
         let Some(line) = self.lines.get(line_idx) else {
             return (line_idx, 0);
         };
-        let click_x = pos.x - TEXT_X_OFFSET;
-        if click_x <= 0.0 {
-            return (line_idx, 0);
+        let is_editing = self.is_block_editing(line, focused);
+        let x = pos.x - TEXT_X_OFFSET;
+
+        if line.is_code_block {
+            let scroll = self
+                .scroll_extent::<R>(state, line.block_id, available_width, focused)
+                .map_or(0.0, |extent| state.block_scroll(line.block_id, &extent));
+            return (line_idx, code_col_at::<R>(line, x + scroll, is_editing));
         }
 
-        let col = self.col_for_visual_point::<R>(
-            line,
-            click_x,
-            pos.y - line_top,
+        let flow = self.flow::<R>(
+            line_idx,
             available_width,
-            self.is_block_editing(line, focused),
+            is_editing,
             self.active_col(line_idx, focused),
         );
-        (line_idx, col)
+        let y = pos.y - self.line_body_top(line_idx, state, focused);
+        (line_idx, flow.col_at::<R>(x, y))
     }
 
     /// Target of moving the caret one visual row up (`delta_lines < 0`) or
@@ -418,90 +93,121 @@ impl<Message> Editor<'_, Message> {
         delta_lines: f32,
         available_width: f32,
     ) -> (usize, usize) {
-        if state.layout_tree.len() != self.lines.len() {
-            self.rebuild_layout_tree::<R>(state, available_width);
-        }
-        let (cur_x, cur_y_in_line) =
-            self.cursor_position::<R>(self.buffer.cursor_line, available_width);
-        let cur_y_base = self.widget_y_for_line(self.buffer.cursor_line, state);
+        let (line_idx, col) = (self.buffer.cursor_line, self.buffer.cursor_col);
+        let Some(line) = self.lines.get(line_idx) else {
+            return (line_idx, col);
+        };
+        let is_editing = self.is_block_editing(line, true);
+        let down = delta_lines > 0.0;
 
-        let visual_x = *state.desired_visual_x.get_or_insert(cur_x);
-        let line = &self.lines[self.buffer.cursor_line];
-        let max_font = line
-            .spans
-            .iter()
-            .map(|s| s.font_size)
-            .fold(DEFAULT_FONT_SIZE, f32::max);
-        let step = visual_line_step(max_font);
-
-        let target_y = cur_y_base + cur_y_in_line + delta_lines * step + step / 2.0;
-
-        let mut target = self.hit_test::<R>(
-            Point::new(visual_x + TEXT_X_OFFSET, target_y),
-            available_width,
-            state.is_focused,
-            state,
-        );
-
-        // Wrapping estimates can put the target on the wrong side of the
-        // caret; never let a move go backwards.
-        let current = (self.buffer.cursor_line, self.buffer.cursor_col);
-        if delta_lines > 0.0 && target <= current {
-            target = self.adjacent_line_target::<R>(visual_x, 1, available_width);
-        } else if delta_lines < 0.0 && target >= current {
-            target = self.adjacent_line_target::<R>(visual_x, -1, available_width);
+        if line.is_code_block {
+            let x = code_x_for_col::<R>(line, col, is_editing);
+            let visual_x = *state.desired_visual_x.get_or_insert(x);
+            return self.adjacent_line_target::<R>(visual_x, down, available_width);
         }
 
-        target
+        let flow = self.flow::<R>(line_idx, available_width, is_editing, Some(col));
+        let spot = flow.caret::<R>(col);
+        let visual_x = *state.desired_visual_x.get_or_insert(spot.x);
+
+        let target_row = if down {
+            Some(spot.row + 1).filter(|row| *row < flow.rows.len())
+        } else {
+            spot.row.checked_sub(1)
+        };
+        match target_row {
+            Some(row) => {
+                let row = &flow.rows[row];
+                let target_col = flow.col_at::<R>(visual_x, row.top + row.height / 2.0);
+                (line_idx, target_col)
+            }
+            None => self.adjacent_line_target::<R>(visual_x, down, available_width),
+        }
     }
 
-    /// Column at `visual_x` on the first row of the neighbouring source line.
+    /// Column at `visual_x` on the nearest row of the next (`down`) or
+    /// previous source line. Stays put at either end of the document.
     fn adjacent_line_target<R: Measure>(
         &self,
         visual_x: f32,
-        delta_lines: isize,
+        down: bool,
         available_width: f32,
     ) -> (usize, usize) {
-        let current_line = self.buffer.cursor_line;
-        let target_line = if delta_lines < 0 {
-            current_line.saturating_sub(1)
+        let current = (self.buffer.cursor_line, self.buffer.cursor_col);
+        let target_line = if down {
+            current.0 + 1
         } else {
-            (current_line + 1).min(self.lines.len().saturating_sub(1))
+            match current.0.checked_sub(1) {
+                Some(line) => line,
+                None => return current,
+            }
         };
-
-        if target_line == current_line {
-            return (self.buffer.cursor_line, self.buffer.cursor_col);
-        }
-
         let Some(line) = self.lines.get(target_line) else {
-            return (self.buffer.cursor_line, self.buffer.cursor_col);
+            return current;
         };
-        let col = self.col_for_visual_point::<R>(
-            line,
-            visual_x,
-            BASE_LINE_HEIGHT / 2.0,
-            available_width,
-            self.is_block_editing(line, true),
-            None,
-        );
-        (target_line, col)
+
+        let is_editing = self.is_block_editing(line, true);
+        if line.is_code_block {
+            return (target_line, code_col_at::<R>(line, visual_x, is_editing));
+        }
+        let flow = self.flow::<R>(target_line, available_width, is_editing, None);
+        let row = if down {
+            &flow.rows[0]
+        } else {
+            &flow.rows[flow.rows.len() - 1]
+        };
+        (
+            target_line,
+            flow.col_at::<R>(visual_x, row.top + row.height / 2.0),
+        )
     }
+}
+
+/// Caret rectangle for `col`, centred on the text line box it sits in.
+pub(super) fn caret_in_flow<R: Measure>(flow: &Flow<'_>, col: usize) -> CaretBox {
+    let spot = flow.caret::<R>(col);
+    let font_size = spot.font_size;
+    let height = font_size + 2.0;
+    CaretBox {
+        x: spot.x,
+        y: flow.text_top(spot.row, font_size) + (font_size * LINE_BOX_FACTOR - height) / 2.0,
+        height,
+    }
+}
+
+/// Visible characters of a code line with their source columns.
+fn code_chars(line: &StyledLine, is_editing: bool) -> impl Iterator<Item = (usize, char)> + '_ {
+    line.spans
+        .iter()
+        .flat_map(move |span| span.visible_text(is_editing).chars())
+        .enumerate()
+}
+
+fn code_char_width<R: Measure>(ch: char) -> f32 {
+    measure_char_width::<R>(ch, CODE_FONT_SIZE, iced::Font::MONOSPACE)
 }
 
 /// X of `col` in an unwrapped code line.
 pub(super) fn code_x_for_col<R: Measure>(line: &StyledLine, col: usize, is_editing: bool) -> f32 {
-    let mut x = 0.0_f32;
-    let mut source_col = 0usize;
-    for span in &line.spans {
-        for ch in span.visible_text(is_editing).chars() {
-            if source_col >= col {
-                return x;
-            }
-            x += measure_char_width::<R>(ch, CODE_FONT_SIZE, iced::Font::MONOSPACE);
-            source_col += 1;
+    code_chars(line, is_editing)
+        .take_while(|(char_col, _)| *char_col < col)
+        .map(|(_, ch)| code_char_width::<R>(ch))
+        .sum()
+}
+
+/// Column nearest `x` in an unwrapped code line.
+fn code_col_at<R: Measure>(line: &StyledLine, x: f32, is_editing: bool) -> usize {
+    let mut cx = 0.0;
+    let mut count = 0;
+    for (col, ch) in code_chars(line, is_editing) {
+        let cw = code_char_width::<R>(ch);
+        if x < cx + cw / 2.0 {
+            return col;
         }
+        cx += cw;
+        count = col + 1;
     }
-    x
+    count
 }
 
 #[cfg(test)]
@@ -509,7 +215,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::super::layout::line_height_for;
-    use super::super::test_support::{editor_for, focused_state};
+    use super::super::testing::{editor_for, focused_state};
     use super::*;
     use crate::editor::buffer::{DocBuffer, EditorCommand};
     use crate::editor::highlight::highlight_markdown;
@@ -614,10 +320,11 @@ mod tests {
             Some(0),
             &mut seen_math_blocks,
         );
-        let cursor = editor.cursor_position::<iced::Renderer>(1, 900.0);
+        let caret = editor.caret_box::<iced::Renderer>(1, 0, 900.0, false, Some(0));
 
         assert_eq!(height, BASE_LINE_HEIGHT);
-        assert_eq!(cursor, (0.0, 0.0));
+        assert_eq!(caret.x, 0.0);
+        assert!(caret.y > 0.0 && caret.y + caret.height < height);
         assert!(height.min(20.0) > 0.0);
     }
 }

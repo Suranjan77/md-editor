@@ -1,19 +1,19 @@
 //! Painting.
 //!
 //! A frame paints in layers: the page background; the chrome of every block
-//! that intersects the viewport (cards, captions, badges); then each visible
-//! line — selection and search highlights first, then its content, then the
-//! caret.
+//! that intersects the viewport (cards, captions, badges); each visible line —
+//! selection and search highlights first, then its content, then the caret;
+//! and finally the scrollbars of blocks wider than the column.
 //!
-//! Lines are painted by kind:
+//! Lines are painted by kind (see [`LineKind`]):
 //!
-//! | line                         | painter             |
-//! |------------------------------|---------------------|
-//! | horizontal rule              | `paint_rule`        |
-//! | unstyled paragraph           | `paint_plain_line`  |
-//! | code block line              | `paint_code_line`   |
-//! | table row (not being edited) | `paint_table_row`   |
-//! | anything else                | `paint_spans`       |
+//! | line                                   | painter            |
+//! |----------------------------------------|--------------------|
+//! | horizontal rule, source hidden         | `paint_rule`       |
+//! | code block line                        | `paint_code_line`  |
+//! | table row, not being edited            | `paint_table_row`  |
+//! | block math, not being edited           | `paint_block_math` |
+//! | everything else, laid out by [`Flow`]  | `paint_flow`       |
 
 mod blocks;
 mod captions;
@@ -26,13 +26,17 @@ use std::collections::HashMap;
 use iced::advanced::renderer::Quad;
 use iced::{Border, Rectangle};
 
+use super::flow::Flow;
 use super::layout::{caption_band, is_first_block_line, table_block_gutter_after};
-use super::metrics::{TOP_PAD, content_bounds};
+use super::metrics::{TEXT_X_OFFSET, TOP_PAD, content_bounds};
+use super::scroll::scrollbar_y;
 use super::selection::TextRange;
+use super::spans::span_is_editing;
 use super::{Editor, Paint, State};
 use crate::editor::highlight::StyledLine;
 use crate::theme;
 use blocks::BlockMeta;
+use primitives::paint_scrollbar;
 
 /// What every painter needs to know about the frame being drawn.
 struct Frame<'a> {
@@ -46,6 +50,19 @@ struct Frame<'a> {
     selection: Option<TextRange>,
 }
 
+/// How a line is painted.
+enum LineKind<'a> {
+    /// A horizontal rule whose `---` source is hidden.
+    Rule,
+    Code,
+    /// A table row shown as cells.
+    Table,
+    /// The first line of block math shown rendered; the rest have no height.
+    BlockMath,
+    /// Inline content laid out in rows.
+    Flow(Flow<'a>),
+}
+
 /// A line placed in the frame.
 struct LineBox<'a> {
     idx: usize,
@@ -56,6 +73,7 @@ struct LineBox<'a> {
     height: f32,
     is_editing: bool,
     active_col: Option<usize>,
+    kind: LineKind<'a>,
 }
 
 /// Running figure and equation counts, for items the highlighter did not
@@ -123,16 +141,54 @@ impl<Message> Editor<'_, Message> {
                 continue;
             }
 
+            let active_col = self.active_col(idx, focused);
             let row = LineBox {
                 idx,
                 line,
                 y,
                 height,
                 is_editing,
-                active_col: self.active_col(idx, focused),
+                active_col,
+                kind: self.line_kind::<R>(idx, bounds.width, is_editing, active_col),
             };
             self.paint_line(renderer, &frame, &row, &mut counters);
             y += height + gutter;
+        }
+
+        for (&block_id, meta) in &frame.blocks {
+            if let Some(extent) = meta.scroll.filter(|extent| extent.overflows()) {
+                paint_scrollbar(
+                    renderer,
+                    state,
+                    block_id,
+                    bounds.x + TEXT_X_OFFSET,
+                    &extent,
+                    scrollbar_y(&self.lines[meta.start], meta.y, meta.height),
+                );
+            }
+        }
+    }
+
+    fn line_kind<R: Paint>(
+        &self,
+        idx: usize,
+        available_width: f32,
+        is_editing: bool,
+        active_col: Option<usize>,
+    ) -> LineKind<'_> {
+        let line = &self.lines[idx];
+        let rule_hidden = line.spans.first().is_some_and(|span| span.is_rule)
+            && !span_is_editing(line, 0, is_editing, active_col);
+        if line.is_code_block {
+            LineKind::Code
+        } else if line.is_table_row && !is_editing {
+            LineKind::Table
+        } else if line.is_math_block && !is_editing {
+            LineKind::BlockMath
+        } else if rule_hidden {
+            LineKind::Rule
+        } else {
+            LineKind::Flow(self.flow::<R>(idx, available_width, is_editing, active_col))
         }
     }
 
@@ -164,21 +220,15 @@ impl<Message> Editor<'_, Message> {
         self.paint_selection(renderer, frame, row);
         self.paint_search_matches(renderer, frame, row);
 
-        let line = row.line;
-        if line.spans.iter().any(|s| s.is_rule) {
-            self.paint_rule(renderer, frame, row);
-            self.paint_caret(renderer, frame, row);
-        } else if inline::is_plain_line(line, row.is_editing) {
-            self.paint_plain_line(renderer, frame, row);
-            self.paint_caret(renderer, frame, row);
-        } else if line.is_code_block && !line.is_math_block {
-            // Code lines draw their own caret, offset by the block's scroll.
-            self.paint_code_line(renderer, frame, row);
-        } else if line.is_table_row && !row.is_editing {
-            self.paint_table_row(renderer, frame, row);
-        } else {
-            self.paint_spans(renderer, frame, row, counters);
-            self.paint_caret(renderer, frame, row);
+        match &row.kind {
+            LineKind::Rule => self.paint_rule(renderer, frame, row),
+            LineKind::Code => self.paint_code_line(renderer, frame, row),
+            LineKind::Table => self.paint_table_row(renderer, frame, row),
+            LineKind::BlockMath => self.paint_block_math(renderer, frame, row, counters),
+            LineKind::Flow(flow) => {
+                self.paint_flow(renderer, frame, row, flow, counters);
+                self.paint_caret(renderer, frame, row, flow);
+            }
         }
     }
 }
