@@ -4,7 +4,7 @@
   <div class="rule"></div>
   <h1>The surface</h1>
   <div class="blurb">Three small, strict systems that decide how the application feels: a token set that
-  leaves no room for arbitrary numbers, a motion vocabulary of one curve and three durations, and a fuzzy
+  leaves no room for arbitrary numbers, a motion vocabulary of one curve, three durations and one spring, and a fuzzy
   matcher whose scores are comparable across commands and files.</div>
   <ol>
     <li>Tokens and motion</li>
@@ -18,7 +18,7 @@
   <div class="chead">
     <div class="num">Chapter 26<span class="pm">PMK-ch26-</span></div>
     <h1>Tokens and motion</h1>
-    <div class="sub">Six sizes, seven spacings, three radii, one curve — and the reason the list is short</div>
+    <div class="sub">Six sizes, seven spacings, three radii, one curve, one spring — and the reason the lists are short</div>
   </div>
 
   <p class="lead">Everything the chrome draws — sidebar, toolbar, panels, modals, tracker — takes its colour,
@@ -41,16 +41,16 @@
       <!-- type scale -->
       <text x="16" y="14" class="t-xs t-b" fill="#22665c">TYPE SCALE — SIX STEPS</text>
       <g>
-        <text x="16" y="36" class="t-mono-sm">TEXT_XS · 10</text>
-        <text x="140" y="36" style="font-size:10px" class="t">Fine print: badges, counters, gutter numbers</text>
-        <text x="16" y="56" class="t-mono-sm">TEXT_SM · 12</text>
-        <text x="140" y="56" style="font-size:12px" class="t">Secondary: captions, metadata, tree affordances</text>
-        <text x="16" y="78" class="t-mono-sm">TEXT_BASE · 14</text>
-        <text x="140" y="78" style="font-size:14px" class="t">Default UI text: controls, buttons, palette rows</text>
-        <text x="16" y="102" class="t-mono-sm">TEXT_MD · 16</text>
-        <text x="140" y="102" style="font-size:16px" class="t">Emphasised UI text and section headings</text>
-        <text x="16" y="128" class="t-mono-sm">TEXT_LG · 18</text>
-        <text x="140" y="128" style="font-size:18px" class="t">Panel and dialog titles</text>
+        <text x="16" y="36" class="t-mono-sm">TEXT_XS · 8</text>
+        <text x="140" y="36" style="font-size:8px" class="t">Fine print: badges, counters, gutter numbers</text>
+        <text x="16" y="56" class="t-mono-sm">TEXT_SM · 10</text>
+        <text x="140" y="56" style="font-size:10px" class="t">Secondary: captions, metadata, tree affordances</text>
+        <text x="16" y="78" class="t-mono-sm">TEXT_BASE · 11</text>
+        <text x="140" y="78" style="font-size:11px" class="t">Default UI text: controls, buttons, palette rows</text>
+        <text x="16" y="102" class="t-mono-sm">TEXT_MD · 14</text>
+        <text x="140" y="102" style="font-size:14px" class="t">Emphasised UI text and section headings</text>
+        <text x="16" y="128" class="t-mono-sm">TEXT_LG · 16</text>
+        <text x="140" y="128" style="font-size:16px" class="t">Panel and dialog titles</text>
         <text x="16" y="162" class="t-mono-sm">TEXT_DISPLAY · 42</text>
         <text x="140" y="166" style="font-size:30px" class="t">MD Editor</text>
         <text x="330" y="166" class="t-xs">— the welcome wordmark, deliberately the only display size</text>
@@ -74,8 +74,8 @@
         <text x="200" y="258" class="t-xs">4 — within a control: icon to label</text>
 
         <text x="16" y="274" class="t-mono-sm">SPACE_3</text>
-        <rect x="96" y="265" width="8" height="10" fill="#22665c"/>
-        <text x="200" y="274" class="t-xs">8 — default gap between siblings; default control padding</text>
+        <rect x="96" y="265" width="6" height="10" fill="#22665c"/>
+        <text x="200" y="274" class="t-xs">6 — default gap between siblings; default control padding</text>
 
         <text x="16" y="290" class="t-mono-sm">SPACE_4</text>
         <rect x="96" y="281" width="12" height="10" fill="#22665c"/>
@@ -92,8 +92,8 @@
 
       <!-- radii -->
       <text x="470" y="204" class="t-xs t-b" fill="#22665c">RADII — THREE</text>
-      <rect x="470" y="214" width="60" height="34" rx="3" class="s-box"/>
-      <text x="500" y="235" class="t-xs t-mid">3 · SM</text>
+      <rect x="470" y="214" width="60" height="34" rx="2" class="s-box"/>
+      <text x="500" y="235" class="t-xs t-mid">2 · SM</text>
       <text x="540" y="235" class="t-xs">chips, badges, inline markers</text>
       <rect x="470" y="256" width="60" height="34" rx="6" class="s-box"/>
       <text x="500" y="277" class="t-xs t-mid">6 · MD</text>
@@ -106,8 +106,9 @@
       <text x="16" y="364" class="t-xs">danger <tspan class="t-mono-sm">#ee7d77</tspan>. <tspan class="t-b">fade(color, opacity)</tspan> scales a colour's own alpha, so a half-faded overlay stays internally consistent instead of some parts leading others.</text>
     </svg>
     <figcaption><b>Figure 26.1 — The whole vocabulary on one page.</b> Sizes are shown at the figure's own scale, so
-    read the ratios rather than the millimetres. The steps grow roughly geometrically so that adjacent steps stay visibly distinct — a scale where 10 and 12
-    both exist is a scale that gets used inconsistently.</figcaption>
+    read the ratios rather than the millimetres. The chrome's type is deliberately small, so that it recedes
+    behind the document; what matters is that there are six sizes and each has a named job, so choosing a size
+    means looking up a role rather than picking a number.</figcaption>
   </figure>
 
   <h2>26.1 Motion</h2>
@@ -183,10 +184,166 @@
     <li><code>toast_text: String</code>, retained after <code>ui.toast</code> clears — so the toast has
     something to draw <em>while it fades out</em>. An animation that outlives its data needs somewhere to
     keep it.</li>
+    <li><code>editor_scroll: Option&lt;ScrollGlide&gt;</code>, the editor gliding to reveal the caret, while it
+    is (Chapter 17).</li>
   </ul>
 
   <p>The booleans themselves stay where they live (sidebar visibility on the vault state, TOC on the editor
   pane); <code>Motion</code> only tracks how far each has travelled.</p>
+
+  <h2>26.2 Springs: motion that follows something</h2>
+
+  <p>A duration and a curve are right for a transition between two known states: the panel is closed, it will
+  be open, and 180&nbsp;ms is how long that takes. They are wrong for motion whose destination keeps moving —
+  the page scrolling to keep a caret in view while you type, or the caret itself sliding to where an arrow key
+  put it. Restarting an ease on every keystroke would stall the motion each time it began again. That kind of
+  motion uses a <b>critically damped spring</b>.</p>
+
+  <div class="srcref">native/src/motion.rs</div>
+<pre>pub struct Spring { target: f32, x0: f32, v0: f32, start: Instant, stiffness: f32 }
+
+<span class="cmt">// displacement x0 and velocity v0 at `start`; ω = stiffness</span>
+x(t) = target + (x0 + (v0 + ω·x0)·t)·e^(−ωt)</pre>
+
+  <p>The spring is <b>solved in closed form</b>, not integrated frame by frame. Its position is a function of the
+  frame's time, <code>Motion::now</code>, so it traces exactly the same curve at 30&nbsp;Hz or 240&nbsp;Hz, and a
+  dropped frame costs nothing. Critical damping is the fastest approach to the target that does not overshoot
+  from rest — a scroll that bounced past the caret and back would be unreadable.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 232" role="img" aria-label="A critically damped spring heading for a target that moves at 60 milliseconds: retargeting keeps velocity and bends the path smoothly, restarting from rest kinks it, and frames sampled at 30 hertz land exactly on the curve">
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">SCROLL_STIFFNESS = 32 · THE TARGET MOVES AT 60 MS</text>
+
+      <line x1="40" y1="176" x2="344" y2="176" class="s-line-2"/>
+      <line x1="40" y1="176" x2="40" y2="30" class="s-line-2"/>
+      <g class="t-xs t-mid" fill="#727b7e">
+        <text x="40" y="190">0</text><text x="160" y="190">100 ms</text><text x="280" y="190">200 ms</text>
+      </g>
+
+      <line x1="40" y1="88" x2="344" y2="88" class="s-dash"/>
+      <text x="34" y="91" class="t-xs t-end">old</text>
+      <line x1="112" y1="44" x2="344" y2="44" class="s-dash"/>
+      <text x="34" y="47" class="t-xs t-end">new</text>
+      <line x1="112" y1="30" x2="112" y2="176" class="s-dash"/>
+      <text x="116" y="36" class="t-xs">target moves</text>
+
+      <polyline points="112,125.7 124,118.4 136,112.2 148,107.2 160,103.1 172,99.8 184,97.2 196,95.1 208,93.5 220,92.2 232,91.2 244,90.5 256,89.9 268,89.4 280,89.1 292,88.8 304,88.6 316,88.5 328,88.4 340,88.3" class="s-line-2"/>
+      <polyline points="112,125.7 124,122.3 136,114.6 148,105.3 160,95.8 172,86.9 184,79.0 196,72.2 208,66.5 220,61.8 232,58.0 244,54.9 256,52.5 268,50.6 280,49.1 292,47.9 304,47.0 316,46.3 328,45.7 340,45.3" class="s-red" stroke-dasharray="4 3"/>
+      <polyline points="40,176.0 52,172.3 64,164.1 76,154.0 88,143.8 100,134.2 112,125.7 124,116.5 136,106.3 148,96.2 160,87.0 172,78.9 184,72.0 196,66.3 208,61.6 220,57.8 232,54.8 244,52.3 256,50.5 268,49.0 280,47.8 292,46.9 304,46.2 316,45.7 328,45.3 340,45.0" class="s-accent"/>
+      <g fill="#22665c">
+        <circle cx="40" cy="176" r="2.6"/><circle cx="80" cy="150.6" r="2.6"/><circle cx="120" cy="119.8" r="2.6"/>
+        <circle cx="160" cy="87" r="2.6"/><circle cx="200" cy="64.6" r="2.6"/><circle cx="240" cy="53.1" r="2.6"/>
+        <circle cx="280" cy="47.8" r="2.6"/><circle cx="320" cy="45.5" r="2.6"/>
+      </g>
+
+      <line x1="40" y1="206" x2="60" y2="206" class="s-accent"/>
+      <text x="66" y="209" class="t-xs">retarget — keeps velocity, the path bends</text>
+      <line x1="40" y1="222" x2="60" y2="222" class="s-red" stroke-dasharray="4 3"/>
+      <text x="66" y="225" class="t-xs">restart from rest — the path kinks</text>
+      <circle cx="266" cy="206" r="2.6" fill="#22665c"/>
+      <text x="274" y="209" class="t-xs">frames at 30 Hz</text>
+      <line x1="256" y1="222" x2="276" y2="222" class="s-line-2"/>
+      <text x="282" y="225" class="t-xs">had it not moved</text>
+
+      <rect x="380" y="24" width="324" height="70" rx="3" class="s-fill"/>
+      <text x="392" y="42" class="t-xs t-b" fill="#11342f">Sampled, not stepped</text>
+      <text x="392" y="58" class="t-xs">position is a function of the frame's time, so the dots</text>
+      <text x="392" y="72" class="t-xs">at 30 Hz sit exactly on the curve a 240 Hz display draws —</text>
+      <text x="392" y="86" class="t-xs">and a dropped frame is simply a dot that was not drawn</text>
+
+      <rect x="380" y="104" width="324" height="70" rx="3" class="s-warn"/>
+      <text x="392" y="122" class="t-xs t-b" fill="#a03730">Stepped (pos += vel · dt) — what is not done</text>
+      <text x="392" y="138" class="t-xs">the result depends on dt, so a slow frame jerks the motion</text>
+      <text x="392" y="152" class="t-xs">and a fast display moves differently from a slow one; and it</text>
+      <text x="392" y="166" class="t-xs">has to run on every frame just to stay correct</text>
+
+      <rect x="380" y="184" width="324" height="44" rx="3" class="s-fill2"/>
+      <text x="392" y="202" class="t-xs t-b">Critical damping</text>
+      <text x="392" y="218" class="t-xs">the fastest approach that never overshoots from rest</text>
+    </svg>
+    <figcaption><b>Figure 26.3 — A spring that follows.</b> At 60&nbsp;ms the target jumps. <code>retarget</code>
+    keeps the spring's position and velocity, so the path bends; restarting from rest throws the velocity away and
+    the motion visibly stalls before setting off again. The dots are what a 30&nbsp;Hz display would draw — the
+    same curve, fewer samples.</figcaption>
+  </figure>
+
+  <table class="compact">
+    <thead><tr><th style="width:24%">Method</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>retarget</code></td><td>heads for a new target from wherever the spring is, keeping its
+        velocity, so a new destination bends the path instead of kinking it</td></tr>
+      <tr><td><code>shift</code></td><td>displaces the spring while keeping its velocity: the target stays, and
+        the spring sets off again from further away</td></tr>
+      <tr><td><code>is_settled</code></td><td>true once remaining distance plus momentum is below a tenth of a
+        pixel — the moment the frame subscription may disarm</td></tr>
+    </tbody>
+  </table>
+
+  <table class="compact">
+    <thead><tr><th style="width:30%">Stiffness</th><th style="width:14%">To 95%</th><th>Used by</th></tr></thead>
+    <tbody>
+      <tr><td><code>SCROLL_STIFFNESS = 32</code></td><td class="num">~150 ms</td><td><span class="fileref">motion.rs</span> — the editor scrolling to reveal the caret</td></tr>
+      <tr><td><code>GLIDE_STIFFNESS = 80</code></td><td class="num">~60 ms</td><td><span class="fileref">editor/renderer/glide.rs</span> — the caret gliding to its new place</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  Never write <code>pos += vel * dt</code> for motion in this codebase. Step-by-step integration makes an animation
+  depend on the frame rate, and it has to run on every frame to stay correct, which fights the zero-idle-CPU rule.
+  Sample the closed form at the frame's time instead.</div>
+
+  <h2>26.3 The caret: glide and blink</h2>
+
+  <p>The caret is the one piece of motion inside the editor widget, and it lives in
+  <span class="fileref">editor/renderer/glide.rs</span>.</p>
+  <ul>
+    <li><b>Glide</b> — the caret is painted where layout puts it, plus an offset that springs to zero. When it
+    moves, the offset starts as the distance moved, so the eye sees it travel. Moves of more than
+    <code>MAX_GLIDE = 96px</code> vertically cut instead, and layout moving under a still caret — an image loading
+    above it — never glides.</li>
+    <li><b>Blink</b> — lit for <code>BLINK_DELAY = 500ms</code> after it last moved, then a soft fade: a cosine over
+    <code>BLINK_PERIOD = 1060ms</code>, stretched by <code>BLINK_SHARPNESS = 2.5</code> and clamped, so it holds
+    fully on and fully off with quick fades between.</li>
+    <li><b>Rest</b> — after <code>BLINK_CYCLES = 18</code> blinks, about twenty seconds, the caret stays lit.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 720 156" role="img" aria-label="Caret opacity over time: fully lit for 500 milliseconds after moving, then a 1060 millisecond blink that holds on and off with short fades, with frames requested only during the fades; after eighteen blinks the caret stays lit">
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">CARET OPACITY AFTER IT MOVES</text>
+      <g fill="#edf4f2">
+        <rect x="179.1" y="36" width="27.8" height="72"/><rect x="285.1" y="36" width="27.8" height="72"/>
+        <rect x="391.1" y="36" width="27.8" height="72"/><rect x="497.1" y="36" width="27.8" height="72"/>
+      </g>
+      <text x="90" y="30" class="t-xs t-mid t-mono-sm">BLINK_DELAY</text>
+      <text x="246" y="30" class="t-xs t-mid t-mono-sm">BLINK_PERIOD</text>
+      <path d="M140 34 L140 108" class="s-dash"/><path d="M352 34 L352 108" class="s-dash"/>
+      <text x="34" y="47" class="t-xs t-end">lit</text><text x="34" y="107" class="t-xs t-end">off</text>
+      <line x1="40" y1="108" x2="700" y2="108" class="s-line-2"/>
+      <polyline points="40.0,44.0 179.0,44.0 180.0,45.8 182.0,50.0 184.0,54.2 186.0,58.6 188.0,62.9 190.0,67.3 192.0,71.8 194.0,76.2 196.0,80.7 198.0,85.1 200.0,89.4 202.0,93.8 204.0,98.0 206.0,102.2 207.0,104.0 285.0,104.0 286.0,102.2 288.0,98.0 290.0,93.8 292.0,89.4 294.0,85.1 296.0,80.7 298.0,76.2 300.0,71.8 302.0,67.3 304.0,62.9 306.0,58.6 308.0,54.2 310.0,50.0 312.0,45.8 313.0,44.0 391.0,44.0 392.0,45.8 394.0,50.0 396.0,54.2 398.0,58.6 400.0,62.9 402.0,67.3 404.0,71.8 406.0,76.2 408.0,80.7 410.0,85.1 412.0,89.4 414.0,93.8 416.0,98.0 418.0,102.2 419.0,104.0 497.0,104.0 498.0,102.2 500.0,98.0 502.0,93.8 504.0,89.4 506.0,85.1 508.0,80.7 510.0,76.2 512.0,71.8 514.0,67.3 516.0,62.9 518.0,58.6 520.0,54.2 522.0,50.0 524.0,45.8 525.0,44.0 564.0,44.0" class="s-accent"/>
+      <text x="582" y="78" class="t-sm t-mid">⋯</text>
+      <line x1="604" y1="44" x2="700" y2="44" class="s-accent"/>
+      <text x="652" y="36" class="t-xs t-mid">lit for good</text>
+      <g class="t-xs t-mid" fill="#727b7e">
+        <text x="40" y="122">moved</text><text x="140" y="122">500 ms</text>
+        <text x="352" y="122">1.56 s</text><text x="564" y="122">2.62 s</text><text x="652" y="122">≈ 19.6 s</text>
+      </g>
+      <rect x="40" y="136" width="10" height="10" fill="#edf4f2" stroke="#d5dcda" stroke-width=".6"/>
+      <text x="56" y="145" class="t-xs">shaded: the widget asks for frames · elsewhere it schedules one wake-up for the next fade with <tspan class="t-mono-sm">request_redraw_at</tspan>, then sleeps</text>
+    </svg>
+    <figcaption><b>Figure 26.4 — The blink, and the frames it costs.</b> A clamped cosine spends most of each period
+    fully on or fully off, where nothing on screen changes and no frame is needed. Only the four short fades per
+    two blinks cost frames.</figcaption>
+  </figure>
+
+  <p>The widget schedules its own frames by the same discipline as the shell's subscriptions:
+  <code>shell.request_redraw()</code> only while the caret glides or fades, <code>request_redraw_at</code> for the
+  exact instant the next fade begins, and nothing once the caret rests lit.</p>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>Why does the caret stop blinking after about twenty seconds, when most editors blink forever?</p>
+  <p class="answer"><b>Answer:</b> because a blinking caret needs frames, and frames are CPU. A caret that blinked
+  forever would make durability invariant 5 — zero idle CPU with a note open — impossible to meet. Eighteen
+  blinks is long enough to find the caret after looking away, and then the window can sleep.</p></div>
 </section>
 
 <!-- ---------- CH 27 ---------- -->

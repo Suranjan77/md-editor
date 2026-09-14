@@ -14,8 +14,9 @@
 <pre>pub enum EditorCommand {
     InsertText(String), DeleteSelection, DeleteBackward, DeleteForward,
     MoveCursor { movement: Movement, extend: bool },
-    SetCursor { line: usize, col: usize },
-    SetSelection { anchor_line: usize, anchor_col: usize, focus_line: usize, focus_col: usize },
+    SetCursor { line: usize, col: usize, affinity: Affinity },
+    SetSelection { anchor_line: usize, anchor_col: usize,
+                   focus_line: usize, focus_col: usize, affinity: Affinity },
     SelectAll, ToggleCheckbox { line: usize },
     FormatBold, FormatItalic, FormatInlineCode, InsertLink,
     TypePaired(char), Undo, Redo,
@@ -23,7 +24,7 @@
 
   <p><code>execute()</code> returns a <code>CommandResult { text_changed, projection_changed,
   media_changed }</code>, so the shell knows whether to re-parse the document, refresh the image and math
-  caches, or merely rescroll. Three booleans, and they save an enormous amount of unnecessary work: moving
+  caches, or merely move the caret. Three booleans, and they save an enormous amount of unnecessary work: moving
   the cursor changes the projection but not the text, so nothing is re-highlighted.</p>
 
   <div class="box"><span class="tag">Why a rope</span>
@@ -175,6 +176,60 @@
   text-scanning code in this file should use <code>chars()</code> and character indices for the same
   reason.</div>
 
+  <h2>13.4 Grapheme clusters and caret affinity</h2>
+
+  <p>Columns in <code>DocBuffer</code> are <code>char</code> offsets, but the caret never stops inside what a
+  person would call one character. <kbd>←</kbd>/<kbd>→</kbd> step, and <kbd>Backspace</kbd>/<kbd>Delete</kbd>
+  remove, one extended grapheme cluster (<code>unicode-segmentation</code>): <code>👩‍💻</code> is three
+  <code>char</code>s joined by a zero-width joiner, and one step. A line break — <code>\r\n</code> included — is
+  one stop. <code>set_cursor</code>, <code>set_selection</code> and vertical movement snap a column that lands
+  inside a cluster back to its start.</p>
+
+  <p>Wrapping creates a second ambiguity. Where a line breaks between rows, one column is <em>both</em> the end
+  of the earlier row and the start of the later one, and the caret has to be drawn at exactly one of them.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 150" role="img" aria-label="The same column at a row break drawn two ways: with upstream affinity the caret sits at the end of the first row, with downstream affinity at the start of the second">
+      <!-- panel A -->
+      <rect x="16" y="34" width="336" height="62" rx="3" class="s-box"/>
+      <rect x="16" y="14" width="336" height="20" rx="3" class="s-amber"/>
+      <text x="28" y="28" class="t-xs t-b" fill="#8a5c07">Affinity::Upstream — end of the earlier row</text>
+      <rect x="24" y="40" width="320" height="22" rx="2" class="s-fill2"/>
+      <rect x="24" y="66" width="320" height="22" rx="2" class="s-fill2"/>
+      <text x="30" y="55" class="t-mono">The quick brown fox jumps over the </text>
+      <text x="30" y="81" class="t-mono">lazy dog.</text>
+      <line x1="230" y1="42" x2="230" y2="60" stroke="#a03730" stroke-width="2"/>
+      <text x="28" y="112" class="t-xs">a click past the end of row 0 → <tspan class="t-mono-sm">col_at(x, y)</tspan> answers Upstream</text>
+
+      <!-- panel B -->
+      <rect x="368" y="34" width="336" height="62" rx="3" class="s-box"/>
+      <rect x="368" y="14" width="336" height="20" rx="3" class="s-fill"/>
+      <text x="380" y="28" class="t-xs t-b" fill="#11342f">Affinity::Downstream — start of the later row</text>
+      <rect x="376" y="40" width="320" height="22" rx="2" class="s-fill2"/>
+      <rect x="376" y="66" width="320" height="22" rx="2" class="s-fill2"/>
+      <text x="382" y="55" class="t-mono">The quick brown fox jumps over the </text>
+      <text x="382" y="81" class="t-mono">lazy dog.</text>
+      <line x1="382" y1="68" x2="382" y2="86" stroke="#22665c" stroke-width="2"/>
+      <text x="380" y="112" class="t-xs">the default — typing and arrow keys land here</text>
+
+      <rect x="16" y="120" width="688" height="26" rx="3" class="s-fill2"/>
+      <text x="28" y="137" class="t-xs">Both carets are column 35 of the same line. <tspan class="t-mono-sm">SetCursor { line, col: 35, affinity }</tspan> is the only thing that tells them apart — so the affinity is part of the caret.</text>
+    </svg>
+    <figcaption><b>Figure 13.2 — One column, two places.</b> Without affinity, clicking just past the end of a
+    wrapped row would put the caret at the start of the next row — under a different word, on a different line
+    of the screen — even though the click was on the first row.</figcaption>
+  </figure>
+
+  <p>Because the affinity describes one particular placement of the caret, the buffer owns it:
+  <code>DocBuffer::cursor_affinity</code> is set only by <code>SetCursor</code> and <code>SetSelection</code>, and
+  <b>reset by every other change</b>. It cannot outlive the placement it describes.</p>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  If the widget kept its own copy of the affinity, an edit or an undo that moved the caret would leave that copy
+  describing a placement that no longer exists, and the caret would be drawn at the end of the wrong row. Keeping
+  every caret fact — position, selection, affinity — in <code>DocBuffer</code>, with no copy on the widget, makes
+  that bug unrepresentable. Chapter 32 states it as a rule.</div>
+
   <div class="box check"><span class="tag">Check yourself</span>
   <p>You type <code>hello</code>, wait two seconds, type <code>world</code>, then press
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> twice. What is on screen after each press?</p>
@@ -186,8 +241,8 @@
 <section class="chapter" id="ch14">
   <div class="chead">
     <div class="num">Chapter 14<span class="pm">PMK-ch14-</span></div>
-    <h1>Hybrid preview: conceal and reveal</h1>
-    <div class="sub">One data structure that holds both the source and what you see</div>
+    <h1>Hybrid preview and incremental highlighting</h1>
+    <div class="sub">One data structure that holds both the source and what you see — kept in step with the text a line at a time</div>
   </div>
 
   <p class="lead">There is no preview mode and no edit mode. The document renders as formatted typography,
@@ -218,6 +273,7 @@ pub struct StyledSpan {
     pub is_link: bool, pub link_target: Option&lt;String&gt;,
     pub is_heading: bool, pub heading_level: u8,
     pub is_checkbox: bool, pub is_checked: bool,
+    pub is_list_marker: bool,          <span class="cmt">// bullet, number or checkbox: wrapped rows hang past it</span>
     pub is_rule: bool,
     pub is_image: bool, pub image_path: Option&lt;String&gt;, pub image_alt: Option&lt;String&gt;,
     pub is_math: bool,
@@ -227,7 +283,9 @@ pub struct StyledSpan {
 
   <p><code>text</code> <em>always</em> holds the exact source. Nothing is lost by concealing — the renderer
   simply chooses <code>display_text</code> instead. That is why editing works normally on a concealed line:
-  the characters are still there, they are just drawn as nothing.</p>
+  the characters are still there, they are just drawn as nothing. Which spans on the active line actually
+  reveal is decided per span, for the caret's column, in <span class="fileref">renderer/spans.rs</span> — which
+  is why the caret's column is part of the line cache key in Chapter 16.</p>
 
   <figure>
     <svg viewBox="0 0 720 250" role="img" aria-label="The same markdown line shown twice: with the cursor elsewhere the marker spans render as empty strings, and with the cursor on the line the raw asterisks and dollar signs reappear in place">
@@ -292,34 +350,129 @@ pub struct StyledSpan {
     “preview” line behave exactly like editing source.</figcaption>
   </figure>
 
-  <h2>14.2 Scheduling: three document sizes</h2>
+  <h2>14.2 Incremental highlighting</h2>
 
-  <p>Highlighting a 20-line note is instant. Highlighting a 20,000-line one is not, and the app must stay
-  responsive during it. <span class="fileref">app.rs</span> therefore has three regimes:</p>
+  <p>A line's highlighting is a pure function of two things: its own text, and the <b>state it is entered
+  in</b> — whether a code fence, a math block or a table is open above it.</p>
 
-  <table class="compact">
-    <thead><tr><th style="width:28%">Document size</th><th>Behaviour</th></tr></thead>
-    <tbody>
-      <tr><td>below 1,000 lines</td><td>highlighted <b>synchronously</b> after a text change</td></tr>
-      <tr><td>above <code>LARGE_DOC_LINE_THRESHOLD</code> (1,000)</td>
-        <td>debounced by <code>HIGHLIGHT_DEBOUNCE</code> (80&nbsp;ms) while typing</td></tr>
-      <tr><td>above <code>HUGE_DOC_LINE_THRESHOLD</code> (5,000)</td>
-        <td>a file opened from disk gets plain <b>placeholder lines</b> immediately and a background task
-        replaces them when ready — the document is editable from the first frame</td></tr>
-    </tbody>
-  </table>
+  <div class="srcref">native/src/editor/highlight.rs</div>
+<pre>pub struct LineState { code: Option&lt;CodeState&gt;, in_math: bool, in_table: bool }
+struct CodeState { lang: Option&lt;String&gt;, syntax: Option&lt;(ParseState, HighlightState)&gt; }</pre>
 
-  <p>Every highlight task carries a <b>generation id</b>. A result whose generation no longer matches the
-  current one is discarded, so a slow parse of old text can never overwrite newer text. This is the same
-  pattern the PDF pane uses for renders (Chapter 23), and it is worth recognising as a pattern rather than
-  learning twice.</p>
+  <p><code>Highlighted</code> keeps, for every line, its text, the <code>LineState</code> it was entered in, and
+  how it opens, continues or closes blocks. <code>update(text)</code> then does the least work that can possibly
+  be correct:</p>
+  <ol class="tight">
+    <li>find the common prefix and suffix of the old and new line texts;</li>
+    <li>re-highlight from the first changed line, starting in that line's recorded entry state;</li>
+    <li>stop as soon as it reaches the kept suffix <b>in the same state</b> that line was entered in before —
+    from there on nothing can differ — and splice the new lines in;</li>
+    <li>run <code>decorate</code> over the whole document: block numbering, math-block concealment and caption
+    numbering, which depend on neighbours rather than on one line.</li>
+  </ol>
 
-  <p>After highlighting completes, <code>app.rs</code> refreshes image discovery and queues LaTeX renders —
-  which is how a late-arriving image changes a line's height, and why Chapter 16 has to fold media
-  dimensions into its cache key.</p>
+  <figure>
+    <svg viewBox="0 0 720 236" role="img" aria-label="Two edits compared: typing a letter re-highlights one line and stops because the next line is entered in the same state as before; opening a code fence re-highlights every following line because each is now entered in a different state">
+      <!-- panel A -->
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">TYPING ONE LETTER ON LINE 4</text>
+      <text x="16" y="30" class="t-xs">entry state</text>
+      <g class="t-mono-sm">
+        <text x="16" y="51">text</text><text x="16" y="69">text</text><text x="16" y="87">text</text>
+        <text x="16" y="105">text</text><text x="16" y="123">text</text><text x="16" y="141">text</text>
+        <text x="16" y="159">text</text><text x="16" y="177">text</text><text x="16" y="195">text</text>
+      </g>
+      <g>
+        <rect x="64" y="40" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="64" y="58" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="64" y="76" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="64" y="94" width="130" height="15" rx="2" class="s-amber"/>
+        <rect x="64" y="112" width="130" height="15" rx="2" class="s-fill"/>
+        <rect x="64" y="130" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="64" y="148" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="64" y="166" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="64" y="184" width="130" height="15" rx="2" class="s-fill2"/>
+      </g>
+      <g class="t-mono-sm">
+        <text x="72" y="51">L1</text><text x="72" y="69">L2</text><text x="72" y="87">L3</text>
+        <text x="72" y="105">L4  Hello, world</text><text x="72" y="123">L5</text><text x="72" y="141">L6</text>
+        <text x="72" y="159">L7</text><text x="72" y="177">L8</text><text x="72" y="195">L9</text>
+      </g>
+      <path d="M200 40 L206 40 L206 91 L200 91" class="s-line-2"/>
+      <text x="212" y="69" class="t-xs">common prefix — kept</text>
+      <text x="212" y="105" class="t-xs t-b" fill="#8a5c07">changed — re-highlighted</text>
+      <text x="212" y="123" class="t-xs t-b" fill="#22665c">same entry state as before → stop</text>
+      <path d="M200 130 L206 130 L206 199 L200 199" class="s-line-2"/>
+      <text x="212" y="168" class="t-xs">common suffix — never touched</text>
+
+      <!-- panel B -->
+      <text x="368" y="14" class="t-xs t-b" fill="#22665c">OPENING A CODE FENCE ON LINE 4</text>
+      <text x="368" y="30" class="t-xs">entry state</text>
+      <g class="t-mono-sm">
+        <text x="368" y="51">text</text><text x="368" y="69">text</text><text x="368" y="87">text</text>
+        <text x="368" y="105">text</text>
+      </g>
+      <g class="t-mono-sm" fill="#a03730">
+        <text x="368" y="123">code</text><text x="368" y="141">code</text><text x="368" y="159">code</text>
+        <text x="368" y="177">code</text><text x="368" y="195">code</text>
+      </g>
+      <g>
+        <rect x="416" y="40" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="416" y="58" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="416" y="76" width="130" height="15" rx="2" class="s-fill2"/>
+        <rect x="416" y="94" width="130" height="15" rx="2" class="s-amber"/>
+        <rect x="416" y="112" width="130" height="15" rx="2" class="s-amber"/>
+        <rect x="416" y="130" width="130" height="15" rx="2" class="s-amber"/>
+        <rect x="416" y="148" width="130" height="15" rx="2" class="s-amber"/>
+        <rect x="416" y="166" width="130" height="15" rx="2" class="s-amber"/>
+        <rect x="416" y="184" width="130" height="15" rx="2" class="s-amber"/>
+      </g>
+      <g class="t-mono-sm">
+        <text x="424" y="51">L1</text><text x="424" y="69">L2</text><text x="424" y="87">L3</text>
+        <text x="424" y="105">L4  ```rust</text><text x="424" y="123">L5</text><text x="424" y="141">L6</text>
+        <text x="424" y="159">L7</text><text x="424" y="177">L8</text><text x="424" y="195">L9</text>
+      </g>
+      <path d="M552 40 L558 40 L558 91 L552 91" class="s-line-2"/>
+      <text x="564" y="69" class="t-xs">common prefix — kept</text>
+      <text x="564" y="105" class="t-xs t-b" fill="#8a5c07">changed</text>
+      <path d="M552 112 L558 112 L558 199 L552 199" class="s-red"/>
+      <text x="564" y="146" class="t-xs t-b t-red">text unchanged, but</text>
+      <text x="564" y="158" class="t-xs t-b t-red">entered as code, not text</text>
+      <text x="564" y="176" class="t-xs">→ keep walking, to the end</text>
+
+      <rect x="16" y="208" width="688" height="24" rx="3" class="s-fill2"/>
+      <text x="28" y="224" class="t-xs">The stop test compares <tspan class="t-mono-sm">LineState</tspan>, not text: a line whose text is unchanged but whose entry state differs must still be re-highlighted.</text>
+    </svg>
+    <figcaption><b>Figure 14.2 — Where the walk stops.</b> Typing an ordinary character re-highlights one line.
+    Opening a code fence re-highlights until the fence closes, because only then is a line entered in the state
+    it was entered in before.</figcaption>
+  </figure>
+
+  <p>Highlighting therefore runs <b>synchronously on every edit</b> — measured at about 0.03&nbsp;ms per keystroke
+  on a 700-line note and 0.34&nbsp;ms at 7,000 lines. There is no debounce, no placeholder lines and no
+  background task, so the painted lines always match the buffer. Each update also takes a new, process-wide
+  unique <code>revision()</code>, which names that set of lines; Chapter 16 uses it to skip layout entirely on
+  frames where nothing changed.</p>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  An asynchronous highlighter needs a generation id so that a slow parse of old text cannot overwrite newer text
+  — the pattern Chapter 23 describes for PDF renders. But even with the id, the lines on screen lag the buffer
+  for a moment after each keystroke, and a click in that moment is hit-tested against lines that no longer
+  describe the text: it lands on the wrong line. Making the work small enough to do synchronously removes the
+  lag, the id, and that bug together.</div>
 
   <div class="box plain"><span class="tag">Note</span>
-  Fenced code is coloured by <code>syntect</code>, and there is a unit test asserting that highlighting
-  <b>preserves the full source text character for character</b>. A syntax highlighter that quietly drops a
-  character is a data-loss bug wearing a cosmetic disguise.</div>
+  Two properties are pinned by tests. Fenced code coloured by <code>syntect</code> <b>preserves the full source
+  text character for character</b> — a highlighter that quietly drops a character is a data-loss bug wearing a
+  cosmetic disguise. And incremental highlighting <b>equals highlighting from scratch</b>, checked through seeded
+  random edit scripts (<code>HIGHLIGHT_PROPERTY_CASES=N</code> raises the case count). A new markdown rule must
+  keep both passing.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>A 500-line note contains no code. You type <code>```</code> at the start of line 10. How many lines are
+  re-highlighted? Then you replace line 20 with a closing <code>```</code> — how many now? Then you type one
+  ordinary letter on line 30?</p>
+  <p class="answer"><b>Answer:</b> 491, then 481, then 1. Opening the fence changes the entry state of every later
+  line, so the walk never meets a line in its old state and runs to the end. Closing it on line 20 changes the
+  entry state of line 21 onwards back again — every later line differs from a moment ago. The ordinary letter
+  changes no state, so the walk stops at line 31.</p></div>
 </section>

@@ -22,9 +22,9 @@
         <code>SearchMatchCaseToggled</code>, <code>SearchReplaceAll</code>, <code>CommandPaletteOpen</code>,
         <code>NameModalSubmit</code>, <code>DeleteFileDialog</code></td></tr>
       <tr><td><b>Editor</b></td><td><code>EditorCommand</code>, <code>EditorCommandNoScroll</code>,
-        <code>EditorSave</code>, <code>EditorCheckboxToggle</code>, <code>EditorCursorMove</code>,
-        <code>EditorScrolled</code>, <code>HighlightReady</code>, <code>HighlightDebounceElapsed</code>,
-        <code>AutosaveElapsed</code>, <code>AnimationTick</code></td></tr>
+        <code>EditorSave</code>, <code>EditorCheckboxToggle</code>, <code>EditorScrolled</code>,
+        <code>EditorCaretView</code>, <code>EditorScrollInterrupted</code>, <code>AutosaveElapsed</code>,
+        <code>AnimationTick</code></td></tr>
       <tr><td><b>PDF</b></td><td><code>PdfZoomChanged</code>, <code>PdfFitToWidth</code>,
         <code>PdfLoaded</code>, <code>PdfPageSizesLoaded</code>, <code>PdfRendered</code>,
         <code>PdfRenderFailed</code>, <code>PdfRenderSkipped</code>, <code>PdfScrolled</code>,
@@ -145,19 +145,25 @@ pub enum TrackerTab { Dashboard, Log, Projects, Gates, Reading, Config }</pre>
     </tbody>
   </table>
 
-  <h2>5 · Add a block type to the editor <span class="kicker-inline">the four-call-site contract</span></h2>
+  <h2>5 · Add a block type to the editor <span class="kicker-inline">the five-call-site contract</span></h2>
   <p>A callout / admonition block (<code>&gt; [!note]</code>) that draws a tinted background and a label.
   This is the task that teaches the layout system properly.</p>
   <table class="compact">
     <tbody>
-      <tr><td style="width:22%"><b>Touch, together</b></td><td>(1) <span class="fileref">editor/highlight.rs</span>
-        — parse it, assign a <code>block_id</code>; (2) the layout pass — block-range tracking and height
-        measurement including any spacer; (3) the draw pass — block backgrounds, clamped to the visible range;
-        (4) hit testing</td></tr>
-      <tr><td><b>Test</b></td><td>height permutations in <span class="fileref">editor/renderer.rs</span>, and a
-        highlighter test that the source text is preserved character for character</td></tr>
+      <tr><td style="width:22%"><b>Touch, together</b></td><td><span class="fileref">editor/highlight.rs</span> —
+        parse it, assign a <code>block_id</code>; then in <span class="fileref">renderer/</span>: (1)
+        <code>layout.rs::record_block_range</code>; (2) <code>layout.rs::line_body_height</code>; (3)
+        <code>layout.rs::requested_margins</code>; (4) <code>draw/blocks.rs::measure_blocks</code> for the card,
+        clamped to the visible range; (5) <code>scroll.rs::scroll_extent</code> for hit testing and scrolling.
+        Any new size goes in <code>metrics.rs</code></td></tr>
+      <tr><td><b>Test</b></td><td>a behaviour test in <span class="fileref">renderer/tests.rs</span> against the
+        draw calls it produces; add callouts to the document generator in
+        <span class="fileref">editor/test_docs.rs</span> so every property suite exercises them; keep
+        incremental-equals-fresh and source preservation passing in the highlighter</td></tr>
       <tr><td><b>Rules</b></td><td>Chapter 32 rule 3, all of it. If the new block's height depends on anything
-        new, it goes into <code>line_hash</code> or <code>resource_hash</code></td></tr>
+        new, it goes into <code>line_hash</code> or <code>resource_hash</code> and must change
+        <code>layout_revision</code>. Run the render transcript harness (Chapter 30) before and after, and read
+        the diff</td></tr>
     </tbody>
   </table>
 
@@ -212,7 +218,8 @@ pub enum TrackerTab { Dashboard, Log, Projects, Gates, Reading, Config }</pre>
     <thead><tr><th style="width:34%">When you need to…</th><th>Read</th></tr></thead>
     <tbody>
       <tr><td>understand a failure in saving or navigation</td><td>Chapters 8, 31 · <span class="fileref">core/src/vault.rs</span></td></tr>
-      <tr><td>make the editor faster, or stop making it slower</td><td>Chapters 15–17 · <span class="fileref">editor/layout_tree.rs</span>, <span class="fileref">layout_cache.rs</span>, <span class="fileref">renderer.rs</span></td></tr>
+      <tr><td>make the editor faster, or stop making it slower</td><td>Chapters 15–17 · <span class="fileref">editor/layout_tree.rs</span>, <span class="fileref">layout_cache.rs</span>, <span class="fileref">renderer/layout.rs</span>, <span class="fileref">renderer/draw/</span></td></tr>
+      <tr><td>fix a caret, click or selection bug</td><td>Chapters 13, 17 and 30 · <span class="fileref">renderer/flow.rs</span>, <span class="fileref">caret.rs</span>, and a failing test in <span class="fileref">renderer/tests.rs</span> first</td></tr>
       <tr><td>debug a PDF page that will not load</td><td>Chapter 23 · the pending sets in <span class="fileref">pdf_pane.rs</span></td></tr>
       <tr><td>debug a PDF jump that lands in the wrong place</td><td>Chapter 24 · the page-slot tests in <span class="fileref">app.rs</span></td></tr>
       <tr><td>work on cross-reference recognition</td><td>Chapter 21 · <span class="fileref">core/src/references.rs</span>, and <code>cargo run --example dump_refs</code></td></tr>

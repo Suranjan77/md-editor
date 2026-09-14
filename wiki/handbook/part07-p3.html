@@ -10,10 +10,10 @@
     <li>The shell: one loop, one router</li>
     <li>Subscriptions and the zero-idle-CPU rule</li>
     <li>DocBuffer, transactions, and word-sized undo</li>
-    <li>Hybrid preview: conceal and reveal</li>
+    <li>Hybrid preview and incremental highlighting</li>
     <li>The Fenwick height tree</li>
-    <li>Measure once: the line cache</li>
-    <li>The draw pass</li>
+    <li>Measure once: the line cache and the layout key</li>
+    <li>The widget: rhythm, rows, and the draw pass</li>
   </ol>
 </section>
 
@@ -122,12 +122,12 @@
     <thead><tr><th style="width:24%">Sub-state</th><th>Owns</th></tr></thead>
     <tbody>
       <tr><td><code>EditorPane</code><br><span class="fileref">editor_state.rs</span></td>
-        <td>The active <code>DocBuffer</code>, the highlighted lines and the generation id that discards
-        stale background highlights, the autosave timestamp, scroll offset, TOC visibility, and the
-        retained-buffer registry (<code>MAX_RETAINED_BUFFERS = 32</code>). Also defines the timing constants:
-        <code>HIGHLIGHT_DEBOUNCE = 80ms</code>, <code>AUTOSAVE_DEBOUNCE = 400ms</code>,
-        <code>AUTOSAVE_POLL = 100ms</code>, <code>LARGE_DOC_LINE_THRESHOLD = 1_000</code>,
-        <code>HUGE_DOC_LINE_THRESHOLD = 5_000</code>.</td></tr>
+        <td>The active <code>DocBuffer</code>; its <code>Highlighted</code> lines, updated incrementally and
+        synchronously on every edit; the image and math caches; the autosave timestamp, scroll offset, the
+        pending caret-reveal request, TOC visibility, and the retained-buffer registry
+        (<code>MAX_RETAINED_BUFFERS = 32</code>). <code>layout_revision()</code> names what the editor widget
+        lays out, so it can skip layout on frames where nothing changed. Also defines
+        <code>AUTOSAVE_DEBOUNCE = 400ms</code> and <code>AUTOSAVE_POLL = 100ms</code>.</td></tr>
       <tr><td><code>VaultState</code><br><span class="fileref">vault_state.rs</span></td>
         <td>Vault root, file entries, sidebar selection and folder expansion, the backlinks panel.</td></tr>
       <tr><td><code>UiState</code><br><span class="fileref">ui_state.rs</span></td>
@@ -189,16 +189,20 @@
         does not act on, so ordinary typing (handled by the focused editor widget) never spawns a redundant
         update cycle.</td><td>event-driven</td></tr>
       <tr><td><b>Toast timeout</b></td><td><code>ui.toast</code> is set</td><td>fires <code>ToastHide</code> after 3s</td></tr>
-      <tr><td><b>Highlight debounce</b></td><td>a highlight generation is pending</td><td>80&nbsp;ms tick</td></tr>
       <tr><td><b>Autosave poll</b></td><td><code>editor.autosave_pending_since</code> is set</td>
         <td>100&nbsp;ms tick; writes once 400&nbsp;ms of quiet have passed</td></tr>
       <tr><td><b>Search debounce</b></td><td>a query keystroke is pending</td><td>200&nbsp;ms tick</td></tr>
       <tr><td><b>Filesystem watcher</b></td><td>a vault is open</td>
         <td><code>notify</code> recursive watch, debounced 300&nbsp;ms</td></tr>
+      <tr><td><b>Scroll interrupt</b></td><td>the editor is gliding to reveal the caret — a wheel turn or click
+        fires <code>EditorScrollInterrupted</code> and hands the page back to you (Chapter 17)</td>
+        <td>event-driven</td></tr>
     </tbody>
   </table>
 
-  <p>Animation frames are armed the same way, from <code>motion.is_animating()</code> (Chapter 26).</p>
+  <p>Animation frames are armed the same way, from <code>motion.is_animating()</code> (Chapter 26). The
+  editor widget follows the same rule for the frames it schedules itself: it asks for one only while the caret
+  glides or fades, and for none once the caret rests lit.</p>
 
   <div class="box"><span class="tag">Why it is like this</span>
   <p>The autosave <em>poll</em> (100&nbsp;ms) is deliberately finer than the autosave <em>debounce</em>
@@ -220,7 +224,7 @@
       <g class="t-sm t-end">
         <text x="168" y="46">keyboard</text>
         <text x="168" y="76">fs watcher</text>
-        <text x="168" y="106">highlight debounce</text>
+        <text x="168" y="106">scroll interrupt</text>
         <text x="168" y="136">autosave poll</text>
         <text x="168" y="166">search debounce</text>
         <text x="168" y="196">toast timeout</text>
@@ -242,8 +246,8 @@
       <rect x="176" y="64" width="524" height="16" rx="2" class="s-fill2"/>
       <text x="438" y="76" class="t-xs t-mid">watching the vault; a 3s grace window suppresses the app's own writes</text>
 
-      <rect x="176" y="94" width="252" height="16" rx="2" fill="#22665c"/>
-      <text x="302" y="106" class="t-xs t-mid" fill="#ffffff">80 ms while a parse is pending</text>
+      <rect x="330" y="94" width="70" height="16" rx="2" fill="#22665c"/>
+      <text x="410" y="106" class="t-xs">while the page glides to the caret</text>
 
       <rect x="200" y="124" width="268" height="16" rx="2" fill="#22665c"/>
       <text x="334" y="136" class="t-xs t-mid" fill="#ffffff">100 ms poll → writes 400 ms after the last keystroke</text>

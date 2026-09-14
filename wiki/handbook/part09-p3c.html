@@ -25,7 +25,7 @@
   <h2>15.2 The structure</h2>
 
   <div class="srcref">native/src/editor/layout_tree.rs</div>
-<pre>pub struct HeightTree { tree: Vec&lt;f32&gt;, heights: Vec&lt;f32&gt; }
+<pre>pub struct HeightTree { tree: Vec&lt;i64&gt;, heights: Vec&lt;i64&gt; }   <span class="cmt">// fixed point, UNITS_PER_PX = 256</span>
 
 pub fn update_height(&amp;mut self, idx: usize, new_height: f32); <span class="cmt">// O(log N)</span>
 pub fn prefix_sum(&amp;self, idx: usize) -&gt; f32;                  <span class="cmt">// O(log N)</span>
@@ -169,22 +169,34 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
   <p>Note the one row where the tree is <em>worse</em>: updating a single height. That is the trade, and it
   is obviously worth it — updates happen when a line is remeasured, queries happen several times per frame.</p>
 
-  <p>Two implementation details in <code>update_height</code> are worth copying:</p>
+  <p>Three implementation details are worth copying:</p>
   <ul>
-    <li>It <b>short-circuits when the delta is below <code>1e-5</code></b>, so remeasuring a line to the same
-    height costs nothing at all. Given that most remeasures produce the identical number, this removes most
-    of the update traffic.</li>
-    <li>Each stored height is not just the text height: it is the sum of an optional block-top spacer (24px
-    before an inactive code or table block), the measured line height, and a table scrollbar gutter where
-    applicable. The tree's unit is “vertical space this line occupies”, not “font metrics”.</li>
+    <li><b>Heights are stored as fixed-point integers</b> — <code>UNITS_PER_PX = 256</code>, so every sum is
+    exact however many lines are added and removed. The public API still speaks <code>f32</code> pixels; only
+    the storage is integral.</li>
+    <li><code>update_height</code> <b>short-circuits when the delta is zero</b>, so remeasuring a line to the
+    same height costs nothing at all. Most remeasures produce the identical number, so this removes most of
+    the update traffic — and in integer units “identical” is exact.</li>
+    <li>Each stored height is a line's <b>whole extent</b>, not its text height: its collapsed top margin, a
+    caption band on the first line of a code block or table (<code>BLOCK_CAPTION_HEIGHT = 24</code>), its body,
+    and a scrollbar gutter under a table's last row (<code>HORIZONTAL_SCROLLBAR_GUTTER = 16</code>). The tree's
+    unit is “vertical space this line occupies”, not “font metrics”.</li>
   </ul>
+
+  <div class="box trap"><span class="tag">Trap — and the bug that made it one</span>
+  An earlier version of the tree stored <code>f32</code> heights. Floating-point addition is not exact, and a
+  Fenwick cell is adjusted by every update beneath it, so over a long editing session rounding error
+  accumulated in the cells until <code>prefix_sum</code> no longer agreed with the heights it was built from —
+  and hit testing picked the wrong line. A property test found it. Integers do not drift.</div>
 
   <div class="box try"><span class="tag">Try it</span>
   Open <span class="fileref">native/src/editor/layout_tree.rs</span> and read the tests at the bottom. They
-  assert two things: that <code>prefix_sum</code> agrees with a brute-force sum for random height vectors,
-  and that <code>find_line_at_y</code> is monotonic and correct at boundaries. That is exactly the right pair
-  of properties for a structure like this — an oracle test and an edge test — and it is a good template if
-  you ever add a similar index.</div>
+  assert two things: that <code>prefix_sum</code> agrees <b>exactly</b> with a brute-force sum for random height
+  vectors, and that <code>find_line_at_y</code> is monotonic and correct at boundaries. That is exactly the right
+  pair of properties for a structure like this — an oracle test and an edge test — and it is a good template if
+  you ever add a similar index. The renderer's property suite adds a third one level up:
+  <code>height_tree_agrees_with_line_visual_y</code> checks the tree against an uncached model of the whole
+  layout (Chapter 30).</div>
 
   <div class="box check"><span class="tag">Check yourself</span>
   <p>An image finishes loading and line 4 grows from 60 to 300 pixels. What has to happen?</p>
@@ -198,28 +210,35 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
 <section class="chapter" id="ch16">
   <div class="chead">
     <div class="num">Chapter 16<span class="pm">PMK-ch16-</span></div>
-    <h1>Measure once: the line cache</h1>
-    <div class="sub">Text shaping is the expensive part, so the answer is remembered — carefully</div>
+    <h1>Measure once: the line cache and the layout key</h1>
+    <div class="sub">Text shaping is the expensive part, so the answer is remembered — and when nothing changed, not even asked for</div>
   </div>
 
-  <p class="lead">Measuring a line means shaping glyphs: resolving the font, applying metrics, and doing word
-  wrap at the current width. It is the dominant cost of a layout pass, and in debug builds it is brutally
-  slow. <code>LineHeightCache</code> memoizes it per line.</p>
+  <p class="lead">Measuring a line means shaping glyphs: resolving the font, applying metrics, and breaking
+  rows at the current width. It is the dominant cost of layout. The editor avoids it at two levels:
+  <code>LineHeightCache</code> remembers each line's body height, and <code>LayoutKey</code> skips the layout
+  pass altogether on a frame whose inputs have not changed.</p>
+
+  <h2>16.1 The line cache</h2>
 
   <div class="srcref">native/src/editor/layout_cache.rs</div>
 <pre>pub struct LineHeightCache {
     pub hash: u64,               <span class="cmt">// line_hash ^ resource_hash</span>
     pub is_editing: bool,
     pub active_col: Option&lt;usize&gt;,
-    pub height: f32,
+    pub math_head: bool,         <span class="cmt">// whether the line carries its math block's height</span>
+    pub height: f32,             <span class="cmt">// the body alone</span>
     pub valid: bool,
 }</pre>
 
-  <p>A cached height is reused only when <b>all four</b> of <code>valid</code>, the combined hash,
-  <code>is_editing</code> and <code>active_col</code> match. Miss any one and the line is remeasured.</p>
+  <p>The cache holds a line's <b>body</b> — its rows of text, its image, its equation — and nothing that
+  depends on its neighbours. Margins do (Chapter 17), so they are never cached: a cheap walk recomputes them
+  on every layout. A cached body is reused only when <code>valid</code>, the combined hash,
+  <code>is_editing</code>, <code>active_col</code> and <code>math_head</code> <b>all</b> match. Miss any one
+  and the line is remeasured.</p>
 
   <figure>
-    <svg viewBox="0 0 720 320" role="img" aria-label="What feeds the line cache key: content hash, resource hash, editing state and active column combine into one entry, with layout width handled separately by invalidating every entry at once">
+    <svg viewBox="0 0 720 320" role="img" aria-label="What feeds the line cache key: content hash, resource hash and editing state combine into one entry for the line's body, with layout width handled separately by invalidating every entry at once">
       <defs>
         <marker id="a16" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
           <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
@@ -231,7 +250,7 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
 
       <rect x="16" y="24" width="230" height="80" rx="3" class="s-box"/>
       <text x="28" y="42" class="t-sm t-b">line_hash(line)</text>
-      <text x="28" y="58" class="t-xs">block flags · block_id · and for every span:</text>
+      <text x="28" y="58" class="t-xs">block flags (not block_id) · for every span:</text>
       <text x="28" y="72" class="t-xs">text · display_text · style flags · font size</text>
       <text x="28" y="86" class="t-xs">link / image / math metadata · id</text>
       <text x="28" y="100" class="t-xs" fill="#727b7e">“has anything about this line changed?”</text>
@@ -243,9 +262,9 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
       <text x="28" y="180" class="t-xs" fill="#727b7e">“has anything this line <tspan font-style="italic">draws</tspan> changed size?”</text>
 
       <rect x="16" y="208" width="230" height="62" rx="3" class="s-box"/>
-      <text x="28" y="226" class="t-sm t-b">is_editing · active_col</text>
-      <text x="28" y="242" class="t-xs">a revealed line is a different line: its</text>
-      <text x="28" y="256" class="t-xs">markers are visible and may re-wrap</text>
+      <text x="28" y="226" class="t-sm t-b">is_editing · active_col · math_head</text>
+      <text x="28" y="242" class="t-xs">a revealed line is a different line; the first</text>
+      <text x="28" y="256" class="t-xs">line of a math block carries the block's height</text>
 
       <!-- combine -->
       <path d="M246 64 L286 64 L286 148" class="s-line-2" marker-end="url(#a16)"/>
@@ -253,19 +272,19 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
       <path d="M246 238 L286 238 L286 172" class="s-line-2" marker-end="url(#a16)"/>
 
       <rect x="292" y="132" width="150" height="48" rx="3" class="s-fill"/>
-      <text x="367" y="152" class="t-sm t-b t-mid" fill="#11342f">cache entry</text>
+      <text x="367" y="152" class="t-sm t-b t-mid" fill="#11342f">cached body</text>
       <text x="367" y="168" class="t-mono-sm t-mid">line_hash ^ resource_hash</text>
 
       <path d="M442 156 L482 156" class="s-accent" marker-end="url(#a16)"/>
       <rect x="488" y="132" width="216" height="48" rx="3" class="s-box"/>
-      <text x="596" y="152" class="t-sm t-b t-mid">all four match?</text>
-      <text x="596" y="168" class="t-xs t-mid">reuse the height · otherwise reshape</text>
+      <text x="596" y="152" class="t-sm t-b t-mid">everything matches?</text>
+      <text x="596" y="168" class="t-xs t-mid">reuse the body height · otherwise reshape</text>
 
       <!-- width path -->
       <rect x="292" y="24" width="412" height="62" rx="3" class="s-amber"/>
       <text x="304" y="42" class="t-sm t-b" fill="#8a5c07">Layout width is handled separately</text>
       <text x="304" y="58" class="t-xs">when max_width moves by more than 0.5 px, <tspan class="t-b">every</tspan> entry's valid flag is cleared</text>
-      <text x="304" y="74" class="t-xs">— because word wrap changes everywhere at once, so per-line comparison would be waste</text>
+      <text x="304" y="74" class="t-xs">— because row breaks change everywhere at once, so per-line comparison would be waste</text>
 
       <!-- the trap -->
       <rect x="292" y="208" width="412" height="62" rx="3" class="s-warn"/>
@@ -274,28 +293,83 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
       <text x="304" y="256" class="t-xs">resource_hash the entry still “matches”, the stale height is reused, and the</text>
       <text x="304" y="268" class="t-xs">equation overlaps the paragraph below it — permanently.</text>
 
-      <text x="16" y="292" class="t-xs">The hash is a <tspan class="t-mono-sm">DefaultHasher</tspan>, chosen for speed. It is a cache key, not a cryptographic digest — collisions are a correctness</text>
-      <text x="16" y="306" class="t-xs">risk in principle and an accepted one in practice, exactly as they are in every layout cache of this shape.</text>
+      <text x="16" y="292" class="t-xs">Margins are <tspan class="t-b">not</tspan> in the entry: they depend on the neighbouring lines, so a cheap walk recomputes them on every layout.</text>
+      <text x="16" y="306" class="t-xs">The hash is a <tspan class="t-mono-sm">DefaultHasher</tspan>, chosen for speed — a cache key, not a cryptographic digest.</text>
     </svg>
-    <figcaption><b>Figure 16.1 — Four inputs, one entry, plus a global reset for width.</b> The
+    <figcaption><b>Figure 16.1 — What a cached body depends on, plus a global reset for width.</b> The
     <code>resource_hash</code> half is the non-obvious one: it exists because asynchronous media changes a
     line's height <em>after</em> the line itself has stopped changing.</figcaption>
   </figure>
 
+  <div class="box"><span class="tag">Why <code>block_id</code> is not in the hash</span>
+  <code>block_id</code> numbers blocks from the top of the document, so inserting a line above a block
+  renumbers it — and every block below — without changing anything a line's own height depends on. With
+  <code>block_id</code> in the hash, pressing <kbd>Enter</kbd> near the top of a long note would remeasure
+  every block beneath it.</div>
+
+  <h2>16.2 The layout key: skipping layout entirely</h2>
+
+  <p>The cache makes a layout walk cheap, but a walk over 37,000 lines is still 37,000 lookups — and Iced
+  rebuilds the view on every scroll and animation frame. So the widget remembers what its last layout was
+  computed from:</p>
+
+  <div class="srcref">native/src/editor/renderer/mod.rs</div>
+<pre>struct LayoutKey {
+    revision: u64,          <span class="cmt">// the app's revision of the lines, images and equations</span>
+    lines: usize,
+    width: u32,             <span class="cmt">// bits of the width laid out at</span>
+    focused: bool,
+    cursor: (usize, usize),
+}</pre>
+
+  <p>The revision is a promise from the app. <code>EditorPane::layout_revision()</code> hashes
+  <code>Highlighted::revision</code> (Chapter 14), the number of images and equations in its caches, and the
+  display scale, and hands the result to the widget through <code>Editor::layout_revision(u64)</code>. Images
+  and equations are only ever added, or all dropped when the scale changes, so those counts identify them.
+  While the revision, the width, focus and the caret are all the same as last time, <b>layout is skipped
+  entirely</b>.</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:62%">Frame · 37,009-line document · release build</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td>Cold layout</td><td class="num">15.5 ms</td></tr>
+      <tr><td>Full walk, every body cached</td><td class="num">15.4 ms</td></tr>
+      <tr><td><b>Nothing changed — layout skipped</b></td><td class="num"><b>47 ns</b></td></tr>
+      <tr><td>Drawing one screen</td><td class="num">0.25 ms</td></tr>
+    </tbody>
+  </table>
+
+  <p>Read the table from the bottom. The frames that matter most — scrolling and animation, which change
+  nothing a layout depends on — cost 47 nanoseconds instead of fifteen milliseconds, which at 60&nbsp;fps
+  would have been almost the entire frame budget. The numbers come from an ignored test you can run yourself
+  (Chapter 30).</p>
+
+  <p>One related detail: <code>Widget::size()</code> reports the editor's height as <code>Shrink</code>. The
+  real height is only known once the document is laid out at the width the widget actually gets, so nothing
+  ever measures the document at a guessed width.</p>
+
   <div class="box trap"><span class="tag">Trap</span>
-  <b>If you add state that affects a line's height, add it to <code>line_hash</code> or
-  <code>resource_hash</code>.</b> Otherwise you have silently made the layout pass do a full shaping call for
-  every line on every frame — or, worse, kept a stale height forever. Neither failure produces an error
-  message; the first shows up as “debug builds crawl” and the second as “the layout is subtly wrong
-  sometimes”.</div>
+  <b>If you add state that affects a line's height, it has to reach both levels.</b> Add it to
+  <code>line_hash</code> or <code>resource_hash</code>, <em>and</em> make sure changing it changes
+  <code>EditorPane::layout_revision</code> or <code>LayoutKey</code>. Miss the first and a stale height is
+  reused; miss the second and the widget never even looks — it paints the previous layout. Neither failure
+  produces an error message; both show up as “the layout is subtly wrong sometimes”.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>A LaTeX bitmap for line 900 arrives while you are scrolling. Which of the two levels notices, and how?</p>
+  <p class="answer"><b>Answer:</b> both, in order. The math cache on <code>EditorPane</code> gains an entry, so
+  <code>layout_revision</code> changes and the <code>LayoutKey</code> no longer matches — the widget walks the
+  lines again. During that walk line 900's <code>resource_hash</code> now includes the bitmap's dimensions, so
+  its cache entry misses and that one body is remeasured; every other line is a hit. The next scroll frame
+  matches the new key and skips layout again.</p></div>
 </section>
 
 <!-- ---------- CH 17 ---------- -->
 <section class="chapter" id="ch17">
   <div class="chead">
     <div class="num">Chapter 17<span class="pm">PMK-ch17-</span></div>
-    <h1>The draw pass</h1>
-    <div class="sub">The one rule that keeps a 10,000-line note scrolling: draw only what is visible</div>
+    <h1>The widget: rhythm, rows, and the draw pass</h1>
+    <div class="sub">One place computes each fact, everything else asks — and the draw pass only asks about what is visible</div>
   </div>
 
   <p class="lead"><code>Editor</code> implements <code>iced::advanced::Widget</code> — not
@@ -303,19 +377,265 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
   canvas abstraction does not provide. Content is capped at <code>MAX_CONTENT_WIDTH = 880.0</code> so prose
   keeps a readable measure in a wide window.</p>
 
-  <h2>17.1 Two passes with different budgets</h2>
-
-  <p><b>Layout</b> walks every line once — but every line is a cache hit unless something about it actually
-  changed (Chapter 16), and the walk maintains <code>block_ranges</code> for O(1) block lookups. Total height
-  is <code>TOP_PAD + prefix_sum(n) + 80.0</code>.</p>
-
-  <p><b>Draw</b> must never walk the document. It walks the viewport:</p>
+  <p>The widget used to be one 4,400-line <code>renderer.rs</code>. It is now
+  <span class="fileref">native/src/editor/renderer/</span>, one module per concern, and it rests on four
+  principles worth reading before any of its code:</p>
   <ol class="tight">
-    <li><code>find_line_at_y(viewport.y - bounds.y - TOP_PAD)</code> gives <code>visible_start</code>; the
-    same call at the viewport's bottom edge gives <code>visible_end</code>;</li>
-    <li>block backgrounds are built only for blocks intersecting that range;</li>
-    <li>lines are drawn starting at <code>prefix_sum(visible_start)</code> and stop once the y position
-    passes the viewport bottom.</li>
+    <li><b>One source of truth per fact.</b> Row breaks, baselines, margins, scroll extents and the caret's
+    position are each computed in exactly one place; everything else asks.</li>
+    <li><b>Layout is a pure function</b> of the lines, the width, the caret and the loaded resources. Every
+    cache is checked against a cold recomputation by a property test.</li>
+    <li><b>Invariants before code.</b> Behaviour is pinned by seeded property suites (Chapter 30) as well as by
+    examples.</li>
+    <li><b>Exact over estimated.</b> Positions come from the shaper and the font's own metrics; motion comes
+    from closed-form springs (Chapter 26), not frame-by-frame integration.</li>
+  </ol>
+
+  <h2>17.1 The module map</h2>
+
+  <table class="compact">
+    <thead><tr><th style="width:44%">To change…</th><th>Look in <span class="fileref">renderer/</span></th></tr></thead>
+    <tbody>
+      <tr><td>how tall a line's body is</td><td><code>layout.rs</code> — <code>line_body_height()</code></td></tr>
+      <tr><td>space between lines and blocks</td><td><code>layout.rs</code> — <code>requested_margins()</code>, <code>MarginWalk</code>; values in <code>metrics.rs</code></td></tr>
+      <tr><td>where rows break, row height, baselines</td><td><code>flow.rs</code></td></tr>
+      <tr><td>any size two passes must agree on</td><td><code>metrics.rs</code></td></tr>
+      <tr><td>when a span reveals its markdown source</td><td><code>spans.rs</code></td></tr>
+      <tr><td>where the caret lands, or what a click selects</td><td><code>flow.rs</code> (inline lines), <code>caret.rs</code> (code lines, up/down)</td></tr>
+      <tr><td>how the caret moves and blinks</td><td><code>glide.rs</code> — Chapter 26</td></tr>
+      <tr><td>how the page scrolls to the caret</td><td><code>reveal.rs</code> (where) and <code>app.rs::reveal_caret()</code> (how)</td></tr>
+      <tr><td>block cards, captions, code lines, table rows</td><td><code>draw/blocks.rs</code>, <code>draw/captions.rs</code></td></tr>
+      <tr><td>paragraph text, images, equations, checkboxes</td><td><code>draw/inline.rs</code></td></tr>
+      <tr><td>the selection shape, search highlights, the caret's look</td><td><code>draw/overlays.rs</code></td></tr>
+      <tr><td>a key binding inside the editor</td><td><code>events.rs</code></td></tr>
+      <tr><td>horizontal scrolling of code, tables or math</td><td><code>scroll.rs</code> — <code>scroll_extent()</code></td></tr>
+    </tbody>
+  </table>
+
+  <p><code>mod.rs</code> holds <code>Editor</code>, its <code>State</code> and <code>LayoutKey</code>, and a thin
+  <code>Widget</code> impl whose methods only delegate to the modules above. <code>measure.rs</code> does the
+  shaping and reads font metrics, <code>selection.rs</code> extracts the selected text, and
+  <code>testing.rs</code>, <code>tests.rs</code> and <code>properties.rs</code> belong to Chapter 30.</p>
+
+  <h2>17.2 Typographic rhythm</h2>
+
+  <p>Every vertical measure in a document is a multiple of <code>GRID = 4px</code>, so baselines in different
+  blocks share one grid. The numbers live in <span class="fileref">renderer/metrics.rs</span>:</p>
+  <ul>
+    <li><b>Row height</b> — <code>row_height(font_size)</code> interpolates line height from 1.6 at the 17px
+    body size down to 1.2 at 34px, because large type needs less leading, and snaps to the grid. A body row
+    is 28px; code rows are <code>row_height(15)</code>.</li>
+    <li><b>Blank lines</b> are paragraph gaps, <code>PARAGRAPH_GAP = 20px</code> — still tall enough to hold the
+    caret.</li>
+    <li><b>Margins</b> — each line asks for space above and below by kind: headings from
+    <code>HEADING_MARGINS</code> (48/16px for <code>#</code> down to 24/8px), and code blocks, tables, block math,
+    images, rules and quote runs <code>BLOCK_MARGIN = 16px</code>.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 720 262" role="img" aria-label="The same paragraph, heading and code block laid out twice: with margins summed the gaps are 60 and 28 pixels; with margins collapsed, as the editor does, they are 40 and 16 pixels, and the blank line counts toward the first gap">
+      <text x="16" y="14" class="t-xs t-b" fill="#a03730">SUMMED — WHAT THE EDITOR DOES NOT DO</text>
+      <text x="376" y="14" class="t-xs t-b" fill="#22665c">COLLAPSED — WHAT IT DOES</text>
+
+      <!-- left stack, drawn 1 unit = 1 px -->
+      <rect x="40" y="28" width="150" height="28" rx="2" class="s-box"/>
+      <text x="50" y="46" class="t-sm">A paragraph line</text>
+      <rect x="40" y="56" width="150" height="20" class="s-fill2"/>
+      <text x="115" y="69" class="t-xs t-mid">blank line · 20</text>
+      <rect x="40" y="76" width="150" height="40" class="s-amber"/>
+      <text x="115" y="99" class="t-xs t-mid">heading asks 40 above</text>
+      <rect x="40" y="116" width="150" height="36" rx="2" class="s-box"/>
+      <text x="50" y="139" class="t-sm t-b">## A heading</text>
+      <rect x="40" y="152" width="150" height="12" class="s-amber"/>
+      <text x="115" y="161" class="t-xs t-mid">asks 12 below</text>
+      <rect x="40" y="164" width="150" height="16" class="s-amber"/>
+      <text x="115" y="175" class="t-xs t-mid">code asks 16 above</text>
+      <rect x="40" y="180" width="150" height="40" rx="3" class="s-box"/>
+      <text x="50" y="203" class="t-mono-sm">```rust …</text>
+
+      <path d="M198 56 L204 56 L204 116 L198 116" class="s-red"/>
+      <text x="212" y="84" class="t-xs t-b t-red">20 + 40 = 60</text>
+      <text x="212" y="98" class="t-xs">the blank line and the</text>
+      <text x="212" y="110" class="t-xs">heading's margin stack</text>
+      <path d="M198 152 L204 152 L204 180 L198 180" class="s-red"/>
+      <text x="212" y="170" class="t-xs t-b t-red">12 + 16 = 28</text>
+
+      <!-- right stack -->
+      <rect x="400" y="28" width="150" height="28" rx="2" class="s-box"/>
+      <text x="410" y="46" class="t-sm">A paragraph line</text>
+      <rect x="400" y="56" width="150" height="20" class="s-fill2"/>
+      <text x="475" y="69" class="t-xs t-mid">blank line · 20</text>
+      <rect x="400" y="76" width="150" height="20" class="s-fill"/>
+      <text x="475" y="89" class="t-xs t-mid">+ 20 to reach 40</text>
+      <rect x="400" y="96" width="150" height="36" rx="2" class="s-box"/>
+      <text x="410" y="119" class="t-sm t-b">## A heading</text>
+      <rect x="400" y="132" width="150" height="16" class="s-fill"/>
+      <text x="475" y="143" class="t-xs t-mid">collapsed · 16</text>
+      <rect x="400" y="148" width="150" height="40" rx="3" class="s-box"/>
+      <text x="410" y="171" class="t-mono-sm">```rust …</text>
+
+      <path d="M558 56 L564 56 L564 96 L558 96" class="s-accent"/>
+      <text x="572" y="74" class="t-xs t-b t-sage">max(0, 40) = 40</text>
+      <text x="572" y="88" class="t-xs">the blank line counts toward it</text>
+      <path d="M558 132 L564 132 L564 148 L558 148" class="s-accent"/>
+      <text x="572" y="143" class="t-xs t-b t-sage">max(12, 16) = 16</text>
+
+      <rect x="16" y="232" width="688" height="26" rx="3" class="s-fill2"/>
+      <text x="28" y="249" class="t-xs">The space between two lines is the <tspan class="t-b">larger</tspan> of what they ask for, never the sum — and the first line of a document gets no top margin at all.</text>
+    </svg>
+    <figcaption><b>Figure 17.1 — Margins collapse.</b> Summing margins is the obvious implementation, and it
+    makes every heading that follows a blank line float away from its own section. Collapsing them is what
+    lets a writer leave blank lines wherever they like without changing the page.</figcaption>
+  </figure>
+
+  <p>The whole collapsed margin is realised above the lower line, so a block's box starts exactly at its
+  content, and the painters read margins from <code>State::line_margins</code> rather than deriving them
+  again.</p>
+
+  <h2>17.3 Inline layout: the <code>Flow</code></h2>
+
+  <p>Every line that is not a code line, a rendered table row or rendered block math is laid out by
+  <code>Flow::build</code> in <span class="fileref">renderer/flow.rs</span>, and <b>that is the only place rows
+  are broken</b>. Line heights, painting, the caret, selection and search highlights, and click and hover hit
+  testing all read the same <code>Flow</code> — so the caret always sits on the painted text, and a click
+  lands where it is drawn.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 250" role="img" aria-label="One markdown list item laid out as a Flow: two rows, a hanging indent, concealed markers with zero width, a shared baseline per row, and four consumers — layout, painting, the caret and hit testing — all reading the same rows and positions">
+      <defs>
+        <marker id="a17b" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">SOURCE</text>
+      <text x="62" y="14" class="t-mono-sm">- Read **the flow** before painting anything</text>
+
+      <text x="16" y="38" class="t-xs t-b" fill="#22665c">THE FLOW — ROWS, AND ITEMS IN SOURCE ORDER</text>
+
+      <!-- column ranges -->
+      <g class="t-xs t-mid">
+        <text x="34" y="56">0–2</text><text x="64" y="56">2–7</text>
+        <text x="86" y="56" fill="#8a5c07">7–9</text><text x="119" y="56">9–17</text>
+        <text x="152" y="56" fill="#8a5c07">17–19</text><text x="180" y="56">19–27</text>
+      </g>
+
+      <!-- rows -->
+      <rect x="20" y="62" width="300" height="30" rx="2" class="s-fill2"/>
+      <rect x="20" y="94" width="300" height="30" rx="2" class="s-fill2"/>
+      <text x="290" y="81" class="t-xs">row 0</text>
+      <text x="290" y="113" class="t-xs">row 1</text>
+      <line x1="20" y1="82" x2="280" y2="82" class="s-dash"/>
+      <line x1="20" y1="114" x2="280" y2="114" class="s-dash"/>
+
+      <!-- row 0 items -->
+      <rect x="26" y="66" width="16" height="22" rx="2" class="s-box"/>
+      <text x="34" y="82" class="t t-mid" style="font-size:13px">•</text>
+      <rect x="46" y="66" width="36" height="22" rx="2" class="s-box"/>
+      <text x="49" y="82" class="t" style="font-size:13px">Read</text>
+      <line x1="86" y1="63" x2="86" y2="91" stroke="#8a5c07" stroke-width="1.8"/>
+      <rect x="90" y="66" width="58" height="22" rx="2" class="s-box"/>
+      <text x="93" y="82" class="t t-b" style="font-size:13px">the flow</text>
+      <line x1="152" y1="63" x2="152" y2="91" stroke="#8a5c07" stroke-width="1.8"/>
+      <rect x="156" y="66" width="48" height="22" rx="2" class="s-box"/>
+      <text x="160" y="82" class="t" style="font-size:13px">before</text>
+
+      <!-- row 1: hanging indent -->
+      <path d="M46 60 L46 128" class="s-accent" stroke-dasharray="3 2"/>
+      <rect x="50" y="98" width="118" height="22" rx="2" class="s-box"/>
+      <text x="53" y="114" class="t" style="font-size:13px">painting anything</text>
+      <text x="109" y="138" class="t-xs t-mid">27–44</text>
+
+      <g class="t-xs">
+        <text x="20" y="160"><tspan class="t-b" fill="#8a5c07">amber ticks</tspan> — concealed <tspan class="t-mono-sm">**</tspan> markers: items with columns, zero width</text>
+        <text x="20" y="174"><tspan class="t-b" fill="#22665c">dashed sage</tspan> — hanging indent: row 1 starts under the text, not the bullet</text>
+        <text x="20" y="188"><tspan class="t-b">dashed grey</tspan> — one baseline per row, from the font's own metrics</text>
+      </g>
+
+      <!-- consumers -->
+      <rect x="420" y="30" width="284" height="34" rx="3" class="s-box"/>
+      <text x="432" y="45" class="t-sm t-b">layout.rs — the body height</text>
+      <text x="432" y="58" class="t-xs">row heights, summed once, for the height tree</text>
+      <rect x="420" y="72" width="284" height="34" rx="3" class="s-box"/>
+      <text x="432" y="87" class="t-sm t-b">draw/inline.rs — painting</text>
+      <text x="432" y="100" class="t-xs">each item at its x, on its row's baseline</text>
+      <rect x="420" y="114" width="284" height="34" rx="3" class="s-box"/>
+      <text x="432" y="129" class="t-sm t-b">caret(col, affinity)</text>
+      <text x="432" y="142" class="t-xs">the caret, the selection shape, search highlights</text>
+      <rect x="420" y="156" width="284" height="34" rx="3" class="s-box"/>
+      <text x="432" y="171" class="t-sm t-b">col_at(x, y) → (col, affinity)</text>
+      <text x="432" y="184" class="t-xs">clicks, drags and hover</text>
+
+      <g class="s-line-2">
+        <path d="M420 47 L372 47"/><path d="M420 89 L372 89"/>
+        <path d="M420 131 L372 131"/><path d="M420 173 L372 173"/>
+        <path d="M372 47 L372 173"/>
+      </g>
+      <path d="M372 93 L326 93" class="s-accent" marker-end="url(#a17b)"/>
+
+      <rect x="16" y="204" width="688" height="40" rx="3" class="s-fill"/>
+      <text x="28" y="220" class="t-xs">Built once by <tspan class="t-mono-sm">Flow::build</tspan>, read by everything. Nothing on the right wraps text itself — which is why the caret</text>
+      <text x="28" y="234" class="t-xs">sits on the painted glyphs (invariant I1) and a click lands exactly where the caret is drawn (invariant I2).</text>
+    </svg>
+    <figcaption><b>Figure 17.2 — One line, one <code>Flow</code>, four readers.</b> An item records its x, its
+    row and the source columns it covers. Concealed markers are real items with no width, which is how a
+    column inside <code>**</code> still has a place to put the caret when the line is revealed.</figcaption>
+  </figure>
+
+  <ul>
+    <li><b>Shaping</b> — prose is shaped with <code>Shaping::Advanced</code> (kerning, ligatures); monospace keeps
+    <code>Shaping::Basic</code> so columns line up as typed. Each word is shaped once per font and size, and the
+    x of every character boundary inside it comes from the shaper's own <code>grapheme_position</code>
+    (<code>measure.rs::word_offsets</code>), so the caret sits exactly between kerned glyphs and never inside a
+    cluster.</li>
+    <li><b>Breaking</b> follows Unicode line-break opportunities (UAX #14, <code>unicode-linebreak</code>):
+    between words, after hyphens and dashes, inside long URLs. Trailing whitespace hangs past the right edge; a
+    word wider than a whole row breaks between grapheme clusters.</li>
+    <li><b>Hanging indents</b> — wrapped rows of a list item, task or numbered item start under its text, not
+    under its marker (the <code>is_list_marker</code> flag from Chapter 14).</li>
+    <li><b>Balanced headings</b> — a wrapped heading nobody is editing is re-laid at the narrowest width that
+    keeps the same number of rows (bisection, 14 steps), so its rows come out even instead of ragged. A heading
+    being edited keeps greedy breaks, so text does not jump between rows while you type.</li>
+    <li><b>Row height and baselines</b> — a row is as tall as the larger of <code>row_height</code> for its
+    largest text and its content (plus <code>INLINE_MATH_ROW_PADDING</code> with an equation on it), snapped up
+    to the grid. <code>measure.rs::font_metrics</code> reads ascent, descent and x-height from the face the
+    shaper uses; every item on a row shares its baseline, and checkboxes and inline equations centre on the
+    <b>axis</b>, half an x-height above it. Painted text snaps to device pixels.</li>
+    <li><b>Columns ⇄ x</b> — <code>caret(col, affinity)</code> places a column; <code>col_at(x, y)</code> returns a
+    column <em>and</em> an affinity. Past the end of a row that wraps it answers <code>Upstream</code>, so the
+    caret stays on the clicked row (Figure 13.2).</li>
+  </ul>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  <b>Never measure or break inline text outside <code>flow.rs</code>.</b> A second wrapper — in a painter, a
+  hit tester, a highlight — will agree with the first on most lines and disagree on a few: a kerned pair, a
+  hyphen, a checkbox. Where they disagree the caret is drawn beside the text instead of in it, or a click
+  selects the character next to the one under the pointer. Laying inline text out once is how the caret,
+  clicks and painting were made to agree. If you need to know where text is, ask the line's
+  <code>Flow</code>.</div>
+
+  <h2>17.4 Two passes with different budgets</h2>
+
+  <p><b>Layout</b> — <code>layout_lines</code> in <span class="fileref">renderer/layout.rs</span> — runs only when
+  the <code>LayoutKey</code> changed (Chapter 16). It walks all lines, taking each body from
+  <code>LineHeightCache</code> unless something about the line changed, recomputing margins, and filling the
+  height tree and <code>block_ranges</code>. Total height is <code>TOP_PAD + prefix_sum(n) + BOTTOM_PAD</code>,
+  24 and 80&nbsp;px.</p>
+
+  <p><b>Draw</b> — <span class="fileref">renderer/draw/</span> — must never walk the document. It walks the
+  viewport:</p>
+  <ol class="tight">
+    <li><code>find_line_at_y(viewport.y - bounds.y - TOP_PAD)</code> gives <code>visible_start</code>; the same
+    call at the viewport's bottom edge gives <code>visible_end</code>;</li>
+    <li><code>measure_blocks()</code> measures only blocks with a line in that range, and their chrome — cards,
+    captions, language badges — is painted first;</li>
+    <li>each visible line is laid out <b>once</b> into a <code>LineBox</code>, its <code>Flow</code> included, and
+    every step below reads those boxes;</li>
+    <li>the selection's pieces over text are painted under everything;</li>
+    <li>each line gets its search highlights, then one painter chosen by kind — rule, code line, table row,
+    block math, or flow — then the caret;</li>
+    <li>the selection's pieces over tables, images and equations are painted in a layer of their own, and block
+    scrollbars last.</li>
   </ol>
 
   <figure>
@@ -364,7 +684,7 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
       <rect x="400" y="24" width="304" height="80" rx="3" class="s-warn"/>
       <text x="412" y="42" class="t-sm t-b" fill="#a03730">if draw iterated the document</text>
       <text x="412" y="60" class="t-xs">10,000 line iterations, 10,000 style resolutions,</text>
-      <text x="412" y="74" class="t-xs">block backgrounds computed for every block —</text>
+      <text x="412" y="74" class="t-xs">block chrome measured for every block —</text>
       <text x="412" y="88" class="t-xs">every frame, at 60 fps, to paint ~40 visible lines.</text>
 
       <rect x="400" y="116" width="304" height="80" rx="3" class="s-fill"/>
@@ -374,65 +694,167 @@ pub fn get_height(&amp;self, idx: usize) -&gt; f32;                  <span class
       <text x="412" y="182" class="t-xs">Cost is proportional to the <tspan class="t-b">window</tspan>, not the file.</text>
 
       <rect x="400" y="208" width="304" height="86" rx="3" class="s-fill2"/>
-      <text x="412" y="226" class="t-xs t-b">Still O(N), and that is fine:</text>
-      <text x="412" y="242" class="t-xs">the <tspan class="t-b">layout</tspan> pass does walk every line — but each one is</text>
-      <text x="412" y="256" class="t-xs">a cache hit, so it is 10,000 hash comparisons rather</text>
-      <text x="412" y="270" class="t-xs">than 10,000 glyph-shaping calls. Two orders of</text>
-      <text x="412" y="284" class="t-xs">magnitude apart, and only one of them is per-frame.</text>
+      <text x="412" y="226" class="t-xs t-b">And layout, on most frames, does not run at all:</text>
+      <text x="412" y="242" class="t-xs">a scroll changes nothing in the LayoutKey, so the walk</text>
+      <text x="412" y="256" class="t-xs">is skipped. When it does run, each line is a cache hit —</text>
+      <text x="412" y="270" class="t-xs">10,000 lookups rather than 10,000 shaping calls,</text>
+      <text x="412" y="284" class="t-xs">and only on the frames where something changed.</text>
     </svg>
-    <figcaption><b>Figure 17.1 — Culling.</b> The draw pass never learns how long the document is. This is
-    the rule stated in the contributor guidelines as “full-document work in the draw pass is a performance
+    <figcaption><b>Figure 17.3 — Culling.</b> The draw pass never learns how long the document is. This is the
+    rule stated in the contributor guidelines as “full-document work in the draw pass is a performance
     regression”, and it is the single easiest thing to break by accident when adding a new block type.</figcaption>
   </figure>
 
-  <h2>17.2 Four more things the widget does</h2>
+  <h2>17.5 The selection, and why it needs layers</h2>
+
+  <p>A selection is painted as <b>one continuous shape</b>: a full-height band per visual row it touches,
+  bridged across the space between lines wherever neighbouring bands overlap, with corners rounded only where
+  they stick out. A selection that continues past the end of a line gets an 8&nbsp;px tail there, standing for
+  the selected line break, so selected blank lines stay visible.</p>
+
+  <p>Tables, images and equations are selected whole, and their bands are painted <b>over</b> them — an opaque
+  table header or picture would hide a band beneath it — while bands over text go <b>under</b> it, where a
+  translucent band on top would dim the glyphs. Doing that correctly depends on how renderers really
+  paint.</p>
+
+  <div class="box trap"><span class="tag">Trap — layers, not clip rectangles</span>
+  <p>A renderer paints each layer's <b>quads, then its images, then its text</b>, whatever order they were drawn
+  in. Anything that must appear over an image or text needs a <em>later layer</em>, not a later call.</p>
+  <p>Clipping has the same shape. Clip with a layer (<code>renderer.with_layer</code>), never with the clip
+  rectangle passed to <code>fill_text</code> or <code>draw_image</code>: no iced backend clips an image to it,
+  and a text clip rectangle <em>inside</em> the enclosing layer switches tiny-skia's clipping off. So wide code,
+  tables and equations are painted inside a layer bounded by the block's viewport
+  (<code>draw/blocks.rs::block_clip</code>), with their text drawn using the frame's viewport as its clip
+  rectangle. The test recorder models both rules, so <code>Call::paint_order</code> and each call's
+  <code>clip</code> show what a renderer really puts on screen.</p></div>
+
+  <h2>17.6 Revealing the caret</h2>
+
+  <p>Keeping the caret in view is a two-party problem. The widget knows exactly where the caret is drawn but
+  cannot scroll the scrollable it sits in; the app can scroll, but cannot see where the caret is drawn. They
+  meet halfway, and nothing is estimated — there is no per-keystroke centring and no guess at the editor's
+  width.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 206" role="img" aria-label="The caret reveal handshake: the app requests a reveal, the widget answers on the next redraw with where the caret is drawn, and the app scrolls with a spring only when the caret has entered a comfort margin at the edge of the viewport">
+      <defs>
+        <marker id="a17d" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">THE HANDSHAKE</text>
+      <rect x="16" y="24" width="390" height="44" rx="3" class="s-box"/>
+      <text x="28" y="41" class="t-sm t-b">1 · app — a command wants the caret visible</text>
+      <text x="28" y="57" class="t-mono-sm">EditorPane::request_reveal(Reveal::Nearest)</text>
+      <path d="M210 68 L210 84" class="s-line" marker-end="url(#a17d)"/>
+
+      <rect x="16" y="88" width="390" height="44" rx="3" class="s-fill"/>
+      <text x="28" y="105" class="t-sm t-b" fill="#11342f">2 · widget — next RedrawRequested, layout final</text>
+      <text x="28" y="121" class="t-mono-sm">EditorCaretView(CaretView { caret_top, caret_bottom, … })</text>
+      <path d="M210 132 L210 148" class="s-line" marker-end="url(#a17d)"/>
+
+      <rect x="16" y="152" width="390" height="44" rx="3" class="s-box"/>
+      <text x="28" y="169" class="t-sm t-b">3 · app — reveal_caret</text>
+      <text x="28" y="185" class="t-mono-sm">viewport_top_for(reveal) → clamp → Spring towards it</text>
+
+      <text x="560" y="14" class="t-xs t-b t-mid" fill="#22665c">THE VIEWPORT · Reveal::Nearest</text>
+      <rect x="470" y="24" width="180" height="172" rx="2" class="s-box"/>
+      <rect x="470" y="24" width="180" height="36" class="s-amber"/>
+      <rect x="470" y="160" width="180" height="36" class="s-amber"/>
+      <text x="478" y="46" class="t-xs" fill="#8a5c07">comfort margin</text>
+      <text x="478" y="182" class="t-xs" fill="#8a5c07">comfort margin</text>
+      <text x="658" y="40" class="t-xs">min(2 rows,</text>
+      <text x="658" y="52" class="t-xs">¼ viewport)</text>
+
+      <line x1="520" y1="100" x2="520" y2="118" stroke="#22665c" stroke-width="2"/>
+      <text x="528" y="113" class="t-xs">caret here: no scroll</text>
+      <line x1="630" y1="168" x2="630" y2="186" stroke="#a03730" stroke-width="2"/>
+      <text x="658" y="174" class="t-xs">scroll just</text>
+      <text x="658" y="186" class="t-xs">enough</text>
+    </svg>
+    <figcaption><b>Figure 17.4 — Where the caret is, answered by the one party that knows.</b>
+    <code>Reveal::Center</code> skips the comfort test and puts the caret mid-view. A target more than two
+    viewports away cuts to one viewport short and glides the rest.</figcaption>
+  </figure>
+
+  <ol class="tight">
+    <li>A command that should keep the caret visible calls <code>EditorPane::request_reveal</code> —
+    <code>Reveal::Nearest</code> for typing and caret movement, <code>Reveal::Center</code> for search navigation,
+    table-of-contents clicks and heading links. This bumps <code>reveal_request</code>; while a request is
+    unanswered the stronger mode wins, so a jump that centres is not downgraded by the cursor move made on the
+    way.</li>
+    <li>On the next <code>RedrawRequested</code> — layout final, viewport known — the widget answers with a
+    <code>CaretView</code>: the caret's top and bottom, the viewport's top and height, and its own height, all
+    relative to the widget.</li>
+    <li><code>app.rs::reveal_caret</code> asks <code>CaretView::viewport_top_for</code>. <code>Nearest</code>
+    scrolls only if the caret is within the comfort margin of an edge, and then only by the amount that restores
+    the margin; <code>Center</code> puts it mid-view.</li>
+    <li>The target is clamped to the scrollable range and reached with a <code>Spring</code>
+    (<code>SCROLL_STIFFNESS</code>, Chapter 26), retargeted with its momentum if typing continues mid-glide. A
+    wheel turn or click fires <code>EditorScrollInterrupted</code> and hands the page back (Chapter 12).</li>
+  </ol>
+
+  <h2>17.7 Three more things the widget does</h2>
 
   <h3>Inline and display LaTeX</h3>
-  <p><code>$...$</code> and <code>$$...$$</code> are rendered by <code>ratex-render</code> into bitmaps,
-  cached on <span class="fileref">app.rs</span> by <code>(tex, scale_factor)</code> and delivered back
-  through <code>Message::MathRendered</code>. Display math is centred with its own background padding;
-  inline math sits on the text baseline. Because the render is asynchronous, its arrival changes
-  <code>resource_hash</code> and the affected lines are remeasured — the loop closed in Chapter 16.</p>
+  <p><code>$...$</code> and <code>$$...$$</code> are rendered by <code>ratex-render</code> into bitmaps, cached on
+  <code>EditorPane</code> by TeX source for the current display scale — flushed and re-rendered when the scale
+  changes — and delivered back through <code>Message::MathRendered</code>. Display math is centred with its own
+  padding; inline math centres on the row's axis. Because the render is asynchronous, its arrival changes the
+  layout revision and <code>resource_hash</code>, and the affected line is remeasured — the loop closed in
+  Chapter 16.</p>
 
   <h3>Wide blocks scroll independently</h3>
   <p>Tables, code blocks and wide equations neither wrap awkwardly nor stretch the layout. Each block keeps
-  <b>its own horizontal scroll offset</b>, clamped to its own content width, so a wide table scrolls sideways
-  under the mouse wheel while vertical document scrolling is unaffected.</p>
+  <b>its own horizontal scroll offset</b>, clamped to its own content width — <code>scroll.rs::scroll_extent</code>
+  is the one answer to how wide a block is and how much of it shows — so a wide table scrolls sideways under the
+  mouse wheel while vertical document scrolling is unaffected. A code block scrolls by the least amount that
+  keeps the caret <code>CODE_CARET_MARGIN</code> (24&nbsp;px) inside its viewport, and an equation's number sits
+  outside the equation's viewport, so a scrolled equation never runs under it.</p>
 
   <h3>Hit testing and visual movement</h3>
   <ul>
-    <li>Click and drag y positions map to line indices through <code>HeightTree</code>.</li>
-    <li>Horizontal wheel and scrollbar interaction resolve the target block via <code>block_ranges</code>
-    plus prefix sums.</li>
-    <li>Visual up/down computes the current visual y from the tree, hit-tests the target y, and preserves a
-    <code>desired_visual_x</code> across consecutive arrow presses — so the caret does not drift left while
-    moving through a run of short lines.</li>
-    <li><b>Horizontal</b> placement still walks the visible spans, because column mapping depends on inline
-    wrapping, font metrics, math and image widths, and hidden markers. To make that affordable the renderer
-    caches single-character width measurements by character, font and size.</li>
+    <li>Click and drag y positions map to line indices through <code>HeightTree</code>, then to a column and
+    affinity through the line's <code>Flow</code>. A drag keeps tracking the pointer outside the widget.</li>
+    <li>Horizontal wheel and scrollbar interaction resolve the target block via <code>block_ranges</code> plus
+    prefix sums.</li>
+    <li>Visual up/down moves <b>exactly one visual row</b>, starting from the caret's own row — its affinity
+    included — and keeps a <code>desired_visual_x</code> across consecutive presses, so the caret does not drift
+    left while moving through a run of short lines.</li>
   </ul>
 
-  <h2>17.3 The maintenance contract</h2>
+  <h2>17.8 The maintenance contract</h2>
 
   <div class="box"><span class="tag">Why it is like this</span>
-  <p>The five rules below are stated in the module and repeated in the contributor guidelines, and they are
-  really one rule seen from five angles: <em>the pieces of the layout system only work together</em>.</p>
+  <p>These rules are stated in the wiki and repeated in the contributor guidelines, and they are really one
+  rule seen from several angles: <em>each fact has one owner, and the pieces only work together</em>.</p>
   <ul class="tight" style="margin-top:2mm;margin-bottom:0">
-    <li>Keep parsing in <code>highlight.rs</code>; do not add markdown rules to the renderer.</li>
-    <li>Keep height and invalidation logic in <code>layout_tree.rs</code> and <code>layout_cache.rs</code>.</li>
+    <li>Keep parsing in <code>highlight.rs</code>; do not add markdown rules to the renderer. A new rule must keep
+    incremental highlighting equal to a fresh pass.</li>
+    <li>Never measure or break inline text outside <code>flow.rs</code>.</li>
+    <li>Caret facts — position, selection, affinity — live in <code>DocBuffer</code>. The widget keeps no copy.</li>
+    <li>Keep height and invalidation logic in <code>layout_tree.rs</code>, <code>layout_cache.rs</code> and
+    <code>renderer/layout.rs</code>.</li>
+    <li>Put any size that layout, painting and hit testing must agree on in <code>renderer/metrics.rs</code>, never
+    as a literal at one call site, and keep vertical sizes on the <code>GRID</code>.</li>
     <li>Keep the draw pass proportional to visible content, never to document length.</li>
-    <li>When adding media that can affect layout height, include its dimensions in
-    <code>resource_hash</code>.</li>
-    <li>When adding a block type, update block-range tracking, height measurement, draw metadata and hit
-    testing <b>together</b> — they are one contract split across four call sites.</li>
+    <li>Clip with layers, and remember that a layer paints its quads, then images, then text.</li>
+    <li>When adding media that can affect height, include its dimensions in <code>resource_hash</code> and make
+    sure a change to it changes <code>EditorPane::layout_revision</code>.</li>
+    <li>When adding a block type, update block-range tracking, body height, margins, draw metadata, and hit
+    testing and scrolling <b>together</b> — one contract split across five call sites.</li>
   </ul></div>
 
   <div class="box check"><span class="tag">Check yourself</span>
-  <p>You add a “callout” block type that draws a coloured background and an icon. Which four places change?</p>
-  <p class="answer"><b>Answer:</b> (1) <code>highlight.rs</code>, to parse it and assign a
-  <code>block_id</code>; (2) the layout pass's block-range tracking and height measurement, including any
-  spacer the block adds; (3) the draw pass's block-background construction, clamped to the visible range;
-  (4) hit testing, so clicking inside the callout maps to the right line and column. Miss the fourth and
-  clicks land one line off — which is exactly the kind of bug that gets reported as “the editor feels
-  weird”.</p></div>
+  <p>You add a “callout” block type that draws a tinted background and a label. Which places change?</p>
+  <p class="answer"><b>Answer:</b> the parser, then the five call sites. First <code>highlight.rs</code>, to
+  parse it and assign a <code>block_id</code> — keeping incremental-equals-fresh passing. Then (1)
+  <code>layout.rs::record_block_range</code>; (2) <code>layout.rs::line_body_height</code>; (3)
+  <code>layout.rs::requested_margins</code>, probably with <code>BLOCK_MARGIN</code>; (4)
+  <code>draw/blocks.rs::measure_blocks</code>, for the card, clamped to the visible range; and (5)
+  <code>scroll.rs::scroll_extent</code>, so clicks and scrolling inside the callout resolve to the right line and
+  column. Miss the last and clicks land in the wrong place — exactly the kind of bug that gets reported as “the
+  editor feels weird”. Finish with a behaviour test in <code>renderer/tests.rs</code>, seen failing
+  first.</p></div>
 </section>

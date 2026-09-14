@@ -25,7 +25,7 @@
   <p>Shortcuts are handled in two places. The <b>application layer</b>
   (<span class="fileref">app.rs::subscription</span>) sees every key press regardless of focus and returns
   <code>None</code> for anything it does not act on, so ordinary typing does not spawn a redundant update
-  cycle. The <b>editor layer</b> (<span class="fileref">editor/renderer.rs</span>) only fires while the
+  cycle. The <b>editor layer</b> (<span class="fileref">editor/renderer/events.rs</span>) only fires while the
   markdown editor widget is focused. On macOS, <kbd>Cmd</kbd> works everywhere <kbd>Ctrl</kbd> does — both
   layers test <code>modifiers.command() || modifiers.control()</code>.</p>
 
@@ -139,7 +139,6 @@
     <tbody>
       <tr><td><code>AUTOSAVE_DEBOUNCE</code></td><td class="num">400 ms</td><td><span class="fileref">editor_state.rs</span> — quiet time before a write</td></tr>
       <tr><td><code>AUTOSAVE_POLL</code></td><td class="num">100 ms</td><td><span class="fileref">editor_state.rs</span> — poll interval, finer than the debounce on purpose</td></tr>
-      <tr><td><code>HIGHLIGHT_DEBOUNCE</code></td><td class="num">80 ms</td><td><span class="fileref">editor_state.rs</span> — re-parse delay for large documents</td></tr>
       <tr><td><code>SEARCH_DEBOUNCE</code></td><td class="num">200 ms</td><td><span class="fileref">search_state.rs</span> — one scan per query, not one per keystroke</td></tr>
       <tr><td><code>UNDO_COALESCE_WINDOW</code></td><td class="num">300 ms</td><td><span class="fileref">editor/buffer.rs</span> — a pause longer than this starts a new undo run</td></tr>
       <tr><td><code>VAULT_WATCH_DEBOUNCE</code></td><td class="num">300 ms</td><td><span class="fileref">app.rs</span> — filesystem watcher coalescing</td></tr>
@@ -148,6 +147,13 @@
       <tr><td><code>OVERLAY</code></td><td class="num">140 ms</td><td><span class="fileref">motion.rs</span> — palette, modals</td></tr>
       <tr><td><code>PANEL</code></td><td class="num">180 ms</td><td><span class="fileref">motion.rs</span> — side panels</td></tr>
       <tr><td><code>EASE</code></td><td class="num">EaseOutQuad</td><td><span class="fileref">motion.rs</span> — the only easing curve</td></tr>
+      <tr><td><code>SCROLL_STIFFNESS</code></td><td class="num">32</td><td><span class="fileref">motion.rs</span> — the editor scrolling to reveal the caret, ~150 ms to 95%</td></tr>
+      <tr><td><code>GLIDE_STIFFNESS</code></td><td class="num">80</td><td><span class="fileref">editor/renderer/glide.rs</span> — the caret gliding, ~60 ms to 95%</td></tr>
+      <tr><td><code>MAX_GLIDE</code></td><td class="num">96 px</td><td><span class="fileref">glide.rs</span> — vertical caret moves further than this cut instead of gliding</td></tr>
+      <tr><td><code>BLINK_DELAY</code></td><td class="num">500 ms</td><td><span class="fileref">glide.rs</span> — the caret stays lit this long after it moves</td></tr>
+      <tr><td><code>BLINK_PERIOD</code></td><td class="num">1 060 ms</td><td><span class="fileref">glide.rs</span> — one blink</td></tr>
+      <tr><td><code>BLINK_SHARPNESS</code></td><td class="num">2.5</td><td><span class="fileref">glide.rs</span> — how far the cosine is stretched before clamping</td></tr>
+      <tr><td><code>BLINK_CYCLES</code></td><td class="num">18</td><td><span class="fileref">glide.rs</span> — blinks before the caret stays lit and the window can idle</td></tr>
     </tbody>
   </table>
 
@@ -156,14 +162,34 @@
     <thead><tr><th style="width:30%">Constant</th><th style="width:14%">Value</th><th>Where · what it does</th></tr></thead>
     <tbody>
       <tr><td><code>MAX_RETAINED_BUFFERS</code></td><td class="num">32</td><td><span class="fileref">editor_state.rs</span> — parked documents with their undo stacks</td></tr>
-      <tr><td><code>LARGE_DOC_LINE_THRESHOLD</code></td><td class="num">1 000</td><td><span class="fileref">editor_state.rs</span> — above this, highlighting is debounced</td></tr>
-      <tr><td><code>HUGE_DOC_LINE_THRESHOLD</code></td><td class="num">5 000</td><td><span class="fileref">editor_state.rs</span> — above this, open with placeholder lines</td></tr>
       <tr><td><code>MAX_WALK_DEPTH</code></td><td class="num">32</td><td><span class="fileref">core/vault.rs</span> — directory recursion cap</td></tr>
       <tr><td><code>MAX_RESULTS</code></td><td class="num">40</td><td><span class="fileref">views/command_palette.rs</span> — palette result cap</td></tr>
-      <tr><td><code>MAX_CONTENT_WIDTH</code></td><td class="num">880.0</td><td><span class="fileref">editor/renderer.rs</span> — readable measure for prose</td></tr>
-      <tr><td><code>SPAN_WIDTH_CACHE_CAP</code></td><td class="num">8 192</td><td><span class="fileref">editor/renderer.rs</span> — character-width measurement cache</td></tr>
+      <tr><td><code>MAX_CONTENT_WIDTH</code></td><td class="num">880.0</td><td><span class="fileref">editor/renderer/metrics.rs</span> — readable measure for prose</td></tr>
+      <tr><td><code>SPAN_WIDTH_CACHE_CAP</code></td><td class="num">8 192</td><td><span class="fileref">editor/renderer/measure.rs</span> — memoized span widths, dropped wholesale past the cap</td></tr>
+      <tr><td><code>WORD_OFFSET_CACHE_CAP</code></td><td class="num">16 384</td><td><span class="fileref">editor/renderer/measure.rs</span> — memoized per-word character offsets from the shaper</td></tr>
       <tr><td><code>PDF_SUPERSAMPLE_MAX</code></td><td class="num">3.0</td><td><span class="fileref">app.rs</span> — ceiling on PDF render oversampling</td></tr>
+      <tr><td><code>PDF_FIT_MAX_ZOOM</code></td><td class="num">2.0</td><td><span class="fileref">app.rs</span> — fit-to-width stops here; manual zoom still reaches 4.0</td></tr>
       <tr><td><code>PDF_PAGE_BITMAP_EVICT_MARGIN</code></td><td class="num">6</td><td><span class="fileref">pdf_pane.rs</span> — pages kept either side of the viewport</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Editor rhythm and geometry</h2>
+  <p>In <span class="fileref">editor/renderer/metrics.rs</span> unless noted — the values layout, painting and hit
+  testing must agree on.</p>
+  <table class="compact">
+    <thead><tr><th style="width:34%">Constant</th><th style="width:14%">Value</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>GRID</code></td><td class="num">4 px</td><td>every vertical measure is a multiple of it</td></tr>
+      <tr><td><code>DEFAULT_FONT_SIZE</code></td><td class="num">17 px</td><td>body text; <code>row_height()</code> gives it a 28 px row</td></tr>
+      <tr><td><code>PARAGRAPH_GAP</code></td><td class="num">20 px</td><td>a blank line</td></tr>
+      <tr><td><code>HEADING_MARGINS</code></td><td class="num">48/16 … 24/8</td><td>above/below: <code>#</code> 48/16, <code>##</code> 40/12, <code>###</code> 32/8, deeper 24/8</td></tr>
+      <tr><td><code>BLOCK_MARGIN</code></td><td class="num">16 px</td><td>code blocks, tables, block math, images, rules, quote runs</td></tr>
+      <tr><td><code>BLOCK_CAPTION_HEIGHT</code></td><td class="num">24 px</td><td>the caption band above a code block or table</td></tr>
+      <tr><td><code>HORIZONTAL_SCROLLBAR_GUTTER</code></td><td class="num">16 px</td><td>space under a table's last row for its scrollbar</td></tr>
+      <tr><td><code>CODE_FONT_SIZE</code> · <code>CODE_CARET_MARGIN</code></td><td class="num">15 · 24 px</td><td>code text · how far inside its viewport a code block keeps the caret</td></tr>
+      <tr><td><code>TABLE_ROW_HEIGHT</code></td><td class="num">36 px</td><td>a body row plus padding</td></tr>
+      <tr><td><code>TOP_PAD</code> · <code>BOTTOM_PAD</code></td><td class="num">24 · 80 px</td><td>above the first line · below the last</td></tr>
+      <tr><td><code>UNITS_PER_PX</code></td><td class="num">256</td><td><span class="fileref">editor/layout_tree.rs</span> — fixed-point heights, so prefix sums are exact</td></tr>
     </tbody>
   </table>
 
@@ -185,11 +211,11 @@
   <table class="compact">
     <thead><tr><th style="width:38%">Type scale</th><th style="width:30%">Spacing (2 px grid)</th><th>Radii</th></tr></thead>
     <tbody>
-      <tr><td><code>TEXT_XS</code> 10 · <code>TEXT_SM</code> 12 · <code>TEXT_BASE</code> 14<br>
-        <code>TEXT_MD</code> 16 · <code>TEXT_LG</code> 18 · <code>TEXT_DISPLAY</code> 42</td>
+      <tr><td><code>TEXT_XS</code> 8 · <code>TEXT_SM</code> 10 · <code>TEXT_BASE</code> 11<br>
+        <code>TEXT_MD</code> 14 · <code>TEXT_LG</code> 16 · <code>TEXT_DISPLAY</code> 42</td>
         <td><code>SPACE_0</code> 0 · <code>SPACE_1</code> 2 · <code>SPACE_2</code> 4<br>
-        <code>SPACE_3</code> 8 · <code>SPACE_4</code> 12 · <code>SPACE_5</code> 16 · <code>SPACE_6</code> 24</td>
-        <td><code>RADIUS_SM</code> 3<br><code>RADIUS_MD</code> 6<br><code>RADIUS_LG</code> 10</td></tr>
+        <code>SPACE_3</code> 6 · <code>SPACE_4</code> 12 · <code>SPACE_5</code> 16 · <code>SPACE_6</code> 24</td>
+        <td><code>RADIUS_SM</code> 2<br><code>RADIUS_MD</code> 6<br><code>RADIUS_LG</code> 10</td></tr>
     </tbody>
   </table>
 
