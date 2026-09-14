@@ -22,6 +22,9 @@ rediscover — each exists because something concrete broke without it.
   `native/src/theme.rs`.
 - Animations use `Easing::EaseOutQuad` and one of `FAST`, `PANEL`, `OVERLAY` from
   `native/src/motion.rs`. A new duration needs a reason, not a preference.
+- Motion that follows something moving — the editor scrolling to the caret, the caret
+  gliding — uses the closed-form critically damped `Spring` in `motion.rs`, sampled at the
+  frame's time. Never integrate motion step by step per frame.
 - A panel's animated open width must match the width it actually lays out at, or the clip
   that produces the slide crops it permanently.
 
@@ -30,10 +33,17 @@ rediscover — each exists because something concrete broke without it.
 - In `native/src/editor/renderer/draw/`, the **draw** pass must never iterate the whole
   document. Clamp strictly between `visible_start` and `visible_end` from
   `HeightTree::find_line_at_y()`, and stop once the y position passes the viewport.
-- The **layout** pass (`renderer/layout.rs`) does walk every line, but every line must be a
-  cache hit unless something about it actually changed. If you add state that affects a
-  line's height, add it to `line_hash` or `resource_hash` — otherwise you have silently made
-  layout O(N) shaping calls per frame, and debug builds will crawl.
+- The **layout** pass (`renderer/layout.rs`) walks every line only when its inputs change:
+  a frame whose `layout_revision`, width, focus and caret match the last layout
+  (`LayoutKey`) skips it. When it does walk, every line must be a cache hit unless something
+  about it actually changed. If you add state that affects a line's height, add it to
+  `line_hash` or `resource_hash`, and make sure changing it changes
+  `EditorPane::layout_revision` or `LayoutKey` — otherwise the editor paints a stale layout,
+  or silently makes layout O(N) shaping calls per frame.
+- Vertical sizes sit on the 4px `GRID` in `renderer/metrics.rs`, and space between lines
+  goes through `requested_margins`, where it collapses. Never pad a painter to fake a gap.
+- Caret facts — position, selection and affinity — live in `DocBuffer`. The widget keeps no
+  copy, so no copy can go stale.
 - When adding a block type, update block-range tracking, height measurement, draw metadata,
   and hit testing **together**. They are one contract split across four call sites — see the
   maintenance notes in [Markdown Pipeline](Markdown-Pipeline.md).
@@ -42,6 +52,11 @@ rediscover — each exists because something concrete broke without it.
   text.
 - Inline text is measured and broken into rows only in `renderer/flow.rs`. Painting, the
   caret, highlights, and hit testing read a line's `Flow`; they never wrap text themselves.
+- Clip with layers (`renderer.with_layer`), never with the clip rectangle passed to
+  `fill_text` or `draw_image`: no backend clips an image to it, and a text clip rectangle
+  inside the enclosing layer switches tiny-skia's clipping off, so draw text inside a clip
+  layer with the frame's viewport. Anything that must appear over an image or text needs a later layer, because
+  a layer paints its quads, then images, then text, regardless of call order.
 - Renderer changes are checked with the render transcript harness described in
   [Developer Guide & Testing](Developer-Guide-and-Testing.md).
 
@@ -66,8 +81,11 @@ rediscover — each exists because something concrete broke without it.
 
 - Arm the per-frame subscription **only** while `motion.is_animating()` is true.
 - The same discipline applies to every other subscription: the toast timer, autosave poll,
-  highlight debounce, and search debounce each return `Subscription::none()` when they have
-  nothing pending. A new always-on timer is a regression even if it looks cheap.
+  search debounce, and the editor's scroll interrupt each return `Subscription::none()` when
+  they have nothing pending. A new always-on timer is a regression even if it looks cheap.
+- Widgets schedule their own frames the same way. The editor asks for the next frame only
+  while the caret glides or fades, schedules the start of the next fade with
+  `request_redraw_at`, and asks for nothing once the caret rests lit.
 
 ### Rule 7: Async results clean up before they are gated
 
@@ -79,8 +97,9 @@ rediscover — each exists because something concrete broke without it.
 - Document-level artifacts — resolved references, the TOC — are gated on `document_id` or the
   document path, **never** on `render_generation`, because their scans routinely outlive a
   zoom change.
-- The same idea applies to markdown: every highlight task carries a generation id, and a
-  result whose generation no longer matches is discarded.
+- Markdown highlighting has no async result to gate: it runs incrementally and
+  synchronously on every edit, so the painted lines always match the buffer. Keep it that
+  way — lines that lag the text are how clicks land on the wrong line.
 
 The full set of PDF rules is in [PDF Viewer Internals](PDF-Viewer-Internals.md#10-reliability-rules).
 
@@ -98,7 +117,11 @@ The full set of PDF rules is in [PDF Viewer Internals](PDF-Viewer-Internals.md#1
   `native/src/app.rs`.
 - A rendering, caret, or hit-testing bug in the editor needs a test in
   `native/src/editor/renderer/tests.rs`, written against the draw calls and messages the widget
-  produces rather than its internals, and seen failing before the fix.
+  produces rather than its internals, and seen failing before the fix. When the bug breaks a
+  general rule, strengthen the matching invariant in `renderer/properties.rs` too, and run
+  it at `RENDER_PROPERTY_CASES=3000` before landing.
+- A highlighter change must keep the incremental-equals-fresh property in `highlight.rs`
+  passing.
 - New core functionality belongs behind a headless test. If it cannot be tested without a
   window, it probably belongs in `md-editor-native`.
 
@@ -126,15 +149,14 @@ CI builds and packages, but does **not** run the tests or the lints. Run them lo
 ```bash
 cargo fmt --check
 cargo check --workspace
-cargo test --workspace           # 171 tests, all passing
+cargo test --workspace           # 212 tests, all passing
 cargo clippy --workspace
 ```
 
 `cargo fmt --check` and `cargo test` must pass cleanly.
 
-**Clippy is not yet warning-clean**: the tree currently carries 15 warnings (2 in core, 13 in
-native), mostly `too_many_arguments` in view functions and `needless_range_loop` in the
-highlighter. The editor renderer is warning-clean. So
+**Clippy is not yet warning-clean**: the tree currently carries 10 warnings (2 in core, 8 in
+native), mostly `too_many_arguments` in view functions. The editor is warning-clean. So
 `-D warnings` does not pass on a fresh checkout. The rule is therefore *do not add new ones*:
 compare the count before and after your change, and fix any warning your own code introduces.
 

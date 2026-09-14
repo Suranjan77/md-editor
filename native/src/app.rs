@@ -5,8 +5,10 @@ use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 use image::GenericImageView;
 use std::sync::Arc;
 
-use crate::editor::buffer::{DocBuffer, EditorCommand};
+use crate::editor::buffer::{Affinity, DocBuffer, EditorCommand};
+use crate::editor::renderer::{CaretView, Reveal};
 use crate::messages::{Message, Shortcut};
+use crate::motion::{SCROLL_STIFFNESS, ScrollGlide, Spring};
 use crate::pdf_notes::{
     append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path, slug_fragment,
 };
@@ -16,10 +18,16 @@ use crate::views::pdf_viewer::PDF_PAGE_LIST_PADDING;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
+/// Space around the editor widget inside its scrollable.
+const EDITOR_PADDING: f32 = app_theme::SPACE_6;
 /// Upper bound on PDF supersampling. The actual factor tracks the display's
 /// scale factor (see `MdEditor::pdf_supersample`); this caps bitmap cost on
 /// unusually high-DPI displays.
 const PDF_SUPERSAMPLE_MAX: f32 = 3.0;
+/// Highest zoom fit-to-width will pick, whether automatic or from the fit
+/// button. Manual zoom still goes to 4.0; this only stops a wide pane from
+/// blowing a small page up past a comfortable reading size.
+const PDF_FIT_MAX_ZOOM: f32 = 2.0;
 /// How many pages beyond the rendered window keep their cached bitmap before
 /// being evicted. Bounds resident bitmap memory for long PDFs while leaving
 /// enough slack that ordinary scrolling reuses cached pages.
@@ -170,6 +178,8 @@ impl MdEditor {
     /// Open a vault-relative file by extension (markdown, PDF, or image);
     /// unsupported extensions are ignored.
     fn open_startup_file(&mut self, file_path: &str) -> Task<Message> {
+        // Select the reopened file so its row offers delete without a click.
+        self.vault.selected_path = Some(file_path.to_string());
         let lower = file_path.to_lowercase();
         if lower.ends_with(".md") || lower.ends_with(".markdown") {
             self.open_file(file_path)
@@ -253,13 +263,6 @@ impl MdEditor {
             Subscription::none()
         };
 
-        let highlight_debounce = if self.editor.pending_highlight_generation.is_some() {
-            iced::time::every(crate::editor_state::HIGHLIGHT_DEBOUNCE)
-                .map(|_| Message::HighlightDebounceElapsed)
-        } else {
-            Subscription::none()
-        };
-
         // Armed only while there are unwritten edits, so an idle app ticks for
         // nothing. The tick is finer than the debounce because its phase is
         // independent of the last keystroke: polling at the debounce itself
@@ -327,11 +330,23 @@ impl MdEditor {
             Subscription::none()
         };
 
+        // A wheel turn or a click takes the page back from a scroll in flight.
+        let scroll_interrupt = if self.motion.editor_scroll.is_some() {
+            iced::event::listen_with(|event, _status, _window_id| match event {
+                iced::Event::Mouse(
+                    iced::mouse::Event::WheelScrolled { .. } | iced::mouse::Event::ButtonPressed(_),
+                ) => Some(Message::EditorScrollInterrupted),
+                _ => None,
+            })
+        } else {
+            Subscription::none()
+        };
+
         Subscription::batch(vec![
             keyboard,
             animation,
+            scroll_interrupt,
             toast,
-            highlight_debounce,
             autosave,
             search_debounce,
             mouse_drag,
@@ -393,7 +408,9 @@ impl MdEditor {
             }
             // Vault navigation arms that mutate only `self.vault` are routed
             // to `VaultState::update`; see vault_state.rs.
-            m @ (Message::SidebarToggle | Message::SidebarFolderToggled(_)) => self.vault.update(m),
+            m @ (Message::SidebarToggle
+            | Message::SidebarFolderToggled(_)
+            | Message::SidebarSelectionCleared) => self.vault.update(m),
             Message::SidebarFileClicked(path) => {
                 let path = path.trim().to_string();
                 if let Some(url_str) = path.strip_prefix("pdf://") {
@@ -500,16 +517,15 @@ impl MdEditor {
                                 let target_slug = slugify(anchor_part);
                                 if let Some(line_idx) = find_heading_or_widget_line(
                                     &self.editor.buffer.text(),
-                                    &self.editor.highlighted_lines,
+                                    &self.editor.highlight.lines,
                                     &target_slug,
                                 ) {
-                                    let scroll_task = self.scroll_editor_to_line(line_idx);
-                                    let cmd_task =
-                                        self.run_editor_command(EditorCommand::SetCursor {
-                                            line: line_idx,
-                                            col: 0,
-                                        });
-                                    Task::batch(vec![cmd_task, scroll_task])
+                                    self.editor.request_reveal(Reveal::Center);
+                                    self.run_editor_command(EditorCommand::SetCursor {
+                                        line: line_idx,
+                                        col: 0,
+                                        affinity: Affinity::Downstream,
+                                    })
                                 } else {
                                     self.ui.toast = Some(format!(
                                         "Heading or widget not found: #{}",
@@ -525,16 +541,17 @@ impl MdEditor {
                                 let target_slug = slugify(anchor_part);
                                 if let Some(line_idx) = find_heading_or_widget_line(
                                     &self.editor.buffer.text(),
-                                    &self.editor.highlighted_lines,
+                                    &self.editor.highlight.lines,
                                     &target_slug,
                                 ) {
-                                    let scroll_task = self.scroll_editor_to_line(line_idx);
+                                    self.editor.request_reveal(Reveal::Center);
                                     let cmd_task =
                                         self.run_editor_command(EditorCommand::SetCursor {
                                             line: line_idx,
                                             col: 0,
+                                            affinity: Affinity::Downstream,
                                         });
-                                    Task::batch(vec![open_task, cmd_task, scroll_task])
+                                    Task::batch(vec![open_task, cmd_task])
                                 } else {
                                     // If heading or widget not found in the new file, reset scroll to top!
                                     self.editor.scroll_y = 0.0;
@@ -648,16 +665,37 @@ impl MdEditor {
                         // file created under the same name cannot inherit the
                         // old document's undo history.
                         self.editor.forget_retained(&path);
-                        if self.active_path.as_deref() == Some(path.as_str()) {
+                        // Deleting a folder takes everything under it too, so
+                        // every check below matches the path or its children.
+                        let child_prefix = format!("{path}/");
+                        let gone = |p: Option<&str>| {
+                            p.is_some_and(|p| p == path || p.starts_with(&child_prefix))
+                        };
+                        // A selection at or inside the deleted entry is gone
+                        // from the tree; keeping it would steer new files into
+                        // it if something with that name reappears later.
+                        if gone(self.vault.selected_path.as_deref()) {
+                            self.vault.selected_path = None;
+                        }
+                        self.vault
+                            .expanded_folders
+                            .retain(|folder| !gone(Some(folder.as_str())));
+                        // An open note inside a deleted folder must be detached
+                        // too, or autosave would write it back and recreate it.
+                        if gone(self.active_path.as_deref()) {
                             self.active_path = None;
                             self.editor.buffer = DocBuffer::new();
                             self.editor.autosave_pending_since = None;
-                            self.editor.highlighted_lines.clear();
+                            self.editor.highlight = Default::default();
                         }
-                        if self.pdf.active_path.as_deref() == Some(path.as_str()) {
+                        if gone(self.pdf.active_path.as_deref()) {
                             self.pdf.active_path = None;
                             self.pdf.pages.clear();
                             self.pdf.dimensions.clear();
+                        }
+                        if gone(self.active_image_path.as_deref()) {
+                            self.active_image_path = None;
+                            self.active_image = None;
                         }
                         self.ui.active_modal = None;
                         self.ui.link_note_picker_search.clear();
@@ -674,9 +712,7 @@ impl MdEditor {
             }
             // Editor arms that mutate only `self.editor` are routed to
             // `EditorPane::update`; see editor_state.rs.
-            m @ (Message::MathRendered(..) | Message::HighlightDebounceElapsed) => {
-                self.editor.update(m)
-            }
+            m @ Message::MathRendered(..) => self.editor.update(m),
             Message::EditorSave => {
                 match self.save_active_document() {
                     SaveOutcome::Saved => self.ui.toast = Some("File saved".to_string()),
@@ -693,7 +729,7 @@ impl MdEditor {
             }
             Message::AnimationTick(now) => {
                 self.motion.now = now;
-                Task::none()
+                self.step_editor_scroll(now)
             }
             Message::AutosaveElapsed => {
                 if self.editor.autosave_due() {
@@ -715,9 +751,6 @@ impl MdEditor {
             Message::EditorCheckboxToggle(line_idx) => {
                 self.run_editor_command(EditorCommand::ToggleCheckbox { line: line_idx })
             }
-            Message::EditorCursorMove(line, col) => {
-                self.run_editor_command(EditorCommand::SetCursor { line, col })
-            }
             Message::EditorScrolled {
                 y,
                 viewport_width,
@@ -729,19 +762,10 @@ impl MdEditor {
                 self.editor.viewport_height = viewport_height;
                 Task::none()
             }
-            Message::ScrollEditorToTarget(target_y) => operation::scroll_to(
-                iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
-                AbsoluteOffset {
-                    x: 0.0,
-                    y: target_y,
-                },
-            ),
-            Message::HighlightReady(generation, lines) => {
-                if generation != self.editor.highlight_generation {
-                    return Task::none();
-                }
-                self.editor.highlighted_lines = lines;
-                self.load_editor_resources()
+            Message::EditorCaretView(view) => self.reveal_caret(view),
+            Message::EditorScrollInterrupted => {
+                self.motion.editor_scroll = None;
+                Task::none()
             }
 
             Message::PdfLoaded(generation, pages) => {
@@ -891,7 +915,8 @@ impl MdEditor {
                             .map(|(w, _)| (*w as f32 / self.pdf.zoom).max(1.0))
                     })
                     .unwrap_or(612.0);
-                let next_zoom = ((available_width - 48.0).max(240.0) / page_width).clamp(0.5, 4.0);
+                let next_zoom =
+                    ((available_width - 48.0).max(240.0) / page_width).clamp(0.5, PDF_FIT_MAX_ZOOM);
                 let next_zoom = (next_zoom * 100.0).round() / 100.0;
                 // Only re-render when fit-to-width crosses a zoom bucket;
                 // otherwise reuse cached bitmaps (see PdfZoomChanged).
@@ -999,7 +1024,13 @@ impl MdEditor {
                     let target_page = (index as u16).min(self.pdf.total_pages.saturating_sub(1));
                     self.navigate_pdf_page(target_page)
                 } else {
-                    Task::done(Message::EditorCursorMove(index, 0))
+                    let task = self.run_editor_command(EditorCommand::SetCursor {
+                        line: index,
+                        col: 0,
+                        affinity: Affinity::Downstream,
+                    });
+                    self.editor.request_reveal(Reveal::Center);
+                    task
                 }
             }
             Message::PdfScrolled { y, viewport_height } => {
@@ -2117,7 +2148,7 @@ impl MdEditor {
             container(
                 crate::editor::renderer::Editor::new(
                     &self.editor.buffer,
-                    &self.editor.highlighted_lines,
+                    &self.editor.highlight.lines,
                     &self.editor.image_cache,
                     &self.editor.math_cache,
                     Message::EditorCommand,
@@ -2131,9 +2162,11 @@ impl MdEditor {
                     self.search.match_case,
                     active_search_match,
                 )
-                .scale_factor(self.ui.scale_factor),
+                .scale_factor(self.ui.scale_factor)
+                .reveal_caret(self.editor.reveal_request, Message::EditorCaretView)
+                .layout_revision(self.editor.layout_revision()),
             )
-            .padding(app_theme::SPACE_6)
+            .padding(EDITOR_PADDING)
             .width(Length::Fill),
         )
         .id(iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID))
@@ -2525,29 +2558,48 @@ impl MdEditor {
     }
 
     fn new_entry_path(&self, name: &str) -> String {
-        let parent = self.vault.selected_path.as_deref().and_then(|path| {
-            if self
-                .vault
-                .entries
-                .iter()
-                .any(|entry| entry.path == path && entry.is_dir)
-            {
-                Some(path.to_string())
-            } else {
-                std::path::Path::new(path).parent().and_then(|p| {
-                    let parent = p.to_string_lossy().replace('\\', "/");
-                    if parent.is_empty() {
-                        None
-                    } else {
-                        Some(parent)
-                    }
-                })
-            }
-        });
+        Self::new_entry_parent(
+            self.vault.selected_path.as_deref(),
+            &self.vault.entries,
+            &self.vault.expanded_folders,
+        )
+        .map(|dir| format!("{}/{}", dir.trim_end_matches('/'), name))
+        .unwrap_or_else(|| name.to_string())
+    }
 
-        parent
-            .map(|dir| format!("{}/{}", dir.trim_end_matches('/'), name))
-            .unwrap_or_else(|| name.to_string())
+    /// The folder a new file or folder lands in: the sidebar selection's
+    /// folder, but only while that row is still on screen. A selection that
+    /// was deleted, or hidden by collapsing a folder above it, no longer reads
+    /// as selected, so new entries go to the vault root rather than following
+    /// a target the user can't see.
+    fn new_entry_parent(
+        selected: Option<&str>,
+        entries: &[md_editor_core::types::FileEntry],
+        expanded: &std::collections::BTreeSet<String>,
+    ) -> Option<String> {
+        let selected = selected?;
+        let child_prefix = format!("{selected}/");
+        let is_dir = entries.iter().any(|entry| {
+            (entry.path == selected && entry.is_dir) || entry.path.starts_with(&child_prefix)
+        });
+        if !is_dir && !entries.iter().any(|entry| entry.path == selected) {
+            return None;
+        }
+
+        // The tree only renders a row when every folder above it is expanded.
+        let mut ancestor = selected;
+        while let Some(idx) = ancestor.rfind('/') {
+            ancestor = &ancestor[..idx];
+            if !expanded.contains(ancestor) {
+                return None;
+            }
+        }
+
+        if is_dir {
+            Some(selected.to_string())
+        } else {
+            selected.rfind('/').map(|idx| selected[..idx].to_string())
+        }
     }
 
     fn open_file(&mut self, path: &str) -> Task<Message> {
@@ -2781,7 +2833,7 @@ impl MdEditor {
         self.active_panel = ActivePanel::Markdown;
         self.editor.toc_entries = views::toc::get_toc(&content);
         self.editor.toc_is_synthetic = false;
-        let highlight_task = self.refresh_highlighting_for_current_buffer(true);
+        let highlight_task = self.highlight_all();
         self.vault.backlinks =
             md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
         if is_different && reset_scroll {
@@ -2792,6 +2844,7 @@ impl MdEditor {
                 .or_else(|| self.stored_scroll_for(path))
                 .unwrap_or(0.0);
             self.editor.scroll_y = target_y;
+            self.motion.editor_scroll = None;
             let scroll_task = operation::scroll_to(
                 iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
                 AbsoluteOffset {
@@ -3278,17 +3331,10 @@ impl MdEditor {
         }
     }
 
+    /// Re-highlight the buffer and load the images and math it references.
     fn highlight_all(&mut self) -> Task<Message> {
-        self.refresh_highlighting_for_current_buffer(false)
-    }
-
-    fn refresh_highlighting_for_current_buffer(&mut self, opened_file: bool) -> Task<Message> {
-        let (task, load_resources) = self.editor.refresh_highlighting(opened_file);
-        if load_resources {
-            Task::batch(vec![task, self.load_editor_resources()])
-        } else {
-            task
-        }
+        self.editor.refresh_highlighting();
+        self.load_editor_resources()
     }
 
     /// Load images and math for the freshly highlighted lines. Images resolve
@@ -3327,8 +3373,10 @@ impl MdEditor {
             anchor_col: item.start_col,
             focus_line: item.line,
             focus_col: item.end_col,
+            affinity: Affinity::Downstream,
         });
-        self.scroll_editor_to_line(item.line)
+        self.editor.request_reveal(Reveal::Center);
+        Task::none()
     }
 
     fn navigate_pdf_search(&mut self, forward: bool) -> Task<Message> {
@@ -3432,50 +3480,6 @@ impl MdEditor {
         Task::batch(tasks)
     }
 
-    fn estimated_editor_viewport_width(&self) -> f32 {
-        let sidebar_width = if self.vault.sidebar_visible {
-            260.0
-        } else {
-            0.0
-        };
-        let toc_width = if self.editor.toc_visible { 260.0 } else { 0.0 };
-        let backlinks_width = if self.vault.backlinks_visible {
-            260.0
-        } else {
-            0.0
-        };
-        let chrome_width = sidebar_width + toc_width + backlinks_width;
-        let content_width = (self.ui.window_width - chrome_width).max(320.0);
-
-        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some()
-        {
-            (content_width * self.ui.split_ratio).max(280.0)
-        } else {
-            content_width
-        }
-    }
-
-    fn estimated_editor_viewport_height(&self) -> f32 {
-        let mut height = self.ui.window_height - 48.0; // toolbar ~48px
-        if self.search.file_visible && self.active_path.is_some() {
-            height -= 40.0; // search bar ~40px
-        }
-        height.max(200.0)
-    }
-
-    fn estimated_editor_line_y(&self, target_line: usize) -> f32 {
-        crate::editor::renderer::line_visual_y::<iced::Renderer>(
-            &self.editor.highlighted_lines,
-            &self.editor.image_cache,
-            &self.editor.math_cache,
-            self.estimated_editor_viewport_width().max(240.0),
-            self.editor.buffer.cursor_line,
-            self.editor.buffer.cursor_col,
-            target_line,
-            true,
-        ) + 20.0
-    }
-
     fn restore_scroll_positions(&self) -> Task<Message> {
         let mut tasks = Vec::new();
         // Restore editor scroll position after search bar toggle
@@ -3521,15 +3525,6 @@ impl MdEditor {
                 || (self.ui.split_view_active
                     && self.active_path.is_some()
                     && self.active_panel == ActivePanel::Pdf))
-    }
-
-    fn scroll_editor_to_line(&self, line: usize) -> Task<Message> {
-        let y = self.estimated_editor_line_y(line);
-        let viewport_height = self.estimated_editor_viewport_height();
-        // Always center the matched line in the viewport
-        let target_y = (y - viewport_height / 2.0 + 18.0).max(0.0);
-
-        Task::perform(async move { target_y }, Message::ScrollEditorToTarget)
     }
 
     fn replace_all_in_current_document(&mut self) -> Result<(usize, Task<Message>), String> {
@@ -3724,6 +3719,64 @@ impl MdEditor {
         )
     }
 
+    /// Scroll the editor the way the answered reveal request asked, now that
+    /// the widget has said exactly where the caret is.
+    fn reveal_caret(&mut self, view: CaretView) -> Task<Message> {
+        let Some(reveal) = self.editor.take_reveal(view.request) else {
+            return Task::none();
+        };
+        let Some(top) = view.viewport_top_for(reveal) else {
+            return Task::none();
+        };
+        // The widget sits inside the scrollable's padding: a widget-relative y
+        // plus the padding is a scroll offset.
+        let current = view.viewport_top + EDITOR_PADDING;
+        let max = (view.height + 2.0 * EDITOR_PADDING - view.viewport_height).max(0.0);
+        let target = (top + EDITOR_PADDING).clamp(0.0, max);
+        if (target - current).abs() < 0.5 {
+            return Task::none();
+        }
+
+        let now = std::time::Instant::now();
+        let mut spring = match self.motion.editor_scroll {
+            // Still gliding from where the page really is: keep the momentum.
+            Some(glide) if (glide.applied - current).abs() < 1.0 => glide.spring,
+            _ => Spring::at_rest(current, now, SCROLL_STIFFNESS),
+        };
+        // A far jump cuts to a screen short of the target and glides the rest.
+        let reach = view.viewport_height.max(1.0);
+        let mut applied = current;
+        let mut task = Task::none();
+        if (target - spring.value(now)).abs() > 2.0 * reach {
+            applied = target - reach.copysign(target - current);
+            spring = Spring::at_rest(applied, now, SCROLL_STIFFNESS);
+            task = scroll_editor_to(applied);
+        }
+        spring.retarget(target, now);
+        self.motion.editor_scroll = Some(ScrollGlide { spring, applied });
+        self.motion.now = now;
+        task
+    }
+
+    /// Move an animated editor scroll on to the frame drawn at `now`.
+    fn step_editor_scroll(&mut self, now: std::time::Instant) -> Task<Message> {
+        let Some(glide) = self.motion.editor_scroll else {
+            return Task::none();
+        };
+        let y = if glide.spring.is_settled(now) {
+            self.motion.editor_scroll = None;
+            glide.spring.target()
+        } else {
+            let y = glide.spring.value(now);
+            self.motion.editor_scroll = Some(ScrollGlide {
+                applied: y,
+                ..glide
+            });
+            y
+        };
+        scroll_editor_to(y)
+    }
+
     fn run_editor_command(&mut self, command: EditorCommand) -> Task<Message> {
         let keep_cursor_visible = editor_command_keeps_cursor_visible(&command);
         self.run_editor_command_with_scroll(command, keep_cursor_visible)
@@ -3754,14 +3807,17 @@ impl MdEditor {
         };
 
         if keep_cursor_visible {
-            Task::batch(vec![
-                content_task,
-                self.scroll_editor_to_line(self.editor.buffer.cursor_line),
-            ])
-        } else {
-            content_task
+            self.editor.request_reveal(Reveal::Nearest);
         }
+        content_task
     }
+}
+
+fn scroll_editor_to(y: f32) -> Task<Message> {
+    operation::scroll_to(
+        iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+        AbsoluteOffset { x: 0.0, y },
+    )
 }
 
 fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bool {
@@ -4251,6 +4307,39 @@ mod tests {
         assert_eq!(resolved, "subdir/another_file");
 
         let _ = std::fs::remove_dir_all(&target_dir);
+    }
+
+    #[test]
+    fn test_new_entry_parent_follows_only_visible_selection() {
+        let entry = |path: &str, is_dir: bool| md_editor_core::types::FileEntry {
+            path: path.to_string(),
+            name: path.rsplit('/').next().unwrap().to_string(),
+            is_dir,
+        };
+        let entries = vec![
+            entry("notes", true),
+            entry("notes/a.md", false),
+            entry("notes/deep", true),
+            entry("root.md", false),
+        ];
+        let expanded: std::collections::BTreeSet<String> = ["notes".to_string()].into();
+        let parent = |selected| MdEditor::new_entry_parent(selected, &entries, &expanded);
+
+        // A visible file inside a folder: new entries go beside it.
+        assert_eq!(parent(Some("notes/a.md")), Some("notes".to_string()));
+        // A visible folder: new entries go inside it.
+        assert_eq!(parent(Some("notes/deep")), Some("notes/deep".to_string()));
+        // Root-level selection, or none: vault root.
+        assert_eq!(parent(Some("root.md")), None);
+        assert_eq!(parent(None), None);
+        // A selection that no longer exists doesn't count.
+        assert_eq!(parent(Some("notes/gone.md")), None);
+        // Collapsing the folder hides the selection, so it doesn't count.
+        let collapsed = std::collections::BTreeSet::new();
+        assert_eq!(
+            MdEditor::new_entry_parent(Some("notes/a.md"), &entries, &collapsed),
+            None
+        );
     }
 
     #[test]

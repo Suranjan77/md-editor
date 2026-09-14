@@ -9,7 +9,7 @@ use iced::advanced::{Clipboard, Shell, clipboard};
 use iced::keyboard::{self, key::Named};
 use iced::{Point, Rectangle, mouse};
 
-use super::metrics::TEXT_X_OFFSET;
+use super::metrics::text_left;
 use super::{Editor, Measure, State};
 use crate::editor::buffer::{EditorCommand, Movement};
 use crate::editor::highlight::StyledSpan;
@@ -36,17 +36,19 @@ impl<Message> Editor<'_, Message> {
                     }
                 }
             }
+            // A drag keeps tracking the pointer after it leaves the widget.
             Event::Mouse(mouse::Event::CursorMoved { .. }) if state.is_dragging => {
-                if let Some(pos) = cursor.position_in(bounds) {
+                if let Some(pos) = relative_position(cursor, bounds) {
                     self.extend_pointer_selection::<R>(state, pos, bounds.width, shell);
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. })
                 if state.horizontal_scroll_drag.is_some() =>
             {
-                if let (Some(pos), Some(drag)) =
-                    (cursor.position_in(bounds), state.horizontal_scroll_drag)
-                {
+                if let (Some(pos), Some(drag)) = (
+                    relative_position(cursor, bounds),
+                    state.horizontal_scroll_drag,
+                ) {
                     state
                         .block_scroll_x
                         .insert(drag.block_id(), drag.scroll_for_pointer(pos.x));
@@ -127,7 +129,8 @@ impl<Message> Editor<'_, Message> {
 
         // Resolve what was clicked against the layout that was on screen,
         // before focusing can change which spans show their source.
-        let (line_idx, col) = self.hit_test::<R>(pos, available_width, state.is_focused, state);
+        let hit = self.hit_test::<R>(pos, available_width, state.is_focused, state);
+        let (line_idx, col) = (hit.line, hit.col);
         let span = self.span_at_point::<R>(pos, available_width, state);
         state.is_focused = true;
         state.selection_anchor = Some((line_idx, col));
@@ -136,6 +139,7 @@ impl<Message> Editor<'_, Message> {
         shell.publish((self.on_pointer_command)(EditorCommand::SetCursor {
             line: line_idx,
             col,
+            affinity: hit.affinity,
         }));
         state.is_dragging = true;
 
@@ -159,7 +163,8 @@ impl<Message> Editor<'_, Message> {
         available_width: f32,
         shell: &mut Shell<'_, Message>,
     ) {
-        let (line_idx, col) = self.hit_test::<R>(pos, available_width, state.is_focused, state);
+        let hit = self.hit_test::<R>(pos, available_width, state.is_focused, state);
+        let (line_idx, col) = (hit.line, hit.col);
         state.selection_focus = Some((line_idx, col));
         if let Some((anchor_line, anchor_col)) = state.selection_anchor {
             shell.publish((self.on_pointer_command)(EditorCommand::SetSelection {
@@ -167,6 +172,7 @@ impl<Message> Editor<'_, Message> {
                 anchor_col,
                 focus_line: line_idx,
                 focus_col: col,
+                affinity: hit.affinity,
             }));
         }
     }
@@ -194,8 +200,8 @@ impl<Message> Editor<'_, Message> {
             self.active_col(line_idx, focused),
         );
         let span_idx = flow.span_at(
-            pos.x - TEXT_X_OFFSET,
-            pos.y - self.line_body_top(line_idx, state, focused),
+            pos.x - text_left(available_width),
+            pos.y - self.line_body_top(line_idx, state),
         )?;
         line.spans.get(span_idx)
     }
@@ -338,7 +344,8 @@ impl<Message> Editor<'_, Message> {
         available_width: f32,
         shell: &mut Shell<'_, Message>,
     ) {
-        let (new_line, new_col) = self.move_visual::<R>(state, delta_lines, available_width);
+        let target = self.move_visual::<R>(state, delta_lines, available_width);
+        let (new_line, new_col) = (target.line, target.col);
         if extend {
             let (anchor_line, anchor_col) = state
                 .selection_anchor
@@ -351,6 +358,7 @@ impl<Message> Editor<'_, Message> {
                 anchor_col,
                 focus_line: new_line,
                 focus_col: new_col,
+                affinity: target.affinity,
             }));
         } else {
             self.send_edit(
@@ -359,6 +367,7 @@ impl<Message> Editor<'_, Message> {
                 EditorCommand::SetCursor {
                     line: new_line,
                     col: new_col,
+                    affinity: target.affinity,
                 },
             );
         }
@@ -371,4 +380,11 @@ impl<Message> Editor<'_, Message> {
         state.selection_anchor = None;
         state.selection_focus = None;
     }
+}
+
+/// The cursor position relative to `bounds`, even outside them.
+fn relative_position(cursor: mouse::Cursor, bounds: Rectangle) -> Option<Point> {
+    cursor
+        .position()
+        .map(|p| Point::new(p.x - bounds.x, p.y - bounds.y))
 }

@@ -6,7 +6,7 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::{Border, Color, Point, Rectangle, Size};
 
 use super::super::flow::{Flow, ItemKind};
-use super::super::measure::{bold_font, measure_width};
+use super::super::measure::{bold_font, centered_text_top, measure_width};
 use super::super::metrics::*;
 use super::super::spans::{math_source, span_is_editing};
 use super::super::{Editor, MATH_BLOCK_SCALE, MathRender, Measure, Paint};
@@ -18,7 +18,6 @@ use crate::theme;
 
 const IMAGE_TOP: f32 = 5.0;
 const FIGURE_CAPTION_SIZE: f32 = 13.0;
-const MATH_SOURCE_TOP: f32 = 18.0;
 
 impl<Message> Editor<'_, Message> {
     pub(super) fn paint_rule<R: Measure>(
@@ -31,9 +30,10 @@ impl<Message> Editor<'_, Message> {
         fill(
             renderer,
             Rectangle {
-                x: bounds.x + TEXT_X_OFFSET,
+                x: bounds.x + text_left(bounds.width),
                 y: row.y + row.height / 2.0,
-                width: bounds.width - TEXT_X_OFFSET - 20.0,
+                width: (bounds.width - text_left(bounds.width) - 20.0 * page_scale(bounds.width))
+                    .max(0.0),
                 height: 2.0,
             },
             rounded(1.0),
@@ -51,8 +51,8 @@ impl<Message> Editor<'_, Message> {
         counters: &mut Counters,
     ) {
         let (bounds, line) = (frame.bounds, row.line);
-        let left = bounds.x + TEXT_X_OFFSET;
-        let right = bounds.x + bounds.width - MARGIN_RIGHT;
+        let left = bounds.x + text_left(bounds.width);
+        let right = left + text_column_width(bounds.width);
 
         for (span_idx, span) in line.spans.iter().enumerate() {
             if span.is_image && !span_is_editing(line, span_idx, row.is_editing, row.active_col) {
@@ -61,25 +61,14 @@ impl<Message> Editor<'_, Message> {
             }
         }
 
-        let items = &flow.items;
-        let mut i = 0;
-        while i < items.len() {
-            let item = &items[i];
+        for item in &flow.items {
             let x = left + item.x;
             match &item.kind {
                 ItemKind::Text(part) => {
-                    // Draw a span's consecutive words on one row as one run.
-                    let mut last = i;
-                    while let Some(next) = items.get(last + 1)
-                        && next.span_idx == item.span_idx
-                        && next.row == item.row
-                        && matches!(&next.kind, ItemKind::Text(p) if p.bytes.start == text_end(&items[last]))
-                    {
-                        last += 1;
-                    }
+                    // Each piece is drawn where layout put it: shaped runs
+                    // don't add up across pieces once kerning is involved.
                     let span = &line.spans[item.span_idx];
-                    let text =
-                        &span.visible_text(part.revealed)[part.bytes.start..text_end(&items[last])];
+                    let text = &span.visible_text(part.revealed)[part.bytes.clone()];
                     let size = item.font_size;
                     TextRun::new(
                         text,
@@ -89,11 +78,13 @@ impl<Message> Editor<'_, Message> {
                     .font(part.font)
                     .draw(
                         renderer,
-                        Point::new(x, row.y + flow.text_top(item.row, size)),
+                        Point::new(
+                            x,
+                            self.snap_px(row.y + flow.text_top(item.row, size, part.font)),
+                        ),
                         span.color,
                         frame.viewport,
                     );
-                    i = last;
                 }
                 ItemKind::Checkbox { checked } => {
                     paint_checkbox(renderer, frame, *checked, x, row.y + flow.axis(item.row));
@@ -117,7 +108,6 @@ impl<Message> Editor<'_, Message> {
                 }
                 ItemKind::Hidden => {}
             }
-            i += 1;
         }
     }
 
@@ -140,14 +130,14 @@ impl<Message> Editor<'_, Message> {
         let bounds = frame.bounds;
 
         let available_w = text_column_width(bounds.width);
-        let scale = if *w > available_w {
+        let scale = if *w > available_w && *w > 0.0 {
             available_w / w
         } else {
             1.0
         };
         let draw_w = w * scale;
         let draw_h = h * scale;
-        let draw_x = bounds.x + TEXT_X_OFFSET + (available_w - draw_w) / 2.0;
+        let draw_x = bounds.x + text_left(bounds.width) + (available_w - draw_w) / 2.0;
 
         renderer.draw_image(
             iced::advanced::image::Image::new(handle.clone()),
@@ -198,6 +188,13 @@ impl<Message> Editor<'_, Message> {
         }
     }
 
+    /// `y` snapped to the device-pixel grid, so text baselines and edges land
+    /// on whole pixels instead of smearing across two.
+    pub(super) fn snap_px(&self, y: f32) -> f32 {
+        let sf = self.scale_factor;
+        (y * sf).round() / sf
+    }
+
     /// Draw an equation bitmap snapped to the device-pixel grid. Centering
     /// yields fractional positions with a different sub-pixel phase per axis,
     /// which makes horizontal and vertical strokes of the same glyph sample
@@ -237,7 +234,7 @@ impl<Message> Editor<'_, Message> {
         // MathRender).
         let draw_w = math.width * MATH_BLOCK_SCALE;
         let draw_h = math.height * MATH_BLOCK_SCALE;
-        let left = bounds.x + TEXT_X_OFFSET;
+        let left = bounds.x + text_left(bounds.width);
         let draw_x = left
             + if draw_w <= extent.viewport_w {
                 (extent.viewport_w - draw_w) / 2.0
@@ -266,17 +263,21 @@ impl<Message> Editor<'_, Message> {
                 height: row.height,
             },
         );
-        self.paint_math_bitmap(
-            renderer,
-            &math.block_handle,
-            Rectangle {
-                x: draw_x,
-                y: draw_y,
-                width: draw_w,
-                height: draw_h,
-            },
-            clip,
-        );
+        let bitmap = Rectangle {
+            x: draw_x,
+            y: draw_y,
+            width: draw_w,
+            height: draw_h,
+        };
+        if draw_w <= extent.viewport_w {
+            self.paint_math_bitmap(renderer, &math.block_handle, bitmap, clip);
+        } else {
+            // Renderers clip an image only to its layer, never to the clip
+            // rectangle drawn with it.
+            renderer.with_layer(clip, |renderer| {
+                self.paint_math_bitmap(renderer, &math.block_handle, bitmap, clip);
+            });
+        }
     }
 
     /// TeX source of block math that has no rendered bitmap (yet).
@@ -290,7 +291,7 @@ impl<Message> Editor<'_, Message> {
     ) {
         let (bounds, line, viewport) = (frame.bounds, row.line, frame.viewport);
         let (extent, scroll_x) = self.row_scroll::<R>(frame, row);
-        let left = bounds.x + TEXT_X_OFFSET;
+        let left = bounds.x + text_left(bounds.width);
 
         let clip = clip_viewport(
             viewport,
@@ -302,21 +303,36 @@ impl<Message> Editor<'_, Message> {
             },
         );
 
-        let mut text_y = row.y + MATH_SOURCE_TOP;
-        for source_line in tex.lines() {
-            TextRun::new(
-                source_line,
-                MATH_SOURCE_FONT_SIZE,
-                Size::new(extent.content_w.max(1.0), BASE_LINE_HEIGHT),
-            )
-            .font(iced::Font::MONOSPACE)
-            .draw(
-                renderer,
-                Point::new(left - scroll_x, text_y),
-                theme::TEXT_SECONDARY,
-                clip,
-            );
-            text_y += BASE_LINE_HEIGHT;
+        let source_row = row_height(MATH_SOURCE_FONT_SIZE);
+        let text_offset =
+            centered_text_top(source_row, MATH_SOURCE_FONT_SIZE, iced::Font::MONOSPACE);
+        let paint_source = |renderer: &mut R| {
+            let mut row_top = row.y + MATH_BLOCK_PADDING / 2.0;
+            for source_line in tex.lines() {
+                TextRun::new(
+                    source_line,
+                    MATH_SOURCE_FONT_SIZE,
+                    Size::new(
+                        extent.content_w.max(1.0),
+                        MATH_SOURCE_FONT_SIZE * LINE_BOX_FACTOR,
+                    ),
+                )
+                .font(iced::Font::MONOSPACE)
+                .draw(
+                    renderer,
+                    Point::new(left - scroll_x, row_top + text_offset),
+                    theme::TEXT_SECONDARY,
+                    viewport,
+                );
+                row_top += source_row;
+            }
+        };
+        // Only source that doesn't fit needs clipping — and only a layer clips
+        // text in every renderer.
+        if scroll_x > 0.0 || extent.overflows() {
+            renderer.with_layer(clip, paint_source);
+        } else {
+            paint_source(renderer);
         }
 
         let number =
@@ -326,17 +342,9 @@ impl<Message> Editor<'_, Message> {
             number,
             left + text_column_width(bounds.width),
             row.y + row.height / 2.0,
-            BASE_LINE_HEIGHT,
+            body_row(),
             viewport,
         );
-    }
-}
-
-/// End byte of a text item's slice.
-fn text_end(item: &super::super::flow::Item) -> usize {
-    match &item.kind {
-        ItemKind::Text(part) => part.bytes.end,
-        _ => 0,
     }
 }
 

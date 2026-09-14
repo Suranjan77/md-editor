@@ -8,4 +8,7 @@ pub mod renderer;
 mod render_snapshot_tests;
 
 #[cfg(test)]
+pub(crate) mod test_docs;
+
+#[cfg(test)]
 mod render_preview;

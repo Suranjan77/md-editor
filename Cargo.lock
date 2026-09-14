@@ -2321,6 +2321,8 @@ dependencies = [
  "serde_json",
  "syntect",
  "tokio",
+ "unicode-linebreak",
+ "unicode-segmentation",
  "uuid",
 ]
 

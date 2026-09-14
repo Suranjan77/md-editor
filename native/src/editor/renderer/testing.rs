@@ -10,7 +10,7 @@ use iced::keyboard::{self, Key, key};
 use iced::{Background, Color, Point, Rectangle, Size, mouse};
 
 use super::{Editor, ImageCache, MathCache, MathRender, State};
-use crate::editor::buffer::{DocBuffer, EditorCommand};
+use crate::editor::buffer::{Affinity, DocBuffer, EditorCommand};
 use crate::editor::highlight::{StyledLine, StyledSpan, highlight_markdown};
 
 type Real = iced::Renderer;
@@ -21,6 +21,8 @@ pub(crate) enum Call {
     Quad {
         bounds: Rectangle,
         color: Color,
+        /// The layer it was drawn into; see [`Call::paint_order`].
+        layer: usize,
         raw: String,
     },
     Text {
@@ -28,10 +30,19 @@ pub(crate) enum Call {
         size: f32,
         font: iced::Font,
         at: Point,
+        align_y: iced::alignment::Vertical,
+        /// What every renderer clips it to. Only a layer clips; drawing text
+        /// with a clip rectangle inside its layer turns tiny-skia's clip off.
+        clip: Rectangle,
+        layer: usize,
         raw: String,
     },
     Image {
         bounds: Rectangle,
+        /// What a renderer clips it to: its layers only. Renderers ignore the
+        /// clip rectangle drawn with an image.
+        clip: Rectangle,
+        layer: usize,
         raw: String,
     },
     Other(String),
@@ -45,6 +56,19 @@ impl Call {
             Call::Other(raw) => raw,
         }
     }
+
+    /// When a renderer actually paints the call recorded at `index`: layers
+    /// in the order they were opened, and within a layer every quad, then
+    /// every image, then all text — whatever order they were drawn in. Later
+    /// sorts on top.
+    pub fn paint_order(&self, index: usize) -> (usize, u8, usize) {
+        match self {
+            Call::Quad { layer, .. } => (*layer, 0, index),
+            Call::Image { layer, .. } => (*layer, 1, index),
+            Call::Text { layer, .. } => (*layer, 2, index),
+            Call::Other(_) => (0, 0, index),
+        }
+    }
 }
 
 /// Renders nothing; records every primitive. Measurement types are borrowed
@@ -52,14 +76,53 @@ impl Call {
 #[derive(Default)]
 pub(crate) struct Recorder {
     pub calls: Vec<Call>,
+    /// The clip of each open layer, innermost last.
+    layers: Vec<Rectangle>,
+    /// The layer being drawn into, the layers it was opened from, and how
+    /// many have been opened — tracked the way iced's layer stack does: a new
+    /// layer paints after every earlier one, and closing it returns to its
+    /// parent.
+    current: usize,
+    parents: Vec<usize>,
+    opened: usize,
+}
+
+/// Stands for no clip at all.
+const UNCLIPPED: Rectangle = Rectangle {
+    x: -1e9,
+    y: -1e9,
+    width: 2e9,
+    height: 2e9,
+};
+
+impl Recorder {
+    /// The clip a renderer applies to a primitive: the innermost layer's,
+    /// narrowed by the clip drawn with it where the renderer honours one.
+    fn clip(&self, drawn_with: Option<Rectangle>) -> Rectangle {
+        let layer = self.layers.last().copied().unwrap_or(UNCLIPPED);
+        drawn_with.map_or(layer, |clip| {
+            layer.intersection(&clip).unwrap_or(Rectangle {
+                width: 0.0,
+                height: 0.0,
+                ..clip
+            })
+        })
+    }
 }
 
 impl renderer::Renderer for Recorder {
     fn start_layer(&mut self, bounds: Rectangle) {
         self.calls.push(Call::Other(format!("layer {:?}", bounds)));
+        let clip = self.clip(Some(bounds));
+        self.layers.push(clip);
+        self.parents.push(self.current);
+        self.opened += 1;
+        self.current = self.opened;
     }
     fn end_layer(&mut self) {
         self.calls.push(Call::Other("end_layer".into()));
+        self.layers.pop();
+        self.current = self.parents.pop().unwrap_or(0);
     }
     fn start_transformation(&mut self, _t: iced::Transformation) {
         self.calls.push(Call::Other("transform".into()));
@@ -80,6 +143,7 @@ impl renderer::Renderer for Recorder {
         self.calls.push(Call::Quad {
             bounds: quad.bounds,
             color,
+            layer: self.current,
             raw,
         });
     }
@@ -140,11 +204,30 @@ impl text::Renderer for Recorder {
             color,
             clip_bounds
         );
+        // wgpu clips text to its layer and `clip_bounds`. tiny-skia culls text
+        // whose `clip_bounds` miss the layer, and masks the rest to the layer
+        // only when `clip_bounds` reach past it: clip bounds inside the layer
+        // leave text unclipped. What holds in both is the weaker.
+        let layer = self.clip(None);
+        let clip = if !layer.intersects(&clip_bounds) {
+            Rectangle {
+                width: 0.0,
+                height: 0.0,
+                ..clip_bounds
+            }
+        } else if clip_bounds.is_within(&layer) {
+            UNCLIPPED
+        } else {
+            layer
+        };
         self.calls.push(Call::Text {
             content: t.content,
             size: t.size.0,
             font: t.font,
             at: position,
+            align_y: t.align_y,
+            clip,
+            layer: self.current,
             raw,
         });
     }
@@ -169,7 +252,13 @@ impl image::Renderer for Recorder {
             bounds,
             clip
         );
-        self.calls.push(Call::Image { bounds, raw });
+        let clip = self.clip(None);
+        self.calls.push(Call::Image {
+            bounds,
+            clip,
+            layer: self.current,
+            raw,
+        });
     }
 }
 
@@ -205,6 +294,10 @@ pub(crate) struct View {
     pub tree: Tree,
     pub width: f32,
     pub search: (&'static str, bool, bool, Option<(usize, usize)>),
+    /// The reveal request the widget is shown, as the app bumps it.
+    pub reveal_request: u64,
+    /// The layout revision the widget is given, if any.
+    pub layout_revision: Option<u64>,
 }
 
 type Wd<'a> = Editor<'a, String>;
@@ -221,13 +314,15 @@ impl View {
             tree: Tree::empty(),
             width,
             search: ("", false, false, None),
+            reveal_request: 0,
+            layout_revision: None,
         };
         view.reset_tree();
         view
     }
 
     pub fn editor(&self) -> Editor<'_, String> {
-        Editor::new(
+        let editor = Editor::new(
             &self.buffer,
             &self.lines,
             &self.images,
@@ -239,6 +334,20 @@ impl View {
         )
         .search(self.search.0, self.search.1, self.search.2, self.search.3)
         .scale_factor(1.5)
+        .reveal_caret(self.reveal_request, |view| format!("caret {view:?}"));
+        match self.layout_revision {
+            Some(revision) => editor.layout_revision(revision),
+            None => editor,
+        }
+    }
+
+    pub fn state(&self) -> &State {
+        self.tree.state.downcast_ref::<State>()
+    }
+
+    /// Re-highlight after editing `buffer` directly.
+    pub fn rehighlight(&mut self) {
+        self.lines = highlight_markdown(&self.buffer.text());
     }
 
     pub fn reset_tree(&mut self) {
@@ -315,6 +424,30 @@ impl View {
 
     /// Deliver an event against `node` without running widget layout first.
     pub fn event_on(&mut self, event: Event, cursor: Option<Point>, node: Node) -> EventOutcome {
+        let viewport = node.bounds();
+        self.deliver(event, cursor, node, viewport)
+    }
+
+    /// A frame about to be drawn with `viewport` — widget coordinates, as a
+    /// scrollable passes them — in view.
+    pub fn redraw(&mut self, viewport: Rectangle) -> EventOutcome {
+        self.redraw_at(viewport, std::time::Instant::now())
+    }
+
+    /// [`View::redraw`] for a frame requested at `at`.
+    pub fn redraw_at(&mut self, viewport: Rectangle, at: std::time::Instant) -> EventOutcome {
+        let node = self.layout();
+        let event = Event::Window(iced::window::Event::RedrawRequested(at));
+        self.deliver(event, None, node, viewport)
+    }
+
+    fn deliver(
+        &mut self,
+        event: Event,
+        cursor: Option<Point>,
+        node: Node,
+        viewport: Rectangle,
+    ) -> EventOutcome {
         let mut messages = Vec::new();
         let mut clip = RecordingClipboard::default();
         let captured;
@@ -332,7 +465,7 @@ impl View {
                 &Recorder::default(),
                 &mut clip,
                 &mut shell,
-                &node.bounds(),
+                &viewport,
             );
             captured = shell.is_event_captured();
         }
@@ -358,7 +491,15 @@ impl View {
     }
 
     pub fn set_cursor(&mut self, line: usize, col: usize) {
-        self.buffer.execute(EditorCommand::SetCursor { line, col });
+        self.place_caret(line, col, Affinity::Downstream);
+    }
+
+    pub fn place_caret(&mut self, line: usize, col: usize, affinity: Affinity) {
+        self.buffer.execute(EditorCommand::SetCursor {
+            line,
+            col,
+            affinity,
+        });
     }
 
     pub fn press(&mut self, p: Point) -> EventOutcome {

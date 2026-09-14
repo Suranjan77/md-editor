@@ -122,10 +122,39 @@ BACKLINKS_WIDTH 220.0   (views::backlinks)
   than calling `Instant::now()` itself, so every animation in a frame is sampled at the same
   instant;
 - `toast_text: String`, retained after `ui.toast` clears so the toast has something to draw
-  while it fades out.
+  while it fades out;
+- `editor_scroll: Option<ScrollGlide>`, the editor gliding to reveal the caret, while it is.
 
 The booleans themselves stay where they live (sidebar visibility on the vault state, TOC on
 the editor pane); `Motion` only tracks how far each has travelled.
+
+### Springs
+
+Transitions between two known states ease over a duration. Motion that *follows* something
+— the page scrolling to a caret that keeps moving as you type — uses a critically damped
+spring instead, because its target can change mid-flight:
+
+```rust
+pub struct Spring { target, x0, v0, start, stiffness }
+// x(t) = target + (x0 + (v0 + ω·x0)·t)·e^(−ωt)
+```
+
+The spring is **solved in closed form**, not integrated frame by frame, so it traces the
+same curve at 30Hz or 240Hz and a dropped frame costs nothing. Critical damping is the
+fastest approach that doesn't overshoot from rest. `retarget` keeps position and velocity,
+so a new target bends the path instead of kinking it; `shift` displaces it while keeping
+velocity; `is_settled` holds once distance plus momentum is below a tenth of a pixel.
+
+```
+SCROLL_STIFFNESS 32   ─── the editor scrolling to reveal the caret: ~150ms to 95%
+GLIDE_STIFFNESS  80   ─── the caret gliding to its new place: ~60ms to 95% (renderer/glide.rs)
+```
+
+### The caret
+
+The caret is lit for 500ms after it moves, then blinks with a soft fade — a cosine over
+1060ms, stretched and clamped so it holds fully on and fully off with quick fades between —
+and stays lit after 18 blinks. See [Markdown Pipeline](Markdown-Pipeline.md#caret-motion-gliders).
 
 ### Zero idle CPU
 
@@ -145,6 +174,10 @@ The moment every transition settles it returns `Subscription::none()`, and the p
 back to sleep until the next user event. This is one of the five
 [durability invariants](Data-Flows-and-Durability-Invariants.md) and is verified before every
 release.
+
+The editor widget schedules its own frames by the same rule: `shell.request_redraw()` only
+while the caret glides or fades, `request_redraw_at` for the instant the next fade begins,
+and nothing once the caret rests lit.
 
 ---
 

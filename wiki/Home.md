@@ -67,10 +67,10 @@ graph TB
 | **Repository Structure** | Workspace layout, crate boundaries, per-file responsibilities | [Repository Structure](Repository-Structure.md) |
 | **Core Services** | SQLite schema, portable paths, vault operations, atomic writes, wikilink graph | [Core Services](Core-Services.md) |
 | **Native Desktop GUI** | Application lifecycle, message enum, sub-state split, subscriptions, views | [Native Desktop GUI](Native-Desktop-GUI.md) |
-| **Markdown Pipeline** | Rope buffer, undo runs, auto-pairing, hybrid preview, Fenwick layout, draw pass | [Markdown Pipeline](Markdown-Pipeline.md) |
+| **Markdown Pipeline** | Rope buffer, incremental highlighting, typographic rhythm, caret affinity, scroll-into-view, draw pass | [Markdown Pipeline](Markdown-Pipeline.md) |
 | **PDF Engine & Sidecars** | PDFium worker, TOC recovery, reference resolver, sidecar annotations, linked notes | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) |
 | **PDF Viewer Internals** | Native PDF state, generation and pending invariants, navigation, scroll, zoom | [PDF Viewer Internals](PDF-Viewer-Internals.md) |
-| **Design Tokens & Motion** | Type scale, 2px spacing grid, radii, colors, one easing curve, zero idle CPU | [Design Tokens, Motion & Palette](Design-Tokens-Motion-and-Palette.md) |
+| **Design Tokens & Motion** | Type scale, 2px spacing grid, radii, colors, one easing curve, closed-form springs, zero idle CPU | [Design Tokens, Motion & Palette](Design-Tokens-Motion-and-Palette.md) |
 | **Study Tracker** | Timer, sessions, the configurable curriculum, gates, reading, storage | [Study Tracker](Study-Tracker.md) |
 | **Data Flows & Invariants** | Keystroke to atomic save, navigation, highlight creation, durability invariants | [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md) |
 | **Developer Guide & Testing** | Toolchain, build commands, PDFium resolution, test suites, desktop integration | [Developer Guide & Testing](Developer-Guide-and-Testing.md) |

@@ -156,7 +156,6 @@ impl<Message> Editor<'_, Message> {
         let lines = self.lines.get(start..=end)?;
         let first = lines.first()?;
         let is_editing = self.is_block_editing(first, focused);
-        let column = text_column_width(available_width);
 
         if first.is_code_block {
             let widest = lines
@@ -175,12 +174,12 @@ impl<Message> Editor<'_, Message> {
                 })
                 .fold(0.0, f32::max);
             Some(ScrollExtent {
-                viewport_w: (column - CODE_VIEWPORT_INSET).max(MIN_TEXT_WIDTH),
+                viewport_w: code_viewport_width(available_width),
                 content_w: widest + CODE_CONTENT_PADDING,
             })
         } else if first.is_table_row && !is_editing {
             Some(ScrollExtent {
-                viewport_w: column.max(MIN_TEXT_WIDTH),
+                viewport_w: wrap_width(available_width),
                 content_w: table_columns::<R>(lines).iter().sum(),
             })
         } else if first.is_math_block && !is_editing {
@@ -190,7 +189,7 @@ impl<Message> Editor<'_, Message> {
                 .map(math_source)
                 .find(|tex| !tex.is_empty())?;
             Some(ScrollExtent {
-                viewport_w: (column - MATH_BLOCK_PADDING).max(MIN_TEXT_WIDTH),
+                viewport_w: math_viewport_width(available_width),
                 content_w: math_block_width::<R>(self.math_cache.get(tex).map(|m| m.width), tex),
             })
         } else {
@@ -227,7 +226,7 @@ impl<Message> Editor<'_, Message> {
         let &(start, end) = state.block_ranges.get(&block_id)?;
         let (block_y, block_h) = super::layout::lines_extent(state, start, end);
         let bar_y = scrollbar_y(&self.lines[start], block_y, block_h);
-        let viewport_x = TEXT_X_OFFSET;
+        let viewport_x = text_left(available_width);
         if pos.x < viewport_x
             || pos.x > viewport_x + extent.viewport_w
             || pos.y < bar_y - GRAB_SLOP_ABOVE

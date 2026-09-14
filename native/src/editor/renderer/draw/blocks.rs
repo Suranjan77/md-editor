@@ -4,18 +4,19 @@
 //! (card, caption, badge) behind everything, their rows as part of the line
 //! pass, and their scrollbars last.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use iced::border::Radius;
 use iced::{Border, Color, Point, Rectangle, Size};
 
 use super::super::caret::code_x_for_col;
-use super::super::measure::{measure_width, span_font};
+use super::super::layout::lines_extent;
+use super::super::measure::{centered_text_top, measure_width, span_font};
 use super::super::metrics::*;
 use super::super::scroll::{ScrollExtent, table_columns};
 use super::super::{Editor, Measure, Paint, State};
 use super::captions::{block_ordinal, paint_block_caption, paint_language_badge};
-use super::primitives::{TextRun, draw_nowrap_text, fill, rounded};
+use super::primitives::{TextRun, clip_viewport, draw_nowrap_text, fill, rounded};
 use super::{Frame, LineBox};
 use crate::theme;
 
@@ -23,8 +24,6 @@ const CARD_RADIUS: f32 = 8.0;
 /// Cards start this far left of the text column.
 const CARD_OUTSET: f32 = 16.0;
 const QUOTE_BAR_WIDTH: f32 = 4.0;
-/// Code text sits this far below the top of its row.
-const CODE_TEXT_TOP: f32 = 10.0;
 /// Cell text starts this far right of its column's left edge.
 const CELL_TEXT_INSET: f32 = 7.0;
 
@@ -40,11 +39,11 @@ pub(super) enum BlockKind {
 pub(super) struct BlockMeta {
     /// Index of the block's first line.
     pub start: usize,
-    /// Top of the block, including any caption band, in window coordinates.
+    /// Top of the block's box, below its margin and including any caption
+    /// band, in window coordinates.
     pub y: f32,
     pub height: f32,
     pub kind: BlockKind,
-    pub is_editing: bool,
     /// Width of each table column, padding included.
     pub columns: Vec<f32>,
     /// Horizontal extent, for blocks that scroll.
@@ -62,23 +61,36 @@ impl<Message> Editor<'_, Message> {
         visible_start: usize,
         visible_end: usize,
     ) -> HashMap<usize, BlockMeta> {
-        let visible_block_ids: HashSet<usize> = self.lines[visible_start..visible_end]
-            .iter()
-            .filter(|l| l.is_code_block || l.is_math_block || l.is_blockquote || l.is_table_row)
-            .map(|l| l.block_id)
-            .collect();
+        // Blocks keyed by their id, except runs of quoted lines, which frame
+        // together and are keyed by their first line's id.
+        let mut visible: HashMap<usize, (usize, usize)> = HashMap::new();
+        for idx in visible_start..visible_end {
+            let line = &self.lines[idx];
+            if line.is_blockquote {
+                let start = (0..idx)
+                    .rev()
+                    .take_while(|&i| self.lines[i].is_blockquote)
+                    .last()
+                    .unwrap_or(idx);
+                let end = (idx + 1..self.lines.len())
+                    .take_while(|&i| self.lines[i].is_blockquote)
+                    .last()
+                    .unwrap_or(idx);
+                visible.insert(self.lines[start].block_id, (start, end));
+            } else if (line.is_code_block || line.is_math_block || line.is_table_row)
+                && let Some(&range) = state.block_ranges.get(&line.block_id)
+            {
+                visible.insert(line.block_id, range);
+            }
+        }
 
         let mut blocks = HashMap::new();
-        for block_id in visible_block_ids {
-            let Some(&(start, end)) = state.block_ranges.get(&block_id) else {
-                continue;
-            };
+        for (block_id, (start, end)) in visible {
             let Some(first_line) = self.lines.get(start) else {
                 continue;
             };
-            let block_y = bounds.y + TOP_PAD + state.layout_tree.prefix_sum(start);
-            let block_height = state.layout_tree.prefix_sum(end.saturating_add(1))
-                - state.layout_tree.prefix_sum(start);
+            let (top, block_height) = lines_extent(state, start, end);
+            let block_y = bounds.y + top;
             if block_height <= 0.0 {
                 continue;
             }
@@ -104,7 +116,6 @@ impl<Message> Editor<'_, Message> {
                     Vec::new()
                 },
                 kind,
-                is_editing,
                 scroll: self.scroll_extent::<R>(state, block_id, bounds.width, focused),
                 code_lang: lines.iter().find_map(|line| line.code_block_lang.clone()),
             };
@@ -126,8 +137,9 @@ impl<Message> Editor<'_, Message> {
             return;
         }
 
-        let card_x = bounds.x + TEXT_X_OFFSET - CARD_OUTSET;
-        let card_w = bounds.width - TEXT_X_OFFSET;
+        let scale = page_scale(bounds.width);
+        let card_x = bounds.x + text_left(bounds.width) - CARD_OUTSET * scale;
+        let card_w = bounds.width - text_left(bounds.width);
         let card = Rectangle {
             x: card_x,
             y: meta.y,
@@ -161,8 +173,8 @@ impl<Message> Editor<'_, Message> {
                     theme::ACCENT,
                 );
             }
-            BlockKind::Table if !meta.is_editing => {
-                let table_x = bounds.x + TEXT_X_OFFSET;
+            BlockKind::Table => {
+                let table_x = bounds.x + text_left(bounds.width);
                 let table_width = meta
                     .scroll
                     .map_or(text_column_width(bounds.width), |extent| extent.viewport_w);
@@ -191,7 +203,6 @@ impl<Message> Editor<'_, Message> {
                     viewport,
                 );
             }
-            BlockKind::Table => {}
             BlockKind::Code | BlockKind::Math => {
                 fill(
                     renderer,
@@ -204,7 +215,7 @@ impl<Message> Editor<'_, Message> {
                     theme::BG_SECONDARY,
                 );
 
-                if meta.kind == BlockKind::Code && !meta.is_editing {
+                if meta.kind == BlockKind::Code {
                     let number = block_ordinal(self.lines, block_id, "code-").unwrap_or(1);
                     paint_block_caption(
                         renderer,
@@ -237,10 +248,34 @@ impl<Message> Editor<'_, Message> {
                 self.scroll_extent::<R>(frame.state, block_id, frame.bounds.width, frame.focused)
             })
             .unwrap_or(ScrollExtent {
-                viewport_w: text_column_width(frame.bounds.width).max(MIN_TEXT_WIDTH),
+                viewport_w: wrap_width(frame.bounds.width),
                 content_w: 0.0,
             });
         (extent, frame.state.block_scroll(block_id, &extent))
+    }
+
+    /// Where the horizontally scrolled content of `row`'s block may show: its
+    /// scroll viewport, `viewport_w` wide, over the block's full height — so
+    /// every line of a block shares one clip — within the frame's viewport.
+    pub(super) fn block_clip(
+        &self,
+        frame: &Frame<'_>,
+        row: &LineBox<'_>,
+        viewport_w: f32,
+    ) -> Rectangle {
+        let (y, height) = frame
+            .blocks
+            .get(&row.line.block_id)
+            .map_or((row.y, row.height), |meta| (meta.y, meta.height));
+        clip_viewport(
+            frame.viewport,
+            Rectangle {
+                x: frame.bounds.x + text_left(frame.bounds.width),
+                y,
+                width: viewport_w,
+                height,
+            },
+        )
     }
 
     /// Visible x range, relative to the text column, of source columns
@@ -269,50 +304,75 @@ impl<Message> Editor<'_, Message> {
     ) {
         let (bounds, line) = (frame.bounds, row.line);
         let (extent, scroll_x) = self.row_scroll::<R>(frame, row);
-        let code_left = bounds.x + TEXT_X_OFFSET;
+        let code_left = bounds.x + text_left(bounds.width);
         let code_right = code_left + extent.viewport_w;
-
-        let mut code_x = code_left - scroll_x;
-        for span in &line.spans {
-            let text = span.visible_text(row.is_editing);
-            if text.is_empty() {
-                continue;
+        let clip = self.block_clip(frame, row, extent.viewport_w);
+        let text_top = self
+            .snap_px(row.y + centered_text_top(row.height, CODE_FONT_SIZE, iced::Font::MONOSPACE));
+        let spans = || {
+            line.spans
+                .iter()
+                .map(|span| (span, span.visible_text(row.is_editing)))
+                .filter(|(_, text)| !text.is_empty())
+                .map(|(span, text)| {
+                    let width = measure_width::<R>(text, CODE_FONT_SIZE, iced::Font::MONOSPACE);
+                    (span, text, width)
+                })
+        };
+        let paint_text = |renderer: &mut R| {
+            let mut code_x = code_left - scroll_x;
+            for (span, text, width) in spans() {
+                if code_x + width >= code_left && code_x <= code_right {
+                    draw_nowrap_text(
+                        renderer,
+                        text,
+                        code_x,
+                        text_top,
+                        width,
+                        CODE_FONT_SIZE,
+                        iced::Font::MONOSPACE,
+                        span.color,
+                        // The layer clips. A clip rectangle inside it would
+                        // switch tiny-skia's clipping off.
+                        frame.viewport,
+                    );
+                }
+                code_x += width;
             }
-            let width = measure_width::<R>(text, CODE_FONT_SIZE, iced::Font::MONOSPACE);
-            if code_x + width >= code_left && code_x <= code_right {
-                draw_nowrap_text(
-                    renderer,
-                    text,
-                    code_x,
-                    row.y + CODE_TEXT_TOP,
-                    width,
-                    CODE_FONT_SIZE,
-                    iced::Font::MONOSPACE,
-                    span.color,
-                    frame.viewport,
-                );
-            }
-            code_x += width;
+        };
+        // Only a line that doesn't fit needs clipping — and only a layer clips
+        // text in every renderer.
+        let line_width: f32 = spans().map(|(_, _, width)| width).sum();
+        if scroll_x > 0.0 || line_width > extent.viewport_w {
+            renderer.with_layer(clip, paint_text);
+        } else {
+            paint_text(renderer);
         }
 
-        if frame.focused && row.idx == self.buffer.cursor_line {
+        let motion = &frame.state.caret_motion;
+        if frame.focused && row.idx == self.buffer.cursor_line && motion.alpha() > 0.0 {
             let caret = self.caret_box::<R>(
                 row.idx,
                 self.buffer.cursor_col,
+                self.buffer.cursor_affinity,
                 bounds.width,
                 row.is_editing,
                 row.active_col,
             );
+            let offset = motion.offset();
             fill(
                 renderer,
                 Rectangle {
-                    x: code_left + caret.x - scroll_x,
-                    y: row.y + caret.y,
+                    x: code_left + caret.x - scroll_x + offset.x,
+                    y: self.snap_px(row.y + caret.y + offset.y),
                     width: 2.0,
                     height: caret.height,
                 },
                 rounded(1.0),
-                theme::ACCENT_SECONDARY,
+                Color {
+                    a: theme::ACCENT_SECONDARY.a * motion.alpha(),
+                    ..theme::ACCENT_SECONDARY
+                },
             );
         }
     }
@@ -331,7 +391,7 @@ impl<Message> Editor<'_, Message> {
 
         let (extent, scroll_x) = self.row_scroll::<R>(frame, row);
         let table_width = extent.viewport_w;
-        let table_x = bounds.x + TEXT_X_OFFSET;
+        let table_x = bounds.x + text_left(bounds.width);
         let (row_y, row_h) = (row.y, row.height);
         let full_row = Rectangle {
             x: table_x - TABLE_EDGE_PADDING / 2.0,
@@ -375,66 +435,70 @@ impl<Message> Editor<'_, Message> {
         }
 
         let table_right = table_x + table_width;
-        let cell_clip = Rectangle {
-            x: table_x,
-            y: row_y,
-            width: table_width,
-            height: row_h,
-        };
-        let mut cx = table_x - scroll_x;
-        for (c_idx, cell) in line.table_cells.iter().enumerate() {
-            let Some(&col_width) = meta.columns.get(c_idx) else {
-                break;
-            };
+        let cell_clip = self.block_clip(frame, row, table_width);
+        let paint_cells = |renderer: &mut R| {
+            let mut cx = table_x - scroll_x;
+            for (c_idx, cell) in line.table_cells.iter().enumerate() {
+                let Some(&col_width) = meta.columns.get(c_idx) else {
+                    break;
+                };
 
-            if c_idx > 0 && cx >= table_x && cx <= table_right {
-                fill(
-                    renderer,
-                    Rectangle {
-                        x: cx - 3.0,
-                        y: row_y,
-                        width: 1.0,
-                        height: row_h,
-                    },
-                    Border::default(),
-                    theme::BORDER_SUBTLE,
-                );
-            }
-
-            let mut px = cx + CELL_TEXT_INSET;
-            for span in cell {
-                let text = span.visible_text(false);
-                if text.is_empty() {
-                    continue;
+                if c_idx > 0 && cx >= table_x && cx <= table_right {
+                    fill(
+                        renderer,
+                        Rectangle {
+                            x: cx - 3.0,
+                            y: row_y,
+                            width: 1.0,
+                            height: row_h,
+                        },
+                        Border::default(),
+                        theme::BORDER_SUBTLE,
+                    );
                 }
 
-                let font = span_font(span, line);
-                let fs = span.font_size;
-                let width = measure_width::<R>(text, fs, font);
-                if px + width < table_x || px > table_right {
+                let mut px = cx + CELL_TEXT_INSET;
+                for span in cell {
+                    let text = span.visible_text(false);
+                    if text.is_empty() {
+                        continue;
+                    }
+
+                    let font = span_font(span, line);
+                    let fs = span.font_size;
+                    let width = measure_width::<R>(text, fs, font);
+                    if px + width < table_x || px > table_right {
+                        px += width;
+                        continue;
+                    }
+
+                    TextRun::new(
+                        text,
+                        fs,
+                        Size::new(width.min((table_right - px).max(1.0)).max(1.0), row_h),
+                    )
+                    .font(font)
+                    .draw(
+                        renderer,
+                        Point::new(px, self.snap_px(row_y + centered_text_top(row_h, fs, font))),
+                        if is_header {
+                            theme::TEXT_PRIMARY
+                        } else {
+                            span.color
+                        },
+                        frame.viewport,
+                    );
                     px += width;
-                    continue;
                 }
-
-                TextRun::new(
-                    text,
-                    fs,
-                    Size::new(width.min((table_right - px).max(1.0)).max(1.0), row_h),
-                )
-                .font(font)
-                .draw(
-                    renderer,
-                    Point::new(px, row_y + (row_h - fs) / 2.0),
-                    if is_header {
-                        theme::TEXT_PRIMARY
-                    } else {
-                        span.color
-                    },
-                    cell_clip,
-                );
-                px += width;
+                cx += col_width;
             }
-            cx += col_width;
+        };
+        // Only a table that doesn't fit needs clipping — and only a layer
+        // clips text in every renderer.
+        if scroll_x > 0.0 || extent.overflows() {
+            renderer.with_layer(cell_clip, paint_cells);
+        } else {
+            paint_cells(renderer);
         }
     }
 }

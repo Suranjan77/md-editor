@@ -48,7 +48,7 @@ md-editor/
         ├── app.rs              # MdEditor shell: update router, view composition, tasks
         ├── messages.rs         # Message, Shortcut, TrackerTab enums
         ├── theme.rs            # Design tokens: type scale, spacing grid, radii, colors
-        ├── motion.rs           # One easing curve, three durations, animation state
+        ├── motion.rs           # One easing curve, three durations, springs, animation state
         ├── fuzzy.rs            # score() and score_path() for the command palette
         ├── search.rs           # Reusable in-file line matching (plain + regex)
         ├── pdf_notes.rs        # Linked-note path normalization and markdown formatting
@@ -66,24 +66,28 @@ md-editor/
         │   ├── layout_tree.rs  # HeightTree — Fenwick tree over visual line heights
         │   ├── render_snapshot_tests.rs # Opt-in draw-call transcript for renderer changes
         │   ├── render_preview.rs # Opt-in PNG previews through the software renderer
+        │   ├── test_docs.rs    # Seeded markdown document generator for property suites
         │   └── renderer/       # The iced Widget, split by concern
-        │       ├── mod.rs      # Editor, State, and a thin Widget impl that delegates
-        │       ├── metrics.rs  # Constants layout, painting, and hit testing must share
-        │       ├── measure.rs  # Memoized text shaping and span fonts
+        │       ├── mod.rs      # Editor, State, LayoutKey, and a thin Widget impl
+        │       ├── metrics.rs  # Rhythm grid and constants layout, painting, hit testing share
+        │       ├── measure.rs  # Shaping, font metrics, memoized word offsets
         │       ├── spans.rs    # When a span shows its source instead of its rendering
         │       ├── flow.rs     # Inline layout: rows, baselines, column ⇄ x — the only wrapper
-        │       ├── layout.rs   # Line heights, HeightWalk, height tree, line_visual_y
+        │       ├── layout.rs   # Line bodies, collapsing margins, height tree
         │       ├── caret.rs    # Caret boxes, hit testing, visual up/down, code columns
+        │       ├── glide.rs    # The caret's glide and blink, and the frames they need
+        │       ├── reveal.rs   # CaretView: telling the app where the caret is
         │       ├── selection.rs # Selection ordering and text extraction
         │       ├── scroll.rs   # Per-block horizontal scroll and scrollbar geometry
         │       ├── events.rs   # Mouse and keyboard handling
         │       ├── testing.rs  # Test support: recording renderer and a widget driver
         │       ├── tests.rs    # Behavioral tests through the Widget API
+        │       ├── properties.rs # Seeded invariants: caret, rows, layout, scrolling
         │       └── draw/       # Painting
         │           ├── mod.rs  # Frame setup, culling, per-line dispatch
         │           ├── blocks.rs # Block cards and captions, code lines, table rows
         │           ├── inline.rs # Flow lines, images, inline and block math, rules
-        │           ├── overlays.rs # Selection and search highlights, the caret
+        │           ├── overlays.rs # The selection shape, search highlights, the caret
         │           ├── captions.rs # Table, Listing, Figure, and equation numbering
         │           └── primitives.rs # Quads, text runs, clipping, scrollbars
         └── views/              # View-layer components
@@ -131,26 +135,30 @@ md-editor/
 | File | Primary Responsibility |
 | :--- | :--- |
 | `main.rs` | Parses `--install` / `--install-desktop`, `--uninstall` / `--uninstall-desktop`, and a bare path argument; restores and clamps window size; installs the Linux desktop entry and multi-size icons; starts the `iced::application`. |
-| `app.rs` | The `MdEditor` shell: `update()` routing, `view()` composition, subscriptions (keyboard, toast, highlight debounce, autosave, search debounce, animation frames, filesystem watcher), and every cross-pane effect. |
+| `app.rs` | The `MdEditor` shell: `update()` routing, `view()` composition, subscriptions (keyboard, toast, autosave, search debounce, animation frames, editor scroll interrupt, filesystem watcher), revealing the caret with a spring-animated scroll, and every cross-pane effect. |
 | `messages.rs` | `Message` (the complete event vocabulary), `Shortcut`, and `TrackerTab`. |
 | `theme.rs` | Six type sizes, seven spacing steps on a 2px grid, three radii, the dark colour palette, `fade()`, and the custom iced `Theme`. |
-| `motion.rs` | `EASE = Easing::EaseOutQuad`; durations `FAST`, `PANEL`, `OVERLAY`; panel widths; the `Motion` animation state and `is_animating()`. |
+| `motion.rs` | `EASE = Easing::EaseOutQuad`; durations `FAST`, `PANEL`, `OVERLAY`; panel widths; the closed-form critically damped `Spring` and `ScrollGlide`; the `Motion` animation state and `is_animating()`. |
 | `fuzzy.rs` | `score()` — in-order matching with word-boundary, CamelCase, run, and distance rules — and `score_path()`, which favours the filename. |
-| `editor/buffer.rs` | `DocBuffer` over `ropey::Rope`: transactions with inverse ops, undo-run coalescing, auto-pairing, list continuation, formatting commands, movement. |
-| `editor/highlight.rs` | `highlight_markdown()` producing `StyledLine`/`StyledSpan`, with syntect for fenced code and marker concealing via `is_syntax` + `display_text`. |
-| `editor/layout_tree.rs` | `HeightTree`, a Fenwick tree over visual line heights, giving O(log N) prefix sums and y-to-line lookups. |
-| `editor/layout_cache.rs` | `LineHeightCache` plus `line_hash()` and `resource_hash()` so a line is remeasured only when its content, edit state, active column, layout width, or media dimensions change. |
-| `editor/renderer/mod.rs` | `Editor` (the `iced::advanced::Widget`), its builder, `State`, `MathRender`, and the `ImageCache` / `MathCache` aliases. The `Widget` methods only delegate to the modules below. |
-| `editor/renderer/metrics.rs` | Every layout constant that more than one pass depends on — margins, row heights, caption bands, code and table metrics, checkbox advance — plus `content_bounds()`, `visual_line_step()`, and `wrap_width()`. |
-| `editor/renderer/measure.rs` | `measure_width()` and `measure_char_width()` over process-wide width caches, and `span_font()`. |
+| `editor/buffer.rs` | `DocBuffer` over `ropey::Rope`: transactions with inverse ops, undo-run coalescing, auto-pairing, list continuation, formatting commands, grapheme-aware movement and deletion, and the caret with its `Affinity`. |
+| `editor/highlight.rs` | `Highlighted`, which keeps `StyledLine`/`StyledSpan` in step with the text by re-highlighting from the first changed line until the block state converges; syntect for fenced code; marker concealing via `is_syntax` + `display_text`; block and caption numbering. |
+| `editor/layout_tree.rs` | `HeightTree`, a Fenwick tree over fixed-point line heights, giving exact O(log N) prefix sums and y-to-line lookups. |
+| `editor/layout_cache.rs` | `LineHeightCache` plus `line_hash()` and `resource_hash()` so a line's body is remeasured only when its content, edit state, active column, layout width, or media dimensions change. |
+| `editor/test_docs.rs` | Test-only: a seeded generator of markdown documents covering every block and inline kind, shared by the highlighter and renderer property suites. |
+| `editor/renderer/mod.rs` | `Editor` (the `iced::advanced::Widget`), its builder — including `reveal_caret` and `layout_revision` — `State`, `LayoutKey`, `MathRender`, and the `ImageCache` / `MathCache` aliases. The `Widget` methods only delegate to the modules below. |
+| `editor/renderer/metrics.rs` | The vertical rhythm — `GRID`, `row_height()`, `PARAGRAPH_GAP`, `HEADING_MARGINS`, `BLOCK_MARGIN` — and every other constant more than one pass depends on, plus `content_bounds()` and `wrap_width()`. |
+| `editor/renderer/measure.rs` | Shaping (`shaping_for()`), real font metrics (`font_metrics()`), per-word character offsets from the shaper (`word_offsets()`), memoized widths, and `span_font()`. |
 | `editor/renderer/spans.rs` | Typora-style reveal rules: which spans show markdown source for a given caret column, and whether a whole block is being edited. |
-| `editor/renderer/flow.rs` | `Flow`, the inline layout of one line: greedy word breaking with hanging whitespace, per-row height and baseline, and the queries everything else uses — `caret()`, `col_at()`, `span_at()`, and `range_extents()`. |
-| `editor/renderer/layout.rs` | `line_height_for()`, the `HeightWalk` document pass, `total_height()`, the public `line_visual_y()`, and `layout_lines()`, which fills the height tree and block ranges using `LineHeightCache`. |
-| `editor/renderer/caret.rs` | `caret_box()`, `hit_test()`, and visual up/down movement over a line's `Flow`, plus column ⇄ x for unwrapped code lines. |
+| `editor/renderer/flow.rs` | `Flow`, the inline layout of one line: UAX #14 breaking with hanging whitespace, hanging indents, balanced headings, rows on the rhythm grid with font-metric baselines, and the queries everything else uses — `caret()`, `col_at()` (with affinity), `span_at()`, and `range_extents()`. |
+| `editor/renderer/layout.rs` | Line body heights, collapsing margins (`requested_margins()`, `MarginWalk`), and `layout_lines()`, which fills the height tree, margins and block ranges using `LineHeightCache`; plus the uncached model tests check it against. |
+| `editor/renderer/caret.rs` | `caret_box()`, `hit_test()` returning a `Position` with affinity, and visual up/down movement over a line's `Flow`, plus column ⇄ x for unwrapped code lines. |
+| `editor/renderer/glide.rs` | `CaretMotion`: the caret's spring glide between places, its soft blink, and when it next needs a frame. |
+| `editor/renderer/reveal.rs` | `Reveal` and `CaretView`: answering the app's reveal request with the caret's exact place, and the nearest/centre scrolling policy. |
+| `editor/renderer/properties.rs` | Seeded property suites for the renderer's invariants; see [Developer Guide & Testing](Developer-Guide-and-Testing.md#property-suites). |
 | `editor/renderer/selection.rs` | Selection normalization, the selection to paint, and pointer-selection text for copy and cut. |
 | `editor/renderer/scroll.rs` | `scroll_extent()` — the one answer to how wide a code block, table, or equation is and how much of it shows — plus scroll offsets, scrollbar geometry and hit testing, and drag and wheel handling. |
 | `editor/renderer/events.rs` | Mouse press, drag, wheel, and keyboard handling; every edit leaves as an `EditorCommand` message. |
-| `editor/renderer/draw/` | Painting: frame setup and culling (`mod.rs`), block chrome, code lines, and table rows (`blocks.rs`), inline content (`inline.rs`), highlights and the caret (`overlays.rs`), numbered captions (`captions.rs`), and shared primitives (`primitives.rs`). |
+| `editor/renderer/draw/` | Painting: frame setup, culling and laying out visible lines once (`mod.rs`), block chrome, code lines, and table rows (`blocks.rs`), inline content (`inline.rs`), the selection shape, search highlights and the caret (`overlays.rs`), numbered captions (`captions.rs`), and shared primitives (`primitives.rs`). |
 | `editor/renderer/testing.rs`, `tests.rs` | A recording renderer and a `View` driver that feeds the widget real layout, draw, and input calls, and the behavioral tests built on them. |
 | `editor/render_preview.rs` | An ignored-by-default test that renders sample scenes to PNG with iced's tiny-skia software renderer. See [Developer Guide & Testing](Developer-Guide-and-Testing.md). |
 | `editor/render_snapshot_tests.rs` | An ignored-by-default harness that drives the widget through its `Widget` API and records every draw call, message, and cursor shape to a transcript. See [Developer Guide & Testing](Developer-Guide-and-Testing.md). |

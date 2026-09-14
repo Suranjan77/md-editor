@@ -1,10 +1,12 @@
 use iced::Color;
 use std::sync::OnceLock;
+use syntect::highlighting::{HighlightIterator, HighlightState, Highlighter};
+use syntect::parsing::{ParseState, ScopeStack};
 
 use crate::theme;
 
 /// A styled text span for rendering.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StyledSpan {
     /// The raw markdown source text for this span.
     pub text: String,
@@ -22,6 +24,9 @@ pub struct StyledSpan {
     pub heading_level: u8,
     pub is_checkbox: bool,
     pub is_checked: bool,
+    /// The marker that starts a list item — bullet, number or checkbox.
+    /// Wrapped rows of the item hang indented past it.
+    pub is_list_marker: bool,
     pub is_rule: bool,
     pub is_image: bool,
     pub image_path: Option<String>,
@@ -51,6 +56,7 @@ impl StyledSpan {
             heading_level: 0,
             is_checkbox: false,
             is_checked: false,
+            is_list_marker: false,
             is_rule: false,
             is_image: false,
             image_path: None,
@@ -86,7 +92,7 @@ impl StyledSpan {
 }
 
 /// A line of styled spans for the editor to render.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StyledLine {
     pub spans: Vec<StyledSpan>,
     pub is_code_block: bool,
@@ -119,316 +125,515 @@ impl StyledLine {
     }
 }
 
+/// The multi-line context a line is highlighted in: which fenced code block,
+/// math block or table, if any, it continues.
+///
+/// A line's styling is a pure function of its text and this state. That is
+/// what lets an edit re-highlight only the lines it can affect: once the state
+/// entering an unchanged line matches the state it was highlighted with
+/// before, it and everything after it are known to be unchanged.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LineState {
+    code: Option<CodeState>,
+    in_math: bool,
+    in_table: bool,
+}
+
+/// Inside a fenced code block.
+#[derive(Debug, Clone, PartialEq)]
+struct CodeState {
+    lang: Option<String>,
+    /// Syntax highlighting state carried from line to line.
+    syntax: Option<(ParseState, HighlightState)>,
+}
+
+/// What the document pass needs to know about a line's local result.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct BlockStep {
+    /// How the line's spans present on their own, before any math block
+    /// conceals them.
+    presentation: Presentation,
+    /// Blocks begun before the line takes its id.
+    before: u8,
+    /// The line opens a block that following lines continue.
+    opens: bool,
+    /// The line belongs to the open block rather than a block of its own.
+    continues: bool,
+    /// Blocks begun after the line.
+    after: u8,
+}
+
+/// How a line that continues a block presents on its own. Only such lines
+/// can share a math block's id and be concealed by it, and each is either
+/// shown or concealed as a whole, which is what lets the document pass
+/// restore it exactly.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+enum Presentation {
+    /// A line with its own block; never concealed by another.
+    #[default]
+    Own,
+    /// All spans shown as their source.
+    Shown,
+    /// All spans concealed: fences and table separators.
+    Concealed,
+}
+
+#[derive(Debug, Clone)]
+struct LineSource {
+    text: String,
+    /// The state the line was highlighted in.
+    entry: LineState,
+    step: BlockStep,
+}
+
+/// A document's highlighted lines, kept exactly in step with its text.
+///
+/// [`Highlighted::update`] re-highlights from the first changed line only
+/// until the block state converges with what was there before, then splices
+/// the result in; the outcome is identical to highlighting from scratch.
+#[derive(Debug, Clone, Default)]
+pub struct Highlighted {
+    pub lines: Vec<StyledLine>,
+    sources: Vec<LineSource>,
+    /// The state after the last line.
+    end_state: LineState,
+    /// Changes whenever `lines` does, and never repeats, even across
+    /// instances: a revision names one set of lines.
+    revision: u64,
+}
+
+/// A revision no `Highlighted` has had before.
+fn next_revision() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+impl Highlighted {
+    /// Identifies the current `lines`; see the field.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    #[cfg(test)]
+    pub fn new(text: &str) -> Self {
+        let mut highlighted = Self::default();
+        highlighted.update(text);
+        highlighted
+    }
+
+    /// Bring the lines in step with `text`. Returns the range of lines that
+    /// were re-highlighted.
+    pub fn update(&mut self, text: &str) -> std::ops::Range<usize> {
+        let texts: Vec<&str> = text.split('\n').collect();
+        let (old_n, new_n) = (self.sources.len(), texts.len());
+
+        let prefix = self
+            .sources
+            .iter()
+            .zip(&texts)
+            .take_while(|(source, text)| source.text == **text)
+            .count();
+        let suffix = self
+            .sources
+            .iter()
+            .rev()
+            .zip(texts.iter().rev())
+            .take(old_n.min(new_n) - prefix)
+            .take_while(|(source, text)| source.text == **text)
+            .count();
+
+        let mut state = match self.sources.get(prefix) {
+            Some(source) => source.entry.clone(),
+            None => self.end_state.clone(),
+        };
+        let mut lines = Vec::new();
+        let mut sources = Vec::new();
+        let mut i = prefix;
+        // Index of the first old line that is kept.
+        let mut old_resume = old_n;
+        let mut converged = false;
+        while i < new_n {
+            if i >= new_n - suffix {
+                let old_i = i + old_n - new_n;
+                if self.sources[old_i].entry == state {
+                    old_resume = old_i;
+                    converged = true;
+                    break;
+                }
+            }
+            let entry = state;
+            let (line, exit, step) = highlight_with_state(&entry, texts[i]);
+            lines.push(line);
+            sources.push(LineSource {
+                text: texts[i].to_string(),
+                entry,
+                step,
+            });
+            state = exit;
+            i += 1;
+        }
+
+        self.lines.splice(prefix..old_resume, lines);
+        self.sources.splice(prefix..old_resume, sources);
+        if !converged {
+            self.end_state = state;
+        }
+        decorate(&mut self.lines, &self.sources);
+        self.revision = next_revision();
+        prefix..i
+    }
+}
+
 /// Parse markdown text into styled lines for rendering.
+#[cfg(test)]
 pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
-    let mut lines = Vec::new();
+    Highlighted::new(text).lines
+}
 
-    let mut in_code_block = false;
-    let mut code_lang: Option<String> = None;
-    let mut in_math_block = false;
-    let mut in_table = false;
-    let mut block_id: usize = 0;
-    let mut current_block_id: usize = 0;
-    let mut code_highlighter: Option<syntect::easy::HighlightLines<'static>> = None;
+/// Highlight one raw line in `state`, returning the styled line, the state
+/// after it, and how it steps block numbering.
+fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineState, BlockStep) {
+    let raw_line = raw_line.trim_end_matches('\r');
+    let trimmed = raw_line.trim();
+    let mut state = state.clone();
+    let mut step = BlockStep::default();
 
-    for raw_line in text.split('\n') {
-        let raw_line = raw_line.trim_end_matches('\r');
-        let trimmed = raw_line.trim();
+    // A table ends at the first line that isn't a row.
+    if state.in_table && !trimmed.starts_with('|') {
+        state.in_table = false;
+    }
 
-        // Stop table block if not a table row
-        if in_table && !trimmed.starts_with('|') {
-            in_table = false;
-        }
-
-        // Code block fences
-        if trimmed.starts_with("```") {
-            if in_code_block {
-                // Closing fence
-                let mut sl = StyledLine::new();
-                sl.is_code_block = true;
-                sl.is_block_fence = true;
-                sl.block_id = current_block_id;
-                sl.spans.push(StyledSpan {
-                    text: raw_line.to_string(),
-                    display_text: Some(String::new()),
-                    color: theme::TEXT_MUTED,
-                    is_syntax: true,
-                    font_size: 13.0,
-                    is_code: true,
-                    ..StyledSpan::plain("")
-                });
-                lines.push(sl);
-                in_code_block = false;
-                code_lang = None;
-                code_highlighter = None;
-                block_id += 1;
-                continue;
-            } else {
-                // Opening fence
-                block_id += 1;
-                current_block_id = block_id;
-                in_code_block = true;
-                code_lang = if trimmed.len() > 3 {
-                    Some(trimmed[3..].trim().to_string())
-                } else {
-                    None
-                };
-                code_highlighter = make_code_highlighter(code_lang.as_deref());
-                let mut sl = StyledLine::new();
-                sl.is_code_block = true;
-                sl.is_block_fence = true;
-                sl.block_id = current_block_id;
-                sl.code_block_lang = code_lang.clone();
-                sl.spans.push(StyledSpan {
-                    text: raw_line.to_string(),
-                    display_text: Some(String::new()),
-                    color: theme::TEXT_MUTED,
-                    is_syntax: true,
-                    font_size: 14.0,
-                    is_code: true,
-                    ..StyledSpan::plain("")
-                });
-                lines.push(sl);
-                continue;
-            }
-        }
-
-        // Math block fences. Keep this narrow so ordinary markdown/HTML is not
-        // accidentally promoted to a math block.
-        if in_math_block && is_obvious_markdown_boundary(trimmed) {
-            in_math_block = false;
-            block_id += 1;
-        }
-
-        if in_math_block && (trimmed.starts_with("$$") || is_math_end(trimmed)) {
-            let mut sl = StyledLine::new();
-            sl.is_math_block = true;
-            sl.is_block_fence = true;
-            sl.block_id = current_block_id;
-            sl.spans.push(StyledSpan {
-                text: raw_line.to_string(),
-                display_text: Some(String::new()),
-                color: theme::WARNING,
-                is_syntax: true,
-                is_math: true,
-                font_size: 16.0,
-                ..StyledSpan::plain("")
+    // Code block fences.
+    if trimmed.starts_with("```") {
+        let mut sl = StyledLine::new();
+        sl.is_code_block = true;
+        sl.is_block_fence = true;
+        step.continues = true;
+        step.presentation = Presentation::Concealed;
+        let font_size = if state.code.is_some() {
+            state.code = None;
+            step.after = 1;
+            13.0
+        } else {
+            let lang = trimmed
+                .strip_prefix("```")
+                .filter(|rest| !rest.is_empty())
+                .map(|rest| rest.trim().to_string());
+            step.before = 1;
+            step.opens = true;
+            sl.code_block_lang = lang.clone();
+            state.code = Some(CodeState {
+                syntax: start_code_syntax(lang.as_deref()),
+                lang,
             });
-            lines.push(sl);
-            in_math_block = false;
-            block_id += 1;
-            continue;
-        }
+            14.0
+        };
+        sl.spans.push(StyledSpan {
+            text: raw_line.to_string(),
+            display_text: Some(String::new()),
+            color: theme::TEXT_MUTED,
+            is_syntax: true,
+            font_size,
+            is_code: true,
+            ..StyledSpan::plain("")
+        });
+        return (sl, state, step);
+    }
 
-        if trimmed.starts_with("$$") || is_math_begin(trimmed) {
-            if let Some(inline_math) = single_line_display_math(trimmed) {
-                block_id += 1;
-                let mut sl = StyledLine::new();
-                sl.is_math_block = true;
-                sl.block_id = block_id;
-                sl.spans.push(StyledSpan {
-                    text: raw_line.to_string(),
-                    display_text: Some(inline_math.to_string()),
-                    color: theme::WARNING,
-                    italic: true,
-                    font_size: 16.0,
-                    is_math: true,
-                    ..StyledSpan::plain("")
-                });
-                lines.push(sl);
-                continue;
-            }
+    // Math block fences. Keep this narrow so ordinary markdown/HTML is not
+    // accidentally promoted to a math block.
+    if state.in_math && is_obvious_markdown_boundary(trimmed) {
+        state.in_math = false;
+        step.before += 1;
+    }
 
-            block_id += 1;
-            current_block_id = block_id;
-            in_math_block = true;
-            let mut sl = StyledLine::new();
+    let math_fence = |sl: &mut StyledLine| {
+        sl.is_math_block = true;
+        sl.is_block_fence = true;
+        sl.spans.push(StyledSpan {
+            text: raw_line.to_string(),
+            display_text: Some(String::new()),
+            color: theme::WARNING,
+            is_syntax: true,
+            is_math: true,
+            font_size: 16.0,
+            ..StyledSpan::plain("")
+        });
+    };
+
+    if state.in_math && (trimmed.starts_with("$$") || is_math_end(trimmed)) {
+        let mut sl = StyledLine::new();
+        math_fence(&mut sl);
+        state.in_math = false;
+        step.presentation = Presentation::Concealed;
+        step.continues = true;
+        step.after = 1;
+        return (sl, state, step);
+    }
+
+    if trimmed.starts_with("$$") || is_math_begin(trimmed) {
+        step.before += 1;
+        let mut sl = StyledLine::new();
+        if let Some(inline_math) = single_line_display_math(trimmed) {
             sl.is_math_block = true;
-            sl.is_block_fence = true;
-            sl.block_id = current_block_id;
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
-                display_text: Some(String::new()),
-                color: theme::WARNING,
-                is_syntax: true,
-                is_math: true,
-                font_size: 16.0,
-                ..StyledSpan::plain("")
-            });
-            lines.push(sl);
-            continue;
-        }
-
-        // Inside code block
-        if in_code_block {
-            let mut sl = StyledLine::new();
-            sl.is_code_block = true;
-            sl.block_id = current_block_id;
-            sl.code_block_lang = code_lang.clone();
-            sl.spans = highlight_code_spans(raw_line, &mut code_highlighter, code_lang.as_deref());
-            lines.push(sl);
-            continue;
-        }
-
-        // Inside math block
-        if in_math_block {
-            let mut sl = StyledLine::new();
-            sl.is_math_block = true;
-            sl.block_id = current_block_id;
-            sl.spans.push(StyledSpan {
-                text: raw_line.to_string(),
-                display_text: None,
+                display_text: Some(inline_math.to_string()),
                 color: theme::WARNING,
                 italic: true,
                 font_size: 16.0,
                 is_math: true,
                 ..StyledSpan::plain("")
             });
-            lines.push(sl);
-            continue;
+            return (sl, state, step);
         }
-
-        // Table row
-        if trimmed.starts_with('|') && trimmed.contains('|') {
-            if !in_table {
-                in_table = true;
-                block_id += 1;
-                current_block_id = block_id;
-            }
-            let mut sl = StyledLine::new();
-            sl.is_table_row = true;
-            sl.block_id = current_block_id;
-
-            // Check if it's a separator line like |---|---|
-            let is_separator = trimmed
-                .chars()
-                .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
-            if is_separator {
-                // We can mark this as an empty row or skip spans, but let's just make it a row
-                sl.spans
-                    .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
-            } else {
-                let mut parts = trimmed.split('|').collect::<Vec<_>>();
-                if parts.first() == Some(&"") {
-                    parts.remove(0);
-                }
-                if parts.last() == Some(&"") {
-                    parts.pop();
-                }
-
-                for part in parts {
-                    let mut cell_spans = Vec::new();
-                    parse_inline_spans(part.trim(), &mut cell_spans);
-                    sl.table_cells.push(cell_spans);
-                }
-                sl.spans.push(StyledSpan::plain(raw_line)); // Raw text for editing
-            }
-            lines.push(sl);
-            continue;
-        }
-
-        // Regular line — parse inline markdown
-        block_id += 1;
-        let mut sl = highlight_line(raw_line);
-        sl.block_id = block_id;
-        lines.push(sl);
+        math_fence(&mut sl);
+        state.in_math = true;
+        step.presentation = Presentation::Concealed;
+        step.opens = true;
+        step.continues = true;
+        return (sl, state, step);
     }
 
-    // Consolidated math block processing
+    // Inside a code block.
+    if let Some(code) = &mut state.code {
+        let mut sl = StyledLine::new();
+        sl.is_code_block = true;
+        sl.code_block_lang = code.lang.clone();
+        sl.spans = highlight_code_spans(raw_line, code);
+        step.continues = true;
+        step.presentation = Presentation::Shown;
+        return (sl, state, step);
+    }
+
+    // Inside a math block.
+    if state.in_math {
+        let mut sl = StyledLine::new();
+        sl.is_math_block = true;
+        sl.spans.push(StyledSpan {
+            text: raw_line.to_string(),
+            display_text: None,
+            color: theme::WARNING,
+            italic: true,
+            font_size: 16.0,
+            is_math: true,
+            ..StyledSpan::plain("")
+        });
+        step.presentation = Presentation::Shown;
+        step.continues = true;
+        return (sl, state, step);
+    }
+
+    // Table row.
+    if trimmed.starts_with('|') && trimmed.contains('|') {
+        if !state.in_table {
+            state.in_table = true;
+            step.before += 1;
+            step.opens = true;
+        }
+        step.continues = true;
+        let mut sl = StyledLine::new();
+        sl.is_table_row = true;
+
+        let is_separator = trimmed
+            .chars()
+            .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
+        if is_separator {
+            step.presentation = Presentation::Concealed;
+            sl.spans
+                .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
+        } else {
+            step.presentation = Presentation::Shown;
+            let mut parts = trimmed.split('|').collect::<Vec<_>>();
+            if parts.first() == Some(&"") {
+                parts.remove(0);
+            }
+            if parts.last() == Some(&"") {
+                parts.pop();
+            }
+            for part in parts {
+                let mut cell_spans = Vec::new();
+                parse_inline_spans(part.trim(), &mut cell_spans);
+                sl.table_cells.push(cell_spans);
+            }
+            sl.spans.push(StyledSpan::plain(raw_line)); // Raw text for editing
+        }
+        return (sl, state, step);
+    }
+
+    // A regular line: its own block, styled inline.
+    step.before += 1;
+    (highlight_line(raw_line), state, step)
+}
+
+/// Document-wide decoration of the line-local results: block ids, merged
+/// display math, and caption numbers. Idempotent, so it can run after every
+/// update over lines it has already decorated.
+fn decorate(lines: &mut [StyledLine], sources: &[LineSource]) {
+    number_blocks(lines, sources);
+    merge_math_blocks(lines, sources);
+    number_captions(lines);
+}
+
+/// Assign block ids: consecutive lines of one code block, math block or
+/// table share an id, and every other line has its own.
+///
+/// Every block is homogeneous — all its lines are of one kind — so consumers
+/// can take a block's kind from any of its lines. Malformed nesting (a `$$`
+/// inside a code fence, say) can make a line continue a block of another
+/// kind; such a line starts a block of its own instead.
+fn number_blocks(lines: &mut [StyledLine], sources: &[LineSource]) {
+    let (mut next, mut open) = (0usize, 0usize);
+    let mut open_kind = None;
+    for (line, source) in lines.iter_mut().zip(sources) {
+        let step = source.step;
+        let kind = block_kind(line);
+        next += step.before as usize;
+        if step.opens {
+            open = next;
+            open_kind = kind;
+        } else if step.continues && kind != open_kind {
+            next += 1;
+            open = next;
+            open_kind = kind;
+        }
+        line.block_id = if step.continues { open } else { next };
+        next += step.after as usize;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum BlockKind {
+    Code,
+    Math,
+    Table,
+}
+
+fn block_kind(line: &StyledLine) -> Option<BlockKind> {
+    if line.is_code_block {
+        Some(BlockKind::Code)
+    } else if line.is_math_block {
+        Some(BlockKind::Math)
+    } else if line.is_table_row {
+        Some(BlockKind::Table)
+    } else {
+        None
+    }
+}
+
+/// Collect each fenced math block's source onto its opening fence, which
+/// renders the equation, and conceal the lines after it.
+fn merge_math_blocks(lines: &mut [StyledLine], sources: &[LineSource]) {
+    // Start from each line's own presentation, so a line that has left a
+    // math block since the last pass doesn't keep that block's concealment.
+    for (line, source) in lines.iter_mut().zip(sources) {
+        let (display, is_syntax) = match source.step.presentation {
+            Presentation::Own => continue,
+            Presentation::Shown => (None, false),
+            Presentation::Concealed => (Some(String::new()), true),
+        };
+        for span in &mut line.spans {
+            span.display_text = display.clone();
+            span.is_syntax = is_syntax;
+        }
+    }
+
     let mut idx = 0;
     while idx < lines.len() {
-        if lines[idx].is_math_block && lines[idx].is_block_fence && lines[idx].block_id > 0 {
-            let block_id = lines[idx].block_id;
-            let mut j = idx + 1;
-            let mut math_lines = Vec::new();
-
-            // If the opening fence has some math content (like \begin{align}), include it.
-            let first_trimmed = lines[idx]
-                .spans
-                .first()
-                .map(|s| s.text.trim())
-                .unwrap_or("");
-            if first_trimmed.starts_with("\\begin{") {
-                math_lines.push(first_trimmed);
-            }
-
-            while j < lines.len() && lines[j].block_id == block_id {
-                if !lines[j].is_block_fence {
-                    if let Some(span) = lines[j].spans.first() {
-                        math_lines.push(span.text.as_str());
-                    }
-                } else {
-                    // If the closing fence is \end{...}, include it.
-                    let last_trimmed = lines[j].spans.first().map(|s| s.text.trim()).unwrap_or("");
-                    if last_trimmed.starts_with("\\end{") {
-                        math_lines.push(last_trimmed);
-                    }
-                }
-                j += 1;
-            }
-
-            // Consolidate the math lines
-            let consolidated_math = math_lines.join("\n");
-
-            if !consolidated_math.is_empty()
-                && let Some(span) = lines[idx].spans.first_mut()
-            {
-                span.display_text = Some(consolidated_math);
-                span.is_syntax = false;
-                span.is_math = true;
-                span.font_size = 16.0;
-            }
-
-            for hidden_idx in idx + 1..j {
-                for span in &mut lines[hidden_idx].spans {
-                    span.display_text = Some(String::new());
-                    span.is_syntax = true;
-                }
-            }
-
-            idx = j;
-        } else {
+        if !(lines[idx].is_math_block && lines[idx].is_block_fence && lines[idx].block_id > 0) {
             idx += 1;
+            continue;
         }
+        let block_id = lines[idx].block_id;
+        let mut math_lines: Vec<String> = Vec::new();
+
+        // If the opening fence has some math content (like \begin{align}), include it.
+        let first_trimmed = lines[idx]
+            .spans
+            .first()
+            .map(|s| s.text.trim())
+            .unwrap_or("");
+        if first_trimmed.starts_with("\\begin{") {
+            math_lines.push(first_trimmed.to_string());
+        }
+
+        let mut j = idx + 1;
+        while j < lines.len() && lines[j].block_id == block_id {
+            let first = lines[j].spans.first().map(|s| s.text.as_str());
+            if !lines[j].is_block_fence {
+                if let Some(text) = first {
+                    math_lines.push(text.to_string());
+                }
+            } else if let Some(text) = first.map(str::trim)
+                && text.starts_with("\\end{")
+            {
+                // If the closing fence is \end{...}, include it.
+                math_lines.push(text.to_string());
+            }
+            j += 1;
+        }
+
+        let consolidated = math_lines.join("\n");
+        if let Some(span) = lines[idx].spans.first_mut()
+            && !consolidated.is_empty()
+        {
+            span.display_text = Some(consolidated);
+            span.is_syntax = false;
+            span.is_math = true;
+            span.font_size = 16.0;
+        }
+
+        for hidden in &mut lines[idx + 1..j] {
+            for span in &mut hidden.spans {
+                span.display_text = Some(String::new());
+                span.is_syntax = true;
+            }
+        }
+
+        idx = j;
     }
+}
 
-    // Post-process to assign unique sequential IDs to images, display math blocks, tables, and code blocks
-    let mut image_counter = 0;
-    let mut equation_counter = 0;
-    let mut table_counter = 0;
-    let mut code_counter = 0;
-    let mut seen_math_block_ids = std::collections::HashSet::new();
-    let mut seen_table_block_ids = std::collections::HashSet::new();
-    let mut seen_code_block_ids = std::collections::HashSet::new();
+/// Assign sequential ids to images, display math blocks, tables and code
+/// blocks, for numbered captions and cross-reference links.
+fn number_captions(lines: &mut [StyledLine]) {
+    let (mut images, mut equations, mut tables, mut code) = (0, 0, 0, 0);
+    let mut seen_math = std::collections::HashSet::new();
+    let mut seen_tables = std::collections::HashSet::new();
+    let mut seen_code = std::collections::HashSet::new();
 
-    for line in &mut lines {
-        if line.is_math_block && line.block_id > 0 && seen_math_block_ids.insert(line.block_id) {
-            equation_counter += 1;
-            if let Some(first_span) = line.spans.first_mut() {
-                first_span.id = Some(format!("equation-{}", equation_counter));
+    for line in lines.iter_mut() {
+        if let Some(first) = line.spans.first_mut()
+            && !first.is_image
+        {
+            first.id = None;
+        }
+        if line.is_math_block && line.block_id > 0 && seen_math.insert(line.block_id) {
+            equations += 1;
+            if let Some(first) = line.spans.first_mut() {
+                first.id = Some(format!("equation-{}", equations));
             }
         }
-        if line.is_table_row && line.block_id > 0 && seen_table_block_ids.insert(line.block_id) {
-            table_counter += 1;
-            if let Some(first_span) = line.spans.first_mut() {
-                first_span.id = Some(format!("table-{}", table_counter));
+        if line.is_table_row && line.block_id > 0 && seen_tables.insert(line.block_id) {
+            tables += 1;
+            if let Some(first) = line.spans.first_mut() {
+                first.id = Some(format!("table-{}", tables));
             }
         }
-        if line.is_code_block && line.block_id > 0 && seen_code_block_ids.insert(line.block_id) {
-            code_counter += 1;
-            if let Some(first_span) = line.spans.first_mut() {
-                first_span.id = Some(format!("code-{}", code_counter));
+        if line.is_code_block && line.block_id > 0 && seen_code.insert(line.block_id) {
+            code += 1;
+            if let Some(first) = line.spans.first_mut() {
+                first.id = Some(format!("code-{}", code));
             }
         }
         for span in &mut line.spans {
             if span.is_image {
-                image_counter += 1;
-                span.id = Some(format!("figure-{}", image_counter));
+                images += 1;
+                span.id = Some(format!("figure-{}", images));
             }
         }
     }
-
-    lines
 }
 
 fn highlight_line(line: &str) -> StyledLine {
@@ -538,6 +743,7 @@ fn highlight_line(line: &str) -> StyledLine {
             },
             is_checkbox: true,
             is_checked,
+            is_list_marker: true,
             ..StyledSpan::plain("")
         });
         let start_idx = sl.spans.len();
@@ -558,6 +764,7 @@ fn highlight_line(line: &str) -> StyledLine {
             text: line[..bullet_end].to_string(),
             display_text: Some("  • ".to_string()),
             color: theme::ACCENT,
+            is_list_marker: true,
             ..StyledSpan::plain("")
         });
         parse_inline_spans(&line[bullet_end..], &mut sl.spans);
@@ -571,6 +778,7 @@ fn highlight_line(line: &str) -> StyledLine {
             text: line[..prefix_end].to_string(),
             display_text: None,
             color: theme::ACCENT,
+            is_list_marker: true,
             ..StyledSpan::plain("")
         });
         parse_inline_spans(&line[prefix_end..], &mut sl.spans);
@@ -900,24 +1108,11 @@ fn heading_size(level: u8) -> f32 {
 }
 
 fn find_char(chars: &[char], start: usize, target: char) -> Option<usize> {
-    for i in start..chars.len() {
-        if chars[i] == target {
-            return Some(i);
-        }
-    }
-    None
+    (start..chars.len()).find(|&i| chars[i] == target)
 }
 
 fn find_double(chars: &[char], start: usize, target: char) -> Option<usize> {
-    if start + 1 >= chars.len() {
-        return None;
-    }
-    for i in start..chars.len() - 1 {
-        if chars[i] == target && chars[i + 1] == target {
-            return Some(i);
-        }
-    }
-    None
+    (start..chars.len().saturating_sub(1)).find(|&i| chars[i] == target && chars[i + 1] == target)
 }
 
 fn extract_display_name(target: &str) -> String {
@@ -966,27 +1161,28 @@ fn extract_display_name(target: &str) -> String {
     }
 }
 
-fn highlight_code_spans(
-    line: &str,
-    highlighter: &mut Option<syntect::easy::HighlightLines<'static>>,
-    lang: Option<&str>,
-) -> Vec<StyledSpan> {
+/// Syntax-highlight one line of a code block, advancing its state.
+fn highlight_code_spans(line: &str, code: &mut CodeState) -> Vec<StyledSpan> {
+    let plain = || vec![code_span(line, theme::TEXT_PRIMARY)];
     let Some((syntax_set, _)) = syntect_defaults() else {
-        return vec![code_span(line, theme::TEXT_PRIMARY)];
+        return plain();
     };
-
-    if highlighter.is_none() {
-        *highlighter = make_code_highlighter(lang);
+    if code.syntax.is_none() {
+        code.syntax = start_code_syntax(code.lang.as_deref());
     }
-
-    let Some(highlighter) = highlighter.as_mut() else {
-        return vec![code_span(line, theme::TEXT_PRIMARY)];
+    let (Some((parse, highlight)), Some(highlighter)) = (code.syntax.as_mut(), code_highlighter())
+    else {
+        return plain();
     };
 
-    match highlighter.highlight_line(line, syntax_set) {
-        Ok(regions) => {
-            let spans = regions
-                .into_iter()
+    // The bundled grammars expect each line to end in a newline; without one,
+    // constructs that end at the line end (a `#` comment, say) never close and
+    // bleed into the following lines.
+    let terminated = format!("{line}\n");
+    match parse.parse_line(&terminated, syntax_set) {
+        Ok(ops) => {
+            let spans = HighlightIterator::new(highlight, &ops, &terminated, highlighter)
+                .map(|(style, text)| (style, text.strip_suffix('\n').unwrap_or(text)))
                 .filter(|(_, text)| !text.is_empty())
                 .map(|(style, text)| {
                     let fg = style.foreground;
@@ -996,26 +1192,38 @@ fn highlight_code_spans(
                     )
                 })
                 .collect::<Vec<_>>();
-            if spans.is_empty() {
-                vec![code_span(line, theme::TEXT_PRIMARY)]
-            } else {
-                spans
-            }
+            if spans.is_empty() { plain() } else { spans }
         }
-        Err(_) => vec![code_span(line, theme::TEXT_PRIMARY)],
+        Err(_) => plain(),
     }
 }
 
-fn make_code_highlighter(lang: Option<&str>) -> Option<syntect::easy::HighlightLines<'static>> {
-    let (syntax_set, theme_set) = syntect_defaults()?;
+/// Fresh syntax state for a code block in `lang`.
+fn start_code_syntax(lang: Option<&str>) -> Option<(ParseState, HighlightState)> {
+    let (syntax_set, _) = syntect_defaults()?;
     let syntax = lang
         .and_then(|lang| syntax_set.find_syntax_by_token(lang))
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
-    let theme = theme_set
-        .themes
-        .get("base16-ocean.dark")
-        .or_else(|| theme_set.themes.values().next())?;
-    Some(syntect::easy::HighlightLines::new(syntax, theme))
+    let highlighter = code_highlighter()?;
+    Some((
+        ParseState::new(syntax),
+        HighlightState::new(highlighter, ScopeStack::new()),
+    ))
+}
+
+/// The code highlighter for the editor's syntax theme.
+fn code_highlighter() -> Option<&'static Highlighter<'static>> {
+    static HIGHLIGHTER: OnceLock<Option<Highlighter<'static>>> = OnceLock::new();
+    HIGHLIGHTER
+        .get_or_init(|| {
+            let (_, theme_set) = syntect_defaults()?;
+            let theme = theme_set
+                .themes
+                .get("base16-ocean.dark")
+                .or_else(|| theme_set.themes.values().next())?;
+            Some(Highlighter::new(theme))
+        })
+        .as_ref()
 }
 
 fn code_span(text: &str, color: Color) -> StyledSpan {
@@ -1041,9 +1249,525 @@ fn syntect_defaults()
     }))
 }
 
+/// The highlighter as it was before it became incremental, kept as a
+/// reference: the stateful implementation must produce identical lines.
+#[cfg(test)]
+#[allow(clippy::all)]
+mod reference {
+    use super::*;
+
+    /// Parse markdown text into styled lines for rendering.
+    pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
+        let mut lines = Vec::new();
+
+        let mut in_code_block = false;
+        let mut code_lang: Option<String> = None;
+        let mut in_math_block = false;
+        let mut in_table = false;
+        let mut block_id: usize = 0;
+        let mut current_block_id: usize = 0;
+        let mut code_highlighter: Option<syntect::easy::HighlightLines<'static>> = None;
+
+        for raw_line in text.split('\n') {
+            let raw_line = raw_line.trim_end_matches('\r');
+            let trimmed = raw_line.trim();
+
+            // Stop table block if not a table row
+            if in_table && !trimmed.starts_with('|') {
+                in_table = false;
+            }
+
+            // Code block fences
+            if trimmed.starts_with("```") {
+                if in_code_block {
+                    // Closing fence
+                    let mut sl = StyledLine::new();
+                    sl.is_code_block = true;
+                    sl.is_block_fence = true;
+                    sl.block_id = current_block_id;
+                    sl.spans.push(StyledSpan {
+                        text: raw_line.to_string(),
+                        display_text: Some(String::new()),
+                        color: theme::TEXT_MUTED,
+                        is_syntax: true,
+                        font_size: 13.0,
+                        is_code: true,
+                        ..StyledSpan::plain("")
+                    });
+                    lines.push(sl);
+                    in_code_block = false;
+                    code_lang = None;
+                    code_highlighter = None;
+                    block_id += 1;
+                    continue;
+                } else {
+                    // Opening fence
+                    block_id += 1;
+                    current_block_id = block_id;
+                    in_code_block = true;
+                    code_lang = if trimmed.len() > 3 {
+                        Some(trimmed[3..].trim().to_string())
+                    } else {
+                        None
+                    };
+                    code_highlighter = make_code_highlighter(code_lang.as_deref());
+                    let mut sl = StyledLine::new();
+                    sl.is_code_block = true;
+                    sl.is_block_fence = true;
+                    sl.block_id = current_block_id;
+                    sl.code_block_lang = code_lang.clone();
+                    sl.spans.push(StyledSpan {
+                        text: raw_line.to_string(),
+                        display_text: Some(String::new()),
+                        color: theme::TEXT_MUTED,
+                        is_syntax: true,
+                        font_size: 14.0,
+                        is_code: true,
+                        ..StyledSpan::plain("")
+                    });
+                    lines.push(sl);
+                    continue;
+                }
+            }
+
+            // Math block fences. Keep this narrow so ordinary markdown/HTML is not
+            // accidentally promoted to a math block.
+            if in_math_block && is_obvious_markdown_boundary(trimmed) {
+                in_math_block = false;
+                block_id += 1;
+            }
+
+            if in_math_block && (trimmed.starts_with("$$") || is_math_end(trimmed)) {
+                let mut sl = StyledLine::new();
+                sl.is_math_block = true;
+                sl.is_block_fence = true;
+                sl.block_id = current_block_id;
+                sl.spans.push(StyledSpan {
+                    text: raw_line.to_string(),
+                    display_text: Some(String::new()),
+                    color: theme::WARNING,
+                    is_syntax: true,
+                    is_math: true,
+                    font_size: 16.0,
+                    ..StyledSpan::plain("")
+                });
+                lines.push(sl);
+                in_math_block = false;
+                block_id += 1;
+                continue;
+            }
+
+            if trimmed.starts_with("$$") || is_math_begin(trimmed) {
+                if let Some(inline_math) = single_line_display_math(trimmed) {
+                    block_id += 1;
+                    let mut sl = StyledLine::new();
+                    sl.is_math_block = true;
+                    sl.block_id = block_id;
+                    sl.spans.push(StyledSpan {
+                        text: raw_line.to_string(),
+                        display_text: Some(inline_math.to_string()),
+                        color: theme::WARNING,
+                        italic: true,
+                        font_size: 16.0,
+                        is_math: true,
+                        ..StyledSpan::plain("")
+                    });
+                    lines.push(sl);
+                    continue;
+                }
+
+                block_id += 1;
+                current_block_id = block_id;
+                in_math_block = true;
+                let mut sl = StyledLine::new();
+                sl.is_math_block = true;
+                sl.is_block_fence = true;
+                sl.block_id = current_block_id;
+                sl.spans.push(StyledSpan {
+                    text: raw_line.to_string(),
+                    display_text: Some(String::new()),
+                    color: theme::WARNING,
+                    is_syntax: true,
+                    is_math: true,
+                    font_size: 16.0,
+                    ..StyledSpan::plain("")
+                });
+                lines.push(sl);
+                continue;
+            }
+
+            // Inside code block
+            if in_code_block {
+                let mut sl = StyledLine::new();
+                sl.is_code_block = true;
+                sl.block_id = current_block_id;
+                sl.code_block_lang = code_lang.clone();
+                sl.spans =
+                    highlight_code_spans(raw_line, &mut code_highlighter, code_lang.as_deref());
+                lines.push(sl);
+                continue;
+            }
+
+            // Inside math block
+            if in_math_block {
+                let mut sl = StyledLine::new();
+                sl.is_math_block = true;
+                sl.block_id = current_block_id;
+                sl.spans.push(StyledSpan {
+                    text: raw_line.to_string(),
+                    display_text: None,
+                    color: theme::WARNING,
+                    italic: true,
+                    font_size: 16.0,
+                    is_math: true,
+                    ..StyledSpan::plain("")
+                });
+                lines.push(sl);
+                continue;
+            }
+
+            // Table row
+            if trimmed.starts_with('|') && trimmed.contains('|') {
+                if !in_table {
+                    in_table = true;
+                    block_id += 1;
+                    current_block_id = block_id;
+                }
+                let mut sl = StyledLine::new();
+                sl.is_table_row = true;
+                sl.block_id = current_block_id;
+
+                // Check if it's a separator line like |---|---|
+                let is_separator = trimmed
+                    .chars()
+                    .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
+                if is_separator {
+                    // We can mark this as an empty row or skip spans, but let's just make it a row
+                    sl.spans
+                        .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
+                } else {
+                    let mut parts = trimmed.split('|').collect::<Vec<_>>();
+                    if parts.first() == Some(&"") {
+                        parts.remove(0);
+                    }
+                    if parts.last() == Some(&"") {
+                        parts.pop();
+                    }
+
+                    for part in parts {
+                        let mut cell_spans = Vec::new();
+                        parse_inline_spans(part.trim(), &mut cell_spans);
+                        sl.table_cells.push(cell_spans);
+                    }
+                    sl.spans.push(StyledSpan::plain(raw_line)); // Raw text for editing
+                }
+                lines.push(sl);
+                continue;
+            }
+
+            // Regular line — parse inline markdown
+            block_id += 1;
+            let mut sl = highlight_line(raw_line);
+            sl.block_id = block_id;
+            lines.push(sl);
+        }
+
+        // Consolidated math block processing
+        let mut idx = 0;
+        while idx < lines.len() {
+            if lines[idx].is_math_block && lines[idx].is_block_fence && lines[idx].block_id > 0 {
+                let block_id = lines[idx].block_id;
+                let mut j = idx + 1;
+                let mut math_lines = Vec::new();
+
+                // If the opening fence has some math content (like \begin{align}), include it.
+                let first_trimmed = lines[idx]
+                    .spans
+                    .first()
+                    .map(|s| s.text.trim())
+                    .unwrap_or("");
+                if first_trimmed.starts_with("\\begin{") {
+                    math_lines.push(first_trimmed);
+                }
+
+                while j < lines.len() && lines[j].block_id == block_id {
+                    if !lines[j].is_block_fence {
+                        if let Some(span) = lines[j].spans.first() {
+                            math_lines.push(span.text.as_str());
+                        }
+                    } else {
+                        // If the closing fence is \end{...}, include it.
+                        let last_trimmed =
+                            lines[j].spans.first().map(|s| s.text.trim()).unwrap_or("");
+                        if last_trimmed.starts_with("\\end{") {
+                            math_lines.push(last_trimmed);
+                        }
+                    }
+                    j += 1;
+                }
+
+                // Consolidate the math lines
+                let consolidated_math = math_lines.join("\n");
+
+                if !consolidated_math.is_empty()
+                    && let Some(span) = lines[idx].spans.first_mut()
+                {
+                    span.display_text = Some(consolidated_math);
+                    span.is_syntax = false;
+                    span.is_math = true;
+                    span.font_size = 16.0;
+                }
+
+                for hidden_idx in idx + 1..j {
+                    for span in &mut lines[hidden_idx].spans {
+                        span.display_text = Some(String::new());
+                        span.is_syntax = true;
+                    }
+                }
+
+                idx = j;
+            } else {
+                idx += 1;
+            }
+        }
+
+        // Post-process to assign unique sequential IDs to images, display math blocks, tables, and code blocks
+        let mut image_counter = 0;
+        let mut equation_counter = 0;
+        let mut table_counter = 0;
+        let mut code_counter = 0;
+        let mut seen_math_block_ids = std::collections::HashSet::new();
+        let mut seen_table_block_ids = std::collections::HashSet::new();
+        let mut seen_code_block_ids = std::collections::HashSet::new();
+
+        for line in &mut lines {
+            if line.is_math_block && line.block_id > 0 && seen_math_block_ids.insert(line.block_id)
+            {
+                equation_counter += 1;
+                if let Some(first_span) = line.spans.first_mut() {
+                    first_span.id = Some(format!("equation-{}", equation_counter));
+                }
+            }
+            if line.is_table_row && line.block_id > 0 && seen_table_block_ids.insert(line.block_id)
+            {
+                table_counter += 1;
+                if let Some(first_span) = line.spans.first_mut() {
+                    first_span.id = Some(format!("table-{}", table_counter));
+                }
+            }
+            if line.is_code_block && line.block_id > 0 && seen_code_block_ids.insert(line.block_id)
+            {
+                code_counter += 1;
+                if let Some(first_span) = line.spans.first_mut() {
+                    first_span.id = Some(format!("code-{}", code_counter));
+                }
+            }
+            for span in &mut line.spans {
+                if span.is_image {
+                    image_counter += 1;
+                    span.id = Some(format!("figure-{}", image_counter));
+                }
+            }
+        }
+
+        lines
+    }
+
+    pub fn highlight_code_spans(
+        line: &str,
+        highlighter: &mut Option<syntect::easy::HighlightLines<'static>>,
+        lang: Option<&str>,
+    ) -> Vec<StyledSpan> {
+        let Some((syntax_set, _)) = syntect_defaults() else {
+            return vec![code_span(line, theme::TEXT_PRIMARY)];
+        };
+
+        if highlighter.is_none() {
+            *highlighter = make_code_highlighter(lang);
+        }
+
+        let Some(highlighter) = highlighter.as_mut() else {
+            return vec![code_span(line, theme::TEXT_PRIMARY)];
+        };
+
+        let terminated = format!("{line}\n");
+        match highlighter.highlight_line(&terminated, syntax_set) {
+            Ok(regions) => {
+                let spans = regions
+                    .into_iter()
+                    .map(|(style, text)| (style, text.strip_suffix('\n').unwrap_or(text)))
+                    .filter(|(_, text)| !text.is_empty())
+                    .map(|(style, text)| {
+                        let fg = style.foreground;
+                        code_span(
+                            text,
+                            Color::from_rgba8(fg.r, fg.g, fg.b, (fg.a as f32) / 255.0),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if spans.is_empty() {
+                    vec![code_span(line, theme::TEXT_PRIMARY)]
+                } else {
+                    spans
+                }
+            }
+            Err(_) => vec![code_span(line, theme::TEXT_PRIMARY)],
+        }
+    }
+
+    pub fn make_code_highlighter(
+        lang: Option<&str>,
+    ) -> Option<syntect::easy::HighlightLines<'static>> {
+        let (syntax_set, theme_set) = syntect_defaults()?;
+        let syntax = lang
+            .and_then(|lang| syntax_set.find_syntax_by_token(lang))
+            .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+        let theme = theme_set
+            .themes
+            .get("base16-ocean.dark")
+            .or_else(|| theme_set.themes.values().next())?;
+        Some(syntect::easy::HighlightLines::new(syntax, theme))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::highlight_markdown;
+    use super::{Highlighted, highlight_markdown};
+    use crate::editor::test_docs::{Rng, block, document};
+
+    /// `HIGHLIGHT_PROPERTY_CASES` overrides the default number of cases.
+    fn cases(default: u64) -> u64 {
+        std::env::var("HIGHLIGHT_PROPERTY_CASES")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(default)
+    }
+
+    fn random_edit(rng: &mut Rng, text: &str) -> String {
+        let chars: Vec<char> = text.chars().collect();
+        let at = rng.below(chars.len() + 1);
+        let head: String = chars[..at].iter().collect();
+        if rng.chance(0.4) && at < chars.len() {
+            let end = (at + 1 + rng.below(40)).min(chars.len());
+            let tail: String = chars[end..].iter().collect();
+            return head + &tail;
+        }
+        let tail: String = chars[at..].iter().collect();
+        let insert = match rng.below(6) {
+            0 => "\n".to_string(),
+            1 => rng
+                .pick(&["```", "$$", "| x |", "> ", "- [ ] ", "\\end{align}", "# "])
+                .to_string(),
+            2 => {
+                let mut lines = Vec::new();
+                block(rng, &mut lines);
+                format!("\n{}\n", lines.join("\n"))
+            }
+            _ => rng
+                .pick(&["a", " ", "*", "`", "$", "|", "word "])
+                .to_string(),
+        };
+        head + &insert + &tail
+    }
+
+    /// Whether every block in `lines` is of a single kind.
+    fn blocks_are_homogeneous(lines: &[super::StyledLine]) -> bool {
+        let mut kinds = std::collections::HashMap::new();
+        lines.iter().all(|line| {
+            let kind = super::block_kind(line).map(|k| k as u8);
+            *kinds.entry(line.block_id).or_insert(kind) == kind
+        })
+    }
+
+    #[test]
+    fn stateful_highlighting_matches_the_reference_implementation() {
+        let mut compared = 0;
+        for seed in 0..cases(600) {
+            let doc = document(&mut Rng::new(seed));
+            let reference = super::reference::highlight_markdown(&doc);
+            // The reference lets malformed nesting mix kinds in one block,
+            // which the current numbering deliberately avoids.
+            if !blocks_are_homogeneous(&reference) {
+                continue;
+            }
+            compared += 1;
+            assert_eq!(highlight_markdown(&doc), reference, "seed {seed}:\n{doc}");
+        }
+        assert!(
+            compared > cases(600) / 2,
+            "too few documents compared: {compared}"
+        );
+    }
+
+    #[test]
+    fn line_comments_end_at_the_end_of_their_line() {
+        let lines = highlight_markdown("```python\n# a comment\nx = 1\n```");
+        let comment = lines[1].spans[0].color;
+        assert!(
+            lines[2].spans.iter().any(|span| span.color != comment),
+            "code after a comment is still coloured as a comment"
+        );
+    }
+
+    #[test]
+    fn every_block_is_homogeneous_through_edits() {
+        for seed in 0..cases(150) {
+            let mut rng = Rng::new(seed ^ 0x5851_F42D_4C95_7F2D);
+            let mut text = document(&mut rng);
+            let mut highlighted = Highlighted::new(&text);
+            for step in 0..20 {
+                assert!(
+                    blocks_are_homogeneous(&highlighted.lines),
+                    "seed {seed} step {step}:\n{text}"
+                );
+                text = random_edit(&mut rng, &text);
+                highlighted.update(&text);
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_updates_equal_highlighting_from_scratch() {
+        for seed in 0..cases(150) {
+            let mut rng = Rng::new(seed ^ 0xD1B5_4A32_D192_ED03);
+            let mut text = document(&mut rng);
+            let mut highlighted = Highlighted::new(&text);
+            for step in 0..25 {
+                text = random_edit(&mut rng, &text);
+                highlighted.update(&text);
+                let fresh = Highlighted::new(&text);
+                if let Some(i) = (0..fresh.lines.len().max(highlighted.lines.len()))
+                    .find(|&i| highlighted.lines.get(i) != fresh.lines.get(i))
+                {
+                    panic!(
+                        "seed {seed} step {step}: line {i} differs\n incremental: {:#?}\n fresh: {:#?}\n--- text ---\n{text}",
+                        highlighted.lines.get(i),
+                        fresh.lines.get(i)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_edit_rehighlights_only_until_the_state_converges() {
+        let body = (0..200)
+            .map(|i| format!("paragraph {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = format!("# Title\n{body}");
+        let mut highlighted = Highlighted::new(&text);
+        let edited = text.replacen("paragraph 100", "paragraph one hundred", 1);
+        let range = highlighted.update(&edited);
+        assert_eq!(range, 101..102);
+
+        // Opening a fence changes the state of everything after it.
+        let fenced = edited.replacen("paragraph 50", "```", 1);
+        let range = highlighted.update(&fenced);
+        assert_eq!(range.start, 51);
+        assert_eq!(range.end, 201);
+        assert_eq!(highlighted.lines, highlight_markdown(&fenced));
+    }
 
     #[test]
     fn heading_is_not_math() {
@@ -1285,14 +2009,14 @@ mod tests {
                 "Environment {} did not generate a block ID",
                 env
             );
-            for idx in 0..4 {
+            for (idx, line) in lines.iter().enumerate() {
                 assert!(
-                    lines[idx].is_math_block,
+                    line.is_math_block,
                     "Line {} in environment {} not marked as math block",
                     idx, env
                 );
                 assert_eq!(
-                    lines[idx].block_id, block_id,
+                    line.block_id, block_id,
                     "Block ID mismatch in environment {}",
                     env
                 );
@@ -1305,9 +2029,9 @@ mod tests {
         assert_eq!(lines.len(), 3);
         let math_block_id = lines[0].block_id;
         assert!(math_block_id > 0);
-        for idx in 0..3 {
-            assert!(lines[idx].is_math_block);
-            assert_eq!(lines[idx].block_id, math_block_id);
+        for line in &lines {
+            assert!(line.is_math_block);
+            assert_eq!(line.block_id, math_block_id);
         }
 
         // 5. Fenced code block language permutations

@@ -20,7 +20,7 @@ use iced::{Point, Rectangle, Size};
 
 use std::collections::HashMap;
 
-use crate::editor::buffer::EditorCommand;
+use crate::editor::buffer::{Affinity, EditorCommand};
 use crate::editor::highlight::highlight_markdown;
 use crate::editor::renderer::testing::{Recorder, View};
 use crate::editor::renderer::{Editor, ImageCache, MathCache, MathRender, line_visual_y};
@@ -508,10 +508,14 @@ fn run_scenarios(out: &mut String) {
             anchor_col: 3,
             focus_line: 5,
             focus_col: 12,
+            affinity: Affinity::Downstream,
         });
         h.frame("buffer selection", None);
-        h.buffer
-            .execute(EditorCommand::SetCursor { line: 2, col: 0 });
+        h.buffer.execute(EditorCommand::SetCursor {
+            line: 2,
+            col: 0,
+            affinity: Affinity::Downstream,
+        });
 
         // Search highlights.
         h.search = ("line", false, false, Some((10, 9)));

@@ -9,9 +9,12 @@
 //! - `measure`: memoized text shaping
 //! - `spans`: which spans reveal their markdown source while being edited
 //! - `flow`: breaking a line into visual rows — the one wrapping implementation
+//! - `glide`: the caret's glide between places and its blink
 //! - `layout`: per-line heights and the height tree
 //! - `caret`: mapping between source columns and visual positions
 //! - `selection`: selection normalization and extraction
+//! - `reveal`: telling the app exactly where the caret is, to scroll it into
+//!   view
 //! - `scroll`: horizontal scrolling of wide blocks (code, tables, math)
 //! - `events`: mouse and keyboard handling
 //! - `draw`: painting
@@ -33,14 +36,18 @@ mod caret;
 mod draw;
 mod events;
 mod flow;
+mod glide;
 mod layout;
 mod measure;
 mod metrics;
+mod reveal;
 mod scroll;
 mod selection;
 mod spans;
 
-pub use layout::line_visual_y;
+#[cfg(test)]
+pub(crate) use layout::line_visual_y;
+pub use reveal::{CaretView, Reveal};
 
 /// Display-size boost applied to block (`$$`) math relative to inline math.
 /// The rasterizer bakes this into the bitmap's device-pixel ratio (see
@@ -95,6 +102,24 @@ pub struct Editor<'a, Message> {
     on_pointer_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
     on_checkbox_toggle: Box<dyn Fn(usize) -> Message + 'a>,
+    /// The app's latest request to bring the caret into view.
+    reveal_request: u64,
+    on_caret_view: Option<Box<dyn Fn(CaretView) -> Message + 'a>>,
+    /// Names the lines and the resources they show; see
+    /// [`Editor::layout_revision`].
+    layout_revision: Option<u64>,
+}
+
+/// Everything a layout depends on: while it is unchanged, so is the layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LayoutKey {
+    /// The app's revision of the lines, images and equations.
+    revision: u64,
+    lines: usize,
+    /// Bits of the width laid out at.
+    width: u32,
+    focused: bool,
+    cursor: (usize, usize),
 }
 
 /// Widget state persisted across frames in the iced tree.
@@ -119,6 +144,17 @@ pub struct State {
     last_layout_width: f32,
     /// First and last line index of every code, table, math and quote block.
     block_ranges: HashMap<usize, (usize, usize)>,
+    /// Per line, the caption band above its body and the gutter below it, as
+    /// decided by the last layout. Painting and hit testing read these rather
+    /// than deriving them again.
+    line_margins: Vec<layout::LineMargins>,
+    /// The caret position the last layout saw, to react only when it moves.
+    last_caret: Option<(usize, usize)>,
+    /// The last reveal request answered.
+    revealed_request: u64,
+    caret_motion: glide::CaretMotion,
+    /// What the last layout was keyed on, and the height it produced.
+    laid_out: Option<(LayoutKey, f32)>,
 }
 
 impl<'a, Message> Editor<'a, Message> {
@@ -147,6 +183,9 @@ impl<'a, Message> Editor<'a, Message> {
             on_pointer_command: Box::new(on_pointer_command),
             on_link_click: Box::new(on_link_click),
             on_checkbox_toggle: Box::new(on_checkbox_toggle),
+            reveal_request: 0,
+            on_caret_view: None,
+            layout_revision: None,
         }
     }
 
@@ -166,6 +205,27 @@ impl<'a, Message> Editor<'a, Message> {
 
     pub fn scale_factor(mut self, factor: f32) -> Self {
         self.scale_factor = factor.max(1.0);
+        self
+    }
+
+    /// Promise that the lines and the image and math caches stay the same for
+    /// as long as `revision` does. Layout is then skipped while nothing else
+    /// it depends on — width, focus, the caret — changes either, so frames
+    /// that only scroll or animate cost nothing per line.
+    pub fn layout_revision(mut self, revision: u64) -> Self {
+        self.layout_revision = Some(revision);
+        self
+    }
+
+    /// Answer reveal request `request` — a number the app bumps whenever the
+    /// caret should be brought into view — with where the caret is.
+    pub fn reveal_caret(
+        mut self,
+        request: u64,
+        on_view: impl Fn(CaretView) -> Message + 'a,
+    ) -> Self {
+        self.reveal_request = request;
+        self.on_caret_view = Some(Box::new(on_view));
         self
     }
 
@@ -201,24 +261,31 @@ where
     }
 
     fn size(&self) -> Size<Length> {
+        // The height is only known once laid out at the width the widget gets.
         Size {
             width: Length::Fill,
-            height: Length::Fixed(layout::total_height::<R>(
-                self.lines,
-                self.image_cache,
-                self.math_cache,
-                800.0,
-                None,
-                None,
-                false,
-            )),
+            height: Length::Shrink,
         }
     }
 
     fn layout(&mut self, tree: &mut widget::Tree, _renderer: &R, limits: &Limits) -> Node {
         let state = tree.state.downcast_mut::<State>();
         let max_width = limits.max().width.min(metrics::MAX_CONTENT_WIDTH);
-        let height = self.layout_lines::<R>(state, max_width);
+        let key = self.layout_revision.map(|revision| LayoutKey {
+            revision,
+            lines: self.lines.len(),
+            width: max_width.to_bits(),
+            focused: state.is_focused,
+            cursor: (self.buffer.cursor_line, self.buffer.cursor_col),
+        });
+        let height = match state.laid_out {
+            Some((last, height)) if key == Some(last) => height,
+            _ => {
+                let height = self.layout_lines::<R>(state, max_width);
+                state.laid_out = key.map(|key| (key, height));
+                height
+            }
+        };
         Node::new(limits.resolve(Length::Fill, Length::Fixed(height), Size::ZERO))
     }
 
@@ -245,9 +312,19 @@ where
         _renderer: &R,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State>();
+        if let Event::Window(iced::window::Event::RedrawRequested(now)) = event {
+            self.report_caret::<R>(state, layout.bounds(), *viewport, shell);
+            let place = self.caret_place::<R>(state, layout.bounds(), *viewport);
+            // Frames only while the caret moves or fades; none once it rests.
+            match state.caret_motion.advance(*now, place) {
+                glide::NextFrame::Now => shell.request_redraw(),
+                glide::NextFrame::At(at) => shell.request_redraw_at(at),
+                glide::NextFrame::Never => {}
+            }
+        }
         let bounds = metrics::content_bounds(layout.bounds());
         self.on_event::<R>(state, event, bounds, cursor, clipboard, shell);
     }
@@ -280,6 +357,9 @@ where
 
 #[cfg(test)]
 pub(crate) mod testing;
+
+#[cfg(test)]
+mod properties;
 
 #[cfg(test)]
 mod tests;

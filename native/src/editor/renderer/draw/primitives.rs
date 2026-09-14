@@ -5,7 +5,8 @@ use iced::advanced::text;
 use iced::alignment::{Horizontal, Vertical};
 use iced::{Border, Color, Point, Rectangle, Size};
 
-use super::super::metrics::visual_line_step;
+use super::super::measure::shaping_for;
+use super::super::metrics::LINE_BOX_FACTOR;
 use super::super::scroll::{ScrollExtent, scrollbar_geometry};
 use super::super::{Measure, State};
 use crate::theme;
@@ -31,7 +32,7 @@ pub(super) fn fill<R: Measure>(renderer: &mut R, bounds: Rectangle, border: Bord
     );
 }
 
-/// A single run of unshaped text.
+/// A single run of text, shaped the way its font calls for.
 pub(super) struct TextRun {
     content: String,
     bounds: Size,
@@ -82,7 +83,7 @@ impl TextRun {
                 font: self.font,
                 align_x: self.align_x.into(),
                 align_y: self.align_y,
-                shaping: text::Shaping::Basic,
+                shaping: shaping_for(self.font),
                 wrapping: self.wrapping,
             },
             at,
@@ -111,7 +112,7 @@ pub(super) fn draw_nowrap_text<R: Measure>(
     TextRun::new(
         content,
         font_size,
-        Size::new(max_width.max(1.0), visual_line_step(font_size)),
+        Size::new(max_width.max(1.0), font_size * LINE_BOX_FACTOR),
     )
     .font(font)
     .draw(renderer, Point::new(x, y), color, viewport);

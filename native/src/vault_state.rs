@@ -43,9 +43,9 @@ impl VaultState {
     }
 
     /// Handle messages that mutate only this pane's own navigation state:
-    /// sidebar visibility and folder expansion. Arms that open files, build
-    /// the index, or compute backlinks (which need the shared `AppState`) stay
-    /// on the shell.
+    /// sidebar visibility, folder expansion and selection. Arms that open
+    /// files, build the index, or compute backlinks (which need the shared
+    /// `AppState`) stay on the shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SidebarToggle => {
@@ -53,6 +53,9 @@ impl VaultState {
                 Task::none()
             }
             Message::SidebarFolderToggled(path) => {
+                // Clicking a folder also selects it, so it is where new
+                // entries land and its row offers the delete button.
+                self.selected_path = Some(path.clone());
                 if self.expanded_folders.contains(&path) {
                     self.expanded_folders.remove(&path);
                 } else {
@@ -60,7 +63,41 @@ impl VaultState {
                 }
                 Task::none()
             }
+            Message::SidebarSelectionCleared => {
+                self.selected_path = None;
+                Task::none()
+            }
             _ => Task::none(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clicking_a_folder_selects_and_toggles_it() {
+        let mut vault = VaultState::new();
+        vault.selected_path = Some("notes/a.md".to_string());
+
+        let _ = vault.update(Message::SidebarFolderToggled("notes".to_string()));
+        assert_eq!(vault.selected_path.as_deref(), Some("notes"));
+        assert!(vault.expanded_folders.contains("notes"));
+
+        let _ = vault.update(Message::SidebarFolderToggled("notes".to_string()));
+        assert_eq!(vault.selected_path.as_deref(), Some("notes"));
+        assert!(!vault.expanded_folders.contains("notes"));
+    }
+
+    #[test]
+    fn clicking_empty_space_clears_selection() {
+        let mut vault = VaultState::new();
+        vault.expanded_folders.insert("notes".to_string());
+        let _ = vault.update(Message::SidebarFolderToggled("notes".to_string()));
+        assert_eq!(vault.selected_path.as_deref(), Some("notes"));
+
+        let _ = vault.update(Message::SidebarSelectionCleared);
+        assert_eq!(vault.selected_path, None);
     }
 }
