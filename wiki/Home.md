@@ -57,6 +57,15 @@ graph TB
 
 ---
 
+## The Field Handbook (PDF)
+
+The whole wiki is also published as a single printable book,
+**[MD Editor — The Field Handbook](MD-Editor-Handbook.pdf)** (100 pages): the same material
+re-ordered as a guided tour for a new contributor, with thirty purpose-drawn diagrams, worked
+examples, and exercises. It is generated from `wiki/handbook/` — see the README there to rebuild it.
+
+---
+
 ## Wiki Navigation Matrix
 
 | Topic | Description | Link |

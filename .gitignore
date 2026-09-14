@@ -12,3 +12,6 @@ dist-portable
 # Editor/IDE
 .idea
 .vscode
+
+# Handbook build intermediates (the PDF itself is committed)
+wiki/handbook/build

@@ -149,7 +149,7 @@ CI builds and packages, but does **not** run the tests or the lints. Run them lo
 ```bash
 cargo fmt --check
 cargo check --workspace
-cargo test --workspace           # 212 tests, all passing
+cargo test --workspace           # 215 tests, all passing
 cargo clippy --workspace
 ```
 

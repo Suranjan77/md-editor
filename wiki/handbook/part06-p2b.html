@@ -1,0 +1,378 @@
+<!-- ---------- CH 8 ---------- -->
+<section class="chapter" id="ch08">
+  <div class="chead">
+    <div class="num">Chapter 8<span class="pm">PMK-ch08-</span></div>
+    <h1>The atomic save</h1>
+    <div class="sub">Forty lines in <code>vault.rs</code> that decide whether the program is trustworthy</div>
+  </div>
+
+  <p class="lead">This is the most important function in the repository. If you read one thing carefully,
+  read <code>vault::write_file</code> — and then read the four unit tests underneath it, which exist because
+  every step below is load-bearing.</p>
+
+  <h2>8.1 The problem</h2>
+
+  <p>The naive save is <code>fs::write(path, content)</code>. It opens the destination, truncates it to zero
+  bytes, and writes. If the process dies in the middle — a crash, a <code>kill&nbsp;-9</code>, a power cut —
+  the file on disk is now half a note. The old version is gone and the new one never arrived. For an
+  application whose entire pitch is “your work is safe in plain files”, that is not an edge case; it is the
+  thing being promised against.</p>
+
+  <p>Worse, this app saves <em>constantly</em>: 400&nbsp;ms after you stop typing, on every navigation, and
+  on window close. A rare failure mode multiplied by a very high write frequency is a common failure mode.</p>
+
+  <h2>8.2 The protocol</h2>
+
+  <p>In the order the code performs it:</p>
+
+  <ol>
+    <li><b>Canonicalize the destination.</b> A symlinked note is written <em>through</em> to its target
+    rather than replaced by a regular file.</li>
+    <li><b>Create a sibling temp file</b> — <code>.&lt;filename&gt;.&lt;uuid&gt;.tmp</code>, in the
+    destination's own directory, so the final rename can never cross a filesystem boundary. The UUID means
+    two concurrent saves cannot collide.</li>
+    <li><b>Write the bytes, then copy the destination's permissions</b> onto the temp file, so a note kept
+    at <code>0600</code> does not come back world-readable.</li>
+    <li><b><code>file.sync_all()</code></b> — flush the contents to physical storage.</li>
+    <li><b><code>fs::rename()</code></b> — atomically replace the destination.</li>
+    <li><b><code>sync_all()</code> on the parent directory</b>, best-effort, so the rename itself survives a
+    power loss.</li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 720 300" role="img" aria-label="Timeline of the six steps of the atomic write with, underneath each step, the state of the destination file if the process is killed at that instant: complete old content until the rename, complete new content afterwards">
+      <defs>
+        <marker id="a8" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- steps -->
+      <g>
+        <rect x="16" y="22" width="106" height="48" rx="3" class="s-box"/>
+        <text x="69" y="40" class="t-xs t-b t-mid">1 · canonicalize</text>
+        <text x="69" y="54" class="t-xs t-mid">resolve symlinks</text>
+        <text x="69" y="66" class="t-xs t-mid">to the real target</text>
+
+        <rect x="132" y="22" width="106" height="48" rx="3" class="s-box"/>
+        <text x="185" y="40" class="t-xs t-b t-mid">2 · temp file</text>
+        <text x="185" y="54" class="t-xs t-mid">.name.uuid.tmp</text>
+        <text x="185" y="66" class="t-xs t-mid">same directory</text>
+
+        <rect x="248" y="22" width="106" height="48" rx="3" class="s-box"/>
+        <text x="301" y="40" class="t-xs t-b t-mid">3 · write + chmod</text>
+        <text x="301" y="54" class="t-xs t-mid">full byte buffer,</text>
+        <text x="301" y="66" class="t-xs t-mid">then copy 0600 etc.</text>
+
+        <rect x="364" y="22" width="106" height="48" rx="3" class="s-box"/>
+        <text x="417" y="40" class="t-xs t-b t-mid">4 · sync_all()</text>
+        <text x="417" y="54" class="t-xs t-mid">bytes are on</text>
+        <text x="417" y="66" class="t-xs t-mid">stable storage</text>
+
+        <rect x="480" y="22" width="106" height="48" rx="3" class="s-fill"/>
+        <text x="533" y="40" class="t-xs t-b t-mid" fill="#11342f">5 · rename()</text>
+        <text x="533" y="54" class="t-xs t-mid">atomic in the</text>
+        <text x="533" y="66" class="t-xs t-mid">kernel</text>
+
+        <rect x="596" y="22" width="108" height="48" rx="3" class="s-box"/>
+        <text x="650" y="40" class="t-xs t-b t-mid">6 · sync dir</text>
+        <text x="650" y="54" class="t-xs t-mid">the directory entry</text>
+        <text x="650" y="66" class="t-xs t-mid">survives too</text>
+      </g>
+      <g class="s-line-2">
+        <path d="M122 46 L130 46" marker-end="url(#a8)"/><path d="M238 46 L246 46" marker-end="url(#a8)"/>
+        <path d="M354 46 L362 46" marker-end="url(#a8)"/><path d="M470 46 L478 46" marker-end="url(#a8)"/>
+        <path d="M586 46 L594 46" marker-end="url(#a8)"/>
+      </g>
+
+      <!-- kill markers -->
+      <text x="16" y="96" class="t-xs t-b" fill="#a03730">kill -9 HERE ↓</text>
+      <g class="s-red">
+        <path d="M185 78 L185 108"/><path d="M301 78 L301 108"/><path d="M417 78 L417 108"/>
+        <path d="M533 78 L533 108" stroke="#22665c"/><path d="M650 78 L650 108" stroke="#22665c"/>
+      </g>
+
+      <!-- destination lane -->
+      <text x="10" y="132" class="t-xs t-b">DESTINATION</text>
+      <text x="10" y="145" class="t-xs">Summary.md</text>
+      <rect x="132" y="116" width="338" height="34" rx="3" class="s-fill2"/>
+      <text x="301" y="137" class="t-xs t-mid">the complete <tspan class="t-b">old</tspan> file — never opened for writing</text>
+      <rect x="480" y="116" width="224" height="34" rx="3" class="s-fill"/>
+      <text x="592" y="137" class="t-xs t-mid" fill="#11342f">the complete <tspan class="t-b">new</tspan> file</text>
+
+      <!-- temp lane -->
+      <text x="10" y="176" class="t-xs t-b">TEMP FILE</text>
+      <text x="10" y="189" class="t-xs">.Summary.md.…tmp</text>
+      <rect x="132" y="160" width="338" height="34" rx="3" class="s-warn"/>
+      <text x="301" y="181" class="t-xs t-mid">may be empty or partial — nobody reads it</text>
+      <rect x="480" y="160" width="224" height="34" rx="3" class="s-fill2"/>
+      <text x="592" y="181" class="t-xs t-mid">gone: the rename consumed it</text>
+
+      <!-- verdict -->
+      <rect x="16" y="212" width="688" height="34" rx="3" class="s-fill"/>
+      <text x="30" y="233" class="t-sm t-b" fill="#11342f">Verdict at every instant:</text>
+      <text x="180" y="233" class="t-sm">a reader sees the whole old file, or the whole new one. There is no moment in between.</text>
+
+      <!-- failure path -->
+      <rect x="16" y="256" width="688" height="34" rx="3" class="s-amber"/>
+      <text x="30" y="277" class="t-sm t-b" fill="#8a5c07">On error:</text>
+      <text x="110" y="277" class="t-sm">a failed write or rename deletes the temp file and returns <tspan class="t-mono-sm">Err</tspan> — nothing is left behind, and the destination is untouched.</text>
+    </svg>
+    <figcaption><b>Figure 8.1 — Kill it anywhere.</b> The top row is the protocol; the two lanes below show
+    what is actually on disk at that instant. The destination is never open for writing, which is the whole
+    trick — the new content becomes visible in one indivisible kernel operation, or not at all.</figcaption>
+  </figure>
+
+  <h2>8.3 The tests that hold it in place</h2>
+  <p>Four unit tests live in <span class="fileref">core/src/vault.rs</span> and each maps to one property
+  above. If you change this function, you will meet them:</p>
+  <ul class="tight">
+    <li>content replacement leaves <b>no <code>.tmp</code> files</b> behind;</li>
+    <li>permissions are <b>preserved</b>;</li>
+    <li>a symlink is written <b>through</b>, not over;</li>
+    <li><code>write_file_never_leaves_a_truncated_file</code> — the name is the specification.</li>
+  </ul>
+
+  <h2>8.4 Where saves are triggered from</h2>
+  <p>Three call sites, with three different failure policies. The differences are deliberate.</p>
+  <table class="compact">
+    <thead><tr><th style="width:26%">Trigger</th><th>Policy on failure</th></tr></thead>
+    <tbody>
+      <tr><td><b>Autosave</b> — 400&nbsp;ms after the last keystroke, polled every 100&nbsp;ms</td>
+        <td>Raise a toast the <em>first</em> time in a run of failures, keep the unsaved marker in the title,
+        and restart the debounce. Toasting on every poll would be a strobe light.</td></tr>
+      <tr><td><b>Navigation</b> — opening another note, an image, or a PDF</td>
+        <td><b>Refuse to navigate.</b> The view does not change and the error is surfaced. Walking away from
+        work that could not be persisted is the one thing the app will not do.</td></tr>
+      <tr><td><b>Window close</b></td>
+        <td>Best-effort, and it does <em>not</em> block the close. An app that refuses to quit because a
+        write is failing is a worse outcome than losing the few hundred milliseconds autosave had not yet
+        committed.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  The close-window exception looks like an inconsistency and is actually the harder call. The reasoning is
+  about what the user can do next: a refused <em>navigation</em> leaves them in the editor, where they can
+  fix the problem. A refused <em>quit</em> leaves them with a window that will not close, which is a support
+  ticket and a force-kill — and a force-kill loses strictly more.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>Why must the temp file be a <em>sibling</em> of the destination, rather than in <code>/tmp</code>?</p>
+  <p class="answer"><b>Answer:</b> <code>rename()</code> is only atomic within a single filesystem. A temp
+  file in <code>/tmp</code> is very likely on a different mount, so the “rename” would degrade into a
+  copy-then-delete — which is exactly the non-atomic write the whole protocol exists to avoid, now with
+  extra steps.</p></div>
+</section>
+
+<!-- ---------- CH 9 ---------- -->
+<section class="chapter" id="ch09">
+  <div class="chead">
+    <div class="num">Chapter 9<span class="pm">PMK-ch09-</span></div>
+    <h1>Wikilinks and the backlink graph</h1>
+    <div class="sub">One regex, a three-step resolver, and why <code>incoming</code> is stored rather than derived</div>
+  </div>
+
+  <p class="lead">A vault is a graph as well as a folder. <span class="fileref">core/src/file_index.rs</span>
+  is 403 lines that keep that graph correct while files are created, renamed, edited and deleted underneath
+  it.</p>
+
+  <h2>9.1 Parsing</h2>
+
+  <div class="srcref">core/src/file_index.rs</div>
+<pre>static WIKILINK_RE: LazyLock&lt;Regex&gt; =
+    LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").unwrap());</pre>
+
+  <p>Compiled once, reused for every file in the vault. It matches both the bare form
+  <code>[[Note Name]]</code> and the aliased form <code>[[Note Name|Display Text]]</code>, and captures only
+  the target — the alias affects display, never resolution.</p>
+
+  <div class="box plain"><span class="tag">Note</span>
+  <code>LazyLock</code> matters more than it looks. Compiling a regex is expensive; compiling it inside the
+  per-file loop would make indexing a 2,000-note vault noticeably slower for no reason at all. If you add a
+  pattern to this module, add it the same way.</div>
+
+  <h2>9.2 Resolution</h2>
+
+  <p><code>resolve_link(target, from_file)</code> tries three things in order.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 336" role="img" aria-label="Resolving a bare wikilink: the names map holds every candidate path for a lowercased filename stem, ordered so the shortest path wins deterministically">
+      <defs>
+        <marker id="a9" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="6" markerHeight="6" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- vault -->
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">THE VAULT</text>
+      <rect x="16" y="22" width="212" height="132" rx="3" class="s-box"/>
+      <rect x="22" y="119" width="118" height="15" fill="#edf4f2"/>
+      <g class="t-mono-sm">
+        <text x="28" y="42">Lectures/</text>
+        <text x="42" y="58">Week1.md</text>
+        <text x="28" y="78">Archive/</text>
+        <text x="42" y="94">2023/</text>
+        <text x="56" y="110">Note.md</text>
+        <text x="28" y="130">Note.md</text>
+        <text x="28" y="146">Summary.md</text>
+      </g>
+      <text x="150" y="131" class="t-xs" fill="#22665c">shortest path</text>
+
+      <!-- source line -->
+      <rect x="16" y="168" width="212" height="42" rx="3" class="s-fill"/>
+      <text x="28" y="186" class="t-xs t-b">In Lectures/Week1.md:</text>
+      <text x="28" y="202" class="t-mono-sm">see [[Note]] for the proof</text>
+
+      <path d="M228 182 L248 182 L248 45 L268 45" class="s-accent" marker-end="url(#a9)"/>
+
+      <!-- steps -->
+      <text x="272" y="14" class="t-xs t-b" fill="#22665c">RESOLVE_LINK — FIRST MATCH WINS</text>
+
+      <rect x="272" y="22" width="432" height="46" rx="3" class="s-box"/>
+      <text x="284" y="40" class="t-sm t-b">1 · exact path match</text>
+      <text x="284" y="56" class="t-xs">handles [[Archive/2023/Note]] and a root-level [[Summary]]. No match here — “Note” is not a path.</text>
+
+      <rect x="272" y="76" width="432" height="76" rx="3" class="s-fill"/>
+      <text x="284" y="94" class="t-sm t-b" fill="#11342f">2 · shortest basename match</text>
+      <text x="284" y="110" class="t-xs">names: HashMap&lt;String, BTreeSet&lt;PathBuf&gt;&gt; — lowercased stem → ordered candidates</text>
+      <rect x="284" y="118" width="408" height="26" rx="2" fill="#ffffff" stroke="#22665c" stroke-width=".8"/>
+      <text x="294" y="135" class="t-mono-sm">"note" → { Archive/2023/Note.md,  Note.md }</text>
+      <text x="560" y="135" class="t-xs" fill="#22665c">→ Note.md wins</text>
+
+      <rect x="272" y="160" width="432" height="50" rx="3" class="s-box"/>
+      <text x="284" y="178" class="t-sm t-b">3 · optimistic forward reference</text>
+      <text x="284" y="194" class="t-xs">no file with that stem is known yet? keep the path-based candidate anyway, so creating</text>
+      <text x="284" y="206" class="t-xs">the note later makes the backlink appear with no re-index.</text>
+
+      <!-- resulting maps -->
+      <text x="16" y="240" class="t-xs t-b" fill="#22665c">BOTH DIRECTIONS ARE STORED</text>
+      <rect x="16" y="248" width="336" height="72" rx="3" class="s-fill2"/>
+      <text x="28" y="266" class="t-sm t-b">outgoing</text>
+      <text x="28" y="284" class="t-mono-sm">Lectures/Week1.md → { Note.md }</text>
+      <text x="28" y="306" class="t-xs">rebuilt from the file's own text whenever it changes</text>
+
+      <rect x="368" y="248" width="336" height="72" rx="3" class="s-fill"/>
+      <text x="380" y="266" class="t-sm t-b" fill="#11342f">incoming</text>
+      <text x="380" y="284" class="t-mono-sm">Note.md → { Lectures/Week1.md }</text>
+      <text x="380" y="306" class="t-xs">maintained explicitly, so the Backlinks panel is one map lookup</text>
+
+      <path d="M352 284 L364 284" class="s-accent" marker-end="url(#a9)"/>
+    </svg>
+    <figcaption><b>Figure 9.1 — Why the shortest path wins.</b> Two files are called <code>Note.md</code>.
+    A <code>BTreeSet</code> keeps the candidates ordered, so the choice is <em>deterministic</em> — the same
+    file is picked by the link, by the click-through, and by the backlink. Any tie-break would do; what
+    matters is that all three agree.</figcaption>
+  </figure>
+
+  <h2>9.3 The bidirectional index</h2>
+
+  <div class="srcref">core/src/file_index.rs</div>
+<pre>pub struct FileIndex {
+    pub outgoing: HashMap&lt;PathBuf, HashSet&lt;PathBuf&gt;&gt;, <span class="cmt">// file → files it links to</span>
+    pub incoming: HashMap&lt;PathBuf, HashSet&lt;PathBuf&gt;&gt;, <span class="cmt">// file → files that link to it</span>
+    vault_root: PathBuf,
+    names: HashMap&lt;String, BTreeSet&lt;PathBuf&gt;&gt;,        <span class="cmt">// lowercased stem → candidates</span>
+}</pre>
+
+  <p><code>incoming</code> could be derived from <code>outgoing</code> on demand — scan every file's outgoing
+  set looking for the one you care about. It is stored instead, because the Backlinks panel is drawn on
+  every relevant redraw and a map lookup is free where a full scan is not.</p>
+
+  <p>Two functions maintain it:</p>
+  <ul>
+    <li><b><code>rebuild()</code></b> runs in <b>two passes</b>: register every filename first, then resolve
+    links. This is not a style choice — a bare <code>[[Name]]</code> must be able to reach a file that
+    appears later in the listing, or in a different subfolder. A single pass would resolve links against a
+    half-built name map and produce different results depending on directory iteration order.</li>
+    <li><b><code>update_file()</code></b> does the same incrementally for one edited file, and its first
+    action is to <em>remove that file's previous outgoing edges from every target's <code>incoming</code>
+    set</em>. Forget that and deleting a link from a note leaves a permanent phantom backlink.</li>
+  </ul>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  Anything you change here must survive <span class="fileref">core/src/massive_tests.rs</span>, which fuzzes
+  wikilink variants, graph topologies (stars, chains, cycles, disconnected islands) and a dynamic
+  create/edit/delete workload. That suite exists because this exact code is easy to get subtly wrong and
+  impossible to eyeball.</div>
+</section>
+
+<!-- ---------- CH 10 ---------- -->
+<section class="chapter" id="ch10">
+  <div class="chead">
+    <div class="num">Chapter 10<span class="pm">PMK-ch10-</span></div>
+    <h1>Full-text search</h1>
+    <div class="sub">One FTS5 table, one quoting rule, and backlinks that are not only wikilinks</div>
+  </div>
+
+  <p class="lead">Global search is a single SQL statement. The interesting parts are the quoting, and the
+  fact that the index contains PDF text as well as markdown.</p>
+
+  <h2>10.1 The query</h2>
+
+  <div class="srcref">core/src/vault.rs::search_vault</div>
+<pre>SELECT path, snippet(file_search, 1, '&lt;b&gt;', '&lt;/b&gt;', '...', 15)
+FROM file_search
+WHERE content MATCH ?1
+ORDER BY rank
+LIMIT 100;</pre>
+
+  <p>The query string is wrapped in double quotes before it reaches <code>MATCH</code>, with any embedded
+  quotes doubled, so it is treated as an FTS5 <em>phrase</em> rather than as query syntax.</p>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  FTS5's <code>MATCH</code> takes a small query language: <code>AND</code>, <code>OR</code>,
+  <code>NEAR</code>, prefix stars, column filters. Passing raw user input straight in means someone searching
+  for <code>NOT</code> or <code>a AND b</code> gets an unexpected result — or a syntax error where they
+  expected zero hits. Quoting turns the whole input into one literal phrase, which is what a search box in a
+  notes app should mean.</div>
+
+  <p>Results carry the path and a highlighted snippet, ordered by FTS5's own <code>rank</code>, capped at
+  100. On the native side the query is debounced by <code>SEARCH_DEBOUNCE = 200ms</code>, so a ten-character
+  query runs one scan rather than ten (Chapter 12).</p>
+
+  <h2>10.2 One index, two kinds of document</h2>
+
+  <p><code>file_search</code> holds <code>(path, content)</code> rows for markdown notes <em>and</em> for
+  text extracted from PDFs. That is the entire reason global search covers papers as well as notes, and it is
+  why vault indexing (Chapter 5) has a phase 1b that runs PDFium.</p>
+
+  <p>The table is rebuilt wholesale, inside one transaction, whenever a vault is opened — not maintained
+  incrementally. For vault sizes this app targets that is simpler and fast enough, and it means the index can
+  never drift out of sync with the filesystem in a way that requires a “rebuild index” command.</p>
+
+  <h2>10.3 Backlinks beyond markdown</h2>
+
+  <p><code>get_mixed_backlinks(state, path)</code> answers “what points at the thing I am looking at?”, and
+  the answer depends on what that thing is.</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:22%">Active document</th><th>What comes back</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="2"><b>A markdown note</b></td>
+        <td><code>MarkdownFile { path }</code> — every note whose <code>[[wikilink]]</code> resolves to this
+        one, straight from <code>FileIndex::get_backlinks</code>.</td></tr>
+      <tr><td><code>PdfAnnotation { document_path, annotation_id, page }</code> — every sidecar highlight
+        whose <code>linked_note_path</code> is this note, joined from <code>pdf_annotations</code> to
+        <code>pdf_documents</code>. Activating one opens that PDF at the exact page and focuses the
+        highlight.</td></tr>
+      <tr><td rowspan="2"><b>A PDF</b></td>
+        <td><code>MarkdownFile { path }</code> — notes that wikilink to the PDF itself.</td></tr>
+      <tr><td><code>MarkdownFile { path }</code> again, but carrying the highlight's
+        <code>selected_text</code> as context — notes reached <em>through</em> this PDF's own annotations, so
+        the panel can show which passage produced the link.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box plain"><span class="tag">Note</span>
+  <code>BacklinkTarget::PdfDocument { path }</code> is defined in <span class="fileref">core/src/types.rs</span>
+  and rendered by <span class="fileref">views/backlinks.rs</span>, but <b>no query currently emits it</b>. It
+  is a wired-up variant with no producer — worth knowing before you spend an hour looking for the code path
+  that creates one.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>A user searches for <code>1.5"</code> (with a quote character). What reaches SQLite?</p>
+  <p class="answer"><b>Answer:</b> <code>"1.5"""</code> — the whole thing wrapped in quotes with the embedded
+  quote doubled, which FTS5 reads as the literal phrase <code>1.5"</code>. Without the doubling the quote
+  would terminate the phrase early and the rest would be parsed as query syntax.</p></div>
+</section>

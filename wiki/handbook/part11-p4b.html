@@ -1,0 +1,298 @@
+<!-- ---------- CH 21 ---------- -->
+<section class="chapter" id="ch21">
+  <div class="chead">
+    <div class="num">Chapter 21<span class="pm">PMK-ch21-</span></div>
+    <h1>Resolving “see equation (3.14)”</h1>
+    <div class="sub">A pure resolver, one hard precision rule, and the chunking that keeps it from blocking renders</div>
+  </div>
+
+  <p class="lead">Papers reference their own equations, figures, tables and sections by number all the time,
+  and almost never carry link annotations for those mentions. <span class="fileref">core/src/references.rs</span>
+  reads the extracted text and turns the mentions into clickable targets.</p>
+
+  <div class="srcref">core/src/references.rs</div>
+<pre>pub fn resolve_references(pages: &amp;[PdfPageText], toc: &amp;[TocEntry]) -&gt; Vec&lt;ReferenceLink&gt;</pre>
+
+  <p>The resolver is <b>pure</b>: it reads already-extracted page text plus the outline, touches no PDFium,
+  and is therefore <code>Send</code>, cheap (roughly 15–30&nbsp;ms for a full textbook) and unit-testable
+  without a window. That signature is a design statement — the hard part of this feature is a text problem,
+  not a rendering one, so it is kept where it can be tested.</p>
+
+  <h2>21.1 Two passes and one gate</h2>
+
+  <figure>
+    <svg viewBox="0 0 720 356" role="img" aria-label="The reference resolver: pass one builds a label to location map using the right margin rule, pass two scans call sites, and a gate emits a link only when the label matches exactly one target">
+      <defs>
+        <marker id="a21" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- page mock -->
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">PASS 1 — BUILD THE TARGET MAP</text>
+      <rect x="16" y="22" width="240" height="150" rx="2" class="s-box"/>
+      <g class="s-line-2">
+        <line x1="28" y1="40" x2="200" y2="40"/><line x1="28" y1="52" x2="192" y2="52"/>
+      </g>
+      <text x="76" y="76" class="t-mono-sm">E = mc²</text>
+      <rect x="196" y="64" width="48" height="16" rx="2" class="s-fill"/>
+      <text x="220" y="76" class="t-mono-sm t-mid" fill="#11342f">(3.14)</text>
+      <g class="s-line-2">
+        <line x1="28" y1="98" x2="200" y2="98"/><line x1="28" y1="110" x2="176" y2="110"/>
+      </g>
+      <text x="28" y="132" class="t-xs t-b">Figure 1.1: Attention matrix</text>
+      <g class="s-line-2"><line x1="28" y1="148" x2="188" y2="148"/></g>
+      <!-- margin line -->
+      <path d="M164 26 L164 168" class="s-dash"/>
+      <text x="168" y="164" class="t-xs">RIGHT_MARGIN_FRAC = 0.62</text>
+
+      <path d="M262 96 L296 96" class="s-accent" marker-end="url(#a21)"/>
+
+      <rect x="300" y="22" width="404" height="150" rx="3" class="s-fill"/>
+      <text x="312" y="40" class="t-sm t-b" fill="#11342f">label → location, per family</text>
+      <text x="312" y="58" class="t-xs"><tspan class="t-b">equations</tspan> — parenthesised numbers in the right margin beside display maths.</text>
+      <text x="312" y="72" class="t-xs">A token whose left edge is past 0.62 of the page width is a <tspan class="t-b">label</tspan>, never a call-site.</text>
+      <text x="312" y="92" class="t-xs"><tspan class="t-b">figures and tables</tspan> — caption lines matching Figure N[.M] / Table N[.M]</text>
+      <text x="312" y="112" class="t-xs"><tspan class="t-b">sections</tspan> — leading section numbers taken from the outline</text>
+      <text x="312" y="136" class="t-xs t-b">A label found at two locations is dropped as ambiguous.</text>
+      <text x="312" y="156" class="t-mono-sm">"3.14" → page 7  ·  "1.1" → page 3  ·  "3.2" → page 22</text>
+
+      <!-- pass 2 -->
+      <text x="16" y="200" class="t-xs t-b" fill="#22665c">PASS 2 — SCAN CALL-SITES, THEN THE GATE</text>
+
+      <rect x="16" y="208" width="240" height="132" rx="3" class="s-box"/>
+      <text x="28" y="226" class="t-xs t-b">in-prose mentions found</text>
+      <g class="t-mono-sm">
+        <text x="28" y="248">“see equation (3.14)”</text>
+        <text x="28" y="268">“as Figure 1.1 shows”</text>
+        <text x="28" y="288">“Smith et al. (2003)”</text>
+        <text x="28" y="308">“the interval (2, 5)”</text>
+        <text x="28" y="328">“in Chapter 3”</text>
+      </g>
+
+      <path d="M262 274 L296 274" class="s-accent" marker-end="url(#a21)"/>
+
+      <rect x="300" y="208" width="404" height="60" rx="3" class="s-fill"/>
+      <text x="312" y="228" class="t-sm t-b" fill="#11342f">the gate: no target ⇒ no link</text>
+      <text x="312" y="246" class="t-xs">a ReferenceLink is emitted <tspan class="t-b">only</tspan> when the label matches exactly one target</text>
+      <text x="312" y="260" class="t-xs">in the map built by pass 1 — never on the shape of the text alone</text>
+
+      <rect x="300" y="276" width="196" height="64" rx="3" class="s-fill"/>
+      <text x="312" y="294" class="t-xs t-b" fill="#11342f">✓ linked</text>
+      <text x="312" y="310" class="t-mono-sm">(3.14) → page 7</text>
+      <text x="312" y="330" class="t-mono-sm">Figure 1.1 → page 3</text>
+
+      <rect x="508" y="276" width="196" height="64" rx="3" class="s-warn"/>
+      <text x="520" y="294" class="t-xs t-b" fill="#a03730">✗ rejected</text>
+      <text x="520" y="310" class="t-xs">(2003) — 4+ digits, a citation year</text>
+      <text x="520" y="324" class="t-xs">(2, 5) — no matching target</text>
+      <text x="520" y="336" class="t-xs">Chapter 3 — bare integer, too coarse</text>
+    </svg>
+    <figcaption><b>Figure 21.1 — Precision by construction.</b> The gate is the whole design: a number only
+    becomes a link if the document itself defines that number somewhere. Stray numbers — intervals,
+    quantities, years — cannot become bogus links, because there is nothing for them to point at.</figcaption>
+  </figure>
+
+  <p>Three precision rules were learned from a real corpus and are worth stating explicitly, because each one
+  is a bug that was observed before it was fixed:</p>
+  <ul>
+    <li><b>Reject bare four-or-more-digit parenthesised numbers.</b> <code>(2003)</code> is a citation year,
+    not equation 2003.</li>
+    <li><b>Capture dotted figure and table numbers</b> — otherwise <code>Figure 1.1</code> and
+    <code>Figure 1.2</code> collapse into one target called “1” and both become ambiguous.</li>
+    <li><b>Require a dotted section number.</b> A bare chapter integer is too coarse to aim at.</li>
+  </ul>
+
+  <h2>21.2 Chunked scanning</h2>
+
+  <p>References need the whole text layer. PDFium is single-threaded, and priority renders only drain
+  <em>between</em> worker commands (Chapter 18) — so one monolithic full-document command would block page
+  rendering for half a second or more. The native side therefore resolves references as a chunked background
+  task:</p>
+
+  <ol>
+    <li><code>get_embedded_toc(path)</code> for section targets — cheap, no text scan;</li>
+    <li>extract text <b>one page at a time</b> with <code>get_page_text(path, i)</code>, so queued priority
+    page renders interleave between pages;</li>
+    <li>if there were no embedded bookmarks, recover the outline from the text just collected with
+    <code>recover_toc_from_texts(&amp;pages)</code> — no second scan;</li>
+    <li>run <code>resolve_references(&amp;pages, &amp;toc)</code> on the async thread.</li>
+  </ol>
+
+  <p>For bookmark-less PDFs the full scan already happens for TOC recovery, so references are effectively
+  free. For bookmarked PDFs the chunking is what keeps first-open rendering responsive.</p>
+
+  <h2>21.3 Caching, versioning, and aiming the preview</h2>
+
+  <p>Results are cached in <code>pdf_references</code> keyed by <code>document_id</code>, stored as
+  <code>(RESOLVER_VERSION, links)</code>. <code>get_pdf_references</code> discards entries whose version does
+  not match the current resolver, so changing the algorithm invalidates stale results rather than serving
+  them.</p>
+
+  <div class="box trap"><span class="tag">Trap</span>
+  <b>Bump <code>references::RESOLVER_VERSION</code> whenever the resolver's output for the same input would
+  change.</b> It is currently <code>2</code>. Forget it and every existing user keeps the old — now wrong —
+  cached links for ever, while your machine, which has a fresh cache, looks perfect.</div>
+
+  <p>One more detail, and it is a nice example of caring about the actual reading experience: a caption sits
+  <em>beside</em> its artwork, not on it. So <code>scan_caption_callsites</code> nudges the preview target
+  off the caption — figures up (caption-below convention), tables down (caption-above) — by
+  <code>CAPTION_PREVIEW_SHIFT = 110.0</code> points, about a third of the 300&nbsp;pt preview window, so the
+  figure fills the frame instead of being clipped.</p>
+
+  <p>Recognised references are drawn with a subtle accent <b>underline</b>. Those rects set
+  <code>OverlayRect.thin</code>, which bypasses the minimum-size clamp that keeps highlight rectangles
+  legibly tall, letting the underline render as a true hairline.</p>
+
+  <div class="box try"><span class="tag">Try it</span>
+  Two examples exist for working on this code:
+  <pre style="margin-top:2mm">cargo run --example dump_refs  -- path/to/paper.pdf   <span class="cmt"># resolved references with surrounding text</span>
+cargo run --example bench_refs -- path/to/paper.pdf   <span class="cmt"># text-scan cost per document</span></pre>
+  <p><code>dump_refs</code> is the precision spot-check: run it on a paper you know and read the surrounding
+  text of every link it claims. A single wrong link is worth more attention than ten missing ones, because a
+  wrong link makes the reader stop trusting the underlines entirely.</p></div>
+</section>
+
+<!-- ---------- CH 22 ---------- -->
+<section class="chapter" id="ch22">
+  <div class="chead">
+    <div class="num">Chapter 22<span class="pm">PMK-ch22-</span></div>
+    <h1>Sidecar annotations and document identity</h1>
+    <div class="sub">What a highlight is attached to, when it survives, and how you find out it drifted</div>
+  </div>
+
+  <p class="lead">Highlighting text never modifies the <code>.pdf</code> on disk. That raises an immediate
+  question: if the annotation is not <em>in</em> the file, what is it attached to?</p>
+
+  <h2>22.1 The identity function</h2>
+
+  <div class="srcref">core/src/pdf.rs</div>
+<pre>pub fn compute_provisional_id(path: &amp;Path) -&gt; Result&lt;(String, u64, Option&lt;i64&gt;), String&gt;</pre>
+
+  <p>The <code>document_id</code> is the SHA-256 of <b>the first 1&nbsp;MiB of the file plus its length</b>,
+  in hex. Two deliberate choices are buried in that sentence:</p>
+  <ul>
+    <li><b>A bounded prefix, not the whole file.</b> Hashing 1&nbsp;MiB keeps opening a 500-page PDF cheap.
+    Adding the length makes truncation or extension detectable without reading the rest.</li>
+    <li><b>mtime is excluded on purpose.</b> Including it would orphan every annotation whenever the file was
+    copied, restored from a backup, or re-downloaded. The mtime is still returned and recorded in
+    <code>pdf_documents</code> for bookkeeping — it just is not part of identity.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 720 306" role="img" aria-label="How annotations survive a file being copied or replaced: the content hash is unchanged by a copy, and when the hash does change rows are adopted only if the file size also matches">
+      <defs>
+        <marker id="a22" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">THREE THINGS THAT CAN HAPPEN TO A PDF IN YOUR VAULT</text>
+
+      <!-- case 1 -->
+      <rect x="16" y="24" width="220" height="118" rx="3" class="s-fill"/>
+      <text x="28" y="42" class="t-sm t-b" fill="#11342f">copied, synced, restored</text>
+      <text x="28" y="60" class="t-xs">bytes identical · mtime changed</text>
+      <text x="28" y="80" class="t-mono-sm">document_id unchanged</text>
+      <path d="M126 90 L126 106" class="s-accent" marker-end="url(#a22)"/>
+      <rect x="28" y="106" width="196" height="26" rx="2" fill="#ffffff" stroke="#22665c" stroke-width=".8"/>
+      <text x="126" y="123" class="t-xs t-mid" fill="#22665c">every highlight still attached ✓</text>
+
+      <!-- case 2 -->
+      <rect x="250" y="24" width="220" height="118" rx="3" class="s-amber"/>
+      <text x="262" y="42" class="t-sm t-b" fill="#8a5c07">recompiled, same paper</text>
+      <text x="262" y="60" class="t-xs">bytes differ · <tspan class="t-b">size matches</tspan> · same path</text>
+      <text x="262" y="80" class="t-mono-sm">new document_id</text>
+      <path d="M360 90 L360 106" class="s-line-2" marker-end="url(#a22)"/>
+      <rect x="262" y="106" width="196" height="26" rx="2" fill="#ffffff" stroke="#8a5c07" stroke-width=".8"/>
+      <text x="360" y="123" class="t-xs t-mid" fill="#8a5c07">rows adopted under the new id</text>
+
+      <!-- case 3 -->
+      <rect x="484" y="24" width="220" height="118" rx="3" class="s-warn"/>
+      <text x="496" y="42" class="t-sm t-b" fill="#a03730">a different file, same name</text>
+      <text x="496" y="60" class="t-xs">bytes differ · <tspan class="t-b">size differs</tspan> · same path</text>
+      <text x="496" y="80" class="t-mono-sm">new document_id</text>
+      <path d="M594 90 L594 106" class="s-line-2" marker-end="url(#a22)"/>
+      <rect x="496" y="106" width="196" height="26" rx="2" fill="#ffffff" stroke="#a03730" stroke-width=".8"/>
+      <text x="594" y="123" class="t-xs t-mid" fill="#a03730">left orphaned, deliberately</text>
+
+      <!-- the rule -->
+      <rect x="16" y="156" width="688" height="42" rx="3" class="s-fill2"/>
+      <text x="30" y="174" class="t-xs t-b">The adoption rule, in one line</text>
+      <text x="30" y="190" class="t-xs"><tspan class="t-mono-sm">save_pdf_document</tspan> adopts rows previously recorded for the same vault path — <tspan class="t-b">but only when the file size also matches</tspan>.</text>
+
+      <!-- why -->
+      <rect x="16" y="210" width="336" height="82" rx="3" class="s-box"/>
+      <text x="28" y="228" class="t-xs t-b">Why not adopt on path alone?</text>
+      <text x="28" y="246" class="t-xs">Because “same filename” is not “same document”. Dropping a</text>
+      <text x="28" y="260" class="t-xs">different paper in as Attention.pdf would silently reattach</text>
+      <text x="28" y="274" class="t-xs">forty highlights to unrelated text — worse than losing them.</text>
+
+      <rect x="368" y="210" width="336" height="82" rx="3" class="s-box"/>
+      <text x="380" y="228" class="t-xs t-b">The orphan and drift report</text>
+      <text x="380" y="246" class="t-xs">compares each highlight's stored selected_text against the</text>
+      <text x="380" y="260" class="t-xs">text now under its rectangle, and reports how many drifted —</text>
+      <text x="380" y="274" class="t-xs">and how many were <tspan class="t-b">checkable</tspan>, since page text loads lazily.</text>
+    </svg>
+    <figcaption><b>Figure 22.1 — Survive a copy, refuse a substitution.</b> The size check in the adoption
+    rule is the line between “helpful” and “dangerous”. Note the honesty in the report: it states how many
+    annotations it could actually check, rather than implying it checked them all.</figcaption>
+  </figure>
+
+  <h2>22.2 The annotation record</h2>
+
+  <div class="srcref">core/src/pdf.rs</div>
+<pre>pub struct PdfAnnotation {
+    pub id: String,
+    pub document_id: String,
+    pub page_index: u16,
+    pub kind: PdfAnnotationKind,        <span class="cmt">// Highlight | Note</span>
+    pub color: PdfAnnotationColor,      <span class="cmt">// Yellow | Green | Blue | Pink | Orange</span>
+    pub selected_text: String,
+    pub ranges: Vec&lt;PdfTextRange&gt;,      <span class="cmt">// character intervals on the page text layer</span>
+    pub rects: Vec&lt;PdfRect&gt;,            <span class="cmt">// bounding boxes in PDF points</span>
+    pub note: Option&lt;String&gt;,
+    pub linked_note_path: Option&lt;String&gt;,
+    pub markdown_anchor: Option&lt;String&gt;,
+    pub created_at: i64,
+    pub updated_at: i64,
+}</pre>
+
+  <p>Two fields are stored where one might do. <code>ranges</code> are character intervals on the text layer
+  — the semantic anchor, used by the drift report. <code>rects</code> are geometry in PDF points — what gets
+  drawn. Keeping both is what lets the app detect that a highlight has moved rather than silently drawing it
+  in the wrong place.</p>
+
+  <p><b>Colour cycling.</b> <code>PdfAnnotationColor::next()</code> advances Yellow → Green → Blue → Pink →
+  Orange → Yellow, and <code>PdfPane::next_highlight_color</code> steps through it after each quick
+  highlight, so successive highlights stay visually distinct without the reader choosing a colour every
+  time. The explicit <code>Message::PdfCreateHighlight(color)</code> path lets you pick one deliberately.</p>
+
+  <h2>22.3 Text search, and the whitespace problem</h2>
+
+  <div class="srcref">core/src/pdf.rs</div>
+<pre>pub fn search_text(&amp;self, path: &amp;str, query: &amp;str, regex: bool, match_case: bool)
+    -&gt; Result&lt;Vec&lt;PdfSearchMatch&gt;, String&gt;</pre>
+
+  <p>The worker walks each page's text layer, builds the page string alongside a <code>char_indices</code>
+  map back into PDFium's own character indices, finds matches (a compiled <code>regex</code> when
+  <code>regex</code> is set, otherwise a literal), and converts each match into <code>PdfRect</code>s via
+  <code>text_page.segments_subset</code>.</p>
+
+  <p><b>Loose whitespace mode</b> is a native-side convenience built on the same regex path
+  (<code>app.rs::search_pdf</code>):</p>
+
+<pre>let pattern = query.split_whitespace()
+    .map(regex::escape)
+    .collect::&lt;Vec&lt;_&gt;&gt;()
+    .join(r"\s+");</pre>
+
+  <p>Three lines that make PDF search actually usable on papers: a phrase still matches when the extracted
+  text puts a line break or a run of spaces between the words, which is exactly what happens when a sentence
+  wraps across a PDF line or column.</p>
+
+  <div class="box plain"><span class="tag">Note</span>
+  It does <b>not</b> rejoin words hyphenated across a line break. A word split as <code>algo-</code> /
+  <code>rithm</code> still has to be searched in halves. That is a known limit, stated in the release notes
+  rather than hidden.</div>
+</section>

@@ -136,7 +136,7 @@ per-user directory by an interim version is migrated back beside the executable 
 | --- | --- |
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
-| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp` |
+| Images | `.jpeg`, `.jpg`, `.png`, `.svg`, `.webp`, `.avif` |
 
 ## Supported Platforms
 

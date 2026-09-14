@@ -1,0 +1,188 @@
+<!-- ================= PART I ================= -->
+<section class="part-opener">
+  <div class="kicker">Part I</div>
+  <div class="rule"></div>
+  <h1>Orientation</h1>
+  <div class="blurb">Before any code: what this program is for, what shape it has, and how to get it
+  running on your machine. By the end of this part you should be able to open any file in the repository
+  and know roughly why it exists.</div>
+  <ol>
+    <li>What you are looking at</li>
+    <li>The map: two crates, three kinds of thread</li>
+    <li>Your first hour</li>
+    <li>The language of this codebase</li>
+  </ol>
+</section>
+
+<!-- ---------- CH 1 ---------- -->
+<section class="chapter" id="ch01">
+  <div class="chead">
+    <div class="num">Chapter 1<span class="pm">PMK-ch01-</span></div>
+    <h1>What you are looking at</h1>
+    <div class="sub">The product, and the four decisions everything else follows from</div>
+  </div>
+
+  <p class="lead">MD Editor is a desktop workspace for people who read papers and write notes about them:
+  a markdown editor on one side, a PDF reader on the other, a search index across both, and a study
+  timer underneath. It is written in Rust, it runs entirely on your machine, and it stores your work as
+  ordinary files in an ordinary folder.</p>
+
+  <p>That description is short enough to fit on a landing page, and it hides everything interesting. What
+  makes this codebase worth reading is not the feature list — plenty of programs edit markdown — but the
+  four commitments the author made early and then refused to bend, because every non-obvious piece of code
+  in the repository is downstream of one of them.</p>
+
+  <h2>1.1 The four pillars</h2>
+
+  <h3>Local-first, and no proprietary format</h3>
+  <p>A <b>vault</b> is a directory. You open one with a native folder picker and MD Editor indexes what it
+  finds: markdown (<code>.md</code>, <code>.markdown</code>), PDFs, and images
+  (<code>.jpeg</code>, <code>.jpg</code>, <code>.png</code>, <code>.svg</code>, <code>.webp</code>,
+  <code>.avif</code> — the list in <span class="fileref">core/src/vault.rs</span>, which is not quite the
+  list the README prints; see Appendix B). Nothing is imported, converted, or moved. Your notes stay readable by
+  <code>cat</code>, editable by Vim, and syncable by Git, rsync, or Syncthing.</p>
+  <p>There is no account, no licence key, and no telemetry. The <em>only</em> network access anywhere in the
+  project is the build script fetching PDFium, and that happens once, at compile time (Chapter&nbsp;29).</p>
+
+  <h3>Zero-configuration portability</h3>
+  <p>Everything that is not your content — settings, window size, per-document scroll and cursor positions,
+  PDF highlights, cached PDF text, resolved cross-references, study history — lives in a single SQLite file
+  called <code>md_editor_settings.sqlite</code>. By default that file sits <em>beside the executable</em>, so
+  the whole application is one folder you can drop on a USB stick. Chapter&nbsp;7 covers what happens when
+  that directory is read-only.</p>
+
+  <h3>Durability and continuity</h3>
+  <p>Typing must survive a crash, a power cut, and a window closed in a hurry. The app therefore treats disk
+  as the source of truth and commits aggressively: an autosave fires 400&nbsp;ms after you stop typing, every
+  write is atomic, and navigating away from a note flushes it first — refusing to navigate if the write
+  fails. Chapters&nbsp;8 and&nbsp;31 are entirely about this.</p>
+
+  <h3>Non-destructive sidecar annotations</h3>
+  <p>A paper you are reading is reference material, and the app treats it as immutable. Highlight a passage
+  and MD Editor writes a row in SQLite — never a byte into your <code>.pdf</code>. This is the decision with
+  the longest tail of consequences, and Figure&nbsp;1.1 is the shape of it.</p>
+
+  <figure>
+    <svg viewBox="0 0 720 292" role="img" aria-label="Your vault of plain files on the left, the single settings database on the right, with three labelled arrows showing what each side stores and how they reference each other">
+      <defs>
+        <marker id="a1" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+          <polygon points="0,1 8,4.5 0,8" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <text x="16" y="14" class="t-xs t-b" fill="#22665c">YOUR CONTENT — YOURS, IN PLAIN FILES</text>
+      <text x="420" y="14" class="t-xs t-b" fill="#22665c">EVERYTHING ELSE — ONE PORTABLE FILE</text>
+
+      <!-- vault -->
+      <rect x="16" y="24" width="268" height="212" rx="4" class="s-box"/>
+      <rect x="16" y="24" width="268" height="24" rx="4" class="s-fill2"/>
+      <text x="28" y="41" class="t t-b">MyResearchVault/</text>
+      <g class="t-mono-sm">
+        <text x="34" y="68">Lectures/</text>
+        <text x="52" y="86">Week1.md</text>
+        <text x="52" y="104">Week2.md</text>
+        <text x="34" y="126">Papers/</text>
+        <text x="52" y="144">Attention.pdf</text>
+        <text x="34" y="166">Images/</text>
+        <text x="52" y="184">architecture.png</text>
+        <text x="34" y="206">Summary.md</text>
+      </g>
+      <text x="28" y="228" class="t-xs">Never rewritten in place — only replaced atomically.</text>
+
+      <!-- db -->
+      <rect x="452" y="24" width="252" height="212" rx="4" class="s-fill"/>
+      <rect x="452" y="24" width="252" height="24" rx="4" fill="#22665c"/>
+      <text x="464" y="41" class="t t-b" fill="#ffffff">md_editor_settings.sqlite</text>
+      <g class="t-mono-sm">
+        <text x="466" y="68">settings</text>
+        <text x="466" y="86">file_search   (FTS5)</text>
+        <text x="466" y="104">pdf_documents</text>
+        <text x="466" y="122">pdf_annotations</text>
+        <text x="466" y="140">pdf_text_cache</text>
+        <text x="466" y="158">pdf_references</text>
+        <text x="466" y="176">tracker_sessions</text>
+        <text x="466" y="194">tracker_kv</text>
+      </g>
+      <text x="464" y="222" class="t-xs">Beside the executable. Copy the folder, the state comes too.</text>
+
+      <!-- arrows across the gutter -->
+      <path d="M288 84 L448 84" class="s-accent" marker-end="url(#a1)"/>
+      <text x="368" y="76" class="t-xs t-mid" fill="#22665c">note text + extracted PDF text</text>
+      <text x="368" y="98" class="t-xs t-mid">indexed into one FTS5 table</text>
+
+      <path d="M448 142 L288 142" class="s-accent" marker-end="url(#a1)"/>
+      <text x="368" y="134" class="t-xs t-mid" fill="#22665c">highlights point at PDFs</text>
+      <text x="368" y="156" class="t-xs t-mid">by content hash — one way</text>
+
+      <path d="M288 198 L448 198" class="s-dash" marker-end="url(#a1)"/>
+      <text x="368" y="190" class="t-xs t-mid">scroll + cursor, per file</text>
+
+      <!-- negative space band -->
+      <rect x="16" y="250" width="688" height="34" rx="4" class="s-warn"/>
+      <text x="32" y="271" class="t t-b" fill="#a03730">No arrow leaves this figure.</text>
+      <text x="230" y="271" class="t-sm">No account, no sync service, no telemetry — and no write path into a <tspan class="t-mono-sm">.pdf</tspan>.</text>
+    </svg>
+    <figcaption><b>Figure 1.1 — The sidecar split.</b> Content on the left is plain and portable; state on
+    the right is one file. The arrow that <em>does not exist</em> is the important one: annotations reference
+    PDFs, but nothing ever writes back into them. That single missing arrow is why annotations must be keyed by a content
+    hash rather than a filename, why a “drifted highlight” report has to exist at all (both Chapter 22),
+    and why your highlights do not travel with a PDF you email to someone.</figcaption>
+  </figure>
+
+  <div class="box"><span class="tag">Why it is like this</span>
+  <p>Every one of these pillars costs something. Sidecar annotations mean your highlights do not open in
+  Acrobat. Portability means the database is in a slightly unusual place. Aggressive autosave means the
+  code has to be careful about writes in a way a “save when the user asks” editor never does.</p>
+  <p>They were chosen anyway because the failure they prevent is worse than the cost they impose: a
+  research vault you cannot read without the tool that made it is a vault you will lose.</p></div>
+
+  <h2>1.2 What it actually does, briefly</h2>
+  <p>You will understand the code faster if you have used the program for ten minutes. The feature surface, in
+  one pass:</p>
+
+  <table class="compact">
+    <thead><tr><th style="width:22%">Area</th><th>What a user gets</th><th style="width:26%">Where it lives</th></tr></thead>
+    <tbody>
+      <tr><td><b>Markdown editing</b></td>
+        <td>Hybrid live preview — formatted text that reveals its raw syntax on the line the cursor is on, with
+        no mode switch. Inline and display LaTeX, images, tables that scroll on their own, task lists you click.</td>
+        <td><span class="fileref">native/src/editor/</span></td></tr>
+      <tr><td><b>Smart typing</b></td>
+        <td>Auto-paired brackets and quotes that know what a contraction is, list continuation with ordered-list
+        increment, and an undo that takes back a word rather than a character.</td>
+        <td><span class="fileref">native/src/editor/buffer.rs</span></td></tr>
+      <tr><td><b>Linking</b></td>
+        <td><code>[[Wikilinks]]</code> that resolve across subfolders by filename, and a backlinks panel that
+        shows both notes and PDF highlights pointing at the open document.</td>
+        <td><span class="fileref">core/src/file_index.rs</span></td></tr>
+      <tr><td><b>PDF reading</b></td>
+        <td>Continuous scroll, fit-to-width, a recovered table of contents when the file has no bookmarks,
+        recognised cross-references (“see equation (3.14)”) you can right-click to preview.</td>
+        <td><span class="fileref">core/src/pdf.rs</span>, <span class="fileref">references.rs</span></td></tr>
+      <tr><td><b>Study workflow</b></td>
+        <td>Highlights in five cycling colours, quick notes, and “Link to Note”, which writes a markdown
+        section quoting the passage with a <code>pdf://</code> deep link back to the exact page.</td>
+        <td><span class="fileref">native/src/pdf_notes.rs</span></td></tr>
+      <tr><td><b>Search</b></td>
+        <td>Three of them: in-note with regex and replace, PDF search with a loose-whitespace mode for phrases
+        that wrap across lines, and a global FTS5 search covering notes and extracted PDF text together.</td>
+        <td><span class="fileref">core/src/vault.rs</span>, <span class="fileref">native/src/search.rs</span></td></tr>
+      <tr><td><b>Tracker</b></td>
+        <td>A timer, a session log, and a configurable curriculum of phases, projects, gates and reading lists.</td>
+        <td><span class="fileref">core/src/tracker.rs</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="box try"><span class="tag">Try it</span>
+  Before reading Chapter 2, build and run the app on a scratch folder with one markdown file and one PDF in it
+  (Chapter 3 has the commands). Type a sentence, press <kbd>Ctrl</kbd>+<kbd>Z</kbd> once, and watch a whole
+  word-run disappear rather than one character. That behaviour is Chapter 13, and it is much easier to read the
+  code once you have felt the thing it produces.</div>
+
+  <div class="box check"><span class="tag">Check yourself</span>
+  <p>You copy your vault folder to a new laptop but forget the application folder. What survives?</p>
+  <p class="answer"><b>Answer:</b> every note, PDF and image — and none of the highlights, study history,
+  scroll positions or cached text, because those live in the settings database beside the executable, not in
+  the vault. Whether that split is right is a genuine design question; Chapter 22 explains why the annotations
+  were nevertheless not put inside the PDFs.</p></div>
+</section>

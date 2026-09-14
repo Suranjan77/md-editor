@@ -127,14 +127,14 @@ executable, or directly beside it.
 cargo test --workspace
 ```
 
-The suite is **212 tests**: 56 in `md-editor-core` and 156 in `md-editor-native`, plus
+The suite is **215 tests**: 56 in `md-editor-core` and 159 in `md-editor-native`, plus
 three opt-in renderer tools that are ignored by default (below). They run in a few seconds
 and need no display server.
 
 ```mermaid
 graph TD
     Runner["cargo test --workspace"] --> CoreTests["md-editor-core — 56 tests"]
-    Runner --> NativeTests["md-editor-native — 156 tests"]
+    Runner --> NativeTests["md-editor-native — 159 tests"]
 
     CoreTests --> VaultT["vault.rs — atomic writes, symlinks, permissions, exclusions"]
     CoreTests --> PdfT["pdf.rs — page count, text, search, TOC recovery"]

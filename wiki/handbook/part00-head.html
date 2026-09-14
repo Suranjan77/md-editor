@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MD Editor — The Field Handbook</title>
+<style>
+/* ============================================================
+   MD Editor Field Handbook — print stylesheet
+   Body: Bitstream Charter (serif) · Headings: Liberation Sans
+   Code: DejaVu Sans Mono · Page: A4
+   ============================================================ */
+
+@page { size: A4; margin: 17mm 17mm 20mm 17mm; }
+
+:root{
+  --ink:#14181a;         /* body text */
+  --ink-2:#3d4548;       /* secondary text */
+  --muted:#727b7e;       /* captions, meta */
+  --rule:#d5dcda;        /* hairlines */
+  --rule-2:#e8eeec;      /* faint fills */
+  --sage:#22665c;        /* primary accent (print-darkened app accent) */
+  --sage-dk:#11342f;
+  --sage-lt:#edf4f2;
+  --amber:#8a5c07;
+  --amber-lt:#fdf6e6;
+  --red:#a03730;
+  --red-lt:#fbeeec;
+  --blue:#2b5578;
+  --blue-lt:#eef3f8;
+  --surf:#f6f8f7;
+}
+
+*{ box-sizing:border-box; }
+
+html{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+body{
+  font-family:"Bitstream Charter","Charter","DejaVu Serif",Georgia,serif;
+  font-size:10.4pt;
+  line-height:1.56;
+  color:var(--ink);
+  margin:0;
+  hyphens:none;
+  text-rendering:optimizeLegibility;
+}
+
+/* ---------- headings ---------- */
+h1,h2,h3,h4,.ui{ font-family:"Liberation Sans","DejaVu Sans",Arial,sans-serif; }
+
+h1{ font-size:20pt; line-height:1.15; margin:0 0 4mm; font-weight:700; letter-spacing:-.015em; }
+h2{ font-size:13pt; line-height:1.25; margin:9mm 0 2.5mm; font-weight:700; color:var(--sage-dk);
+    letter-spacing:-.005em; break-after:avoid; }
+h3{ font-size:10.8pt; margin:6mm 0 1.6mm; font-weight:700; color:var(--ink); break-after:avoid; }
+h4{ font-size:9.6pt; margin:4.5mm 0 1mm; font-weight:700; color:var(--ink-2);
+    text-transform:uppercase; letter-spacing:.07em; break-after:avoid; }
+
+p{ margin:0 0 2.6mm; }
+p.lead{ font-size:11.4pt; line-height:1.5; color:var(--ink-2); margin-bottom:4mm; }
+
+a{ color:var(--sage); text-decoration:none; }
+
+strong{ font-weight:700; }
+em{ font-style:italic; }
+
+/* ---------- inline code & pre ---------- */
+code,kbd,samp{ font-family:"DejaVu Sans Mono","Liberation Mono",monospace; font-size:.84em; }
+p code,li code,td code,figcaption code,dd code,dt code{
+  background:var(--rule-2); border-radius:2px; padding:.5pt 2pt; color:var(--sage-dk);
+}
+kbd{
+  background:#fff; border:.6pt solid var(--rule); border-bottom-width:1.4pt; border-radius:3px;
+  padding:.6pt 3pt; font-size:.8em; color:var(--ink); white-space:nowrap;
+}
+pre{
+  font-family:"DejaVu Sans Mono","Liberation Mono",monospace;
+  font-size:8.3pt; line-height:1.45;
+  background:var(--surf); border:.6pt solid var(--rule); border-left:2.2pt solid var(--sage);
+  border-radius:2px; padding:2.6mm 3.2mm; margin:3mm 0;
+  white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere;
+  break-inside:avoid;
+}
+pre.wide{ font-size:7.6pt; }
+pre b{ font-weight:700; color:var(--sage-dk); }
+pre .cmt{ color:#7d8a87; font-style:italic; }
+
+/* code caption above a block */
+.srcref{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:7.4pt; letter-spacing:.04em;
+  text-transform:uppercase; color:var(--muted); margin:3mm 0 -2mm; break-after:avoid;
+}
+.srcref + pre{ margin-top:1.4mm; }
+
+/* ---------- lists ---------- */
+ul,ol{ margin:0 0 2.8mm; padding-left:5.4mm; }
+li{ margin:0 0 1.3mm; }
+li > ul, li > ol{ margin-top:1.3mm; }
+ul.tight li,ol.tight li{ margin-bottom:.5mm; }
+dl{ margin:0 0 3mm; }
+dt{ font-weight:700; margin-top:2mm; }
+dd{ margin:0 0 1.4mm 5mm; }
+
+/* ---------- tables ---------- */
+table{ width:100%; border-collapse:collapse; margin:3mm 0 4mm; font-size:9pt; }
+thead{ display:table-header-group; }
+tr{ break-inside:avoid; page-break-inside:avoid; }
+thead th{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:7.6pt; font-weight:700;
+  text-transform:uppercase; letter-spacing:.06em; color:var(--sage-dk);
+  text-align:left; padding:1.4mm 2mm; border-bottom:1pt solid var(--sage); vertical-align:bottom;
+}
+tbody td{ padding:1.3mm 2mm; border-bottom:.5pt solid var(--rule); vertical-align:top; }
+tbody tr:nth-child(even) td{ background:#fafcfb; }
+table.compact{ font-size:8.4pt; }
+table.compact tbody td{ padding:1mm 1.6mm; }
+td.num{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+/* ---------- callouts ---------- */
+.box{
+  margin:3.4mm 0; padding:2.6mm 3.2mm 2.6mm 3.4mm; border-radius:2px;
+  border-left:2.4pt solid var(--sage); background:var(--sage-lt);
+  font-size:9.4pt; line-height:1.5; break-inside:avoid;
+}
+.box p:last-child{ margin-bottom:0; }
+.box .tag{
+  display:block; font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:7.4pt;
+  font-weight:700; text-transform:uppercase; letter-spacing:.09em; color:var(--sage);
+  margin-bottom:1.2mm;
+}
+.box.trap{ border-left-color:var(--red); background:var(--red-lt); }
+.box.trap .tag{ color:var(--red); }
+.box.try{ border-left-color:var(--amber); background:var(--amber-lt); }
+.box.try .tag{ color:var(--amber); }
+.box.check{ border-left-color:var(--blue); background:var(--blue-lt); }
+.box.check .tag{ color:var(--blue); }
+.box.plain{ border-left-color:var(--rule); background:var(--surf); }
+.box.plain .tag{ color:var(--muted); }
+
+/* answer key text */
+.answer{ font-size:8.8pt; color:var(--ink-2); }
+.answer b{ color:var(--blue); }
+
+/* ---------- figures ---------- */
+figure{ margin:5mm 0 5.5mm; break-inside:avoid; page-break-inside:avoid; }
+figure svg{ width:100%; height:auto; display:block; color:var(--ink); }
+figcaption{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif;
+  font-size:8pt; line-height:1.45; color:var(--muted);
+  margin-top:2.2mm; padding-top:1.4mm; border-top:.5pt solid var(--rule);
+}
+figcaption b{ color:var(--sage-dk); font-weight:700; }
+
+/* svg helper classes (inline SVG inherits document CSS) */
+.s-box{ fill:#fff; stroke:currentColor; stroke-width:1; }
+.s-fill{ fill:var(--sage-lt); stroke:var(--sage); stroke-width:1; }
+.s-fill2{ fill:var(--rule-2); stroke:var(--rule); stroke-width:1; }
+.s-warn{ fill:var(--red-lt); stroke:var(--red); stroke-width:1; }
+.s-amber{ fill:var(--amber-lt); stroke:var(--amber); stroke-width:1; }
+.s-line{ stroke:currentColor; stroke-width:1; fill:none; }
+.s-line-2{ stroke:var(--muted); stroke-width:.8; fill:none; }
+.s-dash{ stroke:var(--muted); stroke-width:.9; fill:none; stroke-dasharray:3 2.5; }
+.s-accent{ stroke:var(--sage); stroke-width:1.4; fill:none; }
+.s-red{ stroke:var(--red); stroke-width:1.4; fill:none; }
+.t{ font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:11px; fill:var(--ink); }
+.t-sm{ font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:9.5px; fill:var(--ink-2); }
+.t-xs{ font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:8.5px; fill:var(--muted); }
+.t-b{ font-weight:700; }
+.t-mono{ font-family:"DejaVu Sans Mono",monospace; font-size:9.5px; fill:var(--ink); }
+.t-mono-sm{ font-family:"DejaVu Sans Mono",monospace; font-size:8.5px; fill:var(--ink-2); }
+.t-sage{ fill:var(--sage); }
+.t-red{ fill:var(--red); }
+.t-amber{ fill:var(--amber); }
+.t-mid{ text-anchor:middle; }
+.t-end{ text-anchor:end; }
+
+/* ---------- structural ---------- */
+.page-break{ break-before:page; page-break-before:always; }
+.avoid{ break-inside:avoid; }
+
+.part-opener{
+  break-before:page; page-break-before:always;
+  height:245mm; display:flex; flex-direction:column; justify-content:center;
+}
+.part-opener .kicker{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:9pt; font-weight:700;
+  letter-spacing:.28em; text-transform:uppercase; color:var(--sage); margin-bottom:3mm;
+}
+.part-opener h1{ font-size:30pt; letter-spacing:-.02em; margin-bottom:5mm; }
+.part-opener .rule{ height:2.2pt; background:var(--sage); width:38mm; margin-bottom:6mm; }
+.part-opener .blurb{ font-size:11.6pt; line-height:1.5; color:var(--ink-2); max-width:118mm; }
+.part-opener ol{ margin-top:7mm; font-family:"Liberation Sans","DejaVu Sans",sans-serif;
+  font-size:9.6pt; color:var(--ink-2); padding-left:6mm; }
+.part-opener ol li{ margin-bottom:1.6mm; }
+
+.chapter{ break-before:page; page-break-before:always; }
+.chapter > .chead{ margin-bottom:6mm; padding-bottom:3mm; border-bottom:1.6pt solid var(--sage); }
+.chead .num{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:8.4pt; font-weight:700;
+  letter-spacing:.2em; text-transform:uppercase; color:var(--sage); margin-bottom:2mm;
+}
+.chead h1{ margin-bottom:0; }
+.chead .sub{ font-size:10.4pt; color:var(--muted); margin-top:2mm; font-style:italic; }
+
+/* page marker for the build script (invisible in print) */
+.pm{ font-size:6px; color:#ffffff; letter-spacing:0; text-transform:none; font-variant:normal; }
+
+/* ---------- cover ---------- */
+.cover{ height:252mm; position:relative; display:flex; flex-direction:column; }
+.cover .top{ flex:0 0 auto; }
+.cover .mark{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:8.6pt; font-weight:700;
+  letter-spacing:.3em; text-transform:uppercase; color:var(--sage);
+}
+.cover .art{ flex:1 1 auto; display:flex; align-items:center; justify-content:center; padding:6mm 0; }
+.cover .art svg{ width:100%; height:auto; }
+.cover h1{ font-size:33pt; letter-spacing:-.025em; line-height:1.05; margin:0 0 3mm; }
+.cover .tagline{ font-size:13pt; color:var(--ink-2); line-height:1.4; max-width:130mm; margin-bottom:6mm; }
+.cover .meta{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:8.6pt; color:var(--muted);
+  line-height:1.7; border-top:.8pt solid var(--rule); padding-top:3mm;
+}
+.cover .meta b{ color:var(--ink-2); }
+
+/* ---------- table of contents ---------- */
+.toc h2.partline{
+  font-size:8.4pt; letter-spacing:.2em; text-transform:uppercase; color:var(--sage);
+  margin:6mm 0 2mm; border-bottom:.6pt solid var(--rule); padding-bottom:1.2mm;
+}
+.toc ol{ list-style:none; margin:0; padding:0; }
+.toc li{ margin:0; }
+.toc a{
+  display:flex; align-items:baseline; gap:1.5mm; color:var(--ink);
+  font-size:9.6pt; padding:.7mm 0;
+}
+.toc .cn{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:8.4pt; color:var(--sage);
+  width:7mm; flex:0 0 7mm; font-weight:700;
+}
+.toc .ct{ flex:0 0 auto; }
+.toc .dots{ flex:1 1 auto; border-bottom:.5pt dotted var(--rule); transform:translateY(-1mm); }
+.toc .pg{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:8.6pt; color:var(--ink-2);
+  font-variant-numeric:tabular-nums; flex:0 0 auto;
+}
+
+/* ---------- small utilities ---------- */
+.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:4mm; }
+.rule-soft{ height:.5pt; background:var(--rule); margin:5mm 0; border:0; }
+.kicker-inline{
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:7.6pt; font-weight:700;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--sage);
+}
+.fileref{
+  font-family:"DejaVu Sans Mono",monospace; font-size:8pt; color:var(--muted);
+}
+blockquote{
+  margin:3mm 0; padding:0 0 0 4mm; border-left:2pt solid var(--rule);
+  color:var(--ink-2); font-style:italic;
+}
+</style>
+</head>
+<body>
