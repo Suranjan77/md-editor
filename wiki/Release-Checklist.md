@@ -9,8 +9,9 @@ Everything to verify before packaging an MD Editor build.
 ```bash
 cargo fmt --check               # must be clean
 cargo check --workspace
-cargo test --workspace          # expect 158 passing: 56 core + 102 native
-cargo clippy --workspace        # baseline is 34 warnings; confirm it has not grown
+cargo test --workspace          # expect 212 passing: 56 core + 156 native
+RENDER_PROPERTY_CASES=3000 cargo test -p md-editor-native properties
+cargo clippy --workspace        # baseline is 10 warnings; confirm it has not grown
 cargo build --release
 ```
 
@@ -61,6 +62,17 @@ for what each is protecting.
       highlight with `↑`/`↓` and open it with `Enter`.
 - [ ] Type a command's initials (for example `sv`) and confirm it ranks first. Press `Escape`
       and confirm the palette closes.
+- [ ] Type near the bottom of a long note. The page glides just far enough to keep the caret
+      clear of the edge — it never re-centres on every key.
+- [ ] Jump to a search match or a table-of-contents heading. It glides to the middle of the
+      view; turning the wheel mid-glide stops it.
+- [ ] Move the caret with the arrows. It glides between nearby places and cuts across long
+      jumps; at rest it fades in and out, and after about 20 seconds it stays lit and the
+      window goes idle.
+- [ ] Click past the end of a wrapped row. The caret stays at the end of that row.
+- [ ] Drag a selection across several paragraphs. It is one shape, with no gaps between
+      lines and rounded corners only where it sticks out.
+- [ ] Type `👩‍💻`, then press `Backspace` once. The whole emoji goes.
 
 ---
 

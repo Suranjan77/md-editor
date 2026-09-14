@@ -25,8 +25,8 @@ sequenceDiagram
     App->>Buf: execute(TypePaired or InsertText)
     Buf->>Buf: Insert into the ropey::Rope
     Buf->>Buf: Coalesce into the current undo run if it continues one
-    App->>App: Re-highlight, synchronously or debounced by document size
-    App->>Tree: Invalidate the edited line's cached height
+    App->>App: Re-highlight incrementally from the first changed line, synchronously
+    App->>Tree: Next layout re-measures only lines whose content or caret state changed
     App->>App: Set autosave_pending_since = Instant::now
 
     loop every AUTOSAVE_POLL — 100ms

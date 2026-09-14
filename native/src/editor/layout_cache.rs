@@ -8,17 +8,23 @@ pub struct LineHeightCache {
     pub hash: u64,
     pub is_editing: bool,
     pub active_col: Option<usize>,
+    /// Whether the line carried its math block's height.
+    pub math_head: bool,
+    /// Height of the line's body alone. Margins that depend on neighbouring
+    /// lines are never cached.
     pub height: f32,
     pub valid: bool,
 }
 
+/// Hash of everything about a line that its body height depends on. Block ids
+/// are left out: they renumber when lines are inserted above, without
+/// changing anything a line's own height depends on.
 pub fn line_hash(line: &StyledLine) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     line.is_code_block.hash(&mut hasher);
     line.is_math_block.hash(&mut hasher);
     line.code_block_lang.hash(&mut hasher);
     line.is_blockquote.hash(&mut hasher);
-    line.block_id.hash(&mut hasher);
     line.is_block_fence.hash(&mut hasher);
     line.is_table_row.hash(&mut hasher);
     for span in &line.spans {
@@ -71,6 +77,7 @@ fn hash_span(span: &crate::editor::highlight::StyledSpan, hasher: &mut impl Hash
     span.heading_level.hash(hasher);
     span.is_checkbox.hash(hasher);
     span.is_checked.hash(hasher);
+    span.is_list_marker.hash(hasher);
     span.is_rule.hash(hasher);
     span.is_image.hash(hasher);
     span.image_path.hash(hasher);

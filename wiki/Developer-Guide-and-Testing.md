@@ -50,8 +50,9 @@ cargo build --release        # optimized binary
 ```
 
 > `cargo fmt --check` and `cargo test --workspace` pass cleanly on `main`. Clippy does not
-> yet: the tree carries 34 warnings, so `-D warnings` fails on a fresh checkout. Treat the
-> current count as the baseline and do not add to it.
+> yet: the tree carries 10 warnings (2 in core, 8 in native, none in the editor), so
+> `-D warnings` fails on a fresh checkout. Treat the current count as the baseline and do
+> not add to it.
 
 Release output:
 
@@ -126,13 +127,14 @@ executable, or directly beside it.
 cargo test --workspace
 ```
 
-The suite is **158 tests**: 56 in `md-editor-core` and 102 in `md-editor-native`. They run in
-a few seconds and need no display server.
+The suite is **212 tests**: 56 in `md-editor-core` and 156 in `md-editor-native`, plus
+three opt-in renderer tools that are ignored by default (below). They run in a few seconds
+and need no display server.
 
 ```mermaid
 graph TD
     Runner["cargo test --workspace"] --> CoreTests["md-editor-core — 56 tests"]
-    Runner --> NativeTests["md-editor-native — 102 tests"]
+    Runner --> NativeTests["md-editor-native — 156 tests"]
 
     CoreTests --> VaultT["vault.rs — atomic writes, symlinks, permissions, exclusions"]
     CoreTests --> PdfT["pdf.rs — page count, text, search, TOC recovery"]
@@ -140,10 +142,11 @@ graph TD
     CoreTests --> IndexT["file_index.rs — wikilink resolution and backlinks"]
     CoreTests --> Massive["massive_tests.rs — 8 combinatorial and stress suites"]
 
-    NativeTests --> BufferT["editor/buffer.rs — undo runs, auto-pairing, list continuation"]
-    NativeTests --> HighlightT["editor/highlight.rs — concealing, fences, permutations"]
-    NativeTests --> RendererT["editor/renderer.rs — heights, visual movement, extremes"]
-    NativeTests --> TreeT["editor/layout_tree.rs — prefix sums and find_line_at_y"]
+    NativeTests --> BufferT["editor/buffer.rs — undo runs, auto-pairing, graphemes, affinity"]
+    NativeTests --> HighlightT["editor/highlight.rs — concealing, fences, incremental = fresh"]
+    NativeTests --> RendererT["editor/renderer/ — invariants, caret, hit testing, motion, painting"]
+    NativeTests --> TreeT["editor/layout_tree.rs — exact prefix sums and find_line_at_y"]
+    NativeTests --> MotionT["motion.rs — springs, panel widths, settling"]
     NativeTests --> FuzzyT["fuzzy.rs — ordering, word starts, initials"]
     NativeTests --> PaletteT["views/command_palette.rs — ranking, caps, activation"]
     NativeTests --> AppT["app.rs — PDF page slots, offsets, note paths"]
@@ -161,21 +164,124 @@ graph TD
    file rename/delete lifecycle.
 3. **Buffer semantics** (`native/src/editor/buffer.rs`) — undo-run coalescing, bracket
    wrapping and skip-over, contraction apostrophes, list continuation including ordered-list
-   increment and multibyte markers, and a deterministic editing stress test that asserts the
-   cursor and selection stay valid.
-4. **Highlighter permutations** (`native/src/editor/highlight.rs`) — nested markdown,
-   unclosed fences, inline math, and the invariant that code highlighting preserves the full
-   source text.
+   increment and multibyte markers, grapheme-cluster movement and deletion (CRLF as one
+   stop), caret affinity that lasts only until the next change, and a deterministic editing
+   stress test that asserts the cursor and selection stay valid.
+4. **Highlighter** (`native/src/editor/highlight.rs`) — nested markdown, unclosed fences,
+   inline math, code highlighting preserving the full source text, equivalence with a
+   reference implementation, and seeded edit scripts proving incremental highlighting equals
+   highlighting from scratch.
 5. **Fenwick invariants** (`native/src/editor/layout_tree.rs`) — prefix sums match brute-force
-   sums, and `find_line_at_y` is monotonic and correct at boundaries.
-6. **Renderer geometry** (`native/src/editor/renderer.rs`) — line-height permutations, total
-   height accumulation, visual down-movement through empty and wrapped lines, and extreme
-   dimensions.
-7. **PDF page geometry** (`native/src/app.rs`) — target offsets map back to the same page,
+   sums exactly, and `find_line_at_y` is monotonic and correct at boundaries.
+6. **Renderer geometry** (`native/src/editor/renderer/`) — line heights, margins and table
+   gutters (`layout.rs`), visual down-movement through empty and wrapped lines (`caret.rs`),
+   selection extraction (`selection.rs`), inline reveal rules (`spans.rs`), caption numbering
+   (`draw/captions.rs`), the reveal policy (`reveal.rs`), and the caret's glide and blink
+   schedule (`glide.rs`).
+7. **Renderer behaviour** (`native/src/editor/renderer/tests.rs`) — driven only through the
+   `Widget` API and checked against the draw calls and messages that come out: the caret sits
+   on painted text at every column of wrapped lines, clicking where the caret is drawn puts it
+   back there, clicking past a row's end keeps the caret on that row, a multi-line selection
+   is one continuous shape that covers images, tables and equations whole, painting over them
+   and under text, wide code, tables and equations show nothing outside their viewports at
+   any scroll position, an equation rendering late reflows the layout, a reveal request is
+   answered once with the caret's drawn place,
+   short caret moves glide and long ones cut, layout is skipped exactly while its inputs are
+   unchanged, links on wrapped rows are clickable, table headers and stripes, scrollbar thumbs
+   follow the pointer with no dead zone, clicks in scrolled code hit the character under the
+   pointer, and no widths from 40 to 260px panic.
+8. **Renderer invariants** (`native/src/editor/renderer/properties.rs`) — see
+   [Property suites](#property-suites).
+9. **PDF page geometry** (`native/src/app.rs`) — target offsets map back to the same page,
    blank pages reserve space, and placeholder slots scale with zoom.
-8. **Platform integration** (`native/src/main.rs`) — CLI argument parsing, window-size
+10. **Platform integration** (`native/src/main.rs`) — CLI argument parsing, window-size
    round-tripping and rejection of nonsense values, and a full Linux desktop install and
    uninstall round-trip against a temporary `$HOME`.
+
+### Property suites
+
+The editor's geometry is pinned by invariants rather than by examples alone.
+`native/src/editor/renderer/properties.rs` generates documents from a seed — every block
+and inline kind, pathological nesting, CRLF, widths from 40 to 1400px — using the generator
+shared with the highlighter's suite (`native/src/editor/test_docs.rs`). A failing case is
+shrunk line by line and reported with its seed and a minimal document.
+
+| Invariant | Test |
+| :--- | :--- |
+| I1 — the caret lies on painted glyphs of its row, on either side of a row break | `caret_lies_on_painted_glyphs` |
+| I2 — hitting where the caret is drawn yields a position drawn at exactly the same place | `hit_testing_inverts_caret_placement` |
+| I3 — caret positions advance in reading order | `caret_order_follows_logical_order` |
+| I5 — rows tile a line; painted content stays inside its line box | `rows_tile_their_line_and_contain_their_items`, `painted_content_stays_inside_line_boxes` |
+| I6 — cached and early-out layouts equal a cold layout through edits and caret moves | `cached_layout_equals_cold_layout` |
+| I8 — the height tree, the widget height and the uncached model agree | `height_tree_agrees_with_line_visual_y` |
+| I9 — up and down move exactly one visual row | `vertical_moves_step_one_visual_row` |
+| I10 — no input panics | `arbitrary_input_never_panics` |
+| I11 — scroll offsets stay in range and thumbs follow drags | `scrollbars_stay_in_bounds_and_follow_drags` |
+| I12 — drawing touches only visible lines | `drawing_visits_only_visible_lines` |
+
+```bash
+cargo test -p md-editor-native properties                          # default case counts
+RENDER_PROPERTY_CASES=3000 cargo test -p md-editor-native properties # before a renderer change lands
+RENDER_PROPERTY_SEED=<seed> cargo test -p md-editor-native properties # replay a reported failure
+HIGHLIGHT_PROPERTY_CASES=3000 cargo test -p md-editor-native highlight
+```
+
+### Timing report
+
+An ignored test prints what frames cost on a 37,000-line document — cold layout, a full walk
+with warm caches, an unchanged frame, and drawing one screen. Run it in a release build;
+debug numbers mean nothing:
+
+```bash
+cargo test -p md-editor-native --release layout_timing -- --ignored --nocapture
+```
+
+### Render transcript harness
+
+`native/src/editor/render_snapshot_tests.rs` is an opt-in test (`#[ignore]`, so
+`cargo test` skips it) for changes to the editor renderer. It drives the `Editor` widget
+purely through its `Widget` API — layout, draw, update, and mouse interaction — against a
+document that exercises every block and inline kind, at three widths. It records every
+quad, text run, and image the widget draws, every message it publishes, clipboard writes,
+and mouse-cursor shapes, into a plain-text transcript. Drawing goes to a recording renderer
+that borrows the real renderer's text measurement, so no window or GPU is needed.
+
+```bash
+# Before the change: write a baseline transcript
+RENDER_SNAPSHOT=/tmp/render.txt RENDER_SNAPSHOT_WRITE=1 \
+  cargo test -p md-editor-native render_snapshot -- --ignored
+
+# After the change: compare (writes /tmp/render.txt.actual on mismatch)
+RENDER_SNAPSHOT=/tmp/render.txt cargo test -p md-editor-native render_snapshot -- --ignored
+diff /tmp/render.txt /tmp/render.txt.actual | less
+```
+
+- **For a refactor**, the comparison must pass. That is how the split of `renderer.rs` into
+  `renderer/` was verified to change nothing.
+- **For a visual fix**, the diff should contain the draw calls you meant to change, and
+  nothing else.
+
+The transcript is large (tens of MB) and pins current behaviour, including known bugs, so
+keep it out of the repository.
+
+### Render previews
+
+`native/src/editor/render_preview.rs` renders a sample document — wrapped styled and plain
+paragraphs, tasks, a quote, inline and block math, a code block, a table, an image — to PNG files
+using iced's tiny-skia software renderer, so rendering can be looked at without opening a
+window. Scenes cover a caret mid-paragraph, a caret after a checkbox, a selection across
+wrapped rows, a selection across lines, a selection across a table, an equation and an
+image, a caret in equation source, and a wide unfocused view. Equations are rendered by the
+app's own `render_latex_task`, and the image is the repository's `md-editor.png`, so what
+the previews show is what the app draws.
+
+```bash
+RENDER_PREVIEW_DIR=/tmp/previews cargo test -p md-editor-native render_preview -- --ignored
+```
+
+It uses only the widget's public API, so the same file can be dropped into an older
+checkout to render a before/after pair. Text is shaped with system fonts, so glyphs the
+software renderer's fonts lack (the task checkmark, for one) may show as boxes.
 
 ### Reference-resolver tools
 

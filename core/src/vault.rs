@@ -65,7 +65,7 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
             let rel_path = file_path
                 .strip_prefix(&root)
                 .unwrap_or(&file_path)
-                .to_string_lossy()
+                .to_string_lossy() // If the path is valid UTF-8 then this method will not allocate memory and returns Cow borrowed, else it allocates String in heap and wraps into Cow Owned
                 .to_string();
             indexed.push((rel_path, content.clone()));
             for_graph.push((file_path, content));
