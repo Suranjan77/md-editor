@@ -16,13 +16,14 @@ md-editor/
 ├── LICENSE                     # GNU General Public License v3.0
 ├── md-editor.png               # Application icon, embedded into the binary
 ├── images/                     # README screenshots and the intro animation
-├── tests-fixtures/             # Sample PDFs used by core tests
-│   └── pdf/                    # dummy.pdf, large-500-pages.pdf
+├── tests-fixtures/             # Sample documents used by core tests
+│   ├── pdf/                    # dummy.pdf, large-500-pages.pdf
+│   └── pptx/                   # fixture.pptx, and make_fixture.py which generates it
 ├── wiki/                       # This documentation set — the only docs tree
 ├── .github/workflows/          # CI: windows-build.yml
 ├── core/                       # md-editor-core crate
 │   ├── Cargo.toml              # rusqlite (bundled), pdfium-render, image, regex,
-│   │                           # serde, serde_json, sha2, uuid
+│   │                           # roxmltree, serde, serde_json, sha2, uuid, zip
 │   ├── build.rs                # Thin wrapper that calls build_pdfium::setup_pdfium()
 │   ├── build_pdfium.rs         # Downloads/caches the platform PDFium shared library
 │   ├── pdfium/                 # Build-script output: the copied shared library
@@ -35,6 +36,7 @@ md-editor/
 │       ├── file_index.rs       # Wikilink parsing, resolution, bidirectional backlinks
 │       ├── massive_tests.rs    # Combinatorial and stress suite (cfg(test) only)
 │       ├── pdf.rs              # PDFium worker, render queues, text, TOC recovery, search
+│       ├── pptx.rs             # Read-only PowerPoint parser: package, inheritance, slide model
 │       ├── references.rs       # Internal cross-reference resolver (pure, no PDFium)
 │       ├── state.rs            # AppState, SQLite schema, WAL setup, DB path resolution
 │       ├── tracker.rs          # Study session + tracker key/value persistence
@@ -53,6 +55,7 @@ md-editor/
         ├── search.rs           # Reusable in-file line matching (plain + regex)
         ├── pdf_notes.rs        # Linked-note path normalization and markdown formatting
         ├── pdf_pane.rs         # PDF viewport, cache, annotation, and navigation state
+        ├── pptx_pane.rs        # Presentation viewer state: deck, load generation, zoom, scroll
         ├── ui_state.rs         # Modals, palette, toast, split view, window geometry
         ├── editor_state.rs     # EditorPane: buffer, highlights, retained-buffer registry
         ├── vault_state.rs      # Vault root, file entries, expansion, backlinks panel
@@ -90,6 +93,12 @@ md-editor/
         │           ├── overlays.rs # The selection shape, search highlights, the caret
         │           ├── captions.rs # Table, Listing, Figure, and equation numbering
         │           └── primitives.rs # Quads, text runs, clipping, scrollbars
+        ├── slides/             # Presentation slides, prepared once and drawn on canvases
+        │   ├── mod.rs          # load_deck, picture decoding, layer_ranges
+        │   ├── text.rs         # Slide text layout: wrapping, bullets, alignment, table rows
+        │   ├── fonts.rs        # Typeface substitution and shaper-backed measurement
+        │   ├── draw.rs         # Canvas programs that paint a slide's layers
+        │   └── preview.rs      # Opt-in PNG previews of a deck's slides
         └── views/              # View-layer components
             ├── mod.rs          # Module declarations
             ├── backlinks.rs    # Incoming connections pane (notes, PDFs, highlights)
@@ -99,6 +108,7 @@ md-editor/
             ├── link_note_picker.rs # Modal for attaching a PDF highlight to a note
             ├── modals.rs       # Create file/folder, delete confirm, quick note, link note
             ├── pdf_viewer.rs   # Toolbar, search bar, continuous page list, overlay canvas
+            ├── pptx_viewer.rs  # Slide column, slide toolbar, slide metrics
             ├── search.rs       # In-file and global search panels
             ├── sidebar.rs      # Vault file tree and its header actions
             ├── toast.rs        # Animated feedback toast
@@ -125,6 +135,7 @@ md-editor/
 | `vault.rs` | Vault root indexing, tree listing, path jailing (`resolve_vault_path_checked`), atomic `write_file`, create/rename/delete, FTS5 rebuild, `search_vault`, and backlink queries. |
 | `file_index.rs` | Parses `[[target]]` and `[[target\|alias]]` wikilinks, resolves them by exact path then shortest matching basename, and maintains `outgoing` and `incoming` maps. |
 | `pdf.rs` | The PDFium FFI boundary: worker thread, priority and standard channels, page rendering, text extraction, page sizes, links, bookmarks, TOC recovery, search, link previews, and the `document_id` content hash. |
+| `pptx.rs` | Read-only PowerPoint reader: bounded zip access, relationship resolution, theme and colour-map resolution, master → layout → slide placeholder inheritance, preset and custom geometry, tables, and the resolved `Presentation` model. See [Core Services](Core-Services.md#8-powerpoint-presentations-pptxrs). |
 | `references.rs` | Pure resolver that turns already-extracted page text plus an outline into `ReferenceLink`s for equations, figures, tables, and sections. Never touches PDFium. |
 | `tracker.rs` | `StudySession` and `TrackerKv` models with their SQLite persistence helpers. |
 | `types.rs` | `FileEntry`, `SearchResult`, `BacklinkTarget`, `BacklinkItem`. |
@@ -162,6 +173,13 @@ md-editor/
 | `editor/renderer/testing.rs`, `tests.rs` | A recording renderer and a `View` driver that feeds the widget real layout, draw, and input calls, and the behavioral tests built on them. |
 | `editor/render_preview.rs` | An ignored-by-default test that renders sample scenes to PNG with iced's tiny-skia software renderer. See [Developer Guide & Testing](Developer-Guide-and-Testing.md). |
 | `editor/render_snapshot_tests.rs` | An ignored-by-default harness that drives the widget through its `Widget` API and records every draw call, message, and cursor shape to a transcript. See [Developer Guide & Testing](Developer-Guide-and-Testing.md). |
+| `pptx_pane.rs` | `PptxPane`: the prepared deck, the load `generation` that drops stale results, the error to show, zoom as a multiple of fit-to-width, and the scroll position the slide counter and slide stepping read. |
+| `slides/mod.rs` | `load_deck()`, which parses a deck, decodes and crops its pictures (capped at `MAX_IMAGE_SIDE`), and lays out all its text once, off the UI thread; and `layer_ranges()`, which splits a slide into canvas layers. |
+| `slides/text.rs` | Text layout in points: greedy wrapping, hanging bullets and numbers, alignment, shared baselines, super- and subscripts, underline and strike rules, `anchor_offset()`, and `layout_table()`, which grows rows to fit their text. |
+| `slides/fonts.rs` | `resolve()`, mapping a slide's typeface to an installed family or a metric-compatible substitute, and `Shaper`, which measures with the cosmic-text shaper at `REFERENCE_SIZE`. |
+| `slides/draw.rs` | `SlideLayer`, the canvas program for one `SlidePart` of a slide: fills and gradients, dashed lines and arrowheads, rotation and flips, pictures, text, tables, and unsupported-content boxes. |
+| `slides/preview.rs` | An ignored-by-default test that renders a deck's slides to PNG through the viewer's widgets. |
+| `views/pptx_viewer.rs` | The slide column (`slide_page()` stacks one slide's layers), the slide toolbar, and `slide_metrics()`, the geometry scrolling and the slide counter share with the view. |
 
 ---
 
@@ -177,6 +195,8 @@ graph LR
         serde_c["serde and serde_json"]
         sha2["sha2"]
         uuid["uuid"]
+        roxmltree["roxmltree — slide XML"]
+        zip_c["zip — read-only, deflate only"]
     end
 
     subgraph BuildDeps ["core build dependencies"]
@@ -203,6 +223,8 @@ graph LR
     CoreCrate --> serde_c
     CoreCrate --> sha2
     CoreCrate --> uuid
+    CoreCrate --> roxmltree
+    CoreCrate --> zip_c
     CoreCrate -.->|"build.rs only"| ureq
     CoreCrate -.->|"build.rs only"| flate2
     CoreCrate -.->|"build.rs only"| tar

@@ -5,6 +5,7 @@ pub mod interactive_pdf;
 pub mod link_note_picker;
 pub mod modals;
 pub mod pdf_viewer;
+pub mod pptx_viewer;
 pub mod search;
 pub mod sidebar;
 pub mod toast;

@@ -4,7 +4,7 @@ Welcome to the **MD Editor** wiki — the single, authoritative documentation se
 the project. Everything that used to live under `docs/` has been folded into these
 pages; there is no other documentation tree to keep in sync.
 
-MD Editor is a calm, native, local-first desktop workspace for notes, PDFs, images,
+MD Editor is a calm, native, local-first desktop workspace for notes, PDFs, presentations, images,
 search, backlinks, and study progress. It is written in Rust on top of the
 [Iced](https://github.com/iced-rs/iced) GUI toolkit (0.14) and Google's
 [PDFium](https://pdfium.googlesource.com/pdfium/) rendering engine.
@@ -25,6 +25,7 @@ graph TB
         Fenwick["HeightTree — Fenwick tree<br/>editor/layout_tree.rs"]
         Highlighter["Markdown tokenizer and concealer<br/>editor/highlight.rs"]
         PDFView["Interactive PDF widget and overlays<br/>views/interactive_pdf.rs, views/pdf_viewer.rs"]
+        SlideView["Slide text layout and layered canvases<br/>slides/, views/pptx_viewer.rs"]
         Palette["Command palette and fuzzy matcher<br/>fuzzy.rs, views/command_palette.rs"]
         Tokens["Design tokens and motion<br/>theme.rs, motion.rs"]
     end
@@ -37,6 +38,7 @@ graph TB
         FTS["FTS5 full-text index<br/>file_search"]
         PDFWorker["PDFium worker thread and renderer<br/>pdf.rs"]
         RefScanner["Internal reference resolver<br/>references.rs"]
+        PptxParser["Read-only PowerPoint parser<br/>pptx.rs"]
         Tracker["Study tracker persistence<br/>tracker.rs"]
     end
 
@@ -45,6 +47,7 @@ graph TB
     DocBuf -->|"markdown text"| Highlighter
     Highlighter -->|"styled spans"| Widget
     PDFView -->|"typed tasks over channels"| PDFWorker
+    SlideView -->|"loads a deck off the UI thread"| PptxParser
     Vault -->|"rebuilds FTS rows"| SQLite
     Index -->|"resolves wikilinks"| Vault
     AppState --> SQLite
@@ -70,11 +73,11 @@ examples, and exercises. It is generated from `wiki/handbook/` — see the READM
 
 | Topic | Description | Link |
 | :--- | :--- | :--- |
-| **User Guide & Features** | Vaults, markdown editing, PDF reading, split view, search modes, tracker | [User Guide & Feature Manual](User-Guide-and-Feature-Manual.md) |
+| **User Guide & Features** | Vaults, markdown editing, PDF reading, split view, presentations, search modes, tracker | [User Guide & Feature Manual](User-Guide-and-Feature-Manual.md) |
 | **Keyboard Shortcuts** | Every binding, and which layer owns it | [Keyboard Shortcuts](Keyboard-Shortcuts.md) |
 | **Architecture & Philosophy** | Local-first, portability, durability, non-destructive sidecars, threading | [Architecture & Philosophy](Architecture-and-Philosophy.md) |
 | **Repository Structure** | Workspace layout, crate boundaries, per-file responsibilities | [Repository Structure](Repository-Structure.md) |
-| **Core Services** | SQLite schema, portable paths, vault operations, atomic writes, wikilink graph | [Core Services](Core-Services.md) |
+| **Core Services** | SQLite schema, portable paths, vault operations, atomic writes, wikilink graph, presentation parsing | [Core Services](Core-Services.md) |
 | **Native Desktop GUI** | Application lifecycle, message enum, sub-state split, subscriptions, views | [Native Desktop GUI](Native-Desktop-GUI.md) |
 | **Markdown Pipeline** | Rope buffer, incremental highlighting, typographic rhythm, caret affinity, scroll-into-view, draw pass | [Markdown Pipeline](Markdown-Pipeline.md) |
 | **PDF Engine & Sidecars** | PDFium worker, TOC recovery, reference resolver, sidecar annotations, linked notes | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) |

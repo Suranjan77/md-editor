@@ -12,6 +12,7 @@ pub enum Icon {
     Image,
     LayoutPanelLeft,
     ListTree,
+    Presentation,
     Search,
     ChevronDown,
     ChevronRight,
@@ -130,6 +131,18 @@ impl<Message> canvas::Program<Message> for IconCanvas {
                 stroke_line(&mut frame, p(6.0, 17.0), p(11.0, 13.0), stroke);
                 stroke_line(&mut frame, p(11.0, 13.0), p(14.0, 16.0), stroke);
                 stroke_line(&mut frame, p(14.0, 16.0), p(18.0, 12.0), stroke);
+            }
+            Icon::Presentation => {
+                frame.stroke(
+                    &canvas::Path::rounded_rectangle(
+                        p(3.0, 4.0),
+                        iced::Size::new(18.0 * scale, 12.0 * scale),
+                        (2.0 * scale).into(),
+                    ),
+                    stroke,
+                );
+                stroke_line(&mut frame, p(12.0, 16.0), p(12.0, 20.0), stroke);
+                stroke_line(&mut frame, p(8.0, 20.0), p(16.0, 20.0), stroke);
             }
             Icon::Trash => {
                 stroke_line(&mut frame, p(5.0, 7.0), p(19.0, 7.0), stroke);

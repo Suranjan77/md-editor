@@ -127,14 +127,14 @@ executable, or directly beside it.
 cargo test --workspace
 ```
 
-The suite is **215 tests**: 56 in `md-editor-core` and 159 in `md-editor-native`, plus
+The suite is **241 tests**: 68 in `md-editor-core` and 173 in `md-editor-native`, plus
 three opt-in renderer tools that are ignored by default (below). They run in a few seconds
 and need no display server.
 
 ```mermaid
 graph TD
-    Runner["cargo test --workspace"] --> CoreTests["md-editor-core — 56 tests"]
-    Runner --> NativeTests["md-editor-native — 159 tests"]
+    Runner["cargo test --workspace"] --> CoreTests["md-editor-core — 68 tests"]
+    Runner --> NativeTests["md-editor-native — 173 tests"]
 
     CoreTests --> VaultT["vault.rs — atomic writes, symlinks, permissions, exclusions"]
     CoreTests --> PdfT["pdf.rs — page count, text, search, TOC recovery"]
@@ -282,6 +282,24 @@ RENDER_PREVIEW_DIR=/tmp/previews cargo test -p md-editor-native render_preview -
 It uses only the widget's public API, so the same file can be dropped into an older
 checkout to render a before/after pair. Text is shaped with system fonts, so glyphs the
 software renderer's fonts lack (the task checkmark, for one) may show as boxes.
+
+### Slide previews
+
+`native/src/slides/preview.rs` renders the slides of any `.pptx` to PNG files through the
+viewer's own widgets (`views::pptx_viewer::slide_page`) and the tiny-skia software renderer.
+Converting the same deck with `soffice --headless --convert-to pdf` and rasterising the
+result with `pdftoppm` gives a reference to compare against.
+
+```bash
+PPTX_PREVIEW_FILE=/abs/path/deck.pptx PPTX_PREVIEW_DIR=/tmp/slides \
+  cargo test -p md-editor-native slide_preview -- --ignored
+```
+
+Cargo runs the test from `native/`, so give absolute paths. `PPTX_PREVIEW_WIDTH` sets the
+slide width in pixels (default 960) and `PPTX_PREVIEW_LIMIT` caps the number of slides.
+Slide text is shaped with the fonts installed on the machine, through the substitutions the
+app makes (`slides/fonts.rs`), so a deck set in fonts you lack breaks lines slightly
+differently than it does in PowerPoint.
 
 ### Reference-resolver tools
 

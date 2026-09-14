@@ -85,7 +85,7 @@ pub fn result_count(
 /// relevance rather than segregated into fixed sections.
 enum Hit<'a> {
     Command(&'a Command),
-    File { path: &'a str, is_pdf: bool },
+    File { path: &'a str, badge: &'static str },
 }
 
 fn rank<'a>(
@@ -115,13 +115,12 @@ fn rank<'a>(
         if entry.is_dir {
             continue;
         }
-        let is_pdf = entry.path.to_lowercase().ends_with(".pdf");
         if let Some(score) = fuzzy::score_path(&entry.path, query) {
             scored.push((
                 score,
                 Hit::File {
                     path: &entry.path,
-                    is_pdf,
+                    badge: file_badge(&entry.path),
                 },
             ));
         }
@@ -132,6 +131,18 @@ fn rank<'a>(
     scored.sort_by(|a, b| b.0.cmp(&a.0));
     scored.truncate(MAX_RESULTS);
     scored.into_iter().map(|(_, hit)| hit).collect()
+}
+
+/// The one-letter marker for a file's kind in the results list.
+fn file_badge(path: &str) -> &'static str {
+    let lower = path.to_lowercase();
+    if lower.ends_with(".pdf") {
+        "P"
+    } else if lower.ends_with(".pptx") {
+        "S"
+    } else {
+        "M"
+    }
 }
 
 fn badge<'a>(glyph: &'a str, opacity: f32) -> Element<'a, Message, Theme, Renderer> {
@@ -246,12 +257,12 @@ pub fn view<'a>(
                 is_selected,
                 opacity,
             ),
-            Hit::File { path, is_pdf } => {
+            Hit::File { path, badge: glyph } => {
                 let name = path.rsplit('/').next().unwrap_or(path);
                 let folder = path.strip_suffix(name).unwrap_or("").trim_end_matches('/');
 
                 row_button(
-                    badge(if is_pdf { "P" } else { "M" }, opacity),
+                    badge(glyph, opacity),
                     text(name)
                         .size(theme::TEXT_BASE)
                         .color(theme::fade(theme::TEXT_PRIMARY, opacity))

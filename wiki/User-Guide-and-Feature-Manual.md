@@ -27,7 +27,7 @@ MyResearchVault/
 
 1. Launch MD Editor. The welcome screen offers **Open Existing Vault**.
 2. Or press `Ctrl+O` at any time.
-3. Pick a folder. MD Editor indexes its Markdown, PDF, and image files and shows them in the
+3. Pick a folder. MD Editor indexes its Markdown, PDF, presentation, and image files and shows them in the
    sidebar tree.
 
 Indexing walks up to 32 directory levels and skips `node_modules`, `target`, `build`, `dist`,
@@ -42,8 +42,10 @@ The last vault and last open file are restored the next time you launch.
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
 | Images | `.jpeg`, `.jpg`, `.png`, `.svg`, `.webp`, `.avif` |
+| Presentations | `.pptx` (view only) |
 
-Images open in a dedicated preview pane.
+Images open in a dedicated preview pane. Presentations open in a read-only slide viewer —
+see [Viewing presentations](#viewing-presentations).
 
 ### The sidebar
 
@@ -216,6 +218,35 @@ the PDF's position.
 `Ctrl+P` → *Split View*, or the toolbar button, with both a note and a PDF open. Drag the
 divider to resize. If fit-to-width is on, the PDF re-fits to the narrower pane while keeping
 your page and scroll position.
+
+### Viewing presentations
+
+Open a `.pptx` from the sidebar or the command palette to read it. The viewer is **view
+only** — nothing you do in it changes the file.
+
+- **Every slide in one column**, each under its number and title; hidden slides are marked
+  *Hidden*.
+- **Slide navigation** — the arrows in the toolbar, or `PageUp` / `PageDown`, move one slide
+  at a time; the arrow keys and the wheel scroll. The toolbar shows which slide you are on.
+- **Zoom** — slides fit the pane's width by default. `-` and `+` step between 50% and 300% of
+  that width, keeping your slide in view, and **Fit** returns to it.
+- **Follows the file** — if the deck changes on disk (saved from PowerPoint, pulled with
+  Git), the viewer reads it again and keeps your place.
+
+Slides are drawn by MD Editor itself, so no Office suite is needed. Text, bullets and
+numbering, shapes and lines, pictures, tables, backgrounds, theme colours and fonts, and
+content inherited from the slide layout and master are all shown. Some things are
+approximated or left out:
+
+- **Charts, SmartArt, and embedded objects** appear as labelled grey boxes.
+- **Fonts** the deck names but your system lacks are replaced — by a metric-compatible font
+  when one is installed (Liberation Sans for Arial, Carlito for Calibri), so lines break
+  where they did in PowerPoint.
+- **Radial gradients** are drawn as linear ones; shadows, glows, and 3-D effects are not
+  drawn; built-in table styles are approximated.
+- **Animations, transitions, and speaker notes** are not shown.
+
+Password-protected presentations and the old binary `.ppt` format can't be opened.
 
 ---
 

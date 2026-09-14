@@ -87,6 +87,8 @@ fn render_tree_level<'a>(
             Icon::Folder
         } else if crate::app::is_supported_image_path(&lower_name) {
             Icon::Image
+        } else if lower_name.ends_with(".pptx") {
+            Icon::Presentation
         } else if lower_name.ends_with(".md") || lower_name.ends_with(".markdown") {
             Icon::FileText
         } else {
