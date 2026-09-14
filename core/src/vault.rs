@@ -800,7 +800,11 @@ fn list_vault_recursive(
         } else if path
             .extension()
             .map(|e| {
-                e == "md" || e == "markdown" || e == "pdf" || is_image(e.to_str().unwrap_or(""))
+                e == "md"
+                    || e == "markdown"
+                    || e == "pdf"
+                    || e == "pptx"
+                    || is_image(e.to_str().unwrap_or(""))
             })
             .unwrap_or(false)
         {

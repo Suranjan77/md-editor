@@ -1,6 +1,7 @@
 pub mod config;
 pub mod file_index;
 pub mod pdf;
+pub mod pptx;
 pub mod references;
 pub mod state;
 pub mod tracker;

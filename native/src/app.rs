@@ -18,6 +18,8 @@ use crate::views::pdf_viewer::PDF_PAGE_LIST_PADDING;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
+/// How far one arrow key press scrolls a PDF or a presentation.
+const ARROW_SCROLL: f32 = 64.0;
 /// Space around the editor widget inside its scrollable.
 const EDITOR_PADDING: f32 = app_theme::SPACE_6;
 /// Upper bound on PDF supersampling. The actual factor tracks the display's
@@ -79,6 +81,9 @@ pub struct MdEditor {
     // PDF viewer (document pages, geometry, annotations, render bookkeeping)
     pdf: crate::pdf_pane::PdfPane,
 
+    // Presentation viewer (prepared deck, zoom, scroll position)
+    pptx: crate::pptx_pane::PptxPane,
+
     // Image viewer + active-viewer mode flag (shell-level routing)
     active_image_path: Option<String>,
     active_image: Option<(iced::widget::image::Handle, f32, f32)>,
@@ -135,6 +140,7 @@ impl MdEditor {
             active_path: None,
             editor: crate::editor_state::EditorPane::new(),
             pdf: crate::pdf_pane::PdfPane::new(),
+            pptx: crate::pptx_pane::PptxPane::new(),
             active_image_path: None,
             active_image: None,
             showing_pdf: false,
@@ -189,6 +195,8 @@ impl MdEditor {
             self.open_pdf(file_path)
         } else if is_supported_image_path(&lower) {
             self.open_image(file_path)
+        } else if lower.ends_with(".pptx") {
+            self.open_pptx(file_path)
         } else {
             Task::none()
         }
@@ -202,6 +210,7 @@ impl MdEditor {
                 .as_deref()
                 .or(self.pdf.active_path.as_deref())
                 .or(self.active_image_path.as_deref())
+                .or(self.pptx.active_path.as_deref())
                 .unwrap_or("New File")
         )
     }
@@ -249,8 +258,8 @@ impl MdEditor {
                 };
             }
             match key {
-                Key::Named(Named::ArrowDown) => Some(Message::PdfScrollBy(64.0)),
-                Key::Named(Named::ArrowUp) => Some(Message::PdfScrollBy(-64.0)),
+                Key::Named(Named::ArrowDown) => Some(Message::PdfScrollBy(ARROW_SCROLL)),
+                Key::Named(Named::ArrowUp) => Some(Message::PdfScrollBy(-ARROW_SCROLL)),
                 Key::Named(Named::PageDown) => Some(Message::PdfScrollBy(520.0)),
                 Key::Named(Named::PageUp) => Some(Message::PdfScrollBy(-520.0)),
                 _ => None,
@@ -575,6 +584,8 @@ impl MdEditor {
                                 self.open_pdf(&resolved_path)
                             } else if is_supported_image_path(&lower) {
                                 self.open_image(&resolved_path)
+                            } else if lower.ends_with(".pptx") {
+                                self.open_pptx(&resolved_path)
                             } else {
                                 Task::none()
                             }
@@ -696,6 +707,9 @@ impl MdEditor {
                         if gone(self.active_image_path.as_deref()) {
                             self.active_image_path = None;
                             self.active_image = None;
+                        }
+                        if gone(self.pptx.active_path.as_deref()) {
+                            self.pptx.close();
                         }
                         self.ui.active_modal = None;
                         self.ui.link_note_picker_search.clear();
@@ -1449,6 +1463,19 @@ impl MdEditor {
                     }
                     return Task::none();
                 }
+                if self.pptx.active_path.is_some() {
+                    if self.search.visible || self.ui.active_modal.is_some() {
+                        return Task::none();
+                    }
+                    let width = self.pdf_available_width();
+                    // Page Up and Page Down move a whole slide; the arrows scroll.
+                    return if delta.abs() > ARROW_SCROLL {
+                        self.pptx
+                            .update(Message::PptxStep(delta.signum() as i32), width)
+                    } else {
+                        self.pptx.scroll_by(delta, width)
+                    };
+                }
                 if self.pdf.active_path.is_none()
                     || (!self.showing_pdf
                         && !(self.ui.split_view_active && self.active_path.is_some()))
@@ -2035,12 +2062,35 @@ impl MdEditor {
                     .active_path
                     .clone()
                     .or_else(|| self.pdf.active_path.clone())
+                    .or_else(|| self.pptx.active_path.clone())
                 {
                     self.vault.backlinks =
                         md_editor_core::vault::get_mixed_backlinks(&self.state, &active)
                             .unwrap_or_default();
                 }
+                // An open presentation follows its file: it is read again
+                // when the file changes, and closed when the file is gone.
+                if let Some(deck) = self.pptx.active_path.clone()
+                    && paths.contains(&deck)
+                {
+                    if self
+                        .resolve_active_path(&deck)
+                        .is_some_and(|path| path.is_file())
+                    {
+                        return self.load_pptx(&deck);
+                    }
+                    self.pptx.close();
+                }
                 Task::none()
+            }
+            m @ (Message::PptxLoaded(..)
+            | Message::PptxScrolled { .. }
+            | Message::PptxZoomIn
+            | Message::PptxZoomOut
+            | Message::PptxZoomFit
+            | Message::PptxStep(_)) => {
+                let width = self.pdf_available_width();
+                self.pptx.update(m, width)
             }
             Message::ToggleTOC => {
                 if self.pdf.active_path.is_some()
@@ -2100,7 +2150,8 @@ impl MdEditor {
             self.pdf
                 .active_path
                 .as_deref()
-                .or(self.active_image_path.as_deref()),
+                .or(self.active_image_path.as_deref())
+                .or(self.pptx.active_path.as_deref()),
             None,
             self.vault.sidebar_visible,
             self.vault.backlinks_visible,
@@ -2123,7 +2174,8 @@ impl MdEditor {
             self.active_path
                 .as_deref()
                 .or(self.pdf.active_path.as_deref())
-                .or(self.active_image_path.as_deref()),
+                .or(self.active_image_path.as_deref())
+                .or(self.pptx.active_path.as_deref()),
             &self.vault.expanded_folders,
             sidebar_width < 1.0,
         ))
@@ -2351,6 +2403,8 @@ impl MdEditor {
             .into()
         } else if self.showing_pdf && self.pdf.active_path.is_some() {
             pdf_view
+        } else if self.pptx.active_path.is_some() {
+            views::pptx_viewer::view(&self.pptx, self.pdf_available_width())
         } else if self.active_image.is_some() {
             image_view
         } else {
@@ -2829,6 +2883,7 @@ impl MdEditor {
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
+        self.pptx.close();
         self.showing_pdf = false;
         self.active_panel = ActivePanel::Markdown;
         self.editor.toc_entries = views::toc::get_toc(&content);
@@ -2867,6 +2922,7 @@ impl MdEditor {
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
+        self.pptx.close();
         self.showing_pdf = true;
         self.active_panel = ActivePanel::Pdf;
         self.pdf.current_page = 0;
@@ -2956,6 +3012,47 @@ impl MdEditor {
         ])
     }
 
+    /// Show a presentation in the viewer. Like an image, a presentation takes
+    /// the pane from the open note, so the note is flushed and parked first.
+    fn open_pptx(&mut self, path: &str) -> Task<Message> {
+        if self.vault.root.is_none() {
+            self.ui.toast = Some("Open a vault before opening a presentation".to_string());
+            return Task::none();
+        }
+        if let Err(err) = self.leave_active_document() {
+            self.ui.toast = Some(format!(
+                "Not opening the presentation: {err}. Your edits are still open."
+            ));
+            return Task::none();
+        }
+        self.active_path = None;
+        self.pdf.active_path = None;
+        self.showing_pdf = false;
+        self.active_image_path = None;
+        self.active_image = None;
+        self.active_panel = ActivePanel::Markdown;
+        self.editor.toc_entries.clear();
+        self.editor.toc_is_synthetic = false;
+        self.pdf.toc_entries.clear();
+        self.pdf.toc_is_synthetic = false;
+        let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
+        self.vault.backlinks =
+            md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
+        self.load_pptx(path)
+    }
+
+    /// Read and lay out the presentation at `path` off the UI thread.
+    fn load_pptx(&mut self, path: &str) -> Task<Message> {
+        let Some(abs_path) = self.resolve_active_path(path) else {
+            return Task::none();
+        };
+        let generation = self.pptx.begin_load(path);
+        Task::perform(
+            async move { crate::slides::load_deck(&abs_path).map(Arc::new) },
+            move |result| Message::PptxLoaded(generation, result),
+        )
+    }
+
     fn open_image(&mut self, path: &str) -> Task<Message> {
         let Some(abs_path) = self.resolve_active_path(path) else {
             self.ui.toast = Some("Open a vault before opening an image".to_string());
@@ -2985,6 +3082,7 @@ impl MdEditor {
                 self.active_image = Some((handle, width as f32, height as f32));
                 self.active_path = None;
                 self.pdf.active_path = None;
+                self.pptx.close();
                 self.showing_pdf = false;
                 self.active_panel = ActivePanel::Markdown;
                 self.editor.toc_entries.clear();

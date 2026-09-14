@@ -28,8 +28,8 @@ On macOS, `Cmd` works everywhere `Ctrl` does — both layers test
 | `Ctrl+C` | Copy the PDF text selection, when the PDF pane holds one |
 | `Escape` | Close the topmost overlay, in priority order |
 | `Enter` | Submit the open name modal |
-| `↑` / `↓` | Scroll the PDF pane by 64px |
-| `PageUp` / `PageDown` | Scroll the PDF pane by 520px |
+| `↑` / `↓` | Scroll the PDF pane or the presentation by 64px |
+| `PageUp` / `PageDown` | Scroll the PDF pane by 520px; in a presentation, go to the previous or next slide |
 
 ### What `Ctrl+F` does
 
@@ -108,7 +108,7 @@ explaining why.
 
 | Gesture | Context | Action |
 | :--- | :--- | :--- |
-| Wheel | Editor / PDF | Scroll vertically |
+| Wheel | Editor / PDF / Presentation | Scroll vertically |
 | Wheel over a wide block | Editor | Scroll that table or code block horizontally, independently of the page |
 | Click and drag | Editor | Select text |
 | Click and drag | PDF | Select PDF text |

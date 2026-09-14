@@ -109,6 +109,23 @@ pub enum Message {
         page: u16,
     },
 
+    // ── Presentations ────────────────────────────────────────────
+    /// Load generation, then the prepared deck or why it could not be read.
+    PptxLoaded(
+        u64,
+        Result<std::sync::Arc<crate::slides::LoadedDeck>, String>,
+    ),
+    PptxScrolled {
+        x: f32,
+        y: f32,
+        viewport_height: f32,
+    },
+    PptxZoomIn,
+    PptxZoomOut,
+    PptxZoomFit,
+    /// Move this many slides; negative moves back.
+    PptxStep(i32),
+
     // ── Tracker ──────────────────────────────────────────────────
     TrackerToggle,
     TrackerStart,

@@ -1,6 +1,6 @@
 # MD Editor
 
-**A calm, local-first Markdown workspace for notes, PDFs, images, search, backlinks, and study progress.**
+**A calm, local-first Markdown workspace for notes, PDFs, presentations, images, search, backlinks, and study progress.**
 
 ![MD Editor intro](images/intro.gif)
 
@@ -79,6 +79,12 @@ PDFs open inside the app, so reading and writing happen in one place.
 PDF highlights and recognized references are stored separately, so the original PDF is never
 modified.
 
+PowerPoint decks (`.pptx`) open in a read-only slide viewer: every slide in one scrolling
+column, with slide-by-slide navigation and zoom. Slides are drawn natively — no Office or
+LibreOffice install is needed — including theme colours, placeholders inherited from layouts
+and masters, tables, pictures, and grouped shapes. Charts, SmartArt, and embedded objects
+show as labelled boxes.
+
 ### 4. Search Without Breaking Flow
 
 - `Ctrl+F` in Markdown searches the active note.
@@ -137,6 +143,7 @@ per-user directory by an interim version is migrated back beside the executable 
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
 | Images | `.jpeg`, `.jpg`, `.png`, `.svg`, `.webp`, `.avif` |
+| Presentations | `.pptx` (view only) |
 
 ## Supported Platforms
 

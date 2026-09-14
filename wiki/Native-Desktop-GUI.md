@@ -105,6 +105,7 @@ classDiagram
         +SearchState search
         +TrackerState tracker
         +PdfPane pdf
+        +PptxPane pptx
         +Option~String~ active_path
         +ActivePanel active_panel
         +bool showing_pdf
@@ -167,6 +168,14 @@ classDiagram
         +Option~PdfSelection~ selection
         +u64 render_generation
     }
+    class PptxPane {
+        +Option~String~ active_path
+        +Option~Arc~LoadedDeck~~ deck
+        +Option~String~ error
+        +u64 generation
+        +f32 zoom
+        +f32 scroll_y
+    }
 
     MdEditor *-- EditorPane
     MdEditor *-- VaultState
@@ -174,6 +183,7 @@ classDiagram
     MdEditor *-- SearchState
     MdEditor *-- TrackerState
     MdEditor *-- PdfPane
+    MdEditor *-- PptxPane
 ```
 
 - **`EditorPane`** (`editor_state.rs`) — the active `DocBuffer`, its `Highlighted` lines
@@ -198,6 +208,12 @@ classDiagram
 - **`PdfPane`** (`pdf_pane.rs`) — the PDF viewport, page caches, annotations, selection, and
   the render generation. Documented in detail in
   [PDF Viewer Internals](PDF-Viewer-Internals.md).
+- **`PptxPane`** (`pptx_pane.rs`) — the open presentation: the prepared `LoadedDeck`, the
+  load `generation` (bumped by every load and by closing, so the result of a slow parse the
+  reader has since left is dropped when it lands), the error to show, zoom as a multiple of
+  fit-to-width, and the scroll position the slide counter and slide stepping are derived
+  from. A reload triggered by the vault watcher keeps the old deck on screen until the new
+  one is ready, and a reload that fails keeps it rather than flashing an error.
 
 ---
 
@@ -248,6 +264,13 @@ Animation frames are armed the same way, from `motion.is_animating()`; see
   continuous page list, toolbar, and search bar; page bitmaps wrapped in a custom `Widget`
   for hit testing and drag selection; and five canvas overlay layers for annotations,
   focus outlines, search matches, the live selection, and reference underlines.
+- **Presentation viewer** (`pptx_viewer.rs`, with `slides/`) — every slide in one scrolling
+  column under its number and title, and a toolbar to step between slides and zoom. A deck
+  is parsed and all its text laid out once, off the UI thread (`slides::load_deck`), in
+  points, so zooming and resizing never lay text out again. Each slide is a `stack` of
+  canvases, one per layer from `slides::layer_ranges`: a canvas layer paints all its shapes,
+  then its images, then its text, whatever order they were drawn in, so an element that
+  must cover something drawn earlier starts a new layer.
 - **Backlinks panel** (`backlinks.rs`) — notes and PDF highlights pointing at the open
   document.
 - **Table of contents** (`toc.rs`) — Markdown headings H1–H6, or the PDF outline (embedded

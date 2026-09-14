@@ -6,8 +6,10 @@ mod messages;
 mod motion;
 mod pdf_notes;
 mod pdf_pane;
+mod pptx_pane;
 mod search;
 mod search_state;
+mod slides;
 mod theme;
 mod tracker_state;
 mod ui_state;
@@ -81,7 +83,7 @@ Exec={} %F
 Icon={}
 Terminal=false
 Type=Application
-MimeType=text/markdown;application/pdf;
+MimeType=text/markdown;application/pdf;application/vnd.openxmlformats-officedocument.presentationml.presentation;
 Categories=Office;WordProcessor;Utility;
 StartupWMClass=md-editor
 "#,
