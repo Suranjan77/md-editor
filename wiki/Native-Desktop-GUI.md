@@ -65,7 +65,7 @@ computing backlinks — stays on the shell, which is the only place that owns th
 | **Vault** | `OpenVaultDialog`, `VaultOpened`, `VaultIndexed`, `CreateFileDialog`, `CreateFolderDialog` |
 | **Sidebar** | `SidebarToggle`, `SidebarFileClicked`, `SidebarFolderToggled` |
 | **Navigation** | `GlobalSearchOpen`, `SearchQueryChanged`, `SearchDebounceElapsed`, `SearchRegexToggled`, `SearchMatchCaseToggled`, `SearchReplaceAll`, `CommandPaletteOpen`, `NameModalSubmit`, `DeleteFileDialog` |
-| **Editor** | `EditorCommand`, `EditorCommandNoScroll`, `EditorSave`, `EditorCheckboxToggle`, `EditorCursorMove`, `EditorScrolled`, `HighlightReady`, `HighlightDebounceElapsed`, `AutosaveElapsed`, `AnimationTick` |
+| **Editor** | `EditorCommand`, `EditorCommandNoScroll`, `EditorSave`, `EditorCheckboxToggle`, `EditorScrolled`, `EditorCaretView`, `EditorScrollInterrupted`, `AutosaveElapsed`, `AnimationTick` |
 | **PDF** | `PdfZoomChanged`, `PdfFitToWidth`, `PdfLoaded`, `PdfPageSizesLoaded`, `PdfRendered`, `PdfRenderFailed`, `PdfRenderSkipped`, `PdfScrolled`, `PdfLeftClicked`, `PdfRightClicked`, `PdfTocLoaded`, `PdfPageLinksLoaded`, `PdfReferencesLoaded`, `PdfSearchResult`, `PdfLinkPreviewResult` |
 | **PDF study** | `PdfDocumentIdComputed`, `PdfPageTextLoaded`, `PdfSelectionChanged`, `PdfSelectionFinished`, `PdfCopySelection`, `PdfCreateHighlight`, `PdfQuickHighlight`, `PdfDeleteHighlight`, `PdfSearchLooseToggled`, `PdfOrphanReport`, `PdfAddQuickNote`, `PdfLinkNote`, `PdfOpenLinkedNote`, `PdfAnnotationFocused` |
 | **Tracker** | `TrackerToggle`, `TrackerStart`, `TrackerStop`, `TrackerTabSelected`, `TrackerGateToggled`, `TrackerReadingToggled`, `TrackerProjectStatusChanged`, `TrackerConfigEdited`, `TrackerConfigSave`, `TrackerManualAdd`, `TrackerSessionDelete` |
@@ -111,7 +111,7 @@ classDiagram
     }
     class EditorPane {
         +DocBuffer buffer
-        +Vec~StyledLine~ highlighted_lines
+        +Highlighted highlight
         +Option~u64~ pending_highlight_generation
         +Option~Instant~ autosave_pending_since
         +f32 scroll_y
@@ -176,12 +176,13 @@ classDiagram
     MdEditor *-- PdfPane
 ```
 
-- **`EditorPane`** (`editor_state.rs`) — the active `DocBuffer`, highlighted lines and the
-  generation id that discards stale background highlights, the autosave timestamp, scroll
-  offset, TOC visibility, and the retained-buffer registry capped at
-  `MAX_RETAINED_BUFFERS = 32`. It also defines the timing constants:
-  `HIGHLIGHT_DEBOUNCE = 80ms`, `AUTOSAVE_DEBOUNCE = 400ms`, `AUTOSAVE_POLL = 100ms`,
-  `LARGE_DOC_LINE_THRESHOLD = 1_000`, `HUGE_DOC_LINE_THRESHOLD = 5_000`.
+- **`EditorPane`** (`editor_state.rs`) — the active `DocBuffer`, its `Highlighted` lines
+  (updated incrementally and synchronously on every edit), the image and math caches, the
+  autosave timestamp, scroll offset, the pending caret-reveal request, TOC visibility, and
+  the retained-buffer registry capped at `MAX_RETAINED_BUFFERS = 32`. `layout_revision()`
+  names what the editor widget lays out, so it can skip layout on frames where nothing
+  changed. It also defines the timing constants `AUTOSAVE_DEBOUNCE = 400ms` and
+  `AUTOSAVE_POLL = 100ms`.
 - **`VaultState`** (`vault_state.rs`) — vault root, file entries, sidebar selection and
   expansion, and the backlinks panel. Note that `active_path` deliberately stays on the
   shell: it is a cross-cutting "current document" shared by the editor, search, and PDF.
@@ -209,18 +210,19 @@ have nothing to do**:
    anything the app does not act on, so ordinary typing (handled by the focused editor
    widget) does not spawn a redundant update cycle. See [Keyboard Shortcuts](Keyboard-Shortcuts.md).
 2. **Toast timeout** — armed only while `ui.toast` is set; fires `ToastHide` after 3s.
-3. **Highlight debounce** — armed only while a highlight generation is pending; ticks every
-   `HIGHLIGHT_DEBOUNCE` (80ms).
-4. **Autosave poll** — armed only while `editor.autosave_pending_since` is set; ticks every
+3. **Autosave poll** — armed only while `editor.autosave_pending_since` is set; ticks every
    `AUTOSAVE_POLL` (100ms) and writes once `AUTOSAVE_DEBOUNCE` (400ms) has elapsed since the
    last keystroke. The poll is deliberately finer than the debounce because its phase is
    independent of when the user stopped typing.
-5. **Search debounce** — armed only while a query keystroke is pending; ticks every
+4. **Search debounce** — armed only while a query keystroke is pending; ticks every
    `SEARCH_DEBOUNCE` (200ms), so a ten-character query runs one FTS/PDF scan rather than ten.
-6. **Filesystem watcher** — a `notify` recursive watch on the vault, debounced by
+5. **Filesystem watcher** — a `notify` recursive watch on the vault, debounced by
    `VAULT_WATCH_DEBOUNCE = 300ms`, emitting `VaultFilesChanged` with the changed paths. A
    `SELF_WRITE_GRACE` of 3s suppresses events caused by the app's own saves. External edits
    (`git pull`, a CLI change) refresh buffers and the link index without a restart.
+6. **Scroll interrupt** — armed only while the editor is gliding to reveal the caret; a
+   wheel turn or click fires `EditorScrollInterrupted` and hands the page back to the user.
+   See [Markdown Pipeline](Markdown-Pipeline.md#revealing-the-caret).
 
 Animation frames are armed the same way, from `motion.is_animating()`; see
 [Design Tokens, Motion & Palette](Design-Tokens-Motion-and-Palette.md).
@@ -229,8 +231,13 @@ Animation frames are armed the same way, from `motion.is_animating()`; see
 
 ## 5. View Layer Components (`views/`)
 
-- **Sidebar** (`sidebar.rs`) — the folder/file tree with type-appropriate icons, a per-row
-  delete (trash) button, and a header offering *open vault*, *new file*, and *new folder*.
+- **Sidebar** (`sidebar.rs`) — the folder/file tree with type-appropriate icons and a header
+  offering *open vault*, *new file*, and *new folder*. Clicking a file or folder selects it:
+  the selected row gets a faint highlight and a delete (trash) button, and deleting a folder
+  removes everything in it (closing any open document inside). New entries go into the
+  selected folder, or beside the selected file, only while that row is visible in the tree
+  (not deleted, not inside a collapsed folder); otherwise they go to the vault root.
+  Clicking empty space in the tree clears the selection, so new entries go to the root.
 - **Toolbar** (`toolbar.rs`) — sidebar toggle, the active file's name with a saved/unsaved
   indicator, split-view toggle, table of contents, global search, command palette, and the
   study tracker.

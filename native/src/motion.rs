@@ -48,6 +48,8 @@ pub struct Motion {
     pub backlinks: Animation<bool>,
     pub toast: Animation<bool>,
     pub palette: Animation<bool>,
+    /// The editor scrolling the caret into view, while it is.
+    pub editor_scroll: Option<ScrollGlide>,
 
     /// The timestamp the current frame is being drawn for. Updated by the
     /// per-frame subscription while anything is moving; `view` reads it rather
@@ -68,6 +70,7 @@ impl Motion {
             backlinks: Animation::new(false).easing(EASE).duration(PANEL),
             toast: Animation::new(false).easing(EASE).duration(FAST),
             palette: Animation::new(false).easing(EASE).duration(OVERLAY),
+            editor_scroll: None,
             now: Instant::now(),
             toast_text: String::new(),
         }
@@ -82,6 +85,7 @@ impl Motion {
             || self.backlinks.is_animating(at)
             || self.toast.is_animating(at)
             || self.palette.is_animating(at)
+            || self.editor_scroll.is_some()
     }
 
     /// Drive every animation to match the flags that own the real state.
@@ -149,6 +153,102 @@ impl Default for Motion {
     }
 }
 
+/// Stiffness of scrolling that brings the caret into view: about 150ms to
+/// cover 95% of the way from rest.
+pub const SCROLL_STIFFNESS: f32 = 32.0;
+
+/// The editor gliding to a scroll offset.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollGlide {
+    pub spring: Spring,
+    /// The offset most recently sent to the scrollable.
+    pub applied: f32,
+}
+
+/// A critically damped spring, solved in closed form.
+///
+/// The displacement `x` from the target obeys `x'' = −2ωx' − ω²x`, whose
+/// exact solution is `x(t) = (x₀ + (v₀ + ω·x₀)·t)·e^(−ωt)`. Sampling it rather
+/// than integrating step by step makes the motion identical at any frame rate
+/// and immune to dropped frames. Critical damping is the fastest approach
+/// that doesn't overshoot from rest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spring {
+    target: f32,
+    /// Displacement from `target` and velocity (per second) at `start`.
+    x0: f32,
+    v0: f32,
+    start: Instant,
+    /// Natural angular frequency ω, per second.
+    stiffness: f32,
+}
+
+impl Spring {
+    /// Below this distance-plus-momentum a spring is visually at rest.
+    const SETTLED: f32 = 0.1;
+
+    /// A spring resting at `value`.
+    pub fn at_rest(value: f32, now: Instant, stiffness: f32) -> Self {
+        Self {
+            target: value,
+            x0: 0.0,
+            v0: 0.0,
+            start: now,
+            stiffness,
+        }
+    }
+
+    pub fn target(&self) -> f32 {
+        self.target
+    }
+
+    /// Position and velocity at `now`.
+    pub fn sample(&self, now: Instant) -> (f32, f32) {
+        let t = now.saturating_duration_since(self.start).as_secs_f32();
+        let w = self.stiffness;
+        let b = self.v0 + w * self.x0;
+        let decay = (-w * t).exp();
+        let x = (self.x0 + b * t) * decay;
+        let v = (self.v0 - w * b * t) * decay;
+        (self.target + x, v)
+    }
+
+    pub fn value(&self, now: Instant) -> f32 {
+        self.sample(now).0
+    }
+
+    /// Head for `target` from wherever the spring is at `now`, keeping its
+    /// velocity, so a new target bends the path instead of kinking it.
+    pub fn retarget(&mut self, target: f32, now: Instant) {
+        let (position, velocity) = self.sample(now);
+        *self = Self {
+            target,
+            x0: position - target,
+            v0: velocity,
+            start: now,
+            stiffness: self.stiffness,
+        };
+    }
+
+    /// Displace the spring by `delta` at `now`, keeping its velocity: the
+    /// target stays, and the spring sets off again from further away.
+    pub fn shift(&mut self, delta: f32, now: Instant) {
+        let (position, velocity) = self.sample(now);
+        *self = Self {
+            x0: position + delta - self.target,
+            v0: velocity,
+            start: now,
+            ..*self
+        };
+    }
+
+    /// Whether the remaining distance and momentum are below what can be seen.
+    pub fn is_settled(&self, now: Instant) -> bool {
+        let (position, velocity) = self.sample(now);
+        (position - self.target).abs() + velocity.abs() / self.stiffness < Self::SETTLED
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +290,43 @@ mod tests {
             !motion.is_animating(),
             "once the durations elapse nothing should still be moving"
         );
+    }
+
+    fn after(start: Instant, seconds: f32) -> Instant {
+        start + std::time::Duration::from_secs_f32(seconds)
+    }
+
+    #[test]
+    fn a_spring_moves_from_its_position_to_its_target_without_overshoot() {
+        let start = Instant::now();
+        let mut spring = Spring::at_rest(0.0, start, SCROLL_STIFFNESS);
+        spring.retarget(500.0, start);
+        assert_eq!(spring.value(start), 0.0);
+
+        let mut previous = 0.0;
+        for frame in 1..=120 {
+            let value = spring.value(after(start, frame as f32 / 120.0));
+            assert!(
+                (previous..=500.0).contains(&value),
+                "frame {frame}: {value} after {previous}"
+            );
+            previous = value;
+        }
+        assert!(spring.is_settled(after(start, 1.0)));
+        assert!(!spring.is_settled(after(start, 0.05)));
+    }
+
+    #[test]
+    fn retargeting_keeps_position_and_velocity_continuous() {
+        let start = Instant::now();
+        let mut spring = Spring::at_rest(0.0, start, SCROLL_STIFFNESS);
+        spring.retarget(300.0, start);
+        let midway = after(start, 0.04);
+        let before = spring.sample(midway);
+        spring.retarget(-120.0, midway);
+        let after_retarget = spring.sample(midway);
+        assert!((before.0 - after_retarget.0).abs() < 1e-3);
+        assert!((before.1 - after_retarget.1).abs() < 1e-2);
     }
 
     /// The toast text has to outlive `ui.toast` so the fade-out has something

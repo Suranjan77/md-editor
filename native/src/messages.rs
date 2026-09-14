@@ -11,6 +11,9 @@ pub enum Message {
     SidebarToggle,
     SidebarFileClicked(String),
     SidebarFolderToggled(String),
+    /// Empty space in the file tree was clicked: drop the selection so new
+    /// entries go to the vault root.
+    SidebarSelectionCleared,
 
     // ── Navigation ───────────────────────────────────────────────
     GlobalSearchOpen,
@@ -44,15 +47,15 @@ pub enum Message {
     EditorCommandNoScroll(crate::editor::buffer::EditorCommand),
     EditorSave,
     EditorCheckboxToggle(usize),
-    EditorCursorMove(usize, usize),
     EditorScrolled {
         y: f32,
         viewport_width: f32,
         viewport_height: f32,
     },
-    ScrollEditorToTarget(f32),
-    HighlightReady(u64, Vec<crate::editor::highlight::StyledLine>),
-    HighlightDebounceElapsed,
+    /// The editor widget's answer to a request to bring the caret into view.
+    EditorCaretView(crate::editor::renderer::CaretView),
+    /// A wheel turn or click took over from an animated editor scroll.
+    EditorScrollInterrupted,
     /// The autosave debounce window elapsed; write the buffer if still dirty.
     AutosaveElapsed,
     /// A frame is being prepared; advance in-flight UI transitions.

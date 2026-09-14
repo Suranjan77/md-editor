@@ -120,6 +120,17 @@ pub enum Movement {
     End,
 }
 
+/// Which side of a row break the caret is on. Where a wrapped line breaks,
+/// one column is both the end of a row and the start of the next.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum Affinity {
+    /// At the end of the earlier row, as after clicking past a row's end.
+    Upstream,
+    /// At the start of the later row.
+    #[default]
+    Downstream,
+}
+
 #[derive(Debug, Clone)]
 pub enum EditorCommand {
     InsertText(String),
@@ -133,12 +144,15 @@ pub enum EditorCommand {
     SetCursor {
         line: usize,
         col: usize,
+        affinity: Affinity,
     },
     SetSelection {
         anchor_line: usize,
         anchor_col: usize,
         focus_line: usize,
         focus_col: usize,
+        /// Of the focus, where the caret is.
+        affinity: Affinity,
     },
     SelectAll,
     ToggleCheckbox {
@@ -180,6 +194,10 @@ pub struct DocBuffer {
 
     pub cursor_line: usize,
     pub cursor_col: usize,
+    /// Which row the caret is drawn on when its column is a row break. Every
+    /// change resets it; only placing the caret by position sets it, so it
+    /// can never outlive the placement it describes.
+    pub cursor_affinity: Affinity,
     pub selection: Option<(usize, usize, usize, usize)>,
     pub dirty: bool,
 
@@ -203,6 +221,7 @@ impl DocBuffer {
             desired_col: None,
             cursor_line: 0,
             cursor_col: 0,
+            cursor_affinity: Affinity::Downstream,
             selection: None,
             dirty: false,
             undo_stack: Vec::new(),
@@ -310,8 +329,13 @@ impl DocBuffer {
                 self.move_cursor(movement, extend);
                 CommandResult::default()
             }
-            EditorCommand::SetCursor { line, col } => {
+            EditorCommand::SetCursor {
+                line,
+                col,
+                affinity,
+            } => {
                 self.set_cursor(line, col);
+                self.cursor_affinity = affinity;
                 CommandResult::default()
             }
             EditorCommand::SetSelection {
@@ -319,8 +343,10 @@ impl DocBuffer {
                 anchor_col,
                 focus_line,
                 focus_col,
+                affinity,
             } => {
                 self.set_selection(anchor_line, anchor_col, focus_line, focus_col);
+                self.cursor_affinity = affinity;
                 CommandResult::default()
             }
             EditorCommand::SelectAll => {
@@ -425,7 +451,7 @@ impl DocBuffer {
     }
 
     pub fn set_cursor(&mut self, line: usize, col: usize) {
-        self.cursor_offset = self.line_col_to_offset(line, col);
+        self.cursor_offset = self.caret_stop(line, col);
         self.selection_offsets = None;
         self.desired_col = None;
         self.sync_public_state();
@@ -449,8 +475,8 @@ impl DocBuffer {
         end_line: usize,
         end_col: usize,
     ) {
-        let anchor = self.line_col_to_offset(start_line, start_col);
-        let focus = self.line_col_to_offset(end_line, end_col);
+        let anchor = self.caret_stop(start_line, start_col);
+        let focus = self.caret_stop(end_line, end_col);
         self.cursor_offset = focus;
         self.selection_offsets = Selection::new(anchor, focus);
         self.desired_col = None;
@@ -567,20 +593,59 @@ impl DocBuffer {
         if self.selection_offsets.is_some() {
             return self.delete_selection();
         }
-        if self.cursor_offset == 0 {
+        let start = self.grapheme_before(self.cursor_offset);
+        if start == self.cursor_offset {
             return CommandResult::default();
         }
-        self.delete_range(self.cursor_offset - 1, self.cursor_offset)
+        self.delete_range(start, self.cursor_offset)
     }
 
     fn delete_forward(&mut self) -> CommandResult {
         if self.selection_offsets.is_some() {
             return self.delete_selection();
         }
-        if self.cursor_offset >= self.rope.len_chars() {
+        let end = self.grapheme_after(self.cursor_offset);
+        if end == self.cursor_offset {
             return CommandResult::default();
         }
-        self.delete_range(self.cursor_offset, self.cursor_offset + 1)
+        self.delete_range(self.cursor_offset, end)
+    }
+
+    /// The caret stop before `offset`: the start of the grapheme cluster
+    /// before it, or the end of the previous line's text — a line break,
+    /// `\r\n` included, is one stop.
+    fn grapheme_before(&self, offset: usize) -> usize {
+        let (line, col) = self.offset_to_line_col(offset);
+        if col == 0 {
+            return match line.checked_sub(1) {
+                Some(prev) => self.line_col_to_offset(prev, usize::MAX),
+                None => 0,
+            };
+        }
+        self.rope.line_to_char(line) + grapheme_boundary_before(&self.line_text(line), col)
+    }
+
+    /// The caret stop after `offset`: the end of the grapheme cluster after
+    /// it, or the start of the next line.
+    fn grapheme_after(&self, offset: usize) -> usize {
+        let (line, col) = self.offset_to_line_col(offset);
+        let text = self.line_text(line);
+        if col >= text.chars().count() {
+            return if line + 1 < self.line_count() {
+                self.rope.line_to_char(line + 1)
+            } else {
+                self.rope.len_chars()
+            };
+        }
+        self.rope.line_to_char(line) + grapheme_boundary_after(&text, col)
+    }
+
+    /// `(line, col)` as an offset, moved back to the start of the grapheme
+    /// cluster it falls inside.
+    fn caret_stop(&self, line: usize, col: usize) -> usize {
+        let offset = self.line_col_to_offset(line, col);
+        let (line, col) = self.offset_to_line_col(offset);
+        self.rope.line_to_char(line) + grapheme_boundary_at_or_before(&self.line_text(line), col)
     }
 
     fn delete_range(&mut self, start: usize, end: usize) -> CommandResult {
@@ -612,8 +677,8 @@ impl DocBuffer {
         };
 
         self.cursor_offset = match movement {
-            Movement::Left => self.cursor_offset.saturating_sub(1),
-            Movement::Right => (self.cursor_offset + 1).min(self.rope.len_chars()),
+            Movement::Left => self.grapheme_before(self.cursor_offset),
+            Movement::Right => self.grapheme_after(self.cursor_offset),
             Movement::Home => {
                 self.desired_col = None;
                 let line = self
@@ -653,7 +718,7 @@ impl DocBuffer {
         } else {
             (line + delta as usize).min(max_line)
         };
-        self.line_col_to_offset(target_line, desired_col)
+        self.caret_stop(target_line, desired_col)
     }
 
     fn toggle_checkbox(&mut self, line: usize) -> CommandResult {
@@ -954,6 +1019,7 @@ impl DocBuffer {
     }
 
     fn sync_public_state(&mut self) {
+        self.cursor_affinity = Affinity::Downstream;
         self.cursor_offset = self.cursor_offset.min(self.rope.len_chars());
         let (line, col) = self.offset_to_line_col(self.cursor_offset);
         self.cursor_line = line;
@@ -965,6 +1031,39 @@ impl DocBuffer {
             (start_line, start_col, end_line, end_col)
         });
     }
+}
+
+/// Char offsets of the grapheme cluster boundaries in `text`, from 0 to its
+/// length inclusive.
+fn grapheme_boundaries(text: &str) -> impl Iterator<Item = usize> + '_ {
+    use unicode_segmentation::UnicodeSegmentation;
+    std::iter::once(0).chain(text.graphemes(true).scan(0, |chars, cluster| {
+        *chars += cluster.chars().count();
+        Some(*chars)
+    }))
+}
+
+/// The last cluster boundary strictly before `col` (0 when there is none).
+fn grapheme_boundary_before(text: &str, col: usize) -> usize {
+    grapheme_boundaries(text)
+        .take_while(|&boundary| boundary < col)
+        .last()
+        .unwrap_or(0)
+}
+
+/// The first cluster boundary strictly after `col`, or the text's length.
+fn grapheme_boundary_after(text: &str, col: usize) -> usize {
+    grapheme_boundaries(text)
+        .find(|&boundary| boundary > col)
+        .unwrap_or_else(|| text.chars().count())
+}
+
+/// `col` itself when it is a cluster boundary, else the boundary before it.
+fn grapheme_boundary_at_or_before(text: &str, col: usize) -> usize {
+    grapheme_boundaries(text)
+        .take_while(|&boundary| boundary <= col)
+        .last()
+        .unwrap_or(0)
 }
 
 struct ListItem {
@@ -1072,7 +1171,7 @@ fn parse_list_item(line_text: &str) -> Option<ListItem> {
 
 #[cfg(test)]
 mod tests {
-    use crate::editor::buffer::{DocBuffer, EditorCommand, Movement};
+    use crate::editor::buffer::{Affinity, DocBuffer, EditorCommand, Movement};
 
     /// A bulk rewrite (replace-all) must be undoable — it is the edit a user is
     /// most likely to want back, and autosave commits it within 400ms.
@@ -1466,13 +1565,80 @@ mod tests {
     }
 
     #[test]
-    fn unicode_boundaries_are_char_based() {
+    fn editing_steps_over_whole_grapheme_clusters() {
+        // "👩‍💻" is three chars (woman, ZWJ, laptop) but one cluster.
         let mut buffer = DocBuffer::from_text("a👩‍💻b");
         buffer.set_cursor(0, 4);
         buffer.backspace();
-        assert_eq!(buffer.text(), "a👩‍b");
+        assert_eq!(buffer.text(), "ab");
+        assert_eq!(buffer.cursor_col, 1);
         buffer.undo();
         assert_eq!(buffer.text(), "a👩‍💻b");
+
+        buffer.set_cursor(0, 1);
+        buffer.move_cursor_right();
+        assert_eq!(buffer.cursor_col, 4);
+        buffer.move_cursor_left();
+        assert_eq!(buffer.cursor_col, 1);
+        buffer.delete();
+        assert_eq!(buffer.text(), "ab");
+
+        // A column inside the cluster snaps to its start.
+        let mut buffer = DocBuffer::from_text("a👩‍💻b");
+        buffer.set_cursor(0, 2);
+        assert_eq!(buffer.cursor_col, 1);
+        let mut buffer = DocBuffer::from_text("e\u{301}x");
+        buffer.set_cursor(0, 1);
+        assert_eq!(buffer.cursor_col, 0);
+        buffer.backspace();
+        assert_eq!(buffer.text(), "e\u{301}x");
+        buffer.set_cursor(0, 2);
+        buffer.move_cursor_right();
+        buffer.backspace();
+        assert_eq!(buffer.text(), "e\u{301}");
+    }
+
+    #[test]
+    fn caret_affinity_lasts_only_until_the_next_change() {
+        let upstream_at = |col| EditorCommand::SetCursor {
+            line: 0,
+            col,
+            affinity: Affinity::Upstream,
+        };
+        let mut buffer = DocBuffer::from_text("hello world");
+        buffer.execute(upstream_at(6));
+        assert_eq!(buffer.cursor_affinity, Affinity::Upstream);
+
+        buffer.move_cursor_right();
+        buffer.move_cursor_left();
+        assert_eq!(
+            (buffer.cursor_col, buffer.cursor_affinity),
+            (6, Affinity::Downstream)
+        );
+
+        buffer.execute(upstream_at(6));
+        buffer.insert_at_cursor("x");
+        assert_eq!(buffer.cursor_affinity, Affinity::Downstream);
+
+        buffer.execute(upstream_at(6));
+        buffer.undo();
+        assert_eq!(buffer.cursor_affinity, Affinity::Downstream);
+    }
+
+    #[test]
+    fn a_crlf_line_break_is_one_caret_stop() {
+        let mut buffer = DocBuffer::from_text("ab\r\ncd");
+        buffer.set_cursor(0, 2);
+        buffer.move_cursor_right();
+        assert_eq!((buffer.cursor_line, buffer.cursor_col), (1, 0));
+        buffer.move_cursor_left();
+        assert_eq!((buffer.cursor_line, buffer.cursor_col), (0, 2));
+        buffer.delete();
+        assert_eq!(buffer.text(), "abcd");
+        buffer.undo();
+        buffer.set_cursor(1, 0);
+        buffer.backspace();
+        assert_eq!(buffer.text(), "abcd");
     }
 
     #[test]

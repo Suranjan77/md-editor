@@ -29,26 +29,37 @@ pub fn view<'a>(
     };
 
     let content: Element<'a, Message, Theme, Renderer> = match modal_type {
-        ModalType::Delete(path) => column![
-            text(format!("Are you sure you want to delete '{}'?", path)).color(theme::TEXT_PRIMARY),
-            text("This action cannot be undone.")
-                .size(theme::TEXT_SM)
-                .color(theme::TEXT_MUTED),
-            row![
-                button(text("Cancel").size(theme::TEXT_BASE))
-                    .on_press(Message::NameModalCancel)
-                    .padding([theme::SPACE_3, theme::SPACE_6])
-                    .style(button::text),
-                button(text("Delete").size(theme::TEXT_BASE))
-                    .on_press(Message::DeleteFile(path.clone()))
-                    .padding([theme::SPACE_3, theme::SPACE_6])
-                    .style(button::secondary),
+        ModalType::Delete(path) => {
+            let child_prefix = format!("{path}/");
+            let is_dir = vault_entries.iter().any(|entry| {
+                (entry.path == *path && entry.is_dir) || entry.path.starts_with(&child_prefix)
+            });
+            let question = if is_dir {
+                format!("Are you sure you want to delete the folder '{path}' and everything in it?")
+            } else {
+                format!("Are you sure you want to delete '{path}'?")
+            };
+            column![
+                text(question).color(theme::TEXT_PRIMARY),
+                text("This action cannot be undone.")
+                    .size(theme::TEXT_SM)
+                    .color(theme::TEXT_MUTED),
+                row![
+                    button(text("Cancel").size(theme::TEXT_BASE))
+                        .on_press(Message::NameModalCancel)
+                        .padding([theme::SPACE_3, theme::SPACE_6])
+                        .style(button::text),
+                    button(text("Delete").size(theme::TEXT_BASE))
+                        .on_press(Message::DeleteFile(path.clone()))
+                        .padding([theme::SPACE_3, theme::SPACE_6])
+                        .style(button::secondary),
+                ]
+                .spacing(theme::SPACE_4)
+                .align_y(Alignment::Center)
             ]
-            .spacing(theme::SPACE_4)
-            .align_y(Alignment::Center)
-        ]
-        .spacing(theme::SPACE_6)
-        .into(),
+            .spacing(theme::SPACE_6)
+            .into()
+        }
         ModalType::LinkNote(_) => link_note_picker::view(input_value, picker_search, vault_entries),
         _ => {
             column![

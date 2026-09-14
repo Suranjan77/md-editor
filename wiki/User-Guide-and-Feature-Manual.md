@@ -155,7 +155,9 @@ Open any `.pdf` from the sidebar to enter the integrated reader.
 ### Viewing
 
 - **Continuous scrolling** through the document.
-- **Fit-to-width** (on by default) and manual zoom. Pages are rendered above their displayed
+- **Fit-to-width** (on by default) and manual zoom. Fit-to-width — automatic or via the fit
+  button — stops at 200% so a wide pane doesn't blow pages up; the zoom buttons still go to
+  400%. Pages are rendered above their displayed
   size, scaled by your display's factor, so they stay sharp in a narrow split pane and on
   HiDPI screens.
 - **Keyboard scrolling** — arrows and page keys.

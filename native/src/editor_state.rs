@@ -1,7 +1,7 @@
 //! Editor pane sub-state.
 //!
-//! Owns the document buffer, the highlighted/rendered lines, the debounced
-//! highlight pipeline bookkeeping, the buffer revision (used by SearchState to
+//! Owns the document buffer, its highlighted lines (kept in step with the text
+//! incrementally), caret-reveal requests, the buffer revision (used by SearchState to
 //! invalidate its match cache), the table of contents, the editor
 //! scroll/viewport geometry, and the image/math resource caches used when
 //! rendering markdown content.
@@ -19,21 +19,9 @@ use iced::widget::image::Handle;
 use image::GenericImageView;
 
 use crate::editor::buffer::DocBuffer;
-use crate::editor::highlight::{self, StyledLine};
+use crate::editor::highlight::Highlighted;
 use crate::messages::Message;
 use crate::views;
-
-/// Debounce window before a queued highlight pass actually runs. Owned here
-/// alongside the highlight pipeline; the keyboard subscription on the shell
-/// references it to schedule the debounce tick.
-pub const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(80);
-
-/// Above this line count, an opened document is shown with plain placeholders
-/// first and highlighted asynchronously.
-pub const HUGE_DOC_LINE_THRESHOLD: usize = 5_000;
-/// Above this line count, edits debounce re-highlighting onto a background task
-/// instead of highlighting synchronously.
-pub const LARGE_DOC_LINE_THRESHOLD: usize = 1_000;
 
 /// Idle time after the last edit before the document is written to disk.
 /// Short enough that the unsaved window is never meaningful, long enough that
@@ -51,12 +39,8 @@ const MAX_RETAINED_BUFFERS: usize = 32;
 
 pub struct EditorPane {
     pub buffer: DocBuffer,
-    pub highlighted_lines: Vec<StyledLine>,
-
-    pub highlight_generation: u64,
-    pub pending_highlight_generation: Option<u64>,
-    pub pending_highlight_requested_at: Option<Instant>,
-    pub pending_highlight_text: Option<String>,
+    /// The buffer's highlighted lines, always in step with its text.
+    pub highlight: Highlighted,
 
     /// Bumped on every text change; read by SearchState to invalidate its
     /// in-document match cache.
@@ -71,6 +55,11 @@ pub struct EditorPane {
     pub scroll_y: f32,
     pub viewport_width: f32,
     pub viewport_height: f32,
+    /// Bumped to ask the editor widget where the caret is, so it can be
+    /// scrolled into view; see [`crate::editor::renderer::CaretView`].
+    pub reveal_request: u64,
+    /// The request not yet answered, and how it wants the caret shown.
+    reveal_pending: Option<(u64, crate::editor::renderer::Reveal)>,
 
     pub image_cache: HashMap<String, (Handle, f32, f32)>,
     pub math_cache: HashMap<String, crate::editor::renderer::MathRender>,
@@ -95,11 +84,7 @@ impl EditorPane {
     pub fn new() -> Self {
         Self {
             buffer: DocBuffer::new(),
-            highlighted_lines: Vec::new(),
-            highlight_generation: 0,
-            pending_highlight_generation: None,
-            pending_highlight_requested_at: None,
-            pending_highlight_text: None,
+            highlight: Highlighted::default(),
             buffer_revision: 0,
             toc_visible: false,
             toc_entries: Vec::new(),
@@ -107,6 +92,8 @@ impl EditorPane {
             scroll_y: 0.0,
             viewport_width: 900.0,
             viewport_height: 720.0,
+            reveal_request: 0,
+            reveal_pending: None,
             image_cache: HashMap::new(),
             math_cache: HashMap::new(),
             math_scale_factor: 1.0,
@@ -117,6 +104,46 @@ impl EditorPane {
     }
 
     // ── Retained buffers ─────────────────────────────────────────────
+
+    /// Names what the editor widget lays out — the highlighted lines and the
+    /// images and equations they show; see
+    /// [`crate::editor::renderer::Editor::layout_revision`]. Images and
+    /// equations are only ever added, or all dropped when the display scale
+    /// changes, so their counts and that scale identify them.
+    pub fn layout_revision(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (
+            self.highlight.revision(),
+            self.image_cache.len(),
+            self.math_cache.len(),
+            self.math_scale_factor.to_bits(),
+        )
+            .hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Ask for the caret to be brought into view. While a request is
+    /// unanswered the stronger way of showing it wins, so a jump that centres
+    /// isn't downgraded by the cursor move made on the way.
+    pub fn request_reveal(&mut self, reveal: crate::editor::renderer::Reveal) {
+        let reveal = self
+            .reveal_pending
+            .map_or(reveal, |(_, pending)| pending.max(reveal));
+        self.reveal_request = self.reveal_request.wrapping_add(1);
+        self.reveal_pending = Some((self.reveal_request, reveal));
+    }
+
+    /// Claim the answer to `request`, if it is the one outstanding.
+    pub fn take_reveal(&mut self, request: u64) -> Option<crate::editor::renderer::Reveal> {
+        match self.reveal_pending {
+            Some((pending, reveal)) if pending == request => {
+                self.reveal_pending = None;
+                Some(reveal)
+            }
+            _ => None,
+        }
+    }
 
     /// Park `buffer` under `path` so a later visit can resume its undo history.
     ///
@@ -156,11 +183,14 @@ impl EditorPane {
         self.retained.remove(path)
     }
 
-    /// Drop the parked buffer for `path`, if any. Used when a file is deleted
-    /// or renamed so stale history cannot be resurrected under a new file.
+    /// Drop the parked buffer for `path`, and for anything under it when
+    /// `path` is a folder. Used when an entry is deleted or renamed so stale
+    /// history cannot be resurrected under a new file.
     pub fn forget_retained(&mut self, path: &str) {
-        self.retained.remove(path);
-        self.retained_order.retain(|p| p != path);
+        let child_prefix = format!("{path}/");
+        let gone = |p: &String| p == path || p.starts_with(&child_prefix);
+        self.retained.retain(|p, _| !gone(p));
+        self.retained_order.retain(|p| !gone(p));
     }
 
     /// Arm the autosave debounce. Called whenever buffer text changes.
@@ -176,49 +206,16 @@ impl EditorPane {
 
     // ── Highlighting ─────────────────────────────────────────────────
 
-    /// Re-run highlighting for the current buffer. Bumps the generation, then
-    /// either highlights synchronously, defers a large edit to a debounced
-    /// task, or shows placeholders + an async task for a freshly opened huge
-    /// document.
-    ///
-    /// Returns the async highlight task (if any) and whether the caller should
-    /// now load image/math resources for the freshly highlighted lines (true
-    /// only on the synchronous path; the async paths load resources when their
-    /// `HighlightReady` arrives).
-    pub fn refresh_highlighting(&mut self, opened_file: bool) -> (Task<Message>, bool) {
+    /// Bring highlighting in step with the buffer. Only the lines an edit can
+    /// have affected are re-highlighted, and it happens synchronously, so the
+    /// lines on screen always match the text.
+    pub fn refresh_highlighting(&mut self) {
         let text = self.buffer.text();
-        let line_count = self.buffer.line_count();
-        self.highlight_generation = self.highlight_generation.wrapping_add(1);
-        let generation = self.highlight_generation;
-        self.pending_highlight_generation = None;
-        self.pending_highlight_requested_at = None;
-        self.pending_highlight_text = None;
-
-        if opened_file && line_count > HUGE_DOC_LINE_THRESHOLD {
-            self.highlighted_lines = plain_highlight_placeholders(&text);
-            return (Self::highlight_task(generation, text), false);
-        }
-
-        if !opened_file && line_count > LARGE_DOC_LINE_THRESHOLD {
-            self.pending_highlight_generation = Some(generation);
-            self.pending_highlight_requested_at = Some(Instant::now());
-            self.pending_highlight_text = Some(text);
-            return (Task::none(), false);
-        }
-
-        self.highlighted_lines = highlight::highlight_markdown(&text);
-        (Task::none(), true)
-    }
-
-    pub fn highlight_task(generation: u64, text: String) -> Task<Message> {
-        Task::perform(
-            async move { highlight::highlight_markdown(&text) },
-            move |lines| Message::HighlightReady(generation, lines),
-        )
+        self.highlight.update(&text);
     }
 
     /// Handle messages that mutate only this pane's own state: caching a
-    /// rendered LaTeX image and firing a debounced highlight pass. Arms that
+    /// rendered LaTeX image. Arms that
     /// need vault paths to resolve resources (`HighlightReady`) stay on the
     /// shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -233,25 +230,6 @@ impl EditorPane {
                     self.math_cache.insert(tex, render);
                 }
                 Task::none()
-            }
-            Message::HighlightDebounceElapsed => {
-                if self
-                    .pending_highlight_requested_at
-                    .is_some_and(|requested| requested.elapsed() < HIGHLIGHT_DEBOUNCE)
-                {
-                    return Task::none();
-                }
-                let Some(generation) = self.pending_highlight_generation else {
-                    return Task::none();
-                };
-                let Some(text) = self.pending_highlight_text.take() else {
-                    self.pending_highlight_generation = None;
-                    self.pending_highlight_requested_at = None;
-                    return Task::none();
-                };
-                self.pending_highlight_generation = None;
-                self.pending_highlight_requested_at = None;
-                Self::highlight_task(generation, text)
             }
             _ => Task::none(),
         }
@@ -270,7 +248,7 @@ impl EditorPane {
             return;
         };
 
-        for line in &self.highlighted_lines {
+        for line in &self.highlight.lines {
             for span in &line.spans {
                 if span.is_image
                     && let Some(path) = &span.image_path
@@ -297,7 +275,7 @@ impl EditorPane {
     pub fn load_math(&mut self, scale_factor: f32) -> Task<Message> {
         self.math_scale_factor = scale_factor;
         let mut tasks = Vec::new();
-        for line in &self.highlighted_lines {
+        for line in &self.highlight.lines {
             for span in &line.spans {
                 if span.is_math {
                     let tex = span
@@ -324,23 +302,7 @@ impl EditorPane {
     }
 }
 
-/// Render a single-line plain highlighting (no markdown parsing) for very large
-/// documents, used as an instant placeholder before async highlighting lands.
-pub(crate) fn plain_highlight_placeholders(text: &str) -> Vec<StyledLine> {
-    text.split('\n')
-        .enumerate()
-        .map(|(idx, line)| {
-            let mut styled = StyledLine::new();
-            styled.block_id = idx;
-            styled
-                .spans
-                .push(crate::editor::highlight::StyledSpan::plain(line));
-            styled
-        })
-        .collect()
-}
-
-fn render_latex_task(
+pub(crate) fn render_latex_task(
     tex: &str,
     scale_factor: f32,
 ) -> Result<crate::editor::renderer::MathRender, String> {
@@ -412,6 +374,46 @@ fn render_latex_task(
 mod tests {
     use super::*;
     use crate::editor::buffer::EditorCommand;
+
+    /// The layout revision changes exactly when something the editor lays out
+    /// does: the lines, an arriving image or equation, or the math scale.
+    #[test]
+    fn layout_revision_names_the_lines_and_resources_laid_out() {
+        let mut pane = EditorPane::new();
+        pane.buffer = crate::editor::buffer::DocBuffer::from_text("$$\nx\n$$\n![a](i.png)");
+        pane.refresh_highlighting();
+        let initial = pane.layout_revision();
+        assert_eq!(
+            pane.layout_revision(),
+            initial,
+            "stable while nothing changes"
+        );
+
+        let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0; 4]);
+        pane.math_cache.insert(
+            "x".into(),
+            crate::editor::renderer::MathRender {
+                inline_handle: handle.clone(),
+                block_handle: handle.clone(),
+                width: 10.0,
+                height: 10.0,
+            },
+        );
+        let with_math = pane.layout_revision();
+        assert_ne!(with_math, initial, "an equation arrived");
+
+        pane.image_cache.insert("i.png".into(), (handle, 1.0, 1.0));
+        let with_image = pane.layout_revision();
+        assert_ne!(with_image, with_math, "an image arrived");
+
+        pane.math_scale_factor = 2.0;
+        let rescaled = pane.layout_revision();
+        assert_ne!(rescaled, with_image, "the math scale changed");
+
+        pane.buffer.insert_at_cursor("y");
+        pane.refresh_highlighting();
+        assert_ne!(pane.layout_revision(), rescaled, "the lines changed");
+    }
 
     fn edited(text: &str) -> DocBuffer {
         let mut buffer = DocBuffer::from_text(text);
