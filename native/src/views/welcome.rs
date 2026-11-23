@@ -1,3 +1,5 @@
+//! The zero state shown before a vault is open.
+
 use iced::widget::{Space, button, column, container, image, text};
 use iced::{Alignment, Background, Element, Length, Renderer, Theme};
 

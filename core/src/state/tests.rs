@@ -1,3 +1,5 @@
+//! Tests for `state`.
+
 use super::*;
 
 #[test]

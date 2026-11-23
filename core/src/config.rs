@@ -1,3 +1,5 @@
+//! Key/value settings over the `settings` table, plus a reader usable before `AppState` exists.
+
 use crate::state::AppState;
 
 /// Get a configuration value by key.

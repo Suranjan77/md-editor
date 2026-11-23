@@ -1,3 +1,5 @@
+//! Vector icons drawn on a canvas.
+
 use iced::widget::{canvas, container};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse};
 

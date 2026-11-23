@@ -1,3 +1,5 @@
+//! The backlinks panel: notes and PDF highlights that point at the open document.
+
 use iced::widget::{Column, button, column, container, scrollable, text};
 use iced::{Element, Length, Renderer, Theme};
 

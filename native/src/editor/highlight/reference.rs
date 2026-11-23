@@ -1,3 +1,5 @@
+//! The pre-incremental highlighter, kept as a test oracle: incremental results must equal it.
+
 #![allow(clippy::all)]
 use super::*;
 

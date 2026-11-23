@@ -1,3 +1,5 @@
+//! Table of contents: Markdown headings and the PDF outline.
+
 use iced::widget::{Space, button, column, container, scrollable, text};
 use iced::{Element, Length, Padding, Renderer, Theme};
 

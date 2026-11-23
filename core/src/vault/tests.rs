@@ -1,3 +1,5 @@
+//! Tests for `vault`.
+
 use super::*;
 
 fn insert_annotation_link(state: &AppState, id: &str, document_id: &str, note_path: &str) {

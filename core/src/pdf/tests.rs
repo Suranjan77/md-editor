@@ -1,3 +1,5 @@
+//! Tests for `pdf`.
+
 use super::*;
 
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

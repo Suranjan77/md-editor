@@ -1,3 +1,5 @@
+//! Tests for `ink`.
+
 use super::*;
 
 fn surface() -> InkState {

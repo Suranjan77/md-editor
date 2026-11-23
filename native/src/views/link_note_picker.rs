@@ -1,3 +1,5 @@
+//! The picker for attaching a PDF highlight to a note.
+
 use iced::advanced::text::Wrapping;
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Theme};

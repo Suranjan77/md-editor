@@ -1,3 +1,5 @@
+//! The `MdEditor` shell: state, boot, window title and the message router. Handlers live in sibling files by feature.
+
 use iced::widget::operation::{self, AbsoluteOffset};
 use iced::widget::{Space, container, mouse_area, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Subscription, Task, Theme};

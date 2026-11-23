@@ -1,3 +1,5 @@
+//! Tests for `graph_state`.
+
 use super::*;
 use md_editor_core::types::{GraphEdge, GraphEdgeKind};
 

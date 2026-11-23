@@ -1,3 +1,5 @@
+//! The study-tracker dashboard and its tabs. The config model is in `config`.
+
 use iced::advanced::text::Wrapping;
 use iced::widget::{
     Space, button, checkbox, column, container, row, scrollable, text, text_editor, text_input,

@@ -1,3 +1,5 @@
+//! Tests for `editor_state`.
+
 use super::*;
 use crate::editor::buffer::EditorCommand;
 

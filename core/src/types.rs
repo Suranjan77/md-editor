@@ -1,3 +1,5 @@
+//! Plain data shared with the UI: file entries, search results, backlinks, graph snapshots.
+
 use serde::{Deserialize, Serialize};
 
 /// A file entry in the vault listing.

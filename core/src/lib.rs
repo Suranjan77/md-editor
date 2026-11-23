@@ -1,3 +1,5 @@
+//! md-editor-core: the headless engine — vault, index, search, SQLite state, PDF and PPTX readers. No UI.
+
 pub mod config;
 pub mod file_index;
 pub mod pdf;

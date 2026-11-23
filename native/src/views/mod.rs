@@ -1,3 +1,5 @@
+//! View builders. Each file renders one part of the window from state; none hold state.
+
 pub mod backlinks;
 pub mod command_palette;
 pub mod gpu_graph;

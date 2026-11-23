@@ -1,3 +1,5 @@
+//! PDF engine: shared data types, document identity, and the PDFium binding. The worker lives in `renderer`, TOC recovery in `toc`.
+
 use image::DynamicImage;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};

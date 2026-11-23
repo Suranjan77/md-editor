@@ -1,3 +1,5 @@
+//! The top bar.
+
 use iced::widget::{Button, Space, button, container, row, text, tooltip};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 

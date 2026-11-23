@@ -1,3 +1,5 @@
+//! Combinatorial and stress tests across the index, vault, settings, tracker and search.
+
 use crate::config::{get_sys_config, set_sys_config};
 use crate::file_index::FileIndex;
 use crate::state::AppState;

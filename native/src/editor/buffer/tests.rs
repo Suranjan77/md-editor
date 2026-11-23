@@ -1,3 +1,5 @@
+//! Tests for `buffer`.
+
 use crate::editor::buffer::{Affinity, DocBuffer, EditorCommand, Movement};
 
 /// A bulk rewrite (replace-all) must be undoable — it is the edit a user is

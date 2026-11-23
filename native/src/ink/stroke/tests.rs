@@ -1,3 +1,5 @@
+//! Tests for `stroke`.
+
 use super::*;
 
 /// Straight horizontal run of samples at a constant pressure.

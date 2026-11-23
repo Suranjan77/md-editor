@@ -1,3 +1,5 @@
+//! The vault file tree.
+
 use std::collections::BTreeSet;
 
 use iced::advanced::text::Wrapping;

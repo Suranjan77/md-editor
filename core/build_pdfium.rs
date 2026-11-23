@@ -1,3 +1,5 @@
+//! Downloads, verifies and caches the platform PDFium library, then copies it next to the build output.
+
 use std::env;
 use std::fs;
 use std::fs::File;

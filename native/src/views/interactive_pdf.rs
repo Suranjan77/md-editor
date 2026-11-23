@@ -1,3 +1,5 @@
+//! One PDF page as a widget: the bitmap plus hit testing, text selection and clicks.
+
 use iced::advanced::graphics::core::event::Event;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;

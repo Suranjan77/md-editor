@@ -1,3 +1,5 @@
+//! Line matching for in-note search (plain, case-folded, regex).
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineMatch {
     pub start_col: usize,

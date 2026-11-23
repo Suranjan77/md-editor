@@ -1,3 +1,5 @@
+//! Tests for `pptx`.
+
 use super::*;
 use std::io::{Cursor, Write};
 

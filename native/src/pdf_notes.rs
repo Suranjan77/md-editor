@@ -1,3 +1,5 @@
+//! Linked notes for PDF highlights: paths, `pdf://` links and note content.
+
 pub fn slug_fragment(s: &str) -> String {
     let slug = slugify(s);
     if slug.is_empty() {

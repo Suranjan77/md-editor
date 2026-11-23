@@ -1,3 +1,5 @@
+//! The vault: indexing, opening/saving/creating/renaming/deleting files, search and backlinks.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

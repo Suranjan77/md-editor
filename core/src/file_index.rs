@@ -1,3 +1,5 @@
+//! The wikilink index: parses `[[target|alias]]`, resolves targets, and keeps outgoing and incoming links.
+
 use regex::Regex;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};

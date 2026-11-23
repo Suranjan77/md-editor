@@ -1,3 +1,5 @@
+//! `AppState`: the shared SQLite connection, schema and migrations, vault generation, and PDF sidecar queries.
+
 use std::path::{Path, PathBuf};
 use std::sync::{
     Mutex, MutexGuard,

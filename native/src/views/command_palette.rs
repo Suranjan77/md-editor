@@ -1,3 +1,5 @@
+//! The Ctrl+P palette: command registry, fuzzy ranking over commands and files, and its view.
+
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 

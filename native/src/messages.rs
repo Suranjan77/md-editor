@@ -1,3 +1,5 @@
+//! `Message`, the complete event vocabulary, plus `Shortcut` and `TrackerTab`.
+
 #[derive(Debug, Clone)]
 pub enum Message {
     // ── Vault ────────────────────────────────────────────────────

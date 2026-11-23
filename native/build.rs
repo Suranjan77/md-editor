@@ -1,3 +1,5 @@
+//! Build script: embeds the Windows icon and version resource.
+
 fn main() {
     #[cfg(windows)]
     embed_windows_resources();
@@ -21,7 +23,7 @@ fn embed_windows_resources() {
     res.set_icon(icon);
     res.set("ProductName", "MD Editor");
     res.set("FileDescription", "MD Editor");
-    res.set("LegalCopyright", "MIT licensed");
+    res.set("LegalCopyright", "Licensed under GPL-3.0");
 
     if let Err(e) = res.compile() {
         println!("cargo:warning=Could not embed Windows resources ({e}); building without an icon");

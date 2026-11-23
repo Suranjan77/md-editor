@@ -1,3 +1,5 @@
+//! The PDF pane: toolbar, search bar, the continuous page list and its overlay canvas.
+
 use iced::widget::{
     Space, button, canvas, checkbox, column, container, row, stack, text, text_input,
 };

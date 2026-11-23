@@ -1,3 +1,5 @@
+//! Tests for `layout`.
+
 use super::super::MathRender;
 use super::super::testing::make_line;
 use super::*;

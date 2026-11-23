@@ -1,3 +1,5 @@
+//! `DocBuffer`: the document rope, caret and selection, edit commands, undo/redo runs and dirty tracking.
+
 use std::time::{Duration, Instant};
 
 use ropey::Rope;

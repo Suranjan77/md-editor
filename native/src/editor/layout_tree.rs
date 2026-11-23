@@ -1,3 +1,5 @@
+//! `HeightTree`: a Fenwick tree over line heights for O(log n) y ⇄ line lookups.
+
 /// Heights are stored in fixed point: this many units per pixel.
 ///
 /// A Fenwick tree accumulates *differences*, and floating-point differences

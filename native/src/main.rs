@@ -1,3 +1,5 @@
+//! Entry point: CLI arguments, Linux desktop-entry install, window settings and the iced daemon.
+
 // Release builds on Windows run as a GUI app so launching the exe does not
 // open a console window. Debug builds keep the console for stdout/stderr.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]

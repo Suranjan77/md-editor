@@ -1,3 +1,5 @@
+//! Modals: create, rename, delete, quick note and linked note.
+
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 

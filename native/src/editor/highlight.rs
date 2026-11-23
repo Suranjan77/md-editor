@@ -1,3 +1,5 @@
+//! Markdown → styled lines, kept in step with edits incrementally. Inline parsing in `inline`, code in `code`.
+
 use iced::Color;
 use std::sync::OnceLock;
 use syntect::highlighting::{HighlightIterator, HighlightState, Highlighter};

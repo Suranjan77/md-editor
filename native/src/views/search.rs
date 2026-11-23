@@ -1,3 +1,5 @@
+//! Search panels: in-note find/replace and vault-wide search.
+
 use iced::widget::{
     Column, button, checkbox, column, container, row, scrollable, text, text_input,
 };

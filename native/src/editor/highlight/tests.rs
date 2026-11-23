@@ -1,3 +1,5 @@
+//! Tests for `highlight`.
+
 use super::{Highlighted, highlight_markdown};
 use crate::editor::test_docs::{Rng, block, document};
 

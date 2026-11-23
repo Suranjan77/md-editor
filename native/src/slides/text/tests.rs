@@ -1,3 +1,5 @@
+//! Tests for `text`.
+
 use super::*;
 use md_editor_core::pptx::{Borders, Bullet, Fill, Insets, Run, RunStyle, TableCell, TableRow};
 

@@ -1,3 +1,5 @@
+//! Study-tracker persistence: sessions and key/value progress.
+
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 

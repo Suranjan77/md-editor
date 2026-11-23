@@ -1,3 +1,5 @@
+//! The knowledge-graph screen: layout of toolbar, canvas layers and inspector over `GraphState`.
+
 use std::collections::HashSet;
 use std::sync::Arc;
 

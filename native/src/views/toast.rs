@@ -1,3 +1,5 @@
+//! The transient feedback toast.
+
 use iced::widget::{container, text};
 use iced::{Element, Renderer, Theme};
 

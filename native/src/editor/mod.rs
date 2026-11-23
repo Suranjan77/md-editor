@@ -1,3 +1,5 @@
+//! The Markdown editor: buffer, highlighter and the custom `iced` widget.
+
 pub mod buffer;
 pub mod highlight;
 pub mod layout_cache;

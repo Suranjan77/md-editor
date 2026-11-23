@@ -1,3 +1,5 @@
+//! Per-line height cache keys, so a line is remeasured only when something that affects it changes.
+
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 

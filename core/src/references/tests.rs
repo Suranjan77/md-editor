@@ -1,3 +1,5 @@
+//! Tests for `references`.
+
 use super::*;
 use crate::pdf::{PdfTextChar, PdfTextLine};
 
