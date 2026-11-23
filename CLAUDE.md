@@ -58,7 +58,8 @@ is the fastest map. Tests for `foo.rs` live in `foo/tests.rs`.
 ## Docs
 
 `wiki/` is authoritative; start at `wiki/Home.md` ("I want to change…" table). Plans in
-progress: `docs/ui-overhaul-plan.md` (+ `docs/design-system/`) and
-`docs/e2e-bug-discovery-plan.md`. When code
+progress: `docs/ui-overhaul-plan.md` (+ `docs/design-system/`),
+`docs/e2e-bug-discovery-plan.md`, `docs/code-health-plan.md`,
+`docs/feature-plan-tabs-and-images.md`. When code
 moves, update `wiki/Repository-Structure.md` in the same change. Cite files and symbols,
 not line numbers. `docs/` holds the printable handbook, a dated snapshot.
