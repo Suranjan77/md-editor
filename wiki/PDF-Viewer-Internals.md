@@ -2,7 +2,7 @@
 
 This page covers the **native** half of the PDF subsystem: the viewport state in
 `native/src/pdf_pane.rs`, the scheduling and cache invariants enforced in
-`native/src/app.rs`, and the navigation and scroll model. The engine side — the PDFium
+`native/src/app/pdf.rs` and `app/pdf_pages.rs`, and the navigation and scroll model. The engine side — the PDFium
 worker, TOC recovery, the reference resolver, and sidecar storage — is in
 [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md).
 
@@ -10,11 +10,11 @@ The flow of one interaction:
 
 ```text
 iced UI
-  -> Message handler in native/src/app.rs
+  -> Message handler in native/src/app/pdf.rs
   -> iced::Task async call
-  -> PdfRenderer API in core/src/pdf.rs
+  -> PdfRenderer API in core/src/pdf/renderer.rs
   -> single PDFium worker thread
-  -> typed Message result back into app.rs
+  -> typed Message result back into app/pdf.rs
   -> generation validation, pending cleanup, cache update, optional follow-up task
 ```
 
@@ -93,7 +93,7 @@ on the document path for the same reason.
 
 ## 3. Page Rendering
 
-Scheduling entry points, in `app.rs`:
+Scheduling entry points, in `app/pdf_pages.rs`:
 
 - `render_visible_pdf_pages()`
 - `render_pdf_pages_for_viewport(scroll_y, viewport_height)`
@@ -148,7 +148,7 @@ scroll geometry. This is what keeps the scroll model and the actual blank-page l
 agreement — without it, a jump deep into a long PDF accumulates offset error, because the
 model and the layout drift apart page by page.
 
-The stable-slot behaviour is covered by unit tests in `native/src/app.rs`: target offsets
+The stable-slot behaviour is covered by unit tests in `native/src/app/tests.rs`: target offsets
 map back to the same page, blank pages reserve space in the total document height, and
 placeholder slots scale with zoom.
 

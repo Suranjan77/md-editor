@@ -1,249 +1,135 @@
 # Repository Structure
 
-MD Editor is a Cargo workspace with two members: `md-editor-core` (the headless domain
-engine) and `md-editor-native` (the Iced desktop interface). The workspace pins Rust
-edition 2024 and version `1.0.0`.
+A Cargo workspace (Rust edition 2024) with two crates: **`md-editor-core`**, the headless
+engine, and **`md-editor-native`**, the Iced desktop app. Core never depends on native.
 
----
-
-## Workspace Directory Tree
+> **Finding your way.** Every source file opens with a one-line `//!` summary, so
+> `grep -rm1 '^//!' core/src native/src` prints a live map of the code. Tests for a module
+> `foo.rs` live in `foo/tests.rs`.
 
 ```
 md-editor/
-├── Cargo.toml                  # Workspace manifest: members core + native, edition 2024
-├── Cargo.lock                  # Pinned dependency graph
-├── README.md                   # Project overview, screenshots, build instructions
-├── LICENSE                     # GNU General Public License v3.0
-├── md-editor.png               # Application icon, embedded into the binary
-├── images/                     # README screenshots and the intro animation
-├── tests-fixtures/             # Sample documents used by core tests
-│   ├── pdf/                    # dummy.pdf, large-500-pages.pdf
-│   └── pptx/                   # fixture.pptx, and make_fixture.py which generates it
-├── wiki/                       # This documentation set — the only docs tree
-├── .github/workflows/          # CI: windows-build.yml
-├── core/                       # md-editor-core crate
-│   ├── Cargo.toml              # rusqlite (bundled), pdfium-render, image, regex,
-│   │                           # roxmltree, serde, serde_json, sha2, uuid, zip
-│   ├── build.rs                # Thin wrapper that calls build_pdfium::setup_pdfium()
-│   ├── build_pdfium.rs         # Downloads/caches the platform PDFium shared library
-│   ├── pdfium/                 # Build-script output: the copied shared library
-│   ├── examples/
-│   │   ├── dump_refs.rs        # Prints resolved references with surrounding text
-│   │   └── bench_refs.rs       # Reports text-scan cost per document
-│   └── src/
-│       ├── lib.rs              # Module declarations, `pub use state::AppState`
-│       ├── config.rs           # settings key/value helpers + pre-init startup reader
-│       ├── file_index.rs       # Wikilink parsing, resolution, bidirectional backlinks
-│       ├── massive_tests.rs    # Combinatorial and stress suite (cfg(test) only)
-│       ├── pdf.rs              # PDFium worker, render queues, text, TOC recovery, search
-│       ├── pptx.rs             # Read-only PowerPoint parser: package, inheritance, slide model
-│       ├── references.rs       # Internal cross-reference resolver (pure, no PDFium)
-│       ├── state.rs            # AppState, SQLite schema, WAL setup, DB path resolution
-│       ├── tracker.rs          # Study session + tracker key/value persistence
-│       ├── types.rs            # FileEntry, SearchResult, BacklinkTarget, BacklinkItem
-│       └── vault.rs            # Traversal, path jailing, atomic writes, FTS rebuild
-└── native/                     # md-editor-native crate
-    ├── Cargo.toml              # iced 0.14, ropey, syntect, ratex-*, rfd, notify,
-    │                           # tokio, chrono, image, regex, serde, uuid
-    └── src/
-        ├── main.rs             # Entrypoint, CLI args, window geometry, Linux desktop entry
-        ├── app.rs              # MdEditor shell: update router, view composition, tasks
-        ├── messages.rs         # Message, Shortcut, TrackerTab enums
-        ├── theme.rs            # Design tokens: type scale, spacing grid, radii, colors
-        ├── motion.rs           # One easing curve, three durations, springs, animation state
-        ├── fuzzy.rs            # score() and score_path() for the command palette
-        ├── search.rs           # Reusable in-file line matching (plain + regex)
-        ├── pdf_notes.rs        # Linked-note path normalization and markdown formatting
-        ├── pdf_pane.rs         # PDF viewport, cache, annotation, and navigation state
-        ├── pptx_pane.rs        # Presentation viewer state: deck, load generation, zoom, scroll
-        ├── ui_state.rs         # Modals, palette, toast, split view, window geometry
-        ├── editor_state.rs     # EditorPane: buffer, highlights, retained-buffer registry
-        ├── vault_state.rs      # Vault root, file entries, expansion, backlinks panel
-        ├── tracker_state.rs    # Timer, sessions, tracker key/values, active tab
-        ├── search_state.rs     # Query/replace, flags, results, memoized doc matches
-        ├── editor/             # Custom markdown editor implementation
-        │   ├── mod.rs          # Module declarations
-        │   ├── buffer.rs       # DocBuffer over ropey::Rope, undo runs, auto-pairing
-        │   ├── highlight.rs    # StyledLine/StyledSpan parser, syntect, marker concealing
-        │   ├── layout_cache.rs # Per-line measurement cache keys and hashing helpers
-        │   ├── layout_tree.rs  # HeightTree — Fenwick tree over visual line heights
-        │   ├── render_snapshot_tests.rs # Opt-in draw-call transcript for renderer changes
-        │   ├── render_preview.rs # Opt-in PNG previews through the software renderer
-        │   ├── test_docs.rs    # Seeded markdown document generator for property suites
-        │   └── renderer/       # The iced Widget, split by concern
-        │       ├── mod.rs      # Editor, State, LayoutKey, and a thin Widget impl
-        │       ├── metrics.rs  # Rhythm grid and constants layout, painting, hit testing share
-        │       ├── measure.rs  # Shaping, font metrics, memoized word offsets
-        │       ├── spans.rs    # When a span shows its source instead of its rendering
-        │       ├── flow.rs     # Inline layout: rows, baselines, column ⇄ x — the only wrapper
-        │       ├── layout.rs   # Line bodies, collapsing margins, height tree
-        │       ├── caret.rs    # Caret boxes, hit testing, visual up/down, code columns
-        │       ├── glide.rs    # The caret's glide and blink, and the frames they need
-        │       ├── reveal.rs   # CaretView: telling the app where the caret is
-        │       ├── selection.rs # Selection ordering and text extraction
-        │       ├── scroll.rs   # Per-block horizontal scroll and scrollbar geometry
-        │       ├── events.rs   # Mouse and keyboard handling
-        │       ├── testing.rs  # Test support: recording renderer and a widget driver
-        │       ├── tests.rs    # Behavioral tests through the Widget API
-        │       ├── properties.rs # Seeded invariants: caret, rows, layout, scrolling
-        │       └── draw/       # Painting
-        │           ├── mod.rs  # Frame setup, culling, per-line dispatch
-        │           ├── blocks.rs # Block cards and captions, code lines, table rows
-        │           ├── inline.rs # Flow lines, images, inline and block math, rules
-        │           ├── overlays.rs # The selection shape, search highlights, the caret
-        │           ├── captions.rs # Table, Listing, Figure, and equation numbering
-        │           └── primitives.rs # Quads, text runs, clipping, scrollbars
-        ├── slides/             # Presentation slides, prepared once and drawn on canvases
-        │   ├── mod.rs          # load_deck, picture decoding, layer_ranges
-        │   ├── text.rs         # Slide text layout: wrapping, bullets, alignment, table rows
-        │   ├── fonts.rs        # Typeface substitution and shaper-backed measurement
-        │   ├── draw.rs         # Canvas programs that paint a slide's layers
-        │   └── preview.rs      # Opt-in PNG previews of a deck's slides
-        └── views/              # View-layer components
-            ├── mod.rs          # Module declarations
-            ├── backlinks.rs    # Incoming connections pane (notes, PDFs, highlights)
-            ├── command_palette.rs # Ctrl+P overlay, command registry, ranking
-            ├── icons.rs        # Vector icons drawn on an iced canvas
-            ├── interactive_pdf.rs # Page bitmap widget: hit testing, selection, clicks
-            ├── link_note_picker.rs # Modal for attaching a PDF highlight to a note
-            ├── modals.rs       # Create file/folder, delete confirm, quick note, link note
-            ├── pdf_viewer.rs   # Toolbar, search bar, continuous page list, overlay canvas
-            ├── pptx_viewer.rs  # Slide column, slide toolbar, slide metrics
-            ├── search.rs       # In-file and global search panels
-            ├── sidebar.rs      # Vault file tree and its header actions
-            ├── toast.rs        # Animated feedback toast
-            ├── toc.rs          # Markdown heading outline and PDF bookmark tree
-            ├── toolbar.rs      # Top bar: sidebar, split view, TOC, search, palette, tracker
-            ├── tracker.rs      # Study tracker dashboard, tabs, and config schema
-            └── welcome.rs      # Zero-state view when no vault is open
+├── core/                 md-editor-core: vault, index, search, SQLite, PDF and PPTX readers
+├── native/               md-editor-native: the Iced app (shell, editor widget, viewers, graph, ink)
+│   └── shaders/          WGSL for the knowledge-graph GPU layer
+├── wiki/                 This documentation (authoritative)
+├── docs/                 The Field Handbook PDF and its HTML sources (a periodic snapshot)
+├── tests-fixtures/       Sample PDFs and a generated .pptx used by tests
+├── images/               README screenshots
+├── .github/workflows/    CI: Windows and Linux release builds
+├── CLAUDE.md             Orientation for AI coding agents (also useful to humans)
+└── md-editor.png/.ico    App icons, embedded at build time
 ```
 
-> `target/` (build output, the PDFium cache, and a debug settings database) is generated
-> and git-ignored.
+`target/` holds build output and the cached PDFium library; it is git-ignored.
 
 ---
 
-## Detailed File & Responsibility Matrix
+## `core/` — md-editor-core
 
-### Core Services (`core/src/`)
-
-| File | Primary Responsibility |
+| Path | Responsibility |
 | :--- | :--- |
-| `lib.rs` | Declares the modules and re-exports `AppState`. |
-| `state.rs` | Owns `AppState`, the `rusqlite::Connection`, the full schema DDL, WAL/synchronous pragmas, `PRAGMA user_version` migrations, database path resolution, legacy migration, and all PDF sidecar queries. |
-| `config.rs` | `get_sys_config` / `set_sys_config` over the `settings` table, plus `read_startup_value` which opens its own connection before `AppState` exists (used for window geometry). |
-| `vault.rs` | Vault root indexing, tree listing, path jailing (`resolve_vault_path_checked`), atomic `write_file`, create/rename/delete, FTS5 rebuild, `search_vault`, and backlink queries. |
-| `file_index.rs` | Parses `[[target]]` and `[[target\|alias]]` wikilinks, resolves them by exact path then shortest matching basename, and maintains `outgoing` and `incoming` maps. |
-| `pdf.rs` | The PDFium FFI boundary: worker thread, priority and standard channels, page rendering, text extraction, page sizes, links, bookmarks, TOC recovery, search, link previews, and the `document_id` content hash. |
-| `pptx.rs` | Read-only PowerPoint reader: bounded zip access, relationship resolution, theme and colour-map resolution, master → layout → slide placeholder inheritance, preset and custom geometry, tables, and the resolved `Presentation` model. See [Core Services](Core-Services.md#8-powerpoint-presentations-pptxrs). |
-| `references.rs` | Pure resolver that turns already-extracted page text plus an outline into `ReferenceLink`s for equations, figures, tables, and sections. Never touches PDFium. |
-| `tracker.rs` | `StudySession` and `TrackerKv` models with their SQLite persistence helpers. |
-| `types.rs` | `FileEntry`, `SearchResult`, `BacklinkTarget`, `BacklinkItem`. |
-| `massive_tests.rs` | Eight combinatorial/stress tests: wikilink variants, graph topologies, index fuzzing, settings upserts, tracker volume, recursive vault operations, FTS indexing, and file lifecycle. |
+| `build.rs`, `build_pdfium.rs` | Download (optionally pinned and SHA-256 verified), cache and copy the platform PDFium library. |
+| `src/lib.rs` | Module declarations; re-exports `AppState`. |
+| `src/state.rs` | `AppState`: the SQLite connection, schema DDL, WAL pragmas, `user_version` migrations, DB path resolution, vault generation and publication locks, PDF sidecar queries (document identity is vault-scoped). |
+| `src/config.rs` | `get_sys_config` / `set_sys_config` over `settings`, and `read_startup_value` for use before `AppState` exists. |
+| `src/vault.rs` | The vault API: indexing for a generation, open/save/create/rename/delete, `search_vault`, backlinks, `read_vault_image`. |
+| `src/vault/files.rs` | Path jailing (`resolve_vault_path_checked`), the atomic `write_file`, file-type checks, tree listing. |
+| `src/vault/graph.rs` | `get_graph_snapshot`: knowledge-graph nodes and edges. See [Knowledge Graph](Knowledge-Graph.md). |
+| `src/file_index.rs` | Wikilink parsing (`[[target\|alias]]`), resolution (exact path, then shortest matching basename), outgoing and incoming maps. |
+| `src/pdf.rs` | PDF data types, `compute_provisional_id`, render-scale buckets, `bind_pdfium`. |
+| `src/pdf/renderer.rs` | The PDFium worker thread and `PdfRenderer`: priority and standard queues, rendering, text, links, search, previews. |
+| `src/pdf/toc.rs` | Page-text extraction and outline recovery: embedded bookmarks, printed contents pages, dot leaders, typographic fallback. |
+| `src/references.rs` | Pure resolver from page text to equation, figure, table and section references. Never touches PDFium. |
+| `src/pptx.rs`, `src/pptx/` | Read-only PowerPoint reader. `model` is the resolved slide model; `package`, `xml`, `theme`, `color`, `fill`, `text`, `placeholder`, `geometry`, `numbering`, `table_style` and `slide` do the reading and inheritance. See [Core Services](Core-Services.md#8-powerpoint-presentations-pptxrs-pptx). |
+| `src/tracker.rs` | `StudySession` and tracker key/value persistence. |
+| `src/types.rs` | Plain data for the UI: `FileEntry`, `SearchResult(s)`, backlinks, `GraphSnapshot`. |
+| `src/massive_tests.rs` | Combinatorial and stress tests. |
+| `examples/` | `dump_refs`, `bench_refs`: reference-resolver diagnostics on a real PDF. |
 
-### Native GUI Application (`native/src/`)
+## `native/` — md-editor-native
 
-| File | Primary Responsibility |
+### Shell (`src/app/`, `main.rs`)
+
+| Path | Responsibility |
 | :--- | :--- |
-| `main.rs` | Parses `--install` / `--install-desktop`, `--uninstall` / `--uninstall-desktop`, and a bare path argument; restores and clamps window size; installs the Linux desktop entry and multi-size icons; starts the `iced::application`. |
-| `app.rs` | The `MdEditor` shell: `update()` routing, `view()` composition, subscriptions (keyboard, toast, autosave, search debounce, animation frames, editor scroll interrupt, filesystem watcher), revealing the caret with a spring-animated scroll, and every cross-pane effect. |
-| `messages.rs` | `Message` (the complete event vocabulary), `Shortcut`, and `TrackerTab`. |
-| `theme.rs` | Six type sizes, seven spacing steps on a 2px grid, three radii, the dark colour palette, `fade()`, and the custom iced `Theme`. |
-| `motion.rs` | `EASE = Easing::EaseOutQuad`; durations `FAST`, `PANEL`, `OVERLAY`; panel widths; the closed-form critically damped `Spring` and `ScrollGlide`; the `Motion` animation state and `is_animating()`. |
-| `fuzzy.rs` | `score()` — in-order matching with word-boundary, CamelCase, run, and distance rules — and `score_path()`, which favours the filename. |
-| `editor/buffer.rs` | `DocBuffer` over `ropey::Rope`: transactions with inverse ops, undo-run coalescing, auto-pairing, list continuation, formatting commands, grapheme-aware movement and deletion, and the caret with its `Affinity`. |
-| `editor/highlight.rs` | `Highlighted`, which keeps `StyledLine`/`StyledSpan` in step with the text by re-highlighting from the first changed line until the block state converges; syntect for fenced code; marker concealing via `is_syntax` + `display_text`; block and caption numbering. |
-| `editor/layout_tree.rs` | `HeightTree`, a Fenwick tree over fixed-point line heights, giving exact O(log N) prefix sums and y-to-line lookups. |
-| `editor/layout_cache.rs` | `LineHeightCache` plus `line_hash()` and `resource_hash()` so a line's body is remeasured only when its content, edit state, active column, layout width, or media dimensions change. |
-| `editor/test_docs.rs` | Test-only: a seeded generator of markdown documents covering every block and inline kind, shared by the highlighter and renderer property suites. |
-| `editor/renderer/mod.rs` | `Editor` (the `iced::advanced::Widget`), its builder — including `reveal_caret` and `layout_revision` — `State`, `LayoutKey`, `MathRender`, and the `ImageCache` / `MathCache` aliases. The `Widget` methods only delegate to the modules below. |
-| `editor/renderer/metrics.rs` | The vertical rhythm — `GRID`, `row_height()`, `PARAGRAPH_GAP`, `HEADING_MARGINS`, `BLOCK_MARGIN` — and every other constant more than one pass depends on, plus `content_bounds()` and `wrap_width()`. |
-| `editor/renderer/measure.rs` | Shaping (`shaping_for()`), real font metrics (`font_metrics()`), per-word character offsets from the shaper (`word_offsets()`), memoized widths, and `span_font()`. |
-| `editor/renderer/spans.rs` | Typora-style reveal rules: which spans show markdown source for a given caret column, and whether a whole block is being edited. |
-| `editor/renderer/flow.rs` | `Flow`, the inline layout of one line: UAX #14 breaking with hanging whitespace, hanging indents, balanced headings, rows on the rhythm grid with font-metric baselines, and the queries everything else uses — `caret()`, `col_at()` (with affinity), `span_at()`, and `range_extents()`. |
-| `editor/renderer/layout.rs` | Line body heights, collapsing margins (`requested_margins()`, `MarginWalk`), and `layout_lines()`, which fills the height tree, margins and block ranges using `LineHeightCache`; plus the uncached model tests check it against. |
-| `editor/renderer/caret.rs` | `caret_box()`, `hit_test()` returning a `Position` with affinity, and visual up/down movement over a line's `Flow`, plus column ⇄ x for unwrapped code lines. |
-| `editor/renderer/glide.rs` | `CaretMotion`: the caret's spring glide between places, its soft blink, and when it next needs a frame. |
-| `editor/renderer/reveal.rs` | `Reveal` and `CaretView`: answering the app's reveal request with the caret's exact place, and the nearest/centre scrolling policy. |
-| `editor/renderer/properties.rs` | Seeded property suites for the renderer's invariants; see [Developer Guide & Testing](Developer-Guide-and-Testing.md#property-suites). |
-| `editor/renderer/selection.rs` | Selection normalization, the selection to paint, and pointer-selection text for copy and cut. |
-| `editor/renderer/scroll.rs` | `scroll_extent()` — the one answer to how wide a code block, table, or equation is and how much of it shows — plus scroll offsets, scrollbar geometry and hit testing, and drag and wheel handling. |
-| `editor/renderer/events.rs` | Mouse press, drag, wheel, and keyboard handling; every edit leaves as an `EditorCommand` message. |
-| `editor/renderer/draw/` | Painting: frame setup, culling and laying out visible lines once (`mod.rs`), block chrome, code lines, and table rows (`blocks.rs`), inline content (`inline.rs`), the selection shape, search highlights and the caret (`overlays.rs`), numbered captions (`captions.rs`), and shared primitives (`primitives.rs`). |
-| `editor/renderer/testing.rs`, `tests.rs` | A recording renderer and a `View` driver that feeds the widget real layout, draw, and input calls, and the behavioral tests built on them. |
-| `editor/render_preview.rs` | An ignored-by-default test that renders sample scenes to PNG with iced's tiny-skia software renderer. See [Developer Guide & Testing](Developer-Guide-and-Testing.md). |
-| `editor/render_snapshot_tests.rs` | An ignored-by-default harness that drives the widget through its `Widget` API and records every draw call, message, and cursor shape to a transcript. See [Developer Guide & Testing](Developer-Guide-and-Testing.md). |
-| `pptx_pane.rs` | `PptxPane`: the prepared deck, the load `generation` that drops stale results, the error to show, zoom as a multiple of fit-to-width, and the scroll position the slide counter and slide stepping read. |
-| `slides/mod.rs` | `load_deck()`, which parses a deck, decodes and crops its pictures (capped at `MAX_IMAGE_SIDE`), and lays out all its text once, off the UI thread; and `layer_ranges()`, which splits a slide into canvas layers. |
-| `slides/text.rs` | Text layout in points: greedy wrapping, hanging bullets and numbers, alignment, shared baselines, super- and subscripts, underline and strike rules, `anchor_offset()`, and `layout_table()`, which grows rows to fit their text. |
-| `slides/fonts.rs` | `resolve()`, mapping a slide's typeface to an installed family or a metric-compatible substitute, and `Shaper`, which measures with the cosmic-text shaper at `REFERENCE_SIZE`. |
-| `slides/draw.rs` | `SlideLayer`, the canvas program for one `SlidePart` of a slide: fills and gradients, dashed lines and arrowheads, rotation and flips, pictures, text, tables, and unsupported-content boxes. |
-| `slides/preview.rs` | An ignored-by-default test that renders a deck's slides to PNG through the viewer's widgets. |
-| `views/pptx_viewer.rs` | The slide column (`slide_page()` stacks one slide's layers), the slide toolbar, and `slide_metrics()`, the geometry scrolling and the slide counter share with the view. |
+| `main.rs` | CLI (`--install`, `--uninstall`, a path to open), Linux desktop entry, window size restore, the iced daemon. |
+| `build.rs` | Embeds the Windows icon and version resource. |
+| `app/mod.rs` | `MdEditor` state, `boot`, `title`, `update`, and `update_inner`, which routes each message family to a handler below. |
+| `app/{pdf,graph,ink,search,editor,vault,shortcuts,shell}.rs` | One `update_<family>` handler each; see [Native Desktop GUI](Native-Desktop-GUI.md#2-messages-and-where-they-are-handled-messagesrs-app). |
+| `app/pdf_pages.rs` | Opening PDFs, page rendering and eviction, fit, navigation, highlights. |
+| `app/documents.rs` | Opening, saving, parking documents (notes, decks, images); session and layout persistence. |
+| `app/subscription.rs` | Keyboard, timers, window events, pen input, the vault watcher. |
+| `app/view.rs` | `view(window)`: the shell window and the ink window. |
+| `app/links.rs` | Wikilink, relative-link and heading-anchor resolution. |
+| `messages.rs` | `Message`, `Shortcut`, `TrackerTab`. |
+| `platform.rs` | Per-OS shims (opening external links). |
+
+### State (`src/*_state.rs`, `*_pane.rs`)
+
+| Path | Responsibility |
+| :--- | :--- |
+| `editor_state.rs` | `EditorPane`: buffer, highlighted lines, image and math caches, autosave timing, caret reveal, retained buffers. |
+| `vault_state.rs` | Vault root, entries, sidebar selection and expansion, backlinks. |
+| `ui_state.rs` | Modals, palette, toast, split view, window size and scale. |
+| `search_state.rs` | Query, flags, results, memoized in-document matches. |
+| `tracker_state.rs` | Timer, sessions, tracker values, active tab. |
+| `pdf_pane.rs` | PDF viewport, page caches, annotations, selection, render generation. |
+| `pptx_pane.rs` | Open deck, load generation, zoom, scroll. |
+| `graph_state.rs`, `graph_state/` | `GraphState`, with the force simulation in `physics` and initial placement in `layout`. |
+| `ink/` | `InkState` and the handwriting engine; see [Handwritten Notes](Handwritten-Notes.md). |
+
+### The Markdown editor (`src/editor/`)
+
+| Path | Responsibility |
+| :--- | :--- |
+| `buffer.rs` | `DocBuffer` over `ropey::Rope`: transactions with inverse ops, undo-run coalescing, revision-based dirty tracking, auto-pairing, list continuation, grapheme-aware movement, line-ending preservation. |
+| `highlight.rs`, `highlight/` | `Highlighted`: incremental Markdown → `StyledLine`s (block state machine here, `inline` spans, `code` via syntect). `reference.rs` is the old highlighter kept as a test oracle. |
+| `layout_tree.rs` | `HeightTree`, a Fenwick tree over line heights. |
+| `layout_cache.rs` | `LineHeightCache` keys so lines are remeasured only when needed. |
+| `renderer/mod.rs` | The `Editor` widget, `State`, `LayoutKey`, `MathRender`; `Widget` methods delegate to the modules below. |
+| `renderer/metrics.rs` | The vertical rhythm and every constant shared by layout, painting and hit testing. |
+| `renderer/measure.rs` | Shaping, font metrics, memoized word offsets and widths, `span_font()`. |
+| `renderer/spans.rs` | Which spans reveal their Markdown source for a given caret column. |
+| `renderer/flow.rs` | `Flow`, inline layout of one line: UAX #14 breaking, rows, baselines, column ⇄ x. The only wrapper. |
+| `renderer/layout.rs` | Line body heights, collapsing margins, filling the height tree. |
+| `renderer/caret.rs` | Caret boxes, hit testing with affinity, visual up/down. |
+| `renderer/glide.rs`, `reveal.rs` | Caret glide and blink; answering the app's reveal request. |
+| `renderer/selection.rs`, `scroll.rs` | Selection shape and text; per-block horizontal scroll and scrollbars. |
+| `renderer/events.rs` | Mouse and keyboard; every edit leaves as an `EditorCommand`. |
+| `renderer/draw/` | Painting: frame setup and culling, blocks, inline content, overlays, captions, primitives. |
+| `renderer/testing.rs`, `tests.rs`, `properties.rs` | A recording renderer and `View` driver, behavioural tests, seeded property suites. |
+| `render_preview.rs`, `render_snapshot_tests.rs`, `test_docs.rs` | Opt-in PNG previews and draw-call transcripts; the seeded test-document generator. |
+
+### Views and viewers (`src/views/`, `src/slides/`)
+
+| Path | Responsibility |
+| :--- | :--- |
+| `views/sidebar.rs`, `toolbar.rs`, `welcome.rs`, `toast.rs`, `icons.rs` | Shell chrome. |
+| `views/modals.rs`, `link_note_picker.rs`, `command_palette.rs` | Dialogs and the `Ctrl+P` palette (registry and fuzzy ranking via `fuzzy.rs`). |
+| `views/search.rs`, `toc.rs`, `backlinks.rs` | Side panels. |
+| `views/pdf_viewer.rs`, `interactive_pdf.rs` | The PDF pane and the per-page widget. See [PDF Viewer Internals](PDF-Viewer-Internals.md). |
+| `views/pptx_viewer.rs`, `slides/` | The slide viewer; `slides/` prepares decks off the UI thread and draws slides on layered canvases. |
+| `views/graph.rs`, `graph/`, `gpu_graph.rs` | The knowledge graph: toolbar, inspector, label overlay, and the GPU layer. |
+| `views/ink.rs` | The handwriting window's toolbar and palette. |
+| `views/tracker.rs`, `tracker/config.rs` | The study-tracker dashboard and its JSON config model. |
+| `theme.rs`, `motion.rs` | Design tokens and motion. See [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md). |
+| `pdf_notes.rs`, `search.rs` | Linked-note helpers for PDF highlights; in-note line matching. |
 
 ---
 
-## Workspace Crate Dependencies
+## Crate Dependencies
 
-```mermaid
-graph LR
-    subgraph ThirdPartyCore ["core dependencies"]
-        rusqlite["rusqlite — bundled SQLite"]
-        pdfium["pdfium-render"]
-        image_c["image"]
-        regex_c["regex"]
-        serde_c["serde and serde_json"]
-        sha2["sha2"]
-        uuid["uuid"]
-        roxmltree["roxmltree — slide XML"]
-        zip_c["zip — read-only, deflate only"]
-    end
+| Crate | Runtime | Build |
+| :--- | :--- | :--- |
+| core | `rusqlite` (bundled SQLite), `pdfium-render`, `image`, `regex`, `serde`/`serde_json`, `sha2`, `uuid`, `zip` (read-only, deflate), `roxmltree` | `ureq`, `flate2`, `tar`, `sha2` (PDFium download) |
+| native | `md-editor-core`, `iced` 0.14 (canvas, image, advanced, tokio), `ropey`, `syntect`, `ratex-*`, `unicode-linebreak`, `unicode-segmentation`, `rfd`, `notify`, `tokio`, `chrono`, `image`, `regex`, `serde`, `uuid`, `bytemuck`; Windows: `windows-sys` | Windows: `winresource` |
 
-    subgraph BuildDeps ["core build dependencies"]
-        ureq["ureq"]
-        flate2["flate2"]
-        tar["tar"]
-    end
+### Dependency Rules
 
-    subgraph ThirdPartyNative ["native dependencies"]
-        iced["iced 0.14"]
-        ropey["ropey"]
-        syntect["syntect"]
-        ratex["ratex-render, -parser, -layout, -types"]
-        rfd["rfd — native file dialogs"]
-        notify["notify — filesystem watcher"]
-        tokio["tokio"]
-        chrono["chrono"]
-    end
-
-    CoreCrate["md-editor-core"] --> rusqlite
-    CoreCrate --> pdfium
-    CoreCrate --> image_c
-    CoreCrate --> regex_c
-    CoreCrate --> serde_c
-    CoreCrate --> sha2
-    CoreCrate --> uuid
-    CoreCrate --> roxmltree
-    CoreCrate --> zip_c
-    CoreCrate -.->|"build.rs only"| ureq
-    CoreCrate -.->|"build.rs only"| flate2
-    CoreCrate -.->|"build.rs only"| tar
-
-    NativeCrate["md-editor-native"] --> CoreCrate
-    NativeCrate --> iced
-    NativeCrate --> ropey
-    NativeCrate --> syntect
-    NativeCrate --> ratex
-    NativeCrate --> rfd
-    NativeCrate --> notify
-    NativeCrate --> tokio
-    NativeCrate --> chrono
-```
-
-### Inviolable Dependency Rules
-
-1. **No circular dependencies.** `md-editor-core` must never depend on `md-editor-native`.
-2. **No UI in core.** The core crate must never take a dependency on a GUI or text-shaping
-   toolkit (`iced`, `winit`, `ratex-render`).
-3. **Pure FFI containment.** `pdfium-render` is reachable only through `core/src/pdf.rs`;
-   exactly one `Pdfium` binding may exist per process.
+1. **No cycles.** `md-editor-core` never depends on `md-editor-native`.
+2. **No UI in core.** Core takes no GUI or text-shaping dependency (`iced`, `winit`,
+   `ratex-render`).
+3. **FFI containment.** `pdfium-render` is used only under `core/src/pdf/`; exactly one
+   `Pdfium` binding exists per process. Win32 calls stay in `native/src/platform.rs` and
+   `native/src/ink/pen_win.rs`.

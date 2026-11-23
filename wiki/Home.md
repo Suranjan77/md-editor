@@ -1,113 +1,116 @@
 # MD Editor Wiki
 
-Welcome to the **MD Editor** wiki — the single, authoritative documentation set for
-the project. Everything that used to live under `docs/` has been folded into these
-pages; there is no other documentation tree to keep in sync.
+**MD Editor** is a calm, native, local-first desktop workspace for Markdown notes, PDFs,
+presentations, images, a knowledge graph, handwritten notes, search, backlinks, and study
+progress. It is written in Rust on [Iced](https://github.com/iced-rs/iced) 0.14 and Google's
+[PDFium](https://pdfium.googlesource.com/pdfium/).
 
-MD Editor is a calm, native, local-first desktop workspace for notes, PDFs, presentations, images,
-search, backlinks, and study progress. It is written in Rust on top of the
-[Iced](https://github.com/iced-rs/iced) GUI toolkit (0.14) and Google's
-[PDFium](https://pdfium.googlesource.com/pdfium/) rendering engine.
+This wiki is the authoritative documentation. If a page and the code disagree, the code is
+right and the page is a bug.
 
 ---
 
-## System Architecture at a Glance
+## I want to change…
 
-The workspace is two crates: a headless engine (`md-editor-core`) and a native
-desktop interface (`md-editor-native`).
+| …this | Start here | Then read |
+| :--- | :--- | :--- |
+| How Markdown looks or edits | `native/src/editor/` | [Markdown Pipeline](Markdown-Pipeline.md) |
+| What a message or shortcut does | `native/src/app/<family>.rs` | [Native Desktop GUI](Native-Desktop-GUI.md#2-messages-and-where-they-are-handled-messagesrs-app), [Keyboard Shortcuts](Keyboard-Shortcuts.md) |
+| Saving, opening, file operations | `native/src/app/documents.rs`, `core/src/vault.rs` | [Data Flows & Invariants](Data-Flows-and-Durability-Invariants.md), [Core Services](Core-Services.md) |
+| PDF rendering, TOC, references | `core/src/pdf/`, `core/src/references.rs` | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) |
+| The PDF pane, highlights, linked notes | `native/src/app/pdf*.rs`, `native/src/views/pdf_viewer.rs` | [PDF Viewer Internals](PDF-Viewer-Internals.md) |
+| Presentations | `core/src/pptx/`, `native/src/slides/` | [Core Services §8](Core-Services.md#8-powerpoint-presentations-pptxrs-pptx) |
+| The knowledge graph | `native/src/graph_state.rs`, `native/src/views/graph*` | [Knowledge Graph](Knowledge-Graph.md) |
+| Handwriting | `native/src/ink/` | [Handwritten Notes](Handwritten-Notes.md) |
+| Search, wikilinks, backlinks | `core/src/file_index.rs`, `native/src/app/search.rs` | [Core Services](Core-Services.md) |
+| The study tracker | `native/src/views/tracker.rs`, `core/src/tracker.rs` | [Study Tracker](Study-Tracker.md) |
+| Colours, spacing, animation | `native/src/theme.rs`, `native/src/motion.rs` | [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md) |
+| The database schema | `core/src/state.rs` | [Core Services](Core-Services.md) |
+
+Every source file opens with a one-line `//!` summary: `grep -rm1 '^//!' core/src native/src`
+prints a map of the code. [Repository Structure](Repository-Structure.md) has the same map
+with more detail.
+
+---
+
+## Architecture at a Glance
+
+Two crates: a headless engine (`md-editor-core`) and the desktop app (`md-editor-native`).
 
 ```mermaid
 graph TB
-    subgraph UI ["md-editor-native — Iced GUI"]
-        App["Shell: state, update router, subscriptions<br/>app.rs, messages.rs"]
-        Widget["Custom markdown editor widget<br/>editor/renderer/"]
-        DocBuf["DocBuffer and undo runs<br/>editor/buffer.rs"]
-        Fenwick["HeightTree — Fenwick tree<br/>editor/layout_tree.rs"]
-        Highlighter["Markdown tokenizer and concealer<br/>editor/highlight.rs"]
-        PDFView["Interactive PDF widget and overlays<br/>views/interactive_pdf.rs, views/pdf_viewer.rs"]
-        SlideView["Slide text layout and layered canvases<br/>slides/, views/pptx_viewer.rs"]
-        Palette["Command palette and fuzzy matcher<br/>fuzzy.rs, views/command_palette.rs"]
-        Tokens["Design tokens and motion<br/>theme.rs, motion.rs"]
+    subgraph UI ["md-editor-native — Iced"]
+        App["Shell: state, message router, subscriptions<br/>app/, messages.rs"]
+        Widget["Markdown editor widget<br/>editor/renderer/"]
+        DocBuf["DocBuffer, undo runs<br/>editor/buffer.rs"]
+        Highlighter["Incremental Markdown highlighter<br/>editor/highlight.rs"]
+        PDFView["PDF pane and page widget<br/>views/pdf_viewer.rs, views/interactive_pdf.rs"]
+        SlideView["Slide viewer<br/>slides/, views/pptx_viewer.rs"]
+        GraphView["Knowledge graph<br/>graph_state.rs, views/graph*, shaders/"]
+        Ink["Handwriting canvas (own window)<br/>ink/, views/ink.rs"]
     end
 
-    subgraph Core ["md-editor-core — headless engine"]
-        AppState["Shared AppState context<br/>state.rs"]
-        Vault["Vault traversal and atomic writes<br/>vault.rs"]
-        Index["Wikilink and backlink graph<br/>file_index.rs"]
-        SQLite["SQLite in WAL mode, schema, migrations<br/>state.rs, config.rs"]
-        FTS["FTS5 full-text index<br/>file_search"]
-        PDFWorker["PDFium worker thread and renderer<br/>pdf.rs"]
-        RefScanner["Internal reference resolver<br/>references.rs"]
-        PptxParser["Read-only PowerPoint parser<br/>pptx.rs"]
-        Tracker["Study tracker persistence<br/>tracker.rs"]
+    subgraph Core ["md-editor-core — headless"]
+        AppState["AppState, SQLite (WAL), schema<br/>state.rs"]
+        Vault["Vault ops, atomic writes, graph snapshot<br/>vault.rs, vault/"]
+        Index["Wikilink and backlink index<br/>file_index.rs"]
+        PDFWorker["PDFium worker, TOC recovery<br/>pdf/"]
+        RefScanner["Reference resolver<br/>references.rs"]
+        PptxParser["PowerPoint reader<br/>pptx/"]
     end
 
-    App -->|"requests and state sync"| AppState
-    Widget -->|"queries line offsets"| Fenwick
-    DocBuf -->|"markdown text"| Highlighter
-    Highlighter -->|"styled spans"| Widget
-    PDFView -->|"typed tasks over channels"| PDFWorker
-    SlideView -->|"loads a deck off the UI thread"| PptxParser
-    Vault -->|"rebuilds FTS rows"| SQLite
-    Index -->|"resolves wikilinks"| Vault
-    AppState --> SQLite
+    App --> AppState
+    DocBuf --> Highlighter --> Widget
+    PDFView -->|"typed commands over channels"| PDFWorker
+    PDFWorker --> RefScanner
+    SlideView -->|"parsed off the UI thread"| PptxParser
+    GraphView -->|"snapshot task"| Vault
+    Ink -->|"atomic save of .ink"| Vault
+    Index --> Vault
     AppState --> Vault
     AppState --> Index
-    AppState --> Tracker
-    SQLite --- FTS
-    PDFWorker --> RefScanner
 ```
 
 ---
 
-## The Field Handbook (PDF)
+## Pages
 
-The whole wiki is also published as a single printable book,
-**[MD Editor — The Field Handbook](MD-Editor-Handbook.pdf)** (100 pages): the same material
-re-ordered as a guided tour for a new contributor, with thirty purpose-drawn diagrams, worked
-examples, and exercises. It is generated from `wiki/handbook/` — see the README there to rebuild it.
+| Page | Covers |
+| :--- | :--- |
+| [User Guide & Feature Manual](User-Guide-and-Feature-Manual.md) | Everything a user can do |
+| [Keyboard Shortcuts](Keyboard-Shortcuts.md) | Every binding, and which layer owns it |
+| [Architecture & Philosophy](Architecture-and-Philosophy.md) | Local-first, durability, non-destructive sidecars, threading |
+| [Repository Structure](Repository-Structure.md) | Crates and per-file responsibilities |
+| [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md) | Keystroke to atomic save, navigation, highlight creation |
+| [Core Services](Core-Services.md) | SQLite schema, paths, vault operations, wikilinks, search, presentations |
+| [Native Desktop GUI](Native-Desktop-GUI.md) | Lifecycle, windows, message routing, sub-states, subscriptions, views |
+| [Markdown Pipeline](Markdown-Pipeline.md) | Buffer, incremental highlighting, rhythm, caret, drawing |
+| [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) | PDFium worker, TOC recovery, references, annotations |
+| [PDF Viewer Internals](PDF-Viewer-Internals.md) | PDF pane state, generations, navigation, zoom |
+| [Knowledge Graph](Knowledge-Graph.md) | Snapshot, refresh, layout, simulation, GPU rendering, insights |
+| [Handwritten Notes](Handwritten-Notes.md) | Ink window, pen capture, strokes, the `.ink` format |
+| [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md) | Type scale, spacing, colours, easing, springs |
+| [Study Tracker](Study-Tracker.md) | Timer, sessions, curriculum config, storage |
+| [Developer Guide & Testing](Developer-Guide-and-Testing.md) | Toolchain, builds, PDFium, test suites |
+| [Release Checklist](Release-Checklist.md) | Pre-release verification and packaging |
+| [Contributor Guidelines](Contributor-Guidelines.md) | Architectural rules and PR checklist |
 
----
+New contributors: read [Contributor Guidelines](Contributor-Guidelines.md), then
+[Developer Guide & Testing](Developer-Guide-and-Testing.md), then
+[Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md).
 
-## Wiki Navigation Matrix
-
-| Topic | Description | Link |
-| :--- | :--- | :--- |
-| **User Guide & Features** | Vaults, markdown editing, PDF reading, split view, presentations, search modes, tracker | [User Guide & Feature Manual](User-Guide-and-Feature-Manual.md) |
-| **Keyboard Shortcuts** | Every binding, and which layer owns it | [Keyboard Shortcuts](Keyboard-Shortcuts.md) |
-| **Architecture & Philosophy** | Local-first, portability, durability, non-destructive sidecars, threading | [Architecture & Philosophy](Architecture-and-Philosophy.md) |
-| **Repository Structure** | Workspace layout, crate boundaries, per-file responsibilities | [Repository Structure](Repository-Structure.md) |
-| **Core Services** | SQLite schema, portable paths, vault operations, atomic writes, wikilink graph, presentation parsing | [Core Services](Core-Services.md) |
-| **Native Desktop GUI** | Application lifecycle, message enum, sub-state split, subscriptions, views | [Native Desktop GUI](Native-Desktop-GUI.md) |
-| **Markdown Pipeline** | Rope buffer, incremental highlighting, typographic rhythm, caret affinity, scroll-into-view, draw pass | [Markdown Pipeline](Markdown-Pipeline.md) |
-| **PDF Engine & Sidecars** | PDFium worker, TOC recovery, reference resolver, sidecar annotations, linked notes | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) |
-| **PDF Viewer Internals** | Native PDF state, generation and pending invariants, navigation, scroll, zoom | [PDF Viewer Internals](PDF-Viewer-Internals.md) |
-| **Design Tokens & Motion** | Type scale, 2px spacing grid, radii, colors, one easing curve, closed-form springs, zero idle CPU | [Design Tokens, Motion & Palette](Design-Tokens-Motion-and-Palette.md) |
-| **Study Tracker** | Timer, sessions, the configurable curriculum, gates, reading, storage | [Study Tracker](Study-Tracker.md) |
-| **Data Flows & Invariants** | Keystroke to atomic save, navigation, highlight creation, durability invariants | [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md) |
-| **Developer Guide & Testing** | Toolchain, build commands, PDFium resolution, test suites, desktop integration | [Developer Guide & Testing](Developer-Guide-and-Testing.md) |
-| **Release Checklist** | Pre-release verification, smoke test, packaging, known constraints | [Release Checklist](Release-Checklist.md) |
-| **Contributor Guidelines** | Architectural rules, design token compliance, PR verification | [Contributor Guidelines](Contributor-Guidelines.md) |
-
----
-
-## Finding What You Need
-
-- **New user** — start with the [User Guide & Feature Manual](User-Guide-and-Feature-Manual.md)
-  and keep [Keyboard Shortcuts](Keyboard-Shortcuts.md) open beside it.
-- **New contributor** — read [Contributor Guidelines](Contributor-Guidelines.md), then
-  [Developer Guide & Testing](Developer-Guide-and-Testing.md), then
-  [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md).
-- **Reviewing the design** — the deep dives are [Markdown Pipeline](Markdown-Pipeline.md),
-  [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md),
-  [PDF Viewer Internals](PDF-Viewer-Internals.md), and [Core Services](Core-Services.md).
-- **Preparing a build** — [Release Checklist](Release-Checklist.md).
+**The Field Handbook** — a ~100-page printable tour of the codebase lives at
+[`docs/MD-Editor-Handbook.pdf`](../docs/MD-Editor-Handbook.pdf). It is a snapshot from
+2026-09-14 and predates the knowledge graph, handwriting and the module splits; this wiki is
+current.
 
 ---
 
-## Documentation Conventions
+## Conventions for These Pages
 
-- Every claim on these pages is meant to be checkable against the source file named
-  beside it. If a page and the code disagree, the code is right and the page is a bug.
-- Line-level details (exact constants, table columns, message variants) are quoted from
-  the modules that define them, so a rename should break a search rather than rot quietly.
+- Name the file (and function) a claim comes from, so it can be checked. Prefer symbol
+  names over line numbers, which rot on every edit.
+- Do not copy lists the code already holds (every `Message` variant, every constant);
+  link to the file and describe the shape instead.
+- When code moves, update [Repository Structure](Repository-Structure.md) and the
+  "I want to change…" table above in the same change.

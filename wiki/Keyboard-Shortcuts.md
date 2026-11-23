@@ -3,7 +3,7 @@
 Shortcuts are handled by two layers, and knowing which is which explains the behaviour you
 see:
 
-- **Application layer** — `app.rs::subscription`. Sees every key press regardless of focus,
+- **Application layer** — `app/subscription.rs`. Sees every key press regardless of focus,
   and returns `None` for anything it does not act on, so ordinary typing does not spawn a
   redundant update cycle.
 - **Editor layer** — `editor/renderer/events.rs`. Only fires while the markdown editor widget is
@@ -21,14 +21,17 @@ On macOS, `Cmd` works everywhere `Ctrl` does — both layers test
 | `Ctrl+P` | Open the command palette |
 | `Ctrl+O` | Open a folder as a vault |
 | `Ctrl+N` | New file |
-| `Ctrl+S` | Save the active note immediately, with a confirming toast |
+| `Ctrl+S` | Save the active note immediately, with a confirming toast; saves the ink page instead while the handwriting canvas is in front |
 | `Ctrl+F` | Search — routed to the active pane, see below |
 | `Ctrl+B` | Toggle the sidebar |
 | `Ctrl+T` | Toggle the table of contents |
 | `Ctrl+G` | Open the knowledge graph |
+| `Ctrl+I` | Open or close the handwriting canvas |
 | `Ctrl+C` | Copy the PDF text selection, when the PDF pane holds one |
 | `Escape` | Close the topmost overlay, in priority order |
-| `Enter` | Submit the open name modal |
+| `Enter` | Run the palette's highlighted row; submit global search; open the node selected in the knowledge graph; otherwise submit the open name modal |
+| `Delete` | Remove the lasso selection on the handwriting canvas |
+| `Ctrl+Z` / `Ctrl+Y` | Also undo / redo on the handwriting canvas (no effect while it is closed) |
 | `↑` / `↓` | Scroll the PDF pane or the presentation by 64px |
 | `PageUp` / `PageDown` | Scroll the PDF pane by 520px; in a presentation, go to the previous or next slide |
 
@@ -45,9 +48,10 @@ It follows the active pane rather than opening one fixed panel:
 
 ### What `Escape` closes
 
-In order, closing exactly one thing per press: the PDF text selection → the focused
-annotation → the PDF link preview → the open modal → the study tracker → in-file search →
-global search → the command palette → the table of contents.
+In order, closing exactly one thing per press: the lasso selection on the handwriting
+canvas → the PDF text selection → the focused annotation → the PDF link preview → the open
+modal → the study tracker → in-file search → global search → the command palette → the
+knowledge graph → the table of contents.
 
 ---
 

@@ -7,85 +7,74 @@ they have something to do.
 
 ---
 
-## 1. Application Lifecycle (`main.rs`, `app.rs`)
+## 1. Application Lifecycle (`main.rs`, `app/mod.rs`)
 
-`main.rs` starts the app through iced's function API rather than the older `Application`
-trait:
+The app runs as an iced **daemon** rather than a single-window application, because the
+handwriting canvas lives in a window of its own. A daemon starts with no windows, so
+`MdEditor::boot` opens the shell window itself:
 
 ```rust
-iced::application(
-    move || app::MdEditor::new_with_startup_file(startup_path.clone()),
+iced::daemon(
+    move || app::MdEditor::boot(main_window.clone(), startup_path.clone()),
     app::MdEditor::update,
-    app::MdEditor::view,
+    app::MdEditor::view,          // view(&self, window::Id)
 )
-.title(app::MdEditor::title)
-.theme(|state: &app::MdEditor| state.theme())
+.title(app::MdEditor::title)      // title(&self, window::Id)
+.theme(|state: &app::MdEditor, _window| state.theme())
 .subscription(app::MdEditor::subscription)
-.window(iced::window::Settings { size: restore_window_size(), icon, platform_specific, ..Default::default() })
 .run()
 ```
 
 ```mermaid
 flowchart TD
     Init(["Process start"]) --> Cli["Parse CLI args: --install, --uninstall, or a path"]
-    Cli --> Geometry["read_startup_value('window_size') on its own connection"]
-    Geometry --> Clamp["Parse and clamp; fall back to 1200x800"]
-    Clamp --> Construct["MdEditor::new_with_startup_file — restore last_vault and last_file"]
-    Construct --> EventLoop{"Iced event loop"}
-
-    EventLoop -->|"user input or OS event"| Update["MdEditor::update"]
-    EventLoop -->|"subscription tick or task result"| Update
-
-    Update --> HandleMsg["Match the Message variant"]
-    HandleMsg --> Delegate["Delegate to a sub-state, or handle cross-pane effects on the shell"]
-    Delegate --> ReturnTask["Return an iced::Task&lt;Message&gt;"]
-
-    ReturnTask --> View["MdEditor::view"]
-    View --> Layout["Compose toolbar, sidebar, editor or PDF pane, panels, overlays"]
-    Layout --> EventLoop
+    Cli --> Geometry["restore_window_size(): read 'window_size', clamp, fall back to 1200x800"]
+    Geometry --> Boot["MdEditor::boot: new_with_startup_file + open the shell window"]
+    Boot --> EventLoop{"Iced event loop"}
+    EventLoop -->|"input, subscription tick, task result"| Update["MdEditor::update"]
+    Update --> Router["update_inner routes by message family"]
+    Router --> Handler["update_pdf / update_vault / update_graph / …"]
+    Handler --> ReturnTask["Return an iced::Task&lt;Message&gt;"]
+    ReturnTask --> View["MdEditor::view(window): shell_view or ink_view"]
+    View --> EventLoop
 ```
 
-`update()` is the central router. For each message it matches the variant, mutates the
-relevant sub-state, dispatches side effects as tasks (a background highlight parse, an
-atomic save, a PDF render), and arms animation only when something is actually moving.
+**Windows.** `main_window` is the shell; closing it exits the process (`WindowClosed`).
+`ink_window` exists only while the handwriting canvas is open (`Ctrl+I`). Window events
+carry their `window::Id`, so resizes and DPI changes of the ink window never touch the
+shell's saved geometry or PDF supersampling.
 
-A key structural rule: **a sub-state's `update` handles only messages that touch its own
-fields.** Anything cross-cutting — a modal submit that creates a vault entry, opening a file,
-computing backlinks — stays on the shell, which is the only place that owns the shared
-`Arc<AppState>`.
+**A structural rule:** a sub-state's own `update` handles only messages that touch its own
+fields. Anything cross-cutting — a modal submit that creates a vault entry, opening a file,
+computing backlinks — stays on the shell, which alone owns the shared `Arc<AppState>`.
 
 ---
 
-## 2. Message Architecture (`messages.rs`)
+## 2. Messages and Where They Are Handled (`messages.rs`, `app/`)
 
-`Message` is the complete event vocabulary of the application, grouped by domain:
+`Message` (in `messages.rs`) is the complete event vocabulary. `MdEditor::update_inner`
+does nothing but route each variant to the handler for its family; each handler lives in
+the file of the same name. To find the code for a message, find its family:
 
-| Group | Representative variants |
-| :--- | :--- |
-| **Vault** | `OpenVaultDialog`, `VaultOpened`, `VaultIndexed`, `CreateFileDialog`, `CreateFolderDialog` |
-| **Sidebar** | `SidebarToggle`, `SidebarFileClicked`, `SidebarFolderToggled` |
-| **Navigation** | `GlobalSearchOpen`, `SearchQueryChanged`, `SearchDebounceElapsed`, `SearchRegexToggled`, `SearchMatchCaseToggled`, `SearchReplaceAll`, `CommandPaletteOpen`, `NameModalSubmit`, `DeleteFileDialog` |
-| **Editor** | `EditorCommand`, `EditorCommandNoScroll`, `EditorSave`, `EditorCheckboxToggle`, `EditorScrolled`, `EditorCaretView`, `EditorScrollInterrupted`, `AutosaveElapsed`, `AnimationTick` |
-| **PDF** | `PdfZoomChanged`, `PdfFitToWidth`, `PdfLoaded`, `PdfPageSizesLoaded`, `PdfRendered`, `PdfRenderFailed`, `PdfRenderSkipped`, `PdfScrolled`, `PdfLeftClicked`, `PdfRightClicked`, `PdfTocLoaded`, `PdfPageLinksLoaded`, `PdfReferencesLoaded`, `PdfSearchResult`, `PdfLinkPreviewResult` |
-| **PDF study** | `PdfDocumentIdComputed`, `PdfPageTextLoaded`, `PdfSelectionChanged`, `PdfSelectionFinished`, `PdfCopySelection`, `PdfCreateHighlight`, `PdfQuickHighlight`, `PdfDeleteHighlight`, `PdfSearchLooseToggled`, `PdfOrphanReport`, `PdfAddQuickNote`, `PdfLinkNote`, `PdfOpenLinkedNote`, `PdfAnnotationFocused` |
-| **Tracker** | `TrackerToggle`, `TrackerStart`, `TrackerStop`, `TrackerTabSelected`, `TrackerGateToggled`, `TrackerReadingToggled`, `TrackerProjectStatusChanged`, `TrackerConfigEdited`, `TrackerConfigSave`, `TrackerManualAdd`, `TrackerSessionDelete` |
-| **Toast & media** | `ShowToast`, `ToastHide`, `MathRendered` |
-| **System** | `KeyboardShortcut(Shortcut)`, `ToggleTOC`, `TocClicked`, `SplitViewToggle`, `SplitViewDragStart`, `SplitViewDragging`, `SplitViewDragEnd`, `WindowResized`, `WindowOpened`, `WindowRescaled`, `WindowCloseRequested`, `VaultFilesChanged` |
+| Family (variant prefix) | Handler | File |
+| :--- | :--- | :--- |
+| `Pdf*` (except the link-note picker's `PdfLinkNote*Selected`/`…SearchChanged`) | `update_pdf` | `app/pdf.rs` (page management in `app/pdf_pages.rs`) |
+| `Graph*` | `update_graph` | `app/graph.rs` |
+| `Ink*` | `update_ink` | `app/ink.rs` |
+| `Search*`, `GlobalSearch*` | `update_search` | `app/search.rs` |
+| `Editor*`, `Autosave*`, `AnimationTick`, `MathRendered`, `TocClicked`, `ToggleTOC` | `update_editor` | `app/editor.rs` |
+| `OpenVault*`, `Vault*`, `Sidebar*`, create/rename/delete dialogs, name modals, the link-note picker | `update_vault` | `app/vault.rs` |
+| `KeyboardShortcut(Shortcut)` | `update_shortcuts` | `app/shortcuts.rs` |
+| everything else: `Window*`, `SplitView*`, `CommandPalette*`, `Tracker*`, `Pptx*`, toasts | `update_shell` | `app/shell.rs` |
 
-Two supporting enums live beside it:
-
-```rust
-pub enum Shortcut {
-    Save, OpenVault, NewFile, Search, CommandPalette,
-    ToggleSidebar, ToggleBacklinks, FocusMode,
-    TableOfContents, StudyTracker, SplitView, Escape,
-}
-
-pub enum TrackerTab { Dashboard, Log, Projects, Gates, Reading, Config }
-```
+The rest of `app/` holds the shared machinery: `documents.rs` (opening, saving, parking
+documents and persisting the session), `subscription.rs`, `view.rs`, `links.rs` (wikilink
+and heading resolution) and `tests.rs`.
 
 `Shortcut` is the indirection that lets the keyboard subscription and the command palette
-trigger exactly the same handler.
+trigger exactly the same handler. Adding a message means: a variant in `messages.rs`, an
+arm in the matching `app/<family>.rs` handler, and — if its name does not start with a
+routed prefix — a pattern in `update_inner`.
 
 ---
 
@@ -106,6 +95,10 @@ classDiagram
         +TrackerState tracker
         +PdfPane pdf
         +PptxPane pptx
+        +GraphState graph
+        +InkState ink
+        +Option~Id~ main_window
+        +Option~Id~ ink_window
         +Option~String~ active_path
         +ActivePanel active_panel
         +bool showing_pdf
@@ -208,6 +201,12 @@ classDiagram
 - **`PdfPane`** (`pdf_pane.rs`) — the PDF viewport, page caches, annotations, selection, and
   the render generation. Documented in detail in
   [PDF Viewer Internals](PDF-Viewer-Internals.md).
+- **`GraphState`** (`graph_state.rs`) — the knowledge graph: the latest `GraphSnapshot`,
+  scope and filters, selection and pins, the view transform, and the force simulation. See
+  [Knowledge Graph](Knowledge-Graph.md).
+- **`InkState`** (`ink/mod.rs`) — the handwriting surface: the open `.ink` document and its
+  path, tool and colour settings, the camera, the in-progress stroke, and selection. See
+  [Handwritten Notes](Handwritten-Notes.md).
 - **`PptxPane`** (`pptx_pane.rs`) — the open presentation: the prepared `LoadedDeck`, the
   load `generation` (bumped by every load and by closing, so the result of a slow parse the
   reader has since left is dropped when it lands), the error to show, zoom as a multiple of
@@ -217,10 +216,10 @@ classDiagram
 
 ---
 
-## 4. Reactive Subscriptions (`app.rs::subscription`)
+## 4. Reactive Subscriptions (`app/subscription.rs`)
 
-Six streams are combined, and **five of the six return `Subscription::none()` when they
-have nothing to do**:
+Every stream except the keyboard, window events, the vault watcher and pen input returns
+`Subscription::none()` when it has nothing to do:
 
 1. **Keyboard** — `iced::event::listen_with` filters key presses and returns `None` for
    anything the app does not act on, so ordinary typing (handled by the focused editor
@@ -240,6 +239,11 @@ have nothing to do**:
    wheel turn or click fires `EditorScrollInterrupted` and hands the page back to the user.
    See [Markdown Pipeline](Markdown-Pipeline.md#revealing-the-caret).
 
+7. **Graph refresh and physics** — armed only while the graph is visible: a 200ms refresh
+   while the snapshot is stale, and a 33ms physics tick while the simulation runs.
+8. **Pen input** — always on (the stream owns a process-wide receiver); it yields nothing
+   unless the ink window has claimed pen capture.
+
 Animation frames are armed the same way, from `motion.is_animating()`; see
 [Design Tokens, Motion & Palette](Design-Tokens-Motion-and-Palette.md).
 
@@ -249,7 +253,7 @@ Animation frames are armed the same way, from `motion.is_animating()`; see
 
 - **Sidebar** (`sidebar.rs`) — the folder/file tree with type-appropriate icons and a header
   offering *open vault*, *new file*, and *new folder*. Clicking a file or folder selects it:
-  the selected row gets a faint highlight and a delete (trash) button, and deleting a folder
+  the selected row gets a faint highlight and rename and delete buttons, and deleting a folder
   removes everything in it (closing any open document inside). New entries go into the
   selected folder, or beside the selected file, only while that row is visible in the tree
   (not deleted, not inside a collapsed folder); otherwise they go to the vault root.
@@ -271,16 +275,22 @@ Animation frames are armed the same way, from `motion.is_animating()`; see
   canvases, one per layer from `slides::layer_ranges`: a canvas layer paints all its shapes,
   then its images, then its text, whatever order they were drawn in, so an element that
   must cover something drawn earlier starts a new layer.
+- **Knowledge graph** (`graph.rs`, `graph/`, `gpu_graph.rs`) — the graph screen: a GPU
+  canvas for nodes and edges with a label overlay, a toolbar, and an inspector. See
+  [Knowledge Graph](Knowledge-Graph.md).
+- **Handwriting chrome** (`ink.rs`) — the ink window's toolbar and colour palette; the
+  canvas itself is `ink/canvas.rs`. See [Handwritten Notes](Handwritten-Notes.md).
 - **Backlinks panel** (`backlinks.rs`) — notes and PDF highlights pointing at the open
   document.
 - **Table of contents** (`toc.rs`) — Markdown headings H1–H6, or the PDF outline (embedded
   bookmarks, or a recovered one marked as synthetic).
 - **Toast** (`toast.rs`) — a single animated feedback message that fades in and out.
-- **Modals** (`modals.rs`) — create file, create folder, delete confirmation, quick note, and
-  link-note dialogs.
+- **Modals** (`modals.rs`) — create file, create folder, rename, delete confirmation, quick
+  note, and link-note dialogs.
 - **Link note picker** (`link_note_picker.rs`) — a searchable in-app vault picker for
   attaching a PDF highlight to an existing note or a new note path.
-- **Tracker** (`tracker.rs`) — the six-tab study dashboard and the JSON configuration schema.
+- **Tracker** (`tracker.rs`, `tracker/config.rs`) — the six-tab study dashboard and the JSON
+  configuration schema.
 - **Icons** (`icons.rs`) — the vector icon set, drawn directly on an iced canvas rather than
   loaded as font glyphs or bitmaps.
 - **Welcome** (`welcome.rs`) — the zero-state: the app icon, wordmark, an

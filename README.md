@@ -1,6 +1,6 @@
 # MD Editor
 
-**A calm, local-first Markdown workspace for notes, PDFs, presentations, knowledge graphs, search, backlinks, and study progress.**
+**A calm, local-first Markdown workspace for notes, PDFs, presentations, knowledge graphs, handwriting, search, backlinks, and study progress.**
 
 ![MD Editor intro](images/intro.gif)
 
@@ -101,7 +101,14 @@ LibreOffice install is needed — including theme colours, placeholders inherite
 and masters, tables, pictures, and grouped shapes. Charts, SmartArt, and embedded objects
 show as labelled boxes.
 
-### 5. Search Without Breaking Flow
+### 5. Write By Hand
+
+`Ctrl+I` opens a handwriting canvas in its own window, ready for a tablet or a second
+monitor. On Windows, pen pressure shapes every stroke; elsewhere it works with a mouse. Pen,
+highlighter, eraser and lasso tools, ruled, grid or dotted paper, and a ring menu summoned
+with the pen's barrel button. Pages save as `.ink` files beside the note you are working on.
+
+### 6. Search Without Breaking Flow
 
 - `Ctrl+F` in Markdown searches the active note.
 - Global search scans the vault and indexed PDF text through SQLite FTS5.
@@ -109,7 +116,7 @@ show as labelled boxes.
 - In split view, `Ctrl+F` follows whichever pane you last touched.
 - `Ctrl+P` opens a command palette that searches commands and vault files together.
 
-### 6. Track Study Progress
+### 7. Track Study Progress
 
 A built-in tracker records sessions, reading, project stages, and checkpoint gates. It ships
 seeded with a four-year efficient-ML research roadmap, which you replace with your own
@@ -160,6 +167,7 @@ per-user directory by an interim version is migrated back beside the executable 
 | PDF | `.pdf` |
 | Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` |
 | Presentations | `.pptx` (view only) |
+| Handwritten pages | `.ink` |
 
 ## Supported Platforms
 
@@ -234,44 +242,49 @@ tools are available.
 
 ```text
 md-editor/
-+-- core/      vaults, indexing, search, PDF rendering, settings, tracker storage
-+-- native/    Iced desktop UI, editor, views, commands, interaction state
-+-- wiki/      all project documentation
++-- core/      headless engine: vault, link index, search, SQLite state, PDF and PPTX readers
++-- native/    the Iced app: shell (src/app/), editor widget, viewers, knowledge graph, ink
++-- wiki/      project documentation (authoritative)
++-- docs/      the printable Field Handbook (a dated snapshot) and its sources
 +-- images/    README screenshots and intro media
 ```
 
-Useful development commands:
+Every source file opens with a one-line `//!` summary, so
+`grep -rm1 '^//!' core/src native/src` prints a map of the code. AI coding agents get a
+short orientation from [`CLAUDE.md`](CLAUDE.md).
 
 ```bash
-cargo fmt --check
-cargo check --workspace
-cargo test --workspace              # 158 tests
-cargo clippy --workspace                # 34 warnings baseline; do not add more
+cargo fmt --all -- --check
+cargo check --workspace --all-targets
+cargo test --workspace
+cargo clippy --workspace
 ```
 
 ## Documentation
 
-All documentation lives in the [**project wiki**](wiki/Home.md) — there is no separate `docs/`
-tree to keep in sync.
+The [**wiki**](wiki/Home.md) is the documentation. Its home page has an
+"I want to change…" table that sends you to the right code and page.
 
 | Start here | |
 | --- | --- |
 | [User Guide & Feature Manual](wiki/User-Guide-and-Feature-Manual.md) | Every feature and workflow |
 | [Keyboard Shortcuts](wiki/Keyboard-Shortcuts.md) | Every binding, and which layer owns it |
-| [Architecture & Philosophy](wiki/Architecture-and-Philosophy.md) | Design tenets and the threading model |
-| [Repository Structure](wiki/Repository-Structure.md) | Workspace layout and per-file responsibilities |
+| [Repository Structure](wiki/Repository-Structure.md) | Crates and per-file responsibilities |
 | [Developer Guide & Testing](wiki/Developer-Guide-and-Testing.md) | Toolchain, builds, PDFium, tests |
 | [Contributor Guidelines](wiki/Contributor-Guidelines.md) | The rules that are expensive to rediscover |
-| [Release Checklist](wiki/Release-Checklist.md) | Pre-release verification and packaging |
 
-Deep dives: [Core Services](wiki/Core-Services.md) ·
+Deep dives: [Architecture & Philosophy](wiki/Architecture-and-Philosophy.md) ·
+[Core Services](wiki/Core-Services.md) ·
 [Native Desktop GUI](wiki/Native-Desktop-GUI.md) ·
 [Markdown Pipeline](wiki/Markdown-Pipeline.md) ·
 [PDF Engine & Sidecars](wiki/PDF-Engine-and-Sidecars.md) ·
 [PDF Viewer Internals](wiki/PDF-Viewer-Internals.md) ·
-[Design Tokens, Motion & Palette](wiki/Design-Tokens-Motion-and-Palette.md) ·
+[Knowledge Graph](wiki/Knowledge-Graph.md) ·
+[Handwritten Notes](wiki/Handwritten-Notes.md) ·
+[Design Tokens & Motion](wiki/Design-Tokens-Motion-and-Palette.md) ·
 [Study Tracker](wiki/Study-Tracker.md) ·
-[Data Flows & Durability Invariants](wiki/Data-Flows-and-Durability-Invariants.md)
+[Data Flows & Invariants](wiki/Data-Flows-and-Durability-Invariants.md) ·
+[Release Checklist](wiki/Release-Checklist.md)
 
 ## License
 

@@ -127,29 +127,29 @@ executable, or directly beside it.
 cargo test --workspace
 ```
 
-The suite is **241 tests**: 68 in `md-editor-core` and 173 in `md-editor-native`, plus
-three opt-in renderer tools that are ignored by default (below). They run in a few seconds
+The suite covers both crates, plus a few opt-in renderer and slide tools that are
+`#[ignore]`d by default (below). They run in a few seconds
 and need no display server.
 
 ```mermaid
 graph TD
-    Runner["cargo test --workspace"] --> CoreTests["md-editor-core — 68 tests"]
-    Runner --> NativeTests["md-editor-native — 173 tests"]
+    Runner["cargo test --workspace"] --> CoreTests["md-editor-core"]
+    Runner --> NativeTests["md-editor-native"]
 
-    CoreTests --> VaultT["vault.rs — atomic writes, symlinks, permissions, exclusions"]
-    CoreTests --> PdfT["pdf.rs — page count, text, search, TOC recovery"]
+    CoreTests --> VaultT["vault/tests.rs — atomic writes, symlinks, permissions, exclusions"]
+    CoreTests --> PdfT["pdf/tests.rs — page count, text, search, TOC recovery"]
     CoreTests --> RefsT["references.rs — target maps, call-sites, precision rules"]
     CoreTests --> IndexT["file_index.rs — wikilink resolution and backlinks"]
     CoreTests --> Massive["massive_tests.rs — 8 combinatorial and stress suites"]
 
     NativeTests --> BufferT["editor/buffer.rs — undo runs, auto-pairing, graphemes, affinity"]
-    NativeTests --> HighlightT["editor/highlight.rs — concealing, fences, incremental = fresh"]
+    NativeTests --> HighlightT["editor/highlight/tests.rs — concealing, fences, incremental = fresh"]
     NativeTests --> RendererT["editor/renderer/ — invariants, caret, hit testing, motion, painting"]
     NativeTests --> TreeT["editor/layout_tree.rs — exact prefix sums and find_line_at_y"]
     NativeTests --> MotionT["motion.rs — springs, panel widths, settling"]
     NativeTests --> FuzzyT["fuzzy.rs — ordering, word starts, initials"]
     NativeTests --> PaletteT["views/command_palette.rs — ranking, caps, activation"]
-    NativeTests --> AppT["app.rs — PDF page slots, offsets, note paths"]
+    NativeTests --> AppT["app/tests.rs — PDF page slots, offsets, note paths"]
     NativeTests --> MainT["main.rs — CLI parsing, window size, desktop install"]
 ```
 
@@ -192,7 +192,7 @@ graph TD
    pointer, and no widths from 40 to 260px panic.
 8. **Renderer invariants** (`native/src/editor/renderer/properties.rs`) — see
    [Property suites](#property-suites).
-9. **PDF page geometry** (`native/src/app.rs`) — target offsets map back to the same page,
+9. **PDF page geometry** (`native/src/app/tests.rs`) — target offsets map back to the same page,
    blank pages reserve space, and placeholder slots scale with zoom.
 10. **Platform integration** (`native/src/main.rs`) — CLI argument parsing, window-size
    round-tripping and rejection of nonsense values, and a full Linux desktop install and

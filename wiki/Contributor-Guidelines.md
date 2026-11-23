@@ -12,7 +12,7 @@ rediscover — each exists because something concrete broke without it.
 - Never import `iced`, `winit`, `ratex-render`, or any GUI or text-shaping crate into
   `md-editor-core`.
 - Core must stay headless, deterministic, and testable without a windowing server or GPU. Its
-  68 tests run in CI containers with no display.
+  tests run in CI containers with no display.
 
 ### Rule 2: Use the design tokens
 
@@ -68,7 +68,7 @@ rediscover — each exists because something concrete broke without it.
 - Highlights, notes, bookmarks, and cross-references belong in `pdf_annotations` and
   `pdf_references`, keyed by the content-derived `document_id`.
 - Only ever create one `Pdfium` binding per process, and reach it only through
-  `core/src/pdf.rs`.
+  `core/src/pdf/`.
 
 ### Rule 5: Do not weaken durability
 
@@ -110,20 +110,21 @@ The full set of PDF rules is in [PDF Viewer Internals](PDF-Viewer-Internals.md#1
 ## 2. Testing Requirements
 
 - A bug fix in the markdown parser, undo grouping, or auto-pairing needs a regression test in
-  `native/src/editor/buffer.rs` or `native/src/editor/highlight.rs`.
+  `native/src/editor/buffer/tests.rs` or `native/src/editor/highlight/tests.rs`.
 - A change to wikilink parsing or resolution must be validated against the combinatorial
   suite in `core/src/massive_tests.rs`.
 - A change to the reference resolver's output for the same input **must bump**
   `references::RESOLVER_VERSION`, or users will be served stale cached results.
 - A change to PDF scroll or page geometry needs coverage in the page-slot tests in
-  `native/src/app.rs`.
+  `native/src/app/`.
 - A rendering, caret, or hit-testing bug in the editor needs a test in
   `native/src/editor/renderer/tests.rs`, written against the draw calls and messages the widget
   produces rather than its internals, and seen failing before the fix. When the bug breaks a
   general rule, strengthen the matching invariant in `renderer/properties.rs` too, and run
   it at `RENDER_PROPERTY_CASES=3000` before landing.
-- A highlighter change must keep the incremental-equals-fresh property in `highlight.rs`
-  passing.
+- A highlighter change must keep the incremental-equals-fresh property in
+  `highlight/tests.rs` passing (it compares against the oracle in `highlight/reference.rs`;
+  a deliberate behaviour change updates both).
 - New core functionality belongs behind a headless test. If it cannot be tested without a
   window, it probably belongs in `md-editor-native`.
 
@@ -151,7 +152,7 @@ CI builds and packages, but does **not** run the tests or the lints. Run them lo
 ```bash
 cargo fmt --check
 cargo check --workspace
-cargo test --workspace           # 241 tests, all passing
+cargo test --workspace           # must pass in full
 cargo clippy --workspace
 ```
 

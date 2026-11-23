@@ -1,7 +1,7 @@
 # User Guide & Feature Manual
 
-This is the complete manual: vaults, markdown editing, PDF reading, search, split view, and
-the study tracker. Key bindings have their own page —
+This is the complete manual: vaults, markdown editing, PDF reading, search, split view, the
+knowledge graph, handwriting, and the study tracker. Key bindings have their own page —
 [Keyboard Shortcuts](Keyboard-Shortcuts.md).
 
 ---
@@ -43,6 +43,7 @@ The last vault and last open file are restored the next time you launch.
 | PDF | `.pdf` |
 | Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` |
 | Presentations | `.pptx` (view only) |
+| Handwritten pages | `.ink` (made with the handwriting canvas) |
 
 Images open in a dedicated preview pane. Presentations open in a read-only slide viewer —
 see [Viewing presentations](#viewing-presentations).
@@ -52,7 +53,9 @@ see [Viewing presentations](#viewing-presentations).
 - **Open** — click any file.
 - **Expand / collapse** — click a folder.
 - **New note / new folder** — the buttons in the sidebar header.
-- **Delete** — the trash button on a file's row, which asks for confirmation first.
+- **Rename / delete** — select a file or folder; its row shows a rename (✎) and a delete
+  button. Delete asks for confirmation first; renaming a note rewrites wikilinks that
+  point at it.
 
 ### External changes
 
@@ -273,7 +276,26 @@ Password-protected presentations and the old binary `.ppt` format can't be opene
 
 ---
 
-## 4. Search
+## 4. Handwritten Notes
+
+`Ctrl+I` opens a handwriting canvas in its own window — put it on a tablet or a second
+monitor beside your notes. On Windows a pen's pressure shapes each stroke; elsewhere, and
+with a mouse, strokes have a fixed weight.
+
+- **Tools**: pen, highlighter (drawn behind writing), eraser (rub out part of a stroke, or
+  whole strokes), and lasso (circle strokes, then drag them or press `Delete`).
+- **Paper**: plain, ruled, grid, or dotted.
+- **Quick menu**: press the pen's barrel button for a ring of tools and colours at the nib.
+- `Ctrl+Z` / `Ctrl+Y` undo and redo; `Ctrl+S` saves.
+
+A page is saved beside the open note (`Week1.md` → `Week1.ink`), or at the vault root as
+`handwritten-<date>.ink` when no note is open. Pages are not autosaved: save before you quit.
+Saved pages appear in the sidebar and reopen in the canvas. Developer detail is in
+[Handwritten Notes](Handwritten-Notes.md).
+
+---
+
+## 5. Search
 
 ### In-note search — `Ctrl+F` with a note active
 
@@ -312,7 +334,7 @@ path. `↑`/`↓` to move, `Enter` to open or run, `Escape` to close.
 
 ---
 
-## 5. Study Tracker
+## 6. Study Tracker
 
 `Ctrl+P` → *Study Tracker*, or the toolbar button.
 
@@ -333,7 +355,7 @@ Full detail: [Study Tracker](Study-Tracker.md).
 
 ---
 
-## 6. Where Your Data Lives
+## 7. Where Your Data Lives
 
 - **Your content** stays exactly where you put it: plain Markdown, PDF, and image files in
   your own folder.

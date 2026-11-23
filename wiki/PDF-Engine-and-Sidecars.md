@@ -10,7 +10,7 @@ side — viewport state, scheduling invariants, and navigation — is in
 
 ---
 
-## 1. Threading Model (`core/src/pdf.rs`)
+## 1. Threading Model (`core/src/pdf/renderer.rs`)
 
 `pdfium-render` stores its bindings in a process-global cell, so the application must never
 create a second `Pdfium` binding, and PDFium handles must not be shared across threads.
@@ -255,7 +255,7 @@ The worker walks each page's text layer, builds the page string alongside a
 `PdfRect`s via `text_page.segments_subset`.
 
 **Loose whitespace mode** is a native-side convenience built on the same regex path
-(`app.rs::search_pdf`): the query is split on whitespace, each token is `regex::escape`d, and
+(`app/search.rs::search_pdf`): the query is split on whitespace, each token is `regex::escape`d, and
 they are rejoined with `\s+`.
 
 ```rust

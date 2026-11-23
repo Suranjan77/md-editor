@@ -13,7 +13,7 @@ traces the end-to-end flows and states the five invariants every build must sati
 sequenceDiagram
     autonumber
     actor User
-    participant App as Iced event loop — app.rs
+    participant App as Iced event loop — app/
     participant Buf as DocBuffer — buffer.rs
     participant Tree as HeightTree — layout_tree.rs
     participant Sub as Autosave subscription
@@ -58,7 +58,7 @@ sequenceDiagram
     autonumber
     actor User
     participant UI as Sidebar
-    participant App as app.rs
+    participant App as app/
     participant Retain as Retained buffers — 32, LRU
     participant Vault as vault.rs
 
@@ -97,7 +97,7 @@ sequenceDiagram
     autonumber
     actor User
     participant Canvas as Interactive PDF widget
-    participant App as app.rs
+    participant App as app/
     participant Core as AppState
     participant DB as SQLite — pdf_annotations
     participant Modal as Link note picker

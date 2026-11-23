@@ -185,7 +185,7 @@ def add_outline(pdf_bytes: bytes, pages: dict[str, int]) -> bytes:
             "/Author": "MD Editor project",
             "/Subject": "A guided tour of the md-editor codebase for new contributors",
             "/Keywords": "Rust, Iced, PDFium, SQLite, markdown editor, onboarding",
-            "/Creator": "wiki/handbook/build.py",
+            "/Creator": "docs/handbook/build.py",
         }
     )
     writer.page_layout = "/SinglePage"

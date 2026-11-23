@@ -74,7 +74,7 @@ pub struct TrackerKv { pub key: String, pub value: String }
 
 ---
 
-## 2. The Interface (`views/tracker.rs`, `tracker_state.rs`)
+## 2. The Interface (`views/tracker.rs`, `views/tracker/config.rs`, `tracker_state.rs`)
 
 Six tabs: **Dashboard**, **Log**, **Projects**, **Gates**, **Reading**, **Config**.
 

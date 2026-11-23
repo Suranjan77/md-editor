@@ -16,7 +16,7 @@ Nothing is locked inside a proprietary database, an opaque container, or a cloud
   filesystem, opened through a native folder picker.
 - **Plain files.** Markdown notes (`.md`, `.markdown`), PDFs (`.pdf`), PowerPoint
   presentations (`.pptx`, view only), and images
-  (`.jpeg`, `.jpg`, `.png`, `.svg`, `.webp`, `.avif` — `IMAGE_EXTENSIONS` in `core/src/vault.rs`)
+  (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` — `IMAGE_EXTENSIONS` in `core/src/vault.rs`)
   stay usable by any editor, CLI tool,
   or backup system — Git, rsync, Syncthing.
 - **No account, no network.** There are no user accounts, licence keys, or telemetry, and
@@ -51,7 +51,7 @@ Work typed into the app must survive crashes, power loss, and abrupt window term
 - **Disk is the source of truth.** Edits are committed by an autosave debounce:
   `AUTOSAVE_DEBOUNCE = 400ms` after the last keystroke, polled every
   `AUTOSAVE_POLL = 100ms` (`native/src/editor_state.rs`).
-- **Atomic save protocol** (`core/src/vault.rs::write_file`), in the order the code
+- **Atomic save protocol** (`core/src/vault/files.rs::write_file`), in the order the code
   performs it:
   1. the destination path is canonicalized, so a symlinked note is written *through* to its
      target rather than replaced by a regular file;
@@ -85,7 +85,7 @@ immutable.
 
 - **PDFs are never rewritten.** MD Editor never modifies, re-saves, or injects annotation
   streams into a `.pdf` file.
-- **Presentations are read-only.** `core/src/pptx.rs` only reads a `.pptx`, and the slide
+- **Presentations are read-only.** `core/src/pptx/` only reads a `.pptx`, and the slide
   viewer offers no editing; there is no code path that writes one.
 - **External SQLite storage.** Highlights, quick notes, linked-note paths, and resolved
   cross-references live in the `pdf_annotations` and `pdf_references` tables, keyed by a
@@ -130,7 +130,7 @@ immutable.
 
 1. **`md-editor-core` is headless.** It must never depend on `iced`, `winit`,
    `ratex-render`, or any windowing or graphics toolkit. Every core operation is testable
-   in a headless CI environment; the 68 core tests run without a display server.
+   in a headless CI environment; the core tests run without a display server.
 2. **`md-editor-native` owns presentation.** Interaction, painting, input routing, and
    animation live here, and reach core only through thread-safe `AppState` methods or
    async tasks.

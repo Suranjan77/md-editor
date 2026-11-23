@@ -29,7 +29,7 @@ graph TD
     C -->|"content and resource hashes"| E["LineHeightCache"]
     D -->|"O(log N) visible range"| F["Viewport-culled draw pass"]
     C -->|"LaTeX and image lookups"| G["math_cache and image_cache on EditorPane"]
-    C -->|"CaretView — where the caret is"| H["app.rs — scrolls to reveal it"]
+    C -->|"CaretView — where the caret is"| H["app/editor.rs — scrolls to reveal it"]
 ```
 
 Modules under `native/src/editor/`:
@@ -47,7 +47,7 @@ Modules under `native/src/editor/`:
    [§5](#5-the-widget-renderer)).
 
 `EditorPane` (`editor_state.rs`) owns the buffer, the `Highlighted` lines, and the image
-and math caches; `app.rs` routes commands to it, asks the widget to reveal the caret, and
+and math caches; `app/editor.rs` routes commands to it, asks the widget to reveal the caret, and
 animates the resulting scroll.
 
 ---
@@ -343,7 +343,7 @@ graph TD
 | When a span reveals its markdown source | `spans.rs` |
 | Where the caret lands, or what a click selects | `flow.rs` (inline lines), `caret.rs` (code lines, up/down) |
 | How the caret moves and blinks | `glide.rs` |
-| How the page scrolls to the caret | `reveal.rs` (where) and `app.rs` — `reveal_caret()` (how) |
+| How the page scrolls to the caret | `reveal.rs` (where) and `app/editor.rs` — `reveal_caret()` (how) |
 | Block cards, captions, code lines, table rows | `draw/blocks.rs`, `draw/captions.rs` |
 | Paragraph text, images, equations, checkboxes | `draw/inline.rs` |
 | Selection shape, search highlights, caret appearance | `draw/overlays.rs` |
@@ -471,7 +471,7 @@ is drawn. So:
 2. On the next `RedrawRequested` — layout final, viewport known — the widget answers with a
    `CaretView`: the caret's top and bottom, the viewport's top and height, and its own
    height, all relative to the widget.
-3. `app.rs::reveal_caret` asks `CaretView::viewport_top_for`: `Nearest` scrolls only if the
+3. `app/editor.rs::reveal_caret` asks `CaretView::viewport_top_for`: `Nearest` scrolls only if the
    caret is within a comfort margin (two body rows, or a quarter of the viewport) of an
    edge, and then only by the amount that restores the margin; `Center` puts it mid-view.
    The target is clamped to the scrollable range and reached with a critically damped

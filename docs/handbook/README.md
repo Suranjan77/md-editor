@@ -1,8 +1,13 @@
 # The Field Handbook — build sources
 
 This directory generates **`../MD-Editor-Handbook.pdf`**, a ~100-page printable book that
-teaches the repository to a new contributor. It is written from the wiki pages one level up
+teaches the repository to a new contributor. It is written from the pages in `../../wiki/`
 and verified against the source tree; where a wiki page and the code disagreed, the code won.
+
+> **Snapshot.** The PDF was last built on 2026-09-14. It predates the knowledge graph, the
+> handwriting canvas, and the split of `app.rs` and the large core modules into submodules,
+> so some file paths in it are out of date. The wiki is authoritative; rebuild the book after
+> updating these HTML sources.
 
 ## Rebuilding
 

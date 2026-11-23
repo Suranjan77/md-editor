@@ -14,4 +14,4 @@ dist-portable
 .vscode
 
 # Handbook build intermediates (the PDF itself is committed)
-wiki/handbook/build
+docs/handbook/build
