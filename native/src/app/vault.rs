@@ -41,11 +41,7 @@ impl MdEditor {
                                 )
                             },
                             move |result| {
-                                Message::VaultIndexed(
-                                    generation,
-                                    message_root.clone(),
-                                    result,
-                                )
+                                Message::VaultIndexed(generation, message_root.clone(), result)
                             },
                         );
                     }
@@ -558,9 +554,7 @@ impl MdEditor {
         let path = path.to_string();
         let result_path = path.clone();
         Task::perform(
-            async move {
-                md_editor_core::vault::index_vault_for_generation(&state, &path, generation)
-            },
+            async move { md_editor_core::vault::index_vault_for_generation(&state, &path, generation) },
             move |result| Message::VaultIndexed(generation, result_path.clone(), result),
         )
     }

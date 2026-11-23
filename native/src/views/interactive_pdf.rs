@@ -6,7 +6,6 @@ use iced::advanced::{Clipboard, Shell};
 use iced::mouse;
 use iced::{Element, Length, Rectangle, Size};
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdfSelection {
     pub page_index: u16,

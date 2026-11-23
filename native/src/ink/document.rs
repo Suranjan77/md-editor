@@ -74,12 +74,7 @@ pub struct InkStroke {
 }
 
 impl InkStroke {
-    pub fn from_points(
-        points: &[InkPoint],
-        size: f32,
-        color: [f32; 4],
-        kind: StrokeKind,
-    ) -> Self {
+    pub fn from_points(points: &[InkPoint], size: f32, color: [f32; 4], kind: StrokeKind) -> Self {
         Self {
             size,
             color,
@@ -644,7 +639,10 @@ mod tests {
         assert!(doc.can_redo());
 
         doc.push(line(20.0));
-        assert!(!doc.can_redo(), "a new stroke should discard the redo branch");
+        assert!(
+            !doc.can_redo(),
+            "a new stroke should discard the redo branch"
+        );
     }
 
     #[test]
@@ -654,8 +652,15 @@ mod tests {
         doc.push(line(80.0));
 
         assert!(doc.erase_at(Vec2::new(20.0, 10.5), 4.0));
-        assert_eq!(doc.strokes().len(), 1, "only the stroke under the eraser should go");
-        assert!(!doc.erase_at(Vec2::new(500.0, 500.0), 4.0), "empty space erases nothing");
+        assert_eq!(
+            doc.strokes().len(),
+            1,
+            "only the stroke under the eraser should go"
+        );
+        assert!(
+            !doc.erase_at(Vec2::new(500.0, 500.0), 4.0),
+            "empty space erases nothing"
+        );
     }
 
     #[test]
@@ -673,7 +678,11 @@ mod tests {
         assert_eq!(doc.strokes().len(), 1);
 
         assert!(doc.undo());
-        assert_eq!(doc.strokes(), &[bottom, middle, top][..], "z-order must survive undo");
+        assert_eq!(
+            doc.strokes(),
+            &[bottom, middle, top][..],
+            "z-order must survive undo"
+        );
     }
 
     #[test]
@@ -687,7 +696,11 @@ mod tests {
         assert!(doc.is_empty());
 
         assert!(doc.undo());
-        assert_eq!(doc.strokes().len(), 3, "one undo should bring back the whole page");
+        assert_eq!(
+            doc.strokes().len(),
+            3,
+            "one undo should bring back the whole page"
+        );
     }
 
     #[test]
@@ -833,7 +846,10 @@ mod tests {
         let mut doc = InkDocument::new();
         doc.push(line(10.0));
         assert!(!doc.remove_strokes(&[]));
-        assert!(!doc.remove_strokes(&[99]), "out-of-range indices change nothing");
+        assert!(
+            !doc.remove_strokes(&[99]),
+            "out-of-range indices change nothing"
+        );
     }
 
     #[test]
@@ -877,7 +893,11 @@ mod tests {
         assert_eq!(doc.strokes().len(), 2);
 
         assert!(doc.undo());
-        assert_eq!(doc.strokes(), &[original.clone()][..], "undo restores the whole line");
+        assert_eq!(
+            doc.strokes(),
+            &[original.clone()][..],
+            "undo restores the whole line"
+        );
 
         assert!(doc.redo());
         assert_eq!(doc.strokes().len(), 2, "redo re-cuts it");
@@ -947,7 +967,11 @@ mod tests {
 
         let restored = InkDocument::from_json(&doc.to_json().unwrap()).unwrap();
         assert_eq!(restored.strokes()[0].kind, StrokeKind::Highlighter);
-        assert_eq!(restored.paper, PaperStyle::Grid, "paper travels with the page");
+        assert_eq!(
+            restored.paper,
+            PaperStyle::Grid,
+            "paper travels with the page"
+        );
     }
 
     #[test]

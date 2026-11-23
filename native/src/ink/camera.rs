@@ -171,7 +171,10 @@ mod tests {
     fn panning_shifts_the_view_in_screen_space() {
         let mut camera = Camera::new();
         camera.pan_by(Vec2::new(25.0, -10.0));
-        assert!(approx(camera.to_screen(Vec2::new(0.0, 0.0)), Vec2::new(25.0, -10.0)));
+        assert!(approx(
+            camera.to_screen(Vec2::new(0.0, 0.0)),
+            Vec2::new(25.0, -10.0)
+        ));
     }
 
     #[test]

@@ -190,8 +190,7 @@ impl Quadtree {
             let resident = std::mem::replace(&mut self.cells[child].body, Self::EMPTY);
             if resident != Self::EMPTY {
                 let com = self.cells[child].com;
-                let resident_position =
-                    [com[0] * mass - position[0], com[1] * mass - position[1]];
+                let resident_position = [com[0] * mass - position[0], com[1] * mass - position[1]];
                 self.push_down(child, resident, resident_position, depth);
             }
             current = child;
@@ -593,8 +592,7 @@ impl FilteredGraph {
         let mut edge_pairs = Vec::with_capacity(snapshot.edges.len());
         let mut neighbors = vec![Vec::new(); snapshot.nodes.len()];
         for edge in &snapshot.edges {
-            let (Some(&source), Some(&target)) =
-                (index.get(&edge.source), index.get(&edge.target))
+            let (Some(&source), Some(&target)) = (index.get(&edge.source), index.get(&edge.target))
             else {
                 // Keep `edge_pairs` aligned with `snapshot.edges` even if an
                 // endpoint was filtered out, so callers can zip the two.
@@ -1137,8 +1135,14 @@ impl GraphState {
             .iter()
             .map(|edge| {
                 (
-                    self.node_index.get(&edge.source).copied().unwrap_or(usize::MAX),
-                    self.node_index.get(&edge.target).copied().unwrap_or(usize::MAX),
+                    self.node_index
+                        .get(&edge.source)
+                        .copied()
+                        .unwrap_or(usize::MAX),
+                    self.node_index
+                        .get(&edge.target)
+                        .copied()
+                        .unwrap_or(usize::MAX),
                 )
             })
             .collect();
@@ -1551,8 +1555,7 @@ fn build_layout(snapshot: &GraphSnapshot) -> GraphLayout {
             // lone note "reach" 163 units, which flung the orphans of a small
             // vault so far out that Fit had to shrink the interesting cluster
             // to a third of its readable size.
-            extent: 0.5
-                * ((max_x - min_x).powi(2) + (max_y - min_y).powi(2)).sqrt(),
+            extent: 0.5 * ((max_x - min_x).powi(2) + (max_y - min_y).powi(2)).sqrt(),
             seed,
         });
     }
@@ -1607,8 +1610,8 @@ fn build_layout(snapshot: &GraphSnapshot) -> GraphLayout {
         // the radius.
         let (radial, angular) = unit_pair(seed);
         let radius = radius + radial * (extent + GAP) * 0.45;
-        let angle = rank as f32 * GOLDEN_ANGLE
-            + (angular - 0.5) * 1.4 / ((rank as f32) + 1.0).sqrt();
+        let angle =
+            rank as f32 * GOLDEN_ANGLE + (angular - 0.5) * 1.4 / ((rank as f32) + 1.0).sqrt();
         // Place each island by its center so big clusters are not shoved
         // off-spiral by their own extent.
         let offset_x = radius * angle.cos() - min_x - width * 0.5;
@@ -1922,11 +1925,7 @@ mod tests {
     }
 
     /// Reference implementation the quadtree has to agree with.
-    fn brute_force_repulsion(
-        positions: &[[f32; 2]],
-        body: usize,
-        repulsion: f32,
-    ) -> [f32; 2] {
+    fn brute_force_repulsion(positions: &[[f32; 2]], body: usize, repulsion: f32) -> [f32; 2] {
         let mut force = [0.0_f32, 0.0];
         for (other, p) in positions.iter().enumerate() {
             if other == body {
@@ -2005,7 +2004,10 @@ mod tests {
         let force = tree.repulsion_on(body, positions[body], 8_000.0);
 
         assert!(force[0] > 0.0, "expected outward push, got {force:?}");
-        assert!(force[1].abs() < force[0], "force should be mostly horizontal");
+        assert!(
+            force[1].abs() < force[0],
+            "force should be mostly horizontal"
+        );
     }
 
     #[test]
@@ -2018,8 +2020,7 @@ mod tests {
         for _ in 0..120 {
             state.physics_tick();
         }
-        let positions: Vec<GraphPoint> =
-            state.graph_layout().positions.values().copied().collect();
+        let positions: Vec<GraphPoint> = state.graph_layout().positions.values().copied().collect();
         for (i, a) in positions.iter().enumerate() {
             assert!(a.x.is_finite() && a.y.is_finite(), "layout went non-finite");
             for b in &positions[i + 1..] {

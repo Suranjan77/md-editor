@@ -13,11 +13,16 @@ pub fn setup_pdfium() -> PathBuf {
     const DEFAULT_PDFIUM_RELEASE: &str = "latest";
     println!("cargo:rerun-if-env-changed=PDFIUM_RELEASE");
     println!("cargo:rerun-if-env-changed=PDFIUM_SHA256");
-    let release = env::var("PDFIUM_RELEASE")
-        .unwrap_or_else(|_| DEFAULT_PDFIUM_RELEASE.to_string());
+    let release = env::var("PDFIUM_RELEASE").unwrap_or_else(|_| DEFAULT_PDFIUM_RELEASE.to_string());
     let release_slug: String = release
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect();
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| {
         if cfg!(target_os = "windows") {

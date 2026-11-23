@@ -1738,9 +1738,15 @@ mod tests {
         buffer.mark_saved();
         assert!(!buffer.dirty);
         assert!(buffer.undo());
-        assert!(buffer.dirty, "undo moved away from the explicitly saved revision");
+        assert!(
+            buffer.dirty,
+            "undo moved away from the explicitly saved revision"
+        );
         assert!(buffer.redo());
-        assert!(!buffer.dirty, "redo returned to the explicitly saved revision");
+        assert!(
+            !buffer.dirty,
+            "redo returned to the explicitly saved revision"
+        );
     }
 
     #[test]

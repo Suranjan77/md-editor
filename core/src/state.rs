@@ -269,11 +269,7 @@ impl AppState {
                      WHERE vault_relative_path = ?1 AND document_id != ?2
                      ORDER BY (file_size = ?3) DESC, updated_at DESC
                      LIMIT 1",
-                    rusqlite::params![
-                        vault_relative_path,
-                        storage_document_id,
-                        file_size as i64
-                    ],
+                    rusqlite::params![vault_relative_path, storage_document_id, file_size as i64],
                     |row| row.get(0),
                 )
                 .optional()
@@ -394,8 +390,7 @@ impl AppState {
         } else {
             db.execute("DELETE FROM pdf_annotations WHERE id = ?1", [id])
         };
-        deleted
-            .map_err(|e| format!("Failed to delete pdf annotation: {e}"))?;
+        deleted.map_err(|e| format!("Failed to delete pdf annotation: {e}"))?;
         Ok(())
     }
 
@@ -475,7 +470,11 @@ impl AppState {
         file_size: u64,
         modified_at: i64,
     ) -> Option<String> {
-        let key = format!("{}{}", Self::pdf_scope_prefix_for_root(vault_root), rel_path);
+        let key = format!(
+            "{}{}",
+            Self::pdf_scope_prefix_for_root(vault_root),
+            rel_path
+        );
         self.get_cached_pdf_text_by_key(&key, file_size, modified_at)
     }
 
@@ -518,7 +517,11 @@ impl AppState {
         modified_at: i64,
         content: &str,
     ) {
-        let key = format!("{}{}", Self::pdf_scope_prefix_for_root(vault_root), rel_path);
+        let key = format!(
+            "{}{}",
+            Self::pdf_scope_prefix_for_root(vault_root),
+            rel_path
+        );
         self.put_cached_pdf_text_by_key(&key, file_size, modified_at, content);
     }
 
@@ -1027,7 +1030,10 @@ mod tests {
         state
             .save_pdf_document("other-id", "papers/a.pdf", 9999, Some(300))
             .unwrap();
-        assert_eq!(state.get_pdf_annotations("other-id", None).unwrap().len(), 1);
+        assert_eq!(
+            state.get_pdf_annotations("other-id", None).unwrap().len(),
+            1
+        );
     }
 
     #[test]
@@ -1082,12 +1088,15 @@ mod tests {
         let state = AppState::new_with_db_path(&db_path);
 
         assert!(db_path.exists());
-        assert!(state
-            .db
-            .lock()
-            .unwrap()
-            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get::<_, i64>(0))
-            .is_ok());
+        assert!(
+            state
+                .db
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM settings", [], |row| row
+                    .get::<_, i64>(0))
+                .is_ok()
+        );
         let notice = state.take_startup_notice().expect("recovery notice");
         assert!(notice.contains("has been reset"));
         let backup = std::fs::read_dir(&base)
@@ -1097,7 +1106,10 @@ mod tests {
             .find(|path| {
                 path.file_name()
                     .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("md_editor_settings.sqlite.corrupt-") && !name.ends_with("-wal"))
+                    .is_some_and(|name| {
+                        name.starts_with("md_editor_settings.sqlite.corrupt-")
+                            && !name.ends_with("-wal")
+                    })
             })
             .expect("quarantined database");
         assert_eq!(std::fs::read(&backup).unwrap(), b"this is not sqlite");
@@ -1109,7 +1121,8 @@ mod tests {
 
     #[test]
     fn quarantining_database_preserves_sidecars() {
-        let base = std::env::temp_dir().join(format!("md_editor_sidecars_{}", uuid::Uuid::new_v4()));
+        let base =
+            std::env::temp_dir().join(format!("md_editor_sidecars_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let db_path = base.join(DB_FILE_NAME);
         std::fs::write(&db_path, b"database").unwrap();
@@ -1166,7 +1179,8 @@ mod tests {
 
         let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         let bumped = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        file.set_times(std::fs::FileTimes::new().set_modified(bumped)).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(bumped))
+            .unwrap();
         let (new_id, new_size, new_mtime) = crate::pdf::compute_provisional_id(&path).unwrap();
         assert_ne!(old_id, new_id);
 
@@ -1261,17 +1275,12 @@ mod tests {
             .save_pdf_annotation(&annotation("second-annotation", "second-note"))
             .unwrap();
         assert_eq!(
-            state
-                .get_pdf_annotations("same-content-id", None)
-                .unwrap()[0]
-                .id,
+            state.get_pdf_annotations("same-content-id", None).unwrap()[0].id,
             "second-annotation"
         );
 
         *state.vault_root.lock().unwrap() = Some(base.join("first"));
-        let first_annotations = state
-            .get_pdf_annotations("same-content-id", None)
-            .unwrap();
+        let first_annotations = state.get_pdf_annotations("same-content-id", None).unwrap();
         assert_eq!(first_annotations.len(), 1);
         assert_eq!(first_annotations[0].id, "first-annotation");
 

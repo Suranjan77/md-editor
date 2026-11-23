@@ -132,10 +132,26 @@ mod tests {
     #[test]
     fn folder_delete_copy_counts_only_contained_files() {
         let entries = vec![
-            md_editor_core::types::FileEntry { path: "dir".into(), name: "dir".into(), is_dir: true },
-            md_editor_core::types::FileEntry { path: "dir/a.md".into(), name: "a.md".into(), is_dir: false },
-            md_editor_core::types::FileEntry { path: "dir/sub".into(), name: "sub".into(), is_dir: true },
-            md_editor_core::types::FileEntry { path: "dir/sub/b.md".into(), name: "b.md".into(), is_dir: false },
+            md_editor_core::types::FileEntry {
+                path: "dir".into(),
+                name: "dir".into(),
+                is_dir: true,
+            },
+            md_editor_core::types::FileEntry {
+                path: "dir/a.md".into(),
+                name: "a.md".into(),
+                is_dir: false,
+            },
+            md_editor_core::types::FileEntry {
+                path: "dir/sub".into(),
+                name: "sub".into(),
+                is_dir: true,
+            },
+            md_editor_core::types::FileEntry {
+                path: "dir/sub/b.md".into(),
+                name: "b.md".into(),
+                is_dir: false,
+            },
         ];
         assert_eq!(
             delete_confirmation("dir", &entries),

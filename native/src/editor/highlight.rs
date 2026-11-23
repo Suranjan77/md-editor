@@ -823,9 +823,9 @@ fn is_horizontal_rule(trimmed: &str) -> bool {
 }
 
 fn is_task_prefix(trimmed: &str) -> bool {
-    ["- [ ]", "- [x]", "- [X]"].iter().any(|prefix| {
-        trimmed == *prefix || trimmed.starts_with(&format!("{prefix} "))
-    })
+    ["- [ ]", "- [x]", "- [X]"]
+        .iter()
+        .any(|prefix| trimmed == *prefix || trimmed.starts_with(&format!("{prefix} ")))
 }
 
 fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
@@ -1368,7 +1368,8 @@ mod reference {
                 sl.is_code_block = true;
                 sl.block_id = current_block_id;
                 sl.code_block_lang = code_lang.clone();
-                sl.spans = highlight_code_spans(raw_line, &mut code_highlighter, code_lang.as_deref());
+                sl.spans =
+                    highlight_code_spans(raw_line, &mut code_highlighter, code_lang.as_deref());
                 lines.push(sl);
                 continue;
             }
@@ -1552,7 +1553,8 @@ mod reference {
                         }
                     } else {
                         // If the closing fence is \end{...}, include it.
-                        let last_trimmed = lines[j].spans.first().map(|s| s.text.trim()).unwrap_or("");
+                        let last_trimmed =
+                            lines[j].spans.first().map(|s| s.text.trim()).unwrap_or("");
                         if math_env(last_trimmed, "\\end").is_some() {
                             math_lines.push(last_trimmed);
                         }
@@ -2035,12 +2037,16 @@ mod tests {
 
         assert!(lines.iter().all(|line| line.is_code_block));
         assert!(lines.iter().all(|line| !line.is_math_block));
-        assert!(lines
-            .iter()
-            .all(|line| !line.spans.iter().any(|span| span.is_heading)));
-        assert!(lines
-            .iter()
-            .all(|line| !line.spans.iter().any(|span| span.is_checkbox)));
+        assert!(
+            lines
+                .iter()
+                .all(|line| !line.spans.iter().any(|span| span.is_heading))
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| !line.spans.iter().any(|span| span.is_checkbox))
+        );
         assert!(lines.iter().all(|line| !line.is_table_row));
     }
 
@@ -2050,19 +2056,30 @@ mod tests {
         let quote = &lines[0];
 
         assert!(quote.is_blockquote);
-        assert!(quote
-            .spans
-            .iter()
-            .any(|span| span.text == "Linked from:" && span.bold));
-        assert!(quote.spans.iter().any(|span| {
-            span.is_link && span.link_target.as_deref() == Some("curriculum")
-        }));
-        assert!(quote
-            .spans
-            .iter()
-            .any(|span| span.text == "notes" && span.is_code));
+        assert!(
+            quote
+                .spans
+                .iter()
+                .any(|span| span.text == "Linked from:" && span.bold)
+        );
+        assert!(
+            quote
+                .spans
+                .iter()
+                .any(|span| { span.is_link && span.link_target.as_deref() == Some("curriculum") })
+        );
+        assert!(
+            quote
+                .spans
+                .iter()
+                .any(|span| span.text == "notes" && span.is_code)
+        );
         assert_eq!(
-            quote.spans.iter().map(|span| span.text.as_str()).collect::<String>(),
+            quote
+                .spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>(),
             "> **Linked from:** [[curriculum]] · `notes`"
         );
     }

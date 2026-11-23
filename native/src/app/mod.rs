@@ -53,7 +53,6 @@ enum SaveOutcome {
     Failed(String),
 }
 
-
 fn search_result_should_reload(active_path: Option<&str>, target_path: &str) -> bool {
     active_path != Some(target_path)
 }
@@ -150,25 +149,25 @@ pub struct MdEditor {
 /// arriving later is never mistaken for our own.
 const SELF_WRITE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
-mod subscription;
-mod view;
 mod documents;
-mod vault;
 mod editor;
-mod search;
-mod pdf;
 mod graph;
 mod ink;
-mod shortcuts;
-mod shell;
 mod links;
+mod pdf;
+mod search;
+mod shell;
+mod shortcuts;
+mod subscription;
+mod vault;
+mod view;
 
-use links::*;
-use search::{focus_file_search_input, focus_global_search_input, focus_pdf_search_input};
 #[cfg(test)]
 use editor::editor_command_keeps_cursor_visible;
 #[cfg(test)]
 use ink::derive_ink_path;
+use links::*;
+use search::{focus_file_search_input, focus_global_search_input, focus_pdf_search_input};
 
 impl MdEditor {
     /// `startup_file` is a path passed on the command line (typically by the
@@ -362,8 +361,7 @@ impl MdEditor {
             | Message::NameModalSubmit(..)
             | Message::DeleteFile(..)
             | Message::NameModalSubmitCurrent
-            | Message::VaultFilesChanged(..)
-            ) => self.update_vault(m),
+            | Message::VaultFilesChanged(..)) => self.update_vault(m),
             m @ (Message::GraphToggle
             | Message::GraphRefresh
             | Message::GraphSnapshotLoaded(..)
@@ -388,8 +386,7 @@ impl MdEditor {
             | Message::GraphResetLayout
             | Message::GraphPhysicsTick
             | Message::GraphSetView { .. }
-            | Message::GraphHovered(..)
-            ) => self.update_graph(m),
+            | Message::GraphHovered(..)) => self.update_graph(m),
             m @ (Message::CommandPaletteOpen
             | Message::TrackerToggle
             | Message::CommandPaletteFileClicked(..)
@@ -421,8 +418,7 @@ impl MdEditor {
             | Message::PptxZoomIn
             | Message::PptxZoomOut
             | Message::PptxZoomFit
-            | Message::PptxStep(..)
-            ) => self.update_shell(m),
+            | Message::PptxStep(..)) => self.update_shell(m),
             m @ (Message::EditorCommand(..)
             | Message::EditorCommandNoScroll(..)
             | Message::MathRendered(..)
@@ -434,8 +430,7 @@ impl MdEditor {
             | Message::EditorCaretView(..)
             | Message::EditorScrollInterrupted
             | Message::TocClicked(..)
-            | Message::ToggleTOC
-            ) => self.update_editor(m),
+            | Message::ToggleTOC) => self.update_editor(m),
             m @ (Message::PdfLoaded(..)
             | Message::PdfZoomChanged(..)
             | Message::PdfFitToWidth
@@ -469,8 +464,7 @@ impl MdEditor {
             | Message::PdfAddQuickNote(..)
             | Message::PdfLinkNote(..)
             | Message::PdfOpenLinkedNote(..)
-            | Message::PdfAnnotationFocused { .. }
-            ) => self.update_pdf(m),
+            | Message::PdfAnnotationFocused { .. }) => self.update_pdf(m),
             m @ (Message::GlobalSearchOpen
             | Message::GlobalSearchSubmit
             | Message::SearchClose
@@ -482,8 +476,7 @@ impl MdEditor {
             | Message::SearchPrevious
             | Message::SearchNext
             | Message::SearchReplaceAll
-            | Message::SearchResultClicked(..)
-            ) => self.update_search(m),
+            | Message::SearchResultClicked(..)) => self.update_search(m),
             m @ Message::KeyboardShortcut(..) => self.update_shortcuts(m),
             m @ (Message::InkPenHookReady(..)
             | Message::InkToggle
@@ -506,8 +499,7 @@ impl MdEditor {
             | Message::InkRedo
             | Message::InkClear
             | Message::InkSave
-            | Message::InkSaved(..)
-            ) => self.update_ink(m),
+            | Message::InkSaved(..)) => self.update_ink(m),
         }
     }
 }

@@ -93,13 +93,11 @@ pub fn options_for(kind: document::StrokeKind, base: StrokeOptions) -> StrokeOpt
 }
 
 /// Pen widths offered in the toolbar, in logical pixels at full pressure.
-pub const SIZE_PRESETS: [(&str, f32); 4] =
-    [("XS", 1.6), ("S", 3.2), ("M", 5.5), ("L", 9.0)];
+pub const SIZE_PRESETS: [(&str, f32); 4] = [("XS", 1.6), ("S", 3.2), ("M", 5.5), ("L", 9.0)];
 
 /// Highlighter widths. Broader across the board — a highlighter narrower than
 /// the text it covers reads as a mistake.
-pub const HIGHLIGHTER_SIZE_PRESETS: [(&str, f32); 3] =
-    [("S", 14.0), ("M", 20.0), ("L", 30.0)];
+pub const HIGHLIGHTER_SIZE_PRESETS: [(&str, f32); 3] = [("S", 14.0), ("M", 20.0), ("L", 30.0)];
 
 /// Whether two colours are the same swatch.
 ///
@@ -145,10 +143,7 @@ pub(crate) fn set_viewport(bounds: Rectangle) {
 }
 
 pub fn set_scale_factor(factor: f32) {
-    SCALE_FACTOR.store(
-        factor.to_bits(),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    SCALE_FACTOR.store(factor.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
 fn scale_factor() -> f32 {
@@ -177,10 +172,7 @@ fn point_is_on_canvas(x: f32, y: f32, bounds: Rectangle, scale: f32) -> bool {
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let (x, y) = (x / scale, y / scale);
 
-    x >= bounds.x
-        && y >= bounds.y
-        && x <= bounds.x + bounds.width
-        && y <= bounds.y + bounds.height
+    x >= bounds.x && y >= bounds.y && x <= bounds.x + bounds.width && y <= bounds.y + bounds.height
 }
 
 /// Map a captured pen sample into surface-local logical coordinates.
@@ -191,7 +183,11 @@ fn point_is_on_canvas(x: f32, y: f32, bounds: Rectangle, scale: f32) -> bool {
 /// than kinking at the boundary.
 fn map_to_canvas(sample: &PenSample, scale_factor: f32, reject_outside: bool) -> Option<Vec2> {
     let bounds = viewport()?;
-    let scale = if scale_factor > 0.0 { scale_factor } else { 1.0 };
+    let scale = if scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
 
     let x = sample.x / scale - bounds.x;
     let y = sample.y / scale - bounds.y;
@@ -723,20 +719,34 @@ impl InkState {
         if self.tool == Tool::Highlighter {
             let mut color = rgba(self.highlighter_color);
             color[3] = HIGHLIGHTER_ALPHA;
-            (self.highlighter_size, color, document::StrokeKind::Highlighter)
+            (
+                self.highlighter_size,
+                color,
+                document::StrokeKind::Highlighter,
+            )
         } else {
-            (self.options.size, rgba(self.color), document::StrokeKind::Pen)
+            (
+                self.options.size,
+                rgba(self.color),
+                document::StrokeKind::Pen,
+            )
         }
     }
 
     /// Render options and colour for the stroke currently under the pen.
     pub fn live_style(&self) -> (StrokeOptions, Color) {
         let (size, color, kind) = self.active_stroke_style();
-        let options = options_for(kind, StrokeOptions {
-            size,
-            ..self.options
-        });
-        (options, Color::from_rgba(color[0], color[1], color[2], color[3]))
+        let options = options_for(
+            kind,
+            StrokeOptions {
+                size,
+                ..self.options
+            },
+        );
+        (
+            options,
+            Color::from_rgba(color[0], color[1], color[2], color[3]),
+        )
     }
 
     /// Set the page's background ruling.
@@ -919,10 +929,22 @@ mod tests {
         // The pen hook only claims input that lands on the surface; anywhere
         // else it falls through so the pen can press toolbar buttons.
         let bounds = surface_bounds();
-        assert!(point_is_on_canvas(400.0, 300.0, bounds, 1.0), "middle of the canvas");
-        assert!(!point_is_on_canvas(400.0, 40.0, bounds, 1.0), "up on the toolbar");
-        assert!(!point_is_on_canvas(80.0, 300.0, bounds, 1.0), "over the sidebar");
-        assert!(!point_is_on_canvas(400.0, 800.0, bounds, 1.0), "below the canvas");
+        assert!(
+            point_is_on_canvas(400.0, 300.0, bounds, 1.0),
+            "middle of the canvas"
+        );
+        assert!(
+            !point_is_on_canvas(400.0, 40.0, bounds, 1.0),
+            "up on the toolbar"
+        );
+        assert!(
+            !point_is_on_canvas(80.0, 300.0, bounds, 1.0),
+            "over the sidebar"
+        );
+        assert!(
+            !point_is_on_canvas(400.0, 800.0, bounds, 1.0),
+            "below the canvas"
+        );
     }
 
     #[test]
@@ -966,7 +988,10 @@ mod tests {
 
         assert!(ink.apply_samples(&samples, 1.0));
         assert_eq!(ink.document.strokes().len(), 1);
-        assert!(ink.live_points().is_empty(), "live stroke should be committed");
+        assert!(
+            ink.live_points().is_empty(),
+            "live stroke should be committed"
+        );
         assert!(ink.dirty);
     }
 
@@ -987,8 +1012,16 @@ mod tests {
         erase.eraser = true;
         ink.apply_samples(&[erase], 1.0);
 
-        assert_eq!(ink.document.strokes().len(), 0, "the inverted end should erase");
-        assert_eq!(ink.tool, Tool::Pen, "erasing by inversion must not change the tool");
+        assert_eq!(
+            ink.document.strokes().len(),
+            0,
+            "the inverted end should erase"
+        );
+        assert_eq!(
+            ink.tool,
+            Tool::Pen,
+            "erasing by inversion must not change the tool"
+        );
     }
 
     #[test]
@@ -1003,7 +1036,11 @@ mod tests {
         ink.set_visible(false);
         assert!(!pen::is_capturing());
         assert!(ink.live_points().is_empty());
-        assert_eq!(ink.document.strokes().len(), 0, "an abandoned stroke should not commit");
+        assert_eq!(
+            ink.document.strokes().len(),
+            0,
+            "an abandoned stroke should not commit"
+        );
     }
 
     #[test]
@@ -1348,7 +1385,10 @@ mod tests {
                 .iter()
                 .filter(|(_, b)| same_color(a, *b))
                 .count();
-            assert_eq!(matches, 1, "{name} should be distinguishable from every other swatch");
+            assert_eq!(
+                matches, 1,
+                "{name} should be distinguishable from every other swatch"
+            );
         }
     }
 
@@ -1470,7 +1510,10 @@ mod tests {
         press.pressure = 0.7;
 
         ink.apply_samples(&[press], 1.0);
-        assert!(ink.radial_menu().is_some(), "the side button summons the ring");
+        assert!(
+            ink.radial_menu().is_some(),
+            "the side button summons the ring"
+        );
         assert!(ink.live_points().is_empty(), "and lays down no ink");
     }
 
@@ -1493,7 +1536,10 @@ mod tests {
 
         assert!(ink.radial_menu().is_none(), "lifting closes the menu");
         assert_eq!(ink.tool, Tool::Highlighter);
-        assert!(ink.document.is_empty(), "the gesture must not leave a stroke");
+        assert!(
+            ink.document.is_empty(),
+            "the gesture must not leave a stroke"
+        );
     }
 
     #[test]
@@ -1534,7 +1580,11 @@ mod tests {
         lifted.phase = PenPhase::Up;
         ink.apply_samples(&[moved, lifted], 1.0);
 
-        assert_eq!(ink.tool, Tool::Pen, "picking a colour must not change tools");
+        assert_eq!(
+            ink.tool,
+            Tool::Pen,
+            "picking a colour must not change tools"
+        );
         assert!(same_color(ink.color, target));
     }
 
@@ -1554,7 +1604,10 @@ mod tests {
         let before = ink.document.strokes()[0].clone();
 
         assert!(ink.pan_by(Vec2::new(120.0, -40.0)));
-        assert!(!ink.pan_by(Vec2::new(0.0, 0.0)), "a zero pan is not a change");
+        assert!(
+            !ink.pan_by(Vec2::new(0.0, 0.0)),
+            "a zero pan is not a change"
+        );
         assert_eq!(ink.document.strokes()[0], before);
 
         assert!(ink.reset_view());

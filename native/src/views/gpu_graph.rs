@@ -105,18 +105,10 @@ impl Primitive for GpuGraphPrimitive {
         queue.write_buffer(&pipeline.globals_buffer, 0, bytemuck::bytes_of(&globals));
 
         if !self.nodes.is_empty() {
-            queue.write_buffer(
-                &pipeline.nodes_buffer,
-                0,
-                bytemuck::cast_slice(&self.nodes),
-            );
+            queue.write_buffer(&pipeline.nodes_buffer, 0, bytemuck::cast_slice(&self.nodes));
         }
         if !self.edges.is_empty() {
-            queue.write_buffer(
-                &pipeline.edges_buffer,
-                0,
-                bytemuck::cast_slice(&self.edges),
-            );
+            queue.write_buffer(&pipeline.edges_buffer, 0, bytemuck::cast_slice(&self.edges));
         }
     }
 
@@ -191,20 +183,19 @@ impl shader::Pipeline for GpuGraphPipeline {
             source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/graph.wgsl").into()),
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("graph globals layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("graph globals layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("graph pipeline layout"),
@@ -298,8 +289,10 @@ impl shader::Pipeline for GpuGraphPipeline {
 
         let nodes_capacity = 256;
         let edges_capacity = 512;
-        let nodes_buffer = new_instance_buffer::<NodeInstance>(device, nodes_capacity, "graph nodes");
-        let edges_buffer = new_instance_buffer::<EdgeInstance>(device, edges_capacity, "graph edges");
+        let nodes_buffer =
+            new_instance_buffer::<NodeInstance>(device, nodes_capacity, "graph nodes");
+        let edges_buffer =
+            new_instance_buffer::<EdgeInstance>(device, edges_capacity, "graph edges");
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("graph globals bind group"),
@@ -454,7 +447,12 @@ impl GpuGraphProgram {
         }
     }
 
-    fn hit_node(&self, bounds: Rectangle, transform: ViewTransform, screen: Point) -> Option<usize> {
+    fn hit_node(
+        &self,
+        bounds: Rectangle,
+        transform: ViewTransform,
+        screen: Point,
+    ) -> Option<usize> {
         self.frame
             .nodes()
             .iter()
@@ -550,8 +548,10 @@ impl shader::Program<Message> for GpuGraphProgram {
                         dragging: false,
                     });
                     Some(
-                        shader::Action::publish(Message::GraphNodeSelected(Some(node.path.clone())))
-                            .and_capture(),
+                        shader::Action::publish(Message::GraphNodeSelected(Some(
+                            node.path.clone(),
+                        )))
+                        .and_capture(),
                     )
                 } else {
                     state.last_click = None;
@@ -632,12 +632,12 @@ impl shader::Program<Message> for GpuGraphProgram {
                     }
                 }
             },
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left | mouse::Button::Middle)) => {
-                match state.gesture.take() {
-                    Some(_) => Some(shader::Action::capture()),
-                    None => None,
-                }
-            }
+            Event::Mouse(mouse::Event::ButtonReleased(
+                mouse::Button::Left | mouse::Button::Middle,
+            )) => match state.gesture.take() {
+                Some(_) => Some(shader::Action::capture()),
+                None => None,
+            },
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 let point = cursor_pos?;
                 let amount = match delta {

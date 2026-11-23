@@ -89,8 +89,7 @@ impl MdEditor {
         // Vault writes and watcher notifications often arrive in bursts. Wait
         // briefly, then build one graph snapshot away from the UI thread.
         let graph_refresh = if self.graph.visible && self.graph.refresh_due() {
-            iced::time::every(std::time::Duration::from_millis(200))
-                .map(|_| Message::GraphRefresh)
+            iced::time::every(std::time::Duration::from_millis(200)).map(|_| Message::GraphRefresh)
         } else {
             Subscription::none()
         };

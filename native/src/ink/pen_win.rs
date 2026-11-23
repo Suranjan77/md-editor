@@ -129,8 +129,7 @@ unsafe extern "system" fn subclass_proc(
         });
     }
 
-    if super::pen::is_capturing()
-        && matches!(msg, WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP)
+    if super::pen::is_capturing() && matches!(msg, WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP)
     {
         // SAFETY: called from the window procedure for `hwnd` with that
         // message's own `wparam`.
@@ -324,9 +323,9 @@ unsafe fn client_position(hwnd: HWND, info: &POINTER_PEN_INFO) -> Option<(f32, f
 
     // SAFETY: both out-params are live locals; `sourceDevice` comes from the
     // pointer info the API filled in.
-    let have_rects = unsafe {
-        GetPointerDeviceRects(pointer.sourceDevice, &mut device_rect, &mut display_rect)
-    } != 0;
+    let have_rects =
+        unsafe { GetPointerDeviceRects(pointer.sourceDevice, &mut device_rect, &mut display_rect) }
+            != 0;
 
     let device_width = (device_rect.right - device_rect.left) as f64;
     let device_height = (device_rect.bottom - device_rect.top) as f64;

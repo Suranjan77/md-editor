@@ -61,13 +61,11 @@ impl MdEditor {
                 // Its own column rather than an overlay: the canvas claims all
                 // pen input within its bounds, so a panel drawn on top of it
                 // could never be pressed with the pen.
-                views::ink::color_palette(
-                    if self.ink.tool == crate::ink::Tool::Highlighter {
-                        self.ink.highlighter_color
-                    } else {
-                        self.ink.color
-                    }
-                ),
+                views::ink::color_palette(if self.ink.tool == crate::ink::Tool::Highlighter {
+                    self.ink.highlighter_color
+                } else {
+                    self.ink.color
+                }),
             ]
             .height(Length::Fill),
         ]
@@ -354,12 +352,14 @@ impl MdEditor {
         let content = column![toolbar, main_content].height(Length::Fill);
 
         let backlinks_width = self.motion.backlinks_width();
-        let backlinks_view: Element<Message, Theme, iced::Renderer> = container(
-            views::backlinks::view(&self.vault.backlinks, backlinks_width >= 1.0 && !self.graph.visible),
-        )
-        .width(Length::Fixed(backlinks_width))
-        .clip(true)
-        .into();
+        let backlinks_view: Element<Message, Theme, iced::Renderer> =
+            container(views::backlinks::view(
+                &self.vault.backlinks,
+                backlinks_width >= 1.0 && !self.graph.visible,
+            ))
+            .width(Length::Fixed(backlinks_width))
+            .clip(true)
+            .into();
 
         let layout = row![sidebar, content, backlinks_view, toc_view].height(Length::Fill);
 

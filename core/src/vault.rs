@@ -9,8 +9,7 @@ use crate::types::{
     GraphSnapshot, SearchResult,
 };
 
-pub const IMAGE_EXTENSIONS: [&str; 8] =
-    ["jpeg", "jpg", "png", "gif", "bmp", "svg", "webp", "avif"];
+pub const IMAGE_EXTENSIONS: [&str; 8] = ["jpeg", "jpg", "png", "gif", "bmp", "svg", "webp", "avif"];
 const MARKDOWN_EXTENSIONS: [&str; 2] = ["md", "markdown"];
 const PDF_EXTENSIONS: [&str; 1] = ["pdf"];
 const PPTX_EXTENSIONS: [&str; 1] = ["pptx"];
@@ -116,12 +115,7 @@ pub fn index_vault_for_generation(
         // Reuse the content identity for unchanged, already-scoped PDFs. New,
         // replaced, or legacy PDFs pay the bounded 1 MiB hash once.
         let identity = state
-            .stored_pdf_document_id_for_vault(
-                &root,
-                &rel_path,
-                file_size,
-                Some(modified_at),
-            )
+            .stored_pdf_document_id_for_vault(&root, &rel_path, file_size, Some(modified_at))
             .map(|document_id| (document_id, file_size, Some(modified_at)))
             .or_else(|| crate::pdf::compute_provisional_id(&pdf_path).ok());
         if let Some((document_id, size, modified)) = identity {
@@ -131,12 +125,9 @@ pub fn index_vault_for_generation(
         if let Some(renderer) = state.pdf_renderer.as_ref() {
             // Reuse cached text when the PDF is unchanged; only fall back to
             // the (slow) pdfium extraction when size/mtime differ.
-            let text = if let Some(cached) = state.get_cached_pdf_text_for_vault(
-                &root,
-                &rel_path,
-                file_size,
-                modified_at,
-            ) {
+            let text = if let Some(cached) =
+                state.get_cached_pdf_text_for_vault(&root, &rel_path, file_size, modified_at)
+            {
                 cached
             } else {
                 match renderer.extract_document_text(&pdf_path.to_string_lossy()) {
@@ -164,10 +155,7 @@ pub fn index_vault_for_generation(
 
     // Phase 2: publish all shared stores while vault switching is excluded.
     // Slow disk/PDF work above never holds this lock.
-    let _publish = state
-        .vault_publish_lock
-        .lock()
-        .map_err(|e| e.to_string())?;
+    let _publish = state.vault_publish_lock.lock().map_err(|e| e.to_string())?;
     let _mutation = state.vault_publish_mutation_lock()?;
     if state.current_vault_generation() != generation {
         return Ok(None);
@@ -175,13 +163,7 @@ pub fn index_vault_for_generation(
     if state.current_vault_content_revision() != content_revision {
         return Ok(None);
     }
-    if state
-        .vault_root
-        .lock()
-        .map_err(|e| e.to_string())?
-        .as_ref()
-        != Some(&root)
-    {
+    if state.vault_root.lock().map_err(|e| e.to_string())?.as_ref() != Some(&root) {
         return Ok(None);
     }
     {
@@ -207,9 +189,7 @@ pub fn index_vault_for_generation(
         *file_index = index;
     }
     for (document_id, rel_path, size, modified_at) in pdf_documents {
-        if let Err(error) =
-            state.save_pdf_document(&document_id, &rel_path, size, modified_at)
-        {
+        if let Err(error) = state.save_pdf_document(&document_id, &rel_path, size, modified_at) {
             eprintln!("Failed to scope PDF document {rel_path}: {error}");
         }
     }
@@ -495,9 +475,7 @@ fn rewrite_persisted_rename_paths(
     update_pdf_documents: bool,
     update_linked_notes: bool,
 ) -> Result<(), String> {
-    let scope_prefix = state
-        .pdf_scope_prefix()?
-        .ok_or("No vault root set")?;
+    let scope_prefix = state.pdf_scope_prefix()?.ok_or("No vault root set")?;
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
 
@@ -555,10 +533,7 @@ fn rewrite_path_column(
                     OR substr(replace({column}, char(92), '/'), 1, length(?3)) = ?3)
                AND substr(document_id, 1, length(?4)) = ?4"
         );
-        let changed = tx.execute(
-            &sql,
-            rusqlite::params![new_path, old_path, prefix, scope],
-        );
+        let changed = tx.execute(&sql, rusqlite::params![new_path, old_path, prefix, scope]);
         (sql, changed)
     } else if subtree {
         let prefix = format!("{}/", old_path.trim_end_matches('/'));
@@ -740,10 +715,7 @@ pub fn get_backlinks(state: &AppState, path: &str) -> Result<Vec<String>, String
 /// Get mixed backlinks (markdown files, PDF documents, and PDF annotations).
 pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkItem>, String> {
     let (vault_root, pdf_scope_prefix, generation) = {
-        let _publish = state
-            .vault_publish_lock
-            .lock()
-            .map_err(|e| e.to_string())?;
+        let _publish = state.vault_publish_lock.lock().map_err(|e| e.to_string())?;
         let root = state
             .vault_root
             .lock()
@@ -884,17 +856,9 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
                 _ => true,
             }
     });
-    let _publish = state
-        .vault_publish_lock
-        .lock()
-        .map_err(|e| e.to_string())?;
+    let _publish = state.vault_publish_lock.lock().map_err(|e| e.to_string())?;
     if state.current_vault_generation() != generation
-        || state
-            .vault_root
-            .lock()
-            .map_err(|e| e.to_string())?
-            .as_ref()
-            != Some(&vault_root)
+        || state.vault_root.lock().map_err(|e| e.to_string())?.as_ref() != Some(&vault_root)
     {
         return Err("Vault changed while reading backlinks".to_string());
     }
@@ -918,10 +882,7 @@ pub fn get_graph_snapshot(state: &AppState) -> Result<GraphSnapshot, String> {
     // same short publication/mutation barrier. A concurrent A -> B switch can
     // therefore never mix A's filesystem with B's annotations or FileIndex.
     let (root, pdf_scope_prefix, generation, content_revision, indexed_outgoing) = {
-        let _publish = state
-            .vault_publish_lock
-            .lock()
-            .map_err(|e| e.to_string())?;
+        let _publish = state.vault_publish_lock.lock().map_err(|e| e.to_string())?;
         let _mutation = state.vault_publish_mutation_lock()?;
         let root = state
             .vault_root
@@ -1083,19 +1044,11 @@ pub fn get_graph_snapshot(state: &AppState) -> Result<GraphSnapshot, String> {
     // Filesystem/database work above deliberately ran without shared vault
     // locks. Validate the captured identity under the same barrier before
     // exposing the snapshot; callers can retry if anything changed meanwhile.
-    let _publish = state
-        .vault_publish_lock
-        .lock()
-        .map_err(|e| e.to_string())?;
+    let _publish = state.vault_publish_lock.lock().map_err(|e| e.to_string())?;
     let _mutation = state.vault_publish_mutation_lock()?;
     if state.current_vault_generation() != generation
         || state.current_vault_content_revision() != content_revision
-        || state
-            .vault_root
-            .lock()
-            .map_err(|e| e.to_string())?
-            .as_ref()
-            != Some(&root)
+        || state.vault_root.lock().map_err(|e| e.to_string())?.as_ref() != Some(&root)
     {
         return Err("Vault changed while building graph snapshot".to_string());
     }
@@ -1141,7 +1094,10 @@ pub fn resolve_vault_path_checked(
     let mut existing = resolved.as_path();
     while fs::symlink_metadata(existing).is_err() {
         existing = existing.parent().ok_or_else(|| {
-            format!("Could not resolve an existing ancestor for {}", resolved.display())
+            format!(
+                "Could not resolve an existing ancestor for {}",
+                resolved.display()
+            )
         })?;
     }
     let canonical_existing = fs::canonicalize(existing).map_err(|e| {
@@ -1151,7 +1107,9 @@ pub fn resolve_vault_path_checked(
         )
     })?;
     if !canonical_existing.starts_with(&canonical_root) {
-        return Err(format!("Path resolves outside the vault root: {relative_path}"));
+        return Err(format!(
+            "Path resolves outside the vault root: {relative_path}"
+        ));
     }
     Ok(resolved)
 }
@@ -2073,7 +2031,12 @@ mod tests {
         );
 
         assert_eq!(state.vault_root.lock().unwrap().as_ref(), Some(&second));
-        assert!(search_vault(&state, "first-only-token").unwrap().items.is_empty());
+        assert!(
+            search_vault(&state, "first-only-token")
+                .unwrap()
+                .items
+                .is_empty()
+        );
         let results = search_vault(&state, "second-only-token").unwrap();
         assert_eq!(results.items.len(), 1);
         assert_eq!(results.items[0].path, "b.md");
@@ -2113,7 +2076,8 @@ mod tests {
 
     #[test]
     fn renaming_markdown_extension_rewrites_backlinks() {
-        let base = std::env::temp_dir().join(format!("md_rename_markdown_{}", uuid::Uuid::new_v4()));
+        let base =
+            std::env::temp_dir().join(format!("md_rename_markdown_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&base).unwrap();
         fs::write(base.join("target.markdown"), "target [[target]]").unwrap();
         fs::write(base.join("source.md"), "[[target]]").unwrap();
@@ -2122,7 +2086,10 @@ mod tests {
 
         rename_entry(&state, "target.markdown", "renamed.markdown").unwrap();
 
-        assert_eq!(fs::read_to_string(base.join("source.md")).unwrap(), "[[renamed]]");
+        assert_eq!(
+            fs::read_to_string(base.join("source.md")).unwrap(),
+            "[[renamed]]"
+        );
         assert_eq!(
             fs::read_to_string(base.join("renamed.markdown")).unwrap(),
             "target [[renamed]]"

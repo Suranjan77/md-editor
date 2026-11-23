@@ -120,12 +120,16 @@ fn label_action<'a>(
 }
 
 fn divider<'a>() -> Element<'a, Message, Theme, Renderer> {
-    container(Space::new().width(Length::Fixed(1.0)).height(Length::Fixed(20.0)))
-        .style(|_| container::Style {
-            background: Some(Background::Color(theme::BORDER)),
-            ..Default::default()
-        })
-        .into()
+    container(
+        Space::new()
+            .width(Length::Fixed(1.0))
+            .height(Length::Fixed(20.0)),
+    )
+    .style(|_| container::Style {
+        background: Some(Background::Color(theme::BORDER)),
+        ..Default::default()
+    })
+    .into()
 }
 
 /// The single top row.
@@ -329,16 +333,15 @@ pub fn color_palette<'a>(active: Color) -> Element<'a, Message, Theme, Renderer>
     }
 
     container(
-        container(swatches.padding([12, 8]))
-            .style(|_| container::Style {
-                background: Some(Background::Color(theme::BG_SECONDARY)),
-                border: Border {
-                    color: theme::BORDER,
-                    width: 1.0,
-                    radius: 24.0.into(),
-                },
-                ..Default::default()
-            }),
+        container(swatches.padding([12, 8])).style(|_| container::Style {
+            background: Some(Background::Color(theme::BG_SECONDARY)),
+            border: Border {
+                color: theme::BORDER,
+                width: 1.0,
+                radius: 24.0.into(),
+            },
+            ..Default::default()
+        }),
     )
     .width(Length::Fixed(PALETTE_WIDTH))
     .height(Length::Fill)

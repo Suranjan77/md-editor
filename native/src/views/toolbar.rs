@@ -142,17 +142,21 @@ pub fn view<'a>(
             .on_press(Message::InkToggle)
             .padding(8)
             .style(button::text),
-            container(text("Handwriting  Ctrl I").size(11).color(theme::TEXT_SECONDARY))
-                .padding([4, 8])
-                .style(|_| container::Style {
-                    background: Some(Background::Color(theme::BG_TERTIARY)),
-                    border: Border {
-                        color: theme::BORDER,
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    ..Default::default()
-                }),
+            container(
+                text("Handwriting  Ctrl I")
+                    .size(11)
+                    .color(theme::TEXT_SECONDARY)
+            )
+            .padding([4, 8])
+            .style(|_| container::Style {
+                background: Some(Background::Color(theme::BG_TERTIARY)),
+                border: Border {
+                    color: theme::BORDER,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            }),
             tooltip::Position::Bottom,
         ),
         button(icons::view(

@@ -17,8 +17,9 @@ impl MdEditor {
                     }
                     Ok(_) => {
                         let file = self.pdf.active_path.as_deref().unwrap_or("PDF");
-                        self.pdf.load_error =
-                            Some(format!("Could not open '{file}': the document has no pages"));
+                        self.pdf.load_error = Some(format!(
+                            "Could not open '{file}': the document has no pages"
+                        ));
                         0
                     }
                     Err(error) => {

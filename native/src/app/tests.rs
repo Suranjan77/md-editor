@@ -124,8 +124,7 @@ fn test_resolve_relative_link_path_with_vault() {
     let vault_root = target_dir.to_str().unwrap();
     let active_path = "subdir/active.md";
 
-    let resolved =
-        resolve_relative_link_path(Some(vault_root), Some(active_path), "another_file");
+    let resolved = resolve_relative_link_path(Some(vault_root), Some(active_path), "another_file");
     assert_eq!(resolved, "subdir/another_file");
 
     let _ = std::fs::remove_dir_all(&target_dir);
@@ -219,25 +218,11 @@ fn rename_updates_open_descendant_paths() {
 #[test]
 fn pdf_search_scroll_targets_match_rect_not_just_page_top() {
     assert_eq!(
-        crate::pdf_pane::search_match_scroll_y_from(
-            1000.0,
-            Some(250.0),
-            20.0,
-            792.0,
-            2.0,
-            5000.0
-        ),
+        crate::pdf_pane::search_match_scroll_y_from(1000.0, Some(250.0), 20.0, 792.0, 2.0, 5000.0),
         1948.0
     );
     assert_eq!(
-        crate::pdf_pane::search_match_scroll_y_from(
-            20.0,
-            Some(780.0),
-            10.0,
-            792.0,
-            1.0,
-            5000.0
-        ),
+        crate::pdf_pane::search_match_scroll_y_from(20.0, Some(780.0), 10.0, 792.0, 1.0, 5000.0),
         0.0
     );
 }
@@ -312,10 +297,7 @@ fn editor_cursor_move_reclaims_active_panel_from_pdf() {
     let mut app = MdEditor::new_with_startup_file(None).0;
     app.pdf.render_generation = 8;
     app.search.pdf_error = Some("keep".to_string());
-    let _ = app.update_inner(Message::PdfSearchResult(
-        7,
-        Err("stale result".to_string()),
-    ));
+    let _ = app.update_inner(Message::PdfSearchResult(7, Err("stale result".to_string())));
     assert_eq!(app.search.pdf_error.as_deref(), Some("keep"));
 
     app.active_panel = ActivePanel::Pdf;
@@ -353,7 +335,10 @@ fn graph_shortcut_is_a_noop_without_a_vault() {
     let _ = app.update_inner(Message::GraphToggle);
 
     assert!(!app.graph.visible);
-    assert!(!app.title(iced::window::Id::unique()).contains("Knowledge Graph"));
+    assert!(
+        !app.title(iced::window::Id::unique())
+            .contains("Knowledge Graph")
+    );
 }
 
 #[test]
@@ -365,13 +350,23 @@ fn stale_pdf_identity_result_cannot_attach_to_another_document() {
 
     let _ = app.update_inner(Message::PdfDocumentIdComputed(
         7,
-        Some(("current.pdf".to_string(), "stale-id".to_string(), 10, Some(1))),
+        Some((
+            "current.pdf".to_string(),
+            "stale-id".to_string(),
+            10,
+            Some(1),
+        )),
     ));
     assert!(app.pdf.document_id.is_none());
 
     let _ = app.update_inner(Message::PdfDocumentIdComputed(
         8,
-        Some(("other.pdf".to_string(), "wrong-file".to_string(), 10, Some(1))),
+        Some((
+            "other.pdf".to_string(),
+            "wrong-file".to_string(),
+            10,
+            Some(1),
+        )),
     ));
     assert!(app.pdf.document_id.is_none());
 }

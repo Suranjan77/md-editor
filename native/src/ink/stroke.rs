@@ -47,7 +47,11 @@ impl Vec2 {
     /// Unit vector, or `None` when the vector is too short to have a direction.
     fn unit(self) -> Option<Self> {
         let len = self.len();
-        if len > 1e-6 { Some(self.scale(1.0 / len)) } else { None }
+        if len > 1e-6 {
+            Some(self.scale(1.0 / len))
+        } else {
+            None
+        }
     }
 
     /// Left-hand perpendicular.
@@ -249,8 +253,16 @@ pub fn outline(raw: &[InkPoint], opts: &StrokeOptions) -> Vec<Vec2> {
 
         // Direction of travel through this point. Interior points use the
         // bisector of the incoming and outgoing segments so joins stay smooth.
-        let incoming = if i > 0 { pts[i].pos.sub(pts[i - 1].pos).unit() } else { None };
-        let outgoing = if i + 1 < n { pts[i + 1].pos.sub(pts[i].pos).unit() } else { None };
+        let incoming = if i > 0 {
+            pts[i].pos.sub(pts[i - 1].pos).unit()
+        } else {
+            None
+        };
+        let outgoing = if i + 1 < n {
+            pts[i + 1].pos.sub(pts[i].pos).unit()
+        } else {
+            None
+        };
 
         let (offset_dir, miter) = match (incoming, outgoing) {
             (Some(a), Some(b)) => {
@@ -511,12 +523,18 @@ mod tests {
     fn streamline_preserves_endpoints_and_shortens_nothing() {
         let raw = horizontal(30, 0.7);
         let smoothed = streamline(&raw, 0.5);
-        assert_eq!(smoothed[0].pos, raw[0].pos, "stroke must start where the pen landed");
+        assert_eq!(
+            smoothed[0].pos, raw[0].pos,
+            "stroke must start where the pen landed"
+        );
         assert!(smoothed.len() >= 2);
         // Smoothing lags, so the tail trails the raw input but must still track it.
         let last = smoothed.last().unwrap().pos;
         assert!(last.x <= raw.last().unwrap().pos.x + 0.01);
-        assert!(last.x > raw[raw.len() / 2].pos.x, "smoothing must not stall the stroke");
+        assert!(
+            last.x > raw[raw.len() / 2].pos.x,
+            "smoothing must not stall the stroke"
+        );
     }
 
     #[test]
@@ -527,7 +545,10 @@ mod tests {
         let start = taper_at(0.0, total, &opts);
         let end = taper_at(total, total, &opts);
 
-        assert!((mid - 1.0).abs() < f32::EPSILON, "middle should be full width");
+        assert!(
+            (mid - 1.0).abs() < f32::EPSILON,
+            "middle should be full width"
+        );
         assert!(start < 0.01, "stroke should start from a point");
         assert!(end < 0.01, "stroke should end at a point");
     }

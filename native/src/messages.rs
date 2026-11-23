@@ -135,7 +135,10 @@ pub enum Message {
     PdfTocLoaded(String, Vec<md_editor_core::pdf::TocEntry>, bool),
     PdfPageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     PdfReferencesLoaded(String, Vec<md_editor_core::references::ReferenceLink>),
-    PdfSearchResult(u64, Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>),
+    PdfSearchResult(
+        u64,
+        Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>,
+    ),
     PdfSearchResultClicked(u16),
     PdfScrollBy(f32),
     PdfLinkPreviewResult(Result<md_editor_core::pdf::LinkPreviewResult, String>),

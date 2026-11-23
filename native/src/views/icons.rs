@@ -186,7 +186,13 @@ impl<Message> canvas::Program<Message> for IconCanvas {
             Icon::Undo | Icon::Redo => {
                 // An arrow curving back on itself; the redo variant is the
                 // same shape mirrored, so both read as a pair.
-                let mirror = |x: f32| if matches!(self.icon, Icon::Redo) { 24.0 - x } else { x };
+                let mirror = |x: f32| {
+                    if matches!(self.icon, Icon::Redo) {
+                        24.0 - x
+                    } else {
+                        x
+                    }
+                };
                 let arc = canvas::Path::new(|path| {
                     path.move_to(p(mirror(7.0), 9.0));
                     path.line_to(p(mirror(4.0), 9.0));
@@ -369,7 +375,10 @@ impl<Message> canvas::Program<Message> for IconCanvas {
             }
             Icon::Target => {
                 frame.stroke(&canvas::Path::circle(p(12.0, 12.0), 7.0 * scale), stroke);
-                frame.fill(&canvas::Path::circle(p(12.0, 12.0), 2.0 * scale), self.color);
+                frame.fill(
+                    &canvas::Path::circle(p(12.0, 12.0), 2.0 * scale),
+                    self.color,
+                );
                 stroke_line(&mut frame, p(12.0, 2.5), p(12.0, 5.5), stroke);
                 stroke_line(&mut frame, p(12.0, 18.5), p(12.0, 21.5), stroke);
                 stroke_line(&mut frame, p(2.5, 12.0), p(5.5, 12.0), stroke);

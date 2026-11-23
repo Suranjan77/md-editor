@@ -15,10 +15,7 @@ pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
     let mut fence: Option<(char, usize)> = None;
     for (i, line) in buffer_text.split('\n').enumerate() {
         let trimmed = line.trim_start();
-        let marker = trimmed
-            .chars()
-            .next()
-            .filter(|c| *c == '\x60' || *c == '~');
+        let marker = trimmed.chars().next().filter(|c| *c == '\x60' || *c == '~');
         let marker_len = marker
             .map(|marker| trimmed.chars().take_while(|c| *c == marker).count())
             .unwrap_or(0);
@@ -33,9 +30,7 @@ pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
         }
 
         let level = trimmed.chars().take_while(|c| *c == '#').count();
-        if (1..=6).contains(&level)
-            && trimmed.chars().nth(level).is_some_and(|c| c == ' ')
-        {
+        if (1..=6).contains(&level) && trimmed.chars().nth(level).is_some_and(|c| c == ' ') {
             let text = trimmed[level + 1..].trim().to_string();
             if !text.is_empty() {
                 toc.push(TocEntry {
@@ -55,9 +50,8 @@ mod tests {
 
     #[test]
     fn toc_skips_fenced_comments_and_tags() {
-        let toc = get_toc(
-            "# Real\n\n\x60\x60\x60bash\n# not a heading\n\x60\x60\x60\n#tag\n## Heading",
-        );
+        let toc =
+            get_toc("# Real\n\n\x60\x60\x60bash\n# not a heading\n\x60\x60\x60\n#tag\n## Heading");
         assert_eq!(toc.len(), 2);
         assert_eq!((toc[0].text.as_str(), toc[0].line), ("Real", 0));
         assert_eq!((toc[1].text.as_str(), toc[1].line), ("Heading", 6));
@@ -71,10 +65,7 @@ mod tests {
     }
 }
 
-pub fn view<'a>(
-    toc: &'a [TocEntry],
-    is_synthetic: bool,
-) -> Element<'a, Message, Theme, Renderer> {
+pub fn view<'a>(toc: &'a [TocEntry], is_synthetic: bool) -> Element<'a, Message, Theme, Renderer> {
     let title = text("Table of Contents")
         .size(theme::TEXT_MD)
         .color(theme::TEXT_PRIMARY);

@@ -61,9 +61,11 @@ pub struct ReadingItemConfig {
 }
 
 fn content_hash(text: &str) -> u64 {
-    text.as_bytes().iter().fold(0xcbf29ce484222325, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    })
+    text.as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        })
 }
 
 pub(crate) fn gate_completion_keys(gate: &str, item: &str, index: usize) -> (String, String) {
@@ -84,7 +86,10 @@ pub(crate) fn reading_completion_keys(
     )
 }
 
-fn completion_checked(kv: &std::collections::HashMap<String, String>, keys: &(String, String)) -> bool {
+fn completion_checked(
+    kv: &std::collections::HashMap<String, String>,
+    keys: &(String, String),
+) -> bool {
     kv.get(&keys.0)
         .or_else(|| kv.get(&keys.1))
         .is_some_and(|value| value == "true")
@@ -1012,7 +1017,9 @@ fn gates_body<'a>(
             item_col = item_col.push(
                 checkbox(checked)
                     .label(item)
-                    .on_toggle(move |_| Message::TrackerGateToggled(gate_id.clone(), item_key.clone(), idx))
+                    .on_toggle(move |_| {
+                        Message::TrackerGateToggled(gate_id.clone(), item_key.clone(), idx)
+                    })
                     .size(theme::TEXT_MD),
             );
         }
@@ -1042,7 +1049,10 @@ fn reading_body<'a>(
                 .iter()
                 .enumerate()
                 .filter(|(idx, item)| {
-                    completion_checked(kv, &reading_completion_keys(&key_section, &item.title, *idx))
+                    completion_checked(
+                        kv,
+                        &reading_completion_keys(&key_section, &item.title, *idx),
+                    )
                 })
                 .count()
         })
@@ -1063,7 +1073,10 @@ fn reading_body<'a>(
             .iter()
             .enumerate()
             .filter(|(idx, item)| {
-                completion_checked(kv, &reading_completion_keys(&key_section, &item.title, *idx))
+                completion_checked(
+                    kv,
+                    &reading_completion_keys(&key_section, &item.title, *idx),
+                )
             })
             .count();
         let mut item_col = column![
@@ -1075,14 +1088,17 @@ fn reading_body<'a>(
         ]
         .spacing(theme::SPACE_3);
         for (idx, item) in section.items.into_iter().enumerate() {
-            let checked = completion_checked(kv, &reading_completion_keys(&key_section, &item.title, idx));
+            let checked =
+                completion_checked(kv, &reading_completion_keys(&key_section, &item.title, idx));
             let label = format!("{}  {}", item.priority.to_uppercase(), item.title);
             let section_clone = key_section.clone();
             let item_key = item.title.clone();
             item_col = item_col.push(
                 checkbox(checked)
                     .label(label)
-                    .on_toggle(move |_| Message::TrackerReadingToggled(section_clone.clone(), item_key.clone(), idx))
+                    .on_toggle(move |_| {
+                        Message::TrackerReadingToggled(section_clone.clone(), item_key.clone(), idx)
+                    })
                     .size(theme::TEXT_MD),
             );
         }

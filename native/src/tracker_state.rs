@@ -234,7 +234,6 @@ impl TrackerState {
         self.toggle_bool_kv(state, key);
     }
 
-
     fn migrate_completion_keys(&mut self, state: &AppState) {
         let Ok(config) = views::tracker::parse_config(&self.config_json) else {
             return;

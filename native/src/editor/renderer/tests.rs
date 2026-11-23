@@ -292,7 +292,9 @@ fn links_in_rendered_tables_are_clickable() {
     assert_eq!(view.interaction(link.center()), mouse::Interaction::Pointer);
     let messages = view.click(link.center()).messages;
     assert!(
-        messages.iter().any(|m| m == "link https://example.com/repo"),
+        messages
+            .iter()
+            .any(|m| m == "link https://example.com/repo"),
         "ctrl+click on the table link published {messages:?}"
     );
 }

@@ -257,11 +257,20 @@ impl canvas::Program<Message> for InkSurface<'_> {
                     }
                     builder.close();
                 });
-                frame.fill(&path, Color { a: 0.10, ..SELECTION_HUE });
+                frame.fill(
+                    &path,
+                    Color {
+                        a: 0.10,
+                        ..SELECTION_HUE
+                    },
+                );
                 frame.stroke(
                     &path,
                     canvas::Stroke::default()
-                        .with_color(Color { a: 0.85, ..SELECTION_HUE })
+                        .with_color(Color {
+                            a: 0.85,
+                            ..SELECTION_HUE
+                        })
                         // Keep the outline one screen pixel wide whatever the
                         // zoom, since the frame is scaled.
                         .with_width(1.0 / self.camera.zoom.max(0.001)),
@@ -288,7 +297,10 @@ impl canvas::Program<Message> for InkSurface<'_> {
                     iced::Size::new(rect.width, rect.height),
                 ),
                 canvas::Stroke::default()
-                    .with_color(Color { a: 0.9, ..SELECTION_HUE })
+                    .with_color(Color {
+                        a: 0.9,
+                        ..SELECTION_HUE
+                    })
                     .with_width(1.0),
             );
         }
@@ -326,7 +338,10 @@ impl canvas::Program<Message> for InkSurface<'_> {
                 overlay.stroke(
                     &canvas::Path::circle(centre, radius + 1.0),
                     canvas::Stroke::default()
-                        .with_color(Color { a: 0.7, ..self.color })
+                        .with_color(Color {
+                            a: 0.7,
+                            ..self.color
+                        })
                         .with_width(1.0),
                 );
             }
@@ -492,12 +507,8 @@ fn draw_radial(frame: &mut canvas::Frame, menu: &super::radial::RadialMenu) {
     );
 
     for (index, (label, tool)) in radial::TOOLS.iter().enumerate() {
-        let at = radial::slot_position(
-            menu.center,
-            index,
-            radial::TOOLS.len(),
-            radial::TOOL_RADIUS,
-        );
+        let at =
+            radial::slot_position(menu.center, index, radial::TOOLS.len(), radial::TOOL_RADIUS);
         let lit = highlighted == Some(RadialAction::Tool(*tool));
 
         frame.fill(
@@ -533,7 +544,10 @@ fn draw_radial(frame: &mut canvas::Frame, menu: &super::radial::RadialMenu) {
         let lit = highlighted == Some(RadialAction::Color(*preset));
         let point = Point::new(at.x, at.y);
 
-        frame.fill(&canvas::Path::circle(point, if lit { 15.0 } else { 11.0 }), *preset);
+        frame.fill(
+            &canvas::Path::circle(point, if lit { 15.0 } else { 11.0 }),
+            *preset,
+        );
         if lit {
             frame.stroke(
                 &canvas::Path::circle(point, 18.0),

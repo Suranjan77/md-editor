@@ -52,8 +52,7 @@ impl MdEditor {
                 Task::none()
             }
             Message::GraphScopeGlobal => {
-                self.graph
-                    .set_scope(crate::graph_state::GraphScope::Global);
+                self.graph.set_scope(crate::graph_state::GraphScope::Global);
                 Task::none()
             }
             Message::GraphScopeLocal => {

@@ -263,7 +263,9 @@ impl MdEditor {
             && (!self.ui.split_view_active || self.active_panel == ActivePanel::Markdown)
     }
 
-    pub(super) fn replace_all_in_current_document(&mut self) -> Result<(usize, Task<Message>), String> {
+    pub(super) fn replace_all_in_current_document(
+        &mut self,
+    ) -> Result<(usize, Task<Message>), String> {
         if self.active_path.is_none() {
             return Err("Open a markdown file before replacing text".to_string());
         }

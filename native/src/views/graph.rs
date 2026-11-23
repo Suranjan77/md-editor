@@ -316,7 +316,9 @@ fn toolbar<'a>(
     } else {
         row![
             icons::view(Icon::Pin, theme::ACCENT, 11.0),
-            text(format!("{pinned} pinned")).size(10).color(theme::ACCENT),
+            text(format!("{pinned} pinned"))
+                .size(10)
+                .color(theme::ACCENT),
             button(text("release").size(10))
                 .on_press(Message::GraphUnpinAll)
                 .padding([3, 6])
@@ -481,7 +483,12 @@ fn viewport_controls<'a>(state: &'a GraphState) -> Element<'a, Message> {
     floating(
         row![
             hinted(
-                icon_button(Icon::Minus, false, zoom > MIN_ZOOM, Message::GraphZoomBy(0.8)),
+                icon_button(
+                    Icon::Minus,
+                    false,
+                    zoom > MIN_ZOOM,
+                    Message::GraphZoomBy(0.8)
+                ),
                 "Zoom out",
             ),
             text(zoom_label)
@@ -631,7 +638,10 @@ fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Element<'a, Mess
 
     let actions = row![
         button(text("Open note").size(11))
-            .on_press_maybe(node.exists.then(|| Message::GraphNodeOpen(node.path.clone())))
+            .on_press_maybe(
+                node.exists
+                    .then(|| Message::GraphNodeOpen(node.path.clone()))
+            )
             .padding([7, 12])
             .style(primary_style),
         hinted(
@@ -767,12 +777,7 @@ fn insights<'a>(state: &'a GraphState) -> Element<'a, Message> {
             theme::WARNING,
             "Every note is connected",
         ),
-        link_list(
-            "BROKEN LINKS",
-            unresolved,
-            theme::DANGER,
-            "No broken links",
-        ),
+        link_list("BROKEN LINKS", unresolved, theme::DANGER, "No broken links",),
     ]
     .spacing(10)
     .into()
@@ -866,25 +871,19 @@ fn link_list<'a>(
         }
     }
 
-    container(
-        column![
-            text(title).size(9).color(accent),
-            list,
-        ]
-        .spacing(5),
-    )
-    .padding(9)
-    .width(Length::Fill)
-    .style(|_| container::Style {
-        background: Some(Background::Color(theme::BG_PRIMARY)),
-        border: Border {
-            color: theme::BORDER_SUBTLE,
-            width: 1.0,
-            radius: 7.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
+    container(column![text(title).size(9).color(accent), list,].spacing(5))
+        .padding(9)
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(theme::BG_PRIMARY)),
+            border: Border {
+                color: theme::BORDER_SUBTLE,
+                width: 1.0,
+                radius: 7.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 // ──────────────────────────── shared widgets ────────────────────────
@@ -919,12 +918,16 @@ fn floating<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message
 }
 
 fn divider<'a>() -> Element<'a, Message> {
-    container(Space::new().width(Length::Fixed(1.0)).height(Length::Fixed(16.0)))
-        .style(|_| container::Style {
-            background: Some(Background::Color(theme::BORDER)),
-            ..Default::default()
-        })
-        .into()
+    container(
+        Space::new()
+            .width(Length::Fixed(1.0))
+            .height(Length::Fixed(16.0)),
+    )
+    .style(|_| container::Style {
+        background: Some(Background::Color(theme::BORDER)),
+        ..Default::default()
+    })
+    .into()
 }
 
 fn segmented<'a>(segments: Vec<Element<'a, Message>>) -> Element<'a, Message> {
@@ -983,17 +986,13 @@ fn filter_chip<'a>(
 ) -> Element<'a, Message> {
     button(
         row![
-            text("●").size(7).color(if active {
-                accent
-            } else {
-                theme::TEXT_MUTED
-            }),
+            text("●")
+                .size(7)
+                .color(if active { accent } else { theme::TEXT_MUTED }),
             text(label).size(10),
-            text(count.to_string()).size(10).color(if active {
-                accent
-            } else {
-                theme::TEXT_MUTED
-            }),
+            text(count.to_string())
+                .size(10)
+                .color(if active { accent } else { theme::TEXT_MUTED }),
         ]
         .spacing(5)
         .align_y(Alignment::Center),
@@ -1016,7 +1015,11 @@ fn filter_chip<'a>(
                 theme::TEXT_MUTED
             },
             border: Border {
-                color: if active { theme::BORDER } else { theme::BORDER_SUBTLE },
+                color: if active {
+                    theme::BORDER
+                } else {
+                    theme::BORDER_SUBTLE
+                },
                 width: 1.0,
                 radius: 6.0.into(),
             },
@@ -1439,11 +1442,8 @@ fn draw_hover_card(
         cursor.y + 16.0
     };
 
-    let card = canvas::Path::rounded_rectangle(
-        Point::new(x, y),
-        Size::new(width, height),
-        7.0.into(),
-    );
+    let card =
+        canvas::Path::rounded_rectangle(Point::new(x, y), Size::new(width, height), 7.0.into());
     frame.fill(&card, Color::from_rgba(0.07, 0.08, 0.09, 0.97));
     frame.stroke(
         &card,
@@ -1601,7 +1601,14 @@ mod tests {
         let bounds = Rectangle::new(Point::new(0.0, 0.0), Size::new(800.0, 500.0));
         let anchor = Point::new(175.0, 220.0);
         let before = screen_to_world(anchor, bounds, ViewTransform::default());
-        let zoomed = zoom_about(ViewTransform::default(), bounds, anchor, 2.0, MIN_ZOOM, MAX_ZOOM);
+        let zoomed = zoom_about(
+            ViewTransform::default(),
+            bounds,
+            anchor,
+            2.0,
+            MIN_ZOOM,
+            MAX_ZOOM,
+        );
         let after = screen_to_world(anchor, bounds, zoomed);
         assert!(close(before.x, after.x));
         assert!(close(before.y, after.y));

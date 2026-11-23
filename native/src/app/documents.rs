@@ -405,8 +405,14 @@ impl MdEditor {
 
     pub(super) fn persist_layout(&self) {
         let values = [
-            ("layout_sidebar_visible", self.vault.sidebar_visible.to_string()),
-            ("layout_backlinks_visible", self.vault.backlinks_visible.to_string()),
+            (
+                "layout_sidebar_visible",
+                self.vault.sidebar_visible.to_string(),
+            ),
+            (
+                "layout_backlinks_visible",
+                self.vault.backlinks_visible.to_string(),
+            ),
             ("layout_toc_visible", self.editor.toc_visible.to_string()),
             ("layout_tracker_visible", self.tracker.visible.to_string()),
             ("layout_split_active", self.ui.split_view_active.to_string()),

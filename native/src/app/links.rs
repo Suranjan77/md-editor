@@ -1,6 +1,5 @@
 //! Resolving wikilinks, relative links and heading anchors to vault paths and lines.
 
-
 /// Lexically normalize a vault-relative path and render it with forward
 /// slashes. Vault-relative paths are forward-slash separated everywhere else
 /// (see `vault::path_to_relative_string`), so on Windows the `PathBuf`'s native
