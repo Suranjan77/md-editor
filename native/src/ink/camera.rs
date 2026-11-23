@@ -43,11 +43,11 @@ impl Camera {
             && self.pan.y.abs() < f32::EPSILON
     }
 
-    pub fn to_page(&self, screen: Vec2) -> Vec2 {
+    pub fn to_page(self, screen: Vec2) -> Vec2 {
         screen.sub(self.pan).scale(1.0 / self.zoom)
     }
 
-    pub fn to_screen(&self, page: Vec2) -> Vec2 {
+    pub fn to_screen(self, page: Vec2) -> Vec2 {
         page.scale(self.zoom).add(self.pan)
     }
 

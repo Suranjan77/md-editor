@@ -226,25 +226,6 @@ pub fn default_config_json() -> String {
     serde_json::to_string_pretty(&default_config()).unwrap_or_else(|_| "{}".to_string())
 }
 
-#[cfg(test)]
-mod completion_key_tests {
-    use super::*;
-
-    #[test]
-    fn content_keys_survive_reordering() {
-        let first = gate_completion_keys("g", "alpha", 0).0;
-        let reordered = gate_completion_keys("g", "alpha", 4).0;
-        assert_eq!(first, reordered);
-        assert_ne!(first, gate_completion_keys("g", "beta", 0).0);
-    }
-
-    #[test]
-    fn manual_dates_can_be_normalized() {
-        let date = chrono::NaiveDate::parse_from_str("2026-7-16", "%Y-%m-%d").unwrap();
-        assert_eq!(date.format("%Y-%m-%d").to_string(), "2026-07-16");
-    }
-}
-
 pub fn parse_config(json: &str) -> Result<TrackerConfig, String> {
     let config: TrackerConfig = serde_json::from_str(json).map_err(|err| err.to_string())?;
     if config.phases.is_empty() {
@@ -300,5 +281,24 @@ pub(super) fn default_config() -> TrackerConfig {
                     .collect(),
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod completion_key_tests {
+    use super::*;
+
+    #[test]
+    fn content_keys_survive_reordering() {
+        let first = gate_completion_keys("g", "alpha", 0).0;
+        let reordered = gate_completion_keys("g", "alpha", 4).0;
+        assert_eq!(first, reordered);
+        assert_ne!(first, gate_completion_keys("g", "beta", 0).0);
+    }
+
+    #[test]
+    fn manual_dates_can_be_normalized() {
+        let date = chrono::NaiveDate::parse_from_str("2026-7-16", "%Y-%m-%d").unwrap();
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2026-07-16");
     }
 }

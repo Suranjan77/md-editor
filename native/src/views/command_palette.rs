@@ -130,9 +130,9 @@ fn rank<'a>(
         }
     }
 
-    // Sort by descending score. `sort_by` is stable, so equal scores keep
+    // Sort by descending score. The sort is stable, so equal scores keep
     // registry order for commands and vault order for files.
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
     scored.truncate(MAX_RESULTS);
     scored.into_iter().map(|(_, hit)| hit).collect()
 }

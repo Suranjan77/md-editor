@@ -201,6 +201,7 @@ pub(super) const VAULT_WATCH_DEBOUNCE: std::time::Duration = std::time::Duration
 /// recursively and emits a debounced [`Message::VaultFilesChanged`] listing the
 /// vault-relative paths that changed. Must be a plain `fn` (not a closure) to
 /// satisfy `run_with`; the root is threaded in via the `&String` argument.
+#[allow(clippy::ptr_arg)] // `run_with` passes its data back as `&String`
 pub(super) fn vault_watch_stream(
     root: &String,
 ) -> std::pin::Pin<Box<dyn iced::futures::Stream<Item = Message> + Send>> {

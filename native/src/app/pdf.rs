@@ -138,9 +138,7 @@ impl MdEditor {
                     self.pdf.page_at_scroll(self.pdf.scroll_y)
                 };
                 let page_start_offset = self.pdf.page_offset(current_page);
-                let relative_ratio = if is_initial {
-                    0.0
-                } else if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
+                let relative_ratio = if is_initial || self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
                     0.0
                 } else {
                     let page_height_old = self.pdf.page_height(current_page);

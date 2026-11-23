@@ -50,7 +50,8 @@ cargo build --release        # optimized binary
 ```
 
 > `cargo fmt --check` and `cargo test --workspace` pass cleanly on `main`. Clippy does not
-> yet: the tree carries 10 warnings (2 in core, 8 in native, none in the editor), so
+> yet: the tree carries 10 warnings (2 in core, 8 in native, none in the editor) — argument
+> counts on view builders, index loops in the graph simulation, and two `from_str` names — so
 > `-D warnings` fails on a fresh checkout. Treat the current count as the baseline and do
 > not add to it.
 

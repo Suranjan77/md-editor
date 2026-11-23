@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::messages::Message;
 
 /// Where a sample sits in a stroke's lifecycle.
+#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PenPhase {
     /// Pen touched down: start a new stroke.
@@ -80,10 +81,12 @@ static CHANNEL: LazyLock<Channel> = LazyLock::new(|| {
 });
 
 /// Hand a captured sample to the runtime. Called from the platform hook.
+#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
 pub(crate) fn emit(sample: PenSample) {
     let _ = CHANNEL.0.send(sample);
 }
 
+#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
 pub(crate) fn is_capturing() -> bool {
     CAPTURING.load(Ordering::Relaxed)
 }

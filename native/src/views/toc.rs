@@ -46,27 +46,6 @@ pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
     toc
 }
 
-#[cfg(test)]
-mod tests {
-    use super::get_toc;
-
-    #[test]
-    fn toc_skips_fenced_comments_and_tags() {
-        let toc =
-            get_toc("# Real\n\n\x60\x60\x60bash\n# not a heading\n\x60\x60\x60\n#tag\n## Heading");
-        assert_eq!(toc.len(), 2);
-        assert_eq!((toc[0].text.as_str(), toc[0].line), ("Real", 0));
-        assert_eq!((toc[1].text.as_str(), toc[1].line), ("Heading", 6));
-    }
-
-    #[test]
-    fn toc_tracks_tilde_fences() {
-        let toc = get_toc("~~~text\n## hidden\n~~~~\n### Visible");
-        assert_eq!(toc.len(), 1);
-        assert_eq!((toc[0].text.as_str(), toc[0].line), ("Visible", 3));
-    }
-}
-
 pub fn view<'a>(toc: &'a [TocEntry], is_synthetic: bool) -> Element<'a, Message, Theme, Renderer> {
     let title = text("Table of Contents")
         .size(theme::TEXT_MD)
@@ -145,4 +124,25 @@ pub fn view<'a>(toc: &'a [TocEntry], is_synthetic: bool) -> Element<'a, Message,
         ..Default::default()
     })
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_toc;
+
+    #[test]
+    fn toc_skips_fenced_comments_and_tags() {
+        let toc =
+            get_toc("# Real\n\n\x60\x60\x60bash\n# not a heading\n\x60\x60\x60\n#tag\n## Heading");
+        assert_eq!(toc.len(), 2);
+        assert_eq!((toc[0].text.as_str(), toc[0].line), ("Real", 0));
+        assert_eq!((toc[1].text.as_str(), toc[1].line), ("Heading", 6));
+    }
+
+    #[test]
+    fn toc_tracks_tilde_fences() {
+        let toc = get_toc("~~~text\n## hidden\n~~~~\n### Visible");
+        assert_eq!(toc.len(), 1);
+        assert_eq!((toc[0].text.as_str(), toc[0].line), ("Visible", 3));
+    }
 }

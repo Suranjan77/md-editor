@@ -146,6 +146,7 @@ pub fn set_scale_factor(factor: f32) {
     SCALE_FACTOR.store(factor.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
+#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
 fn scale_factor() -> f32 {
     f32::from_bits(SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)).max(0.001)
 }
@@ -162,12 +163,14 @@ fn viewport() -> Option<Rectangle> {
 /// so the pen can press buttons exactly like a mouse. Without this the pen can
 /// draw but cannot change tools, which makes the toolbar useless to the very
 /// device the feature exists for.
+#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
 pub(crate) fn client_point_is_on_canvas(x: f32, y: f32) -> bool {
     viewport().is_some_and(|bounds| point_is_on_canvas(x, y, bounds, scale_factor()))
 }
 
 /// The hit test itself, taking its inputs explicitly so it can be exercised
 /// without touching the process-wide viewport and scale factor.
+#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
 fn point_is_on_canvas(x: f32, y: f32, bounds: Rectangle, scale: f32) -> bool {
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let (x, y) = (x / scale, y / scale);

@@ -55,12 +55,13 @@ pub fn decode_pdf_link_path(path: &str) -> String {
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let Ok(value) = u8::from_str_radix(&path[index + 1..index + 3], 16) {
-                decoded.push(value);
-                index += 3;
-                continue;
-            }
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let Ok(value) = u8::from_str_radix(&path[index + 1..index + 3], 16)
+        {
+            decoded.push(value);
+            index += 3;
+            continue;
         }
         decoded.push(bytes[index]);
         index += 1;

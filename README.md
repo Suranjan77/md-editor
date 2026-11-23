@@ -257,7 +257,7 @@ short orientation from [`CLAUDE.md`](CLAUDE.md).
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo test --workspace
-cargo clippy --workspace
+cargo clippy --workspace                # baseline: 10 warnings; do not add more
 ```
 
 ## Documentation

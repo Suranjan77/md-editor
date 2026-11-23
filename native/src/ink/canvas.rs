@@ -209,10 +209,10 @@ impl canvas::Program<Message> for InkSurface<'_> {
                         }
                         // Skip anything the viewport cannot show; on a long
                         // page this is most of the document.
-                        if let Some(stroke_box) = stroke.path_bounds() {
-                            if !stroke::boxes_overlap(stroke_box, visible) {
-                                continue;
-                            }
+                        if let Some(stroke_box) = stroke.path_bounds()
+                            && !stroke::boxes_overlap(stroke_box, visible)
+                        {
+                            continue;
                         }
 
                         let selected = self.selection.contains(&index);
@@ -310,41 +310,42 @@ impl canvas::Program<Message> for InkSurface<'_> {
         // Positioned from `hover` rather than iced's cursor: pen input never
         // reaches iced, so its cursor keeps returning the last place the
         // *mouse* was and the ring would sit frozen there.
-        if self.tool == Tool::Eraser {
-            if let Some(position) = self.hover {
-                overlay.stroke(
-                    &canvas::Path::circle(Point::new(position.x, position.y), self.eraser_radius),
-                    canvas::Stroke::default()
-                        .with_color(Color::from_rgba(0.85, 0.85, 0.9, 0.55))
-                        .with_width(1.0),
-                );
-            }
+        if self.tool == Tool::Eraser
+            && let Some(position) = self.hover
+        {
+            overlay.stroke(
+                &canvas::Path::circle(Point::new(position.x, position.y), self.eraser_radius),
+                canvas::Stroke::default()
+                    .with_color(Color::from_rgba(0.85, 0.85, 0.9, 0.55))
+                    .with_width(1.0),
+            );
         }
 
         // Where the nib will land. On an opaque tablet this is the whole
         // aiming mechanism, and it shows the *mark* rather than a pointer:
         // sized to the current brush at the current zoom.
-        if let (Some(position), false) = (self.hover, self.drawing) {
-            if self.tool != Tool::Eraser && self.radial.is_none() {
-                let radius = (self.live_options.size * 0.5 * self.camera.zoom).max(2.0);
-                let centre = Point::new(position.x, position.y);
-                overlay.fill(
-                    &canvas::Path::circle(centre, radius),
-                    Color {
-                        a: 0.35,
+        if let (Some(position), false) = (self.hover, self.drawing)
+            && self.tool != Tool::Eraser
+            && self.radial.is_none()
+        {
+            let radius = (self.live_options.size * 0.5 * self.camera.zoom).max(2.0);
+            let centre = Point::new(position.x, position.y);
+            overlay.fill(
+                &canvas::Path::circle(centre, radius),
+                Color {
+                    a: 0.35,
+                    ..self.color
+                },
+            );
+            overlay.stroke(
+                &canvas::Path::circle(centre, radius + 1.0),
+                canvas::Stroke::default()
+                    .with_color(Color {
+                        a: 0.7,
                         ..self.color
-                    },
-                );
-                overlay.stroke(
-                    &canvas::Path::circle(centre, radius + 1.0),
-                    canvas::Stroke::default()
-                        .with_color(Color {
-                            a: 0.7,
-                            ..self.color
-                        })
-                        .with_width(1.0),
-                );
-            }
+                    })
+                    .with_width(1.0),
+            );
         }
 
         if let Some(menu) = self.radial {

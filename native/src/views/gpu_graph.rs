@@ -90,7 +90,7 @@ impl Primitive for GpuGraphPrimitive {
     ) {
         // Record the physical widget rectangle so `render` can map clip space
         // onto exactly this widget rather than the whole surface.
-        let scale = viewport.scale_factor() as f32;
+        let scale = viewport.scale_factor();
         pipeline.viewport_rect = [
             bounds.x * scale,
             bounds.y * scale,
@@ -634,10 +634,7 @@ impl shader::Program<Message> for GpuGraphProgram {
             },
             Event::Mouse(mouse::Event::ButtonReleased(
                 mouse::Button::Left | mouse::Button::Middle,
-            )) => match state.gesture.take() {
-                Some(_) => Some(shader::Action::capture()),
-                None => None,
-            },
+            )) => state.gesture.take().map(|_| shader::Action::capture()),
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 let point = cursor_pos?;
                 let amount = match delta {

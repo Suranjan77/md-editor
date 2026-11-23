@@ -225,11 +225,11 @@ impl TrackerState {
     }
 
     fn toggle_bool_kv_with_legacy(&mut self, state: &AppState, (key, legacy): (String, String)) {
-        if !self.kv.contains_key(&key) {
-            if let Some(value) = self.kv.get(&legacy).cloned() {
-                let _ = md_editor_core::tracker::set_kv(state, &key, &value);
-                self.kv.insert(key.clone(), value);
-            }
+        if !self.kv.contains_key(&key)
+            && let Some(value) = self.kv.get(&legacy).cloned()
+        {
+            let _ = md_editor_core::tracker::set_kv(state, &key, &value);
+            self.kv.insert(key.clone(), value);
         }
         self.toggle_bool_kv(state, key);
     }
@@ -255,12 +255,11 @@ impl TrackerState {
             }
         }
         for (key, legacy) in keys {
-            if !self.kv.contains_key(&key) {
-                if let Some(value) = self.kv.get(&legacy).cloned() {
-                    if md_editor_core::tracker::set_kv(state, &key, &value).is_ok() {
-                        self.kv.insert(key, value);
-                    }
-                }
+            if !self.kv.contains_key(&key)
+                && let Some(value) = self.kv.get(&legacy).cloned()
+                && md_editor_core::tracker::set_kv(state, &key, &value).is_ok()
+            {
+                self.kv.insert(key, value);
             }
         }
     }
