@@ -9,6 +9,7 @@ graph and handwritten notes. Rust 2024, Iced 0.14, PDFium. GPL-3.0.
 cargo check --workspace --all-targets   # fast typecheck
 cargo test --workspace                  # all tests (~435); core PDF tests need PDFium, fetched by build.rs
 cargo fmt --all                         # the tree is rustfmt-clean; keep it that way
+cargo test -p md-editor-native e2e -- --nocapture   # headless end-to-end runs; screenshots + telemetry in target/e2e/
 cargo run -- path/to/vault-or-note.md   # launch (opens a window)
 ```
 
@@ -56,6 +57,8 @@ is the fastest map. Tests for `foo.rs` live in `foo/tests.rs`.
 
 ## Docs
 
-`wiki/` is authoritative; start at `wiki/Home.md` ("I want to change…" table). When code
+`wiki/` is authoritative; start at `wiki/Home.md` ("I want to change…" table). Plans in
+progress: `docs/ui-overhaul-plan.md` (+ `docs/design-system/`) and
+`docs/e2e-bug-discovery-plan.md`. When code
 moves, update `wiki/Repository-Structure.md` in the same change. Cite files and symbols,
 not line numbers. `docs/` holds the printable handbook, a dated snapshot.
