@@ -862,3 +862,10 @@ fn indexing_adopts_legacy_pdf_rows_before_directory_rename() {
     drop(state);
     let _ = fs::remove_dir_all(&base);
 }
+
+#[test]
+fn handwritten_pages_are_listed_in_the_vault() {
+    assert!(is_supported_vault_path(Path::new("notes/lecture.ink")));
+    assert!(is_supported_vault_path(Path::new("notes/LECTURE.INK")));
+    assert!(!is_supported_vault_path(Path::new("notes/lecture.inkx")));
+}

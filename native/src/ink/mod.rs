@@ -850,7 +850,8 @@ fn resolve(vault_root: &str, rel_path: &str) -> Result<std::path::PathBuf, Strin
 ///
 /// Deliberately bypasses `vault::save_file`: that mirrors content into the
 /// full-text search index, and a page of stroke coordinates would only
-/// pollute search results.
+/// pollute search results. It still goes through the vault's atomic writer,
+/// so a crash mid-save never leaves a truncated page.
 pub fn save_to_vault(
     vault_root: &str,
     rel_path: &str,
@@ -861,8 +862,7 @@ pub fn save_to_vault(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
-    std::fs::write(&path, document.to_json()?)
-        .map_err(|e| format!("Failed to write {}: {e}", path.display()))
+    md_editor_core::vault::write_file(&path, &document.to_json()?)
 }
 
 /// Read a page back from the vault.

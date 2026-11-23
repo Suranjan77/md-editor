@@ -21,6 +21,8 @@ pub const IMAGE_EXTENSIONS: [&str; 8] = ["jpeg", "jpg", "png", "gif", "bmp", "sv
 const MARKDOWN_EXTENSIONS: [&str; 2] = ["md", "markdown"];
 const PDF_EXTENSIONS: [&str; 1] = ["pdf"];
 const PPTX_EXTENSIONS: [&str; 1] = ["pptx"];
+/// Handwritten pages written by the native ink canvas.
+const INK_EXTENSIONS: [&str; 1] = ["ink"];
 
 /// Directory names that are never worth indexing or showing in the tree. These
 /// are heavy or irrelevant in note vaults and would otherwise blow up indexing

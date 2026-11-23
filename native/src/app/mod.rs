@@ -357,10 +357,6 @@ impl MdEditor {
             | Message::PdfLinkNoteFileSelected(..)
             | Message::PdfLinkNotePickerSearchChanged(..)
             | Message::NameModalCancel
-            | Message::CommandPaletteQueryChanged(..)
-            | Message::ShowToast(..)
-            | Message::ToastHide
-            | Message::SplitViewDragStart
             | Message::NameModalSubmit(..)
             | Message::DeleteFile(..)
             | Message::NameModalSubmitCurrent
@@ -391,6 +387,10 @@ impl MdEditor {
             | Message::GraphSetView { .. }
             | Message::GraphHovered(..)) => self.update_graph(m),
             m @ (Message::CommandPaletteOpen
+            | Message::CommandPaletteQueryChanged(..)
+            | Message::ShowToast(..)
+            | Message::ToastHide
+            | Message::SplitViewDragStart
             | Message::TrackerToggle
             | Message::CommandPaletteFileClicked(..)
             | Message::CommandPaletteCommandClicked(..)

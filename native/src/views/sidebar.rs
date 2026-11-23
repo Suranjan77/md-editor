@@ -91,6 +91,8 @@ fn render_tree_level<'a>(
             Icon::Image
         } else if lower_name.ends_with(".pptx") {
             Icon::Presentation
+        } else if lower_name.ends_with(".ink") {
+            Icon::Pen
         } else if lower_name.ends_with(".md") || lower_name.ends_with(".markdown") {
             Icon::FileText
         } else {

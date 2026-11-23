@@ -240,11 +240,7 @@ impl MdEditor {
             | Message::PdfLinkNoteFolderSelected(_)
             | Message::PdfLinkNoteFileSelected(_)
             | Message::PdfLinkNotePickerSearchChanged(_)
-            | Message::NameModalCancel
-            | Message::CommandPaletteQueryChanged(_)
-            | Message::ShowToast(_)
-            | Message::ToastHide
-            | Message::SplitViewDragStart) => self.ui.update(m),
+            | Message::NameModalCancel) => self.ui.update(m),
             Message::NameModalSubmit(input) => {
                 if let Some(views::modals::ModalType::QuickNote(id)) = self.ui.active_modal.clone()
                 {

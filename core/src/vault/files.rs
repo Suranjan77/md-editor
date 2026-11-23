@@ -130,7 +130,7 @@ pub(super) fn read_image(path: &Path) -> Result<Vec<u8>, String> {
 ///   than the link being replaced by a regular file.
 /// - The destination's existing permissions are copied onto the replacement,
 ///   so a note kept at `0600` does not come back world-readable.
-pub(super) fn write_file(path: &Path, content: &str) -> Result<(), String> {
+pub fn write_file(path: &Path, content: &str) -> Result<(), String> {
     use std::io::Write;
 
     // Write through a symlink, not over it.
@@ -220,8 +220,16 @@ pub fn is_pptx_path(path: &Path) -> bool {
     ext_matches(path, &PPTX_EXTENSIONS)
 }
 
+pub fn is_ink_path(path: &Path) -> bool {
+    ext_matches(path, &INK_EXTENSIONS)
+}
+
 pub fn is_supported_vault_path(path: &Path) -> bool {
-    is_markdown_path(path) || is_pdf_path(path) || is_pptx_path(path) || is_image_path(path)
+    is_markdown_path(path)
+        || is_pdf_path(path)
+        || is_pptx_path(path)
+        || is_image_path(path)
+        || is_ink_path(path)
 }
 
 pub(super) fn list_vault_entries(root: &Path) -> Result<Vec<FileEntry>, String> {

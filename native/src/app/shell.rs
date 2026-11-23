@@ -6,6 +6,10 @@ impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
     pub(super) fn update_shell(&mut self, message: Message) -> Task<Message> {
         match message {
+            m @ (Message::CommandPaletteQueryChanged(_)
+            | Message::ShowToast(_)
+            | Message::ToastHide
+            | Message::SplitViewDragStart) => self.ui.update(m),
             // UI chrome arms that mutate only `self.ui` are routed to
             // `UiState::update`; see ui_state.rs.
             // Opening the palette also puts the caret in its field: a palette
