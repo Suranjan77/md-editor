@@ -155,6 +155,7 @@ mod graph;
 mod ink;
 mod links;
 mod pdf;
+mod pdf_pages;
 mod search;
 mod shell;
 mod shortcuts;
