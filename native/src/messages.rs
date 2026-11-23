@@ -178,6 +178,44 @@ pub enum Message {
     PptxZoomFit,
     /// Move this many slides; negative moves back.
     PptxStep(i32),
+    // ── Ink (handwritten notes) ──────────────────────────────────
+    InkToggle,
+    /// Raw window handle, once resolved, so pen capture can be installed.
+    InkPenHookReady(u64),
+    /// A batch of captured pen samples, in window-client physical pixels.
+    InkPenSamples(Vec<crate::ink::pen::PenSample>),
+    /// Mouse fallback, in surface-local logical pixels.
+    InkPointerDown(f32, f32),
+    InkPointerMove(f32, f32),
+    InkPointerUp,
+    /// Mouse moved over the canvas without drawing, in surface-local logical
+    /// pixels. Keeps the aiming indicators live for mouse users.
+    InkHoverMoved(f32, f32),
+    InkToolSelected(crate::ink::Tool),
+    InkEraserModeSelected(crate::ink::EraserMode),
+    InkPaperSelected(crate::ink::document::PaperStyle),
+    InkColorSelected(iced::Color),
+    InkSizeSelected(f32),
+    /// Shift the view by a screen-space delta.
+    InkPan {
+        dx: f32,
+        dy: f32,
+    },
+    /// Zoom about a surface-local anchor, in scroll-wheel notches.
+    InkZoom {
+        x: f32,
+        y: f32,
+        notches: f32,
+    },
+    /// Zoom about the middle of the surface, in wheel-equivalent notches.
+    InkZoomStep(f32),
+    InkResetView,
+    InkDeleteSelection,
+    InkUndo,
+    InkRedo,
+    InkClear,
+    InkSave,
+    InkSaved(Result<String, String>),
 
     // ── Tracker ──────────────────────────────────────────────────
     TrackerToggle,
@@ -213,9 +251,10 @@ pub enum Message {
     SplitViewDragStart,
     SplitViewDragging(f32),
     SplitViewDragEnd,
-    WindowResized(f32, f32),
+    WindowResized(iced::window::Id, f32, f32),
     WindowOpened(iced::window::Id),
-    WindowRescaled(f32),
+    WindowClosed(iced::window::Id),
+    WindowRescaled(iced::window::Id, f32),
     /// The window manager asked to close; flush unsaved work, then exit.
     WindowCloseRequested,
     /// Vault-relative paths that changed on disk (filesystem watcher), debounced.
@@ -246,5 +285,6 @@ pub enum Shortcut {
     TableOfContents,
     StudyTracker,
     SplitView,
+    Handwriting,
     Escape,
 }

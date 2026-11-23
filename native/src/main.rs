@@ -1,13 +1,19 @@
+// Release builds on Windows run as a GUI app so launching the exe does not
+// open a console window. Debug builds keep the console for stdout/stderr.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod editor;
 mod editor_state;
 mod fuzzy;
 mod graph_state;
+mod ink;
 mod messages;
 mod motion;
 mod pdf_notes;
 mod pdf_pane;
 mod pptx_pane;
+mod platform;
 mod search;
 mod search_state;
 mod slides;
@@ -194,6 +200,7 @@ enum CliAction {
     RunApp,
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_cli_args(args: &[String]) -> CliAction {
     if args.len() > 1 {
         let cmd = args[1].as_str();
@@ -257,21 +264,43 @@ fn main() -> iced::Result {
     #[cfg(not(target_os = "linux"))]
     let platform_specific = iced::window::settings::PlatformSpecific::default();
 
-    iced::application(
-        move || app::MdEditor::new_with_startup_file(startup_path.clone()),
-        app::MdEditor::update,
-        app::MdEditor::view,
-    )
-    .title(app::MdEditor::title)
-    .theme(|state: &app::MdEditor| state.theme())
-    .subscription(app::MdEditor::subscription)
-    .window(iced::window::Settings {
+    let main_window = iced::window::Settings {
         size: restore_window_size(),
         icon,
         platform_specific,
         ..Default::default()
-    })
+    };
+
+    // A daemon rather than an application: the handwriting canvas lives in its
+    // own window so it can sit on a second monitor beside the notes. Daemons
+    // own no window by default, so boot opens the main one.
+    iced::daemon(
+        move || app::MdEditor::boot(main_window.clone(), startup_path.clone()),
+        app::MdEditor::update,
+        app::MdEditor::view,
+    )
+    .title(app::MdEditor::title)
+    .theme(|state: &app::MdEditor, _window| state.theme())
+    .subscription(app::MdEditor::subscription)
     .run()
+}
+
+/// Settings for the detached handwriting window.
+///
+/// Sized for writing rather than reading, and given the same icon so it is
+/// recognisable when the two windows sit on different monitors.
+pub fn ink_window_settings() -> iced::window::Settings {
+    let icon = iced::window::icon::from_file_data(
+        include_bytes!("../../md-editor.png"),
+        Some(image::ImageFormat::Png),
+    )
+    .ok();
+
+    iced::window::Settings {
+        size: iced::Size::new(1000.0, 760.0),
+        icon,
+        ..Default::default()
+    }
 }
 
 /// Default window size for a first run, or when the stored geometry is missing

@@ -40,6 +40,7 @@ pub fn get_commands() -> Vec<Command> {
         entry("Toggle Sidebar", Shortcut::ToggleSidebar, "S"),
         entry("Toggle Backlinks", Shortcut::ToggleBacklinks, "B"),
         entry("Open Knowledge Graph", Shortcut::KnowledgeGraph, "G"),
+        entry("Handwriting Canvas", Shortcut::Handwriting, "H"),
         entry("Table of Contents", Shortcut::TableOfContents, "T"),
         entry("Study Tracker", Shortcut::StudyTracker, "R"),
         entry("Split View", Shortcut::SplitView, "|"),
@@ -324,6 +325,7 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::TableOfContents => "Ctrl T",
         Shortcut::StudyTracker => "Tracker",
         Shortcut::SplitView => "Split",
+        Shortcut::Handwriting => "Ctrl I",
         Shortcut::Escape => "Esc",
     }
 }
