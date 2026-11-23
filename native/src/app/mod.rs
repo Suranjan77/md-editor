@@ -172,6 +172,66 @@ use ink::derive_ink_path;
 use links::*;
 use search::{focus_file_search_input, focus_global_search_input, focus_pdf_search_input};
 
+/// What an end-to-end test can observe about the app, read once at the end
+/// of a session (the emulator does not expose state mid-run).
+#[cfg(test)]
+#[derive(Debug)]
+#[allow(dead_code)] // fields are read by scenarios as they are written
+pub(crate) struct Probe {
+    pub active_path: Option<String>,
+    pub buffer: String,
+    pub dirty: bool,
+    pub toast: Option<String>,
+    pub modal_open: bool,
+    pub palette_open: bool,
+    pub graph_visible: bool,
+    pub tracker_visible: bool,
+    pub search_visible: bool,
+    pub file_search_visible: bool,
+    pub search_results: Vec<String>,
+    pub pdf_path: Option<String>,
+    pub pdf_pages: u16,
+    pub pdf_rendered: usize,
+    pub pdf_error: Option<String>,
+    pub pptx_path: Option<String>,
+    pub pptx_loaded: bool,
+    pub pptx_error: Option<String>,
+    pub ink_window_open: bool,
+    pub ink_path: Option<String>,
+    pub ink_dirty: bool,
+    pub entries: Vec<String>,
+}
+
+#[cfg(test)]
+impl MdEditor {
+    pub(crate) fn probe(&self) -> Probe {
+        Probe {
+            active_path: self.active_path.clone(),
+            buffer: self.editor.buffer.text(),
+            dirty: self.editor.buffer.dirty,
+            toast: self.ui.toast.clone(),
+            modal_open: self.ui.active_modal.is_some(),
+            palette_open: self.ui.command_palette_visible,
+            graph_visible: self.graph.visible,
+            tracker_visible: self.tracker.visible,
+            search_visible: self.search.visible,
+            file_search_visible: self.search.file_visible,
+            search_results: self.search.results.iter().map(|r| r.path.clone()).collect(),
+            pdf_path: self.pdf.active_path.clone(),
+            pdf_pages: self.pdf.total_pages,
+            pdf_rendered: self.pdf.pages.iter().filter(|page| page.is_some()).count(),
+            pdf_error: self.pdf.load_error.clone(),
+            pptx_path: self.pptx.active_path.clone(),
+            pptx_loaded: self.pptx.deck.is_some(),
+            pptx_error: self.pptx.error.clone(),
+            ink_window_open: self.ink_window.is_some(),
+            ink_path: self.ink.path.clone(),
+            ink_dirty: self.ink.dirty,
+            entries: self.vault.entries.iter().map(|e| e.path.clone()).collect(),
+        }
+    }
+}
+
 impl MdEditor {
     /// `startup_file` is a path passed on the command line (typically by the
     /// OS "open with" handler). When set it overrides the remembered

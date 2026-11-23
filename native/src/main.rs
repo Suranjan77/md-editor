@@ -5,6 +5,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+#[cfg(test)]
+mod e2e;
 mod editor;
 mod editor_state;
 mod fuzzy;
@@ -273,9 +275,19 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
-    // A daemon rather than an application: the handwriting canvas lives in its
-    // own window so it can sit on a second monitor beside the notes. Daemons
-    // own no window by default, so boot opens the main one.
+    program(main_window, startup_path).run()
+}
+
+/// The app as an iced program: everything `main` runs, minus the event loop.
+///
+/// A daemon rather than an application: the handwriting canvas lives in its
+/// own window so it can sit on a second monitor beside the notes. Daemons own
+/// no window by default, so boot opens the main one. The headless end-to-end
+/// tests (`e2e/`) drive this same program in `iced_test`'s emulator.
+pub(crate) fn program(
+    main_window: iced::window::Settings,
+    startup_path: Option<std::path::PathBuf>,
+) -> iced::Daemon<impl iced_program::Program<State = app::MdEditor, Message = messages::Message>> {
     iced::daemon(
         move || app::MdEditor::boot(main_window.clone(), startup_path.clone()),
         app::MdEditor::update,
@@ -284,7 +296,6 @@ fn main() -> iced::Result {
     .title(app::MdEditor::title)
     .theme(|state: &app::MdEditor, _window| state.theme())
     .subscription(app::MdEditor::subscription)
-    .run()
 }
 
 /// Settings for the detached handwriting window.

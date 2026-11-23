@@ -798,6 +798,7 @@ pub fn settings_db_path() -> PathBuf {
     // has no database yet but that one does, copy it back so users keep their
     // settings and study history.
     if !dir.exists()
+        && data_dir_override().is_none()
         && let Some(other) = platform_data_db_path()
         && other != dir
     {
@@ -870,7 +871,32 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 /// fall back to the per-user platform data directory (`%APPDATA%`,
 /// `~/Library/Application Support`, or `$XDG_DATA_HOME`/`~/.local/share`), and
 /// finally the current directory.
+/// Overrides the data directory, and disables migration from the legacy
+/// per-user location. Used by headless end-to-end tests so a run never reads
+/// or copies the user's real settings; also handy for a throwaway profile.
+pub const DATA_DIR_ENV: &str = "MD_EDITOR_DATA_DIR";
+
+static DATA_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Pin the data directory for this process, as [`DATA_DIR_ENV`] does, without
+/// touching the environment (which is unsound while other threads run).
+/// Returns `false` if a different directory was already pinned.
+pub fn override_data_dir(dir: PathBuf) -> bool {
+    DATA_DIR_OVERRIDE.get_or_init(|| dir.clone()) == &dir
+}
+
+fn data_dir_override() -> Option<PathBuf> {
+    DATA_DIR_OVERRIDE.get().cloned().or_else(|| {
+        std::env::var_os(DATA_DIR_ENV)
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+    })
+}
+
 fn data_dir() -> PathBuf {
+    if let Some(dir) = data_dir_override() {
+        return dir;
+    }
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
