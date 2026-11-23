@@ -9,10 +9,37 @@ use iced::advanced::{Clipboard, Shell, clipboard};
 use iced::keyboard::{self, key::Named};
 use iced::{Point, Rectangle, mouse};
 
-use super::metrics::text_left;
+use super::measure::{measure_width, span_font};
+use super::metrics::{TABLE_CELL_TEXT_INSET, text_left};
+use super::scroll::table_columns;
 use super::{Editor, Measure, State};
 use crate::editor::buffer::{EditorCommand, Movement};
-use crate::editor::highlight::StyledSpan;
+use crate::editor::highlight::{StyledLine, StyledSpan};
+
+/// The parsed cell span (link or checkbox) whose source text covers `col` in
+/// a raw table row. Cells are found in the row's source in order, so a cell
+/// whose text also appears earlier in the row still maps to its own range.
+pub(super) fn raw_table_span_at_col(line: &StyledLine, col: usize) -> Option<&StyledSpan> {
+    let source: String = line.spans.iter().map(|span| span.text.as_str()).collect();
+    let mut search_from = 0;
+    for span in line.table_cells.iter().flatten() {
+        if span.text.is_empty() {
+            continue;
+        }
+        let Some(relative) = source[search_from..].find(&span.text) else {
+            continue;
+        };
+        let byte_start = search_from + relative;
+        let byte_end = byte_start + span.text.len();
+        let start = source[..byte_start].chars().count();
+        let end = start + span.text.chars().count();
+        if (start..end).contains(&col) && (span.is_checkbox || span.is_link) {
+            return Some(span);
+        }
+        search_from = byte_end;
+    }
+    None
+}
 
 impl<Message> Editor<'_, Message> {
     /// Handle one event. `bounds` is the content column.
@@ -189,8 +216,17 @@ impl<Message> Editor<'_, Message> {
         let line_idx = self.line_at_widget_y(pos.y, state)?;
         let line = self.lines.get(line_idx)?;
         let is_editing = self.is_block_editing(line, focused);
-        if line.is_code_block || ((line.is_table_row || line.is_math_block) && !is_editing) {
+        if line.is_table_row && !is_editing {
+            return self.rendered_table_span_at::<R>(line_idx, pos.x, available_width, state);
+        }
+        if line.is_code_block || (line.is_math_block && !is_editing) {
             return None;
+        }
+        if line.is_table_row {
+            // A table row being edited shows its raw source as one span; its
+            // links and checkboxes only exist in the parsed cells.
+            let col = self.hit_test::<R>(pos, available_width, focused, state).col;
+            return raw_table_span_at_col(line, col);
         }
 
         let flow = self.flow::<R>(
@@ -204,6 +240,49 @@ impl<Message> Editor<'_, Message> {
             pos.y - self.line_body_top(line_idx, state),
         )?;
         line.spans.get(span_idx)
+    }
+
+    /// The cell span under `x` in a rendered (not edited) table row, using
+    /// the same column widths, scroll offset and cell inset the row is
+    /// painted with.
+    fn rendered_table_span_at<R: Measure>(
+        &self,
+        line_idx: usize,
+        x: f32,
+        available_width: f32,
+        state: &State,
+    ) -> Option<&StyledSpan> {
+        let line = self.lines.get(line_idx)?;
+        let &(start, end) = state.block_ranges.get(&line.block_id)?;
+        let columns = table_columns::<R>(self.lines.get(start..=end)?);
+        let scroll_x = self
+            .scroll_extent::<R>(state, line.block_id, available_width, state.is_focused)
+            .map_or(0.0, |extent| state.block_scroll(line.block_id, &extent));
+        let table_x = x - text_left(available_width) + scroll_x;
+        if table_x < 0.0 {
+            return None;
+        }
+
+        let mut column_x = 0.0;
+        for (cell, &width) in line.table_cells.iter().zip(&columns) {
+            if table_x < column_x + width {
+                let mut span_x = column_x + TABLE_CELL_TEXT_INSET;
+                for span in cell {
+                    let text = span.visible_text(false);
+                    if text.is_empty() {
+                        continue;
+                    }
+                    let span_w = measure_width::<R>(text, span.font_size, span_font(span, line));
+                    if table_x >= span_x && table_x < span_x + span_w {
+                        return Some(span);
+                    }
+                    span_x += span_w;
+                }
+                return None;
+            }
+            column_x += width;
+        }
+        None
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -41,7 +41,7 @@ The last vault and last open file are restored the next time you launch.
 | :--- | :--- |
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
-| Images | `.jpeg`, `.jpg`, `.png`, `.svg`, `.webp`, `.avif` |
+| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` |
 | Presentations | `.pptx` (view only) |
 
 Images open in a dedicated preview pane. Presentations open in a read-only slide viewer —
@@ -135,6 +135,29 @@ You do not have to think about it:
 
 `Ctrl+T` opens an outline of the document's headings. For a PDF it shows the outline instead
 (see below). In split view each pane keeps its own.
+
+### Knowledge graph
+
+The Knowledge Graph is a research workspace for seeing how notes and source material connect.
+Open it from the toolbar, from the command palette (*Open Knowledge Graph*), or with `Ctrl+G`.
+
+- **Global** scope shows indexed Markdown notes, PDFs, and unresolved wikilink targets.
+  **Local** scope needs an active note or PDF and follows connections one or two hops out.
+  Images and ordinary Markdown links are not graph edges.
+- Notes, PDFs, and missing link targets are visually distinct nodes. Edges are resolved
+  wikilinks plus links from PDF annotations to their linked notes; repeated annotation links
+  are aggregated.
+- The canvas supports panning, zoom, dragging and pinning nodes, selection, opening a file
+  directly, and fit-to-view. Dragged positions last for the session only.
+- Search narrows the visible graph while keeping immediate neighbours for context. Filters
+  toggle PDFs, unresolved targets, and unconnected nodes without touching any vault file.
+- Selecting a node shows its incoming and outgoing connections and graph-derived related
+  notes. Vault-health summaries point out unconnected notes, unresolved links, hubs, and the
+  number of disconnected groups.
+
+The graph is built from the same live link index as navigation and backlinks, so it refreshes
+after saves and external vault changes. It is a derived view: layout and filtering never
+rewrite note content.
 
 ---
 

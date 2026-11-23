@@ -24,8 +24,6 @@ const CARD_RADIUS: f32 = 8.0;
 /// Cards start this far left of the text column.
 const CARD_OUTSET: f32 = 16.0;
 const QUOTE_BAR_WIDTH: f32 = 4.0;
-/// Cell text starts this far right of its column's left edge.
-const CELL_TEXT_INSET: f32 = 7.0;
 
 #[derive(PartialEq)]
 pub(super) enum BlockKind {
@@ -457,7 +455,7 @@ impl<Message> Editor<'_, Message> {
                     );
                 }
 
-                let mut px = cx + CELL_TEXT_INSET;
+                let mut px = cx + TABLE_CELL_TEXT_INSET;
                 for span in cell {
                     let text = span.visible_text(false);
                     if text.is_empty() {

@@ -90,6 +90,15 @@ impl UiState {
                 self.active_modal = Some(views::modals::ModalType::Delete(path));
                 Task::none()
             }
+            Message::RenameEntryDialog(path) => {
+                self.modal_input = std::path::Path::new(&path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&path)
+                    .to_string();
+                self.active_modal = Some(views::modals::ModalType::Rename(path));
+                Task::none()
+            }
             Message::NameModalInputChanged(input) => {
                 self.modal_input = input;
                 Task::none()
@@ -139,6 +148,7 @@ impl UiState {
                         | Some(views::modals::ModalType::CreateFolder)
                         | Some(views::modals::ModalType::QuickNote(_))
                         | Some(views::modals::ModalType::LinkNote(_))
+                        | Some(views::modals::ModalType::Rename(_))
                 ) {
                     Task::done(Message::NameModalSubmit(self.modal_input.clone()))
                 } else {

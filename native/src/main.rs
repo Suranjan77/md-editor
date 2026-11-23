@@ -2,6 +2,7 @@ mod app;
 mod editor;
 mod editor_state;
 mod fuzzy;
+mod graph_state;
 mod messages;
 mod motion;
 mod pdf_notes;
@@ -29,9 +30,9 @@ fn install_linux_desktop_entry_with_home(home: &str) -> bool {
         let hicolor_dir = icons_dir.join("hicolor");
 
         // Create directories if they do not exist
-        let _ = std::fs::create_dir_all(&app_dir);
-        let _ = std::fs::create_dir_all(&icons_dir);
-        let _ = std::fs::create_dir_all(&hicolor_dir);
+        std::fs::create_dir_all(&app_dir).ok()?;
+        std::fs::create_dir_all(&icons_dir).ok()?;
+        std::fs::create_dir_all(&hicolor_dir).ok()?;
 
         // Copy system hicolor index.theme if missing locally
         let index_theme_path = hicolor_dir.join("index.theme");
@@ -44,7 +45,7 @@ fn install_linux_desktop_entry_with_home(home: &str) -> bool {
 
         // Write primary icon (1024x1024) directly to ~/.local/share/icons/md-editor.png
         let primary_icon_path = icons_dir.join("md-editor.png");
-        let _ = std::fs::write(&primary_icon_path, icon_bytes);
+        std::fs::write(&primary_icon_path, icon_bytes).ok()?;
 
         // Write scalable icon (1024x1024) to ~/.local/share/icons/hicolor/scalable/apps/md-editor.png
         let scalable_apps_dir = hicolor_dir.join("scalable").join("apps");
@@ -91,7 +92,7 @@ StartupWMClass=md-editor
         );
 
         let desktop_file_path = app_dir.join("md-editor.desktop");
-        let _ = std::fs::write(desktop_file_path, desktop_content);
+        std::fs::write(desktop_file_path, desktop_content).ok()?;
 
         // Update desktop database and icon cache
         let _ = std::process::Command::new("update-desktop-database")

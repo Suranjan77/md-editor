@@ -1,6 +1,6 @@
 # MD Editor
 
-**A calm, local-first Markdown workspace for notes, PDFs, presentations, images, search, backlinks, and study progress.**
+**A calm, local-first Markdown workspace for notes, PDFs, presentations, knowledge graphs, search, backlinks, and study progress.**
 
 ![MD Editor intro](images/intro.gif)
 
@@ -17,7 +17,7 @@ progress, all stored locally in formats you can keep using outside the app.
 
 | Work locally | Read deeply | Find quickly | Keep momentum |
 | --- | --- | --- | --- |
-| Use any folder as a vault. Your Markdown, PDFs, and images stay as normal files. | Open PDFs beside notes, copy text, create sidecar highlights, and link important passages back to Markdown. | Search the active file, the whole vault, and PDF text, with focused result navigation. | Track sessions, reading, project stages, and study gates in the same workspace. |
+| Use any folder as a vault. Your Markdown, PDFs, and images stay as normal files. | Open PDFs beside notes, copy text, create sidecar highlights, and link important passages back to Markdown. | Search the active file, the whole vault, and PDF text, or explore their connections in the knowledge graph. | Track sessions, reading, project stages, and study gates in the same workspace. |
 
 ## Why It Exists
 
@@ -25,8 +25,8 @@ Most writing tools are either too small for research or too eager to own your wo
 MD Editor takes a quieter route.
 
 You bring a folder. The app gives you a native workspace around it: an editor, file tree,
-backlinks, table of contents, PDF viewer, search tools, image preview, and study tracker.
-When you close the app, your work is still there as plain Markdown and local files.
+backlinks, knowledge graph, table of contents, PDF viewer, search tools, image preview, and
+study tracker. When you close the app, your work is still there as plain Markdown and local files.
 
 Use it for:
 
@@ -61,7 +61,23 @@ files and gives you a familiar tree for opening, creating, and deleting notes. I
 - Autosave 400ms after typing stops, with atomic writes: a crash cannot truncate a note, and
   existing permissions and symlinks are preserved.
 
-### 3. Keep References Beside Your Notes
+### 3. Explore The Knowledge Graph
+
+Open the Knowledge Graph from the toolbar, the command palette, or with
+`Ctrl+G`. Global view maps the vault's notes and PDFs; Local view follows the
+active note or PDF by one or two hops. Markdown notes, PDFs, and unresolved
+targets are shown as distinct nodes, while both wikilinks and links created from
+PDF annotations become connections.
+
+Pan and zoom the canvas, drag notes into place for the current session, select a
+node to inspect its incoming and outgoing links, or open it directly. Search and
+filters can narrow the graph to useful material, while related-note suggestions
+and vault-health summaries reveal unconnected notes, broken links, and highly
+connected hubs.
+
+Graph connections reflect the saved vault, so new wikilinks appear after save.
+
+### 4. Keep References Beside Your Notes
 
 PDFs open inside the app, so reading and writing happen in one place.
 
@@ -85,7 +101,7 @@ LibreOffice install is needed — including theme colours, placeholders inherite
 and masters, tables, pictures, and grouped shapes. Charts, SmartArt, and embedded objects
 show as labelled boxes.
 
-### 4. Search Without Breaking Flow
+### 5. Search Without Breaking Flow
 
 - `Ctrl+F` in Markdown searches the active note.
 - Global search scans the vault and indexed PDF text through SQLite FTS5.
@@ -93,7 +109,7 @@ show as labelled boxes.
 - In split view, `Ctrl+F` follows whichever pane you last touched.
 - `Ctrl+P` opens a command palette that searches commands and vault files together.
 
-### 5. Track Study Progress
+### 6. Track Study Progress
 
 A built-in tracker records sessions, reading, project stages, and checkpoint gates. It ships
 seeded with a four-year efficient-ML research roadmap, which you replace with your own
@@ -142,7 +158,7 @@ per-user directory by an interim version is migrated back beside the executable 
 | --- | --- |
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
-| Images | `.jpeg`, `.jpg`, `.png`, `.svg`, `.webp`, `.avif` |
+| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` |
 | Presentations | `.pptx` (view only) |
 
 ## Supported Platforms

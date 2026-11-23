@@ -12,6 +12,10 @@ pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
 pub(crate) const PDF_PAGE_SPACING: f32 = 20.0;
 pub const PDF_SEARCH_INPUT_ID: &str = "pdf_search_input";
 
+fn empty_pdf_state_message(load_error: Option<&str>) -> &str {
+    load_error.unwrap_or("Loading PDF...")
+}
+
 #[derive(Debug, Clone)]
 struct OverlayRect {
     rect: md_editor_core::pdf::PdfRect,
@@ -437,11 +441,16 @@ pub fn view_continuous<'a>(
     references: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
     active_selection: Option<PdfSelection>,
     focused_annotation_id: Option<&'a str>,
+    load_error: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
     if pages.is_empty() {
         return container(
-            text("Loading PDF...")
-                .color(theme::TEXT_MUTED)
+            text(empty_pdf_state_message(load_error))
+                .color(if load_error.is_some() {
+                    theme::WARNING
+                } else {
+                    theme::TEXT_MUTED
+                })
                 .size(theme::TEXT_BASE),
         )
         .width(Length::Fill)
@@ -615,15 +624,9 @@ pub fn view_continuous<'a>(
                 handle.clone(),
                 w,
                 h,
-                page_width,
-                page_height,
                 page_index,
                 page_text,
-                page_highlights,
-                search_highlights,
-                active_search_highlights,
                 active_selection,
-                focused_annotation_id,
                 move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
                 move |x, y| Message::PdfRightClicked(i as u16, x, y),
                 Message::PdfSelectionChanged,
@@ -679,4 +682,18 @@ pub fn view_continuous<'a>(
             ..Default::default()
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::empty_pdf_state_message;
+
+    #[test]
+    fn failed_empty_pdf_shows_error_instead_of_loading() {
+        assert_eq!(empty_pdf_state_message(None), "Loading PDF...");
+        assert_eq!(
+            empty_pdf_state_message(Some("Could not open 'locked.pdf': Password required")),
+            "Could not open 'locked.pdf': Password required"
+        );
+    }
 }

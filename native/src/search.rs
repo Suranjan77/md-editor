@@ -108,4 +108,10 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn expanding_lowercase_keeps_original_columns() {
+        let matches = line_matches("İx TARGET", "target", false, false);
+        assert_eq!(matches, vec![LineMatch { start_col: 3, end_col: 9 }]);
+    }
 }

@@ -193,6 +193,13 @@ impl EditorPane {
         self.retained_order.retain(|p| !gone(p));
     }
 
+    /// Drop every parked buffer. Used when the vault changes: relative paths
+    /// from the old vault must not resurrect history in the new one.
+    pub fn forget_all_retained(&mut self) {
+        self.retained.clear();
+        self.retained_order.clear();
+    }
+
     /// Arm the autosave debounce. Called whenever buffer text changes.
     pub fn mark_dirty_now(&mut self) {
         self.autosave_pending_since = Some(Instant::now());
@@ -483,5 +490,60 @@ mod tests {
         );
         let newest = format!("n{}.md", MAX_RETAINED_BUFFERS + 4);
         assert!(pane.take_retained_matching(&newest, "x").is_some());
+    }
+
+    mod math_blocks {
+        use super::super::render_latex_task;
+        use crate::editor::highlight::highlight_markdown;
+
+        #[test]
+        fn nested_align_math_block_reaches_the_renderer_as_one_formula() {
+            let markdown = "$$\n\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}\n$$\nAfter";
+            let lines = highlight_markdown(markdown);
+            let tex = lines[0].spans[0].visible_text(false);
+
+            assert_eq!(tex, "\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}");
+            let crate::editor::renderer::MathRender { width, height, .. } =
+                render_latex_task(tex, 1.0).expect("align block should render");
+            assert!(width > 0.0);
+            assert!(height > 24.0, "both align rows should have visible height");
+            assert!(!lines[6].is_math_block);
+        }
+
+        #[test]
+        fn align_nonumber_with_spaced_environment_braces_renders() {
+            let markdown = "\\begin {align}\na &= b \\nonumber\n\\end {align}\nAfter";
+            let lines = highlight_markdown(markdown);
+            let tex = lines[0].spans[0].visible_text(false);
+
+            assert_eq!(tex, "\\begin {align}\na &= b \\nonumber\n\\end {align}");
+            let crate::editor::renderer::MathRender { width, height, .. } =
+                render_latex_task(tex, 1.0).expect("align with nonumber should render");
+            assert!(width > 0.0);
+            assert!(height > 0.0);
+            assert!(!lines[3].is_math_block);
+        }
+
+        #[test]
+        fn linalg_align_block_with_nonumber_on_every_row_renders() {
+            let markdown = r"$$
+    \begin{align}
+    TS(u_k) &= T \left( \sum_{i=1}^n A_{i,k}\;\;v_i \right) \nonumber \\
+            &= \sum_{i=1}^n A_{i,k}\;\;Tv_i \nonumber \\
+            &= \sum_{i=1}^n A_{i,k}\;\;\sum_{j=1}^m B_{j,i}\;\;w_j   \nonumber \\
+            &= \sum_{j=1}^m \left(\sum_{i=1}^n B_{j,i}\; A_{i,k} \right)\;w_j \nonumber
+    \end{align}
+    $$
+    After";
+            let lines = highlight_markdown(markdown);
+            let tex = lines[0].spans[0].visible_text(false);
+
+            assert_eq!(tex.lines().count(), 6);
+            let crate::editor::renderer::MathRender { width, height, .. } =
+                render_latex_task(tex, 1.0).expect("the linalg align block should render");
+            assert!(width > 0.0);
+            assert!(height > 80.0, "all four align rows should be visible");
+            assert!(!lines[8].is_math_block);
+        }
     }
 }

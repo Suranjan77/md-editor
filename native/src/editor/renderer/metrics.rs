@@ -104,6 +104,8 @@ const CODE_VIEWPORT_INSET: f32 = 24.0;
 pub(super) const TABLE_ROW_HEIGHT: f32 = 36.0;
 /// Added to a column's widest cell.
 pub(super) const TABLE_CELL_PADDING: f32 = 20.0;
+/// Cell text starts this far right of its column's left edge.
+pub(super) const TABLE_CELL_TEXT_INSET: f32 = 7.0;
 /// Added to the sum of column widths: the card bleeds 6px past each side.
 pub(super) const TABLE_EDGE_PADDING: f32 = 12.0;
 

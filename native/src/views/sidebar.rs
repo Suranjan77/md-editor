@@ -159,8 +159,15 @@ fn render_tree_level<'a>(
             );
         }
         item = item.push(container(btn).width(Length::Fill));
-        // Delete is offered on the selected row only, file or folder alike.
+        // Rename and delete are offered on the selected row only, file or
+        // folder alike.
         if is_selected {
+            item = item.push(
+                button(text("✎").size(theme::TEXT_MD).color(theme::TEXT_MUTED))
+                    .on_press(Message::RenameEntryDialog(path.clone()))
+                    .padding(theme::SPACE_2)
+                    .style(button::text),
+            );
             item = item.push(
                 button(icons::view(Icon::Trash, theme::DANGER, 13.0))
                     .on_press(Message::DeleteFileDialog(path.clone()))

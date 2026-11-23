@@ -277,6 +277,43 @@ fn links_on_wrapped_rows_are_clickable() {
 }
 
 #[test]
+fn links_in_rendered_tables_are_clickable() {
+    let doc = concat!(
+        "| Framework | Purpose | Link |\n",
+        "|---|---|---|\n",
+        "| bitsandbytes | Quantization | [repository](https://example.com/repo) |"
+    );
+    let mut view = View::new(doc, 900.0);
+    let calls = view.draw();
+    let runs = runs(&calls);
+    let link = run_exact(&runs, "repository");
+
+    view.modifiers(keyboard::Modifiers::CTRL);
+    assert_eq!(view.interaction(link.center()), mouse::Interaction::Pointer);
+    let messages = view.click(link.center()).messages;
+    assert!(
+        messages.iter().any(|m| m == "link https://example.com/repo"),
+        "ctrl+click on the table link published {messages:?}"
+    );
+}
+
+#[test]
+fn links_in_raw_table_rows_map_back_to_their_source_columns() {
+    let text = "| a | [repository](https://example.com/repo) |";
+    let lines = crate::editor::highlight::highlight_markdown(text);
+    let raw = lines[0].spans[0].text.as_str();
+    assert!(!lines[0].spans.iter().any(|span| span.is_link));
+
+    let link_col = raw[..raw.find("[repository]").unwrap()].chars().count() + 1;
+    assert_eq!(
+        super::events::raw_table_span_at_col(&lines[0], link_col)
+            .and_then(|span| span.link_target.as_deref()),
+        Some("https://example.com/repo")
+    );
+    assert!(super::events::raw_table_span_at_col(&lines[0], 2).is_none());
+}
+
+#[test]
 fn table_header_row_is_filled_and_body_rows_striped() {
     let doc = "| Name | Value |\n|---|---|\n| a | 1 |\n| b | 2 |\n| c | 3 |";
     let mut view = View::new(doc, 700.0);

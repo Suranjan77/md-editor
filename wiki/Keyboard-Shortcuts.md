@@ -25,6 +25,7 @@ On macOS, `Cmd` works everywhere `Ctrl` does — both layers test
 | `Ctrl+F` | Search — routed to the active pane, see below |
 | `Ctrl+B` | Toggle the sidebar |
 | `Ctrl+T` | Toggle the table of contents |
+| `Ctrl+G` | Open the knowledge graph |
 | `Ctrl+C` | Copy the PDF text selection, when the PDF pane holds one |
 | `Escape` | Close the topmost overlay, in priority order |
 | `Enter` | Submit the open name modal |

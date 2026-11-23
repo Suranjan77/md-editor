@@ -39,6 +39,7 @@ pub fn get_commands() -> Vec<Command> {
         entry("Search Vault", Shortcut::Search, "/"),
         entry("Toggle Sidebar", Shortcut::ToggleSidebar, "S"),
         entry("Toggle Backlinks", Shortcut::ToggleBacklinks, "B"),
+        entry("Open Knowledge Graph", Shortcut::KnowledgeGraph, "G"),
         entry("Table of Contents", Shortcut::TableOfContents, "T"),
         entry("Study Tracker", Shortcut::StudyTracker, "R"),
         entry("Split View", Shortcut::SplitView, "|"),
@@ -318,6 +319,7 @@ fn shortcut_label(shortcut: Shortcut) -> &'static str {
         Shortcut::CommandPalette => "Ctrl P",
         Shortcut::ToggleSidebar => "Ctrl B",
         Shortcut::ToggleBacklinks => "Backlinks",
+        Shortcut::KnowledgeGraph => "Ctrl G",
         Shortcut::FocusMode => "Focus",
         Shortcut::TableOfContents => "Ctrl T",
         Shortcut::StudyTracker => "Tracker",
@@ -427,6 +429,15 @@ mod tests {
                 "count and ranking disagreed for {query:?}"
             );
         }
+    }
+
+    #[test]
+    fn knowledge_graph_is_discoverable() {
+        let commands = get_commands();
+        assert_eq!(
+            action_at("knowledge graph", &commands, &[], 0),
+            Some(PaletteAction::Command(Shortcut::KnowledgeGraph))
+        );
     }
 
     #[test]

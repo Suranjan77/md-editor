@@ -158,6 +158,17 @@ pub fn compute_provisional_id(
     Ok((id, file_len, modified))
 }
 
+fn format_pdf_load_error(error: PdfiumError) -> String {
+    if matches!(
+        error,
+        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError)
+    ) {
+        "Password required to open PDF".to_string()
+    } else {
+        format!("Failed to load PDF: {error:?}")
+    }
+}
+
 pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
     let chars = chars
         .iter()
@@ -376,7 +387,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -395,7 +406,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -421,16 +432,19 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
                                 return Err("PDF document was not loaded".to_string());
                             };
                             let mut sizes = Vec::with_capacity(doc.pages().len() as usize);
+                            let mut fallback = (612.0, 792.0);
                             for index in 0..doc.pages().len() {
-                                let page = doc.pages().get(index).map_err(|e| e.to_string())?;
-                                sizes.push((page.width().value, page.height().value));
+                                if let Ok(page) = doc.pages().get(index) {
+                                    fallback = (page.width().value, page.height().value);
+                                }
+                                sizes.push(fallback);
                             }
                             Ok(sizes)
                         })();
@@ -477,7 +491,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -503,7 +517,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -533,7 +547,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -555,7 +569,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -640,7 +654,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -805,6 +819,36 @@ impl PdfRenderer {
                                 if matches.len() >= 250 {
                                     break;
                                 }
+
+                                // PDFium is single-threaded, but search need
+                                // not monopolize it: yield to the newest
+                                // visible-page render after each small chunk.
+                                if index % 8 == 7 || index + 1 == doc.pages().len() {
+                                    while let Ok(mut priority) = priority_receiver.try_recv() {
+                                        while let Ok(newer) = priority_receiver.try_recv() {
+                                            priority = newer;
+                                        }
+                                        let rendered = if priority.path == path {
+                                            render_page_from_document(
+                                                doc,
+                                                priority.page_index,
+                                                priority.scale,
+                                            )
+                                        } else {
+                                            pdfium
+                                                .load_pdf_from_file(&priority.path, None)
+                                                .map_err(format_pdf_load_error)
+                                                .and_then(|other| {
+                                                    render_page_from_document(
+                                                        &other,
+                                                        priority.page_index,
+                                                        priority.scale,
+                                                    )
+                                                })
+                                        };
+                                        let _ = priority.resp.send(rendered);
+                                    }
+                                }
                             }
                             Ok(matches)
                         })();
@@ -819,7 +863,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -894,7 +938,7 @@ impl PdfRenderer {
                             {
                                 let doc = pdfium
                                     .load_pdf_from_file(&path, None)
-                                    .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+                                    .map_err(format_pdf_load_error)?;
                                 current_document = Some((path.clone(), doc));
                             }
                             let Some((_, doc)) = current_document.as_ref() else {
@@ -1118,12 +1162,20 @@ fn render_page_from_cache<'a>(
     {
         let doc = pdfium
             .load_pdf_from_file(path, None)
-            .map_err(|e| format!("Failed to load PDF: {:?}", e))?;
+            .map_err(format_pdf_load_error)?;
         *current_document = Some((path.to_string(), doc));
     }
     let Some((_, doc)) = current_document.as_ref() else {
         return Err("PDF document was not loaded".to_string());
     };
+    render_page_from_document(doc, index, scale)
+}
+
+fn render_page_from_document(
+    doc: &PdfDocument<'_>,
+    index: u16,
+    scale: f32,
+) -> Result<DynamicImage, String> {
     let pages = doc.pages();
     if i32::from(index) >= pages.len() {
         return Err("Page index out of bounds".to_string());
@@ -2760,5 +2812,15 @@ mod tests {
         // Test character merging
         let merged = merge_char_rects(&text_layer.chars[..5]);
         assert!(!merged.is_empty(), "Merged rects list should not be empty");
+    }
+
+    #[test]
+    fn password_load_error_is_distinct() {
+        assert_eq!(
+            format_pdf_load_error(PdfiumError::PdfiumLibraryInternalError(
+                PdfiumInternalError::PasswordError
+            )),
+            "Password required to open PDF"
+        );
     }
 }
