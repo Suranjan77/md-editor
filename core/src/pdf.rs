@@ -1,5 +1,7 @@
 //! PDF engine: shared data types, document identity, and the PDFium binding. The worker lives in `renderer`, TOC recovery in `toc`.
 
+mod error;
+pub use error::{PdfError, PdfResult};
 use image::DynamicImage;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -51,11 +53,11 @@ impl PdfAnnotationKind {
         }
     }
 
-    pub fn parse(s: &str) -> Result<Self, String> {
+    pub fn parse(s: &str) -> PdfResult<Self> {
         match s {
             "Highlight" => Ok(Self::Highlight),
             "Note" => Ok(Self::Note),
-            _ => Err(format!("Unknown annotation kind: {s}")),
+            _ => Err(PdfError::Other(format!("Unknown annotation kind: {s}"))),
         }
     }
 }
@@ -80,14 +82,14 @@ impl PdfAnnotationColor {
         }
     }
 
-    pub fn parse(s: &str) -> Result<Self, String> {
+    pub fn parse(s: &str) -> PdfResult<Self> {
         match s {
             "Yellow" => Ok(Self::Yellow),
             "Green" => Ok(Self::Green),
             "Blue" => Ok(Self::Blue),
             "Pink" => Ok(Self::Pink),
             "Orange" => Ok(Self::Orange),
-            _ => Err(format!("Unknown annotation color: {s}")),
+            _ => Err(PdfError::Other(format!("Unknown annotation color: {s}"))),
         }
     }
 

@@ -355,7 +355,9 @@ impl MdEditor {
                         "PDF search is unavailable because PDFium is not loaded".to_string()
                     );
                 };
-                renderer.search_text(&path_str, &query, regex, match_case)
+                renderer
+                    .search_text(&path_str, &query, regex, match_case)
+                    .map_err(String::from)
             },
             move |result| Message::Pdf(PdfMessage::SearchResult(generation, result)),
         )

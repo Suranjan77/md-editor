@@ -240,12 +240,12 @@ fn text_features_numbering_fields_and_gradients() {
 #[test]
 fn rejects_files_that_are_not_presentations() {
     let err = parse_presentation(Cursor::new(b"just some text".to_vec())).unwrap_err();
-    assert!(err.contains("not a zip"), "{err}");
+    assert!(err.to_string().contains("not a zip"), "{err}");
 
     let mut compound = COMPOUND_FILE_MAGIC.to_vec();
     compound.extend_from_slice(&[0; 512]);
     let err = parse_presentation(Cursor::new(compound)).unwrap_err();
-    assert!(err.contains("password-protected"), "{err}");
+    assert!(err.to_string().contains("password-protected"), "{err}");
 
     let word = package(&[
         (
@@ -255,7 +255,10 @@ fn rejects_files_that_are_not_presentations() {
         ("word/document.xml", "<w:document xmlns:w=\"urn:w\"/>"),
     ]);
     let err = parse_presentation(Cursor::new(word)).unwrap_err();
-    assert!(err.contains("Not a PowerPoint presentation"), "{err}");
+    assert!(
+        err.to_string().contains("Not a PowerPoint presentation"),
+        "{err}"
+    );
 }
 
 #[test]

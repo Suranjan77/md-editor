@@ -1,5 +1,7 @@
 //! `AppState`: the shared SQLite connection, schema and migrations, vault generation, and PDF sidecar queries.
 
+mod error;
+pub use error::{StateError, StateResult};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Mutex, MutexGuard,
@@ -122,20 +124,20 @@ impl AppState {
     /// Declare the vault the UI intends to use and invalidate older indexing
     /// work. Publishing an index uses the same lock, making the generation
     /// check and the multi-store update atomic with respect to another switch.
-    pub fn begin_vault_change(&self, root: PathBuf) -> Result<u64, String> {
-        let _publish = self.vault_publish_lock.lock().map_err(|e| e.to_string())?;
-        let _mutation = self.vault_mutation_lock.lock().map_err(|e| e.to_string())?;
+    pub fn begin_vault_change(&self, root: PathBuf) -> StateResult<u64> {
+        let _publish = self.vault_publish_lock.lock()?;
+        let _mutation = self.vault_mutation_lock.lock()?;
         {
-            let db = self.db.lock().map_err(|e| e.to_string())?;
+            let db = self.db.lock()?;
             db.execute("DELETE FROM file_search", [])
                 .map_err(|e| format!("Failed to clear previous vault search index: {e}"))?;
         }
-        *self.file_index.lock().map_err(|e| e.to_string())? = FileIndex::new(root.clone());
+        *self.file_index.lock()? = FileIndex::new(root.clone());
         let generation = self
             .vault_generation
             .fetch_add(1, Ordering::SeqCst)
             .wrapping_add(1);
-        *self.vault_root.lock().map_err(|e| e.to_string())? = Some(root);
+        *self.vault_root.lock()? = Some(root);
         self.vault_content_revision.fetch_add(1, Ordering::SeqCst);
         Ok(generation)
     }
@@ -148,23 +150,23 @@ impl AppState {
         self.vault_content_revision.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn vault_mutation_guard(&self) -> Result<VaultMutationGuard<'_>, String> {
+    pub(crate) fn vault_mutation_guard(&self) -> StateResult<VaultMutationGuard<'_>> {
         Ok(VaultMutationGuard {
-            _lock: self.vault_mutation_lock.lock().map_err(|e| e.to_string())?,
+            _lock: self.vault_mutation_lock.lock()?,
             revision: &self.vault_content_revision,
         })
     }
 
-    pub(crate) fn vault_publish_mutation_lock(&self) -> Result<MutexGuard<'_, ()>, String> {
-        self.vault_mutation_lock.lock().map_err(|e| e.to_string())
+    pub(crate) fn vault_publish_mutation_lock(&self) -> StateResult<MutexGuard<'_, ()>> {
+        self.vault_mutation_lock.lock().map_err(StateError::from)
     }
 
     /// Stable namespace for PDF persistence belonging to the active vault.
     /// Existing databases used unscoped document IDs; `save_pdf_document`
     /// adopts those rows once when a PDF is first opened after this change.
-    pub(crate) fn pdf_scope_prefix(&self) -> Result<Option<String>, String> {
+    pub(crate) fn pdf_scope_prefix(&self) -> StateResult<Option<String>> {
         let root = {
-            let guard = self.vault_root.lock().map_err(|e| e.to_string())?;
+            let guard = self.vault_root.lock()?;
             guard.clone()
         };
         let Some(root) = root else {
@@ -183,7 +185,7 @@ impl AppState {
         format!("{:x}:", hasher.finalize())
     }
 
-    pub(crate) fn pdf_storage_document_id(&self, document_id: &str) -> Result<String, String> {
+    pub(crate) fn pdf_storage_document_id(&self, document_id: &str) -> StateResult<String> {
         Ok(match self.pdf_scope_prefix()? {
             Some(prefix) => format!("{prefix}{document_id}"),
             None => document_id.to_string(),
@@ -219,7 +221,7 @@ impl AppState {
         vault_relative_path: &str,
         file_size: u64,
         modified_at: Option<i64>,
-    ) -> Result<(), String> {
+    ) -> StateResult<()> {
         let scope_prefix = self.pdf_scope_prefix()?;
         // Derive both values from the same root read. Re-reading the active
         // vault here would let a concurrent switch combine one vault's storage
@@ -228,21 +230,19 @@ impl AppState {
             Some(prefix) => format!("{prefix}{document_id}"),
             None => document_id.to_string(),
         };
-        let db = self.db.lock().map_err(|e| e.to_string())?;
+        let db = self.db.lock()?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
 
-        let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+        let tx = db.unchecked_transaction()?;
 
-        let existing_new: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM pdf_documents WHERE document_id = ?1)",
-                [&storage_document_id],
-                |row| row.get(0),
-            )
-            .map_err(|e| e.to_string())?;
+        let existing_new: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pdf_documents WHERE document_id = ?1)",
+            [&storage_document_id],
+            |row| row.get(0),
+        )?;
         if !existing_new {
             // Path is the durable user-facing identity. Prefer a size match,
             // but adopt the newest same-path row even after a replacement so
@@ -264,8 +264,7 @@ impl AppState {
                     ],
                     |row| row.get(0),
                 )
-                .optional()
-                .map_err(|e| e.to_string())?
+                .optional()?
             } else {
                 tx.query_row(
                     "SELECT document_id FROM pdf_documents
@@ -275,8 +274,7 @@ impl AppState {
                     rusqlite::params![vault_relative_path, storage_document_id, file_size as i64],
                     |row| row.get(0),
                 )
-                .optional()
-                .map_err(|e| e.to_string())?
+                .optional()?
             };
             if let Some(previous_id) = previous_id {
                 tx.execute(
@@ -315,31 +313,28 @@ impl AppState {
         )
         .map_err(|e| format!("Failed to save pdf document: {e}"))?;
 
-        tx.commit().map_err(|e| e.to_string())?;
+        tx.commit()?;
 
         Ok(())
     }
 
-    pub fn get_pdf_path_by_id(&self, document_id: &str) -> Result<Option<String>, String> {
+    pub fn get_pdf_path_by_id(&self, document_id: &str) -> StateResult<Option<String>> {
         let storage_document_id = self.pdf_storage_document_id(document_id)?;
-        let db = self.db.lock().map_err(|e| e.to_string())?;
-        let mut stmt = db
-            .prepare("SELECT vault_relative_path FROM pdf_documents WHERE document_id = ?1")
-            .map_err(|e| e.to_string())?;
-        let mut rows = stmt
-            .query([storage_document_id])
-            .map_err(|e| e.to_string())?;
-        if let Some(row) = rows.next().map_err(|e| e.to_string())? {
-            let path: String = row.get(0).map_err(|e| e.to_string())?;
+        let db = self.db.lock()?;
+        let mut stmt =
+            db.prepare("SELECT vault_relative_path FROM pdf_documents WHERE document_id = ?1")?;
+        let mut rows = stmt.query([storage_document_id])?;
+        if let Some(row) = rows.next()? {
+            let path: String = row.get(0)?;
             Ok(Some(path))
         } else {
             Ok(None)
         }
     }
 
-    pub fn save_pdf_annotation(&self, ann: &PdfAnnotation) -> Result<(), String> {
+    pub fn save_pdf_annotation(&self, ann: &PdfAnnotation) -> StateResult<()> {
         let storage_document_id = self.pdf_storage_document_id(&ann.document_id)?;
-        let db = self.db.lock().map_err(|e| e.to_string())?;
+        let db = self.db.lock()?;
         let ranges_json = serde_json::to_string(&ann.ranges)
             .map_err(|e| format!("Failed to serialize ranges: {e}"))?;
         let rects_json = serde_json::to_string(&ann.rects)
@@ -381,9 +376,9 @@ impl AppState {
         Ok(())
     }
 
-    pub fn delete_pdf_annotation(&self, id: &str) -> Result<(), String> {
+    pub fn delete_pdf_annotation(&self, id: &str) -> StateResult<()> {
         let scope_prefix = self.pdf_scope_prefix()?;
-        let db = self.db.lock().map_err(|e| e.to_string())?;
+        let db = self.db.lock()?;
         let deleted = if let Some(prefix) = scope_prefix {
             db.execute(
                 "DELETE FROM pdf_annotations
@@ -528,7 +523,7 @@ impl AppState {
         self.put_cached_pdf_text_by_key(&key, file_size, modified_at, content);
     }
 
-    fn pdf_cache_key(&self, rel_path: &str) -> Result<String, String> {
+    fn pdf_cache_key(&self, rel_path: &str) -> StateResult<String> {
         Ok(match self.pdf_scope_prefix()? {
             Some(prefix) => format!("{prefix}{rel_path}"),
             None => rel_path.to_string(),
@@ -562,9 +557,9 @@ impl AppState {
         &self,
         document_id: &str,
         page_index: Option<u16>,
-    ) -> Result<Vec<PdfAnnotation>, String> {
+    ) -> StateResult<Vec<PdfAnnotation>> {
         let storage_document_id = self.pdf_storage_document_id(document_id)?;
-        let db = self.db.lock().map_err(|e| e.to_string())?;
+        let db = self.db.lock()?;
         let query = if page_index.is_some() {
             "SELECT id, document_id, page_index, kind, color, selected_text,
                     ranges_json, rects_json, note, linked_note_path, markdown_anchor,
@@ -581,30 +576,28 @@ impl AppState {
              ORDER BY created_at ASC"
         };
 
-        let mut stmt = db.prepare(query).map_err(|e| e.to_string())?;
+        let mut stmt = db.prepare(query)?;
         let mut rows = if let Some(page) = page_index {
-            stmt.query(rusqlite::params![storage_document_id, page as i32])
-                .map_err(|e| e.to_string())?
+            stmt.query(rusqlite::params![storage_document_id, page as i32])?
         } else {
-            stmt.query(rusqlite::params![storage_document_id])
-                .map_err(|e| e.to_string())?
+            stmt.query(rusqlite::params![storage_document_id])?
         };
 
         let mut annotations = Vec::new();
-        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-            let id: String = row.get(0).map_err(|e| e.to_string())?;
-            let _stored_doc_id: String = row.get(1).map_err(|e| e.to_string())?;
-            let page_idx: i32 = row.get(2).map_err(|e| e.to_string())?;
-            let kind_str: String = row.get(3).map_err(|e| e.to_string())?;
-            let color_str: String = row.get(4).map_err(|e| e.to_string())?;
-            let selected_text: String = row.get(5).map_err(|e| e.to_string())?;
-            let ranges_json: String = row.get(6).map_err(|e| e.to_string())?;
-            let rects_json: String = row.get(7).map_err(|e| e.to_string())?;
-            let note: Option<String> = row.get(8).map_err(|e| e.to_string())?;
-            let linked_note_path: Option<String> = row.get(9).map_err(|e| e.to_string())?;
-            let markdown_anchor: Option<String> = row.get(10).map_err(|e| e.to_string())?;
-            let created_at: i64 = row.get(11).map_err(|e| e.to_string())?;
-            let updated_at: i64 = row.get(12).map_err(|e| e.to_string())?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let _stored_doc_id: String = row.get(1)?;
+            let page_idx: i32 = row.get(2)?;
+            let kind_str: String = row.get(3)?;
+            let color_str: String = row.get(4)?;
+            let selected_text: String = row.get(5)?;
+            let ranges_json: String = row.get(6)?;
+            let rects_json: String = row.get(7)?;
+            let note: Option<String> = row.get(8)?;
+            let linked_note_path: Option<String> = row.get(9)?;
+            let markdown_anchor: Option<String> = row.get(10)?;
+            let created_at: i64 = row.get(11)?;
+            let updated_at: i64 = row.get(12)?;
 
             let kind = PdfAnnotationKind::parse(&kind_str)?;
             let color = PdfAnnotationColor::parse(&color_str)?;

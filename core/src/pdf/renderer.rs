@@ -69,7 +69,7 @@ pub(super) enum PdfCommand {
 }
 
 impl PdfRenderer {
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> PdfResult<Self> {
         let (sender, receiver) = std::sync::mpsc::channel();
         let (priority_sender, priority_receiver) = std::sync::mpsc::channel::<PriorityRender>();
         let visible_range: std::sync::Arc<std::sync::Mutex<Option<(u16, u16, String)>>> =
@@ -716,12 +716,7 @@ impl PdfRenderer {
         }
     }
 
-    pub fn render_page(
-        &self,
-        path: &str,
-        page_index: u16,
-        scale: f32,
-    ) -> Result<DynamicImage, String> {
+    pub fn render_page(&self, path: &str, page_index: u16, scale: f32) -> PdfResult<DynamicImage> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::RenderPage(
@@ -730,8 +725,8 @@ impl PdfRenderer {
                 scale,
                 tx,
             ))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     pub fn render_page_priority(
@@ -739,7 +734,7 @@ impl PdfRenderer {
         path: &str,
         page_index: u16,
         scale: f32,
-    ) -> Result<DynamicImage, String> {
+    ) -> PdfResult<DynamicImage> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.priority_sender
             .send(PriorityRender {
@@ -751,79 +746,76 @@ impl PdfRenderer {
             .map_err(|e| e.to_string())?;
         self.sender
             .send(PdfCommand::Wake)
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
-    pub fn page_count(&self, path: &str) -> Result<u16, String> {
+    pub fn page_count(&self, path: &str) -> PdfResult<u16> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::PageCount(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     /// Extract the full plain text of a PDF (all pages, newline-separated).
     /// Used to feed PDF content into the vault's full-text search index.
-    pub fn extract_document_text(&self, path: &str) -> Result<String, String> {
+    pub fn extract_document_text(&self, path: &str) -> PdfResult<String> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::ExtractText(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
-    pub fn page_sizes(&self, path: &str) -> Result<Vec<(f32, f32)>, String> {
+    pub fn page_sizes(&self, path: &str) -> PdfResult<Vec<(f32, f32)>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::PageSizes(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     /// Returns the document's table of contents along with a flag that is
     /// `true` when the outline was synthesized from page text because the PDF
     /// has no embedded bookmarks.
-    pub fn get_toc(&self, path: &str) -> Result<(Vec<TocEntry>, bool), String> {
+    pub fn get_toc(&self, path: &str) -> PdfResult<(Vec<TocEntry>, bool)> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetToc(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     /// Resolve internal cross-references (numbered equations, figures, tables,
     /// sections) for the whole document. This performs a one-time full text
     /// scan; callers should cache the result by document id (the result is
     /// stable for a given file). See [`crate::references`].
-    pub fn get_references(
-        &self,
-        path: &str,
-    ) -> Result<Vec<crate::references::ReferenceLink>, String> {
+    pub fn get_references(&self, path: &str) -> PdfResult<Vec<crate::references::ReferenceLink>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetReferences(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     /// The embedded outline (bookmarks) only — no text scan, so cheap on every
     /// document. The chunked reference resolver uses this plus per-page text
     /// extraction to avoid a monolithic full-document command.
-    pub fn get_embedded_toc(&self, path: &str) -> Result<Vec<TocEntry>, String> {
+    pub fn get_embedded_toc(&self, path: &str) -> PdfResult<Vec<TocEntry>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetEmbeddedToc(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
-    pub fn get_page_links(&self, path: &str, page_index: u16) -> Result<Vec<LinkInfo>, String> {
+    pub fn get_page_links(&self, path: &str, page_index: u16) -> PdfResult<Vec<LinkInfo>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetLinks(path.to_string(), page_index, tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     pub fn search_text(
@@ -832,7 +824,7 @@ impl PdfRenderer {
         query: &str,
         regex: bool,
         match_case: bool,
-    ) -> Result<Vec<PdfSearchMatch>, String> {
+    ) -> PdfResult<Vec<PdfSearchMatch>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::SearchText(
@@ -842,8 +834,8 @@ impl PdfRenderer {
                 match_case,
                 tx,
             ))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     pub fn render_link_preview(
@@ -852,7 +844,7 @@ impl PdfRenderer {
         page_index: u32,
         dest_y: Option<f32>,
         target_width_px: u32,
-    ) -> Result<LinkPreviewResult, String> {
+    ) -> PdfResult<LinkPreviewResult> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::RenderLinkPreview(
@@ -862,16 +854,16 @@ impl PdfRenderer {
                 target_width_px,
                 tx,
             ))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
-    pub fn get_page_text(&self, path: &str, page_index: u16) -> Result<PdfPageText, String> {
+    pub fn get_page_text(&self, path: &str, page_index: u16) -> PdfResult<PdfPageText> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetPageText(path.to_string(), page_index, tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     pub(super) fn parse_bookmarks(bookmarks: &[PdfBookmark]) -> Vec<TocEntry> {
@@ -941,4 +933,11 @@ pub(super) fn render_page_from_document(
     bitmap
         .as_image()
         .map_err(|e| format!("Failed to convert to image: {:?}", e))
+}
+
+/// Wait for the worker's answer and classify a failure.
+fn receive<T>(rx: std::sync::mpsc::Receiver<Result<T, String>>) -> PdfResult<T> {
+    rx.recv()
+        .map_err(|_| PdfError::WorkerGone)?
+        .map_err(PdfError::from_worker)
 }

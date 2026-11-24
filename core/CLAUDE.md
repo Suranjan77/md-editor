@@ -16,6 +16,9 @@ Headless engine. Everything here must run in a test without a display or GPU.
 - **PDFs and decks are read-only.** Annotations live in `pdf_annotations` /
   `pdf_references`, keyed by the vault-scoped `document_id`. One `Pdfium` binding per
   process, reached only through `pdf/`.
+- **Typed errors.** Public functions return the module error (`VaultError`, `StateError`,
+  `PdfError`, `PptxError`, thiserror); `Display` is user-facing wording. Never add a
+  public `Result<_, String>`.
 - **Schema changes** go in `state.rs` as a new `user_version` migration; never edit an old
   one.
 - **Reference resolver output changes** must bump `references::RESOLVER_VERSION`.

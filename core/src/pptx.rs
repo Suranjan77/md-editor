@@ -24,6 +24,8 @@
 //! Every length in the model is in points (1/72 inch); the XML's English
 //! Metric Units are converted on the way in.
 
+mod error;
+pub use error::{PptxError, PptxResult};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -78,30 +80,32 @@ use xml::*;
 // ── Entry points ─────────────────────────────────────────────────────
 
 /// Read the presentation at `path`.
-pub fn load_presentation(path: &Path) -> Result<Presentation, String> {
-    let file =
-        std::fs::File::open(path).map_err(|e| format!("Cannot open {}: {e}", path.display()))?;
+pub fn load_presentation(path: &Path) -> PptxResult<Presentation> {
+    let file = std::fs::File::open(path).map_err(|e| PptxError::Io {
+        context: format!("Cannot open {}", path.display()),
+        source: e,
+    })?;
     parse_presentation(BufReader::new(file))
 }
 
 /// Read a presentation from any seekable byte source.
-pub fn parse_presentation<R: Read + Seek>(mut reader: R) -> Result<Presentation, String> {
+pub fn parse_presentation<R: Read + Seek>(mut reader: R) -> PptxResult<Presentation> {
     let mut magic = [0u8; 8];
     if reader.read_exact(&mut magic).is_ok() && magic == COMPOUND_FILE_MAGIC {
         return Err(
             "This presentation is password-protected or in the old .ppt format, \
              neither of which can be opened"
-                .to_string(),
+                .into(),
         );
     }
     reader
         .seek(SeekFrom::Start(0))
-        .map_err(|e| format!("Cannot read the presentation: {e}"))?;
+        .map_err(|e| PptxError::from(format!("Cannot read the presentation: {e}")))?;
     let mut package = Package::open(reader)?;
     read_presentation(&mut package)
 }
 
-fn read_presentation<R: Read + Seek>(package: &mut Package<R>) -> Result<Presentation, String> {
+fn read_presentation<R: Read + Seek>(package: &mut Package<R>) -> PptxResult<Presentation> {
     let root_rels = read_relationships(package, "")?;
     let main_part = root_rels
         .values()
@@ -114,7 +118,9 @@ fn read_presentation<R: Read + Seek>(package: &mut Package<R>) -> Result<Present
     let presentation_doc = parse_xml(&presentation_xml, &main_part)?;
     let presentation = presentation_doc.root_element();
     if presentation.tag_name().name() != "presentation" {
-        return Err("Not a PowerPoint presentation (is it a Word or Excel file?)".to_string());
+        return Err(PptxError::from(
+            "Not a PowerPoint presentation (is it a Word or Excel file?)".to_string(),
+        ));
     }
     let presentation_rels = read_relationships(package, &main_part)?;
 

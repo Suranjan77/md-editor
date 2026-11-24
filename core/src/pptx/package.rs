@@ -1,6 +1,7 @@
 //! The zip package and its relationship parts.
 
 use super::*;
+use super::{PptxError, PptxResult};
 
 // ── Package and relationships ────────────────────────────────────────
 
@@ -10,7 +11,7 @@ pub(super) struct Package<R> {
 }
 
 impl<R: Read + Seek> Package<R> {
-    pub(super) fn open(reader: R) -> Result<Self, String> {
+    pub(super) fn open(reader: R) -> PptxResult<Self> {
         let archive = zip::ZipArchive::new(reader)
             .map_err(|_| "Not a valid .pptx file: it is not a zip package".to_string())?;
         Ok(Self {
@@ -20,34 +21,36 @@ impl<R: Read + Seek> Package<R> {
     }
 
     /// The bytes of `part`, or `None` when the package has no such part.
-    pub(super) fn read(&mut self, part: &str) -> Result<Option<Vec<u8>>, String> {
+    pub(super) fn read(&mut self, part: &str) -> PptxResult<Option<Vec<u8>>> {
         let file = match self.archive.by_name(part) {
             Ok(file) => file,
             Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-            Err(e) => return Err(format!("Cannot read {part}: {e}")),
+            Err(e) => return Err(PptxError::from(format!("Cannot read {part}: {e}"))),
         };
         if file.size() > MAX_PART_BYTES {
-            return Err(format!("{part} is too large to open"));
+            return Err(PptxError::from(format!("{part} is too large to open")));
         }
         let mut bytes = Vec::with_capacity(file.size() as usize);
         file.take(MAX_PART_BYTES + 1)
             .read_to_end(&mut bytes)
-            .map_err(|e| format!("Cannot read {part}: {e}"))?;
+            .map_err(|e| PptxError::from(format!("Cannot read {part}: {e}")))?;
         if bytes.len() as u64 > MAX_PART_BYTES {
-            return Err(format!("{part} is too large to open"));
+            return Err(PptxError::from(format!("{part} is too large to open")));
         }
         self.bytes_read += bytes.len() as u64;
         if self.bytes_read > MAX_PACKAGE_BYTES {
-            return Err("The presentation is too large to open".to_string());
+            return Err(PptxError::from(
+                "The presentation is too large to open".to_string(),
+            ));
         }
         Ok(Some(bytes))
     }
 
-    pub(super) fn read_text(&mut self, part: &str) -> Result<Option<String>, String> {
+    pub(super) fn read_text(&mut self, part: &str) -> PptxResult<Option<String>> {
         match self.read(part)? {
             Some(bytes) => String::from_utf8(bytes)
                 .map(Some)
-                .map_err(|_| format!("{part} is not UTF-8 XML")),
+                .map_err(|_| PptxError::from(format!("{part} is not UTF-8 XML"))),
             None => Ok(None),
         }
     }
@@ -119,7 +122,7 @@ pub(super) fn percent_decode(text: &str) -> String {
 pub(super) fn read_relationships<R: Read + Seek>(
     package: &mut Package<R>,
     part: &str,
-) -> Result<Relationships, String> {
+) -> PptxResult<Relationships> {
     let rels_name = rels_part(part);
     let Some(xml) = package.read_text(&rels_name)? else {
         return Ok(HashMap::new());

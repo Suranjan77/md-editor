@@ -4,7 +4,7 @@
 logging, an enforced quality gate, and tests where the risk is. No behaviour changes except
 where a workstream says so.
 
-**Date:** 2026-11-23 · **Status:** in progress — W1, W2, W4, W9 done (2026-11-24); W5 and W10 (native install, Arch Linux only) done 2026-11-24; see §5. Companion to the
+**Date:** 2026-11-23 · **Status:** in progress — W1, W2, W4, W9 done (2026-11-24); W3, W5 and W10 (native install, Arch Linux only) done 2026-11-24; see §5. Companion to the
 [UI overhaul](ui-overhaul-plan.md), [bug discovery](e2e-bug-discovery-plan.md) and
 [tabs & images](feature-plan-tabs-and-images.md) plans.
 
@@ -298,4 +298,14 @@ portable user's settings, highlights and study history appear after upgrading.
 `PageEvents` callback struct. **Clippy is at 0** (baseline file updated). The six
 `#[allow(clippy::too_many_arguments)]` in the editor renderer (hot paths) remain, as do the
 function splits (`update_pdf`, the PDFium worker, `update_vault`, `DocBuffer`).
+
+**2026-11-24 — W3 landed.** Core's public API has no `Result<_, String>` left:
+`vault::VaultError` (vault, files, graph, attachments; `is_not_found()`,
+`is_permission_denied()`), `state::StateError` (state, tracker, config; `rusqlite` and
+lock errors via `From`), `pdf::PdfError` (`Skipped`, `PasswordRequired`, `WorkerGone`,
+`Other` — replaces the app's `err == "Skipped"` string check), `pptx::PptxError`. `Display`
+keeps the old wording, so toasts read the same; each converts to `String` for the native
+shell's message payloads (which must be `Clone`). `SaveOutcome::Failed` keeps the typed
+`VaultError`. Still stringly: the PDFium worker's internal channels (typed at the
+`PdfRenderer` boundary; restructured with W6) and `pub(super)` helpers.
 

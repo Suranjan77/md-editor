@@ -81,7 +81,7 @@ impl MdEditor {
                         .ok_or_else(|| "PDF renderer is unavailable".to_string())?;
                     renderer.page_count(&path_clone)
                 },
-                move |res| Message::Pdf(PdfMessage::Loaded(generation, res)),
+                move |res| Message::Pdf(PdfMessage::Loaded(generation, res.map_err(String::from))),
             ),
             Task::perform(
                 async move {
@@ -139,7 +139,7 @@ impl MdEditor {
                         crate::messages::PageImage(img),
                     ))
                 } else if let Some((p, Err(err))) = res {
-                    if err == "Skipped" {
+                    if err == md_editor_core::pdf::PdfError::Skipped {
                         Message::Pdf(PdfMessage::RenderSkipped(generation, p))
                     } else {
                         Message::Pdf(PdfMessage::RenderFailed(generation, p))
@@ -247,7 +247,13 @@ impl MdEditor {
                     .ok_or_else(|| "No PDF renderer".to_string())?;
                 renderer.get_page_text(&path_str, page)
             },
-            move |res| Message::Pdf(PdfMessage::PageTextLoaded(generation, page, res)),
+            move |res| {
+                Message::Pdf(PdfMessage::PageTextLoaded(
+                    generation,
+                    page,
+                    res.map_err(String::from),
+                ))
+            },
         )
     }
 

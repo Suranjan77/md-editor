@@ -25,7 +25,9 @@ pub enum VaultError {
         #[source]
         source: io::Error,
     },
-    /// Anything else (the index, the database, a poisoned lock).
+    #[error(transparent)]
+    State(#[from] crate::state::StateError),
+    /// Anything else (the index, a poisoned lock).
     #[error("{0}")]
     Other(String),
 }
