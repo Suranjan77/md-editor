@@ -3,14 +3,14 @@
 use iced::widget::{Space, button, column, container, image, text};
 use iced::{Alignment, Background, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, VaultMessage};
 use crate::theme;
 
 /// Render a premium welcome screen.
 pub fn view<'a>() -> Element<'a, Message, Theme, Renderer> {
     let open_btn =
         button(container(text("Open Existing Vault").size(theme::TEXT_MD)).padding([12, 24]))
-            .on_press(Message::OpenVaultDialog)
+            .on_press(Message::Vault(VaultMessage::OpenVaultDialog))
             .style(button::primary);
 
     let app_icon_handle =

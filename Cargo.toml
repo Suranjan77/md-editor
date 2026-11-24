@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 version = "1.0.0"
 edition = "2024"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 # Release builds are what ships in the download archives, so trade build time
 # for a smaller, faster binary.
@@ -13,3 +13,17 @@ license = "MIT"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# Shared lint policy (code-health plan W2). Crate- and module-specific
+# additions live in `core/src/lib.rs` and `native/src/app/mod.rs`.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+large_enum_variant = "warn"
+# Not enabled: needless_pass_by_value. It flags the props-struct-by-value
+# pattern views use (and that W6 prescribes) and iced's by-value events.

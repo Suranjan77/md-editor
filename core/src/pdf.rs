@@ -4,6 +4,7 @@ use image::DynamicImage;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 
 mod renderer;
 mod toc;
@@ -50,7 +51,7 @@ impl PdfAnnotationKind {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s {
             "Highlight" => Ok(Self::Highlight),
             "Note" => Ok(Self::Note),
@@ -79,7 +80,7 @@ impl PdfAnnotationColor {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s {
             "Yellow" => Ok(Self::Yellow),
             "Green" => Ok(Self::Green),
@@ -217,7 +218,7 @@ pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
                     r.width = x_max - x_min;
                     r.height = y_max - y_min;
                 } else {
-                    rects.push(current.take().unwrap());
+                    rects.push(current.take().expect("matched Some above"));
                     current = Some(c.bbox.clone());
                 }
             }
@@ -300,23 +301,15 @@ fn bind_pdfium() -> Result<Pdfium, String> {
 
     let res = BIND_RESULT.get_or_init(|| {
         let lib_name = Pdfium::pdfium_platform_library_name();
-        let mut candidates = Vec::new();
-
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            candidates.push(dir.join("resources").join(&lib_name));
-            candidates.push(dir.join(&lib_name));
-        }
-        candidates.push(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("pdfium")
-                .join(&lib_name),
-        );
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf));
+        let candidates = pdfium_candidates(exe_dir.as_deref(), Path::new(&lib_name));
 
         let mut bound = false;
         for candidate in candidates {
             if candidate.exists() {
+                log::debug!("Binding PDFium from {}", candidate.display());
                 match Pdfium::bind_to_library(candidate) {
                     Ok(bindings) => {
                         let _ = Pdfium::new(bindings);
@@ -350,6 +343,32 @@ fn bind_pdfium() -> Result<Pdfium, String> {
         Ok(()) => Ok(Pdfium::default()),
         Err(e) => Err(e.clone()),
     }
+}
+
+/// Where to look for the PDFium library, in order, before the system loader
+/// path:
+///
+/// 1. `<exe>/../lib/md-editor/` — the installed layout
+///    (`/usr/bin/md-editor` + `/usr/lib/md-editor/libpdfium.so`), which also
+///    works under `/usr/local` or a packaging root;
+/// 2. `<exe>/` and `<exe>/resources/` — development builds, where the build
+///    script copies the library next to the binary;
+/// 3. the crate's own `pdfium/` folder (tests run from the source tree).
+fn pdfium_candidates(exe_dir: Option<&Path>, lib_name: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = exe_dir {
+        if let Some(prefix) = dir.parent() {
+            candidates.push(prefix.join("lib").join("md-editor").join(lib_name));
+        }
+        candidates.push(dir.join(lib_name));
+        candidates.push(dir.join("resources").join(lib_name));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("pdfium")
+            .join(lib_name),
+    );
+    candidates
 }
 
 #[cfg(test)]

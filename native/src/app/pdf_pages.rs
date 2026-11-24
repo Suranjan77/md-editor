@@ -1,6 +1,7 @@
 //! Opening PDFs and managing their pages: rendering, links, text, fit, navigation and highlights.
 
 use super::*;
+use crate::messages::PdfMessage;
 
 impl MdEditor {
     pub(super) fn open_pdf(&mut self, path: &str) -> Task<Message> {
@@ -58,7 +59,7 @@ impl MdEditor {
                     Err(_) => None,
                 }
             },
-            move |result| Message::PdfDocumentIdComputed(generation, result),
+            move |result| Message::Pdf(PdfMessage::DocumentIdComputed(generation, result)),
         );
 
         let _state = self.state.clone();
@@ -80,7 +81,7 @@ impl MdEditor {
                         .ok_or_else(|| "PDF renderer is unavailable".to_string())?;
                     renderer.page_count(&path_clone)
                 },
-                move |res| Message::PdfLoaded(generation, res),
+                move |res| Message::Pdf(PdfMessage::Loaded(generation, res)),
             ),
             Task::perform(
                 async move {
@@ -88,11 +89,11 @@ impl MdEditor {
                     renderer.page_sizes(&path_str_sizes).ok()
                 },
                 move |res| {
-                    Message::PdfPageSizesLoaded(
+                    Message::Pdf(PdfMessage::PageSizesLoaded(
                         generation,
                         path_for_sizes.clone(),
                         res.unwrap_or_default(),
-                    )
+                    ))
                 },
             ),
             Task::perform(
@@ -102,7 +103,11 @@ impl MdEditor {
                 },
                 move |res| {
                     let (entries, synthetic) = res.unwrap_or_default();
-                    Message::PdfTocLoaded(path_for_toc.clone(), entries, synthetic)
+                    Message::Pdf(PdfMessage::TocLoaded(
+                        path_for_toc.clone(),
+                        entries,
+                        synthetic,
+                    ))
                 },
             ),
         ])
@@ -128,15 +133,15 @@ impl MdEditor {
             },
             move |res| {
                 if let Some((p, Ok(img))) = res {
-                    Message::PdfRendered(generation, p, img)
+                    Message::Pdf(PdfMessage::Rendered(generation, p, img))
                 } else if let Some((p, Err(err))) = res {
                     if err == "Skipped" {
-                        Message::PdfRenderSkipped(generation, p)
+                        Message::Pdf(PdfMessage::RenderSkipped(generation, p))
                     } else {
-                        Message::PdfRenderFailed(generation, p)
+                        Message::Pdf(PdfMessage::RenderFailed(generation, p))
                     }
                 } else {
-                    Message::PdfRenderFailed(generation, page)
+                    Message::Pdf(PdfMessage::RenderFailed(generation, page))
                 }
             },
         )
@@ -167,15 +172,15 @@ impl MdEditor {
                 let renderer = _state.pdf_renderer.as_ref()?;
                 renderer
                     .render_page_priority(&path_str, page, zoom)
-                    .map_err(|e| println!("PDF PRIORITY RENDER ERROR (Page {}): {}", page, e))
+                    .map_err(|e| log::warn!("Priority render of page {page} failed: {e}"))
                     .ok()
                     .map(|img| (page, img))
             },
             move |res| {
                 if let Some((p, img)) = res {
-                    Message::PdfRendered(generation, p, img)
+                    Message::Pdf(PdfMessage::Rendered(generation, p, img))
                 } else {
-                    Message::PdfRenderFailed(generation, page)
+                    Message::Pdf(PdfMessage::RenderFailed(generation, page))
                 }
             },
         )
@@ -201,7 +206,13 @@ impl MdEditor {
                 let renderer = _state.pdf_renderer.as_ref()?;
                 renderer.get_page_links(&path_str, page).ok()
             },
-            move |res| Message::PdfPageLinksLoaded(generation, page, res.unwrap_or_default()),
+            move |res| {
+                Message::Pdf(PdfMessage::PageLinksLoaded(
+                    generation,
+                    page,
+                    res.unwrap_or_default(),
+                ))
+            },
         )
     }
 
@@ -228,7 +239,7 @@ impl MdEditor {
                     .ok_or_else(|| "No PDF renderer".to_string())?;
                 renderer.get_page_text(&path_str, page)
             },
-            move |res| Message::PdfPageTextLoaded(generation, page, res),
+            move |res| Message::Pdf(PdfMessage::PageTextLoaded(generation, page, res)),
         )
     }
 
@@ -370,7 +381,7 @@ impl MdEditor {
 
     pub(super) fn refit_pdf_if_needed(&self) -> Task<Message> {
         if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
-            Task::done(Message::PdfFitToWidth)
+            Task::done(Message::Pdf(PdfMessage::FitToWidth))
         } else {
             Task::none()
         }

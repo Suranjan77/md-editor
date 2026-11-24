@@ -1,7 +1,8 @@
 # MD Editor
 
 Native, local-first desktop workspace for Markdown notes, PDFs, presentations, a knowledge
-graph and handwritten notes. Rust 2024, Iced 0.14, PDFium. GPL-3.0.
+graph and handwritten notes. Rust 2024, Iced 0.14, PDFium. GPL-3.0-or-later. Ships as an
+Arch Linux package (`packaging/arch/`); data and log live in XDG dirs, never beside the exe.
 
 ## Commands
 
@@ -9,8 +10,10 @@ graph and handwritten notes. Rust 2024, Iced 0.14, PDFium. GPL-3.0.
 cargo check --workspace --all-targets   # fast typecheck
 cargo test --workspace                  # all tests (~435); core PDF tests need PDFium, fetched by build.rs
 cargo fmt --all                         # the tree is rustfmt-clean; keep it that way
+scripts/clippy-ratchet.sh               # clippy warnings must not exceed clippy-baseline.txt (CI gate)
 cargo test -p md-editor-native e2e -- --nocapture   # headless end-to-end runs; screenshots + telemetry in target/e2e/
 cargo run -- path/to/vault-or-note.md   # launch (opens a window)
+scripts/build-arch-package.sh -si       # build + install the Arch package from the working tree
 ```
 
 The first build downloads PDFium into `target/pdfium/` (network needed). If PDF tests fail
@@ -21,7 +24,7 @@ with an undefined `FPDF_*` symbol, a stale library is cached: delete
 
 - `core/` — headless engine, no UI deps: `vault.rs` (+`vault/`), `file_index.rs`,
   `state.rs` (SQLite), `pdf.rs` (+`pdf/` worker, TOC), `pptx.rs` (+`pptx/`), `references.rs`.
-- `native/src/app/` — the shell. `mod.rs::update_inner` routes each `Message` family to
+- `native/src/app/` — the shell. `mod.rs::update_inner` routes each `Message` family (`Message::Pdf(PdfMessage)`, …) to
   `update_<family>` in `pdf.rs`, `graph.rs`, `ink.rs`, `search.rs`, `editor.rs`,
   `vault.rs`, `shortcuts.rs` or `shell.rs`. Shared machinery: `documents.rs`,
   `subscription.rs`, `view.rs`, `links.rs`.
@@ -34,8 +37,10 @@ is the fastest map. Tests for `foo.rs` live in `foo/tests.rs`.
 
 ## Where changes go
 
-- New message: variant in `messages.rs`, arm in the matching `app/<family>.rs`. A variant
-  whose name has no routed prefix also needs a pattern in `app/mod.rs::update_inner`.
+- New message: variant in the family enum in `messages.rs` (`PdfMessage`, `VaultMessage`, …),
+  arm in that family's `app/<family>.rs` handler. Handlers match exhaustively, so the
+  compiler finds the missing arm. A new family needs a `Message` variant and an arm in
+  `app/mod.rs::update_inner`.
 - New shortcut: `Shortcut` in `messages.rs`, key in `app/subscription.rs`, handler in
   `app/shortcuts.rs`, palette entry in `views/command_palette.rs`.
 - New file type in the vault: extension list and `is_supported_vault_path` in
@@ -45,7 +50,10 @@ is the fastest map. Tests for `foo.rs` live in `foo/tests.rs`.
 ## Rules that bite
 
 - Core stays headless: never add `iced`/GUI deps to `core`.
-- Writes go through `vault::write_file` (atomic, symlink- and permission-preserving).
+- Log with `log::{info, warn, error}`; `println!`/`eprintln!` are linted (CLI installer excepted).
+- Writes go through `vault::write_file` (atomic, symlink- and permission-preserving, refuses
+  read-only files); the editor saves via `vault::save_file_guarded`, which keeps an external
+  edit as a conflict copy instead of overwriting it.
   Notes autosave 400 ms after typing; switching documents flushes first. Never drop a dirty
   buffer.
 - Sizes, colours and durations come from `native/src/theme.rs` and `motion.rs` — no literals

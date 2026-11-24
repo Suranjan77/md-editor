@@ -4,7 +4,7 @@
 //! handling of the `Tracker*` messages. The shell forwards those messages to
 //! [`TrackerState::update`] and renders [`TrackerState::view`]. Side effects
 //! that belong to the global UI (toasts) are surfaced as
-//! [`Message::ShowToast`] tasks rather than reaching back into the shell.
+//! [`ShellMessage::ShowToast`] tasks rather than reaching back into the shell.
 //!
 //! The first sub-state extracted from the `MdEditor` shell.
 
@@ -17,7 +17,7 @@ use iced::{Element, Task, Theme};
 use md_editor_core::state::AppState;
 use md_editor_core::tracker::StudySession;
 
-use crate::messages::{Message, TrackerTab};
+use crate::messages::{Message, ShellMessage, TrackerTab};
 use crate::views;
 
 pub struct TrackerState {
@@ -74,22 +74,22 @@ impl TrackerState {
     }
 
     /// Handle a `Tracker*` message. Returns a task; toasts are emitted as
-    /// [`Message::ShowToast`] so the shell owns the actual toast field.
+    /// [`ShellMessage::ShowToast`] so the shell owns the actual toast field.
     pub fn update(&mut self, message: Message, state: &AppState) -> Task<Message> {
         match message {
-            Message::TrackerToggle => {
+            Message::Shell(ShellMessage::TrackerToggle) => {
                 self.visible = !self.visible;
                 if self.visible {
                     self.reload_from_disk(state);
                 }
                 Task::none()
             }
-            Message::TrackerStart => {
+            Message::Shell(ShellMessage::TrackerStart) => {
                 self.running = true;
                 self.started_at = Some(Instant::now());
                 toast("Study timer started")
             }
-            Message::TrackerStop => {
+            Message::Shell(ShellMessage::TrackerStop) => {
                 let mut task = Task::none();
                 if let Some(started_at) = self.started_at.take() {
                     let elapsed = started_at.elapsed();
@@ -110,62 +110,64 @@ impl TrackerState {
                 self.running = false;
                 task
             }
-            Message::TrackerTabSelected(tab) => {
+            Message::Shell(ShellMessage::TrackerTabSelected(tab)) => {
                 self.tab = tab;
                 Task::none()
             }
-            Message::TrackerProjectStatusChanged(id, status) => {
+            Message::Shell(ShellMessage::TrackerProjectStatusChanged(id, status)) => {
                 let key = format!("proj_{}", id);
                 if md_editor_core::tracker::set_kv(state, &key, &status).is_ok() {
                     self.kv.insert(key, status);
                 }
                 Task::none()
             }
-            Message::TrackerGateToggled(gate_id, item, item_idx) => {
+            Message::Shell(ShellMessage::TrackerGateToggled(gate_id, item, item_idx)) => {
                 let keys = views::tracker::gate_completion_keys(&gate_id, &item, item_idx);
                 self.toggle_bool_kv_with_legacy(state, keys);
                 Task::none()
             }
-            Message::TrackerReadingToggled(section, item, item_idx) => {
+            Message::Shell(ShellMessage::TrackerReadingToggled(section, item, item_idx)) => {
                 let keys = views::tracker::reading_completion_keys(&section, &item, item_idx);
                 self.toggle_bool_kv_with_legacy(state, keys);
                 Task::none()
             }
-            Message::TrackerConfigEdited(action) => {
+            Message::Shell(ShellMessage::TrackerConfigEdited(action)) => {
                 self.config_content.perform(action);
                 self.config_json = self.config_content.text();
                 Task::none()
             }
-            Message::TrackerConfigSave => match views::tracker::parse_config(&self.config_json) {
-                Ok(_) => {
-                    if md_editor_core::config::set_sys_config(
-                        state,
-                        "tracker_config",
-                        &self.config_json,
-                    )
-                    .is_ok()
-                    {
-                        toast("Tracker configuration saved")
-                    } else {
-                        Task::none()
+            Message::Shell(ShellMessage::TrackerConfigSave) => {
+                match views::tracker::parse_config(&self.config_json) {
+                    Ok(_) => {
+                        if md_editor_core::config::set_sys_config(
+                            state,
+                            "tracker_config",
+                            &self.config_json,
+                        )
+                        .is_ok()
+                        {
+                            toast("Tracker configuration saved")
+                        } else {
+                            Task::none()
+                        }
                     }
+                    Err(err) => toast(format!("Invalid tracker JSON: {}", err)),
                 }
-                Err(err) => toast(format!("Invalid tracker JSON: {}", err)),
-            },
-            Message::TrackerManualDateChanged(value) => {
+            }
+            Message::Shell(ShellMessage::TrackerManualDateChanged(value)) => {
                 self.manual_date = value;
                 Task::none()
             }
-            Message::TrackerManualHoursChanged(value) => {
+            Message::Shell(ShellMessage::TrackerManualHoursChanged(value)) => {
                 self.manual_hours = value;
                 Task::none()
             }
-            Message::TrackerManualNotesChanged(value) => {
+            Message::Shell(ShellMessage::TrackerManualNotesChanged(value)) => {
                 self.manual_notes = value;
                 Task::none()
             }
-            Message::TrackerManualAdd => self.add_manual_session(state),
-            Message::TrackerSessionDelete(id) => {
+            Message::Shell(ShellMessage::TrackerManualAdd) => self.add_manual_session(state),
+            Message::Shell(ShellMessage::TrackerSessionDelete(id)) => {
                 match md_editor_core::tracker::delete_session(state, id) {
                     Ok(()) => {
                         self.refresh_sessions(state);
@@ -270,7 +272,7 @@ impl TrackerState {
             Err(_) => return toast("Enter a valid date in YYYY-MM-DD format"),
         };
         match self.manual_hours.trim().parse::<f32>() {
-            Ok(hours) if hours > 0.0 => {
+            Ok(hours) if hours.is_finite() && hours > 0.0 => {
                 let session = StudySession {
                     id: 0,
                     date,
@@ -296,5 +298,5 @@ impl TrackerState {
 }
 
 fn toast(message: impl Into<String>) -> Task<Message> {
-    Task::done(Message::ShowToast(message.into()))
+    Task::done(Message::Shell(ShellMessage::ShowToast(message.into())))
 }

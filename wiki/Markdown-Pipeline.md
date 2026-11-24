@@ -500,7 +500,7 @@ Nothing is estimated: there is no per-keystroke centring and no guess at the edi
 
 `$...$` and `$$...$$` are rendered by `ratex-render` into bitmaps, cached on `EditorPane` by
 TeX source for the current display scale (flushed and re-rendered when it changes) and
-delivered back through `Message::MathRendered`. Display math is centred with its own
+delivered back through `EditorMessage::MathRendered`. Display math is centred with its own
 padding; inline math centres on the row's axis. Because the render is asynchronous, its
 arrival changes `resource_hash` and the affected lines are re-measured.
 

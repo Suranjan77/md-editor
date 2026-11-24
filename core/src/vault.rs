@@ -85,6 +85,7 @@ pub fn index_vault_for_generation(
     path: &str,
     generation: u64,
 ) -> Result<Option<Vec<FileEntry>>, String> {
+    let started = std::time::Instant::now();
     let root = PathBuf::from(path);
     if !root.is_dir() {
         return Err(format!("Not a directory: {}", path));
@@ -189,7 +190,7 @@ pub fn index_vault_for_generation(
                 "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
                 rusqlite::params![rel_path, content],
             ) {
-                eprintln!("Failed to index {rel_path} for search: {e}");
+                log::warn!("Failed to index {rel_path} for search: {e}");
             }
         }
         tx.commit().map_err(|e| e.to_string())?;
@@ -198,12 +199,19 @@ pub fn index_vault_for_generation(
         let mut file_index = state.file_index.lock().map_err(|e| e.to_string())?;
         *file_index = index;
     }
+    let pdf_count = pdf_documents.len();
     for (document_id, rel_path, size, modified_at) in pdf_documents {
         if let Err(error) = state.save_pdf_document(&document_id, &rel_path, size, modified_at) {
-            eprintln!("Failed to scope PDF document {rel_path}: {error}");
+            log::warn!("Failed to scope PDF document {rel_path}: {error}");
         }
     }
 
+    log::info!(
+        "Indexed vault {path}: {} notes, {} PDFs in {:?}",
+        indexed.len(),
+        pdf_count,
+        started.elapsed()
+    );
     Ok(Some(entries))
 }
 
@@ -240,16 +248,91 @@ pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), Stri
         "DELETE FROM file_search WHERE path = ?1",
         rusqlite::params![path],
     ) {
-        eprintln!("Failed to clear stale search index for {path}: {e}");
+        log::warn!("Failed to clear stale search index for {path}: {e}");
     }
     if let Err(e) = db.execute(
         "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
         rusqlite::params![path, content],
     ) {
-        eprintln!("Failed to update search index for {path}: {e}");
+        log::warn!("Failed to update search index for {path}: {e}");
     }
 
     Ok(())
+}
+
+/// Identity of a note's text, used to notice that a file changed on disk
+/// since the editor last read or wrote it. Stable within one process.
+pub fn content_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Vault-relative path for a conflict copy of `path`:
+/// `notes/B.md` → `notes/B (conflict 2026-11-24 15-04-05).md`, with ` 2`, ` 3`…
+/// appended if that name is taken.
+pub fn conflict_copy_path(vault_root: &Path, path: &str, stamp: &str) -> String {
+    let rel = Path::new(path);
+    let stem = rel
+        .file_stem()
+        .map(|s| s.to_string_lossy())
+        .unwrap_or_default();
+    let ext = rel
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let parent = rel
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| format!("{}/", p.to_string_lossy().replace('\\', "/")))
+        .unwrap_or_default();
+    let mut n = 1;
+    loop {
+        let suffix = if n == 1 {
+            String::new()
+        } else {
+            format!(" {n}")
+        };
+        let candidate = format!("{parent}{stem} (conflict {stamp}{suffix}){ext}");
+        if !vault_root.join(&candidate).exists() {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Save `content` to `path`, unless the file changed on disk since the caller
+/// last read or wrote it (`last_known` is the [`content_hash`] of that text).
+/// In that case the disk version is first preserved as a conflict copy beside
+/// it, and its vault-relative path is returned — so an external edit is never
+/// silently overwritten. A file that vanished is simply written again.
+pub fn save_file_guarded(
+    state: &AppState,
+    path: &str,
+    content: &str,
+    last_known: Option<u64>,
+    stamp: &str,
+) -> Result<Option<String>, String> {
+    let vault_root = {
+        let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
+        guard.as_ref().ok_or("No vault root set")?.clone()
+    };
+    let abs = resolve_vault_path_checked(&vault_root, path)?;
+    let mut conflict = None;
+    if let (Some(expected), Ok(on_disk)) = (last_known, read_file(&abs))
+        && content_hash(&on_disk) != expected
+        && on_disk != content
+    {
+        let copy = conflict_copy_path(&vault_root, path, stamp);
+        save_file(state, &copy, &on_disk)?;
+        log::warn!(
+            "{path} changed on disk while it had unsaved edits; kept that version as {copy}"
+        );
+        conflict = Some(copy);
+    }
+    save_file(state, path, content)?;
+    Ok(conflict)
 }
 
 /// Reconcile the link/search index with the on-disk state of a single
@@ -400,20 +483,26 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
     };
     let new_rel_str = new_link_target.to_string_lossy().replace('\\', "/");
 
-    // Rewrite links in each backlinking file that resolved to the old path.
-    for bl in &backlinks {
-        // The renamed Markdown note may link to itself. Resolve its old link
-        // spelling against the old path, but read/write it at the new path.
-        let stored_path = if bl == &abs_old { &abs_new } else { bl };
-        let Ok(content) = read_file(stored_path) else {
-            continue;
-        };
-        let Some(updated) =
-            crate::file_index::rewrite_links_to(&content, &vault_root, bl, &abs_old, &new_rel_str)
-        else {
-            continue;
-        };
-        if write_file(stored_path, &updated).is_err() {
+    // Work out every rewrite first, resolving links the way the index does
+    // and while it still knows the old name; only then write and re-key.
+    // (Re-keying the renamed note mid-loop would change how the remaining
+    // files' bare links resolve.)
+    let rewrites: Vec<(PathBuf, PathBuf, String)> = {
+        let index = state.file_index.lock().map_err(|e| e.to_string())?;
+        backlinks
+            .iter()
+            .filter_map(|bl| {
+                // The renamed note may link to itself. Resolve its old link
+                // spelling against the old path, but read/write it at the new.
+                let stored_path = if bl == &abs_old { &abs_new } else { bl };
+                let content = read_file(stored_path).ok()?;
+                let updated = index.rewrite_links_to(&content, bl, &abs_old, &new_rel_str)?;
+                Some((bl.clone(), stored_path.clone(), updated))
+            })
+            .collect()
+    };
+    for (bl, stored_path, updated) in &rewrites {
+        if write_file(stored_path, updated).is_err() {
             continue;
         }
         {
@@ -421,7 +510,7 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
             if stored_path != bl {
                 index.remove_file(bl);
             }
-            index.update_file(stored_path, &updated);
+            index.update_file(stored_path, updated);
         }
         let bl_rel = path_to_relative_string(stored_path, &vault_root);
         let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -433,7 +522,7 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
             "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
             rusqlite::params![bl_rel, updated],
         ) {
-            eprintln!("Failed to reindex {bl_rel} after rename: {e}");
+            log::warn!("Failed to reindex {bl_rel} after rename: {e}");
         }
     }
 
@@ -462,7 +551,7 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
                 "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
                 rusqlite::params![new_rel, content],
             ) {
-                eprintln!("Failed to index renamed file {new_rel}: {e}");
+                log::warn!("Failed to index renamed file {new_rel}: {e}");
             }
         }
     }
@@ -632,7 +721,7 @@ pub fn delete_entry(state: &AppState, path: &str) -> Result<(), String> {
             "DELETE FROM file_search WHERE path = ?1",
             rusqlite::params![path],
         ) {
-            eprintln!("Failed to remove {path} from search index: {e}");
+            log::warn!("Failed to remove {path} from search index: {e}");
         }
         fs::remove_file(&abs_path)
             .map_err(|e| format!("Failed to delete file {}: {}", abs_path.display(), e))
@@ -696,7 +785,7 @@ pub fn search_vault(state: &AppState, query: &str) -> Result<crate::types::Searc
     for row in rows {
         match row {
             Ok(r) => results.push(r),
-            Err(e) => eprintln!("Skipping malformed file_search row: {e}"),
+            Err(e) => log::warn!("Skipping malformed file_search row: {e}"),
         }
     }
     let truncated = results.len() > 100;

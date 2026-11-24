@@ -16,7 +16,11 @@ md-editor/
 ├── docs/                 The Field Handbook PDF and its HTML sources (a periodic snapshot)
 ├── tests-fixtures/       Sample PDFs and a generated .pptx used by tests
 ├── images/               README screenshots
-├── .github/workflows/    CI: Windows and Linux release builds
+├── .github/workflows/    CI: quality gate (ci.yml) and Windows/Linux release builds
+├── packaging/arch/       PKGBUILDs (AUR md-editor, md-editor-git) and the desktop entry
+├── scripts/              clippy-ratchet.sh (clippy gate), build-arch-package.sh (package from the tree)
+├── clippy-baseline.txt   Allowed clippy warning count; only goes down
+├── clippy.toml, deny.toml  Lint config for tests; licence/ban policy for cargo-deny
 ├── CLAUDE.md             Orientation for AI coding agents (also useful to humans)
 └── md-editor.png/.ico    App icons, embedded at build time
 ```
@@ -29,7 +33,7 @@ md-editor/
 
 | Path | Responsibility |
 | :--- | :--- |
-| `build.rs`, `build_pdfium.rs` | Download (optionally pinned and SHA-256 verified), cache and copy the platform PDFium library. |
+| `build.rs`, `build_pdfium.rs` | Download (pinned release, SHA-256 verified), cache and copy the platform PDFium library. |
 | `src/lib.rs` | Module declarations; re-exports `AppState`. |
 | `src/state.rs` | `AppState`: the SQLite connection, schema DDL, WAL pragmas, `user_version` migrations, DB path resolution, vault generation and publication locks, PDF sidecar queries (document identity is vault-scoped). |
 | `src/config.rs` | `get_sys_config` / `set_sys_config` over `settings`, and `read_startup_value` for use before `AppState` exists. |
@@ -53,8 +57,9 @@ md-editor/
 
 | Path | Responsibility |
 | :--- | :--- |
-| `main.rs` | CLI (`--install`, `--uninstall`, a path to open), Linux desktop entry, window size restore, the iced daemon. |
+| `main.rs` | CLI (a path to open), logging init, window size restore, the iced daemon. |
 | `build.rs` | Embeds the Windows icon and version resource. |
+| `logging.rs` | File logger behind `log` (`md-editor.log`, rotated 1 MB × 3, level from `MD_EDITOR_LOG`) and the panic hook. |
 | `app/mod.rs` | `MdEditor` state, `boot`, `title`, `update`, and `update_inner`, which routes each message family to a handler below. |
 | `app/{pdf,graph,ink,search,editor,vault,shortcuts,shell}.rs` | One `update_<family>` handler each; see [Native Desktop GUI](Native-Desktop-GUI.md#2-messages-and-where-they-are-handled-messagesrs-app). |
 | `app/pdf_pages.rs` | Opening PDFs, page rendering and eviction, fit, navigation, highlights. |

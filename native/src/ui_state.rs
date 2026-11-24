@@ -11,7 +11,7 @@
 
 use iced::Task;
 
-use crate::messages::Message;
+use crate::messages::{Message, ShellMessage, VaultMessage};
 use crate::pdf_notes::{normalize_note_path, note_filename_from_path};
 use crate::views;
 
@@ -74,23 +74,23 @@ impl UiState {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             // Modals
-            Message::CreateFileDialog => {
+            Message::Vault(VaultMessage::CreateFileDialog) => {
                 self.active_modal = Some(views::modals::ModalType::CreateFile);
                 self.modal_input.clear();
                 self.link_note_picker_search.clear();
                 Task::none()
             }
-            Message::CreateFolderDialog => {
+            Message::Vault(VaultMessage::CreateFolderDialog) => {
                 self.active_modal = Some(views::modals::ModalType::CreateFolder);
                 self.modal_input.clear();
                 self.link_note_picker_search.clear();
                 Task::none()
             }
-            Message::DeleteFileDialog(path) => {
+            Message::Vault(VaultMessage::DeleteFileDialog(path)) => {
                 self.active_modal = Some(views::modals::ModalType::Delete(path));
                 Task::none()
             }
-            Message::RenameEntryDialog(path) => {
+            Message::Vault(VaultMessage::RenameEntryDialog(path)) => {
                 self.modal_input = std::path::Path::new(&path)
                     .file_name()
                     .and_then(|name| name.to_str())
@@ -99,11 +99,11 @@ impl UiState {
                 self.active_modal = Some(views::modals::ModalType::Rename(path));
                 Task::none()
             }
-            Message::NameModalInputChanged(input) => {
+            Message::Vault(VaultMessage::NameModalInputChanged(input)) => {
                 self.modal_input = input;
                 Task::none()
             }
-            Message::PdfLinkNoteFolderSelected(folder) => {
+            Message::Vault(VaultMessage::PdfLinkNoteFolderSelected(folder)) => {
                 if matches!(
                     self.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
@@ -117,7 +117,7 @@ impl UiState {
                 }
                 Task::none()
             }
-            Message::PdfLinkNoteFileSelected(path) => {
+            Message::Vault(VaultMessage::PdfLinkNoteFileSelected(path)) => {
                 if matches!(
                     self.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
@@ -126,7 +126,7 @@ impl UiState {
                 }
                 Task::none()
             }
-            Message::PdfLinkNotePickerSearchChanged(query) => {
+            Message::Vault(VaultMessage::PdfLinkNotePickerSearchChanged(query)) => {
                 if matches!(
                     self.active_modal,
                     Some(views::modals::ModalType::LinkNote(_))
@@ -135,13 +135,13 @@ impl UiState {
                 }
                 Task::none()
             }
-            Message::NameModalCancel => {
+            Message::Vault(VaultMessage::NameModalCancel) => {
                 self.active_modal = None;
                 self.modal_input.clear();
                 self.link_note_picker_search.clear();
                 Task::none()
             }
-            Message::NameModalSubmitCurrent => {
+            Message::Vault(VaultMessage::NameModalSubmitCurrent) => {
                 if matches!(
                     self.active_modal,
                     Some(views::modals::ModalType::CreateFile)
@@ -150,20 +150,22 @@ impl UiState {
                         | Some(views::modals::ModalType::LinkNote(_))
                         | Some(views::modals::ModalType::Rename(_))
                 ) {
-                    Task::done(Message::NameModalSubmit(self.modal_input.clone()))
+                    Task::done(Message::Vault(VaultMessage::NameModalSubmit(
+                        self.modal_input.clone(),
+                    )))
                 } else {
                     Task::none()
                 }
             }
 
             // Command palette
-            Message::CommandPaletteOpen => {
+            Message::Shell(ShellMessage::CommandPaletteOpen) => {
                 self.command_palette_visible = true;
                 self.command_palette_query.clear();
                 self.palette_selected = 0;
                 Task::none()
             }
-            Message::CommandPaletteQueryChanged(query) => {
+            Message::Shell(ShellMessage::CommandPaletteQueryChanged(query)) => {
                 self.command_palette_query = query;
                 // A new query means a new result list; keeping the old index
                 // would leave the highlight on an unrelated row.
@@ -172,17 +174,17 @@ impl UiState {
             }
 
             // Transient toast
-            Message::ShowToast(text) => {
+            Message::Shell(ShellMessage::ShowToast(text)) => {
                 self.toast = Some(text);
                 Task::none()
             }
-            Message::ToastHide => {
+            Message::Shell(ShellMessage::ToastHide) => {
                 self.toast = None;
                 Task::none()
             }
 
             // Split view
-            Message::SplitViewDragStart => {
+            Message::Shell(ShellMessage::SplitViewDragStart) => {
                 self.is_resizing_split = true;
                 Task::none()
             }

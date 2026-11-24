@@ -869,3 +869,84 @@ fn handwritten_pages_are_listed_in_the_vault() {
     assert!(is_supported_vault_path(Path::new("notes/LECTURE.INK")));
     assert!(!is_supported_vault_path(Path::new("notes/lecture.inkx")));
 }
+
+#[test]
+fn guarded_save_keeps_an_external_edit_as_a_conflict_copy() {
+    let base = std::env::temp_dir().join(format!("md_editor_conflict_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(base.join("notes")).unwrap();
+    std::fs::write(base.join("notes/B.md"), "original").unwrap();
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+    let known = content_hash("original");
+
+    // Unchanged on disk: a plain save, no copy.
+    let copy = save_file_guarded(&state, "notes/B.md", "mine 1", Some(known), "S").unwrap();
+    assert_eq!(copy, None);
+    let known = content_hash("mine 1");
+
+    // Changed underneath us: theirs is kept beside ours.
+    std::fs::write(base.join("notes/B.md"), "theirs").unwrap();
+    let copy = save_file_guarded(&state, "notes/B.md", "mine 2", Some(known), "S").unwrap();
+    assert_eq!(copy.as_deref(), Some("notes/B (conflict S).md"));
+    assert_eq!(
+        std::fs::read_to_string(base.join("notes/B.md")).unwrap(),
+        "mine 2"
+    );
+    assert_eq!(
+        std::fs::read_to_string(base.join("notes/B (conflict S).md")).unwrap(),
+        "theirs"
+    );
+
+    // A second conflict in the same second gets a numbered name.
+    std::fs::write(base.join("notes/B.md"), "theirs again").unwrap();
+    let copy = save_file_guarded(
+        &state,
+        "notes/B.md",
+        "mine 3",
+        Some(content_hash("mine 2")),
+        "S",
+    )
+    .unwrap();
+    assert_eq!(copy.as_deref(), Some("notes/B (conflict S 2).md"));
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn renaming_a_note_rewrites_bare_links_from_its_sibling_folder() {
+    let base = std::env::temp_dir().join(format!("md_editor_rename_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(base.join("notes")).unwrap();
+    std::fs::write(base.join("notes/A.md"), "Links: [[B]]\n").unwrap();
+    std::fs::write(base.join("notes/B.md"), "# B\n\nSelf link: [[B]]\n").unwrap();
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+    rename_entry(&state, "notes/B.md", "notes/C.md").unwrap();
+
+    let a = std::fs::read_to_string(base.join("notes/A.md")).unwrap();
+    assert!(!a.contains("[[B]]"), "A.md still links the old name: {a:?}");
+    let c = std::fs::read_to_string(base.join("notes/C.md")).unwrap();
+    assert!(
+        !c.contains("[[B]]"),
+        "C.md's self link not rewritten: {c:?}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(unix)]
+#[test]
+fn write_file_refuses_a_read_only_note() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = std::env::temp_dir().join(format!("md_editor_ro_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&base).unwrap();
+    let note = base.join("locked.md");
+    std::fs::write(&note, "keep me").unwrap();
+    std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+    let err = write_file(&note, "overwrite").unwrap_err();
+    assert!(err.contains("read-only"), "{err}");
+    assert_eq!(std::fs::read_to_string(&note).unwrap(), "keep me");
+
+    std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let _ = std::fs::remove_dir_all(&base);
+}

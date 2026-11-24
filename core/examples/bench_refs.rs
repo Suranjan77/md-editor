@@ -2,14 +2,17 @@
 //!
 //! Measures where the time actually goes so we can pick an affordance tier:
 //!   * `get_toc`            — for bookmark-less PDFs this runs build_page_text
-//!                            over the WHOLE document (the Tier-B upfront scan).
+//!     over the WHOLE document (the Tier-B upfront scan).
 //!   * per-page get_page_text loop — the same per-glyph `loose_bounds()` cost,
-//!                            serialized; this is the dominant extraction cost.
+//!     serialized; this is the dominant extraction cost.
 //!   * extract_document_text — full text, NO bboxes (search-index path), as a
-//!                            floor to isolate the loose_bounds overhead.
+//!     floor to isolate the loose_bounds overhead.
 //!   * search_text          — pdfium native search (the Tier-A on-demand path).
 //!
 //! Run: cargo run --release --example bench_refs -- <file1.pdf> [file2.pdf ...]
+
+// A command-line tool: printing is its output.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use md_editor_core::pdf::PdfRenderer;
 use std::time::Instant;

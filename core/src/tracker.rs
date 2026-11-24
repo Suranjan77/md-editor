@@ -62,7 +62,7 @@ pub fn get_sessions(state: &AppState) -> Result<Vec<StudySession>, String> {
             Ok(r) => results.push(r),
             // A malformed row is skipped but logged — silently dropping
             // tracker sessions would hide data corruption.
-            Err(e) => eprintln!("Skipping malformed tracker_sessions row: {e}"),
+            Err(e) => log::warn!("Skipping malformed tracker_sessions row: {e}"),
         }
     }
     Ok(results)

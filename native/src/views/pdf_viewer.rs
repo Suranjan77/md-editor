@@ -5,7 +5,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse};
 
-use crate::messages::Message;
+use crate::messages::{EditorMessage, Message, PdfMessage, SearchMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 use crate::views::interactive_pdf::{InteractivePdf, PdfSelection};
@@ -105,8 +105,8 @@ pub fn search_bar<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     let search_input = text_input("Find in PDF", query)
         .id(iced::advanced::widget::Id::new(PDF_SEARCH_INPUT_ID))
-        .on_input(Message::SearchQueryChanged)
-        .on_submit(Message::SearchNext)
+        .on_input(|value| Message::Search(SearchMessage::QueryChanged(value)))
+        .on_submit(Message::Search(SearchMessage::Next))
         .padding([theme::SPACE_3, theme::SPACE_4])
         .size(theme::TEXT_BASE)
         .width(Length::Fill);
@@ -117,22 +117,22 @@ pub fn search_bar<'a>(
             search_input,
             checkbox(regex)
                 .label("Regex")
-                .on_toggle(Message::SearchRegexToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::RegexToggled(value)))
                 .size(theme::TEXT_BASE),
             checkbox(match_case)
                 .label("Case")
-                .on_toggle(Message::SearchMatchCaseToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::MatchCaseToggled(value)))
                 .size(theme::TEXT_BASE),
             checkbox(loose)
                 .label("Loose WS")
-                .on_toggle(Message::PdfSearchLooseToggled)
+                .on_toggle(|value| Message::Pdf(PdfMessage::SearchLooseToggled(value)))
                 .size(theme::TEXT_BASE),
             button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchPrevious)
+                .on_press(Message::Search(SearchMessage::Previous))
                 .padding(theme::SPACE_3)
                 .style(button::text),
             button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchNext)
+                .on_press(Message::Search(SearchMessage::Next))
                 .padding(theme::SPACE_3)
                 .style(button::text),
             text(match active_match_index {
@@ -143,7 +143,7 @@ pub fn search_bar<'a>(
             .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED),
             button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchClose)
+                .on_press(Message::Search(SearchMessage::Close))
                 .padding(theme::SPACE_3)
                 .style(button::text),
         ]
@@ -224,7 +224,7 @@ pub fn toolbar<'a>(
                             ..Default::default()
                         }),
                 )
-                .on_press(Message::PdfCreateHighlight(color_enum))
+                .on_press(Message::Pdf(PdfMessage::CreateHighlight(color_enum)))
                 .style(button::text)
                 .padding(theme::SPACE_0),
             );
@@ -242,11 +242,11 @@ pub fn toolbar<'a>(
                             .size(theme::TEXT_BASE)
                             .color(theme::TEXT_SECONDARY)
                     )
-                    .on_press(Message::PdfQuickHighlight)
+                    .on_press(Message::Pdf(PdfMessage::QuickHighlight))
                     .padding(theme::SPACE_2)
                     .style(button::text),
                     button(icons::view(Icon::X, theme::TEXT_MUTED, 14.0))
-                        .on_press(Message::PdfSelectionCleared)
+                        .on_press(Message::Pdf(PdfMessage::SelectionCleared))
                         .padding(theme::SPACE_2)
                         .style(button::text),
                 ]
@@ -279,7 +279,11 @@ pub fn toolbar<'a>(
             ]
             .align_y(Alignment::Center),
         )
-        .on_press(Message::PdfRightClicked(ann.page_index, -1.0, -1.0))
+        .on_press(Message::Pdf(PdfMessage::RightClicked(
+            ann.page_index,
+            -1.0,
+            -1.0,
+        )))
         .padding([theme::SPACE_2, theme::SPACE_3])
         .style(button::text);
 
@@ -292,7 +296,7 @@ pub fn toolbar<'a>(
                     ]
                     .align_y(Alignment::Center),
                 )
-                .on_press(Message::PdfOpenLinkedNote(path.clone()))
+                .on_press(Message::Pdf(PdfMessage::OpenLinkedNote(path.clone())))
                 .padding([theme::SPACE_2, theme::SPACE_3])
                 .style(button::text)
             } else {
@@ -305,7 +309,10 @@ pub fn toolbar<'a>(
                     ]
                     .align_y(Alignment::Center),
                 )
-                .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
+                .on_press(Message::Pdf(PdfMessage::LinkNote(
+                    ann.id.clone(),
+                    String::new(),
+                )))
                 .padding([theme::SPACE_2, theme::SPACE_3])
                 .style(button::text)
             }
@@ -319,7 +326,10 @@ pub fn toolbar<'a>(
                 ]
                 .align_y(Alignment::Center),
             )
-            .on_press(Message::PdfLinkNote(ann.id.clone(), String::new()))
+            .on_press(Message::Pdf(PdfMessage::LinkNote(
+                ann.id.clone(),
+                String::new(),
+            )))
             .padding([theme::SPACE_2, theme::SPACE_3])
             .style(button::text)
         };
@@ -333,7 +343,7 @@ pub fn toolbar<'a>(
             ]
             .align_y(Alignment::Center),
         )
-        .on_press(Message::PdfCopyAnnotationText(ann.id.clone()))
+        .on_press(Message::Pdf(PdfMessage::CopyAnnotationText(ann.id.clone())))
         .padding([theme::SPACE_2, theme::SPACE_3])
         .style(button::text);
 
@@ -342,7 +352,7 @@ pub fn toolbar<'a>(
             Color::from_rgb8(239, 83, 80),
             14.0,
         ))
-        .on_press(Message::PdfDeleteHighlight(ann.id.clone()))
+        .on_press(Message::Pdf(PdfMessage::DeleteHighlight(ann.id.clone())))
         .padding([theme::SPACE_2, theme::SPACE_3])
         .style(button::text);
 
@@ -370,7 +380,7 @@ pub fn toolbar<'a>(
                 .size(theme::TEXT_SM)
                 .color(theme::TEXT_MUTED),
         )
-        .on_press(Message::PdfOrphanReport)
+        .on_press(Message::Pdf(PdfMessage::OrphanReport))
         .padding(theme::SPACE_3)
         .style(button::text)
         .into()
@@ -385,7 +395,7 @@ pub fn toolbar<'a>(
             } else {
                 theme::TEXT_MUTED
             }))
-            .on_press(Message::ToggleTOC)
+            .on_press(Message::Editor(EditorMessage::ToggleTOC))
             .padding(theme::SPACE_3)
             .style(button::text),
             orphan_btn,
@@ -394,18 +404,18 @@ pub fn toolbar<'a>(
             annotation_controls,
             Space::new().width(Length::Fill),
             button(text("-").size(theme::TEXT_MD))
-                .on_press(Message::PdfZoomChanged((zoom - 0.1).max(0.5)))
+                .on_press(Message::Pdf(PdfMessage::ZoomChanged((zoom - 0.1).max(0.5))))
                 .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
             text(format!("{:.0}%", zoom * 100.0))
                 .size(theme::TEXT_SM)
                 .color(theme::TEXT_MUTED),
             button(text("+").size(theme::TEXT_MD))
-                .on_press(Message::PdfZoomChanged((zoom + 0.1).min(4.0)))
+                .on_press(Message::Pdf(PdfMessage::ZoomChanged((zoom + 0.1).min(4.0))))
                 .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
             button(text("Fit").size(theme::TEXT_SM))
-                .on_press(Message::PdfFitToWidth)
+                .on_press(Message::Pdf(PdfMessage::FitToWidth))
                 .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
             Space::new().width(Length::Fill),
@@ -629,12 +639,14 @@ pub fn view_continuous<'a>(
                 page_index,
                 page_text,
                 active_selection,
-                move |x, y, modifiers| Message::PdfLeftClicked(i as u16, x, y, modifiers),
-                move |x, y| Message::PdfRightClicked(i as u16, x, y),
-                Message::PdfSelectionChanged,
-                Message::PdfSelectionFinished,
-                move || Message::PdfSelectionCleared,
-                move || Message::PdfCopySelection,
+                move |x, y, modifiers| {
+                    Message::Pdf(PdfMessage::LeftClicked(i as u16, x, y, modifiers))
+                },
+                move |x, y| Message::Pdf(PdfMessage::RightClicked(i as u16, x, y)),
+                |page, start, end| Message::Pdf(PdfMessage::SelectionChanged(page, start, end)),
+                |page, start, end| Message::Pdf(PdfMessage::SelectionFinished(page, start, end)),
+                move || Message::Pdf(PdfMessage::SelectionCleared),
+                move || Message::Pdf(PdfMessage::CopySelection),
             );
 
             page_list = page_list.push(

@@ -27,7 +27,7 @@ iced::daemon(
 
 ```mermaid
 flowchart TD
-    Init(["Process start"]) --> Cli["Parse CLI args: --install, --uninstall, or a path"]
+    Init(["Process start"]) --> Cli["Parse CLI args: a path to open, then init logging"]
     Cli --> Geometry["restore_window_size(): read 'window_size', clamp, fall back to 1200x800"]
     Geometry --> Boot["MdEditor::boot: new_with_startup_file + open the shell window"]
     Boot --> EventLoop{"Iced event loop"}
@@ -52,29 +52,37 @@ computing backlinks — stays on the shell, which alone owns the shared `Arc<App
 
 ## 2. Messages and Where They Are Handled (`messages.rs`, `app/`)
 
-`Message` (in `messages.rs`) is the complete event vocabulary. `MdEditor::update_inner`
-does nothing but route each variant to the handler for its family; each handler lives in
-the file of the same name. To find the code for a message, find its family:
+`Message` (in `messages.rs`) has one variant per feature family, each wrapping that
+family's own enum. `MdEditor::update_inner` is an exhaustive eight-arm match that hands the
+inner enum to the family's handler, and every handler matches its enum **exhaustively** —
+there is no `_ => Task::none()` catch-all, so a message that is added but not handled is a
+compile error rather than a silently dropped event. To find the code for a message, find
+its family:
 
-| Family (variant prefix) | Handler | File |
+| Message | Handler | File |
 | :--- | :--- | :--- |
-| `Pdf*` (except the link-note picker's `PdfLinkNote*Selected`/`…SearchChanged`) | `update_pdf` | `app/pdf.rs` (page management in `app/pdf_pages.rs`) |
-| `Graph*` | `update_graph` | `app/graph.rs` |
-| `Ink*` | `update_ink` | `app/ink.rs` |
-| `Search*`, `GlobalSearch*` | `update_search` | `app/search.rs` |
-| `Editor*`, `Autosave*`, `AnimationTick`, `MathRendered`, `TocClicked`, `ToggleTOC` | `update_editor` | `app/editor.rs` |
-| `OpenVault*`, `Vault*`, `Sidebar*`, create/rename/delete dialogs, name modals, the link-note picker | `update_vault` | `app/vault.rs` |
-| `KeyboardShortcut(Shortcut)` | `update_shortcuts` | `app/shortcuts.rs` |
-| everything else: `Window*`, `SplitView*`, `CommandPalette*`, `Tracker*`, `Pptx*`, toasts | `update_shell` | `app/shell.rs` |
+| `Message::Pdf(PdfMessage)` | `update_pdf` | `app/pdf.rs` (page management in `app/pdf_pages.rs`) |
+| `Message::Graph(GraphMessage)` | `update_graph` | `app/graph.rs` |
+| `Message::Ink(InkMessage)` | `update_ink` | `app/ink.rs` |
+| `Message::Search(SearchMessage)` — global search and find/replace | `update_search` | `app/search.rs` |
+| `Message::Editor(EditorMessage)` — editing, autosave, animation ticks, math, outline | `update_editor` | `app/editor.rs` |
+| `Message::Vault(VaultMessage)` — vault lifecycle, file tree, create/rename/delete and name modals, the link-note picker | `update_vault` | `app/vault.rs` |
+| `Message::KeyboardShortcut(Shortcut)` | `update_shortcuts` | `app/shortcuts.rs` |
+| `Message::Shell(ShellMessage)` — windows, split view, command palette, toasts, study tracker, presentations | `update_shell` | `app/shell.rs` |
+
+Construct a message as `Message::Pdf(PdfMessage::FitToWidth)`, or `PdfMessage::FitToWidth.into()`
+where the target type is known. Sub-states (`UiState`, `TrackerState`, `PdfPane`, …) still
+take the whole `Message` and keep catch-alls; moving them onto family enums is code-health
+W7.
 
 The rest of `app/` holds the shared machinery: `documents.rs` (opening, saving, parking
 documents and persisting the session), `subscription.rs`, `view.rs`, `links.rs` (wikilink
 and heading resolution) and `tests.rs`.
 
 `Shortcut` is the indirection that lets the keyboard subscription and the command palette
-trigger exactly the same handler. Adding a message means: a variant in `messages.rs`, an
-arm in the matching `app/<family>.rs` handler, and — if its name does not start with a
-routed prefix — a pattern in `update_inner`.
+trigger exactly the same handler. Adding a message means: a variant in the family enum in
+`messages.rs` and an arm in that family's handler — the compiler points at the handler if
+you forget.
 
 ---
 

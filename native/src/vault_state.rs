@@ -17,7 +17,7 @@ use iced::Task;
 
 use md_editor_core::types::{BacklinkItem, FileEntry};
 
-use crate::messages::Message;
+use crate::messages::{Message, VaultMessage};
 
 pub struct VaultState {
     pub root: Option<String>,
@@ -48,11 +48,11 @@ impl VaultState {
     /// `AppState`) stay on the shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::SidebarToggle => {
+            Message::Vault(VaultMessage::SidebarToggle) => {
                 self.sidebar_visible = !self.sidebar_visible;
                 Task::none()
             }
-            Message::SidebarFolderToggled(path) => {
+            Message::Vault(VaultMessage::SidebarFolderToggled(path)) => {
                 // Clicking a folder also selects it, so it is where new
                 // entries land and its row offers the delete button.
                 self.selected_path = Some(path.clone());
@@ -63,7 +63,7 @@ impl VaultState {
                 }
                 Task::none()
             }
-            Message::SidebarSelectionCleared => {
+            Message::Vault(VaultMessage::SidebarSelectionCleared) => {
                 self.selected_path = None;
                 Task::none()
             }
@@ -81,11 +81,15 @@ mod tests {
         let mut vault = VaultState::new();
         vault.selected_path = Some("notes/a.md".to_string());
 
-        let _ = vault.update(Message::SidebarFolderToggled("notes".to_string()));
+        let _ = vault.update(Message::Vault(VaultMessage::SidebarFolderToggled(
+            "notes".to_string(),
+        )));
         assert_eq!(vault.selected_path.as_deref(), Some("notes"));
         assert!(vault.expanded_folders.contains("notes"));
 
-        let _ = vault.update(Message::SidebarFolderToggled("notes".to_string()));
+        let _ = vault.update(Message::Vault(VaultMessage::SidebarFolderToggled(
+            "notes".to_string(),
+        )));
         assert_eq!(vault.selected_path.as_deref(), Some("notes"));
         assert!(!vault.expanded_folders.contains("notes"));
     }
@@ -94,10 +98,12 @@ mod tests {
     fn clicking_empty_space_clears_selection() {
         let mut vault = VaultState::new();
         vault.expanded_folders.insert("notes".to_string());
-        let _ = vault.update(Message::SidebarFolderToggled("notes".to_string()));
+        let _ = vault.update(Message::Vault(VaultMessage::SidebarFolderToggled(
+            "notes".to_string(),
+        )));
         assert_eq!(vault.selected_path.as_deref(), Some("notes"));
 
-        let _ = vault.update(Message::SidebarSelectionCleared);
+        let _ = vault.update(Message::Vault(VaultMessage::SidebarSelectionCleared));
         assert_eq!(vault.selected_path, None);
     }
 }

@@ -1,6 +1,7 @@
 //! Canvas layers: GPU graph, label overlay, legend, viewport controls and empty states.
 
 use super::*;
+use crate::messages::GraphMessage;
 use iced::widget::column;
 
 // ──────────────────────────── canvas layers ─────────────────────────
@@ -77,7 +78,7 @@ pub(super) fn hairball_notice<'a>(state: &'a GraphState) -> Element<'a, Message>
             .size(10)
             .color(theme::TEXT_SECONDARY),
             button(text("Hide unlinked").size(10))
-                .on_press(Message::GraphShowOrphansToggled(false))
+                .on_press(Message::Graph(GraphMessage::ShowOrphansToggled(false)))
                 .padding([4, 9])
                 .style(primary_style),
         ]
@@ -128,7 +129,7 @@ pub(super) fn viewport_controls<'a>(state: &'a GraphState) -> Element<'a, Messag
                     Icon::Minus,
                     false,
                     zoom > MIN_ZOOM,
-                    Message::GraphZoomBy(0.8)
+                    Message::Graph(GraphMessage::ZoomBy(0.8))
                 ),
                 "Zoom out",
             ),
@@ -138,12 +139,22 @@ pub(super) fn viewport_controls<'a>(state: &'a GraphState) -> Element<'a, Messag
                 .width(Length::Fixed(42.0))
                 .align_x(Alignment::Center),
             hinted(
-                icon_button(Icon::Plus, false, true, Message::GraphZoomBy(1.25)),
+                icon_button(
+                    Icon::Plus,
+                    false,
+                    true,
+                    Message::Graph(GraphMessage::ZoomBy(1.25))
+                ),
                 "Zoom in",
             ),
             divider(),
             hinted(
-                icon_button(Icon::Maximize, false, true, Message::GraphFitView),
+                icon_button(
+                    Icon::Maximize,
+                    false,
+                    true,
+                    Message::Graph(GraphMessage::FitView)
+                ),
                 "Fit graph to view",
             ),
             hinted(
@@ -151,7 +162,7 @@ pub(super) fn viewport_controls<'a>(state: &'a GraphState) -> Element<'a, Messag
                     if running { Icon::Pause } else { Icon::Play },
                     running,
                     true,
-                    Message::GraphPhysicsToggled,
+                    Message::Graph(GraphMessage::PhysicsToggled),
                 ),
                 if running {
                     "Pause layout — arrange nodes by hand"
@@ -160,7 +171,12 @@ pub(super) fn viewport_controls<'a>(state: &'a GraphState) -> Element<'a, Messag
                 },
             ),
             hinted(
-                icon_button(Icon::Refresh, false, true, Message::GraphResetLayout),
+                icon_button(
+                    Icon::Refresh,
+                    false,
+                    true,
+                    Message::Graph(GraphMessage::ResetLayout)
+                ),
                 "Rebuild layout from scratch",
             ),
         ]
@@ -185,17 +201,23 @@ pub(super) fn empty_state<'a>(state: &'a GraphState) -> Element<'a, Message> {
             EmptyReason::NeedsActiveDocument => (
                 "No note in focus".to_string(),
                 "This view maps the neighbourhood around the note you have open.".to_string(),
-                Some(("Show the whole vault", Message::GraphScopeGlobal)),
+                Some((
+                    "Show the whole vault",
+                    Message::Graph(GraphMessage::ScopeGlobal),
+                )),
             ),
             EmptyReason::NoSearchMatch => (
                 format!("No matches for “{}”", state.query.trim()),
                 "Search looks at note titles and paths.".to_string(),
-                Some(("Clear search", Message::GraphQueryChanged(String::new()))),
+                Some((
+                    "Clear search",
+                    Message::Graph(GraphMessage::QueryChanged(String::new())),
+                )),
             ),
             EmptyReason::FiltersHideEverything => (
                 "Filters hide every node".to_string(),
                 "Turn a chip back on in the toolbar to bring nodes back.".to_string(),
-                Some(("Reset filters", Message::GraphFiltersReset)),
+                Some(("Reset filters", Message::Graph(GraphMessage::FiltersReset))),
             ),
         };
 

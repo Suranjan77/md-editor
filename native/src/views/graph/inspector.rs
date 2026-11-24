@@ -1,6 +1,7 @@
 //! The inspector panel: the selected node, its links, related notes and vault insights.
 
 use super::*;
+use crate::messages::GraphMessage;
 use iced::widget::column;
 
 // ─────────────────────────────── inspector ──────────────────────────
@@ -40,7 +41,7 @@ pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Eleme
             text(kind_label).size(10).color(kind_color(node.kind)),
             Space::new().width(Length::Fill),
             button(text("Clear").size(10))
-                .on_press(Message::GraphNodeSelected(None))
+                .on_press(Message::Graph(GraphMessage::NodeSelected(None)))
                 .padding([3, 7])
                 .style(ghost_style),
         ]
@@ -55,7 +56,7 @@ pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Eleme
         button(text("Open note").size(11))
             .on_press_maybe(
                 node.exists
-                    .then(|| Message::GraphNodeOpen(node.path.clone()))
+                    .then(|| Message::Graph(GraphMessage::NodeOpen(node.path.clone())))
             )
             .padding([7, 12])
             .style(primary_style),
@@ -64,7 +65,7 @@ pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Eleme
                 Icon::Target,
                 false,
                 true,
-                Message::GraphNodeFocused(node.path.clone()),
+                Message::Graph(GraphMessage::NodeFocused(node.path.clone())),
             ),
             "Center on this node",
         ),
@@ -73,7 +74,7 @@ pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Eleme
                 Icon::Pin,
                 pinned,
                 true,
-                Message::GraphPinToggled(node.path.clone()),
+                Message::Graph(GraphMessage::PinToggled(node.path.clone())),
             ),
             if pinned {
                 "Release — let the layout move it again"
@@ -278,7 +279,7 @@ pub(super) fn link_list<'a>(
                     .spacing(6)
                     .align_y(Alignment::Center),
                 )
-                .on_press(Message::GraphNodeFocused(path))
+                .on_press(Message::Graph(GraphMessage::NodeFocused(path)))
                 .padding([5, 6])
                 .width(Length::Fill)
                 .style(row_style),

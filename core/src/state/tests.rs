@@ -425,3 +425,35 @@ fn opening_pdf_adopts_legacy_unscoped_annotations_into_current_vault() {
     drop(state);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn xdg_dir_prefers_an_absolute_variable_then_home() {
+    use std::ffi::OsString;
+    let some = |s: &str| Some(OsString::from(s));
+
+    assert_eq!(
+        xdg_dir(some("/data"), some("/home/me"), ".local/share"),
+        Some(PathBuf::from("/data"))
+    );
+    // Relative values must be ignored, per the XDG Base Directory spec.
+    assert_eq!(
+        xdg_dir(some("relative/dir"), some("/home/me"), ".local/share"),
+        Some(PathBuf::from("/home/me/.local/share"))
+    );
+    assert_eq!(
+        xdg_dir(None, some("/home/me"), ".local/state"),
+        Some(PathBuf::from("/home/me/.local/state"))
+    );
+    assert_eq!(xdg_dir(None, None, ".local/share"), None);
+    assert_eq!(xdg_dir(None, some("not-absolute"), ".local/share"), None);
+}
+
+#[test]
+fn portable_db_path_is_beside_the_executable() {
+    let exe_dir = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    assert_eq!(portable_db_path(), Some(exe_dir.join(DB_FILE_NAME)));
+}

@@ -136,7 +136,7 @@ pub(super) fn build_page_text(page: &PdfPage, index: u16) -> Result<PdfPageText,
                     line.bbox.height = y_max - y_min;
                     line.end_text_index = c.text_index + 1;
                 } else {
-                    lines.push(current_line.take().unwrap());
+                    lines.push(current_line.take().expect("matched Some above"));
                     current_line = Some(PdfTextLine {
                         start_text_index: c.text_index,
                         end_text_index: c.text_index + 1,

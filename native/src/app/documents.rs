@@ -1,6 +1,7 @@
 //! Opening, saving and parking documents (notes, PDFs, decks, images) and session persistence.
 
 use super::*;
+use crate::messages::ShellMessage;
 
 impl MdEditor {
     pub(super) fn open_file(&mut self, path: &str) -> Task<Message> {
@@ -27,8 +28,24 @@ impl MdEditor {
         };
 
         let content = self.editor.buffer.text();
-        match md_editor_core::vault::save_file(&self.state, &path, &content) {
-            Ok(()) => {
+        let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M-%S").to_string();
+        match md_editor_core::vault::save_file_guarded(
+            &self.state,
+            &path,
+            &content,
+            self.editor.disk_hash,
+            &stamp,
+        ) {
+            Ok(conflict) => {
+                self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&content));
+                if let Some(copy) = conflict {
+                    self.note_self_write(&copy);
+                    self.vault.entries =
+                        md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+                    self.ui.toast = Some(format!(
+                        "{path} was changed on disk while you were editing. Your version is saved; the other is in {copy}"
+                    ));
+                }
                 self.editor.buffer.mark_saved();
                 self.editor.autosave_pending_since = None;
                 self.invalidate_graph();
@@ -44,6 +61,10 @@ impl MdEditor {
                 // would retry a failing write (a full create/write/fsync/rename
                 // attempt) ten times a second for the rest of the session.
                 self.editor.mark_dirty_now();
+                // Once per failure run, like the toast: retries are silent.
+                if !self.autosave_failure_reported {
+                    log::warn!("Saving {path} failed: {err}");
+                }
                 SaveOutcome::Failed(err)
             }
         }
@@ -209,6 +230,7 @@ impl MdEditor {
         }
 
         let content = incoming;
+        self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&content));
         // Resume the parked buffer when it still matches disk, so
         // undo history and cursor survive a round trip; otherwise
         // the file changed underneath us and a fresh buffer is the
@@ -297,7 +319,7 @@ impl MdEditor {
         let generation = self.pptx.begin_load(path);
         Task::perform(
             async move { crate::slides::load_deck(&abs_path).map(Arc::new) },
-            move |result| Message::PptxLoaded(generation, result),
+            move |result| Message::Shell(ShellMessage::PptxLoaded(generation, result)),
         )
     }
 
@@ -421,5 +443,38 @@ impl MdEditor {
         for (key, value) in values {
             let _ = md_editor_core::config::set_sys_config(&self.state, key, &value);
         }
+    }
+
+    /// The open note changed on disk (not by us). A clean buffer follows the
+    /// file, keeping the caret; a dirty one is left alone — the next save
+    /// notices the change and keeps the disk version as a conflict copy.
+    pub(super) fn reload_open_note_from_disk(&mut self) -> Task<Message> {
+        let Some(path) = self.active_path.clone() else {
+            return Task::none();
+        };
+        if self.editor.buffer.dirty || self.showing_pdf {
+            return Task::none();
+        }
+        let Ok(bytes) = md_editor_core::vault::open_file(&self.state, &path) else {
+            return Task::none();
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            return Task::none();
+        };
+        if text == self.editor.buffer.text() {
+            self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&text));
+            return Task::none();
+        }
+        let caret = self.editor.buffer.cursor_offset();
+        self.editor.buffer = DocBuffer::from_text(&text);
+        self.editor
+            .buffer
+            .set_cursor_offset(caret.min(text.chars().count()));
+        self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&text));
+        self.editor.autosave_pending_since = None;
+        self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+        self.editor.toc_entries = views::toc::get_toc(&text);
+        log::info!("Reloaded {path}: changed on disk");
+        self.highlight_all()
     }
 }

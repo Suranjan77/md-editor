@@ -312,7 +312,7 @@ impl<Message> Editor<'_, Message> {
 
         if modifiers.command() || modifiers.control() {
             if let keyboard::Key::Character(c) = key {
-                self.on_shortcut(state, c, clipboard, shell);
+                self.on_shortcut(state, c, modifiers.shift(), clipboard, shell);
             }
             // Unbound shortcuts are swallowed rather than typed.
             return;
@@ -369,14 +369,26 @@ impl<Message> Editor<'_, Message> {
         true
     }
 
+    /// A Ctrl/Cmd chord. Chords the editor acts on are captured, so the
+    /// app-wide shortcut listener does not also fire for them (Ctrl+B is
+    /// bold here, not the sidebar toggle). Unbound chords are left uncaptured
+    /// for the app.
     fn on_shortcut(
         &self,
         state: &mut State,
         c: &str,
+        shift: bool,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
+        // Shift reports letters in upper case on most layouts.
+        let lower = c.to_lowercase();
+        let c = lower.as_str();
+        if matches!(c, "z" | "y" | "a" | "b" | "i" | "e" | "k" | "c" | "x" | "v") {
+            shell.capture_event();
+        }
         let command = match c {
+            "z" if shift => EditorCommand::Redo,
             "z" => EditorCommand::Undo,
             "y" => EditorCommand::Redo,
             "a" => EditorCommand::SelectAll,

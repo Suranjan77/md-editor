@@ -16,6 +16,8 @@
 //!   full resolution and is rescaled here against the device/display rects,
 //!   the same approach winit uses.
 
+#![deny(clippy::undocumented_unsafe_blocks)]
+
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -204,6 +206,7 @@ unsafe fn handle_pointer(hwnd: HWND, msg: u32, wparam: WPARAM) -> bool {
         return false;
     }
 
+    // SAFETY: `POINTER_PEN_INFO` is a plain C struct for which all-zero bytes are valid.
     let mut history: Vec<POINTER_PEN_INFO> = vec![unsafe { std::mem::zeroed() }; count as usize];
     // SAFETY: `history` has room for `count` entries, as just reported.
     if unsafe { GetPointerPenInfoHistory(pointer_id, &mut count, history.as_mut_ptr()) } == 0 {
@@ -255,6 +258,7 @@ static HOVERING_CANVAS: AtomicBool = AtomicBool::new(false);
 /// Hover over the canvas is claimed so the surface can draw its own nib
 /// indicator; anywhere else it passes through untouched.
 unsafe fn report_hover(hwnd: HWND, pointer_id: u32) -> bool {
+    // SAFETY: `POINTER_PEN_INFO` is a plain C struct for which all-zero bytes are valid.
     let mut info: POINTER_PEN_INFO = unsafe { std::mem::zeroed() };
     // SAFETY: out-param is a live local.
     if unsafe { GetPointerPenInfo(pointer_id, &mut info) } == 0 {
@@ -297,6 +301,7 @@ unsafe fn report_hover(hwnd: HWND, pointer_id: u32) -> bool {
 /// Uses the single current sample rather than the history: the decision is
 /// about where the press happened, and the newest reading is that.
 unsafe fn press_is_on_canvas(hwnd: HWND, pointer_id: u32) -> bool {
+    // SAFETY: `POINTER_PEN_INFO` is a plain C struct for which all-zero bytes are valid.
     let mut info: POINTER_PEN_INFO = unsafe { std::mem::zeroed() };
     // SAFETY: out-param is a live local.
     if unsafe { GetPointerPenInfo(pointer_id, &mut info) } == 0 {
@@ -318,7 +323,9 @@ unsafe fn press_is_on_canvas(hwnd: HWND, pointer_id: u32) -> bool {
 unsafe fn client_position(hwnd: HWND, info: &POINTER_PEN_INFO) -> Option<(f32, f32)> {
     let pointer = &info.pointerInfo;
 
+    // SAFETY: `RECT` is four integers; all-zero is valid.
     let mut device_rect: RECT = unsafe { std::mem::zeroed() };
+    // SAFETY: as above.
     let mut display_rect: RECT = unsafe { std::mem::zeroed() };
 
     // SAFETY: both out-params are live locals; `sourceDevice` comes from the

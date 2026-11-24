@@ -4,7 +4,7 @@ use iced::advanced::text::Wrapping;
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, VaultMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -53,7 +53,7 @@ pub fn view<'a>(
             .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED),
         text_input("Search folders and notes...", search_query)
-            .on_input(Message::PdfLinkNotePickerSearchChanged)
+            .on_input(|value| Message::Vault(VaultMessage::PdfLinkNotePickerSearchChanged(value)))
             .padding(theme::SPACE_4),
         container(scrollable(list).height(Length::Fixed(300.0)))
             .height(Length::Fixed(300.0))
@@ -68,15 +68,17 @@ pub fn view<'a>(
                 ..Default::default()
             }),
         text_input("pdf-notes/example.md", input_value)
-            .on_input(Message::NameModalInputChanged)
+            .on_input(|value| Message::Vault(VaultMessage::NameModalInputChanged(value)))
             .padding(theme::SPACE_4),
         row![
             button(text("Cancel").size(theme::TEXT_BASE))
-                .on_press(Message::NameModalCancel)
+                .on_press(Message::Vault(VaultMessage::NameModalCancel))
                 .padding([theme::SPACE_3, theme::SPACE_6])
                 .style(button::text),
             button(text("Link Note").size(theme::TEXT_BASE))
-                .on_press(Message::NameModalSubmit(input_value.to_string()))
+                .on_press(Message::Vault(VaultMessage::NameModalSubmit(
+                    input_value.to_string()
+                )))
                 .padding([theme::SPACE_3, theme::SPACE_6])
                 .style(button::primary),
         ]
@@ -114,9 +116,9 @@ fn picker_row<'a>(
         theme::TEXT_SECONDARY
     };
     let msg = if is_dir {
-        Message::PdfLinkNoteFolderSelected(path.to_string())
+        Message::Vault(VaultMessage::PdfLinkNoteFolderSelected(path.to_string()))
     } else {
-        Message::PdfLinkNoteFileSelected(path.to_string())
+        Message::Vault(VaultMessage::PdfLinkNoteFileSelected(path.to_string()))
     };
 
     let content = row![

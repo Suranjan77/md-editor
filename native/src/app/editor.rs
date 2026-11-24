@@ -1,19 +1,20 @@
 //! The Markdown editor: commands, saving, caret reveal, math and the table of contents.
 
 use super::*;
+use crate::messages::EditorMessage;
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_editor(&mut self, message: Message) -> Task<Message> {
+    pub(super) fn update_editor(&mut self, message: EditorMessage) -> Task<Message> {
         match message {
-            Message::EditorCommand(command) => self.run_editor_command(command),
-            Message::EditorCommandNoScroll(command) => {
+            EditorMessage::Command(command) => self.run_editor_command(command),
+            EditorMessage::CommandNoScroll(command) => {
                 self.run_editor_command_with_scroll(command, false)
             }
             // Editor arms that mutate only `self.editor` are routed to
             // `EditorPane::update`; see editor_state.rs.
-            m @ Message::MathRendered(..) => self.editor.update(m),
-            Message::EditorSave => {
+            m @ EditorMessage::MathRendered(..) => self.editor.update(Message::Editor(m)),
+            EditorMessage::Save => {
                 match self.save_active_document() {
                     SaveOutcome::Saved => self.ui.toast = Some("File saved".to_string()),
                     // An explicit save always answers, even when autosave got
@@ -27,11 +28,11 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::AnimationTick(now) => {
+            EditorMessage::AnimationTick(now) => {
                 self.motion.now = now;
                 self.step_editor_scroll(now)
             }
-            Message::AutosaveElapsed => {
+            EditorMessage::AutosaveElapsed => {
                 if self.editor.autosave_due() {
                     // Autosave is silent on success — a toast on every pause in
                     // typing would be noise. Failures still surface, because a
@@ -48,10 +49,10 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::EditorCheckboxToggle(line_idx) => {
+            EditorMessage::CheckboxToggle(line_idx) => {
                 self.run_editor_command(EditorCommand::ToggleCheckbox { line: line_idx })
             }
-            Message::EditorScrolled {
+            EditorMessage::Scrolled {
                 y,
                 viewport_width,
                 viewport_height,
@@ -62,12 +63,12 @@ impl MdEditor {
                 self.editor.viewport_height = viewport_height;
                 Task::none()
             }
-            Message::EditorCaretView(view) => self.reveal_caret(view),
-            Message::EditorScrollInterrupted => {
+            EditorMessage::CaretView(view) => self.reveal_caret(view),
+            EditorMessage::ScrollInterrupted => {
                 self.motion.editor_scroll = None;
                 Task::none()
             }
-            Message::TocClicked(index) => {
+            EditorMessage::TocClicked(index) => {
                 if self.pdf.active_path.is_some() {
                     let target_page = (index as u16).min(self.pdf.total_pages.saturating_sub(1));
                     self.navigate_pdf_page(target_page)
@@ -81,7 +82,7 @@ impl MdEditor {
                     task
                 }
             }
-            Message::ToggleTOC => {
+            EditorMessage::ToggleTOC => {
                 if self.pdf.active_path.is_some()
                     && (self.showing_pdf
                         || (self.ui.split_view_active && self.active_path.is_some()))
@@ -93,8 +94,6 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
     }
 

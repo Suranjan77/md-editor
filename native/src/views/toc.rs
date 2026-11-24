@@ -3,7 +3,7 @@
 use iced::widget::{Space, button, column, container, scrollable, text};
 use iced::{Element, Length, Padding, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{EditorMessage, Message};
 use crate::theme;
 
 pub struct TocEntry {
@@ -88,7 +88,7 @@ pub fn view<'a>(toc: &'a [TocEntry], is_synthetic: bool) -> Element<'a, Message,
                     .size(theme::TEXT_BASE)
                     .color(theme::TEXT_SECONDARY),
             )
-            .on_press(Message::TocClicked(entry.line))
+            .on_press(Message::Editor(EditorMessage::TocClicked(entry.line)))
             .padding([theme::SPACE_2, theme::SPACE_3])
             .style(button::text)
             .width(Length::Fill),

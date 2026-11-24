@@ -43,17 +43,31 @@ All commands run from the repository root.
 ```bash
 cargo fmt --check            # formatting
 cargo check --workspace      # fast typecheck
-cargo clippy --workspace     # lints — see the note below
+scripts/clippy-ratchet.sh    # lints — see the note below
 cargo test --workspace       # full test suite
 cargo run                    # launch in debug
 cargo build --release        # optimized binary
 ```
 
-> `cargo fmt --check` and `cargo test --workspace` pass cleanly on `main`. Clippy does not
-> yet: the tree carries 10 warnings (2 in core, 8 in native, none in the editor) — argument
-> counts on view builders, index loops in the graph simulation, and two `from_str` names — so
-> `-D warnings` fails on a fresh checkout. Treat the current count as the baseline and do
-> not add to it.
+> `cargo fmt --check` and `cargo test --workspace` pass cleanly on `main`. Clippy carries a
+> small baseline (the count in `clippy-baseline.txt`, today 5 `too_many_arguments` on view
+> builders), so `-D warnings` fails on a fresh checkout. `scripts/clippy-ratchet.sh` fails if
+> the count grows, and also if it shrinks without the baseline being lowered
+> (`scripts/clippy-ratchet.sh --update`), so it only goes down.
+>
+> Lint policy lives in `[workspace.lints]` in `Cargo.toml` and `clippy.toml` (tests may
+> unwrap and print). Core forbids `unsafe` and warns on `unwrap()`; so does `native/src/app/`.
+> `print!`/`eprintln!` are linted everywhere except the CLI installer and the examples — use
+> `log::{info, warn, error}` instead (see *Logging* below). The Win32 modules deny
+> undocumented `unsafe` blocks.
+
+### Logging
+
+`native/src/logging.rs` installs a `log` logger at startup. Records go to `md-editor.log` in
+the data directory (beside the settings database), rotated at 1 MB with three old files
+kept (`.1`–`.3`); warnings and errors are echoed to stderr. `MD_EDITOR_LOG` sets the level
+(`error`, `warn`, `info` — the default — `debug`, `trace`, `off`). A panic hook logs the
+panic with a backtrace before the default hook runs. Core logs through the same facade.
 
 Release output:
 
@@ -94,15 +108,15 @@ copies the library both into `core/pdfium/` and into the Cargo profile output di
 An unsupported platform prints a warning and skips the download; PDF support is then simply
 unavailable and the rest of the app still builds.
 
-Two environment variables control the download, and **both are opt-in**:
+By default the build downloads a **pinned** release (`DEFAULT_PDFIUM_RELEASE` in
+`core/build_pdfium.rs`, currently `chromium/8165`) and verifies it against the per-platform
+SHA-256 in `pinned_sha256`; a mismatch **panics** the build. To move the pin, update both
+together. Two environment variables override it:
 
 | Variable | Effect |
 | :--- | :--- |
-| `PDFIUM_RELEASE` | Pin a release tag, for example `chromium/6996`. Defaults to `latest`. |
-| `PDFIUM_SHA256` | Expected hex digest of the platform `.tgz`. When set, a mismatch **panics** the build. When unset, the script warns that the archive is unverified. |
-
-> For a reproducible, verified build, set both. Leaving them unset trusts whatever bytes the
-> network returned.
+| `PDFIUM_RELEASE` | Use another release tag, for example `chromium/6996` or `latest`. |
+| `PDFIUM_SHA256` | Expected hex digest of the platform `.tgz` for an override. When set, a mismatch panics the build; when unset on an override, the script warns that the archive is unverified. |
 
 The archive is cached at `target/pdfium/<slug>/`, so a rebuild with the library already
 present skips the network entirely.
@@ -112,13 +126,14 @@ present skips the network entirely.
 The binding is created **once per process** behind a `OnceLock`, and candidates are tried in
 this order:
 
-1. `<executable directory>/resources/<library>`
-2. `<executable directory>/<library>`
-3. `<CARGO_MANIFEST_DIR>/pdfium/<library>` — the development path
-4. the plain library name, leaving resolution to the system loader
+1. `<executable directory>/../lib/md-editor/<library>` — the installed layout
+   (`/usr/bin/md-editor` + `/usr/lib/md-editor/libpdfium.so`)
+2. `<executable directory>/<library>` — development builds
+3. `<executable directory>/resources/<library>`
+4. `<CARGO_MANIFEST_DIR>/pdfium/<library>` — tests run from the source tree
+5. the plain library name, leaving resolution to the system loader
 
-For packaged or portable builds, ship the library in a `resources/` folder beside the
-executable, or directly beside it.
+The list is built by `core/src/pdf.rs::pdfium_candidates`.
 
 ---
 
@@ -311,30 +326,40 @@ cargo run --example bench_refs -- path/to/paper.pdf   # text-scan cost
 
 ---
 
-## 5. Linux Desktop Integration
+## 5. Arch Linux Package
 
-Linux builds are portable by default; desktop integration is explicitly opt-in.
+MD Editor ships as an Arch Linux package; there is no portable build and no self-installer.
+`packaging/arch/` holds:
+
+| File | Purpose |
+| :--- | :--- |
+| `md-editor/PKGBUILD` | AUR `md-editor`: builds the release tagged `v$pkgver` |
+| `md-editor-git/PKGBUILD`, `.SRCINFO` | AUR `md-editor-git`: builds `main` |
+| `md-editor.desktop` | Desktop entry (`Exec=md-editor %F`, Markdown/PDF/PPTX MIME types, `StartupWMClass=md-editor`) |
+
+Both PKGBUILDs download the pinned PDFium archive as a declared `source` and hand it to the
+build script through `PDFIUM_ARCHIVE`, which verifies it against `pinned_sha256`. When the
+PDFium pin moves, update `_pdfium` and its checksum in both PKGBUILDs too. `package()`
+installs:
+
+- `/usr/bin/md-editor` and `/usr/lib/md-editor/libpdfium.so`;
+- `/usr/share/applications/md-editor.desktop` and icons in
+  `/usr/share/icons/hicolor/{16…512}x…/apps/md-editor.png` (resized with ImageMagick);
+- the GPL licence and PDFium's licences under `/usr/share/licenses/<pkgname>/`.
+
+pacman's hooks refresh the desktop and icon caches. Every library except glibc/gcc-libs is
+loaded at runtime, so `depends` lists `wayland` and `libxkbcommon`, with Vulkan, the XDG
+desktop portal (file pickers) and the X11 libraries as `optdepends`.
+
+To build and install from a working tree (uncommitted changes included):
 
 ```bash
-./target/release/md-editor --install     # or --install-desktop
-./target/release/md-editor --uninstall   # or --uninstall-desktop
+scripts/build-arch-package.sh -si          # add --nodeps if Rust comes from rustup, not pacman
 ```
 
-`--install` (`native/src/main.rs`):
-
-1. writes the icon to `~/.local/share/icons/md-editor.png` and
-   `~/.local/share/icons/hicolor/scalable/apps/md-editor.png`;
-2. resizes it into `hicolor/{16,32,48,64,128,256,512}x…/apps/md-editor.png` with Lanczos3;
-3. copies the system `hicolor/index.theme` if the local hicolor tree lacks one;
-4. writes `~/.local/share/applications/md-editor.desktop` with an absolute `Exec=<path> %F`,
-   `MimeType=text/markdown;application/pdf;`, and `StartupWMClass=md-editor` so the window
-   associates with the launcher;
-5. runs `update-desktop-database` and `gtk-update-icon-cache -f` where available.
-
-`--uninstall` removes the desktop entry and the installed icons and refreshes the caches
-again. Both flags exit non-zero and print a message on non-Linux platforms.
-
-The whole round-trip is covered by `tests::test_linux_desktop_installation_roundtrip`.
+CI's `arch-package` job does the same in an `archlinux` container, runs `check()` (the test
+suite) and `namcap`, and uploads the package. After changing a PKGBUILD, regenerate
+`.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` before pushing to the AUR.
 
 ---
 
@@ -353,9 +378,19 @@ three jobs:
 Both packages use the **`resources/` layout**, which is the first path
 [`bind_pdfium`](#3-pdfium-resolution) checks at runtime.
 
-Note that CI does **not** currently run `cargo test`, `cargo fmt --check`, or `cargo clippy` —
-those are the contributor's responsibility before opening a pull request, per
-[Contributor Guidelines](Contributor-Guidelines.md).
+### Quality gate — `.github/workflows/ci.yml`
+
+Runs on every push to `main` and every pull request:
+
+| Job | Runner | Checks |
+| :--- | :--- | :--- |
+| `fmt` | `ubuntu-latest` | `cargo fmt --all -- --check` |
+| `arch-package` | `archlinux` container | `scripts/build-arch-package.sh` (builds and tests the package), `namcap`; uploads the `.pkg.tar.zst` |
+| `test` | `ubuntu-latest`, `windows-latest` | Linux: `scripts/clippy-ratchet.sh`; Windows: `cargo clippy` (compiles the Win32-only modules). Both: `cargo test --workspace`, including the headless e2e scenarios, whose screenshots and telemetry (`target/e2e/`) are uploaded as an artifact |
+| `audit` | `ubuntu-latest` | `cargo audit` (RustSec advisories) and `cargo deny check licenses bans` (policy in `deny.toml`) |
+
+A dependency with a new advisory or a licence outside `deny.toml`'s allow-list fails the
+gate; fix it by updating the crate, or extend the policy deliberately in the same change.
 
 Give a first-time build on either runner extra time: `rusqlite`'s bundled SQLite compiles
 from source and the PDFium archive downloads, both exactly once per cache.

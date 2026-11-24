@@ -64,7 +64,7 @@ interaction, so split-view shortcuts route to the right one.
 The invariant, in every async result handler:
 
 ```rust
-Message::PdfRendered(generation, page, img) => {
+PdfMessage::Rendered(generation, page, img) => {
     self.pdf.pending_pages.remove(&page);          // 1. always clean up first
 
     if generation != self.pdf.render_generation {  // 2. then discard if stale
@@ -223,7 +223,7 @@ override the match-precise offset.
 
 ## 8. Scroll Handling
 
-`Message::PdfScrolled { y, viewport_height }` is emitted whenever the scrollable moves.
+`PdfMessage::Scrolled { y, viewport_height }` is emitted whenever the scrollable moves.
 
 **Normal user scrolling:**
 

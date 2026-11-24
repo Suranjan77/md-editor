@@ -8,9 +8,10 @@ use std::sync::LazyLock;
 /// `[[target]]` / `[[target|alias]]` wikilink matcher. Compiled once and
 /// reused — `update_file` runs this for every file during indexing.
 static WIKILINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").unwrap());
+    LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").expect("valid regex"));
 
 /// In-memory graph of wikilink references between files.
+#[derive(Debug)]
 pub struct FileIndex {
     /// file path → set of files it links to
     pub outgoing: HashMap<PathBuf, HashSet<PathBuf>>,
@@ -268,11 +269,39 @@ pub fn rewrite_links_to(
     old_abs: &Path,
     new_rel: &str,
 ) -> Option<String> {
+    rewrite_links_resolved(content, old_abs, new_rel, |target| {
+        resolve_wikilink_target(target, vault_root, file_path)
+    })
+}
+
+impl FileIndex {
+    /// [`rewrite_links_to`], resolving each link the way the index does
+    /// (exact path, then shortest matching basename) — so a bare `[[B]]` that
+    /// the index counts as a backlink to `notes/B.md` is rewritten too.
+    pub fn rewrite_links_to(
+        &self,
+        content: &str,
+        file_path: &Path,
+        old_abs: &Path,
+        new_rel: &str,
+    ) -> Option<String> {
+        rewrite_links_resolved(content, old_abs, new_rel, |target| {
+            self.resolve_link(target, file_path)
+        })
+    }
+}
+
+fn rewrite_links_resolved(
+    content: &str,
+    old_abs: &Path,
+    new_rel: &str,
+    resolve: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<String> {
     let mut changed = false;
     let result = WIKILINK_RE.replace_all(content, |caps: &regex::Captures| {
         let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("");
         let target = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-        match resolve_wikilink_target(target, vault_root, file_path) {
+        match resolve(target) {
             Some(resolved)
                 if resolved == *old_abs
                     || (crate::vault::is_markdown_path(&resolved)

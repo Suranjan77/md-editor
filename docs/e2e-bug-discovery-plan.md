@@ -4,8 +4,9 @@
 automatically and without a human at the screen, before and during the
 [UI overhaul](ui-overhaul-plan.md).
 
-**Date:** 2026-11-23 · **Status:** harness built and proven by one smoke test; the scenario
-suite below is planned, not written.
+**Date:** 2026-11-23 · **Status:** Step 0 done except the upstream report (2026-11-24): every
+test isolated, quiet-state invariants checked after each step. Step 1 in progress — S2, S4, S11, S15, S16,
+S17 (partial) written; findings B5–B11 below, all fixed.
 
 ---
 
@@ -58,9 +59,18 @@ Found while building the harness. Verified, not hypotheses.
 
 | # | Finding | Severity | Status |
 | :--- | :--- | :--- | :--- |
-| B1 | **Tests could read the user's real settings.** The settings DB lives beside the executable; for test binaries that is `target/debug/deps/`, and when no DB exists there it is *copied from `~/.local/share/md-editor`*. App tests that construct `MdEditor` could therefore load the user's last vault and history. | High (test isolation, privacy) | Fixed for e2e via `override_data_dir`; **plan: route every app-level unit test through it** (§4, step 0) |
+| B1 | **Tests could read the user's real settings.** The settings DB lives beside the executable; for test binaries that is `target/debug/deps/`, and when no DB exists there it is *copied from `~/.local/share/md-editor`*. App tests that construct `MdEditor` could therefore load the user's last vault and history. | High (test isolation, privacy) | **Fixed for all tests (2026-11-24):** `native/src/test_support.rs::isolate_data_dir` runs inside `MdEditor::new_with_startup_file` in test builds (and in `e2e::boot`); core pins a temp dir under `cfg(test)`. Regression test `building_the_app_never_uses_the_real_data_dir`. This became urgent with code-health W10: the default data dir is now `~/.local/share/md-editor`, so unisolated tests briefly created an empty DB there |
 | B2 | **`iced_test` 0.14.0: `Emulator::screenshot` takes the UI cache and never returns it**, so any interaction after a screenshot panics (`emulator.rs:290`). | Medium (upstream) | Worked around (own headless renderer); **plan: report upstream with a minimal repro** |
 | B3 | A freshly created headless renderer draws no `text`-widget glyphs on its first frame (the editor's custom text draws fine). | Low (upstream/test-only) | Worked around (render two frames); include in the upstream report |
+| B5 | **H5 confirmed and fixed (2026-11-24).** `Ctrl+Shift+Z` ran Undo (the editor matched `"z"` without Shift); `Ctrl+B` bolded *and* toggled the sidebar, and `Ctrl+I` italicised *and* opened the handwriting canvas, because the editor never captured the chords it handled. The editor now maps Shift+Z to Redo and captures its chords; `app/subscription.rs::keyboard_message` skips captured Ctrl chords | Medium | Fixed; tests `ctrl_shift_z_redoes_and_ctrl_z_undoes`, `editor_shortcuts_are_captured_…`, `ctrl_shortcuts_a_focused_widget_captured_…` |
+| B6 | **H8 confirmed: external edits were lost.** A clean open note did not follow an external edit (the watcher deliberately never reloaded the buffer); a dirty one was overwritten by the next autosave, destroying the external version. | **High** (data loss) | **Fixed 2026-11-24:** `vault::save_file_guarded` keeps the disk version as a conflict copy when it changed since last read/write (`EditorPane::disk_hash`); the watcher reloads a clean open note. Scenarios `s16_*`; core test `guarded_save_keeps_an_external_edit_as_a_conflict_copy`; wiki Invariant 6 |
+| B7 | **Renaming a note left bare `[[links]]` to it dangling.** `rename_entry` found backlinks with the index's resolver (basename match) but rewrote them with the plain path resolver (vault-root-relative), so `[[B]]` in a sibling folder never matched `notes/B.md`. Found by S4. | Medium (broken links) | **Fixed 2026-11-24:** `FileIndex::rewrite_links_to` resolves like the index; all rewrites are computed before re-keying. Core test `renaming_a_note_rewrites_bare_links_from_its_sibling_folder` |
+| B8 | Rename with unsaved edits in the open note: the rename rewrote links inside it on disk while the buffer held the old text. | Medium | **Fixed 2026-11-24:** rename flushes the open note first and reloads it afterwards |
+| B9 | **Plain-text replace-all expanded `$` in the replacement.** With Match Case off, the search was escaped but the replacement went to `regex::replace_all` as a template, so replacing `price` with `$5` deleted the matches (H4, partly). | Medium (silent text loss) | **Fixed 2026-11-24:** `regex::NoExpand`; test `literal_replace_all_inserts_dollar_signs_verbatim` |
+| B10 | **A read-only note was silently overwritten.** The atomic write renames a temp file over the target, which needs only a writable folder; permission copying then made the file still *look* read-only. Found by S17. | High (overrides user protection) | **Fixed 2026-11-24:** `write_file` refuses read-only targets; autosave keeps the edits and reports once. Tests `write_file_refuses_a_read_only_note`, `s17_read_only_note` |
+| B11 | The tracker accepted `inf` hours (`"inf".parse::<f32>()` is positive) | Low | **Fixed 2026-11-24:** finite check; `s11_tracker_manual_sessions` |
+| H1 | Tracker `-0.0h` | — | **Cleared:** non-positive hours were already rejected; S11 |
+| H2, H3, H7 | Rename of the open dirty note keeps edits and never resurrects the old file; deleting its folder does not recreate it; switching vault flushes first | — | **Cleared** by `s4_rename_open_dirty_note`, `s4_delete_folder_of_open_dirty_note`, `s15_switch_vault_with_dirty_note` |
 | B4 | Baseline telemetry (debug build, small vault): boot 158 ms, update ≈ 0.3 ms, view ≈ 0.13 ms. | Info | Recorded in `target/e2e/telemetry.md`; becomes the regression baseline |
 
 ---

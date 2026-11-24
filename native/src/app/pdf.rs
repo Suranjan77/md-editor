@@ -1,12 +1,13 @@
 //! PDF viewing: loading, rendering, zoom, selection, highlights, links and PDF search.
 
 use super::*;
+use crate::messages::{PdfMessage, ShellMessage};
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_pdf(&mut self, message: Message) -> Task<Message> {
+    pub(super) fn update_pdf(&mut self, message: PdfMessage) -> Task<Message> {
         match message {
-            Message::PdfLoaded(generation, result) => {
+            PdfMessage::Loaded(generation, result) => {
                 if generation != self.pdf.render_generation {
                     return Task::none();
                 }
@@ -68,7 +69,7 @@ impl MdEditor {
                         .take(pages as usize)
                         .any(Option::is_some)
                 {
-                    Task::done(Message::PdfFitToWidth)
+                    Task::done(Message::Pdf(PdfMessage::FitToWidth))
                 } else if self.pdf.fit_to_width {
                     Task::none()
                 } else {
@@ -76,7 +77,7 @@ impl MdEditor {
                 };
                 Task::batch(vec![layout_task, target_task])
             }
-            Message::PdfZoomChanged(zoom) => {
+            PdfMessage::ZoomChanged(zoom) => {
                 let current_page = self.pdf.page_at_scroll(self.pdf.scroll_y);
                 let page_start_offset = self.pdf.page_offset(current_page);
                 let relative_ratio = if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {
@@ -130,7 +131,7 @@ impl MdEditor {
                     ),
                 ])
             }
-            Message::PdfFitToWidth => {
+            PdfMessage::FitToWidth => {
                 let is_initial = self.pdf.initial_target_page.is_some();
                 let current_page = if let Some(target_page) = self.pdf.initial_target_page.take() {
                     target_page.min(self.pdf.total_pages.saturating_sub(1))
@@ -212,12 +213,12 @@ impl MdEditor {
             }
             // PDF arms that mutate only `self.pdf` are routed to
             // `PdfPane::update`; see pdf_pane.rs.
-            m @ (Message::PdfPageSizesLoaded(..)
-            | Message::PdfRenderSkipped(..)
-            | Message::ClosePdfLinkPreview
-            | Message::PdfPageTextLoaded(..)
-            | Message::PdfSelectionCleared) => self.pdf.update(m),
-            Message::PdfRendered(generation, page, img) => {
+            m @ (PdfMessage::PageSizesLoaded(..)
+            | PdfMessage::RenderSkipped(..)
+            | PdfMessage::ClosePdfLinkPreview
+            | PdfMessage::PageTextLoaded(..)
+            | PdfMessage::SelectionCleared) => self.pdf.update(Message::Pdf(m)),
+            PdfMessage::Rendered(generation, page, img) => {
                 self.pdf.pending_pages.remove(&page);
                 if generation != self.pdf.render_generation {
                     return Task::none();
@@ -259,7 +260,7 @@ impl MdEditor {
                 }
                 Task::batch(tasks)
             }
-            Message::PdfRenderFailed(generation, page) => {
+            PdfMessage::RenderFailed(generation, page) => {
                 self.pdf.pending_pages.remove(&page);
                 if generation != self.pdf.render_generation {
                     return Task::none();
@@ -271,7 +272,7 @@ impl MdEditor {
                 self.ui.toast = Some(format!("Could not render PDF page {}", page + 1));
                 Task::none()
             }
-            Message::PdfScrolled { y, viewport_height } => {
+            PdfMessage::Scrolled { y, viewport_height } => {
                 self.active_panel = ActivePanel::Pdf;
                 self.pdf.scroll_y = y;
                 let new_page = self.pdf.page_at_scroll(y + viewport_height * 0.33);
@@ -295,7 +296,7 @@ impl MdEditor {
                     self.render_pdf_pages_for_viewport(y, viewport_height)
                 }
             }
-            Message::PdfLeftClicked(page_idx, x, y, modifiers) => {
+            PdfMessage::LeftClicked(page_idx, x, y, modifiers) => {
                 self.active_panel = ActivePanel::Pdf;
                 if let Some(link) = self.pdf.link_at(page_idx, x, y) {
                     if let Some(dest_page) = link.dest_page {
@@ -318,7 +319,7 @@ impl MdEditor {
                     self.pdf.focused_annotation_id = Some(ann.id.clone());
                     if let Some(ref path) = ann.linked_note_path {
                         if !path.is_empty() {
-                            Task::done(Message::PdfOpenLinkedNote(path.clone()))
+                            Task::done(Message::Pdf(PdfMessage::OpenLinkedNote(path.clone())))
                         } else {
                             Task::none()
                         }
@@ -330,7 +331,7 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::PdfRightClicked(page_idx, x, y) => {
+            PdfMessage::RightClicked(page_idx, x, y) => {
                 self.active_panel = ActivePanel::Pdf;
                 let mut target_ann = None;
                 if x < 0.0 || y < 0.0 {
@@ -377,16 +378,16 @@ impl MdEditor {
                                 .ok()
                         },
                         |res| {
-                            Message::PdfLinkPreviewResult(
+                            Message::Pdf(PdfMessage::LinkPreviewResult(
                                 res.ok_or_else(|| "Failed to preview".into()),
-                            )
+                            ))
                         },
                     )
                 } else {
                     Task::none()
                 }
             }
-            Message::PdfLinkPreviewResult(Ok(res)) => {
+            PdfMessage::LinkPreviewResult(Ok(res)) => {
                 if let Ok(img) = image::load_from_memory(&res.image_data) {
                     let (width, height) = img.dimensions();
                     self.pdf.link_preview_size = Some((width as f32, height as f32));
@@ -398,11 +399,11 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::PdfLinkPreviewResult(Err(e)) => {
+            PdfMessage::LinkPreviewResult(Err(e)) => {
                 self.ui.toast = Some(format!("Preview Error: {}", e));
                 Task::none()
             }
-            Message::PdfTocLoaded(path, entries, synthetic) => {
+            PdfMessage::TocLoaded(path, entries, synthetic) => {
                 // Path-gated, not generation-gated: fit-to-width bumps the
                 // render generation right after open, and the TOC scan for
                 // bookmark-less PDFs regularly finishes after that. Only a
@@ -433,7 +434,7 @@ impl MdEditor {
                 self.pdf.toc_is_synthetic = synthetic;
                 Task::none()
             }
-            Message::PdfPageLinksLoaded(generation, page, links) => {
+            PdfMessage::PageLinksLoaded(generation, page, links) => {
                 self.pdf.pending_links.remove(&page);
                 if generation != self.pdf.render_generation {
                     return Task::none();
@@ -441,7 +442,7 @@ impl MdEditor {
                 self.pdf.page_links.insert(page, links);
                 Task::none()
             }
-            Message::PdfSearchLooseToggled(value) => {
+            PdfMessage::SearchLooseToggled(value) => {
                 self.search.loose = value;
                 self.search.match_index = None;
                 if (self.search.visible || self.pdf_search_is_active())
@@ -453,7 +454,7 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::PdfSearchResult(generation, Ok(results)) => {
+            PdfMessage::SearchResult(generation, Ok(results)) => {
                 if !pdf_search_generation_is_current(self.pdf.render_generation, generation) {
                     return Task::none();
                 }
@@ -477,7 +478,7 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::PdfSearchResult(generation, Err(err)) => {
+            PdfMessage::SearchResult(generation, Err(err)) => {
                 if !pdf_search_generation_is_current(self.pdf.render_generation, generation) {
                     return Task::none();
                 }
@@ -486,7 +487,7 @@ impl MdEditor {
                 self.search.pdf_error = Some(err);
                 Task::none()
             }
-            Message::PdfSearchResultClicked(page) => {
+            PdfMessage::SearchResultClicked(page) => {
                 self.search.visible = false;
                 self.search.file_visible = true;
                 self.active_panel = ActivePanel::Pdf;
@@ -502,7 +503,7 @@ impl MdEditor {
                     self.navigate_pdf_page(self.pdf.current_page)
                 }
             }
-            Message::PdfScrollBy(delta) => {
+            PdfMessage::ScrollBy(delta) => {
                 // The palette owns the arrow keys while it is open.
                 if self.ui.command_palette_visible {
                     let count = views::command_palette::result_count(
@@ -527,8 +528,10 @@ impl MdEditor {
                     let width = self.pdf_available_width();
                     // Page Up and Page Down move a whole slide; the arrows scroll.
                     return if delta.abs() > ARROW_SCROLL {
-                        self.pptx
-                            .update(Message::PptxStep(delta.signum() as i32), width)
+                        self.pptx.update(
+                            Message::Shell(ShellMessage::PptxStep(delta.signum() as i32)),
+                            width,
+                        )
                     } else {
                         self.pptx.scroll_by(delta, width)
                     };
@@ -553,7 +556,7 @@ impl MdEditor {
                     AbsoluteOffset { x: 0.0, y },
                 )
             }
-            Message::PdfDocumentIdComputed(generation, Some((path, hash, len, mtime))) => {
+            PdfMessage::DocumentIdComputed(generation, Some((path, hash, len, mtime))) => {
                 if generation != self.pdf.render_generation
                     || self.pdf.active_path.as_deref() != Some(path.as_str())
                 {
@@ -652,10 +655,10 @@ impl MdEditor {
                             Some(links)
                         },
                         move |res| {
-                            Message::PdfReferencesLoaded(
+                            Message::Pdf(PdfMessage::ReferencesLoaded(
                                 doc_id_msg.clone(),
                                 res.unwrap_or_default(),
-                            )
+                            ))
                         },
                     )
                 } else {
@@ -664,7 +667,7 @@ impl MdEditor {
 
                 Task::batch(vec![scroll_task, refs_task])
             }
-            Message::PdfReferencesLoaded(doc_id, links) => {
+            PdfMessage::ReferencesLoaded(doc_id, links) => {
                 // Apply only if still on the same document (the scan is async and
                 // may finish after the user has navigated away).
                 if self.pdf.document_id.as_deref() == Some(doc_id.as_str()) {
@@ -672,8 +675,8 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::PdfDocumentIdComputed(_, None) => Task::none(),
-            Message::PdfSelectionChanged(page, anchor, focus) => {
+            PdfMessage::DocumentIdComputed(_, None) => Task::none(),
+            PdfMessage::SelectionChanged(page, anchor, focus) => {
                 self.active_panel = ActivePanel::Pdf;
                 self.pdf.selection = Some(views::interactive_pdf::PdfSelection {
                     page_index: page,
@@ -682,7 +685,7 @@ impl MdEditor {
                 });
                 Task::none()
             }
-            Message::PdfSelectionFinished(page, anchor, focus) => {
+            PdfMessage::SelectionFinished(page, anchor, focus) => {
                 self.active_panel = ActivePanel::Pdf;
                 self.pdf.selection = Some(views::interactive_pdf::PdfSelection {
                     page_index: page,
@@ -691,7 +694,7 @@ impl MdEditor {
                 });
                 Task::none()
             }
-            Message::PdfCopySelection => {
+            PdfMessage::CopySelection => {
                 if !self.pdf_copy_shortcut_is_active() {
                     return Task::none();
                 }
@@ -707,8 +710,8 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::PdfCreateHighlight(color) => self.create_highlight(color),
-            Message::PdfQuickHighlight => {
+            PdfMessage::CreateHighlight(color) => self.create_highlight(color),
+            PdfMessage::QuickHighlight => {
                 // Only consume a palette color when there is actually a
                 // selection to highlight, so the cycle doesn't silently
                 // advance on empty clicks.
@@ -720,7 +723,7 @@ impl MdEditor {
                     self.create_highlight(color)
                 }
             }
-            Message::PdfCopyAnnotationText(id) => {
+            PdfMessage::CopyAnnotationText(id) => {
                 if let Some(text) = self
                     .pdf
                     .annotations
@@ -735,12 +738,12 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::PdfOrphanReport => {
+            PdfMessage::OrphanReport => {
                 let report = self.pdf_orphan_report();
                 self.ui.toast = Some(report);
                 Task::none()
             }
-            Message::PdfDeleteHighlight(id) => {
+            PdfMessage::DeleteHighlight(id) => {
                 if let Err(e) = self.state.delete_pdf_annotation(&id) {
                     self.ui.toast = Some(format!("Failed to delete highlight: {}", e));
                 } else {
@@ -765,7 +768,7 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::PdfAddQuickNote(id, note_content) => {
+            PdfMessage::AddQuickNote(id, note_content) => {
                 let mut found_ann = None;
                 for page_anns in self.pdf.annotations.values_mut() {
                     if let Some(ann) = page_anns.iter_mut().find(|a| a.id == id) {
@@ -791,7 +794,7 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::PdfLinkNote(annotation_id, mut note_path) => {
+            PdfMessage::LinkNote(annotation_id, mut note_path) => {
                 let mut annotation = None;
                 for page_anns in self.pdf.annotations.values() {
                     if let Some(ann) = page_anns.iter().find(|a| a.id == annotation_id) {
@@ -842,21 +845,24 @@ impl MdEditor {
                             md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                         self.ui.toast = Some(format!("Linked note: {}", note_path));
                         self.invalidate_graph();
-                        return Task::done(Message::PdfOpenLinkedNote(note_path));
+                        return Task::done(Message::Pdf(PdfMessage::OpenLinkedNote(note_path)));
                     }
                 }
                 Task::none()
             }
-            Message::PdfOpenLinkedNote(note_path) => {
+            PdfMessage::OpenLinkedNote(note_path) => {
                 self.ui.split_view_active = true;
                 let open_task = self.open_file_extended(&note_path, false);
                 if self.pdf.fit_to_width {
-                    Task::batch(vec![open_task, Task::done(Message::PdfFitToWidth)])
+                    Task::batch(vec![
+                        open_task,
+                        Task::done(Message::Pdf(PdfMessage::FitToWidth)),
+                    ])
                 } else {
                     Task::batch(vec![open_task, self.restore_scroll_positions()])
                 }
             }
-            Message::PdfAnnotationFocused {
+            PdfMessage::AnnotationFocused {
                 document_path,
                 annotation_id,
                 page,
@@ -885,8 +891,6 @@ impl MdEditor {
                     self.open_pdf(&resolved_pdf_path)
                 }
             }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
     }
 }

@@ -130,6 +130,9 @@ pub(super) fn read_image(path: &Path) -> Result<Vec<u8>, String> {
 ///   than the link being replaced by a regular file.
 /// - The destination's existing permissions are copied onto the replacement,
 ///   so a note kept at `0600` does not come back world-readable.
+/// - A read-only destination is refused. The rename would otherwise succeed
+///   (it needs only a writable folder) and silently replace a file the user
+///   protected.
 pub fn write_file(path: &Path, content: &str) -> Result<(), String> {
     use std::io::Write;
 
@@ -158,6 +161,9 @@ pub fn write_file(path: &Path, content: &str) -> Result<(), String> {
     // Inherit the destination's permissions where it already exists; a fresh
     // file keeps the default the platform would have given it.
     let existing_permissions = fs::metadata(path).map(|m| m.permissions()).ok();
+    if existing_permissions.as_ref().is_some_and(|p| p.readonly()) {
+        return Err(format!("{} is read-only", path.display()));
+    }
 
     let write_result = (|| -> std::io::Result<()> {
         let mut file = fs::File::create(&tmp_path)?;
@@ -232,7 +238,9 @@ pub fn is_supported_vault_path(path: &Path) -> bool {
         || is_ink_path(path)
 }
 
-pub(super) fn list_vault_entries(root: &Path) -> Result<Vec<FileEntry>, String> {
+/// Every supported file and folder under `root`, as the sidebar lists them
+/// (dot/heavy folders and symlinks skipped). Directories first, then by name.
+pub fn list_vault_entries(root: &Path) -> Result<Vec<FileEntry>, String> {
     let mut entries = Vec::new();
     list_vault_recursive(root, root, &mut entries, 0)?;
     entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {

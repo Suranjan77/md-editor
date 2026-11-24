@@ -1,12 +1,13 @@
 //! Application keyboard shortcuts, routed to whichever surface is in front.
 
 use super::*;
+use crate::messages::{EditorMessage, GraphMessage, InkMessage, ShellMessage, VaultMessage};
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_shortcuts(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::KeyboardShortcut(s) => {
+    pub(super) fn update_shortcuts(&mut self, s: Shortcut) -> Task<Message> {
+        {
+            {
                 match s {
                     Shortcut::Escape => {
                         // Close overlays in priority order. The ink surface is
@@ -48,11 +49,15 @@ impl MdEditor {
                         self.refit_pdf_if_needed()
                     }
                     // Ctrl+S saves whatever surface is in front.
-                    Shortcut::Handwriting => Task::done(Message::InkToggle),
-                    Shortcut::Save if self.ink.is_visible() => Task::done(Message::InkSave),
-                    Shortcut::Save => Task::done(Message::EditorSave),
-                    Shortcut::OpenVault => Task::done(Message::OpenVaultDialog),
-                    Shortcut::NewFile => Task::done(Message::CreateFileDialog),
+                    Shortcut::Handwriting => Task::done(Message::Ink(InkMessage::Toggle)),
+                    Shortcut::Save if self.ink.is_visible() => {
+                        Task::done(Message::Ink(InkMessage::Save))
+                    }
+                    Shortcut::Save => Task::done(Message::Editor(EditorMessage::Save)),
+                    Shortcut::OpenVault => {
+                        Task::done(Message::Vault(VaultMessage::OpenVaultDialog))
+                    }
+                    Shortcut::NewFile => Task::done(Message::Vault(VaultMessage::CreateFileDialog)),
                     Shortcut::Search => {
                         if self.ui.split_view_active && self.active_path.is_some() {
                             self.search.file_visible = true;
@@ -108,18 +113,24 @@ impl MdEditor {
                     // Routed through the message rather than setting the flag
                     // here, so the shortcut and any other opener share one
                     // path — including focusing the query field.
-                    Shortcut::CommandPalette => Task::done(Message::CommandPaletteOpen),
+                    Shortcut::CommandPalette => {
+                        Task::done(Message::Shell(ShellMessage::CommandPaletteOpen))
+                    }
                     Shortcut::ToggleBacklinks => {
                         self.vault.backlinks_visible = !self.vault.backlinks_visible;
                         Task::none()
                     }
-                    Shortcut::KnowledgeGraph => Task::done(Message::GraphToggle),
-                    Shortcut::TableOfContents => Task::done(Message::ToggleTOC),
+                    Shortcut::KnowledgeGraph => Task::done(Message::Graph(GraphMessage::Toggle)),
+                    Shortcut::TableOfContents => {
+                        Task::done(Message::Editor(EditorMessage::ToggleTOC))
+                    }
                     Shortcut::StudyTracker => {
                         self.tracker.toggle_visible();
                         Task::none()
                     }
-                    Shortcut::SplitView => Task::done(Message::SplitViewToggle),
+                    Shortcut::SplitView => {
+                        Task::done(Message::Shell(ShellMessage::SplitViewToggle))
+                    }
                     Shortcut::FocusMode => {
                         self.vault.sidebar_visible = false;
                         self.vault.backlinks_visible = false;
@@ -130,8 +141,6 @@ impl MdEditor {
                     }
                 }
             }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
     }
 }

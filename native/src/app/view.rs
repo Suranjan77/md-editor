@@ -1,6 +1,7 @@
 //! Building the UI: the shell window and the handwriting window.
 
 use super::*;
+use crate::messages::{EditorMessage, PdfMessage, ShellMessage, VaultMessage};
 use iced::widget::column;
 
 impl MdEditor {
@@ -138,10 +139,10 @@ impl MdEditor {
                     &self.editor.highlight.lines,
                     &self.editor.image_cache,
                     &self.editor.math_cache,
-                    Message::EditorCommand,
-                    Message::EditorCommandNoScroll,
-                    Message::SidebarFileClicked,
-                    Message::EditorCheckboxToggle,
+                    |value| Message::Editor(EditorMessage::Command(value)),
+                    |value| Message::Editor(EditorMessage::CommandNoScroll(value)),
+                    |value| Message::Vault(VaultMessage::SidebarFileClicked(value)),
+                    |value| Message::Editor(EditorMessage::CheckboxToggle(value)),
                 )
                 .search(
                     editor_search_query,
@@ -150,17 +151,21 @@ impl MdEditor {
                     active_search_match,
                 )
                 .scale_factor(self.ui.scale_factor)
-                .reveal_caret(self.editor.reveal_request, Message::EditorCaretView)
+                .reveal_caret(self.editor.reveal_request, |view| {
+                    Message::Editor(EditorMessage::CaretView(view))
+                })
                 .layout_revision(self.editor.layout_revision()),
             )
             .padding(EDITOR_PADDING)
             .width(Length::Fill),
         )
         .id(iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID))
-        .on_scroll(|vp| Message::EditorScrolled {
-            y: vp.absolute_offset().y,
-            viewport_width: vp.bounds().width,
-            viewport_height: vp.bounds().height,
+        .on_scroll(|vp| {
+            Message::Editor(EditorMessage::Scrolled {
+                y: vp.absolute_offset().y,
+                viewport_width: vp.bounds().width,
+                viewport_height: vp.bounds().height,
+            })
         })
         .height(Length::Fill);
 
@@ -220,9 +225,11 @@ impl MdEditor {
                 self.pdf.load_error.as_deref(),
             ))
             .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
-            .on_scroll(|vp| Message::PdfScrolled {
-                y: vp.absolute_offset().y,
-                viewport_height: vp.bounds().height,
+            .on_scroll(|vp| {
+                Message::Pdf(PdfMessage::Scrolled {
+                    y: vp.absolute_offset().y,
+                    viewport_height: vp.bounds().height,
+                })
             })
             .height(Length::Fill);
 
@@ -320,8 +327,8 @@ impl MdEditor {
                     ..Default::default()
                 }),
             )
-            .on_press(Message::SplitViewDragStart)
-            .on_release(Message::SplitViewDragEnd)
+            .on_press(Message::Shell(ShellMessage::SplitViewDragStart))
+            .on_release(Message::Shell(ShellMessage::SplitViewDragEnd))
             .interaction(iced::mouse::Interaction::ResizingHorizontally);
 
             row![
@@ -483,7 +490,7 @@ impl MdEditor {
                     iced::widget::row![
                         Space::new().width(Length::Fill),
                         iced::widget::button("✕")
-                            .on_press(Message::ClosePdfLinkPreview)
+                            .on_press(Message::Pdf(PdfMessage::ClosePdfLinkPreview))
                             .padding(app_theme::SPACE_3)
                     ],
                     container(img)

@@ -60,8 +60,13 @@ see [Viewing presentations](#viewing-presentations).
 ### External changes
 
 A filesystem watcher follows the vault. If a file changes underneath you — a `git pull`, an
-edit from another tool — buffers, the file tree, and the backlink graph refresh without a
-restart.
+edit from another tool — the file tree and the backlink graph refresh without a restart, and
+the open note reloads if you have no unsaved edits in it.
+
+If the open note changes on disk while you *do* have unsaved edits, nothing is thrown away:
+your version is saved to the note, and the other version is kept next to it as
+`Note (conflict 2026-11-24 15-04-05).md`. A toast tells you the name; compare the two and
+delete the copy when you are done.
 
 ---
 
@@ -221,7 +226,7 @@ outside the app.
 - Colours cycle automatically — yellow → green → blue → pink → orange — so consecutive
   highlights stay distinct. You can also pick one explicitly.
 - Add a **quick note** to a highlight.
-- **The original PDF is never modified.** Highlights, notes, and links live in the portable
+- **The original PDF is never modified.** Highlights, notes, and links live in the
   settings database.
 - **Orphan report** — if a PDF is replaced or recompiled, stored positions can drift. The
   report compares each highlight's saved text against what is now under its rectangle and
@@ -361,8 +366,7 @@ Full detail: [Study Tracker](Study-Tracker.md).
   your own folder.
 - **Everything else** — settings, window size, per-document scroll and cursor positions, PDF
   highlights and notes, cached PDF text, and study history — lives in a single SQLite file
-  named `md_editor_settings.sqlite`, **beside the executable** by default, so the whole app
-  travels as one portable folder.
-- Only when the executable's directory is read-only does it fall back to the per-user
-  platform data directory and then the current directory.
+  named `md_editor_settings.sqlite` in `~/.local/share/md-editor/`. The log is
+  `~/.local/state/md-editor/md-editor.log`.
+- Uninstalling the app leaves both in place; delete those folders to remove all app data.
 - Nothing is sent anywhere. There are no accounts and no telemetry.

@@ -4,7 +4,7 @@ use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
 use crate::fuzzy;
-use crate::messages::{Message, Shortcut};
+use crate::messages::{Message, ShellMessage, Shortcut, VaultMessage};
 use crate::theme;
 
 /// Widget id of the palette's query field, so the shell can put the caret in
@@ -225,8 +225,8 @@ pub fn view<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     let input = iced::widget::text_input("Search commands and files…", query)
         .id(iced::advanced::widget::Id::new(PALETTE_INPUT_ID))
-        .on_input(Message::CommandPaletteQueryChanged)
-        .on_submit(Message::NameModalSubmitCurrent)
+        .on_input(|value| Message::Shell(ShellMessage::CommandPaletteQueryChanged(value)))
+        .on_submit(Message::Vault(VaultMessage::NameModalSubmitCurrent))
         .padding(theme::SPACE_4)
         .size(theme::TEXT_MD);
 
@@ -257,7 +257,7 @@ pub fn view<'a>(
                     .size(theme::TEXT_SM)
                     .color(theme::fade(theme::TEXT_MUTED, opacity))
                     .into(),
-                Message::CommandPaletteCommandClicked(command.shortcut),
+                Message::Shell(ShellMessage::CommandPaletteCommandClicked(command.shortcut)),
                 is_selected,
                 opacity,
             ),
@@ -275,7 +275,7 @@ pub fn view<'a>(
                         .size(theme::TEXT_SM)
                         .color(theme::fade(theme::TEXT_MUTED, opacity))
                         .into(),
-                    Message::CommandPaletteFileClicked(path.to_string()),
+                    Message::Shell(ShellMessage::CommandPaletteFileClicked(path.to_string())),
                     is_selected,
                     opacity,
                 )

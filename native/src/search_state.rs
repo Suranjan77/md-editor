@@ -20,7 +20,7 @@ use iced::Task;
 pub const SEARCH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 use crate::editor::buffer::DocBuffer;
-use crate::messages::Message;
+use crate::messages::{Message, SearchMessage};
 use crate::search::DocumentMatch;
 
 use md_editor_core::pdf::PdfSearchMatch;
@@ -74,7 +74,7 @@ impl SearchState {
     /// coordination.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::SearchReplaceChanged(replace) => {
+            Message::Search(SearchMessage::ReplaceChanged(replace)) => {
                 self.replace = replace;
                 Task::none()
             }

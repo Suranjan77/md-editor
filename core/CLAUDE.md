@@ -5,7 +5,7 @@ Headless engine. Everything here must run in a test without a display or GPU.
 - **No UI dependencies.** Never add `iced`, `winit`, `ratex-render` or other GUI/shaping
   crates.
 - **Atomic writes only.** Every vault write goes through `vault/files.rs::write_file`
-  (sibling temp file, permission copy, `sync_all`, rename, parent-dir sync). Never truncate
+  (sibling temp file, permission copy, read-only refusal, `sync_all`, rename, parent-dir sync). Never truncate
   a user file in place.
 - **Paths are jailed.** Resolve user-supplied vault paths with `resolve_vault_path_checked`;
   vault-relative strings always use `/`.

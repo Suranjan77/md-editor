@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[derive(Debug)]
 pub struct PdfRenderer {
     pub(super) sender: std::sync::mpsc::Sender<PdfCommand>,
     pub(super) priority_sender: std::sync::mpsc::Sender<PriorityRender>,
@@ -77,9 +78,12 @@ impl PdfRenderer {
 
         std::thread::spawn(move || {
             let pdfium = match bind_pdfium() {
-                Ok(pdfium) => pdfium,
+                Ok(pdfium) => {
+                    log::info!("PDFium bound");
+                    pdfium
+                }
                 Err(err) => {
-                    eprintln!("Failed to bind PDFium: {err}");
+                    log::error!("Failed to bind PDFium: {err}");
                     return;
                 }
             };

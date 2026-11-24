@@ -19,7 +19,7 @@ use md_editor_core::pdf::{
     LinkInfo, PdfAnnotation, PdfAnnotationColor, PdfPageText, PdfSearchMatch,
 };
 
-use crate::messages::Message;
+use crate::messages::{Message, PdfMessage};
 use crate::views::interactive_pdf::PdfSelection;
 use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
@@ -126,7 +126,7 @@ impl PdfPane {
     /// the shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::PdfPageSizesLoaded(generation, path, sizes) => {
+            Message::Pdf(PdfMessage::PageSizesLoaded(generation, path, sizes)) => {
                 if generation != self.render_generation
                     && self.active_path.as_deref() != Some(path.as_str())
                 {
@@ -140,12 +140,12 @@ impl PdfPane {
                     self.placeholder_page_size = self.first_page_size();
                 }
                 if self.fit_to_width && self.total_pages > 0 {
-                    Task::done(Message::PdfFitToWidth)
+                    Task::done(Message::Pdf(PdfMessage::FitToWidth))
                 } else {
                     Task::none()
                 }
             }
-            Message::PdfRenderSkipped(generation, page) => {
+            Message::Pdf(PdfMessage::RenderSkipped(generation, page)) => {
                 self.pending_pages.remove(&page);
                 if generation != self.render_generation {
                     return Task::none();
@@ -156,12 +156,12 @@ impl PdfPane {
                 }
                 Task::none()
             }
-            Message::ClosePdfLinkPreview => {
+            Message::Pdf(PdfMessage::ClosePdfLinkPreview) => {
                 self.link_preview = None;
                 self.link_preview_size = None;
                 Task::none()
             }
-            Message::PdfPageTextLoaded(generation, page, res) => {
+            Message::Pdf(PdfMessage::PageTextLoaded(generation, page, res)) => {
                 self.pending_text.remove(&page);
                 if generation == self.render_generation
                     && let Ok(page_text) = res
@@ -176,7 +176,7 @@ impl PdfPane {
                 }
                 Task::none()
             }
-            Message::PdfSelectionCleared => {
+            Message::Pdf(PdfMessage::SelectionCleared) => {
                 self.selection = None;
                 Task::none()
             }

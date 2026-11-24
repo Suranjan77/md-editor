@@ -3,7 +3,7 @@
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, VaultMessage};
 use crate::theme;
 use crate::views::link_note_picker;
 
@@ -58,11 +58,11 @@ pub fn view<'a>(
                     .color(theme::TEXT_MUTED),
                 row![
                     button(text("Cancel").size(theme::TEXT_BASE))
-                        .on_press(Message::NameModalCancel)
+                        .on_press(Message::Vault(VaultMessage::NameModalCancel))
                         .padding([theme::SPACE_3, theme::SPACE_6])
                         .style(button::text),
                     button(text("Delete").size(theme::TEXT_BASE))
-                        .on_press(Message::DeleteFile(path.clone()))
+                        .on_press(Message::Vault(VaultMessage::DeleteFile(path.clone())))
                         .padding([theme::SPACE_3, theme::SPACE_6])
                         .style(button::secondary),
                 ]
@@ -77,15 +77,17 @@ pub fn view<'a>(
             column![
                 text(title).size(theme::TEXT_LG).color(theme::TEXT_PRIMARY),
                 text_input("Enter name...", input_value)
-                    .on_input(Message::NameModalInputChanged)
+                    .on_input(|value| Message::Vault(VaultMessage::NameModalInputChanged(value)))
                     .padding(theme::SPACE_4),
                 row![
                     button(text("Cancel").size(theme::TEXT_BASE))
-                        .on_press(Message::NameModalCancel)
+                        .on_press(Message::Vault(VaultMessage::NameModalCancel))
                         .padding([theme::SPACE_3, theme::SPACE_6])
                         .style(button::text),
                     button(text("Confirm").size(theme::TEXT_BASE))
-                        .on_press(Message::NameModalSubmit(input_value.to_string())) // This needs a "Submit" message
+                        .on_press(Message::Vault(VaultMessage::NameModalSubmit(
+                            input_value.to_string()
+                        ))) // This needs a "Submit" message
                         .padding([theme::SPACE_3, theme::SPACE_6])
                         .style(button::primary),
                 ]

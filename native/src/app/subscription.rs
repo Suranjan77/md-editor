@@ -1,6 +1,9 @@
 //! Subscriptions: keyboard, timers, window events, pen input and the vault watcher.
 
 use super::*;
+use crate::messages::{
+    EditorMessage, GraphMessage, InkMessage, PdfMessage, SearchMessage, ShellMessage, VaultMessage,
+};
 
 impl MdEditor {
     pub fn subscription(&self) -> Subscription<Message> {
@@ -10,61 +13,18 @@ impl MdEditor {
         // context-sensitive messages below are gated in their own handlers
         // (e.g. PdfScrollBy only scrolls when the PDF pane is the active
         // target, NameModalSubmitCurrent is a no-op without an open modal).
-        let keyboard = iced::event::listen_with(|event, _status, _window_id| {
-            use iced::keyboard::Key;
-            use iced::keyboard::key::Named;
-
+        let keyboard = iced::event::listen_with(|event, status, _window_id| {
             let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) =
                 event
             else {
                 return None;
             };
-
-            if key == Key::Named(Named::Escape) {
-                return Some(Message::KeyboardShortcut(Shortcut::Escape));
-            }
-            if key == Key::Named(Named::Enter) {
-                return Some(Message::OverlaySubmitCurrent);
-            }
-            if (modifiers.command() || modifiers.control())
-                && let Key::Character(c) = key.as_ref()
-            {
-                return match c {
-                    "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
-                    "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
-                    "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
-                    "f" => Some(Message::KeyboardShortcut(Shortcut::Search)),
-                    "c" => Some(Message::PdfCopySelection),
-                    "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
-                    "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
-                    "g" => Some(Message::KeyboardShortcut(Shortcut::KnowledgeGraph)),
-                    "t" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
-                    "i" => Some(Message::InkToggle),
-                    // Undo/redo for the ink surface. These are no-ops while it
-                    // is hidden, and the listener does not capture the event,
-                    // so the editor's own handling of Ctrl+Z is unaffected.
-                    "z" => Some(Message::InkUndo),
-                    "y" => Some(Message::InkRedo),
-                    _ => None,
-                };
-            }
-            // Removes the ink selection; a no-op while the surface is hidden,
-            // and the listener does not capture, so the editor still sees the
-            // keystroke normally.
-            if key == Key::Named(Named::Delete) {
-                return Some(Message::InkDeleteSelection);
-            }
-            match key {
-                Key::Named(Named::ArrowDown) => Some(Message::PdfScrollBy(ARROW_SCROLL)),
-                Key::Named(Named::ArrowUp) => Some(Message::PdfScrollBy(-ARROW_SCROLL)),
-                Key::Named(Named::PageDown) => Some(Message::PdfScrollBy(520.0)),
-                Key::Named(Named::PageUp) => Some(Message::PdfScrollBy(-520.0)),
-                _ => None,
-            }
+            keyboard_message(&key, modifiers, status)
         });
 
         let toast = if self.ui.toast.is_some() {
-            iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::ToastHide)
+            iced::time::every(std::time::Duration::from_secs(3))
+                .map(|_| Message::Shell(ShellMessage::ToastHide))
         } else {
             Subscription::none()
         };
@@ -74,14 +34,15 @@ impl MdEditor {
         // independent of the last keystroke: polling at the debounce itself
         // would let a write land up to two windows after typing stopped.
         let autosave = if self.editor.autosave_pending_since.is_some() {
-            iced::time::every(crate::editor_state::AUTOSAVE_POLL).map(|_| Message::AutosaveElapsed)
+            iced::time::every(crate::editor_state::AUTOSAVE_POLL)
+                .map(|_| Message::Editor(EditorMessage::AutosaveElapsed))
         } else {
             Subscription::none()
         };
 
         let search_debounce = if self.search.pending_query_at.is_some() {
             iced::time::every(crate::search_state::SEARCH_DEBOUNCE)
-                .map(|_| Message::SearchDebounceElapsed)
+                .map(|_| Message::Search(SearchMessage::DebounceElapsed))
         } else {
             Subscription::none()
         };
@@ -89,7 +50,8 @@ impl MdEditor {
         // Vault writes and watcher notifications often arrive in bursts. Wait
         // briefly, then build one graph snapshot away from the UI thread.
         let graph_refresh = if self.graph.visible && self.graph.refresh_due() {
-            iced::time::every(std::time::Duration::from_millis(200)).map(|_| Message::GraphRefresh)
+            iced::time::every(std::time::Duration::from_millis(200))
+                .map(|_| Message::Graph(GraphMessage::Refresh))
         } else {
             Subscription::none()
         };
@@ -97,11 +59,11 @@ impl MdEditor {
         let mouse_drag = if self.ui.is_resizing_split {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
-                    Some(Message::SplitViewDragging(position.x))
+                    Some(Message::Shell(ShellMessage::SplitViewDragging(position.x)))
                 }
                 iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
                     iced::mouse::Button::Left,
-                )) => Some(Message::SplitViewDragEnd),
+                )) => Some(Message::Shell(ShellMessage::SplitViewDragEnd)),
                 _ => None,
             })
         } else {
@@ -109,26 +71,26 @@ impl MdEditor {
         };
 
         let window_events = iced::event::listen_with(|event, _status, window_id| match event {
-            iced::Event::Window(iced::window::Event::Resized(size)) => {
-                Some(Message::WindowResized(window_id, size.width, size.height))
-            }
+            iced::Event::Window(iced::window::Event::Resized(size)) => Some(Message::Shell(
+                ShellMessage::WindowResized(window_id, size.width, size.height),
+            )),
             // Captured so we can query the initial scale factor — a static
             // HiDPI monitor may never emit `Rescaled`.
             iced::Event::Window(iced::window::Event::Opened { .. }) => {
-                Some(Message::WindowOpened(window_id))
+                Some(Message::Shell(ShellMessage::WindowOpened(window_id)))
             }
             // A daemon keeps running with no windows, so closing has to be
             // handled explicitly or the process would linger invisibly.
             iced::Event::Window(iced::window::Event::Closed) => {
-                Some(Message::WindowClosed(window_id))
+                Some(Message::Shell(ShellMessage::WindowClosed(window_id)))
             }
-            iced::Event::Window(iced::window::Event::Rescaled(factor)) => {
-                Some(Message::WindowRescaled(window_id, factor))
-            }
+            iced::Event::Window(iced::window::Event::Rescaled(factor)) => Some(Message::Shell(
+                ShellMessage::WindowRescaled(window_id, factor),
+            )),
             // Intercepted rather than letting the window close directly, so the
             // last few hundred milliseconds of typing are written before exit.
             iced::Event::Window(iced::window::Event::CloseRequested) => {
-                Some(Message::WindowCloseRequested)
+                Some(Message::Shell(ShellMessage::WindowCloseRequested))
             }
             _ => None,
         });
@@ -144,14 +106,14 @@ impl MdEditor {
         // Redraw every frame only while something is actually moving; a
         // settled UI subscribes to nothing.
         let animation = if self.motion.is_animating() {
-            iced::window::frames().map(Message::AnimationTick)
+            iced::window::frames().map(|value| Message::Editor(EditorMessage::AnimationTick(value)))
         } else {
             Subscription::none()
         };
 
         let physics_tick = if self.graph.visible && self.graph.physics.running {
             iced::time::every(std::time::Duration::from_millis(33))
-                .map(|_| Message::GraphPhysicsTick)
+                .map(|_| Message::Graph(GraphMessage::PhysicsTick))
         } else {
             Subscription::none()
         };
@@ -161,7 +123,7 @@ impl MdEditor {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(
                     iced::mouse::Event::WheelScrolled { .. } | iced::mouse::Event::ButtonPressed(_),
-                ) => Some(Message::EditorScrollInterrupted),
+                ) => Some(Message::Editor(EditorMessage::ScrollInterrupted)),
                 _ => None,
             })
         } else {
@@ -198,7 +160,7 @@ impl MdEditor {
 pub(super) const VAULT_WATCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// Stream factory for [`iced::Subscription::run_with`]: watches `root`
-/// recursively and emits a debounced [`Message::VaultFilesChanged`] listing the
+/// recursively and emits a debounced [`VaultMessage::VaultFilesChanged`] listing the
 /// vault-relative paths that changed. Must be a plain `fn` (not a closure) to
 /// satisfy `run_with`; the root is threaded in via the `&String` argument.
 #[allow(clippy::ptr_arg)] // `run_with` passes its data back as `&String`
@@ -224,12 +186,12 @@ pub(super) fn vault_watch_stream(
             ) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("Failed to create vault watcher: {e}");
+                    log::warn!("Failed to create vault watcher: {e}");
                     return;
                 }
             };
             if let Err(e) = watcher.watch(&root_path, RecursiveMode::Recursive) {
-                eprintln!("Failed to watch vault root {}: {e}", root_path.display());
+                log::warn!("Failed to watch vault root {}: {e}", root_path.display());
                 return;
             }
             // Hold the watcher for the lifetime of this stream; dropping it stops
@@ -251,7 +213,7 @@ pub(super) fn vault_watch_stream(
                 if !changed.is_empty() {
                     let paths: Vec<String> = changed.into_iter().collect();
                     if output
-                        .send(Message::VaultFilesChanged(paths))
+                        .send(Message::Vault(VaultMessage::VaultFilesChanged(paths)))
                         .await
                         .is_err()
                     {
@@ -291,5 +253,65 @@ pub(super) fn collect_changed_paths(
             continue;
         }
         out.insert(rel.to_string_lossy().replace('\\', "/"));
+    }
+}
+
+/// The app-level message for a key press, or `None` for keys the app does not
+/// act on (ordinary text entry goes to the focused widget). `status` is
+/// whether a widget already captured the event.
+pub(super) fn keyboard_message(
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+    status: iced::event::Status,
+) -> Option<Message> {
+    use iced::keyboard::Key;
+    use iced::keyboard::key::Named;
+
+    if *key == Key::Named(Named::Escape) {
+        return Some(Message::KeyboardShortcut(Shortcut::Escape));
+    }
+    if *key == Key::Named(Named::Enter) {
+        return Some(Message::Shell(ShellMessage::OverlaySubmitCurrent));
+    }
+    if (modifiers.command() || modifiers.control())
+        && let Key::Character(c) = key.as_ref()
+    {
+        // A focused widget that acted on the chord (the editor's Ctrl+B
+        // bold, a text field's Ctrl+C) owns it; don't fire the app
+        // shortcut on top.
+        if status == iced::event::Status::Captured {
+            return None;
+        }
+        return match c {
+            "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
+            "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
+            "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
+            "f" => Some(Message::KeyboardShortcut(Shortcut::Search)),
+            "c" => Some(Message::Pdf(PdfMessage::CopySelection)),
+            "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
+            "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
+            "g" => Some(Message::KeyboardShortcut(Shortcut::KnowledgeGraph)),
+            "t" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
+            "i" => Some(Message::Ink(InkMessage::Toggle)),
+            // Undo/redo for the ink surface. These are no-ops while it
+            // is hidden, and the listener does not capture the event,
+            // so the editor's own handling of Ctrl+Z is unaffected.
+            "z" => Some(Message::Ink(InkMessage::Undo)),
+            "y" => Some(Message::Ink(InkMessage::Redo)),
+            _ => None,
+        };
+    }
+    // Removes the ink selection; a no-op while the surface is hidden,
+    // and the listener does not capture, so the editor still sees the
+    // keystroke normally.
+    if *key == Key::Named(Named::Delete) {
+        return Some(Message::Ink(InkMessage::DeleteSelection));
+    }
+    match key {
+        Key::Named(Named::ArrowDown) => Some(Message::Pdf(PdfMessage::ScrollBy(ARROW_SCROLL))),
+        Key::Named(Named::ArrowUp) => Some(Message::Pdf(PdfMessage::ScrollBy(-ARROW_SCROLL))),
+        Key::Named(Named::PageDown) => Some(Message::Pdf(PdfMessage::ScrollBy(520.0))),
+        Key::Named(Named::PageUp) => Some(Message::Pdf(PdfMessage::ScrollBy(-520.0))),
+        _ => None,
     }
 }

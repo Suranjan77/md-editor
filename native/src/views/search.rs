@@ -5,7 +5,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, PdfMessage, SearchMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -22,15 +22,15 @@ pub fn file_bar<'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     let search_input = text_input("Find in current file", query)
         .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
-        .on_input(Message::SearchQueryChanged)
-        .on_submit(Message::GlobalSearchSubmit)
-        .on_submit(Message::SearchNext)
+        .on_input(|value| Message::Search(SearchMessage::QueryChanged(value)))
+        .on_submit(Message::Search(SearchMessage::GlobalSearchSubmit))
+        .on_submit(Message::Search(SearchMessage::Next))
         .padding([theme::SPACE_3, theme::SPACE_4])
         .size(theme::TEXT_BASE)
         .width(Length::FillPortion(3));
 
     let replace_input = text_input("Replace", replace)
-        .on_input(Message::SearchReplaceChanged)
+        .on_input(|value| Message::Search(SearchMessage::ReplaceChanged(value)))
         .padding([theme::SPACE_3, theme::SPACE_4])
         .size(theme::TEXT_BASE)
         .width(Length::FillPortion(2));
@@ -41,23 +41,23 @@ pub fn file_bar<'a>(
             search_input,
             replace_input,
             button(text("Replace all").size(theme::TEXT_SM))
-                .on_press(Message::SearchReplaceAll)
+                .on_press(Message::Search(SearchMessage::ReplaceAll))
                 .padding([theme::SPACE_3, theme::SPACE_4])
                 .style(button::secondary),
             checkbox(regex)
                 .label("Regex")
-                .on_toggle(Message::SearchRegexToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::RegexToggled(value)))
                 .size(theme::TEXT_BASE),
             checkbox(match_case)
                 .label("Case")
-                .on_toggle(Message::SearchMatchCaseToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::MatchCaseToggled(value)))
                 .size(theme::TEXT_BASE),
             button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchPrevious)
+                .on_press(Message::Search(SearchMessage::Previous))
                 .padding(theme::SPACE_3)
                 .style(button::text),
             button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchNext)
+                .on_press(Message::Search(SearchMessage::Next))
                 .padding(theme::SPACE_3)
                 .style(button::text),
             text(match active_match_index {
@@ -68,7 +68,7 @@ pub fn file_bar<'a>(
             .size(theme::TEXT_SM)
             .color(theme::TEXT_MUTED),
             button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchClose)
+                .on_press(Message::Search(SearchMessage::Close))
                 .padding(theme::SPACE_3)
                 .style(button::text),
         ]
@@ -111,19 +111,19 @@ pub fn view<'a>(
 
     let search_input = text_input("Search document, vault, or PDF...", query)
         .id(iced::advanced::widget::Id::new(GLOBAL_SEARCH_INPUT_ID))
-        .on_input(Message::SearchQueryChanged)
+        .on_input(|value| Message::Search(SearchMessage::QueryChanged(value)))
         .padding([theme::SPACE_4, theme::SPACE_4])
         .size(theme::TEXT_MD)
         .width(Length::Fill);
 
     let replace_input = text_input("Replace in current markdown document...", replace)
-        .on_input(Message::SearchReplaceChanged)
+        .on_input(|value| Message::Search(SearchMessage::ReplaceChanged(value)))
         .padding([theme::SPACE_3, theme::SPACE_4])
         .size(theme::TEXT_BASE)
         .width(Length::Fill);
 
     let close_btn = button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
-        .on_press(Message::SearchClose)
+        .on_press(Message::Search(SearchMessage::Close))
         .padding(theme::SPACE_3)
         .style(button::text);
 
@@ -141,7 +141,7 @@ pub fn view<'a>(
         row![
             replace_input,
             button(text("Replace all").size(theme::TEXT_SM))
-                .on_press(Message::SearchReplaceAll)
+                .on_press(Message::Search(SearchMessage::ReplaceAll))
                 .padding([theme::SPACE_3, theme::SPACE_4])
                 .style(button::secondary),
         ]
@@ -150,11 +150,11 @@ pub fn view<'a>(
         row![
             checkbox(regex)
                 .label("Regex")
-                .on_toggle(Message::SearchRegexToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::RegexToggled(value)))
                 .size(theme::TEXT_BASE),
             checkbox(match_case)
                 .label("Match case")
-                .on_toggle(Message::SearchMatchCaseToggled)
+                .on_toggle(|value| Message::Search(SearchMessage::MatchCaseToggled(value)))
                 .size(theme::TEXT_BASE),
             text(format!(
                 "{} matches in current document",
@@ -182,7 +182,9 @@ pub fn view<'a>(
 
                 let item: iced::widget::Button<'_, Message, Theme, Renderer> =
                     button(column![path_text, context_text].spacing(theme::SPACE_1))
-                        .on_press(Message::SearchResultClicked(result.path.clone()))
+                        .on_press(Message::Search(SearchMessage::ResultClicked(
+                            result.path.clone(),
+                        )))
                         .padding([theme::SPACE_3, theme::SPACE_4])
                         .width(Length::Fill)
                         .style(button::text);
@@ -205,7 +207,9 @@ pub fn view<'a>(
                     ]
                     .spacing(theme::SPACE_1),
                 )
-                .on_press(Message::PdfSearchResultClicked(result.page_index))
+                .on_press(Message::Pdf(PdfMessage::SearchResultClicked(
+                    result.page_index,
+                )))
                 .padding([theme::SPACE_3, theme::SPACE_4])
                 .width(Length::Fill)
                 .style(button::text);

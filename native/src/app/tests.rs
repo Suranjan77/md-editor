@@ -1,6 +1,7 @@
 //! Tests for the app shell: link resolution, routing and document state.
 
 use super::*;
+use crate::messages::{EditorMessage, GraphMessage, PdfMessage};
 
 #[test]
 fn test_slugify_and_find_heading_line() {
@@ -297,15 +298,20 @@ fn editor_cursor_move_reclaims_active_panel_from_pdf() {
     let mut app = MdEditor::new_with_startup_file(None).0;
     app.pdf.render_generation = 8;
     app.search.pdf_error = Some("keep".to_string());
-    let _ = app.update_inner(Message::PdfSearchResult(7, Err("stale result".to_string())));
+    let _ = app.update_inner(Message::Pdf(PdfMessage::SearchResult(
+        7,
+        Err("stale result".to_string()),
+    )));
     assert_eq!(app.search.pdf_error.as_deref(), Some("keep"));
 
     app.active_panel = ActivePanel::Pdf;
-    let _ = app.update_inner(Message::EditorCommand(EditorCommand::SetCursor {
-        line: 0,
-        col: 0,
-        affinity: crate::editor::buffer::Affinity::Downstream,
-    }));
+    let _ = app.update_inner(Message::Editor(EditorMessage::Command(
+        EditorCommand::SetCursor {
+            line: 0,
+            col: 0,
+            affinity: crate::editor::buffer::Affinity::Downstream,
+        },
+    )));
     assert_eq!(app.active_panel, ActivePanel::Markdown);
 }
 
@@ -318,7 +324,7 @@ fn graph_toggle_and_escape_preserve_the_open_document_mode() {
         .set_snapshot(md_editor_core::types::GraphSnapshot::default());
     app.active_path = Some("notes/current.md".to_string());
 
-    let _ = app.update_inner(Message::GraphToggle);
+    let _ = app.update_inner(Message::Graph(GraphMessage::Toggle));
     assert!(app.graph.visible);
 
     let _ = app.update_inner(Message::KeyboardShortcut(Shortcut::Escape));
@@ -332,7 +338,7 @@ fn graph_shortcut_is_a_noop_without_a_vault() {
     app.vault.root = None;
     app.graph.visible = false;
 
-    let _ = app.update_inner(Message::GraphToggle);
+    let _ = app.update_inner(Message::Graph(GraphMessage::Toggle));
 
     assert!(!app.graph.visible);
     assert!(
@@ -348,7 +354,7 @@ fn stale_pdf_identity_result_cannot_attach_to_another_document() {
     app.pdf.active_path = Some("current.pdf".to_string());
     app.pdf.document_id = None;
 
-    let _ = app.update_inner(Message::PdfDocumentIdComputed(
+    let _ = app.update_inner(Message::Pdf(PdfMessage::DocumentIdComputed(
         7,
         Some((
             "current.pdf".to_string(),
@@ -356,10 +362,10 @@ fn stale_pdf_identity_result_cannot_attach_to_another_document() {
             10,
             Some(1),
         )),
-    ));
+    )));
     assert!(app.pdf.document_id.is_none());
 
-    let _ = app.update_inner(Message::PdfDocumentIdComputed(
+    let _ = app.update_inner(Message::Pdf(PdfMessage::DocumentIdComputed(
         8,
         Some((
             "other.pdf".to_string(),
@@ -367,6 +373,61 @@ fn stale_pdf_identity_result_cannot_attach_to_another_document() {
             10,
             Some(1),
         )),
-    ));
+    )));
     assert!(app.pdf.document_id.is_none());
+}
+
+#[test]
+fn ctrl_shortcuts_a_focused_widget_captured_do_not_fire_app_actions() {
+    use iced::event::Status;
+    use iced::keyboard::{Key, Modifiers};
+    let b = Key::Character("b".into());
+
+    // Ctrl+B in the editor is bold (captured): the sidebar must not toggle.
+    assert!(super::subscription::keyboard_message(&b, Modifiers::CTRL, Status::Captured).is_none());
+    // Nothing focused claimed it: the app shortcut runs.
+    assert!(matches!(
+        super::subscription::keyboard_message(&b, Modifiers::CTRL, Status::Ignored),
+        Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar))
+    ));
+    // Unmodified keys and Escape keep working regardless.
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Named(iced::keyboard::key::Named::Escape),
+            Modifiers::empty(),
+            Status::Captured
+        ),
+        Some(Message::KeyboardShortcut(Shortcut::Escape))
+    ));
+}
+
+#[test]
+fn literal_replace_all_inserts_dollar_signs_verbatim() {
+    let mut app = MdEditor::new_with_startup_file(None).0;
+    app.active_path = Some("prices.md".to_string());
+    app.editor.buffer = DocBuffer::from_text("price: PRICE");
+    app.search.query = "price".to_string();
+    app.search.replace = "$5".to_string();
+
+    // Plain text, either case mode: the replacement is text, not a template.
+    for match_case in [false, true] {
+        app.editor.buffer = DocBuffer::from_text("price: price");
+        app.search.match_case = match_case;
+        app.search.regex = false;
+        let (count, _) = app.replace_all_in_current_document().unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(
+            app.editor.buffer.text(),
+            "$5: $5",
+            "match_case={match_case}"
+        );
+    }
+
+    // Regex mode keeps capture-group expansion.
+    app.editor.buffer = DocBuffer::from_text("a1 b2");
+    app.search.regex = true;
+    app.search.query = r"([a-z])(\d)".to_string();
+    app.search.replace = "$2$1".to_string();
+    let _ = app.replace_all_in_current_document().unwrap();
+    assert_eq!(app.editor.buffer.text(), "1a 2b");
 }

@@ -1,0 +1,90 @@
+# Maintainer: Suranjan Poudel
+#
+# Builds the latest commit on `main`. Kept in sync with ../md-editor/PKGBUILD,
+# which builds tagged releases; the shared parts are identical.
+
+pkgname=md-editor-git
+_name=md-editor
+pkgver=r0
+pkgrel=1
+pkgdesc='Native, local-first workspace for Markdown notes, PDFs, presentations, a knowledge graph and handwriting'
+arch=('x86_64')
+url='https://github.com/Suranjan77/md-editor'
+# The app is GPL; the bundled PDFium library is BSD-3-Clause and Apache-2.0.
+license=('GPL-3.0-or-later' 'BSD-3-Clause' 'Apache-2.0')
+depends=('gcc-libs' 'glibc' 'hicolor-icon-theme' 'libxkbcommon' 'wayland')
+makedepends=('cargo' 'git' 'imagemagick')
+optdepends=(
+  'vulkan-icd-loader: GPU rendering (falls back to software rendering)'
+  'xdg-desktop-portal: file and folder pickers'
+  'libx11: X11 session support'
+  'libxcursor: X11 session support'
+  'libxrandr: X11 session support'
+  'libxi: X11 session support'
+)
+provides=("$_name")
+conflicts=("$_name")
+# makepkg's LTO turns C objects (ring, bundled SQLite) into GCC bitcode that
+# Rust's linker cannot read; Cargo's own `lto = "thin"` still applies.
+options=('!lto')
+# Must match DEFAULT_PDFIUM_RELEASE / pinned_sha256 in core/build_pdfium.rs.
+_pdfium=8165
+source=(
+  "$_name::git+$url.git"
+  "pdfium-linux-x64-$_pdfium.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F$_pdfium/pdfium-linux-x64.tgz"
+)
+noextract=("pdfium-linux-x64-$_pdfium.tgz")
+sha256sums=('SKIP'
+            'ba7865e16c0271daab75256790be06c26272190afe6e2a70eae0bb39bb99089c')
+
+pkgver() {
+  cd "$_name"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+_cargo_env() {
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  # The build script verifies this archive against its pinned checksum
+  # instead of downloading PDFium itself.
+  export PDFIUM_ARCHIVE="$srcdir/pdfium-linux-x64-$_pdfium.tgz"
+}
+
+build() {
+  cd "$_name"
+  _cargo_env
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_name"
+  _cargo_env
+  cargo test --frozen --release --workspace
+}
+
+package() {
+  cd "$_name"
+  install -Dm755 target/release/md-editor "$pkgdir/usr/bin/md-editor"
+  # Found by the app as <exe>/../lib/md-editor/ (core/src/pdf.rs::pdfium_candidates).
+  install -Dm755 target/release/libpdfium.so "$pkgdir/usr/lib/md-editor/libpdfium.so"
+
+  install -Dm644 packaging/arch/md-editor.desktop "$pkgdir/usr/share/applications/md-editor.desktop"
+  local size
+  for size in 16 24 32 48 64 128 256 512; do
+    install -d "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps"
+    magick md-editor.png -resize "${size}x${size}" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/md-editor.png"
+  done
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  local pdfium_dir=target/pdfium/linux-x64-chromium_$_pdfium
+  install -Dm644 "$pdfium_dir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/pdfium/LICENSE"
+  cp -r "$pdfium_dir/licenses" "$pkgdir/usr/share/licenses/$pkgname/pdfium/"
+  chmod -R u=rwX,go=rX "$pkgdir/usr/share/licenses/$pkgname/pdfium"
+}

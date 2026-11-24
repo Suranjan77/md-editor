@@ -546,3 +546,22 @@ fn password_load_error_is_distinct() {
         "Password required to open PDF"
     );
 }
+
+#[test]
+fn pdfium_candidates_prefer_the_installed_layout() {
+    let lib = Path::new("libpdfium.so");
+    let candidates = pdfium_candidates(Some(Path::new("/usr/bin")), lib);
+    assert_eq!(
+        candidates[0],
+        PathBuf::from("/usr/lib/md-editor/libpdfium.so")
+    );
+    assert_eq!(candidates[1], PathBuf::from("/usr/bin/libpdfium.so"));
+    assert_eq!(
+        candidates[2],
+        PathBuf::from("/usr/bin/resources/libpdfium.so")
+    );
+    assert!(candidates[3].ends_with("pdfium/libpdfium.so"));
+
+    // Without an executable path only the source-tree fallback remains.
+    assert_eq!(pdfium_candidates(None, lib).len(), 1);
+}

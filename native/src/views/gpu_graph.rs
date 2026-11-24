@@ -21,7 +21,7 @@ use iced::{Point, Rectangle, Vector, mouse};
 use bytemuck::{Pod, Zeroable};
 
 use crate::graph_state::{MAX_ZOOM, MIN_ZOOM};
-use crate::messages::Message;
+use crate::messages::{GraphMessage, Message};
 use crate::theme;
 use crate::views::graph::{
     GraphFrame, ViewTransform, distance, fit_transform, kind_color, node_magnitude,
@@ -497,11 +497,13 @@ impl shader::Program<Message> for GpuGraphProgram {
             state.gesture = None;
             // Publishing already schedules a redraw; no capture so a coincident
             // gesture on this same event still reaches the handlers below.
-            return Some(shader::Action::publish(Message::GraphSetView {
-                pan_x: fit.pan.x,
-                pan_y: fit.pan.y,
-                zoom: fit.zoom,
-            }));
+            return Some(shader::Action::publish(Message::Graph(
+                GraphMessage::SetView {
+                    pan_x: fit.pan.x,
+                    pan_y: fit.pan.y,
+                    zoom: fit.zoom,
+                },
+            )));
         }
 
         // Adopt a transform the app published (zoom buttons, reveal-in-graph).
@@ -534,8 +536,10 @@ impl shader::Program<Message> for GpuGraphProgram {
                         state.last_click = None;
                         state.gesture = None;
                         return Some(
-                            shader::Action::publish(Message::GraphNodeOpen(node.path.clone()))
-                                .and_capture(),
+                            shader::Action::publish(Message::Graph(GraphMessage::NodeOpen(
+                                node.path.clone(),
+                            )))
+                            .and_capture(),
                         );
                     }
                     state.last_click = Some((node.path.clone(), now));
@@ -548,9 +552,9 @@ impl shader::Program<Message> for GpuGraphProgram {
                         dragging: false,
                     });
                     Some(
-                        shader::Action::publish(Message::GraphNodeSelected(Some(
+                        shader::Action::publish(Message::Graph(GraphMessage::NodeSelected(Some(
                             node.path.clone(),
-                        )))
+                        ))))
                         .and_capture(),
                     )
                 } else {
@@ -559,7 +563,10 @@ impl shader::Program<Message> for GpuGraphProgram {
                         start: point,
                         initial_pan: transform.pan,
                     });
-                    Some(shader::Action::publish(Message::GraphNodeSelected(None)).and_capture())
+                    Some(
+                        shader::Action::publish(Message::Graph(GraphMessage::NodeSelected(None)))
+                            .and_capture(),
+                    )
                 }
             }
             // Right-click pins a node where it sits (or releases it) — the fast
@@ -569,7 +576,10 @@ impl shader::Program<Message> for GpuGraphProgram {
                 let point = cursor_pos?;
                 let index = self.hit_node(bounds, transform, point)?;
                 let path = self.frame.nodes()[index].path.clone();
-                Some(shader::Action::publish(Message::GraphPinToggled(path)).and_capture())
+                Some(
+                    shader::Action::publish(Message::Graph(GraphMessage::PinToggled(path)))
+                        .and_capture(),
+                )
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
                 let point = cursor_pos?;
@@ -585,11 +595,11 @@ impl shader::Program<Message> for GpuGraphProgram {
                     let pan = *initial_pan + (point - *start);
                     state.pan = pan;
                     Some(
-                        shader::Action::publish(Message::GraphSetView {
+                        shader::Action::publish(Message::Graph(GraphMessage::SetView {
                             pan_x: pan.x,
                             pan_y: pan.y,
                             zoom: state.zoom,
-                        })
+                        }))
                         .and_capture(),
                     )
                 }
@@ -609,11 +619,11 @@ impl shader::Program<Message> for GpuGraphProgram {
                     let world = screen_to_world(point, bounds, transform) - *grab_offset;
                     let path = path.clone();
                     Some(
-                        shader::Action::publish(Message::GraphNodeMoved {
+                        shader::Action::publish(Message::Graph(GraphMessage::NodeMoved {
                             path,
                             x: world.x,
                             y: world.y,
-                        })
+                        }))
                         .and_capture(),
                     )
                 }
@@ -626,7 +636,9 @@ impl shader::Program<Message> for GpuGraphProgram {
                         .hovered
                         .map(|index| self.frame.nodes()[index].path.clone());
                     if hovered != current {
-                        Some(shader::Action::publish(Message::GraphHovered(hovered)))
+                        Some(shader::Action::publish(Message::Graph(
+                            GraphMessage::Hovered(hovered),
+                        )))
                     } else {
                         None
                     }
@@ -652,11 +664,11 @@ impl shader::Program<Message> for GpuGraphProgram {
                 state.pan = zoomed.pan;
                 state.zoom = zoomed.zoom;
                 Some(
-                    shader::Action::publish(Message::GraphSetView {
+                    shader::Action::publish(Message::Graph(GraphMessage::SetView {
                         pan_x: zoomed.pan.x,
                         pan_y: zoomed.pan.y,
                         zoom: zoomed.zoom,
-                    })
+                    }))
                     .and_capture(),
                 )
             }

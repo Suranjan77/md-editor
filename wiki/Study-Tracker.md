@@ -2,7 +2,7 @@
 
 MD Editor ships an integrated study tracker: a timer, a session log, and a **configurable
 curriculum** of phases, projects, checkpoint gates, and reading lists. It lives inside the
-workspace, beside the notes and papers it is tracking, and its data is in the same portable
+workspace, beside the notes and papers it is tracking, and its data is in the same
 SQLite database as everything else.
 
 It is opened from the toolbar or from the command palette (`Ctrl+P` → *Study Tracker*), and
@@ -162,5 +162,5 @@ four collections.
   stored config before adopting it.
 - Opening the panel (`TrackerToggle`) reloads from disk, so an external edit to the database
   or a change made in another session is picked up.
-- Side effects that belong to the global UI are emitted as `Message::ShowToast` tasks rather
+- Side effects that belong to the global UI are emitted as `ShellMessage::ShowToast` tasks rather
   than reaching back into the shell — the tracker never touches another pane's state.

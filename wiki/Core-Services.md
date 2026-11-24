@@ -146,38 +146,37 @@ since that only runs for fresh databases.
 
 ---
 
-## 3. Zero-Configuration Portability (`state.rs`)
+## 3. Data Location (`state.rs`)
 
 ```mermaid
 flowchart TD
-    Start(["settings_db_path"]) --> ExeDir{"Is the executable's directory writable?"}
-    ExeDir -->|"yes — the default"| BesideExe["Use the directory beside the executable"]
-    ExeDir -->|"no — read-only install"| PlatformData["Use the per-user platform data directory"]
-    PlatformData --> HasPlatform{"Platform directory available?"}
-    HasPlatform -->|"no"| CurrentDir["Fall back to the current working directory"]
-    HasPlatform -->|"yes"| Chosen["Chosen directory"]
-    BesideExe --> Chosen
+    Start(["settings_db_path"]) --> Override{"MD_EDITOR_DATA_DIR or override_data_dir set?"}
+    Override -->|"yes"| Pinned["Use that directory; no migration"]
+    Override -->|"no"| Xdg{"XDG_DATA_HOME absolute?"}
+    Xdg -->|"yes"| XdgDir["$XDG_DATA_HOME/md-editor"]
+    Xdg -->|"no"| Home{"HOME set?"}
+    Home -->|"yes"| HomeDir["~/.local/share/md-editor"]
+    Home -->|"no"| CurrentDir["Current working directory"]
+    XdgDir --> Chosen["Chosen directory"]
+    HomeDir --> Chosen
     CurrentDir --> Chosen
 
     Chosen --> Exists{"Does a database already exist there?"}
     Exists -->|"yes"| OpenDB["Open the connection, apply WAL pragmas, init schema"]
-    Exists -->|"no"| Legacy{"Legacy database in the per-user directory?"}
-    Legacy -->|"yes"| Migrate["Copy the database plus -wal and -shm; leave the original in place"]
-    Legacy -->|"no"| InitFresh["Create a fresh schema"]
+    Exists -->|"no"| Portable{"Database beside the executable (old portable build)?"}
+    Portable -->|"yes"| Migrate["Copy the database plus -wal and -shm; leave the original in place"]
+    Portable -->|"no"| InitFresh["Create a fresh schema"]
     Migrate --> OpenDB
     InitFresh --> OpenDB
 ```
 
-- **Default portable location** — `current_exe().parent()`, tested for writability by
-  `is_writable_dir`.
-- **Read-only fallback** —
-  Linux `$XDG_DATA_HOME/md-editor/` or `~/.local/share/md-editor/`;
-  Windows `%APPDATA%\md-editor\`;
-  macOS `~/Library/Application Support/md-editor/`;
-  then the current working directory.
-- **One-time upstream migration** — the legacy file is *copied*, not moved, so an
-  interrupted migration cannot lose data. Its `-wal` and `-shm` sidecars come along so
-  not-yet-checkpointed writes survive.
+- **Data** — `data_dir()`: `$XDG_DATA_HOME/md-editor/`, default `~/.local/share/md-editor/`.
+  Relative `XDG_*` values are ignored, per the spec (`xdg_dir`).
+- **Log** — `log_dir()`: `$XDG_STATE_HOME/md-editor/`, default `~/.local/state/md-editor/`;
+  the override directory when one is set.
+- **One-time migration from portable** — `portable_db_path()` (beside the executable) is
+  *copied*, not moved, so an interrupted migration cannot lose data. Its `-wal` and `-shm`
+  sidecars come along so not-yet-checkpointed writes survive.
 
 ---
 
@@ -241,6 +240,9 @@ Details worth preserving:
    directory, so the rename can never cross a mount point, and the UUID means concurrent
    saves cannot collide.
 3. **Permission inheritance.** A note kept at `0600` does not come back world-readable.
+   A **read-only** note is refused outright ("… is read-only"): the rename would succeed in
+   a writable folder and silently replace a file the user protected. Autosave keeps the
+   edits in the buffer and reports the failure once.
 4. **Kernel flush before rename.** `sync_all()` on the file, then the rename, then a
    best-effort `sync_all()` on the parent directory so the *directory entry* survives power
    loss too.

@@ -10,7 +10,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Them
 
 use crate::ink::document::PaperStyle;
 use crate::ink::{COLOR_PRESETS, EraserMode, HIGHLIGHTER_SIZE_PRESETS, SIZE_PRESETS, Tool};
-use crate::messages::Message;
+use crate::messages::{InkMessage, Message};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -146,7 +146,7 @@ pub fn toolbar(state: ToolbarState<'_>) -> Element<'_, Message, Theme, Renderer>
                 },
                 ICON_SIZE,
             ))
-            .on_press(Message::InkToolSelected(value))
+            .on_press(Message::Ink(InkMessage::ToolSelected(value)))
             .padding(ICON_PADDING)
             .style(chip_style(selected)),
             hint,
@@ -169,7 +169,7 @@ pub fn toolbar(state: ToolbarState<'_>) -> Element<'_, Message, Theme, Renderer>
             } else {
                 theme::TEXT_SECONDARY
             }))
-            .on_press(Message::InkSizeSelected(preset))
+            .on_press(Message::Ink(InkMessage::SizeSelected(preset)))
             .padding([5, 7])
             .style(chip_style(selected)),
         );
@@ -186,7 +186,7 @@ pub fn toolbar(state: ToolbarState<'_>) -> Element<'_, Message, Theme, Renderer>
                 } else {
                     theme::TEXT_SECONDARY
                 }))
-                .on_press(Message::InkEraserModeSelected(value))
+                .on_press(Message::Ink(InkMessage::EraserModeSelected(value)))
                 .padding([5, 7])
                 .style(chip_style(selected)),
                 hint,
@@ -213,7 +213,7 @@ pub fn toolbar(state: ToolbarState<'_>) -> Element<'_, Message, Theme, Renderer>
             } else {
                 theme::TEXT_SECONDARY
             }))
-            .on_press(Message::InkPaperSelected(style))
+            .on_press(Message::Ink(InkMessage::PaperSelected(style)))
             .padding([5, 7])
             .style(chip_style(selected)),
         );
@@ -243,37 +243,65 @@ pub fn toolbar(state: ToolbarState<'_>) -> Element<'_, Message, Theme, Renderer>
         divider(),
         sizes,
         divider(),
-        icon_action(Icon::Undo, "Undo  Ctrl Z", Message::InkUndo, state.can_undo),
-        icon_action(Icon::Redo, "Redo  Ctrl Y", Message::InkRedo, state.can_redo),
+        icon_action(
+            Icon::Undo,
+            "Undo  Ctrl Z",
+            Message::Ink(InkMessage::Undo),
+            state.can_undo
+        ),
+        icon_action(
+            Icon::Redo,
+            "Redo  Ctrl Y",
+            Message::Ink(InkMessage::Redo),
+            state.can_redo
+        ),
         icon_action(
             Icon::Trash,
             "Delete selection  Del",
-            Message::InkDeleteSelection,
+            Message::Ink(InkMessage::DeleteSelection),
             state.has_selection
         ),
-        label_action("Clear", Message::InkClear, state.has_strokes),
+        label_action("Clear", Message::Ink(InkMessage::Clear), state.has_strokes),
         divider(),
         // Zoom lives in the toolbar because a pen has no scroll wheel.
-        label_action("−", Message::InkZoomStep(-2.0), state.zoom > 0.21),
+        label_action(
+            "−",
+            Message::Ink(InkMessage::ZoomStep(-2.0)),
+            state.zoom > 0.21
+        ),
         hinted(
             button(
                 text(format!("{:.0}%", state.zoom * 100.0))
                     .size(11)
                     .color(theme::TEXT_SECONDARY)
             )
-            .on_press(Message::InkResetView)
+            .on_press(Message::Ink(InkMessage::ResetView))
             .padding([6, 6])
             .style(chip_style(false)),
             "Reset to 100%",
         ),
-        label_action("+", Message::InkZoomStep(2.0), state.zoom < 7.9),
+        label_action(
+            "+",
+            Message::Ink(InkMessage::ZoomStep(2.0)),
+            state.zoom < 7.9
+        ),
         divider(),
         papers,
         Space::new().width(Length::Fill),
         status,
         text(label).size(11).color(theme::TEXT_MUTED),
-        icon_action(Icon::File, "Save  Ctrl S", Message::InkSave, true),
-        icon_action(Icon::X, "Close  Ctrl I", Message::InkToggle, true),
+        icon_action(
+            Icon::File,
+            "Save  Ctrl S",
+            Message::Ink(InkMessage::Save),
+            true
+        ),
+        icon_action(
+            Icon::X,
+            "Close  Ctrl I",
+            Message::Ink(InkMessage::Toggle),
+            true
+        ),
     ]
     .spacing(4)
     .align_y(Alignment::Center)
@@ -315,7 +343,7 @@ pub fn color_palette<'a>(active: Color) -> Element<'a, Message, Theme, Renderer>
                 .width(Length::Fixed(20.0))
                 .height(Length::Fixed(20.0)),
         )
-        .on_press(Message::InkColorSelected(preset))
+        .on_press(Message::Ink(InkMessage::ColorSelected(preset)))
         .padding(5)
         .style(move |_, _| button::Style {
             background: Some(Background::Color(preset)),

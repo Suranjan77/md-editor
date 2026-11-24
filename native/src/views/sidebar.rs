@@ -6,7 +6,7 @@ use iced::advanced::text::Wrapping;
 use iced::widget::{Column, Space, button, column, container, mouse_area, row, scrollable, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, VaultMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -29,17 +29,15 @@ fn render_tree_level<'a>(
             continue;
         }
 
-        let relative = if prefix.is_empty() {
-            &entry.path
-        } else {
-            entry
-                .path
-                .strip_prefix(prefix)
-                .unwrap()
-                .trim_start_matches('/')
+        // `starts_with` was checked above, so the prefix always strips.
+        let Some(relative) = entry.path.strip_prefix(prefix) else {
+            continue;
         };
+        let relative = relative.trim_start_matches('/');
 
-        let first_part = relative.split('/').next().unwrap();
+        let first_part = relative
+            .split_once('/')
+            .map_or(relative, |(first, _)| first);
         if seen.contains(first_part) {
             continue;
         }
@@ -121,9 +119,9 @@ fn render_tree_level<'a>(
         .align_y(Alignment::Center);
 
         let msg = if is_dir {
-            Message::SidebarFolderToggled(path.clone())
+            Message::Vault(VaultMessage::SidebarFolderToggled(path.clone()))
         } else {
-            Message::SidebarFileClicked(path.clone())
+            Message::Vault(VaultMessage::SidebarFileClicked(path.clone()))
         };
 
         // The selected row keeps a faint wash so it's clear where new entries
@@ -168,13 +166,15 @@ fn render_tree_level<'a>(
         if is_selected {
             item = item.push(
                 button(text("✎").size(theme::TEXT_MD).color(theme::TEXT_MUTED))
-                    .on_press(Message::RenameEntryDialog(path.clone()))
+                    .on_press(Message::Vault(VaultMessage::RenameEntryDialog(
+                        path.clone(),
+                    )))
                     .padding(theme::SPACE_2)
                     .style(button::text),
             );
             item = item.push(
                 button(icons::view(Icon::Trash, theme::DANGER, 13.0))
-                    .on_press(Message::DeleteFileDialog(path.clone()))
+                    .on_press(Message::Vault(VaultMessage::DeleteFileDialog(path.clone())))
                     .padding(theme::SPACE_2)
                     .style(button::text),
             );
@@ -217,15 +217,15 @@ pub fn view<'a>(
             .font(iced::Font::default()),
         Space::new().width(Length::Fill),
         button(icons::view(Icon::FolderOpen, theme::TEXT_MUTED, 16.0))
-            .on_press(Message::OpenVaultDialog)
+            .on_press(Message::Vault(VaultMessage::OpenVaultDialog))
             .padding(theme::SPACE_3)
             .style(button::text),
         button(icons::view(Icon::FileText, theme::TEXT_MUTED, 16.0))
-            .on_press(Message::CreateFileDialog)
+            .on_press(Message::Vault(VaultMessage::CreateFileDialog))
             .padding(theme::SPACE_3)
             .style(button::text),
         button(icons::view(Icon::Folder, theme::TEXT_MUTED, 16.0))
-            .on_press(Message::CreateFolderDialog)
+            .on_press(Message::Vault(VaultMessage::CreateFolderDialog))
             .padding(theme::SPACE_3)
             .style(button::text),
     ]
@@ -250,7 +250,7 @@ pub fn view<'a>(
             .padding([theme::SPACE_0, theme::SPACE_3])
             .height(Length::Fill)
         )
-        .on_press(Message::SidebarSelectionCleared)
+        .on_press(Message::Vault(VaultMessage::SidebarSelectionCleared))
     ]
     .width(Length::Fixed(260.0));
 

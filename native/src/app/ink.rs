@@ -1,30 +1,31 @@
 //! Handwritten notes: the ink window, pen and pointer input, tools and saving pages.
 
 use super::*;
+use crate::messages::InkMessage;
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_ink(&mut self, message: Message) -> Task<Message> {
+    pub(super) fn update_ink(&mut self, message: InkMessage) -> Task<Message> {
         match message {
             // ── Ink (handwritten notes) ──────────────────────────
-            Message::InkPenHookReady(raw_window_id) => {
+            InkMessage::PenHookReady(raw_window_id) => {
                 if let Err(e) = crate::ink::pen::install(raw_window_id) {
                     // Not fatal: the surface still works with a mouse.
-                    eprintln!("Pen input unavailable: {e}");
+                    log::warn!("Pen input unavailable: {e}");
                 }
                 Task::none()
             }
-            Message::InkToggle => match self.ink_window {
+            InkMessage::Toggle => match self.ink_window {
                 // Already open: closing the window tears down the surface via
                 // the close event, so there is one path for both routes out.
                 Some(id) => iced::window::close(id),
                 None => self.open_ink_window(),
             },
-            Message::InkPenSamples(samples) => {
+            InkMessage::PenSamples(samples) => {
                 self.ink.apply_samples(&samples, self.ui.scale_factor);
                 Task::none()
             }
-            Message::InkPointerDown(x, y) => {
+            InkMessage::PointerDown(x, y) => {
                 // Mouse fallback: no pressure, so use a fixed mid-weight.
                 self.ink.begin(
                     crate::ink::stroke::Vec2::new(x, y),
@@ -33,22 +34,22 @@ impl MdEditor {
                 );
                 Task::none()
             }
-            Message::InkPointerMove(x, y) => {
+            InkMessage::PointerMove(x, y) => {
                 self.ink.extend(
                     crate::ink::stroke::Vec2::new(x, y),
                     crate::ink::canvas::MOUSE_PRESSURE,
                 );
                 Task::none()
             }
-            Message::InkPointerUp => {
+            InkMessage::PointerUp => {
                 self.ink.finish();
                 Task::none()
             }
-            Message::InkHoverMoved(x, y) => {
+            InkMessage::HoverMoved(x, y) => {
                 self.ink.set_hover(crate::ink::stroke::Vec2::new(x, y));
                 Task::none()
             }
-            Message::InkToolSelected(tool) => {
+            InkMessage::ToolSelected(tool) => {
                 if self.ink.tool != tool {
                     // Leaving the lasso behind should not leave a selection
                     // highlighted with no way to act on it.
@@ -59,17 +60,17 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::InkEraserModeSelected(mode) => {
+            InkMessage::EraserModeSelected(mode) => {
                 self.ink.eraser_mode = mode;
                 Task::none()
             }
-            Message::InkPaperSelected(paper) => {
+            InkMessage::PaperSelected(paper) => {
                 self.ink.set_paper(paper);
                 Task::none()
             }
             // Colour and width belong to the active tool: switching to the
             // highlighter and back must not clobber the pen's settings.
-            Message::InkColorSelected(color) => {
+            InkMessage::ColorSelected(color) => {
                 if self.ink.tool == crate::ink::Tool::Highlighter {
                     self.ink.highlighter_color = color;
                 } else {
@@ -77,7 +78,7 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::InkSizeSelected(size) => {
+            InkMessage::SizeSelected(size) => {
                 if self.ink.tool == crate::ink::Tool::Highlighter {
                     self.ink.highlighter_size = size;
                 } else {
@@ -85,24 +86,24 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::InkPan { dx, dy } => {
+            InkMessage::Pan { dx, dy } => {
                 self.ink.pan_by(crate::ink::stroke::Vec2::new(dx, dy));
                 Task::none()
             }
-            Message::InkZoom { x, y, notches } => {
+            InkMessage::Zoom { x, y, notches } => {
                 self.ink
                     .zoom_by_wheel(crate::ink::stroke::Vec2::new(x, y), notches);
                 Task::none()
             }
-            Message::InkZoomStep(notches) => {
+            InkMessage::ZoomStep(notches) => {
                 self.ink.zoom_step(notches);
                 Task::none()
             }
-            Message::InkResetView => {
+            InkMessage::ResetView => {
                 self.ink.reset_view();
                 Task::none()
             }
-            Message::InkDeleteSelection => {
+            InkMessage::DeleteSelection => {
                 if self.ink.is_visible() {
                     self.ink.delete_selection();
                 }
@@ -110,24 +111,24 @@ impl MdEditor {
             }
             // Guarded so the shared Ctrl+Z / Ctrl+Y bindings only reach the ink
             // surface while it is the one on screen.
-            Message::InkUndo => {
+            InkMessage::Undo => {
                 if self.ink.is_visible() {
                     self.ink.undo();
                 }
                 Task::none()
             }
-            Message::InkRedo => {
+            InkMessage::Redo => {
                 if self.ink.is_visible() {
                     self.ink.redo();
                 }
                 Task::none()
             }
-            Message::InkClear => {
+            InkMessage::Clear => {
                 self.ink.clear();
                 Task::none()
             }
-            Message::InkSave => self.save_ink_page(),
-            Message::InkSaved(result) => {
+            InkMessage::Save => self.save_ink_page(),
+            InkMessage::Saved(result) => {
                 match result {
                     Ok(path) => {
                         self.ink.dirty = false;
@@ -137,8 +138,6 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
     }
 
@@ -186,9 +185,9 @@ impl MdEditor {
     /// save from the note being annotated, or the date when none is open.
     pub(super) fn save_ink_page(&mut self) -> Task<Message> {
         let Some(root) = self.vault.root.clone() else {
-            return Task::done(Message::InkSaved(Err(
+            return Task::done(Message::Ink(InkMessage::Saved(Err(
                 "Open a vault before saving handwritten notes".to_string(),
-            )));
+            ))));
         };
 
         let path = match self.ink.path.clone() {
@@ -202,7 +201,7 @@ impl MdEditor {
         };
 
         let result = crate::ink::save_to_vault(&root, &path, &self.ink.document).map(|()| path);
-        Task::done(Message::InkSaved(result))
+        Task::done(Message::Ink(InkMessage::Saved(result)))
     }
 }
 

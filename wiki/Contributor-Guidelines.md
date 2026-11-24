@@ -147,21 +147,21 @@ would have gone there goes here instead.
 
 ## 4. Pre-Pull-Request Verification
 
-CI builds and packages, but does **not** run the tests or the lints. Run them locally:
+CI (`.github/workflows/ci.yml`) runs the same gate on every pull request; run it locally
+first:
 
 ```bash
 cargo fmt --check
 cargo check --workspace
 cargo test --workspace           # must pass in full
-cargo clippy --workspace
+scripts/clippy-ratchet.sh        # clippy count must equal clippy-baseline.txt
 ```
 
-`cargo fmt --check` and `cargo test` must pass cleanly.
-
-**Clippy is not yet warning-clean**: the tree currently carries 10 warnings (2 in core, 8 in
-native), mostly `too_many_arguments` in view functions. The editor is warning-clean. So
-`-D warnings` does not pass on a fresh checkout. The rule is therefore *do not add new ones*:
-compare the count before and after your change, and fix any warning your own code introduces.
+`cargo fmt --check` and `cargo test` must pass cleanly. Clippy carries a small baseline of
+`too_many_arguments` warnings on view builders (to be removed with `…Props` structs), so
+`-D warnings` does not pass yet. The ratchet fails if your change adds a warning; if your
+change removes some, lower the baseline with `scripts/clippy-ratchet.sh --update` and
+commit it. Log with `log::{info, warn, error}`, never `println!`/`eprintln!`.
 
 Then, if your change touches saving, navigation, animation, or the PDF pane, walk the
 relevant items in the [Release Checklist](Release-Checklist.md) — particularly the durability

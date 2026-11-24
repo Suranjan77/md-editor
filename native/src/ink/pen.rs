@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::messages::Message;
+use crate::messages::{InkMessage, Message};
 
 /// Where a sample sits in a stroke's lifecycle.
 #[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
@@ -158,7 +158,11 @@ pub fn stream() -> std::pin::Pin<Box<dyn iced::futures::Stream<Item = Message> +
                     batch.push(next);
                 }
 
-                if output.send(Message::InkPenSamples(batch)).await.is_err() {
+                if output
+                    .send(Message::Ink(InkMessage::PenSamples(batch)))
+                    .await
+                    .is_err()
+                {
                     break; // subscription dropped
                 }
             }

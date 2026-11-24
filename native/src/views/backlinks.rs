@@ -3,7 +3,7 @@
 use iced::widget::{Column, button, column, container, scrollable, text};
 use iced::{Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, PdfMessage, VaultMessage};
 use crate::theme;
 
 /// Render the backlinks panel.
@@ -35,20 +35,20 @@ pub fn view<'a>(
             .fold(Column::new().spacing(theme::SPACE_3), |col, item| {
                 let msg = match &item.source {
                     md_editor_core::types::BacklinkTarget::MarkdownFile { path } => {
-                        Message::SidebarFileClicked(path.clone())
+                        Message::Vault(VaultMessage::SidebarFileClicked(path.clone()))
                     }
                     md_editor_core::types::BacklinkTarget::PdfDocument { path } => {
-                        Message::SidebarFileClicked(path.clone())
+                        Message::Vault(VaultMessage::SidebarFileClicked(path.clone()))
                     }
                     md_editor_core::types::BacklinkTarget::PdfAnnotation {
                         document_path,
                         annotation_id,
                         page,
-                    } => Message::PdfAnnotationFocused {
+                    } => Message::Pdf(PdfMessage::AnnotationFocused {
                         document_path: document_path.clone(),
                         annotation_id: annotation_id.clone(),
                         page: *page,
-                    },
+                    }),
                 };
 
                 let mut btn_content = column![

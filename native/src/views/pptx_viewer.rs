@@ -10,7 +10,7 @@ use std::sync::Arc;
 use iced::widget::{Space, button, canvas, column, container, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{Message, ShellMessage};
 use crate::pptx_pane::PptxPane;
 use crate::slides::LoadedDeck;
 use crate::slides::draw::{SlideLayer, SlidePart};
@@ -192,10 +192,12 @@ fn slide_list<'a>(
         scrollable(content)
             .id(iced::advanced::widget::Id::new(PPTX_SCROLLABLE_ID))
             .direction(direction)
-            .on_scroll(|viewport| Message::PptxScrolled {
-                x: viewport.absolute_offset().x,
-                y: viewport.absolute_offset().y,
-                viewport_height: viewport.bounds().height,
+            .on_scroll(|viewport| {
+                Message::Shell(ShellMessage::PptxScrolled {
+                    x: viewport.absolute_offset().x,
+                    y: viewport.absolute_offset().y,
+                    viewport_height: viewport.bounds().height,
+                })
             })
             .width(Length::Fill)
             .height(Length::Fill),
@@ -228,28 +230,30 @@ fn toolbar<'a>(
     container(
         row![
             button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
-                .on_press_maybe((current > 0).then_some(Message::PptxStep(-1)))
+                .on_press_maybe((current > 0).then_some(Message::Shell(ShellMessage::PptxStep(-1))))
                 .padding(theme::SPACE_3)
                 .style(button::text),
             text(position)
                 .size(theme::TEXT_SM)
                 .color(theme::TEXT_SECONDARY),
             button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
-                .on_press_maybe((current + 1 < count).then_some(Message::PptxStep(1)))
+                .on_press_maybe(
+                    (current + 1 < count).then_some(Message::Shell(ShellMessage::PptxStep(1)))
+                )
                 .padding(theme::SPACE_3)
                 .style(button::text),
             Space::new().width(Length::Fill),
             button(text("-").size(theme::TEXT_MD))
-                .on_press(Message::PptxZoomOut)
+                .on_press(Message::Shell(ShellMessage::PptxZoomOut))
                 .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
             text(zoom).size(theme::TEXT_SM).color(theme::TEXT_MUTED),
             button(text("+").size(theme::TEXT_MD))
-                .on_press(Message::PptxZoomIn)
+                .on_press(Message::Shell(ShellMessage::PptxZoomIn))
                 .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
             button(text("Fit").size(theme::TEXT_SM))
-                .on_press(Message::PptxZoomFit)
+                .on_press(Message::Shell(ShellMessage::PptxZoomFit))
                 .padding([theme::SPACE_2, theme::SPACE_4])
                 .style(button::text),
         ]

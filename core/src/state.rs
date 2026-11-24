@@ -17,6 +17,7 @@ use crate::pdf::{
 
 /// Application-wide shared state.
 /// Wrap in `Arc<AppState>` when sharing across threads.
+#[derive(Debug)]
 pub struct AppState {
     pub vault_root: Mutex<Option<PathBuf>>,
     pub file_index: Mutex<FileIndex>,
@@ -448,7 +449,7 @@ impl AppState {
                 updated_at = excluded.updated_at",
             rusqlite::params![storage_document_id, json, now],
         ) {
-            eprintln!("Failed to cache PDF references for {document_id}: {e}");
+            log::warn!("Failed to cache PDF references for {document_id}: {e}");
         }
     }
 
@@ -553,7 +554,7 @@ impl AppState {
                 content = excluded.content",
             rusqlite::params![key, file_size as i64, modified_at, content],
         ) {
-            eprintln!("Failed to cache PDF text for {key}: {e}");
+            log::warn!("Failed to cache PDF text for {key}: {e}");
         }
     }
 
@@ -605,8 +606,8 @@ impl AppState {
             let created_at: i64 = row.get(11).map_err(|e| e.to_string())?;
             let updated_at: i64 = row.get(12).map_err(|e| e.to_string())?;
 
-            let kind = PdfAnnotationKind::from_str(&kind_str)?;
-            let color = PdfAnnotationColor::from_str(&color_str)?;
+            let kind = PdfAnnotationKind::parse(&kind_str)?;
+            let color = PdfAnnotationColor::parse(&color_str)?;
             let ranges: Vec<PdfTextRange> = serde_json::from_str(&ranges_json)
                 .map_err(|e| format!("Failed to parse ranges JSON: {e}"))?;
             let rects: Vec<PdfRect> = serde_json::from_str(&rects_json)
@@ -775,7 +776,7 @@ fn quarantine_database(path: &Path) -> std::io::Result<PathBuf> {
         if original_sidecar.exists() {
             let backup_sidecar = sidecar(&backup, sidecar_suffix);
             if let Err(error) = std::fs::rename(&original_sidecar, &backup_sidecar) {
-                eprintln!(
+                log::warn!(
                     "Failed to preserve settings database sidecar {}: {error}",
                     original_sidecar.display()
                 );
@@ -788,21 +789,21 @@ fn quarantine_database(path: &Path) -> std::io::Result<PathBuf> {
 pub fn settings_db_path() -> PathBuf {
     let mut dir = data_dir();
     if let Err(err) = std::fs::create_dir_all(&dir) {
-        eprintln!("Failed to create data directory {}: {err}", dir.display());
+        log::warn!("Failed to create data directory {}: {err}", dir.display());
         return PathBuf::from(DB_FILE_NAME);
     }
     dir.push(DB_FILE_NAME);
 
-    // One-time migration: an interim version stored the database in the per-user
-    // platform data directory. If the portable location (beside the executable)
-    // has no database yet but that one does, copy it back so users keep their
-    // settings and study history.
+    // One-time migration: earlier, portable builds kept the database beside
+    // the executable. If the per-user location has no database yet but that
+    // one does, copy it over so users keep their settings, highlights and
+    // study history.
     if !dir.exists()
         && data_dir_override().is_none()
-        && let Some(other) = platform_data_db_path()
-        && other != dir
+        && let Some(portable) = portable_db_path()
+        && portable != dir
     {
-        migrate_legacy_db(&other, &dir);
+        migrate_legacy_db(&portable, &dir);
     }
 
     dir
@@ -825,10 +826,9 @@ pub fn persisted_window_size() -> Option<(f32, f32)> {
     (width >= 640.0 && height >= 480.0).then_some((width, height))
 }
 
-/// Database location used by the interim version that stored it in the per-user
-/// platform data directory.
-fn platform_data_db_path() -> Option<PathBuf> {
-    Some(platform_data_home()?.join("md-editor").join(DB_FILE_NAME))
+/// Where portable builds kept the database: beside the executable.
+fn portable_db_path() -> Option<PathBuf> {
+    Some(std::env::current_exe().ok()?.parent()?.join(DB_FILE_NAME))
 }
 
 /// Copy a legacy database (and its WAL sidecars, if any) to `new_path` when the
@@ -839,7 +839,7 @@ fn migrate_legacy_db(legacy: &Path, new_path: &Path) {
         return;
     }
     if let Err(e) = std::fs::copy(legacy, new_path) {
-        eprintln!("Failed to migrate legacy settings database: {e}");
+        log::warn!("Failed to migrate legacy settings database: {e}");
         return;
     }
     // Best-effort: bring along WAL/SHM sidecars so any not-yet-checkpointed
@@ -850,7 +850,7 @@ fn migrate_legacy_db(legacy: &Path, new_path: &Path) {
             let _ = std::fs::copy(&from, sidecar(new_path, suffix));
         }
     }
-    eprintln!(
+    log::info!(
         "Migrated settings database from {} to {}",
         legacy.display(),
         new_path.display()
@@ -863,16 +863,8 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Directory holding the settings database.
-///
-/// Portability is a core promise, so the database lives **beside the
-/// executable** by default and the whole app travels as one folder. Only when
-/// that directory is not writable — e.g. a read-only system install — does it
-/// fall back to the per-user platform data directory (`%APPDATA%`,
-/// `~/Library/Application Support`, or `$XDG_DATA_HOME`/`~/.local/share`), and
-/// finally the current directory.
-/// Overrides the data directory, and disables migration from the legacy
-/// per-user location. Used by headless end-to-end tests so a run never reads
+/// Overrides the data directory (database and log), and disables migration
+/// from the portable location. Used by headless end-to-end tests so a run never reads
 /// or copies the user's real settings; also handy for a throwaway profile.
 pub const DATA_DIR_ENV: &str = "MD_EDITOR_DATA_DIR";
 
@@ -886,6 +878,11 @@ pub fn override_data_dir(dir: PathBuf) -> bool {
 }
 
 fn data_dir_override() -> Option<PathBuf> {
+    // Core's own tests never reach the user's real data directory.
+    #[cfg(test)]
+    DATA_DIR_OVERRIDE.get_or_init(|| {
+        std::env::temp_dir().join(format!("md-editor-core-test-data-{}", std::process::id()))
+    });
     DATA_DIR_OVERRIDE.get().cloned().or_else(|| {
         std::env::var_os(DATA_DIR_ENV)
             .filter(|dir| !dir.is_empty())
@@ -893,59 +890,53 @@ fn data_dir_override() -> Option<PathBuf> {
     })
 }
 
-fn data_dir() -> PathBuf {
+/// Directory holding the settings database: [`DATA_DIR_ENV`] if set, else
+/// `$XDG_DATA_HOME/md-editor` (default `~/.local/share/md-editor`), else the
+/// current directory.
+pub fn data_dir() -> PathBuf {
     if let Some(dir) = data_dir_override() {
         return dir;
     }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        if is_writable_dir(dir) {
-            return dir.to_path_buf();
-        }
-        if let Some(base) = platform_data_home() {
-            return base.join("md-editor");
-        }
-        return dir.to_path_buf();
-    }
-    if let Some(base) = platform_data_home() {
-        return base.join("md-editor");
-    }
-    PathBuf::from(".")
+    xdg_dir(
+        std::env::var_os("XDG_DATA_HOME"),
+        std::env::var_os("HOME"),
+        ".local/share",
+    )
+    .map_or_else(|| PathBuf::from("."), |base| base.join(APP_DIR_NAME))
 }
 
-/// Best-effort writability probe: create and delete a temp file in `dir`. Used
-/// to decide whether the portable, exe-adjacent location can hold the database
-/// before falling back to a per-user directory.
-fn is_writable_dir(dir: &Path) -> bool {
-    let probe = dir.join(".md_editor_write_test");
-    match std::fs::File::create(&probe) {
-        Ok(_) => {
-            let _ = std::fs::remove_file(&probe);
-            true
-        }
-        Err(_) => false,
+/// Directory holding `md-editor.log`: the data directory when
+/// [`DATA_DIR_ENV`] overrides it (so a throwaway profile stays in one place),
+/// else `$XDG_STATE_HOME/md-editor` (default `~/.local/state/md-editor`).
+pub fn log_dir() -> PathBuf {
+    if let Some(dir) = data_dir_override() {
+        return dir;
     }
+    xdg_dir(
+        std::env::var_os("XDG_STATE_HOME"),
+        std::env::var_os("HOME"),
+        ".local/state",
+    )
+    .map_or_else(data_dir, |base| base.join(APP_DIR_NAME))
 }
 
-fn platform_data_home() -> Option<PathBuf> {
-    if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|home| {
-            PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
+const APP_DIR_NAME: &str = "md-editor";
+
+/// Resolve an XDG base directory: the variable's value when it is an absolute
+/// path (the spec says relative values must be ignored), else
+/// `$HOME/<default_rel>`.
+fn xdg_dir(
+    var: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+    default_rel: &str,
+) -> Option<PathBuf> {
+    var.map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            home.map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .map(|home| home.join(default_rel))
         })
-    } else if cfg!(target_os = "windows") {
-        std::env::var_os("APPDATA").map(PathBuf::from)
-    } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(|home| PathBuf::from(home).join(".local").join("share"))
-            })
-    }
 }
 
 #[cfg(test)]

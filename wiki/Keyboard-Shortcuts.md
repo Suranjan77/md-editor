@@ -23,10 +23,10 @@ On macOS, `Cmd` works everywhere `Ctrl` does — both layers test
 | `Ctrl+N` | New file |
 | `Ctrl+S` | Save the active note immediately, with a confirming toast; saves the ink page instead while the handwriting canvas is in front |
 | `Ctrl+F` | Search — routed to the active pane, see below |
-| `Ctrl+B` | Toggle the sidebar |
+| `Ctrl+B` | Toggle the sidebar (bold instead while the editor has focus) |
 | `Ctrl+T` | Toggle the table of contents |
 | `Ctrl+G` | Open the knowledge graph |
-| `Ctrl+I` | Open or close the handwriting canvas |
+| `Ctrl+I` | Open or close the handwriting canvas (italic instead while the editor has focus) |
 | `Ctrl+C` | Copy the PDF text selection, when the PDF pane holds one |
 | `Escape` | Close the topmost overlay, in priority order |
 | `Enter` | Run the palette's highlighted row; submit global search; open the node selected in the knowledge graph; otherwise submit the open name modal |
@@ -62,7 +62,7 @@ Active only while the markdown editor has focus.
 | Shortcut | Action |
 | :--- | :--- |
 | `Ctrl+Z` | Undo one word-sized run |
-| `Ctrl+Y` | Redo |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
 | `Ctrl+A` | Select the whole document |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
 | `Ctrl+B` | Toggle **bold** around the selection |
@@ -76,10 +76,12 @@ Active only while the markdown editor has focus.
 | `Home` / `End` | Start / end of line; hold `Shift` to extend |
 | `Ctrl` + click | Follow a link, including a `pdf://` deep link |
 
-> **`Ctrl+B` is bound on both layers.** With the editor focused it also formats the
-> selection bold; the sidebar toggle fires regardless.
->
-> **`Ctrl+Y` is the only redo binding.** `Ctrl+Shift+Z` is not bound.
+> **The focused editor wins.** Chords the editor acts on (`Ctrl+Z/Y/A/B/I/E/K/C/X/V`) are
+> captured by it, so the app-wide meaning of the same chord does not also fire: `Ctrl+B`
+> formats bold without toggling the sidebar, `Ctrl+I` formats italic without opening the
+> handwriting canvas. Click outside the editor, or use the command palette, for the app
+> action. Chords the editor does not bind (`Ctrl+S`, `Ctrl+F`, `Ctrl+P`, …) always reach the
+> app (`app/subscription.rs::keyboard_message`).
 
 ---
 

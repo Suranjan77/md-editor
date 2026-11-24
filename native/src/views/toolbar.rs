@@ -3,7 +3,9 @@
 use iced::widget::{Button, Space, button, container, row, text, tooltip};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
+use crate::messages::{
+    EditorMessage, GraphMessage, InkMessage, Message, SearchMessage, ShellMessage, VaultMessage,
+};
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
@@ -30,7 +32,7 @@ pub fn view<'a>(
         },
         18.0,
     ))
-    .on_press(Message::SidebarToggle)
+    .on_press(Message::Vault(VaultMessage::SidebarToggle))
     .padding(theme::SPACE_3)
     .style(button::text);
 
@@ -68,7 +70,7 @@ pub fn view<'a>(
             },
             18.0,
         ))
-        .on_press(Message::SplitViewToggle)
+        .on_press(Message::Shell(ShellMessage::SplitViewToggle))
         .padding(theme::SPACE_3)
         .style(button::text)
         .into()
@@ -86,7 +88,7 @@ pub fn view<'a>(
             },
             18.0,
         ))
-        .on_press(Message::ToggleTOC)
+        .on_press(Message::Editor(EditorMessage::ToggleTOC))
         .padding(theme::SPACE_3)
         .style(button::text)
         .into()
@@ -96,11 +98,11 @@ pub fn view<'a>(
 
     let actions = row![
         button(icons::view(Icon::Search, theme::TEXT_MUTED, 18.0))
-            .on_press(Message::GlobalSearchOpen)
+            .on_press(Message::Search(SearchMessage::GlobalSearchOpen))
             .padding(theme::SPACE_3)
             .style(button::text),
         button(icons::view(Icon::Command, theme::TEXT_MUTED, 18.0))
-            .on_press(Message::CommandPaletteOpen)
+            .on_press(Message::Shell(ShellMessage::CommandPaletteOpen))
             .padding(theme::SPACE_3)
             .style(button::text),
         button(icons::view(
@@ -112,7 +114,7 @@ pub fn view<'a>(
             },
             18.0,
         ))
-        .on_press(Message::GraphToggle)
+        .on_press(Message::Graph(GraphMessage::Toggle))
         .padding(8)
         .style(button::text),
         button(icons::view(
@@ -141,7 +143,7 @@ pub fn view<'a>(
                 },
                 18.0,
             ))
-            .on_press(Message::InkToggle)
+            .on_press(Message::Ink(InkMessage::Toggle))
             .padding(8)
             .style(button::text),
             container(
@@ -170,7 +172,7 @@ pub fn view<'a>(
             },
             18.0
         ))
-        .on_press(Message::TrackerToggle)
+        .on_press(Message::Shell(ShellMessage::TrackerToggle))
         .padding(theme::SPACE_3)
         .style(button::text),
     ]

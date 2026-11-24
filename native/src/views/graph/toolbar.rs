@@ -1,6 +1,7 @@
 //! The toolbar: scope, depth, search, filters and view controls.
 
 use super::*;
+use crate::messages::GraphMessage;
 use iced::widget::column;
 
 // ─────────────────────────────── toolbar ────────────────────────────
@@ -17,8 +18,16 @@ pub(super) fn toolbar<'a>(
     let is_local = matches!(state.scope, GraphScope::Local { .. });
 
     let scope_control = segmented(vec![
-        segment("Whole vault", !is_local, Message::GraphScopeGlobal),
-        segment("Around this note", is_local, Message::GraphScopeLocal),
+        segment(
+            "Whole vault",
+            !is_local,
+            Message::Graph(GraphMessage::ScopeGlobal),
+        ),
+        segment(
+            "Around this note",
+            is_local,
+            Message::Graph(GraphMessage::ScopeLocal),
+        ),
     ]);
 
     // The depth choice only exists inside local scope, so it appears with it
@@ -28,12 +37,12 @@ pub(super) fn toolbar<'a>(
             segment(
                 "1 hop",
                 local_depth == 1,
-                Message::GraphLocalDepthChanged(1),
+                Message::Graph(GraphMessage::LocalDepthChanged(1)),
             ),
             segment(
                 "2 hops",
                 local_depth == 2,
-                Message::GraphLocalDepthChanged(2),
+                Message::Graph(GraphMessage::LocalDepthChanged(2)),
             ),
         ])
     } else {
@@ -58,7 +67,7 @@ pub(super) fn toolbar<'a>(
         Space::new().width(Length::Fixed(0.0)).into()
     } else {
         button(icons::view(Icon::X, theme::TEXT_MUTED, 11.0))
-            .on_press(Message::GraphQueryChanged(String::new()))
+            .on_press(Message::Graph(GraphMessage::QueryChanged(String::new())))
             .padding(3)
             .style(ghost_style)
             .into()
@@ -68,7 +77,7 @@ pub(super) fn toolbar<'a>(
         row![
             icons::view(Icon::Search, theme::TEXT_MUTED, 13.0),
             text_input("Search notes…", &state.query)
-                .on_input(Message::GraphQueryChanged)
+                .on_input(|value| Message::Graph(GraphMessage::QueryChanged(value)))
                 .padding(0)
                 .size(12)
                 .width(Length::Fill)
@@ -111,7 +120,7 @@ pub(super) fn toolbar<'a>(
                 Icon::PanelRight,
                 state.inspector_visible,
                 true,
-                Message::GraphInspectorToggled,
+                Message::Graph(GraphMessage::InspectorToggled),
             ),
             if state.inspector_visible {
                 "Hide inspector"
@@ -120,7 +129,7 @@ pub(super) fn toolbar<'a>(
             },
         ),
         hinted(
-            icon_button(Icon::X, false, true, Message::GraphToggle),
+            icon_button(Icon::X, false, true, Message::Graph(GraphMessage::Toggle)),
             "Close graph  ·  Esc",
         ),
     ]
@@ -136,21 +145,21 @@ pub(super) fn toolbar<'a>(
             stats.pdfs,
             state.show_pdfs,
             kind_color(GraphNodeKind::Pdf),
-            Message::GraphShowPdfsToggled(!state.show_pdfs),
+            Message::Graph(GraphMessage::ShowPdfsToggled(!state.show_pdfs)),
         ),
         filter_chip(
             "Unresolved",
             stats.missing,
             state.show_missing,
             theme::DANGER,
-            Message::GraphShowMissingToggled(!state.show_missing),
+            Message::Graph(GraphMessage::ShowMissingToggled(!state.show_missing)),
         ),
         filter_chip(
             "Orphans",
             stats.unconnected,
             state.show_orphans,
             theme::WARNING,
-            Message::GraphShowOrphansToggled(!state.show_orphans),
+            Message::Graph(GraphMessage::ShowOrphansToggled(!state.show_orphans)),
         ),
     ]
     .spacing(6)
@@ -159,7 +168,7 @@ pub(super) fn toolbar<'a>(
     if state.filters_active() || !query.is_empty() {
         filters = filters.push(
             button(text("Reset").size(10))
-                .on_press(Message::GraphFiltersReset)
+                .on_press(Message::Graph(GraphMessage::FiltersReset))
                 .padding([4, 8])
                 .style(ghost_style),
         );
@@ -175,7 +184,7 @@ pub(super) fn toolbar<'a>(
                 .size(10)
                 .color(theme::ACCENT),
             button(text("release").size(10))
-                .on_press(Message::GraphUnpinAll)
+                .on_press(Message::Graph(GraphMessage::UnpinAll))
                 .padding([3, 6])
                 .style(ghost_style),
         ]

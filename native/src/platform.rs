@@ -1,5 +1,7 @@
 //! Small platform shims for behaviour that differs per OS.
 
+#![deny(clippy::undocumented_unsafe_blocks)]
+
 /// Open a URL or file path with the system's default handler.
 ///
 /// Windows goes through `ShellExecuteW` rather than `cmd /C start`. Spawning

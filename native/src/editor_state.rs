@@ -20,7 +20,7 @@ use image::GenericImageView;
 
 use crate::editor::buffer::DocBuffer;
 use crate::editor::highlight::Highlighted;
-use crate::messages::Message;
+use crate::messages::{EditorMessage, Message};
 use crate::views;
 
 /// Idle time after the last edit before the document is written to disk.
@@ -78,6 +78,11 @@ pub struct EditorPane {
     /// When the buffer last changed with edits still unwritten. The autosave
     /// subscription is armed while this is set.
     pub autosave_pending_since: Option<Instant>,
+
+    /// [`md_editor_core::vault::content_hash`] of the open note as last read
+    /// from or written to disk. A save that finds different text on disk
+    /// keeps that version as a conflict copy instead of overwriting it.
+    pub disk_hash: Option<u64>,
 }
 
 impl EditorPane {
@@ -100,6 +105,7 @@ impl EditorPane {
             retained: HashMap::new(),
             retained_order: Vec::new(),
             autosave_pending_since: None,
+            disk_hash: None,
         }
     }
 
@@ -227,7 +233,7 @@ impl EditorPane {
     /// shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::MathRendered(tex, scale, res) => {
+            Message::Editor(EditorMessage::MathRendered(tex, scale, res)) => {
                 // Drop results rasterized for a display scale we've since
                 // moved away from (the cache was flushed on rescale; a stale
                 // insert would stay blurry until the next flush).
@@ -299,7 +305,9 @@ impl EditorPane {
                                     render_latex_task(&tex_clone, scale_factor),
                                 )
                             },
-                            move |(t, r)| Message::MathRendered(t, scale_factor, r),
+                            move |(t, r)| {
+                                Message::Editor(EditorMessage::MathRendered(t, scale_factor, r))
+                            },
                         ));
                     }
                 }

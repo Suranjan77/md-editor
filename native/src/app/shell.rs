@@ -1,22 +1,27 @@
 //! Window lifecycle, split view, the command palette, overlays, the tracker and presentations.
 
 use super::*;
+use crate::messages::{
+    GraphMessage, InkMessage, PdfMessage, SearchMessage, ShellMessage, VaultMessage,
+};
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_shell(&mut self, message: Message) -> Task<Message> {
+    pub(super) fn update_shell(&mut self, message: ShellMessage) -> Task<Message> {
         match message {
-            m @ (Message::CommandPaletteQueryChanged(_)
-            | Message::ShowToast(_)
-            | Message::ToastHide
-            | Message::SplitViewDragStart) => self.ui.update(m),
+            m @ (ShellMessage::CommandPaletteQueryChanged(_)
+            | ShellMessage::ShowToast(_)
+            | ShellMessage::ToastHide
+            | ShellMessage::SplitViewDragStart) => self.ui.update(Message::Shell(m)),
             // UI chrome arms that mutate only `self.ui` are routed to
             // `UiState::update`; see ui_state.rs.
             // Opening the palette also puts the caret in its field: a palette
             // you have to click into first is not reachable from the keyboard,
             // which is the only reason it exists.
-            Message::CommandPaletteOpen => {
-                let task = self.ui.update(Message::CommandPaletteOpen);
+            ShellMessage::CommandPaletteOpen => {
+                let task = self
+                    .ui
+                    .update(Message::Shell(ShellMessage::CommandPaletteOpen));
                 Task::batch(vec![
                     task,
                     operation::focus(iced::advanced::widget::Id::new(
@@ -24,53 +29,55 @@ impl MdEditor {
                     )),
                 ])
             }
-            m @ Message::TrackerToggle => self.tracker.update(m, &self.state),
-            Message::CommandPaletteFileClicked(path) => {
+            m @ ShellMessage::TrackerToggle => self.tracker.update(Message::Shell(m), &self.state),
+            ShellMessage::CommandPaletteFileClicked(path) => {
                 self.ui.command_palette_visible = false;
                 self.ui.command_palette_query.clear();
                 // Reuse the sidebar's open path: it already routes markdown,
                 // PDFs and images to the right viewer.
-                Task::done(Message::SidebarFileClicked(path))
+                Task::done(Message::Vault(VaultMessage::SidebarFileClicked(path)))
             }
-            Message::CommandPaletteCommandClicked(shortcut) => {
+            ShellMessage::CommandPaletteCommandClicked(shortcut) => {
                 self.ui.command_palette_visible = false;
                 self.ui.command_palette_query.clear();
                 Task::done(Message::KeyboardShortcut(shortcut))
             }
-            Message::OverlaySubmitCurrent => {
+            ShellMessage::OverlaySubmitCurrent => {
                 if self.ui.command_palette_visible {
-                    Task::done(Message::NameModalSubmitCurrent)
+                    Task::done(Message::Vault(VaultMessage::NameModalSubmitCurrent))
                 } else if self.search.visible {
-                    Task::done(Message::GlobalSearchSubmit)
+                    Task::done(Message::Search(SearchMessage::GlobalSearchSubmit))
                 } else if self.graph.visible && self.ui.active_modal.is_none() {
                     // Enter opens whatever is selected on the canvas, so the
                     // graph is navigable without reaching for the mouse.
                     match self.graph.selected_path.clone() {
-                        Some(path) => Task::done(Message::GraphNodeOpen(path)),
+                        Some(path) => Task::done(Message::Graph(GraphMessage::NodeOpen(path))),
                         None => Task::none(),
                     }
                 } else {
-                    Task::done(Message::NameModalSubmitCurrent)
+                    Task::done(Message::Vault(VaultMessage::NameModalSubmitCurrent))
                 }
             }
-            m @ (Message::TrackerStart
-            | Message::TrackerStop
-            | Message::TrackerTabSelected(_)
-            | Message::TrackerProjectStatusChanged(..)
-            | Message::TrackerGateToggled(..)
-            | Message::TrackerReadingToggled(..)
-            | Message::TrackerConfigEdited(_)
-            | Message::TrackerConfigSave
-            | Message::TrackerManualDateChanged(_)
-            | Message::TrackerManualHoursChanged(_)
-            | Message::TrackerManualNotesChanged(_)
-            | Message::TrackerManualAdd
-            | Message::TrackerSessionDelete(_)) => self.tracker.update(m, &self.state),
-            Message::SplitViewToggle => {
+            m @ (ShellMessage::TrackerStart
+            | ShellMessage::TrackerStop
+            | ShellMessage::TrackerTabSelected(_)
+            | ShellMessage::TrackerProjectStatusChanged(..)
+            | ShellMessage::TrackerGateToggled(..)
+            | ShellMessage::TrackerReadingToggled(..)
+            | ShellMessage::TrackerConfigEdited(_)
+            | ShellMessage::TrackerConfigSave
+            | ShellMessage::TrackerManualDateChanged(_)
+            | ShellMessage::TrackerManualHoursChanged(_)
+            | ShellMessage::TrackerManualNotesChanged(_)
+            | ShellMessage::TrackerManualAdd
+            | ShellMessage::TrackerSessionDelete(_)) => {
+                self.tracker.update(Message::Shell(m), &self.state)
+            }
+            ShellMessage::SplitViewToggle => {
                 if self.active_path.is_some() && self.pdf.active_path.is_some() {
                     self.ui.split_view_active = !self.ui.split_view_active;
                     if self.pdf.fit_to_width {
-                        return Task::done(Message::PdfFitToWidth);
+                        return Task::done(Message::Pdf(PdfMessage::FitToWidth));
                     }
                 } else {
                     self.ui.toast =
@@ -78,7 +85,7 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::SplitViewDragging(x_pos) => {
+            ShellMessage::SplitViewDragging(x_pos) => {
                 if !self.ui.is_resizing_split {
                     return Task::none();
                 }
@@ -97,15 +104,15 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::SplitViewDragEnd => {
+            ShellMessage::SplitViewDragEnd => {
                 self.ui.is_resizing_split = false;
                 self.persist_layout();
                 if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
-                    return Task::done(Message::PdfFitToWidth);
+                    return Task::done(Message::Pdf(PdfMessage::FitToWidth));
                 }
                 Task::none()
             }
-            Message::WindowResized(id, width, height) => {
+            ShellMessage::WindowResized(id, width, height) => {
                 // Only the shell's geometry is layout input and worth restoring;
                 // the handwriting window sizes itself.
                 if Some(id) != self.main_window {
@@ -115,15 +122,15 @@ impl MdEditor {
                 self.ui.window_height = height;
                 self.persist_window_size();
                 if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
-                    return Task::done(Message::PdfFitToWidth);
+                    return Task::done(Message::Pdf(PdfMessage::FitToWidth));
                 }
                 Task::none()
             }
-            Message::WindowOpened(id) => {
+            ShellMessage::WindowOpened(id) => {
                 // Pull the real scale factor; a static HiDPI monitor may never
                 // emit a `Rescaled` event, so the listener alone isn't enough.
                 let scale = iced::window::scale_factor(id)
-                    .map(move |factor| Message::WindowRescaled(id, factor));
+                    .map(move |factor| Message::Shell(ShellMessage::WindowRescaled(id, factor)));
 
                 if Some(id) == self.ink_window {
                     // The hook attaches to whichever window holds the canvas,
@@ -131,12 +138,13 @@ impl MdEditor {
                     // the window is reopened, since the handle is new.
                     return Task::batch(vec![
                         scale,
-                        iced::window::raw_id::<Message>(id).map(Message::InkPenHookReady),
+                        iced::window::raw_id::<Message>(id)
+                            .map(|value| Message::Ink(InkMessage::PenHookReady(value))),
                     ]);
                 }
                 scale
             }
-            Message::WindowCloseRequested => {
+            ShellMessage::WindowCloseRequested => {
                 // Best-effort flush on the way out; the close is deliberately
                 // *not* intercepted. Holding the window open on a failed write
                 // would risk an app that cannot be closed at all, which is a
@@ -147,7 +155,7 @@ impl MdEditor {
                 self.persist_layout();
                 Task::none()
             }
-            Message::WindowClosed(id) => {
+            ShellMessage::WindowClosed(id) => {
                 if Some(id) == self.ink_window {
                     self.ink_window_closed();
                     return Task::none();
@@ -158,7 +166,7 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::WindowRescaled(id, factor) => {
+            ShellMessage::WindowRescaled(id, factor) => {
                 // Clamp: below 1 makes no sense, and capping at 3 bounds the
                 // bitmap cost on unusually high-DPI displays.
                 let factor = factor.clamp(1.0, 3.0);
@@ -197,17 +205,15 @@ impl MdEditor {
                 }
                 math_task
             }
-            m @ (Message::PptxLoaded(..)
-            | Message::PptxScrolled { .. }
-            | Message::PptxZoomIn
-            | Message::PptxZoomOut
-            | Message::PptxZoomFit
-            | Message::PptxStep(_)) => {
+            m @ (ShellMessage::PptxLoaded(..)
+            | ShellMessage::PptxScrolled { .. }
+            | ShellMessage::PptxZoomIn
+            | ShellMessage::PptxZoomOut
+            | ShellMessage::PptxZoomFit
+            | ShellMessage::PptxStep(_)) => {
                 let width = self.pdf_available_width();
-                self.pptx.update(m, width)
+                self.pptx.update(Message::Shell(m), width)
             }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
     }
 }

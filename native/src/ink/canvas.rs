@@ -19,7 +19,7 @@ use super::Tool;
 use super::camera::Camera;
 use super::document::{InkDocument, PaperStyle, StrokeKind};
 use super::stroke::{self, InkPoint, StrokeOptions, Vec2};
-use crate::messages::Message;
+use crate::messages::{InkMessage, Message};
 
 /// Pressure used for mouse input, which reports none. Mid-range so mouse
 /// strokes sit visually between a light and a heavy pen stroke.
@@ -99,7 +99,9 @@ impl canvas::Program<Message> for InkSurface<'_> {
         match event {
             Event::Mouse(ButtonReleased(Left)) if state.drawing => {
                 state.drawing = false;
-                return Some(canvas::Action::publish(Message::InkPointerUp).and_capture());
+                return Some(
+                    canvas::Action::publish(Message::Ink(InkMessage::PointerUp)).and_capture(),
+                );
             }
             Event::Mouse(ButtonReleased(Middle)) if state.panning => {
                 state.panning = false;
@@ -118,11 +120,11 @@ impl canvas::Program<Message> for InkSurface<'_> {
                     mouse::ScrollDelta::Pixels { y, .. } => y / 40.0,
                 };
                 Some(
-                    canvas::Action::publish(Message::InkZoom {
+                    canvas::Action::publish(Message::Ink(InkMessage::Zoom {
                         x: position.x,
                         y: position.y,
                         notches,
-                    })
+                    }))
                     .and_capture(),
                 )
             }
@@ -137,8 +139,10 @@ impl canvas::Program<Message> for InkSurface<'_> {
                 state.drawing = true;
                 state.last_cursor = Some(position);
                 Some(
-                    canvas::Action::publish(Message::InkPointerDown(position.x, position.y))
-                        .and_capture(),
+                    canvas::Action::publish(Message::Ink(InkMessage::PointerDown(
+                        position.x, position.y,
+                    )))
+                    .and_capture(),
                 )
             }
             Event::Mouse(CursorMoved { .. }) => {
@@ -148,23 +152,25 @@ impl canvas::Program<Message> for InkSurface<'_> {
                 if state.panning {
                     let last = previous.unwrap_or(position);
                     return Some(
-                        canvas::Action::publish(Message::InkPan {
+                        canvas::Action::publish(Message::Ink(InkMessage::Pan {
                             dx: position.x - last.x,
                             dy: position.y - last.y,
-                        })
+                        }))
                         .and_capture(),
                     );
                 }
                 if state.drawing {
                     return Some(
-                        canvas::Action::publish(Message::InkPointerMove(position.x, position.y))
-                            .and_capture(),
+                        canvas::Action::publish(Message::Ink(InkMessage::PointerMove(
+                            position.x, position.y,
+                        )))
+                        .and_capture(),
                     );
                 }
                 // Feed the mouse into the same hover state the pen uses, so
                 // the aiming indicators track whichever device moved last.
-                Some(canvas::Action::publish(Message::InkHoverMoved(
-                    position.x, position.y,
+                Some(canvas::Action::publish(Message::Ink(
+                    InkMessage::HoverMoved(position.x, position.y),
                 )))
             }
             _ => None,

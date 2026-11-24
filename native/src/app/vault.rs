@@ -1,12 +1,13 @@
 //! The vault and file tree: opening vaults, indexing, creating, renaming and deleting entries.
 
 use super::*;
+use crate::messages::{PdfMessage, ShellMessage, VaultMessage};
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_vault(&mut self, message: Message) -> Task<Message> {
+    pub(super) fn update_vault(&mut self, message: VaultMessage) -> Task<Message> {
         match message {
-            Message::OpenVaultDialog => Task::perform(
+            VaultMessage::OpenVaultDialog => Task::perform(
                 async {
                     let folder = rfd::AsyncFileDialog::new()
                         .set_title("Open Vault Folder")
@@ -14,10 +15,12 @@ impl MdEditor {
                         .await;
                     folder.map(|f| f.path().to_string_lossy().to_string())
                 },
-                Message::VaultOpened,
+                |value| Message::Vault(VaultMessage::VaultOpened(value)),
             ),
-            Message::VaultOpened(Some(path)) => self.open_vault(&path),
-            Message::VaultIndexed(generation, root, result) => {
+            VaultMessage::VaultOpened(Some(path)) => self.open_vault(&path),
+            // The folder picker was cancelled.
+            VaultMessage::VaultOpened(None) => Task::none(),
+            VaultMessage::VaultIndexed(generation, root, result) => {
                 if generation != self.state.current_vault_generation()
                     || self.vault.root.as_deref() != Some(root.as_str())
                 {
@@ -41,7 +44,11 @@ impl MdEditor {
                                 )
                             },
                             move |result| {
-                                Message::VaultIndexed(generation, message_root.clone(), result)
+                                Message::Vault(VaultMessage::VaultIndexed(
+                                    generation,
+                                    message_root.clone(),
+                                    result,
+                                ))
                             },
                         );
                     }
@@ -67,10 +74,10 @@ impl MdEditor {
             }
             // Vault navigation arms that mutate only `self.vault` are routed
             // to `VaultState::update`; see vault_state.rs.
-            m @ (Message::SidebarToggle
-            | Message::SidebarFolderToggled(_)
-            | Message::SidebarSelectionCleared) => self.vault.update(m),
-            Message::SidebarFileClicked(path) => {
+            m @ (VaultMessage::SidebarToggle
+            | VaultMessage::SidebarFolderToggled(_)
+            | VaultMessage::SidebarSelectionCleared) => self.vault.update(Message::Vault(m)),
+            VaultMessage::SidebarFileClicked(path) => {
                 let path = path.trim().to_string();
                 self.graph.visible = false;
                 if let Some(url_str) = path.strip_prefix("pdf://") {
@@ -232,28 +239,28 @@ impl MdEditor {
                     }
                 }
             }
-            m @ (Message::CreateFileDialog
-            | Message::CreateFolderDialog
-            | Message::DeleteFileDialog(_)
-            | Message::RenameEntryDialog(_)
-            | Message::NameModalInputChanged(_)
-            | Message::PdfLinkNoteFolderSelected(_)
-            | Message::PdfLinkNoteFileSelected(_)
-            | Message::PdfLinkNotePickerSearchChanged(_)
-            | Message::NameModalCancel) => self.ui.update(m),
-            Message::NameModalSubmit(input) => {
+            m @ (VaultMessage::CreateFileDialog
+            | VaultMessage::CreateFolderDialog
+            | VaultMessage::DeleteFileDialog(_)
+            | VaultMessage::RenameEntryDialog(_)
+            | VaultMessage::NameModalInputChanged(_)
+            | VaultMessage::PdfLinkNoteFolderSelected(_)
+            | VaultMessage::PdfLinkNoteFileSelected(_)
+            | VaultMessage::PdfLinkNotePickerSearchChanged(_)
+            | VaultMessage::NameModalCancel) => self.ui.update(Message::Vault(m)),
+            VaultMessage::NameModalSubmit(input) => {
                 if let Some(views::modals::ModalType::QuickNote(id)) = self.ui.active_modal.clone()
                 {
                     self.ui.active_modal = None;
                     self.ui.modal_input.clear();
                     self.ui.link_note_picker_search.clear();
-                    return Task::done(Message::PdfAddQuickNote(id, input));
+                    return Task::done(Message::Pdf(PdfMessage::AddQuickNote(id, input)));
                 }
                 if let Some(views::modals::ModalType::LinkNote(id)) = self.ui.active_modal.clone() {
                     self.ui.active_modal = None;
                     self.ui.modal_input.clear();
                     self.ui.link_note_picker_search.clear();
-                    return Task::done(Message::PdfLinkNote(id, input));
+                    return Task::done(Message::Pdf(PdfMessage::LinkNote(id, input)));
                 }
 
                 let name = input.trim();
@@ -277,6 +284,13 @@ impl MdEditor {
                         .unwrap_or_else(|| std::path::PathBuf::from(name))
                         .to_string_lossy()
                         .replace('\\', "/");
+                    // A rename rewrites links in other notes — possibly the
+                    // open one. Flush it first so the rewrite lands on our
+                    // latest text and the buffer can simply follow the file.
+                    if let SaveOutcome::Failed(err) = self.save_active_document() {
+                        self.ui.toast = Some(format!("Not renaming: {err}"));
+                        return Task::none();
+                    }
                     match md_editor_core::vault::rename_entry(&self.state, &old_path, &new_path) {
                         Ok(()) => {
                             self.vault.entries =
@@ -292,6 +306,8 @@ impl MdEditor {
                             self.ui.modal_input.clear();
                             self.ui.toast = Some("Renamed".to_string());
                             self.invalidate_graph();
+                            // Pick up links the rename rewrote in the open note.
+                            return self.reload_open_note_from_disk();
                         }
                         Err(error) => self.ui.toast = Some(error),
                     }
@@ -326,7 +342,7 @@ impl MdEditor {
                     _ => Task::none(),
                 }
             }
-            Message::DeleteFile(path) => {
+            VaultMessage::DeleteFile(path) => {
                 match md_editor_core::vault::delete_entry(&self.state, &path) {
                     Ok(()) => {
                         self.vault.entries =
@@ -382,7 +398,7 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::NameModalSubmitCurrent => {
+            VaultMessage::NameModalSubmitCurrent => {
                 // Enter belongs to the palette while it is open; otherwise it
                 // falls through to whatever modal is showing.
                 if self.ui.command_palette_visible {
@@ -394,20 +410,24 @@ impl MdEditor {
                     );
                     return match action {
                         Some(views::command_palette::PaletteAction::Command(shortcut)) => {
-                            Task::done(Message::CommandPaletteCommandClicked(shortcut))
+                            Task::done(Message::Shell(ShellMessage::CommandPaletteCommandClicked(
+                                shortcut,
+                            )))
                         }
-                        Some(views::command_palette::PaletteAction::OpenFile(path)) => {
-                            Task::done(Message::CommandPaletteFileClicked(path))
-                        }
+                        Some(views::command_palette::PaletteAction::OpenFile(path)) => Task::done(
+                            Message::Shell(ShellMessage::CommandPaletteFileClicked(path)),
+                        ),
                         None => Task::none(),
                     };
                 }
-                self.ui.update(Message::NameModalSubmitCurrent)
+                self.ui
+                    .update(Message::Vault(VaultMessage::NameModalSubmitCurrent))
             }
-            Message::VaultFilesChanged(paths) => {
+            VaultMessage::VaultFilesChanged(paths) => {
                 // Reconcile the index/search for changed markdown files. The
-                // open editor buffer is intentionally NOT reloaded — that would
-                // clobber unsaved edits and fire on our own saves.
+                // open note follows the file only while it is clean
+                // (`reload_open_note_from_disk`); with unsaved edits, the next
+                // save keeps the disk version as a conflict copy.
                 //
                 // Our own saves are filtered out entirely: `save_file` already
                 // updated the index and the search row, and the tree structure
@@ -439,6 +459,11 @@ impl MdEditor {
                             .unwrap_or_default();
                 }
                 self.invalidate_graph();
+                if let Some(active) = self.active_path.clone()
+                    && paths.contains(&active)
+                {
+                    return self.reload_open_note_from_disk();
+                }
                 // An open presentation follows its file: it is read again
                 // when the file changes, and closed when the file is gone.
                 if let Some(deck) = self.pptx.active_path.clone()
@@ -454,8 +479,6 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
     }
 
@@ -551,7 +574,13 @@ impl MdEditor {
         let result_path = path.clone();
         Task::perform(
             async move { md_editor_core::vault::index_vault_for_generation(&state, &path, generation) },
-            move |result| Message::VaultIndexed(generation, result_path.clone(), result),
+            move |result| {
+                Message::Vault(VaultMessage::VaultIndexed(
+                    generation,
+                    result_path.clone(),
+                    result,
+                ))
+            },
         )
     }
 

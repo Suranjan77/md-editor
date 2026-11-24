@@ -10,7 +10,7 @@ mod config;
 pub use config::*;
 use iced::{Alignment, Background, Element, Length, Renderer, Theme};
 
-use crate::messages::{Message, TrackerTab};
+use crate::messages::{Message, ShellMessage, TrackerTab};
 use crate::theme;
 use md_editor_core::tracker::StudySession;
 use serde::{Deserialize, Serialize};
@@ -313,7 +313,7 @@ pub fn view<'a>(
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
         )
-        .on_press(Message::TrackerStop)
+        .on_press(Message::Shell(ShellMessage::TrackerStop))
         .padding(theme::SPACE_4)
         .width(Length::Fill)
         .style(button::secondary)
@@ -323,7 +323,7 @@ pub fn view<'a>(
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
         )
-        .on_press(Message::TrackerStart)
+        .on_press(Message::Shell(ShellMessage::TrackerStart))
         .padding(theme::SPACE_4)
         .width(Length::Fill)
         .style(button::primary)
@@ -400,7 +400,7 @@ pub fn view<'a>(
             title,
             Space::new().width(Length::Fill),
             button(text("✕").size(theme::TEXT_MD).font(BOLD))
-                .on_press(Message::TrackerToggle)
+                .on_press(Message::Shell(ShellMessage::TrackerToggle))
                 .style(button::text),
         ]
         .align_y(Alignment::Center),
@@ -433,7 +433,7 @@ fn tab_button<'a>(
             })
             .font(BOLD),
     )
-    .on_press(Message::TrackerTabSelected(tab))
+    .on_press(Message::Shell(ShellMessage::TrackerTabSelected(tab)))
     .padding([theme::SPACE_3, theme::SPACE_4])
     .style(button::text)
     .into()
@@ -483,19 +483,23 @@ fn log_body<'a>(
                 .font(BOLD),
             row![
                 text_input("YYYY-MM-DD", manual_date)
-                    .on_input(Message::TrackerManualDateChanged)
+                    .on_input(|value| Message::Shell(ShellMessage::TrackerManualDateChanged(value)))
                     .padding(theme::SPACE_3)
                     .width(Length::FillPortion(2)),
                 text_input("Hours", manual_hours)
-                    .on_input(Message::TrackerManualHoursChanged)
+                    .on_input(
+                        |value| Message::Shell(ShellMessage::TrackerManualHoursChanged(value))
+                    )
                     .padding(theme::SPACE_3)
                     .width(Length::FillPortion(1)),
                 text_input("Notes", manual_notes)
-                    .on_input(Message::TrackerManualNotesChanged)
+                    .on_input(
+                        |value| Message::Shell(ShellMessage::TrackerManualNotesChanged(value))
+                    )
                     .padding(theme::SPACE_3)
                     .width(Length::FillPortion(3)),
                 button(text("Add").size(theme::TEXT_SM).font(BOLD))
-                    .on_press(Message::TrackerManualAdd)
+                    .on_press(Message::Shell(ShellMessage::TrackerManualAdd))
                     .padding([theme::SPACE_3, theme::SPACE_4])
                     .style(button::primary),
             ]
@@ -548,7 +552,9 @@ fn sessions_list<'a>(sessions: &'a [StudySession]) -> Element<'a, Message, Theme
                         .color(theme::ACCENT)
                         .font(BOLD),
                     button(text("Delete").size(theme::TEXT_SM).color(theme::TEXT_MUTED))
-                        .on_press(Message::TrackerSessionDelete(session.id))
+                        .on_press(Message::Shell(ShellMessage::TrackerSessionDelete(
+                            session.id
+                        )))
                         .padding([theme::SPACE_2, theme::SPACE_3])
                         .style(button::text),
                 ]
@@ -654,7 +660,10 @@ fn status_button<'a>(
     } else {
         theme::TEXT_MUTED
     }))
-    .on_press(Message::TrackerProjectStatusChanged(id, value.to_string()))
+    .on_press(Message::Shell(ShellMessage::TrackerProjectStatusChanged(
+        id,
+        value.to_string(),
+    )))
     .padding([theme::SPACE_3, theme::SPACE_4])
     .style(if active {
         button::primary
@@ -723,7 +732,11 @@ fn gates_body<'a>(
                 checkbox(checked)
                     .label(item)
                     .on_toggle(move |_| {
-                        Message::TrackerGateToggled(gate_id.clone(), item_key.clone(), idx)
+                        Message::Shell(ShellMessage::TrackerGateToggled(
+                            gate_id.clone(),
+                            item_key.clone(),
+                            idx,
+                        ))
                     })
                     .size(theme::TEXT_MD),
             );
@@ -802,7 +815,11 @@ fn reading_body<'a>(
                 checkbox(checked)
                     .label(label)
                     .on_toggle(move |_| {
-                        Message::TrackerReadingToggled(section_clone.clone(), item_key.clone(), idx)
+                        Message::Shell(ShellMessage::TrackerReadingToggled(
+                            section_clone.clone(),
+                            item_key.clone(),
+                            idx,
+                        ))
                     })
                     .size(theme::TEXT_MD),
             );
@@ -822,14 +839,14 @@ fn config_body<'a>(config_json: &'a text_editor::Content) -> Element<'a, Message
         text("Projects, gates, reading lists, and phases are read from this JSON. Save to apply it to every tracker tab.").size(theme::TEXT_SM).color(theme::TEXT_MUTED),
         text_editor(config_json)
             .placeholder("Tracker JSON")
-            .on_action(Message::TrackerConfigEdited)
+            .on_action(|value| Message::Shell(ShellMessage::TrackerConfigEdited(value)))
             .padding(theme::SPACE_4)
             .size(theme::TEXT_SM)
             .height(Length::Fixed(260.0))
             .wrapping(Wrapping::WordOrGlyph)
             .font(iced::Font::MONOSPACE),
         button(text("Save Configuration").size(theme::TEXT_SM).font(BOLD))
-            .on_press(Message::TrackerConfigSave)
+            .on_press(Message::Shell(ShellMessage::TrackerConfigSave))
             .padding([theme::SPACE_3, theme::SPACE_4])
             .style(button::primary),
     ].spacing(theme::SPACE_4))

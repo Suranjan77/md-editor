@@ -15,7 +15,7 @@ use std::sync::Arc;
 use iced::Task;
 use iced::widget::operation::{self, AbsoluteOffset};
 
-use crate::messages::Message;
+use crate::messages::{Message, ShellMessage};
 use crate::slides::LoadedDeck;
 use crate::views::pptx_viewer::{PPTX_SCROLLABLE_ID, SLIDE_LIST_PADDING, slide_metrics};
 
@@ -101,7 +101,7 @@ impl PptxPane {
 
     pub fn update(&mut self, message: Message, available_width: f32) -> Task<Message> {
         match message {
-            Message::PptxLoaded(generation, result) => {
+            Message::Shell(ShellMessage::PptxLoaded(generation, result)) => {
                 if generation != self.generation {
                     return Task::none();
                 }
@@ -120,20 +120,24 @@ impl PptxPane {
                 }
                 Task::none()
             }
-            Message::PptxScrolled {
+            Message::Shell(ShellMessage::PptxScrolled {
                 x,
                 y,
                 viewport_height,
-            } => {
+            }) => {
                 self.scroll_x = x;
                 self.scroll_y = y;
                 self.viewport_height = viewport_height;
                 Task::none()
             }
-            Message::PptxZoomIn => self.set_zoom(step_zoom(self.zoom, true), available_width),
-            Message::PptxZoomOut => self.set_zoom(step_zoom(self.zoom, false), available_width),
-            Message::PptxZoomFit => self.set_zoom(1.0, available_width),
-            Message::PptxStep(delta) => {
+            Message::Shell(ShellMessage::PptxZoomIn) => {
+                self.set_zoom(step_zoom(self.zoom, true), available_width)
+            }
+            Message::Shell(ShellMessage::PptxZoomOut) => {
+                self.set_zoom(step_zoom(self.zoom, false), available_width)
+            }
+            Message::Shell(ShellMessage::PptxZoomFit) => self.set_zoom(1.0, available_width),
+            Message::Shell(ShellMessage::PptxStep(delta)) => {
                 let Some(count) = self.deck.as_ref().map(|deck| deck.slides.len()) else {
                     return Task::none();
                 };
@@ -275,7 +279,10 @@ mod tests {
         let mut pane = PptxPane::new();
         pane.begin_load("deck.pptx");
         let generation = pane.generation;
-        let _ = pane.update(Message::PptxLoaded(generation, Ok(deck(10))), 1000.0);
+        let _ = pane.update(
+            Message::Shell(ShellMessage::PptxLoaded(generation, Ok(deck(10)))),
+            1000.0,
+        );
         pane.viewport_height = 600.0;
         assert_eq!(pane.current_slide(1000.0), 0);
 
@@ -292,12 +299,18 @@ mod tests {
         let mut pane = PptxPane::new();
         let stale = pane.begin_load("first.pptx");
         pane.begin_load("second.pptx");
-        let _ = pane.update(Message::PptxLoaded(stale, Ok(deck(3))), 1000.0);
+        let _ = pane.update(
+            Message::Shell(ShellMessage::PptxLoaded(stale, Ok(deck(3)))),
+            1000.0,
+        );
         assert!(pane.deck.is_none());
 
         let stale = pane.generation;
         pane.close();
-        let _ = pane.update(Message::PptxLoaded(stale, Err("late".to_string())), 1000.0);
+        let _ = pane.update(
+            Message::Shell(ShellMessage::PptxLoaded(stale, Err("late".to_string()))),
+            1000.0,
+        );
         assert!(pane.error.is_none());
     }
 }

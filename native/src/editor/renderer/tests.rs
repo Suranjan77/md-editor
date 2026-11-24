@@ -991,3 +991,60 @@ fn rows_of_one_line_never_overlap_and_stay_inside_it() {
         );
     }
 }
+
+/// Press `key` with `modifiers` on a focused editor.
+fn press(
+    view: &mut View,
+    key: &str,
+    modifiers: keyboard::Modifiers,
+) -> super::testing::EventOutcome {
+    view.focus();
+    view.event(
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Character(key.into()),
+            modified_key: keyboard::Key::Character(key.into()),
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        }),
+        None,
+    )
+}
+
+#[test]
+fn ctrl_shift_z_redoes_and_ctrl_z_undoes() {
+    let mut view = View::new("text", 600.0);
+    let ctrl_shift = keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT;
+
+    let undo = press(&mut view, "z", keyboard::Modifiers::CTRL);
+    assert_eq!(undo.messages, vec!["cmd Undo"]);
+    // With Shift held, keyboards report the letter as upper case.
+    for key in ["z", "Z"] {
+        let redo = press(&mut view, key, ctrl_shift);
+        assert_eq!(redo.messages, vec!["cmd Redo"], "Ctrl+Shift+{key}");
+    }
+    assert_eq!(
+        press(&mut view, "y", keyboard::Modifiers::CTRL).messages,
+        vec!["cmd Redo"]
+    );
+}
+
+#[test]
+fn editor_shortcuts_are_captured_so_app_shortcuts_do_not_also_fire() {
+    let mut view = View::new("text", 600.0);
+    let bold = press(&mut view, "b", keyboard::Modifiers::CTRL);
+    assert_eq!(bold.messages, vec!["cmd FormatBold"]);
+    assert!(
+        bold.captured,
+        "Ctrl+B must not also reach the sidebar toggle"
+    );
+
+    // A shortcut the editor does not bind stays available to the app.
+    let save = press(&mut view, "s", keyboard::Modifiers::CTRL);
+    assert!(save.messages.is_empty());
+    assert!(!save.captured, "Ctrl+S must still reach the app");
+}

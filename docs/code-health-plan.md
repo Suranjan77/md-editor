@@ -4,7 +4,7 @@
 logging, an enforced quality gate, and tests where the risk is. No behaviour changes except
 where a workstream says so.
 
-**Date:** 2026-11-23 · **Status:** proposed. Companion to the
+**Date:** 2026-11-23 · **Status:** in progress — W1, W2, W4, W9 done (2026-11-24); W5 and W10 (native install, Arch Linux only) done 2026-11-24; see §5. Companion to the
 [UI overhaul](ui-overhaul-plan.md), [bug discovery](e2e-bug-discovery-plan.md) and
 [tabs & images](feature-plan-tabs-and-images.md) plans.
 
@@ -146,6 +146,76 @@ but new modules must ship with tests.
 - Confine `unsafe` to `platform.rs` and `ink/pen_win.rs` (already true); document each
   block (W2).
 
+### W10 — Native install on Arch Linux, portability dropped (M)
+
+**Decision (2026-11-24):** MD Editor no longer needs to run as a portable folder. It becomes
+a normally installed program. **Scope: Arch Linux only for now** — Windows and macOS
+packaging are out of scope; existing Windows code and CI stay as they are but get no new
+work. This reverses *Pillar 2: Zero-Configuration Portability* (wiki *Architecture and
+Philosophy*).
+
+**Where things live (XDG)**
+
+| What | Location |
+| :--- | :--- |
+| Settings DB (study history, annotations, sidecars) | `$XDG_DATA_HOME/md-editor/` (default `~/.local/share/md-editor/`) |
+| Log (`md-editor.log`, W4) | `$XDG_STATE_HOME/md-editor/` (default `~/.local/state/md-editor/`) |
+| Binary | `/usr/bin/md-editor` |
+| PDFium | `/usr/lib/md-editor/libpdfium.so` |
+| Desktop entry, icons | `/usr/share/applications/md-editor.desktop`, `/usr/share/icons/hicolor/<size>/apps/md-editor.png` |
+| Licence | `/usr/share/licenses/md-editor/LICENSE` |
+
+- `core/src/state.rs::data_dir` stops preferring the executable's directory and the
+  writability probe goes; resolution is `MD_EDITOR_DATA_DIR` (kept, for tests and throwaway
+  profiles) → `$XDG_DATA_HOME/md-editor` → `~/.local/share/md-editor`. Add
+  `state::log_dir()` (`$XDG_STATE_HOME` → `~/.local/state`) and point the W4 logger at it.
+  Relative `XDG_*` values are ignored, per the spec (already done for `XDG_DATA_HOME`).
+- **One-time migration, the other way round:** if the XDG DB does not exist but a
+  `md_editor_settings.sqlite` sits beside the executable, copy it (with `-wal`/`-shm`) into
+  `~/.local/share/md-editor/` and leave the original in place. Delete today's "migrate back
+  to portable" path (`migrate_legacy_db` from the per-user location).
+- `pdf.rs::bind_pdfium` candidates: `/usr/lib/md-editor/` (found as `../lib/md-editor/`
+  relative to the exe, so a `/usr/local` or `$pkgdir` prefix also works), then the exe dir
+  and `exe/resources` (dev builds), then the system loader path.
+
+**Packaging**
+
+- A `PKGBUILD` in `packaging/arch/`, published to the AUR as `md-editor` (builds from a
+  release tag) — and optionally `md-editor-git` (builds `main`).
+  - `depends`: `gcc-libs`, `glibc`, `fontconfig`, `freetype2`, `libxkbcommon`, `wayland`,
+    `vulkan-icd-loader` (check with `namcap` and `ldd` on the built binary).
+  - `makedepends`: `rust` (or `rustup`), `cargo`.
+  - `build()` runs `cargo build --release --locked` with the W1 PDFium pin, so the
+    checksum-verified library is what gets installed. (Alternative: depend on the AUR
+    `pdfium-binaries` package instead of bundling — decide when writing the PKGBUILD;
+    bundling keeps the tested version.)
+  - `package()` installs the files in the table above; the desktop entry declares
+    `MimeType=text/markdown;application/pdf;` and `Exec=md-editor %F`.
+  - `check()` runs `cargo test --workspace --locked`.
+- The self-installer goes: `--install` / `--uninstall` and `install_linux_desktop_entry*`
+  are removed from `main.rs` (pacman owns desktop integration and the icon/desktop caches
+  are refreshed by pacman hooks). A path argument still opens a file or vault.
+- CI: a job that builds the package in an `archlinux:latest` container with `makepkg` and
+  runs `namcap` on the PKGBUILD and the package; the release workflow attaches the built
+  `.pkg.tar.zst` to tagged releases alongside (or instead of) the Linux tarball.
+
+**Tests and docs**
+
+- Unit tests: data/log dir resolution with `XDG_*` and `HOME` overrides (absolute,
+  relative, unset); migration from a beside-exe DB (copied once, sidecars included,
+  original kept, no-op when the target exists); `bind_pdfium` candidate order.
+- Release Checklist: replace *First-run portability check* with `makepkg -si` → first run
+  (data in `~/.local/share/md-editor/`, log in `~/.local/state/md-editor/`) → upgrade over
+  an existing install (data kept) → `pacman -R md-editor` (data kept, desktop entry and
+  icons gone) → app appears in the launcher and opens `.md` files from the file manager.
+- Rewrite the portability sections in README, wiki *Architecture and Philosophy* (Pillar
+  2), *Core Services* §3, *Developer Guide* §5 and *Release Checklist*, and the user guide's
+  "travels as one portable folder" line. Installation docs lead with the AUR.
+
+**Done when:** `makepkg -si` (and an AUR helper) installs MD Editor, it launches from the app
+launcher, nothing is written beside the executable, `namcap` is clean, and an existing
+portable user's settings, highlights and study history appear after upgrading.
+
 ---
 
 ## 3. Order
@@ -154,6 +224,7 @@ but new modules must ship with tests.
 | :--- | :--- | :--- |
 | 1 | W1 CI gate, W2 lints | Everything after is protected and measured |
 | 2 | W4 logging, W9 audit | Small, immediate field value |
+| 2b | W10 native install (Arch Linux) | Settles where data and logs live before more code depends on it; the package rides on the W1 PDFium pin |
 | 3 | W5 message architecture | Mechanical, best done before the UI overhaul touches every view |
 | 4 | W6 decomposition, W7 ownership | Alongside UI overhaul Phases 1–2 (`shell_view` is rewritten there anyway) |
 | 5 | W3 typed errors | Before the tabs feature, which needs "not found" vs other errors |
@@ -162,7 +233,63 @@ but new modules must ship with tests.
 ## 4. Definition of done (whole plan)
 
 - CI gate green and required on `main`; clippy at 0 or every remaining allow justified.
-- No `Result<_, String>` in core's public API; no `eprintln!` outside the CLI installer.
+- No `Result<_, String>` in core's public API; no `eprintln!` in non-test code.
+- Installed on Arch Linux via a PKGBUILD/AUR package; nothing written beside the executable.
 - `Message` routing exhaustive; no silent catch-alls.
 - No function > 150 lines, no non-test module > ~800 lines (enforced by test).
 - Every module over 300 lines has tests in or beside it, or is listed as e2e-covered.
+
+## 5. Progress
+
+**2026-11-24 — W1, W2, W4, W9 landed.**
+
+- W1: `.github/workflows/ci.yml` (fmt; clippy ratchet on Linux, plain clippy on Windows;
+  tests incl. e2e with `target/e2e/` uploaded; `cargo audit`; `cargo deny check licenses
+  bans` with `deny.toml`). `scripts/clippy-ratchet.sh` + `clippy-baseline.txt` (5, all
+  `too_many_arguments` → W6 Props structs). PDFium pinned to `chromium/8165` with
+  per-platform SHA-256 in `core/build_pdfium.rs`. Audit went from 18 advisories to 0:
+  `cargo update`, `rusqlite` 0.39 → 0.43 (bundled SQLite CVE), `zip` 8 → 9.
+- W2: `[workspace.lints]` + `clippy.toml`; core `forbid(unsafe_code)`,
+  `missing_debug_implementations`, `unwrap_used`; `unwrap_used` in `native/src/app/`;
+  `undocumented_unsafe_blocks` denied in `platform.rs` / `ink/pen_win.rs`.
+  `needless_pass_by_value` was **not** enabled: it flags the Props-by-value pattern W6
+  prescribes and iced's by-value events.
+- W4: `native/src/logging.rs` (rotating file log, `MD_EDITOR_LOG`, panic hook); all
+  `eprintln!`/`println!` outside the CLI installer, examples and tests replaced; PDFium
+  bind, vault index timing and save failures logged.
+- W9: native non-test `unwrap`s removed (sidebar); remaining `expect`s state their
+  invariant.
+- Licence settled: `GPL-3.0-or-later` (workspace `license`, `deny.toml`, README); it was
+  `MIT` in `Cargo.toml` while `LICENSE` was GPL-3.0.
+
+**2026-11-24 — W10 landed (Arch Linux).**
+
+- `state.rs`: `data_dir()` → `$XDG_DATA_HOME/md-editor`, new `log_dir()` →
+  `$XDG_STATE_HOME/md-editor` (logger uses it); beside-exe probe and the reverse migration
+  removed; `portable_db_path()` feeds the one-time copy into the XDG location.
+- `pdf.rs::pdfium_candidates`: `<exe>/../lib/md-editor/` first.
+- `main.rs`: `--install`/`--uninstall` and the desktop-entry writer removed.
+- `packaging/arch/`: `md-editor` (tagged release; checksum `SKIP` until `v1.0.0` is tagged)
+  and `md-editor-git` PKGBUILDs + `.SRCINFO`, desktop entry. `PDFIUM_ARCHIVE` lets the
+  PKGBUILD supply the pinned archive as a declared source.
+- `scripts/build-arch-package.sh` and the CI `arch-package` job (makepkg incl. `check()`,
+  `namcap`, artifact upload).
+- Not done: `directories` crate (hand-rolled XDG is enough on Linux-only); publishing to the
+  AUR and tagging `v1.0.0` are owner actions.
+
+**2026-11-24 — W5 landed.**
+
+- `Message` is now `Vault | Graph | Shell | Editor | Pdf | Search | Ink | KeyboardShortcut`,
+  each wrapping a family enum (`VaultMessage`, …) with `From` impls. Variant names lost
+  their family prefix (`PdfLoaded` → `PdfMessage::Loaded`). Families follow the old router
+  grouping, so e.g. tracker and presentation messages are `ShellMessage`.
+- `update_inner` is an eight-arm exhaustive match; every `update_<family>` takes its own
+  enum and matches it exhaustively; `update_shortcuts` takes `Shortcut`. All nine
+  `_ => Task::none()` catch-alls are gone. Removing them surfaced one unhandled shape,
+  `VaultOpened(None)` (folder picker cancelled), now an explicit no-op.
+- Done with a parenthesis-aware rewrite of all 655 use sites; tests and clippy unchanged.
+- Not yet: views still build `Message::Pdf(PdfMessage::…)` directly instead of returning
+  `Element<PdfMessage>` and being `.map(Message::Pdf)`-ed, and sub-states (`UiState`,
+  `TrackerState`, `PdfPane`, `PptxPane`, `SearchState`, `VaultState`, `EditorState`) still
+  take `Message` with catch-alls. Both move with W7.
+

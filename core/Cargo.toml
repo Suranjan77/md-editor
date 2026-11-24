@@ -3,10 +3,11 @@ name = "md-editor-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Core vault, search, PDF, config, and tracker services for MD Editor."
 
 [dependencies]
-rusqlite = { version = "0.39.0", features = ["bundled"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 pdfium-render = { version = "0.9.1", features = ["thread_safe", "image_latest"] }
 image = "0.25"
 regex = "1"
@@ -14,11 +15,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10.9"
 uuid = { version = "1", features = ["v4"] }
-zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9.8", default-features = false, features = ["deflate-flate2"] }
 roxmltree = "0.20"
+log = "0.4"
 
 [build-dependencies]
 ureq = { version = "3.3.0", default-features = true }
 flate2 = "1"
 tar = "0.4"
 sha2 = "0.10.9"
+
+[lints]
+workspace = true

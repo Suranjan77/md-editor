@@ -144,8 +144,8 @@ MD Editor does not hide your work inside a proprietary database.
 - Your vault is a normal folder.
 - Notes are normal Markdown files.
 - PDFs and images stay where you put them.
-- Settings and app state are stored beside the executable by default.
-- No system-wide configuration directories are used automatically, and nothing is sent
+- Settings and app state live in one SQLite file under `~/.local/share/md-editor/`.
+- Nothing is sent
   anywhere — no accounts, no telemetry.
 
 The app creates a single SQLite file:
@@ -154,10 +154,10 @@ The app creates a single SQLite file:
 md_editor_settings.sqlite
 ```
 
-It lives next to the executable, so the whole app travels as one portable folder. Only when
-the executable's directory is not writable (a read-only system install) does it fall back to
-the per-user platform data directory and then the current directory; a database left in that
-per-user directory by an interim version is migrated back beside the executable on first run.
+It lives in `~/.local/share/md-editor/` (`$XDG_DATA_HOME/md-editor/` when set). The log,
+`md-editor.log`, is in `~/.local/state/md-editor/`. A database left beside the executable by
+an older portable build is copied there on first run; the original is left in place.
+`MD_EDITOR_DATA_DIR` points both at another folder (a throwaway profile, for example).
 
 ## Supported Files
 
@@ -171,17 +171,27 @@ per-user directory by an interim version is migrated back beside the executable 
 
 ## Supported Platforms
 
-MD Editor 1.0+ targets:
+MD Editor targets **Arch Linux** (x86_64), on Wayland or X11. Other platforms are not
+supported for now.
 
-| Platform | Architectures |
-| --- | --- |
-| Windows | x64, ARM64 |
-| Linux | x64, ARM64 |
-| macOS | Intel, Apple Silicon |
+## Install
 
-Prebuilt Windows x64 and Linux x64 packages are produced by CI. PDF support uses PDFium: the
-build script downloads the matching binary for the target OS and architecture and copies the
-shared library next to the executable.
+From the AUR, with any AUR helper:
+
+```bash
+yay -S md-editor-git     # latest main
+yay -S md-editor         # tagged releases
+```
+
+Or build the package from a checkout (`packaging/arch/`):
+
+```bash
+scripts/build-arch-package.sh -si   # builds target/arch-package/*.pkg.tar.zst and installs it
+```
+
+The package installs `/usr/bin/md-editor`, PDFium at `/usr/lib/md-editor/libpdfium.so`, a
+desktop entry (MD Editor opens Markdown, PDF and PowerPoint files from the file manager) and
+icons. `pacman -R md-editor-git` removes them and keeps your data.
 
 ## Build From Source
 
@@ -204,89 +214,15 @@ cargo run
 cargo build --release
 ```
 
-| Platform | Executable |
-| --- | --- |
-| Windows | `target\release\md-editor.exe` |
-| Linux/macOS | `target/release/md-editor` |
+The binary is `target/release/md-editor`. The PDFium library is copied next to it during the
+build, where development builds find it. The download is pinned to a tested release and
+checksum-verified; `PDFIUM_RELEASE` and `PDFIUM_SHA256` override it, and `PDFIUM_ARCHIVE`
+points the build at an already-downloaded archive (the PKGBUILD uses it).
 
-The PDFium library is copied into the same Cargo profile output directory during the build.
-To pin and verify that download, set `PDFIUM_RELEASE` and `PDFIUM_SHA256`.
-
-## PDFium Placement
-
-For packaged or portable builds, place the PDFium shared library in either:
-
-1. a `resources` folder next to the executable; or
-2. the same directory as the executable.
-
-| Platform | Library |
-| --- | --- |
-| Windows | `pdfium.dll` |
-| Linux | `libpdfium.so` |
-| macOS | `libpdfium.dylib` |
-
-## Optional Linux Desktop Integration
-
-Linux builds are portable by default. Desktop integration is opt-in.
-
-```bash
-./md-editor --install     # or --install-desktop
-./md-editor --uninstall   # or --uninstall-desktop
-```
-
-`--install` creates `~/.local/share/applications/md-editor.desktop`, installs resized icons
-under `~/.local/share/icons/hicolor/`, and refreshes the desktop and icon caches when those
-tools are available.
-
-## Project Structure
-
-```text
-md-editor/
-+-- core/      headless engine: vault, link index, search, SQLite state, PDF and PPTX readers
-+-- native/    the Iced app: shell (src/app/), editor widget, viewers, knowledge graph, ink
-+-- wiki/      project documentation (authoritative)
-+-- docs/      the printable Field Handbook (a dated snapshot) and its sources
-+-- images/    README screenshots and intro media
-```
-
-Every source file opens with a one-line `//!` summary, so
-`grep -rm1 '^//!' core/src native/src` prints a map of the code. AI coding agents get a
-short orientation from [`CLAUDE.md`](CLAUDE.md).
-
-```bash
-cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo test --workspace
-cargo clippy --workspace                # baseline: 10 warnings; do not add more
-```
-
-## Documentation
-
-The [**wiki**](wiki/Home.md) is the documentation. Its home page has an
-"I want to change…" table that sends you to the right code and page.
-
-| Start here | |
-| --- | --- |
-| [User Guide & Feature Manual](wiki/User-Guide-and-Feature-Manual.md) | Every feature and workflow |
-| [Keyboard Shortcuts](wiki/Keyboard-Shortcuts.md) | Every binding, and which layer owns it |
-| [Repository Structure](wiki/Repository-Structure.md) | Crates and per-file responsibilities |
-| [Developer Guide & Testing](wiki/Developer-Guide-and-Testing.md) | Toolchain, builds, PDFium, tests |
-| [Contributor Guidelines](wiki/Contributor-Guidelines.md) | The rules that are expensive to rediscover |
-
-Deep dives: [Architecture & Philosophy](wiki/Architecture-and-Philosophy.md) ·
-[Core Services](wiki/Core-Services.md) ·
-[Native Desktop GUI](wiki/Native-Desktop-GUI.md) ·
-[Markdown Pipeline](wiki/Markdown-Pipeline.md) ·
-[PDF Engine & Sidecars](wiki/PDF-Engine-and-Sidecars.md) ·
-[PDF Viewer Internals](wiki/PDF-Viewer-Internals.md) ·
-[Knowledge Graph](wiki/Knowledge-Graph.md) ·
-[Handwritten Notes](wiki/Handwritten-Notes.md) ·
-[Design Tokens & Motion](wiki/Design-Tokens-Motion-and-Palette.md) ·
-[Study Tracker](wiki/Study-Tracker.md) ·
-[Data Flows & Invariants](wiki/Data-Flows-and-Durability-Invariants.md) ·
-[Release Checklist](wiki/Release-Checklist.md)
+At runtime PDFium is looked up in `<exe>/../lib/md-editor/` (the installed layout), then
+beside the executable and in `<exe>/resources/`, then on the system library path.
 
 ## License
 
-MD Editor is released under the **GNU General Public License v3.0**.
+MD Editor is released under the **GNU General Public License v3.0 or later** (`GPL-3.0-or-later`).
 See [LICENSE](LICENSE) for the full text.

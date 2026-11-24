@@ -298,7 +298,7 @@ pub struct PdfAnnotation {
 Yellow → Green → Blue → Pink → Orange → Yellow. `PdfPane::next_highlight_color` steps
 through it after each quick highlight, so successive highlights stay visually distinct
 without the reader choosing a colour every time. The explicit
-`Message::PdfCreateHighlight(color)` path lets you pick one deliberately.
+`PdfMessage::CreateHighlight(color)` path lets you pick one deliberately.
 
 **Annotation survival.** Because `document_id` is content-derived, copying or re-downloading
 a PDF keeps its annotations. If the id *does* change, `save_pdf_document` adopts rows
@@ -306,7 +306,7 @@ previously recorded for the same vault path — but only when the file size also
 annotations belonging to a genuinely different file that replaced the old one stay orphaned
 rather than being silently reattached to the wrong text.
 
-**Orphan and drift report.** `Message::PdfOrphanReport` compares each highlight's stored
+**Orphan and drift report.** `PdfMessage::OrphanReport` compares each highlight's stored
 `selected_text` against the text currently under its saved rectangle and reports how many
 have drifted. Because page text is loaded lazily per visible page, the report also states
 how many of the total annotations were actually checkable.

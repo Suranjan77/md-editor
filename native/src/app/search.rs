@@ -1,12 +1,13 @@
 //! In-note and vault-wide search, match navigation and replace.
 
 use super::*;
+use crate::messages::{PdfMessage, SearchMessage};
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_search(&mut self, message: Message) -> Task<Message> {
+    pub(super) fn update_search(&mut self, message: SearchMessage) -> Task<Message> {
         match message {
-            Message::GlobalSearchOpen => {
+            SearchMessage::GlobalSearchOpen => {
                 self.search.visible = true;
                 if self.pdf.active_path.is_some() && !self.search.query.trim().is_empty() {
                     Task::batch(vec![self.search_pdf(), focus_global_search_input()])
@@ -14,21 +15,25 @@ impl MdEditor {
                     focus_global_search_input()
                 }
             }
-            Message::GlobalSearchSubmit => {
+            SearchMessage::GlobalSearchSubmit => {
                 if let Some(result) = self.search.pdf_results.first() {
-                    Task::done(Message::PdfSearchResultClicked(result.page_index))
+                    Task::done(Message::Pdf(PdfMessage::SearchResultClicked(
+                        result.page_index,
+                    )))
                 } else if let Some(result) = self.search.results.first() {
-                    Task::done(Message::SearchResultClicked(result.path.clone()))
+                    Task::done(Message::Search(SearchMessage::ResultClicked(
+                        result.path.clone(),
+                    )))
                 } else {
                     Task::none()
                 }
             }
-            Message::SearchClose => {
+            SearchMessage::Close => {
                 self.search.visible = false;
                 self.search.file_visible = false;
                 self.restore_scroll_positions()
             }
-            Message::SearchQueryChanged(q) => {
+            SearchMessage::QueryChanged(q) => {
                 self.search.query = q;
                 self.search.match_index = None;
                 self.search.pdf_error = None;
@@ -50,7 +55,7 @@ impl MdEditor {
                 self.search.pending_query_at = Some(std::time::Instant::now());
                 Task::none()
             }
-            Message::SearchDebounceElapsed => {
+            SearchMessage::DebounceElapsed => {
                 if self
                     .search
                     .pending_query_at
@@ -80,8 +85,8 @@ impl MdEditor {
             }
             // Search arms that mutate only `self.search` are routed to
             // `SearchState::update`; see search_state.rs.
-            m @ Message::SearchReplaceChanged(_) => self.search.update(m),
-            Message::SearchRegexToggled(value) => {
+            m @ SearchMessage::ReplaceChanged(_) => self.search.update(Message::Search(m)),
+            SearchMessage::RegexToggled(value) => {
                 self.search.regex = value;
                 self.search.match_index = None;
                 if (self.search.visible || self.pdf_search_is_active())
@@ -93,7 +98,7 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::SearchMatchCaseToggled(value) => {
+            SearchMessage::MatchCaseToggled(value) => {
                 self.search.match_case = value;
                 self.search.match_index = None;
                 if (self.search.visible || self.pdf_search_is_active())
@@ -105,7 +110,7 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::SearchPrevious => {
+            SearchMessage::Previous => {
                 if self.pdf_search_is_active() {
                     self.navigate_pdf_search(false)
                 } else if self.editor_search_is_active() {
@@ -114,7 +119,7 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::SearchNext => {
+            SearchMessage::Next => {
                 if self.pdf_search_is_active() {
                     self.navigate_pdf_search(true)
                 } else if self.editor_search_is_active() {
@@ -123,7 +128,7 @@ impl MdEditor {
                     Task::none()
                 }
             }
-            Message::SearchReplaceAll => match self.replace_all_in_current_document() {
+            SearchMessage::ReplaceAll => match self.replace_all_in_current_document() {
                 Ok((count, task)) => {
                     self.ui.toast = Some(format!("Replaced {} matches", count));
                     task
@@ -133,7 +138,7 @@ impl MdEditor {
                     Task::none()
                 }
             },
-            Message::SearchResultClicked(path) => {
+            SearchMessage::ResultClicked(path) => {
                 if !search_result_should_reload(self.active_path.as_deref(), &path) {
                     // The open buffer is authoritative while dirty; a global
                     // search hit for this same file must not reload disk state.
@@ -151,8 +156,6 @@ impl MdEditor {
                     self.open_file(&path)
                 }
             }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
     }
 
@@ -297,8 +300,10 @@ impl MdEditor {
                 .build()
                 .map_err(|err| err.to_string())?;
             let count = re.find_iter(&text).count();
+            // Plain-text mode: `$` in the replacement is text, not a
+            // capture-group reference.
             (
-                re.replace_all(&text, self.search.replace.as_str())
+                re.replace_all(&text, regex::NoExpand(&self.search.replace))
                     .to_string(),
                 count,
             )
@@ -352,7 +357,7 @@ impl MdEditor {
                 };
                 renderer.search_text(&path_str, &query, regex, match_case)
             },
-            move |result| Message::PdfSearchResult(generation, result),
+            move |result| Message::Pdf(PdfMessage::SearchResult(generation, result)),
         )
     }
 }

@@ -1,5 +1,7 @@
 //! The `MdEditor` shell: state, boot, window title and the message router. Handlers live in sibling files by feature.
 
+#![warn(clippy::unwrap_used)]
+
 use iced::widget::operation::{self, AbsoluteOffset};
 use iced::widget::{Space, container, mouse_area, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Subscription, Task, Theme};
@@ -172,12 +174,13 @@ use ink::derive_ink_path;
 use links::*;
 use search::{focus_file_search_input, focus_global_search_input, focus_pdf_search_input};
 
-/// What an end-to-end test can observe about the app, read once at the end
-/// of a session (the emulator does not expose state mid-run).
+/// What an end-to-end test can observe about the app. The e2e harness takes
+/// one after every update (`e2e::latest_probe`) and a final one at the end.
 #[cfg(test)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)] // fields are read by scenarios as they are written
 pub(crate) struct Probe {
+    pub vault_root: Option<String>,
     pub active_path: Option<String>,
     pub buffer: String,
     pub dirty: bool,
@@ -192,6 +195,7 @@ pub(crate) struct Probe {
     pub pdf_path: Option<String>,
     pub pdf_pages: u16,
     pub pdf_rendered: usize,
+    pub pdf_pending_pages: usize,
     pub pdf_error: Option<String>,
     pub pptx_path: Option<String>,
     pub pptx_loaded: bool,
@@ -206,6 +210,7 @@ pub(crate) struct Probe {
 impl MdEditor {
     pub(crate) fn probe(&self) -> Probe {
         Probe {
+            vault_root: self.vault.root.clone(),
             active_path: self.active_path.clone(),
             buffer: self.editor.buffer.text(),
             dirty: self.editor.buffer.dirty,
@@ -220,6 +225,7 @@ impl MdEditor {
             pdf_path: self.pdf.active_path.clone(),
             pdf_pages: self.pdf.total_pages,
             pdf_rendered: self.pdf.pages.iter().filter(|page| page.is_some()).count(),
+            pdf_pending_pages: self.pdf.pending_pages.len(),
             pdf_error: self.pdf.load_error.clone(),
             pptx_path: self.pptx.active_path.clone(),
             pptx_loaded: self.pptx.deck.is_some(),
@@ -256,6 +262,9 @@ impl MdEditor {
     pub fn new_with_startup_file(
         startup_file: Option<std::path::PathBuf>,
     ) -> (Self, Task<Message>) {
+        // Tests must never open the user's real settings database.
+        #[cfg(test)]
+        crate::test_support::isolate_data_dir();
         let state = Arc::new(md_editor_core::state::AppState::new());
         let startup_notice = state.take_startup_notice();
         let last_vault = md_editor_core::config::get_sys_config(&state, "last_vault")
@@ -401,168 +410,14 @@ impl MdEditor {
     /// lives in the file of the same name under `app/`.
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         match message {
-            m @ (Message::OpenVaultDialog
-            | Message::VaultOpened(..)
-            | Message::VaultIndexed(..)
-            | Message::SidebarToggle
-            | Message::SidebarFolderToggled(..)
-            | Message::SidebarSelectionCleared
-            | Message::SidebarFileClicked(..)
-            | Message::CreateFileDialog
-            | Message::CreateFolderDialog
-            | Message::DeleteFileDialog(..)
-            | Message::RenameEntryDialog(..)
-            | Message::NameModalInputChanged(..)
-            | Message::PdfLinkNoteFolderSelected(..)
-            | Message::PdfLinkNoteFileSelected(..)
-            | Message::PdfLinkNotePickerSearchChanged(..)
-            | Message::NameModalCancel
-            | Message::NameModalSubmit(..)
-            | Message::DeleteFile(..)
-            | Message::NameModalSubmitCurrent
-            | Message::VaultFilesChanged(..)) => self.update_vault(m),
-            m @ (Message::GraphToggle
-            | Message::GraphRefresh
-            | Message::GraphSnapshotLoaded(..)
-            | Message::GraphScopeGlobal
-            | Message::GraphScopeLocal
-            | Message::GraphLocalDepthChanged(..)
-            | Message::GraphQueryChanged(..)
-            | Message::GraphShowPdfsToggled(..)
-            | Message::GraphShowMissingToggled(..)
-            | Message::GraphShowOrphansToggled(..)
-            | Message::GraphNodeSelected(..)
-            | Message::GraphNodeMoved { .. }
-            | Message::GraphNodeOpen(..)
-            | Message::GraphNodeFocused(..)
-            | Message::GraphPinToggled(..)
-            | Message::GraphUnpinAll
-            | Message::GraphZoomBy(..)
-            | Message::GraphPhysicsToggled
-            | Message::GraphFiltersReset
-            | Message::GraphInspectorToggled
-            | Message::GraphFitView
-            | Message::GraphResetLayout
-            | Message::GraphPhysicsTick
-            | Message::GraphSetView { .. }
-            | Message::GraphHovered(..)) => self.update_graph(m),
-            m @ (Message::CommandPaletteOpen
-            | Message::CommandPaletteQueryChanged(..)
-            | Message::ShowToast(..)
-            | Message::ToastHide
-            | Message::SplitViewDragStart
-            | Message::TrackerToggle
-            | Message::CommandPaletteFileClicked(..)
-            | Message::CommandPaletteCommandClicked(..)
-            | Message::OverlaySubmitCurrent
-            | Message::TrackerStart
-            | Message::TrackerStop
-            | Message::TrackerTabSelected(..)
-            | Message::TrackerProjectStatusChanged(..)
-            | Message::TrackerGateToggled(..)
-            | Message::TrackerReadingToggled(..)
-            | Message::TrackerConfigEdited(..)
-            | Message::TrackerConfigSave
-            | Message::TrackerManualDateChanged(..)
-            | Message::TrackerManualHoursChanged(..)
-            | Message::TrackerManualNotesChanged(..)
-            | Message::TrackerManualAdd
-            | Message::TrackerSessionDelete(..)
-            | Message::SplitViewToggle
-            | Message::SplitViewDragging(..)
-            | Message::SplitViewDragEnd
-            | Message::WindowResized(..)
-            | Message::WindowOpened(..)
-            | Message::WindowCloseRequested
-            | Message::WindowClosed(..)
-            | Message::WindowRescaled(..)
-            | Message::PptxLoaded(..)
-            | Message::PptxScrolled { .. }
-            | Message::PptxZoomIn
-            | Message::PptxZoomOut
-            | Message::PptxZoomFit
-            | Message::PptxStep(..)) => self.update_shell(m),
-            m @ (Message::EditorCommand(..)
-            | Message::EditorCommandNoScroll(..)
-            | Message::MathRendered(..)
-            | Message::EditorSave
-            | Message::AnimationTick(..)
-            | Message::AutosaveElapsed
-            | Message::EditorCheckboxToggle(..)
-            | Message::EditorScrolled { .. }
-            | Message::EditorCaretView(..)
-            | Message::EditorScrollInterrupted
-            | Message::TocClicked(..)
-            | Message::ToggleTOC) => self.update_editor(m),
-            m @ (Message::PdfLoaded(..)
-            | Message::PdfZoomChanged(..)
-            | Message::PdfFitToWidth
-            | Message::PdfPageSizesLoaded(..)
-            | Message::PdfRenderSkipped(..)
-            | Message::ClosePdfLinkPreview
-            | Message::PdfPageTextLoaded(..)
-            | Message::PdfSelectionCleared
-            | Message::PdfRendered(..)
-            | Message::PdfRenderFailed(..)
-            | Message::PdfScrolled { .. }
-            | Message::PdfLeftClicked(..)
-            | Message::PdfRightClicked(..)
-            | Message::PdfLinkPreviewResult(..)
-            | Message::PdfTocLoaded(..)
-            | Message::PdfPageLinksLoaded(..)
-            | Message::PdfSearchLooseToggled(..)
-            | Message::PdfSearchResult(..)
-            | Message::PdfSearchResultClicked(..)
-            | Message::PdfScrollBy(..)
-            | Message::PdfDocumentIdComputed(..)
-            | Message::PdfReferencesLoaded(..)
-            | Message::PdfSelectionChanged(..)
-            | Message::PdfSelectionFinished(..)
-            | Message::PdfCopySelection
-            | Message::PdfCreateHighlight(..)
-            | Message::PdfQuickHighlight
-            | Message::PdfCopyAnnotationText(..)
-            | Message::PdfOrphanReport
-            | Message::PdfDeleteHighlight(..)
-            | Message::PdfAddQuickNote(..)
-            | Message::PdfLinkNote(..)
-            | Message::PdfOpenLinkedNote(..)
-            | Message::PdfAnnotationFocused { .. }) => self.update_pdf(m),
-            m @ (Message::GlobalSearchOpen
-            | Message::GlobalSearchSubmit
-            | Message::SearchClose
-            | Message::SearchQueryChanged(..)
-            | Message::SearchDebounceElapsed
-            | Message::SearchReplaceChanged(..)
-            | Message::SearchRegexToggled(..)
-            | Message::SearchMatchCaseToggled(..)
-            | Message::SearchPrevious
-            | Message::SearchNext
-            | Message::SearchReplaceAll
-            | Message::SearchResultClicked(..)) => self.update_search(m),
-            m @ Message::KeyboardShortcut(..) => self.update_shortcuts(m),
-            m @ (Message::InkPenHookReady(..)
-            | Message::InkToggle
-            | Message::InkPenSamples(..)
-            | Message::InkPointerDown(..)
-            | Message::InkPointerMove(..)
-            | Message::InkPointerUp
-            | Message::InkHoverMoved(..)
-            | Message::InkToolSelected(..)
-            | Message::InkEraserModeSelected(..)
-            | Message::InkPaperSelected(..)
-            | Message::InkColorSelected(..)
-            | Message::InkSizeSelected(..)
-            | Message::InkPan { .. }
-            | Message::InkZoom { .. }
-            | Message::InkZoomStep(..)
-            | Message::InkResetView
-            | Message::InkDeleteSelection
-            | Message::InkUndo
-            | Message::InkRedo
-            | Message::InkClear
-            | Message::InkSave
-            | Message::InkSaved(..)) => self.update_ink(m),
+            Message::Vault(m) => self.update_vault(m),
+            Message::Graph(m) => self.update_graph(m),
+            Message::Shell(m) => self.update_shell(m),
+            Message::Editor(m) => self.update_editor(m),
+            Message::Pdf(m) => self.update_pdf(m),
+            Message::Search(m) => self.update_search(m),
+            Message::Ink(m) => self.update_ink(m),
+            Message::KeyboardShortcut(shortcut) => self.update_shortcuts(shortcut),
         }
     }
 }
