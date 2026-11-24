@@ -133,7 +133,11 @@ impl MdEditor {
             },
             move |res| {
                 if let Some((p, Ok(img))) = res {
-                    Message::Pdf(PdfMessage::Rendered(generation, p, img))
+                    Message::Pdf(PdfMessage::Rendered(
+                        generation,
+                        p,
+                        crate::messages::PageImage(img),
+                    ))
                 } else if let Some((p, Err(err))) = res {
                     if err == "Skipped" {
                         Message::Pdf(PdfMessage::RenderSkipped(generation, p))
@@ -178,7 +182,11 @@ impl MdEditor {
             },
             move |res| {
                 if let Some((p, img)) = res {
-                    Message::Pdf(PdfMessage::Rendered(generation, p, img))
+                    Message::Pdf(PdfMessage::Rendered(
+                        generation,
+                        p,
+                        crate::messages::PageImage(img),
+                    ))
                 } else {
                     Message::Pdf(PdfMessage::RenderFailed(generation, page))
                 }

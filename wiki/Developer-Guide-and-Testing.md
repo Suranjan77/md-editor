@@ -324,6 +324,33 @@ cargo run --example dump_refs -- path/to/paper.pdf    # precision spot-check
 cargo run --example bench_refs -- path/to/paper.pdf   # text-scan cost
 ```
 
+### End-to-end scenarios (`native/src/e2e/`)
+
+The real program runs headless in `iced_test`'s emulator on a throwaway vault, with a private
+data directory (`test_support::isolate_data_dir`; every test that builds the app uses it).
+
+- `scenarios.rs` — data safety: autosave/undo (S2), rename/delete of the open note (S4),
+  tracker validation (S11), switching vault while dirty (S15), external edits (S16), failure
+  injection (S17).
+- `flows.rs` — UI flows: boot variants (S1), navigation (S3), search (S5), find/replace
+  (S6), palette (S7), PDF (S8), split view (S9), graph (S10), handwriting (S12), scale (S13,
+  `#[ignore]`d — run before releases), formatting (S14).
+- `Session` drives the app: `send` (then settle), `send_quick` (no settle — edits stay
+  unsaved), `type_in_note`, `click`, `wait`, `screenshot`, `probe()` (state after the last
+  update), `restart` (relaunch keeping settings), `finish`.
+- After every settle the **quiet-state invariants** run (`invariant_violations`): a clean
+  note equals disk, the tree equals disk, no PDF page pending, no unexpected error toast
+  (`expect_error_toast()` to allow one), no update over budget (100 ms default,
+  `set_update_budget`). A failure names the step and saves a screenshot.
+- Toasts auto-hide after 3 s; assert on them with `send_quick`, not after long waits.
+
+```bash
+cargo test -p md-editor-native e2e -- --nocapture       # ~90 s; screenshots + telemetry in target/e2e/
+cargo test -p md-editor-native s13 -- --ignored          # the slow scale scenarios
+```
+
+The plan and findings are in `docs/e2e-bug-discovery-plan.md`.
+
 ---
 
 ## 5. Arch Linux Package

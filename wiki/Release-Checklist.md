@@ -11,6 +11,7 @@ cargo fmt --check               # must be clean
 cargo check --workspace
 cargo test --workspace          # expect every test to pass (a few renderer harnesses are #[ignore]d by design)
 RENDER_PROPERTY_CASES=3000 cargo test -p md-editor-native properties
+cargo test -p md-editor-native s13 -- --ignored   # e2e at scale: 20k-line note, 2,000-note vault
 scripts/clippy-ratchet.sh       # must match clippy-baseline.txt
 cargo build --release
 ```

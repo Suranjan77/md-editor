@@ -181,7 +181,7 @@ pub enum PdfMessage {
     FitToWidth,
     Loaded(u64, Result<u16, String>), // render generation, total pages or load error
     PageSizesLoaded(u64, String, Vec<(f32, f32)>),
-    Rendered(u64, u16, image::DynamicImage),
+    Rendered(u64, u16, PageImage),
     RenderFailed(u64, u16),
     RenderSkipped(u64, u16),
     Scrolled {
@@ -325,6 +325,18 @@ impl From<SearchMessage> for Message {
 impl From<InkMessage> for Message {
     fn from(message: InkMessage) -> Self {
         Message::Ink(message)
+    }
+}
+
+/// A rendered PDF page. Wrapped so `Debug` prints its size, not its pixels:
+/// iced formats every message for its debug spans (Comet, the e2e
+/// telemetry), and a derived `Debug` of a page bitmap took ~100 ms.
+#[derive(Clone)]
+pub struct PageImage(pub image::DynamicImage);
+
+impl std::fmt::Debug for PageImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PageImage({}x{})", self.0.width(), self.0.height())
     }
 }
 

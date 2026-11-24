@@ -251,7 +251,18 @@ impl Recorder {
 
     /// Updates recorded since `mark` that took longer than `budget`.
     pub fn slow_updates(&self, mark: usize, budget: Duration) -> Vec<(Duration, String)> {
-        self.records.lock().unwrap()[mark..]
+        let end = self.mark();
+        self.slow_updates_between(mark, end, budget)
+    }
+
+    /// Updates recorded in `from..to` that took longer than `budget`.
+    pub fn slow_updates_between(
+        &self,
+        from: usize,
+        to: usize,
+        budget: Duration,
+    ) -> Vec<(Duration, String)> {
+        self.records.lock().unwrap()[from..to]
             .iter()
             .filter(|r| r.stage == "update" && r.duration > budget)
             .map(|r| (r.duration, r.message.clone().unwrap_or_default()))

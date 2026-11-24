@@ -5,8 +5,10 @@ automatically and without a human at the screen, before and during the
 [UI overhaul](ui-overhaul-plan.md).
 
 **Date:** 2026-11-23 · **Status:** Step 0 done except the upstream report (2026-11-24): every
-test isolated, quiet-state invariants checked after each step. Step 1 in progress — S2, S4, S11, S15, S16,
-S17 (partial) written; findings B5–B11 below, all fixed.
+test isolated, quiet-state invariants checked after each step. **Step 1 done:** S1–S17 written
+(`e2e/scenarios.rs` for data safety, `e2e/flows.rs` for UI flows; S13 is `#[ignore]`d for
+speed and runs before releases). Findings B5–B14 below, all fixed; every hypothesis H1–H10
+confirmed-and-fixed or cleared. Next: Step 2 (randomised sessions).
 
 ---
 
@@ -69,6 +71,11 @@ Found while building the harness. Verified, not hypotheses.
 | B9 | **Plain-text replace-all expanded `$` in the replacement.** With Match Case off, the search was escaped but the replacement went to `regex::replace_all` as a template, so replacing `price` with `$5` deleted the matches (H4, partly). | Medium (silent text loss) | **Fixed 2026-11-24:** `regex::NoExpand`; test `literal_replace_all_inserts_dollar_signs_verbatim` |
 | B10 | **A read-only note was silently overwritten.** The atomic write renames a temp file over the target, which needs only a writable folder; permission copying then made the file still *look* read-only. Found by S17. | High (overrides user protection) | **Fixed 2026-11-24:** `write_file` refuses read-only targets; autosave keeps the edits and reports once. Tests `write_file_refuses_a_read_only_note`, `s17_read_only_note` |
 | B11 | The tracker accepted `inf` hours (`"inf".parse::<f32>()` is positive) | Low | **Fixed 2026-11-24:** finite check; `s11_tracker_manual_sessions` |
+| B12 | **Toasts could vanish almost immediately.** The auto-hide was one `every(3s)` subscription started by the first toast and never restarted, so a toast shown <3 s after another inherited the remainder of its timer. Found as a flaky S6. | Low (missed error messages) | **Fixed 2026-11-24:** the timer is keyed on the toast text (`Subscription::with`) |
+| B13 | **Deleted last vault → misleading startup error.** When the remembered vault no longer existed, startup still opened the remembered file, replacing "Not a directory" with "Cannot open X: No vault root set". | Low | **Fixed 2026-11-24:** the last file is restored only once its vault opened; otherwise a toast says the vault was moved or deleted. `s1_remembered_vault_was_deleted` |
+| B14 | **PDF page messages had a ~100 ms `Debug`.** `PdfMessage::Rendered` carried a `DynamicImage` whose derived `Debug` prints every pixel; iced formats each message for its debug spans (Comet, e2e telemetry), stalling the update loop per page in debug tooling. | Low (dev tooling) | **Fixed 2026-11-24:** `messages::PageImage` wrapper with a size-only `Debug` |
+| P1 | Performance notes (debug build): opening a 20k-line note 228 ms (synchronous full highlight); bold over the whole 20k-line document 190 ms. Keystrokes anywhere in it stay under 100 ms. | Info | Candidates for off-thread highlighting; S13 budgets these at 400 ms |
+| H6, H9, H10 | Ink page listed at once after save; per-keystroke update on a 20k-line note within budget; switching away from a PDF mid-render leaves nothing pending | — | **Cleared** by `s12_handwriting_save_and_reopen`, `s13_large_note`, `s8_pdf_open_zoom_and_switch_mid_render` |
 | H1 | Tracker `-0.0h` | — | **Cleared:** non-positive hours were already rejected; S11 |
 | H2, H3, H7 | Rename of the open dirty note keeps edits and never resurrects the old file; deleting its folder does not recreate it; switching vault flushes first | — | **Cleared** by `s4_rename_open_dirty_note`, `s4_delete_folder_of_open_dirty_note`, `s15_switch_vault_with_dirty_note` |
 | B4 | Baseline telemetry (debug build, small vault): boot 158 ms, update ≈ 0.3 ms, view ≈ 0.13 ms. | Info | Recorded in `target/e2e/telemetry.md`; becomes the regression baseline |

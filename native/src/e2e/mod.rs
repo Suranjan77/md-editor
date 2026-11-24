@@ -18,6 +18,7 @@
 // suite is in docs/e2e-bug-discovery-plan.md.
 #![allow(dead_code)]
 
+mod flows;
 mod scenarios;
 mod telemetry;
 
@@ -144,8 +145,9 @@ pub(crate) struct Session<P: Program<State = MdEditor, Message = Message>> {
     /// Whether an error toast is expected (cleared after each check).
     expect_error: bool,
     update_budget: Duration,
-    /// Updates already reported as slow, so each is reported once.
-    slow_seen: usize,
+    /// Telemetry records already checked against the budget, so each update
+    /// is judged once, against the budget in force when it ran.
+    checked: usize,
     _serial: MutexGuard<'static, ()>,
 }
 
@@ -172,7 +174,24 @@ pub(crate) fn boot_with_path(
     startup: PathBuf,
 ) -> Session<impl Program<State = MdEditor, Message = Message> + 'static> {
     let serial = SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    boot_inner(name, Some(startup), true, serial)
+}
+
+fn boot_inner(
+    name: &str,
+    startup: Option<PathBuf>,
+    fresh_settings: bool,
+    serial: MutexGuard<'static, ()>,
+) -> Session<impl Program<State = MdEditor, Message = Message> + 'static> {
     isolate_data_dir();
+    if fresh_settings {
+        // Sessions share the isolated data dir; start each from blank
+        // settings so one scenario's last vault cannot leak into the next.
+        // (Clearing rows, not deleting the file: unit tests running in
+        // parallel hold the same database open.)
+        let state = md_editor_core::state::AppState::new();
+        md_editor_core::config::clear_sys_config(&state).expect("clear settings");
+    }
     *LATEST.lock().unwrap_or_else(|p| p.into_inner()) = None;
     let mark = telemetry::recorder().mark();
 
@@ -180,7 +199,7 @@ pub(crate) fn boot_with_path(
         size: VIEWPORT,
         ..Default::default()
     };
-    let program = telemetry::Traced(crate::program(window, Some(startup)));
+    let program = telemetry::Traced(crate::program(window, startup));
 
     let (sender, events) = mpsc::channel(1024);
     let emulator = Emulator::new(sender, &program, Mode::Zen, VIEWPORT);
@@ -197,7 +216,7 @@ pub(crate) fn boot_with_path(
         step: "boot".to_string(),
         expect_error: false,
         update_budget: UPDATE_BUDGET,
-        slow_seen: 0,
+        checked: mark,
         _serial: serial,
     };
     session.settle();
@@ -219,7 +238,7 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
     /// Run the event loop until nothing has happened for a moment: tasks
     /// done, debounces (autosave, search) fired, the vault watcher quiet.
     pub fn settle(&mut self) {
-        self.pump(Duration::from_millis(600), Duration::from_secs(15));
+        self.pump(Duration::from_millis(300), Duration::from_secs(15));
         self.check_invariants();
     }
 
@@ -245,9 +264,10 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
         let violations = invariant_violations(&probe, self.expect_error);
         self.expect_error = false;
 
-        let slow = self.slow_updates(self.update_budget);
-        let new_slow: Vec<_> = slow.iter().skip(self.slow_seen).cloned().collect();
-        self.slow_seen = slow.len();
+        let end = telemetry::recorder().mark();
+        let new_slow =
+            telemetry::recorder().slow_updates_between(self.checked, end, self.update_budget);
+        self.checked = end;
 
         let mut problems = violations;
         for (duration, message) in new_slow {
@@ -418,6 +438,20 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
             .save(&path)
             .expect("write screenshot");
         path
+    }
+
+    /// Quit and launch again, keeping the settings this session left (last
+    /// vault, last file, layout) — a restart. No other scenario can run in
+    /// between. `startup` as on the command line, or `None`.
+    pub fn restart(
+        self,
+        name: &str,
+        startup: Option<PathBuf>,
+    ) -> Session<impl Program<State = MdEditor, Message = Message> + 'static> {
+        telemetry::recorder().report(&self.name, self.mark);
+        let serial = self._serial;
+        drop(self.emulator);
+        boot_inner(name, startup, false, serial)
     }
 
     /// End the session: write its telemetry and hand back the final state.

@@ -29,6 +29,15 @@ pub fn set_sys_config(state: &AppState, key: &str, value: &str) -> Result<(), St
     Ok(())
 }
 
+/// Forget every stored setting (last vault, last file, layout, window size),
+/// as on a first launch. Study history and PDF annotations are kept.
+pub fn clear_sys_config(state: &AppState) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM settings", [])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Read a single settings value without constructing a full [`AppState`].
 ///
 /// Window geometry has to be known *before* the window is created, which is

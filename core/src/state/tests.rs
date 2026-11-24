@@ -457,3 +457,27 @@ fn portable_db_path_is_beside_the_executable() {
         .to_path_buf();
     assert_eq!(portable_db_path(), Some(exe_dir.join(DB_FILE_NAME)));
 }
+
+#[test]
+fn clearing_settings_keeps_study_history() {
+    let state = AppState::new_in_memory();
+    crate::config::set_sys_config(&state, "last_vault", "/somewhere").unwrap();
+    crate::tracker::save_session(
+        &state,
+        crate::tracker::StudySession {
+            id: 0,
+            date: "2026-11-24".to_string(),
+            hours: 1.0,
+            activity_type: "Manual".to_string(),
+            phase: "Manual".to_string(),
+            notes: None,
+        },
+    )
+    .unwrap();
+    crate::config::clear_sys_config(&state).unwrap();
+    assert_eq!(
+        crate::config::get_sys_config(&state, "last_vault").unwrap(),
+        None
+    );
+    assert_eq!(crate::tracker::get_sessions(&state).unwrap().len(), 1);
+}

@@ -22,8 +22,11 @@ impl MdEditor {
             keyboard_message(&key, modifiers, status)
         });
 
-        let toast = if self.ui.toast.is_some() {
+        let toast = if let Some(text) = &self.ui.toast {
+            // Keyed on the text, so a new toast restarts the 3 s timer
+            // instead of inheriting what was left of the previous one's.
             iced::time::every(std::time::Duration::from_secs(3))
+                .with(text.clone())
                 .map(|_| Message::Shell(ShellMessage::ToastHide))
         } else {
             Subscription::none()

@@ -196,6 +196,14 @@ pub(crate) struct Probe {
     pub pdf_pages: u16,
     pub pdf_rendered: usize,
     pub pdf_pending_pages: usize,
+    pub pdf_zoom: f32,
+    pub pdf_page: u16,
+    pub pdf_search_results: usize,
+    pub split_view: bool,
+    pub pdf_panel_active: bool,
+    pub palette_query: String,
+    pub graph_nodes: usize,
+    pub graph_local: bool,
     pub pdf_error: Option<String>,
     pub pptx_path: Option<String>,
     pub pptx_loaded: bool,
@@ -203,6 +211,7 @@ pub(crate) struct Probe {
     pub ink_window_open: bool,
     pub ink_path: Option<String>,
     pub ink_dirty: bool,
+    pub ink_strokes: usize,
     pub entries: Vec<String>,
 }
 
@@ -226,6 +235,17 @@ impl MdEditor {
             pdf_pages: self.pdf.total_pages,
             pdf_rendered: self.pdf.pages.iter().filter(|page| page.is_some()).count(),
             pdf_pending_pages: self.pdf.pending_pages.len(),
+            pdf_zoom: self.pdf.zoom,
+            pdf_page: self.pdf.current_page,
+            pdf_search_results: self.search.pdf_results.len(),
+            split_view: self.ui.split_view_active,
+            pdf_panel_active: self.active_panel == ActivePanel::Pdf,
+            palette_query: self.ui.command_palette_query.clone(),
+            graph_nodes: self.graph.filtered().snapshot.nodes.len(),
+            graph_local: matches!(
+                self.graph.scope,
+                crate::graph_state::GraphScope::Local { .. }
+            ),
             pdf_error: self.pdf.load_error.clone(),
             pptx_path: self.pptx.active_path.clone(),
             pptx_loaded: self.pptx.deck.is_some(),
@@ -233,6 +253,7 @@ impl MdEditor {
             ink_window_open: self.ink_window.is_some(),
             ink_path: self.ink.path.clone(),
             ink_dirty: self.ink.dirty,
+            ink_strokes: self.ink.document.strokes().len(),
             entries: self.vault.entries.iter().map(|e| e.path.clone()).collect(),
         }
     }
@@ -319,11 +340,22 @@ impl MdEditor {
             }
             task = Task::batch(vec![index_task, task]);
         } else if let Some(path) = last_vault {
-            let index_task = app.open_vault(&path);
-            if let Some(file_path) = last_file {
-                task = app.open_startup_file(&file_path);
+            if std::path::Path::new(&path).is_dir() {
+                let index_task = app.open_vault(&path);
+                // The remembered file belongs to that vault; restore it only
+                // once the vault is actually open.
+                if app.vault.root.is_some()
+                    && let Some(file_path) = last_file
+                {
+                    task = app.open_startup_file(&file_path);
+                }
+                task = Task::batch(vec![index_task, task]);
+            } else {
+                log::info!("The last vault, {path}, no longer exists");
+                app.ui.toast = Some(format!(
+                    "The last vault, {path}, was moved or deleted. Open a folder to continue."
+                ));
             }
-            task = Task::batch(vec![index_task, task]);
         }
 
         (app, task)

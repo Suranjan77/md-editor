@@ -218,7 +218,7 @@ impl MdEditor {
             | PdfMessage::ClosePdfLinkPreview
             | PdfMessage::PageTextLoaded(..)
             | PdfMessage::SelectionCleared) => self.pdf.update(Message::Pdf(m)),
-            PdfMessage::Rendered(generation, page, img) => {
+            PdfMessage::Rendered(generation, page, crate::messages::PageImage(img)) => {
                 self.pdf.pending_pages.remove(&page);
                 if generation != self.pdf.render_generation {
                     return Task::none();
