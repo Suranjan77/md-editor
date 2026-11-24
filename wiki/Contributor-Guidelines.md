@@ -157,11 +157,9 @@ cargo test --workspace           # must pass in full
 scripts/clippy-ratchet.sh        # clippy count must equal clippy-baseline.txt
 ```
 
-`cargo fmt --check` and `cargo test` must pass cleanly. Clippy carries a small baseline of
-`too_many_arguments` warnings on view builders (to be removed with `…Props` structs), so
-`-D warnings` does not pass yet. The ratchet fails if your change adds a warning; if your
-change removes some, lower the baseline with `scripts/clippy-ratchet.sh --update` and
-commit it. Log with `log::{info, warn, error}`, never `println!`/`eprintln!`.
+`cargo fmt --check`, `cargo test` and clippy must all pass cleanly — the clippy baseline is
+0, and the ratchet fails on any new warning. A view builder that needs more than seven
+inputs takes a `…Props` struct. Log with `log::{info, warn, error}`, never `println!`/`eprintln!`.
 
 Then, if your change touches saving, navigation, animation, or the PDF pane, walk the
 relevant items in the [Release Checklist](Release-Checklist.md) — particularly the durability

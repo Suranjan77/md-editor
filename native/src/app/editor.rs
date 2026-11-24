@@ -8,6 +8,8 @@ impl MdEditor {
     pub(super) fn update_editor(&mut self, message: EditorMessage) -> Task<Message> {
         match message {
             EditorMessage::Command(command) => self.run_editor_command(command),
+            EditorMessage::Paste => self.paste(),
+            EditorMessage::Pasted(payload) => self.pasted(payload),
             EditorMessage::CommandNoScroll(command) => {
                 self.run_editor_command_with_scroll(command, false)
             }

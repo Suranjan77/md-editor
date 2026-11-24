@@ -293,3 +293,9 @@ portable user's settings, highlights and study history appear after upgrading.
   `TrackerState`, `PdfPane`, `PptxPane`, `SearchState`, `VaultState`, `EditorState`) still
   take `Message` with catch-alls. Both move with W7.
 
+**2026-11-24 — W6 (part).** View builders with 9–13 arguments now take `ToolbarProps`,
+`SearchProps`, `TrackerProps`, `ContinuousProps`; `InteractivePdf::new` takes a
+`PageEvents` callback struct. **Clippy is at 0** (baseline file updated). The six
+`#[allow(clippy::too_many_arguments)]` in the editor renderer (hot paths) remain, as do the
+function splits (`update_pdf`, the PDFium worker, `update_vault`, `DocBuffer`).
+

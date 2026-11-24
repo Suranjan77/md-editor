@@ -49,11 +49,10 @@ cargo run                    # launch in debug
 cargo build --release        # optimized binary
 ```
 
-> `cargo fmt --check` and `cargo test --workspace` pass cleanly on `main`. Clippy carries a
-> small baseline (the count in `clippy-baseline.txt`, today 5 `too_many_arguments` on view
-> builders), so `-D warnings` fails on a fresh checkout. `scripts/clippy-ratchet.sh` fails if
-> the count grows, and also if it shrinks without the baseline being lowered
-> (`scripts/clippy-ratchet.sh --update`), so it only goes down.
+> `cargo fmt --check`, `cargo test --workspace` and clippy are all clean: the baseline in
+> `clippy-baseline.txt` is 0. `scripts/clippy-ratchet.sh` fails if the count rises above it.
+> View builders with many inputs take a `…Props` struct (`ToolbarProps`, `SearchProps`,
+> `TrackerProps`, `ContinuousProps`) rather than positional arguments.
 >
 > Lint policy lives in `[workspace.lints]` in `Cargo.toml` and `clippy.toml` (tests may
 > unwrap and print). Core forbids `unsafe` and warns on `unwrap()`; so does `native/src/app/`.

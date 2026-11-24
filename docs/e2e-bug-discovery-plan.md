@@ -8,7 +8,12 @@ automatically and without a human at the screen, before and during the
 test isolated, quiet-state invariants checked after each step. **Step 1 done:** S1–S17 written
 (`e2e/scenarios.rs` for data safety, `e2e/flows.rs` for UI flows; S13 is `#[ignore]`d for
 speed and runs before releases). Findings B5–B14 below, all fixed; every hypothesis H1–H10
-confirmed-and-fixed or cleared. Next: Step 2 (randomised sessions).
+confirmed-and-fixed or cleared. **Step 2 done:**
+`e2e/monkey.rs` — seeded sessions of 17 action kinds (open, type with/without autosave,
+caret, undo/redo, save, bold-all, create, rename, delete, external edit, search, palette,
+graph, split, Escape) generated from the live state, invariants after every action, delta
+shrinking on failure. `cargo test` runs 1×25; a 10×60 exploration (600 actions) found
+nothing. Next: Step 4 (goldens) after UI overhaul Phase 0.
 
 ---
 

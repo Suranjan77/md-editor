@@ -8,7 +8,7 @@ use iced::{Alignment, Color, Element, Length, Point, Rectangle, Renderer, Theme,
 use crate::messages::{EditorMessage, Message, PdfMessage, SearchMessage};
 use crate::theme;
 use crate::views::icons::{self, Icon};
-use crate::views::interactive_pdf::{InteractivePdf, PdfSelection};
+use crate::views::interactive_pdf::{InteractivePdf, PageEvents, PdfSelection};
 
 pub(crate) const PDF_PAGE_LIST_PADDING: f32 = 20.0;
 pub(crate) const PDF_PAGE_SPACING: f32 = 20.0;
@@ -440,21 +440,39 @@ pub fn toolbar<'a>(
     .into()
 }
 
-pub fn view_continuous<'a>(
-    pages: &'a [Option<iced::widget::image::Handle>],
-    zoom: f32,
-    dimensions: &'a [Option<(u32, u32)>],
-    page_sizes: &'a [Option<(f32, f32)>],
-    placeholder_page_size: Option<(f32, f32)>,
-    search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
-    active_search_index: Option<usize>,
-    page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
-    annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
-    references: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
-    active_selection: Option<PdfSelection>,
-    focused_annotation_id: Option<&'a str>,
-    load_error: Option<&'a str>,
-) -> Element<'a, Message, Theme, Renderer> {
+/// Everything the continuous PDF view renders from.
+pub struct ContinuousProps<'a> {
+    pub pages: &'a [Option<iced::widget::image::Handle>],
+    pub zoom: f32,
+    pub dimensions: &'a [Option<(u32, u32)>],
+    pub page_sizes: &'a [Option<(f32, f32)>],
+    pub placeholder_page_size: Option<(f32, f32)>,
+    pub search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
+    pub active_search_index: Option<usize>,
+    pub page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
+    pub annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
+    pub references: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
+    pub active_selection: Option<PdfSelection>,
+    pub focused_annotation_id: Option<&'a str>,
+    pub load_error: Option<&'a str>,
+}
+
+pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, Theme, Renderer> {
+    let ContinuousProps {
+        pages,
+        zoom,
+        dimensions,
+        page_sizes,
+        placeholder_page_size,
+        search_matches,
+        active_search_index,
+        page_texts,
+        annotations,
+        references,
+        active_selection,
+        focused_annotation_id,
+        load_error,
+    } = props;
     if pages.is_empty() {
         return container(
             text(empty_pdf_state_message(load_error))
@@ -639,14 +657,22 @@ pub fn view_continuous<'a>(
                 page_index,
                 page_text,
                 active_selection,
-                move |x, y, modifiers| {
-                    Message::Pdf(PdfMessage::LeftClicked(i as u16, x, y, modifiers))
+                PageEvents {
+                    on_left_click: Box::new(move |x, y, modifiers| {
+                        Message::Pdf(PdfMessage::LeftClicked(i as u16, x, y, modifiers))
+                    }),
+                    on_right_click: Box::new(move |x, y| {
+                        Message::Pdf(PdfMessage::RightClicked(i as u16, x, y))
+                    }),
+                    on_selection_changed: Box::new(|page, start, end| {
+                        Message::Pdf(PdfMessage::SelectionChanged(page, start, end))
+                    }),
+                    on_selection_finished: Box::new(|page, start, end| {
+                        Message::Pdf(PdfMessage::SelectionFinished(page, start, end))
+                    }),
+                    on_selection_cleared: Box::new(|| Message::Pdf(PdfMessage::SelectionCleared)),
+                    on_copy_selection: Box::new(|| Message::Pdf(PdfMessage::CopySelection)),
                 },
-                move |x, y| Message::Pdf(PdfMessage::RightClicked(i as u16, x, y)),
-                |page, start, end| Message::Pdf(PdfMessage::SelectionChanged(page, start, end)),
-                |page, start, end| Message::Pdf(PdfMessage::SelectionFinished(page, start, end)),
-                move || Message::Pdf(PdfMessage::SelectionCleared),
-                move || Message::Pdf(PdfMessage::CopySelection),
             );
 
             page_list = page_list.push(

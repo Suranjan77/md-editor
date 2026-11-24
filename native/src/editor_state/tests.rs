@@ -167,3 +167,14 @@ After";
         assert!(!lines[8].is_math_block);
     }
 }
+
+#[test]
+fn image_link_paths_unwrap_angle_brackets_and_decode() {
+    use super::image_link_path;
+    assert_eq!(image_link_path("a.png"), "a.png");
+    assert_eq!(
+        image_link_path("<attachments/Pasted image 1.png>"),
+        "attachments/Pasted image 1.png"
+    );
+    assert_eq!(image_link_path("my%20pic.png"), "my pic.png");
+}

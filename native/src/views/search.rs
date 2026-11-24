@@ -89,19 +89,34 @@ pub fn file_bar<'a>(
     .into()
 }
 
+/// Everything the vault search overlay renders from.
+pub struct SearchProps<'a> {
+    pub query: &'a str,
+    pub replace: &'a str,
+    pub regex: bool,
+    pub match_case: bool,
+    pub current_match_count: usize,
+    pub results: &'a [md_editor_core::types::SearchResult],
+    pub results_truncated: bool,
+    pub pdf_results: &'a [md_editor_core::pdf::PdfSearchMatch],
+    pub pdf_error: Option<&'a str>,
+    pub visible: bool,
+}
+
 /// Render the vault search overlay.
-pub fn view<'a>(
-    query: &'a str,
-    replace: &'a str,
-    regex: bool,
-    match_case: bool,
-    current_match_count: usize,
-    results: &'a [md_editor_core::types::SearchResult],
-    results_truncated: bool,
-    pdf_results: &'a [md_editor_core::pdf::PdfSearchMatch],
-    pdf_error: Option<&'a str>,
-    visible: bool,
-) -> Element<'a, Message, Theme, Renderer> {
+pub fn view<'a>(props: SearchProps<'a>) -> Element<'a, Message, Theme, Renderer> {
+    let SearchProps {
+        query,
+        replace,
+        regex,
+        match_case,
+        current_match_count,
+        results,
+        results_truncated,
+        pdf_results,
+        pdf_error,
+        visible,
+    } = props;
     if !visible {
         return container(text(""))
             .width(Length::Fixed(0.0))

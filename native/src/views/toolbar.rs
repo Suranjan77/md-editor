@@ -9,20 +9,37 @@ use crate::messages::{
 use crate::theme;
 use crate::views::icons::{self, Icon};
 
-pub fn view<'a>(
-    active_path: Option<&'a str>,
-    active_pdf_path: Option<&'a str>,
-    dirty: bool,
-    sidebar_visible: bool,
-    backlinks_visible: bool,
-    graph_visible: bool,
-    tracker_visible: bool,
-    toc_visible: bool,
-    toc_available: bool,
-    split_view_active: bool,
-    split_available: bool,
-    ink_visible: bool,
-) -> Element<'a, Message, Theme, Renderer> {
+/// Everything the top toolbar renders from.
+pub struct ToolbarProps<'a> {
+    pub active_path: Option<&'a str>,
+    pub active_pdf_path: Option<&'a str>,
+    pub dirty: bool,
+    pub sidebar_visible: bool,
+    pub backlinks_visible: bool,
+    pub graph_visible: bool,
+    pub tracker_visible: bool,
+    pub toc_visible: bool,
+    pub toc_available: bool,
+    pub split_view_active: bool,
+    pub split_available: bool,
+    pub ink_visible: bool,
+}
+
+pub fn view<'a>(props: ToolbarProps<'a>) -> Element<'a, Message, Theme, Renderer> {
+    let ToolbarProps {
+        active_path,
+        active_pdf_path,
+        dirty,
+        sidebar_visible,
+        backlinks_visible,
+        graph_visible,
+        tracker_visible,
+        toc_visible,
+        toc_available,
+        split_view_active,
+        split_available,
+        ink_visible,
+    } = props;
     let sidebar_toggle: Button<'_, Message, Theme, Renderer> = button(icons::view(
         Icon::LayoutPanelLeft,
         if sidebar_visible {

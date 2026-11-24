@@ -79,25 +79,26 @@ impl MdEditor {
             return views::welcome::view();
         }
 
-        let toolbar = views::toolbar::view(
-            self.active_path.as_deref(),
-            self.pdf
+        let toolbar = views::toolbar::view(views::toolbar::ToolbarProps {
+            active_path: self.active_path.as_deref(),
+            active_pdf_path: self
+                .pdf
                 .active_path
                 .as_deref()
                 .or(self.active_image_path.as_deref())
                 .or(self.pptx.active_path.as_deref()),
-            self.editor.buffer.dirty,
-            self.vault.sidebar_visible,
-            self.vault.backlinks_visible,
-            self.graph.visible,
-            self.tracker.visible,
-            self.editor.toc_visible,
-            self.pdf.active_path.is_some()
+            dirty: self.editor.buffer.dirty,
+            sidebar_visible: self.vault.sidebar_visible,
+            backlinks_visible: self.vault.backlinks_visible,
+            graph_visible: self.graph.visible,
+            tracker_visible: self.tracker.visible,
+            toc_visible: self.editor.toc_visible,
+            toc_available: self.pdf.active_path.is_some()
                 && (self.showing_pdf || (self.ui.split_view_active && self.active_path.is_some())),
-            self.ui.split_view_active,
-            self.active_path.is_some(),
-            self.ink.is_visible(),
-        );
+            split_view_active: self.ui.split_view_active,
+            split_available: self.active_path.is_some(),
+            ink_visible: self.ink.is_visible(),
+        });
 
         // Panels are clipped to an animated width rather than swapped between
         // "full" and "absent", so opening and closing them reads as movement.
@@ -151,6 +152,7 @@ impl MdEditor {
                     active_search_match,
                 )
                 .scale_factor(self.ui.scale_factor)
+                .on_paste(|| Message::Editor(EditorMessage::Paste))
                 .reveal_caret(self.editor.reveal_request, |view| {
                     Message::Editor(EditorMessage::CaretView(view))
                 })
@@ -206,23 +208,28 @@ impl MdEditor {
                 focused_ann,
             );
             let pdf_pages = scrollable(views::pdf_viewer::view_continuous(
-                &self.pdf.pages,
-                self.pdf.zoom,
-                &self.pdf.dimensions,
-                &self.pdf.page_sizes,
-                self.pdf.placeholder_page_size,
-                if pdf_search_active || self.search.visible || self.search.file_visible {
-                    &self.search.pdf_results
-                } else {
-                    &[]
+                views::pdf_viewer::ContinuousProps {
+                    pages: &self.pdf.pages,
+                    zoom: self.pdf.zoom,
+                    dimensions: &self.pdf.dimensions,
+                    page_sizes: &self.pdf.page_sizes,
+                    placeholder_page_size: self.pdf.placeholder_page_size,
+                    search_matches: if pdf_search_active
+                        || self.search.visible
+                        || self.search.file_visible
+                    {
+                        &self.search.pdf_results
+                    } else {
+                        &[]
+                    },
+                    active_search_index: self.search.match_index,
+                    page_texts: &self.pdf.page_text,
+                    annotations: &self.pdf.annotations,
+                    references: &self.pdf.references,
+                    active_selection: self.pdf.selection,
+                    focused_annotation_id: self.pdf.focused_annotation_id.as_deref(),
+                    load_error: self.pdf.load_error.as_deref(),
                 },
-                self.search.match_index,
-                &self.pdf.page_text,
-                &self.pdf.annotations,
-                &self.pdf.references,
-                self.pdf.selection,
-                self.pdf.focused_annotation_id.as_deref(),
-                self.pdf.load_error.as_deref(),
             ))
             .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
             .on_scroll(|vp| {
@@ -383,18 +390,18 @@ impl MdEditor {
 
         if self.search.visible {
             layers.push(
-                container(views::search::view(
-                    &self.search.query,
-                    &self.search.replace,
-                    self.search.regex,
-                    self.search.match_case,
-                    self.search.match_count(),
-                    &self.search.results,
-                    self.search.results_truncated,
-                    &self.search.pdf_results,
-                    self.search.pdf_error.as_deref(),
-                    true,
-                ))
+                container(views::search::view(views::search::SearchProps {
+                    query: &self.search.query,
+                    replace: &self.search.replace,
+                    regex: self.search.regex,
+                    match_case: self.search.match_case,
+                    current_match_count: self.search.match_count(),
+                    results: &self.search.results,
+                    results_truncated: self.search.results_truncated,
+                    pdf_results: &self.search.pdf_results,
+                    pdf_error: self.search.pdf_error.as_deref(),
+                    visible: true,
+                }))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .center_x(Length::Fill)

@@ -47,6 +47,7 @@ md-editor/
 | `src/references.rs` | Pure resolver from page text to equation, figure, table and section references. Never touches PDFium. |
 | `src/pptx.rs`, `src/pptx/` | Read-only PowerPoint reader. `model` is the resolved slide model; `package`, `xml`, `theme`, `color`, `fill`, `text`, `placeholder`, `geometry`, `numbering`, `table_style` and `slide` do the reading and inheritance. See [Core Services](Core-Services.md#8-powerpoint-presentations-pptxrs-pptx). |
 | `src/tracker.rs` | `StudySession` and tracker key/value persistence. |
+| `src/attachments.rs` | Images pasted into notes: attachments folder, naming, SHA-256 dedupe, import, relative Markdown links. |
 | `src/types.rs` | Plain data for the UI: `FileEntry`, `SearchResult(s)`, backlinks, `GraphSnapshot`. |
 | `src/massive_tests.rs` | Combinatorial and stress tests. |
 | `examples/` | `dump_refs`, `bench_refs`: reference-resolver diagnostics on a real PDF. |
@@ -63,12 +64,15 @@ md-editor/
 | `app/mod.rs` | `MdEditor` state, `boot`, `title`, `update`, and `update_inner`, which routes each message family to a handler below. |
 | `app/{pdf,graph,ink,search,editor,vault,shortcuts,shell}.rs` | One `update_<family>` handler each; see [Native Desktop GUI](Native-Desktop-GUI.md#2-messages-and-where-they-are-handled-messagesrs-app). |
 | `app/pdf_pages.rs` | Opening PDFs, page rendering and eviction, fit, navigation, highlights. |
+| `app/paste.rs` | Ctrl+V in a note: clipboard bitmaps and image files become attachments; otherwise text paste. |
 | `app/documents.rs` | Opening, saving, parking documents (notes, decks, images); session and layout persistence. |
 | `app/subscription.rs` | Keyboard, timers, window events, pen input, the vault watcher. |
 | `app/view.rs` | `view(window)`: the shell window and the ink window. |
 | `app/links.rs` | Wikilink, relative-link and heading-anchor resolution. |
 | `messages.rs` | `Message`, `Shortcut`, `TrackerTab`. |
-| `platform.rs` | Per-OS shims (opening external links). |
+| `platform.rs` | Per-OS shims: opening external links, reading the clipboard for paste (arboard; test double in tests). |
+| `test_support.rs` | Test-only: pins the data dir to a temp folder for every test that builds the app. |
+| `e2e/` | Headless end-to-end tests: `mod.rs` (harness, invariants), `scenarios.rs` (data safety), `flows.rs` (UI flows), `monkey.rs` (seeded random sessions), `telemetry.rs`. |
 
 ### State (`src/*_state.rs`, `*_pane.rs`)
 

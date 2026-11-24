@@ -181,17 +181,17 @@ impl TrackerState {
     }
 
     pub fn view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        views::tracker::view(
-            true,
-            self.running,
-            &self.sessions,
-            &self.kv,
-            self.tab,
-            &self.config_content,
-            &self.manual_date,
-            &self.manual_hours,
-            &self.manual_notes,
-        )
+        views::tracker::view(views::tracker::TrackerProps {
+            visible: true,
+            running: self.running,
+            sessions: &self.sessions,
+            kv: &self.kv,
+            active_tab: self.tab,
+            config_json: &self.config_content,
+            manual_date: &self.manual_date,
+            manual_hours: &self.manual_hours,
+            manual_notes: &self.manual_notes,
+        })
     }
 
     // ── internals ───────────────────────────────────────────────────

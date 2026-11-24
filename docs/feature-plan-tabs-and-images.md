@@ -3,7 +3,7 @@
 **Scope:** exactly two features. (1) Document tabs. (2) Getting images into notes by pasting
 from the clipboard or dropping files. Nothing else.
 
-**Date:** 2026-11-23 · **Status:** proposed. Visual design follows the
+**Date:** 2026-11-23 · **Status:** images I1–I3 done (2026-11-24, see Part 2 §2.8); tabs not started. Visual design follows the
 [design system](design-system/md-editor/MASTER.md); behaviour is verified with the
 [e2e harness](e2e-bug-discovery-plan.md); code lands under the rules of the
 [code health plan](code-health-plan.md).
@@ -192,6 +192,28 @@ the Markdown by hand.
   and drag-and-drop where supported (listed in the wiki *Release Checklist*).
 
 ---
+
+### 2.8 Progress (2026-11-24)
+
+- **I1** `core/src/attachments.rs`: `AttachmentFolder` (`root` / `beside-note` / custom,
+  setting `attachments_folder`), `store_bytes` (SHA-256 dedupe within the folder),
+  `store_bitmap` (PNG), `import_file` (link in place if inside the vault, else copy),
+  `image_markdown` (relative to the note, `<…>` when the path has spaces);
+  `vault::write_bytes` (the atomic writer, now shared by `write_file`). Tests in
+  `attachments/tests.rs`.
+- **I2/I3** Ctrl+V in the editor publishes `EditorMessage::Paste` (`Editor::on_paste`);
+  `app/paste.rs` reads the clipboard via `platform::read_clipboard` (arboard with
+  `wayland-data-control`, off the UI thread) and inserts with
+  `EditorCommand::InsertBlock` (own line, one undo step). Bitmaps → stored PNG; file lists
+  (or text naming existing files / `file://` URIs) → images imported, vault notes/PDFs as
+  `[[wikilinks]]`, others refused; anything else → the old text paste. The image loader now
+  unwraps `<…>` and decodes `%20`. E2E: `paste_screenshot_into_a_note`, `paste_copied_files`
+  (clipboard test double `platform::test_clipboard`).
+- **Deviations:** collision suffix is ` 2`, not ` (2)` — the editor's image parser ends the
+  target at the first `)`. The "Insert image…" picker is not done yet (I3 remainder); drop
+  (I4) and the Settings UI (I5) wait for the UI overhaul, as planned.
+- **Manual check still needed** on a real Wayland session: screenshot paste and
+  file-manager copy/paste (the harness cannot touch the OS clipboard).
 
 ## Order relative to the other plans
 

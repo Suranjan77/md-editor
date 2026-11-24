@@ -44,3 +44,118 @@ pub fn open_external(target: &str) {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = std::process::Command::new("xdg-open").arg(target).spawn();
 }
+
+/// What the clipboard holds, as far as pasting into a note cares.
+#[derive(Clone, PartialEq, Eq)]
+pub enum ClipboardPayload {
+    /// A bitmap (a screenshot, a copied image), as RGBA.
+    Image {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
+    /// Files copied in a file manager, or pasted text that names existing
+    /// files (`file://` URIs or paths).
+    Files(Vec<std::path::PathBuf>),
+    /// Anything else: let the ordinary text paste handle it.
+    Other,
+}
+
+// Hand-written so formatting a message never walks a bitmap.
+impl std::fmt::Debug for ClipboardPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Image { width, height, .. } => write!(f, "Image({width}x{height})"),
+            Self::Files(files) => f.debug_tuple("Files").field(files).finish(),
+            Self::Other => f.write_str("Other"),
+        }
+    }
+}
+
+/// Read the clipboard for a paste. Blocking (it may wait on the clipboard
+/// owner), so callers run it in a task.
+pub fn read_clipboard() -> ClipboardPayload {
+    #[cfg(test)]
+    if let Some(payload) = test_clipboard::take() {
+        return payload;
+    }
+    let Ok(mut clipboard) = arboard::Clipboard::new() else {
+        return ClipboardPayload::Other;
+    };
+    if let Ok(image) = clipboard.get_image() {
+        return ClipboardPayload::Image {
+            width: image.width as u32,
+            height: image.height as u32,
+            rgba: image.bytes.into_owned(),
+        };
+    }
+    if let Ok(files) = clipboard.get().file_list()
+        && !files.is_empty()
+    {
+        return ClipboardPayload::Files(files);
+    }
+    match clipboard.get_text() {
+        Ok(text) => files_named_by(&text).map_or(ClipboardPayload::Other, ClipboardPayload::Files),
+        Err(_) => ClipboardPayload::Other,
+    }
+}
+
+/// When every non-empty line of `text` is a `file://` URI or an absolute
+/// path to an existing file (`text/uri-list`, or paths copied as text), those
+/// files.
+pub fn files_named_by(text: &str) -> Option<Vec<std::path::PathBuf>> {
+    let files: Option<Vec<std::path::PathBuf>> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let path = match line.strip_prefix("file://") {
+                Some(rest) => std::path::PathBuf::from(percent_decode(rest)),
+                None => std::path::PathBuf::from(line),
+            };
+            (path.is_absolute() && path.is_file()).then_some(path)
+        })
+        .collect();
+    files.filter(|f| !f.is_empty())
+}
+
+/// Decode `%XX` escapes (as in `file://` URIs).
+pub fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
+            && let Ok(byte) = u8::from_str_radix(hex, 16)
+        {
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests;
+
+/// Lets tests put something on the "clipboard" without touching the OS one.
+#[cfg(test)]
+pub mod test_clipboard {
+    use super::ClipboardPayload;
+    use std::sync::Mutex;
+
+    static NEXT: Mutex<Option<ClipboardPayload>> = Mutex::new(None);
+
+    pub fn set(payload: ClipboardPayload) {
+        *NEXT.lock().unwrap_or_else(|p| p.into_inner()) = Some(payload);
+    }
+
+    pub(super) fn take() -> Option<ClipboardPayload> {
+        NEXT.lock().unwrap_or_else(|p| p.into_inner()).take()
+    }
+}

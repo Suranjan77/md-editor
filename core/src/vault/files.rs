@@ -134,6 +134,11 @@ pub(super) fn read_image(path: &Path) -> Result<Vec<u8>, String> {
 ///   (it needs only a writable folder) and silently replace a file the user
 ///   protected.
 pub fn write_file(path: &Path, content: &str) -> Result<(), String> {
+    write_bytes(path, content.as_bytes())
+}
+
+/// [`write_file`] for binary content (attachments).
+pub fn write_bytes(path: &Path, content: &[u8]) -> Result<(), String> {
     use std::io::Write;
 
     // Write through a symlink, not over it.
@@ -167,7 +172,7 @@ pub fn write_file(path: &Path, content: &str) -> Result<(), String> {
 
     let write_result = (|| -> std::io::Result<()> {
         let mut file = fs::File::create(&tmp_path)?;
-        file.write_all(content.as_bytes())?;
+        file.write_all(content)?;
         if let Some(permissions) = existing_permissions.clone() {
             file.set_permissions(permissions)?;
         }

@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations, clippy::unwrap_used)]
 
+pub mod attachments;
 pub mod config;
 pub mod file_index;
 pub mod pdf;

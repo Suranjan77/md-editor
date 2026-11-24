@@ -19,6 +19,7 @@
 #![allow(dead_code)]
 
 mod flows;
+mod monkey;
 mod scenarios;
 mod telemetry;
 

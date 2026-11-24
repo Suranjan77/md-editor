@@ -37,6 +37,16 @@ pub struct InteractivePdf<'a, Message> {
     on_copy_selection: Box<dyn Fn() -> Message + 'a>,
 }
 
+/// What a page publishes for pointer and selection events.
+pub struct PageEvents<'a, Message> {
+    pub on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
+    pub on_right_click: Box<dyn Fn(f32, f32) -> Message + 'a>,
+    pub on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
+    pub on_selection_finished: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
+    pub on_selection_cleared: Box<dyn Fn() -> Message + 'a>,
+    pub on_copy_selection: Box<dyn Fn() -> Message + 'a>,
+}
+
 impl<'a, Message> InteractivePdf<'a, Message> {
     pub fn new(
         handle: iced::widget::image::Handle,
@@ -45,13 +55,16 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         page_index: u16,
         page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
         active_selection: Option<PdfSelection>,
-        on_left_click: impl Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a,
-        on_right_click: impl Fn(f32, f32) -> Message + 'a,
-        on_selection_changed: impl Fn(u16, usize, usize) -> Message + 'a,
-        on_selection_finished: impl Fn(u16, usize, usize) -> Message + 'a,
-        on_selection_cleared: impl Fn() -> Message + 'a,
-        on_copy_selection: impl Fn() -> Message + 'a,
+        events: PageEvents<'a, Message>,
     ) -> Self {
+        let PageEvents {
+            on_left_click,
+            on_right_click,
+            on_selection_changed,
+            on_selection_finished,
+            on_selection_cleared,
+            on_copy_selection,
+        } = events;
         Self {
             handle,
             width,
@@ -59,12 +72,12 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             page_index,
             page_text,
             active_selection,
-            on_left_click: Box::new(on_left_click),
-            on_right_click: Box::new(on_right_click),
-            on_selection_changed: Box::new(on_selection_changed),
-            on_selection_finished: Box::new(on_selection_finished),
-            on_selection_cleared: Box::new(on_selection_cleared),
-            on_copy_selection: Box::new(on_copy_selection),
+            on_left_click,
+            on_right_click,
+            on_selection_changed,
+            on_selection_finished,
+            on_selection_cleared,
+            on_copy_selection,
         }
     }
 }

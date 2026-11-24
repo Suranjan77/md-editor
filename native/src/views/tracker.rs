@@ -264,17 +264,31 @@ fn panel_style() -> container::Style {
     }
 }
 
-pub fn view<'a>(
-    visible: bool,
-    running: bool,
-    sessions: &'a [StudySession],
-    kv: &'a std::collections::HashMap<String, String>,
-    active_tab: TrackerTab,
-    config_json: &'a text_editor::Content,
-    manual_date: &'a str,
-    manual_hours: &'a str,
-    manual_notes: &'a str,
-) -> Element<'a, Message, Theme, Renderer> {
+/// Everything the study tracker renders from.
+pub struct TrackerProps<'a> {
+    pub visible: bool,
+    pub running: bool,
+    pub sessions: &'a [StudySession],
+    pub kv: &'a std::collections::HashMap<String, String>,
+    pub active_tab: TrackerTab,
+    pub config_json: &'a text_editor::Content,
+    pub manual_date: &'a str,
+    pub manual_hours: &'a str,
+    pub manual_notes: &'a str,
+}
+
+pub fn view<'a>(props: TrackerProps<'a>) -> Element<'a, Message, Theme, Renderer> {
+    let TrackerProps {
+        visible,
+        running,
+        sessions,
+        kv,
+        active_tab,
+        config_json,
+        manual_date,
+        manual_hours,
+        manual_notes,
+    } = props;
     if !visible {
         return container(text("")).width(Length::Fixed(0.0)).into();
     }

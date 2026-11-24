@@ -102,6 +102,9 @@ pub struct Editor<'a, Message> {
     on_pointer_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
     on_checkbox_toggle: Box<dyn Fn(usize) -> Message + 'a>,
+    /// Ctrl+V: when set, the app handles pasting (images, files); otherwise
+    /// the widget inserts clipboard text itself.
+    on_paste: Option<Box<dyn Fn() -> Message + 'a>>,
     /// The app's latest request to bring the caret into view.
     reveal_request: u64,
     on_caret_view: Option<Box<dyn Fn(CaretView) -> Message + 'a>>,
@@ -183,10 +186,17 @@ impl<'a, Message> Editor<'a, Message> {
             on_pointer_command: Box::new(on_pointer_command),
             on_link_click: Box::new(on_link_click),
             on_checkbox_toggle: Box::new(on_checkbox_toggle),
+            on_paste: None,
             reveal_request: 0,
             on_caret_view: None,
             layout_revision: None,
         }
+    }
+
+    /// Hand Ctrl+V to the app instead of inserting clipboard text here.
+    pub fn on_paste(mut self, on_paste: impl Fn() -> Message + 'a) -> Self {
+        self.on_paste = Some(Box::new(on_paste));
+        self
     }
 
     pub fn search(

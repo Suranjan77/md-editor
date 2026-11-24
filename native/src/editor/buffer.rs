@@ -138,6 +138,9 @@ pub enum Affinity {
 #[derive(Debug, Clone)]
 pub enum EditorCommand {
     InsertText(String),
+    /// Insert text as a block on its own line (a pasted image): line breaks
+    /// are added before and after as needed. One undo step.
+    InsertBlock(String),
     DeleteSelection,
     DeleteBackward,
     DeleteForward,
@@ -344,6 +347,7 @@ impl DocBuffer {
     pub fn execute(&mut self, command: EditorCommand) -> CommandResult {
         match command {
             EditorCommand::InsertText(text) => self.insert_text(&text),
+            EditorCommand::InsertBlock(text) => self.insert_block(&text),
             EditorCommand::DeleteSelection => self.delete_selection(),
             EditorCommand::DeleteBackward => self.delete_backward(),
             EditorCommand::DeleteForward => self.delete_forward(),
@@ -516,6 +520,24 @@ impl DocBuffer {
         self.selection_offsets = Selection::new(0, self.cursor_offset);
         self.desired_col = None;
         self.sync_public_state();
+    }
+
+    fn insert_block(&mut self, block: &str) -> CommandResult {
+        let at = self
+            .selection_offsets
+            .map_or(self.cursor_offset, |s| s.range().0);
+        let len = self.rope.len_chars();
+        let mut text = String::new();
+        if at > 0 && self.rope.char(at - 1) != '\n' {
+            text.push_str(self.eol);
+        }
+        text.push_str(block);
+        // Mid-line, break after the block; at a line end the existing break
+        // follows it; at the end of the document, end with a line break.
+        if at >= len || !matches!(self.rope.char(at), '\n' | '\r') {
+            text.push_str(self.eol);
+        }
+        self.insert_text(&text)
     }
 
     fn insert_text(&mut self, text: &str) -> CommandResult {

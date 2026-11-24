@@ -410,6 +410,10 @@ impl<Message> Editor<'_, Message> {
                 return;
             }
             "v" => {
+                if let Some(on_paste) = &self.on_paste {
+                    shell.publish(on_paste());
+                    return;
+                }
                 if let Some(text) = clipboard.read(clipboard::Kind::Standard) {
                     self.send_edit(state, shell, EditorCommand::InsertText(text));
                 }

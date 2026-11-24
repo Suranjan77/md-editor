@@ -585,3 +585,120 @@ fn s13_large_vault() {
     assert!(app.probe().graph_nodes >= 2_000);
     app.finish();
 }
+
+fn paste(payload: crate::platform::ClipboardPayload) -> Message {
+    crate::platform::test_clipboard::set(payload);
+    Message::Editor(EditorMessage::Paste)
+}
+
+/// I2: pasting a bitmap stores a PNG under attachments/, inserts an image
+/// line (one undo step), shows the file in the tree and renders it.
+#[test]
+fn paste_screenshot_into_a_note() {
+    let vault = research_vault();
+    let mut app = boot("paste-bitmap", &vault, Some("notes/Attention.md"));
+    app.send(edit(EditorCommand::SetCursor {
+        line: 2,
+        col: 0,
+        affinity: Affinity::Downstream,
+    }));
+
+    let rgba = [[20u8, 120, 220, 255]; 64 * 32].concat();
+    app.send(paste(crate::platform::ClipboardPayload::Image {
+        width: 64,
+        height: 32,
+        rgba,
+    }));
+    let probe = app.probe();
+    let stored = probe
+        .entries
+        .iter()
+        .find(|e| e.starts_with("attachments/Pasted image "))
+        .cloned()
+        .expect("pasted image not in the tree");
+    let decoded = image::open(vault.root.join(&stored)).expect("a readable PNG");
+    assert_eq!((decoded.width(), decoded.height()), (64, 32));
+    let link = format!("![](<../{stored}>)");
+    assert!(
+        probe.buffer.contains(&link),
+        "{link} not in {:?}",
+        probe.buffer
+    );
+    assert!(
+        probe
+            .toast
+            .is_some_and(|t| t.starts_with("Added attachments/"))
+    );
+    app.screenshot("pasted");
+
+    // One undo removes the line; the file stays (losing a screenshot is worse
+    // than an orphan).
+    app.send(edit(EditorCommand::Undo));
+    assert!(!app.probe().buffer.contains("Pasted image"));
+    assert!(vault.exists(&stored));
+
+    // Pasting the same image again reuses the file.
+    let rgba = [[20u8, 120, 220, 255]; 64 * 32].concat();
+    app.send(paste(crate::platform::ClipboardPayload::Image {
+        width: 64,
+        height: 32,
+        rgba,
+    }));
+    let count = app
+        .probe()
+        .entries
+        .iter()
+        .filter(|e| e.starts_with("attachments/"))
+        .count();
+    assert_eq!(count, 1, "the second paste should reuse the stored image");
+    app.finish();
+}
+
+/// I3: pasting copied files imports images (copying those outside the vault,
+/// linking those inside it), links notes, and refuses other files.
+#[test]
+fn paste_copied_files() {
+    let vault = research_vault();
+    let outside = Vault::new("paste-outside");
+    std::fs::write(outside.root.join("photo.png"), tiny_png()).unwrap();
+    std::fs::write(outside.root.join("data.csv"), "a,b").unwrap();
+    std::fs::create_dir_all(vault.root.join("img")).unwrap();
+    std::fs::write(vault.root.join("img/in vault.png"), tiny_png()).unwrap();
+    let mut app = boot("paste-files", &vault, Some("Index.md"));
+
+    app.send(paste(crate::platform::ClipboardPayload::Files(vec![
+        outside.root.join("photo.png"),
+        vault.root.join("img/in vault.png"),
+        vault.root.join("notes/Optimizers.md"),
+    ])));
+    let probe = app.probe();
+    assert!(
+        vault.exists("attachments/photo.png"),
+        "outside image not copied"
+    );
+    assert!(
+        !vault.exists("attachments/in vault.png"),
+        "in-vault image was copied"
+    );
+    for expected in [
+        "![](attachments/photo.png)",
+        "![](<img/in vault.png>)",
+        "[[notes/Optimizers]]",
+    ] {
+        assert!(
+            probe.buffer.contains(expected),
+            "{expected} missing: {:?}",
+            probe.buffer
+        );
+    }
+
+    // Only non-images from outside: refused, nothing inserted.
+    let before = app.probe().buffer;
+    app.send(paste(crate::platform::ClipboardPayload::Files(vec![
+        outside.root.join("data.csv"),
+    ])));
+    let probe = app.probe();
+    assert_eq!(probe.buffer, before);
+    assert_eq!(probe.toast.as_deref(), Some("Only images can be inserted"));
+    app.finish();
+}

@@ -158,6 +158,7 @@ mod editor;
 mod graph;
 mod ink;
 mod links;
+mod paste;
 mod pdf;
 mod pdf_pages;
 mod search;

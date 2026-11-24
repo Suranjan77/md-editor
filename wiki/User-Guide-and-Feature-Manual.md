@@ -98,6 +98,26 @@ MD Editor shows formatted text and lets you edit the exact source, without a mod
 | Wikilinks | `[[Note]]`, `[[Note\|Label]]` | Resolve across subfolders by filename |
 | Horizontal rule | `---` | |
 
+### Pasting images
+
+`Ctrl+V` in a note pastes images, not just text:
+
+- **A screenshot or copied image** is saved as `attachments/Pasted image <date time>.png`
+  and an image line is inserted at the caret.
+- **Image files copied in a file manager** (or their paths/`file://` URIs copied as text)
+  are inserted too: files outside the vault are copied into `attachments/`, files already
+  in the vault are linked where they are. Copied notes and PDFs from the vault become
+  `[[wikilinks]]`; other file types are not inserted.
+- Pasting the same image twice reuses the stored file. `Ctrl+Z` removes the inserted line
+  in one step; the image file stays in the vault.
+- Paths with spaces are written as `![](<attachments/Pasted image ….png>)`, the CommonMark
+  form; `%20`-encoded paths load too.
+- The folder is the `attachments_folder` setting: `root` (default, `attachments/` at the
+  vault root), `beside-note` (`attachments/` next to the note), or a vault-relative folder.
+
+Dragging files onto the window is not supported on Wayland yet (the windowing library does
+not deliver drops there); copy and paste instead.
+
 ### Smart editing
 
 - **Auto-pairing** — `(`, `[`, `{` insert their closer with the cursor between. `"`, `'`, and

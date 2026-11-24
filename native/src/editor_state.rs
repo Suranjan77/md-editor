@@ -267,7 +267,7 @@ impl EditorPane {
                     && let Some(path) = &span.image_path
                     && !self.image_cache.contains_key(path)
                 {
-                    let img_path = base_path.join(path);
+                    let img_path = base_path.join(image_link_path(path));
                     if let Ok(img) = image::open(&img_path) {
                         let (width, height) = img.dimensions();
                         let handle = Handle::from_rgba(width, height, img.into_rgba8().into_raw());
@@ -383,6 +383,17 @@ pub(crate) fn render_latex_task(
         width,
         height,
     })
+}
+
+/// The file an image link points at: `<…>` (CommonMark's form for paths with
+/// spaces) unwrapped and `%XX` escapes decoded.
+pub(crate) fn image_link_path(link: &str) -> String {
+    let link = link.trim();
+    let link = link
+        .strip_prefix('<')
+        .and_then(|l| l.strip_suffix('>'))
+        .unwrap_or(link);
+    crate::platform::percent_decode(link)
 }
 
 #[cfg(test)]

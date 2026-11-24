@@ -147,6 +147,11 @@ pub enum ShellMessage {
 /// The Markdown editor, autosave, math rendering and the outline. Handled by `app/editor.rs`.
 #[derive(Debug, Clone)]
 pub enum EditorMessage {
+    /// Ctrl+V in the editor: read the clipboard (off the UI thread) and paste
+    /// an image, image files, or text.
+    Paste,
+    /// What the clipboard held.
+    Pasted(crate::platform::ClipboardPayload),
     Command(crate::editor::buffer::EditorCommand),
     CommandNoScroll(crate::editor::buffer::EditorCommand),
     Save,
