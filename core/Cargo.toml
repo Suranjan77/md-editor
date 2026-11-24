@@ -18,6 +18,7 @@ uuid = { version = "1", features = ["v4"] }
 zip = { version = "9.8", default-features = false, features = ["deflate-flate2"] }
 roxmltree = "0.20"
 log = "0.4"
+thiserror = "2"
 
 [build-dependencies]
 ureq = { version = "3.3.0", default-features = true }

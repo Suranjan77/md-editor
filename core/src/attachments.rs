@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::state::AppState;
-use crate::vault::{resolve_vault_path_checked, write_bytes};
+use crate::vault::{VaultError, VaultResult, resolve_vault_path_checked, write_bytes};
 
 /// Where new attachments go.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -69,7 +69,7 @@ pub fn store_bytes(
     note: Option<&str>,
     file_name: &str,
     bytes: &[u8],
-) -> Result<Stored, String> {
+) -> VaultResult<Stored> {
     let root = vault_root(state)?;
     let dir_rel = attachments_dir(folder, note);
     let dir_abs = resolve_vault_path_checked(&root, &dir_rel)?;
@@ -100,13 +100,13 @@ pub fn store_bitmap(
     height: u32,
     rgba: Vec<u8>,
     stamp: &str,
-) -> Result<Stored, String> {
+) -> VaultResult<Stored> {
     let image = image::RgbaImage::from_raw(width, height, rgba)
         .ok_or("Clipboard image has an unexpected size")?;
     let mut png = Vec::new();
     image
         .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-        .map_err(|e| format!("Could not encode the image: {e}"))?;
+        .map_err(|e| VaultError::from(format!("Could not encode the image: {e}")))?;
     store_bytes(state, folder, note, &pasted_image_name(stamp), &png)
 }
 
@@ -118,10 +118,10 @@ pub fn import_file(
     folder: &AttachmentFolder,
     note: Option<&str>,
     source: &Path,
-) -> Result<Stored, String> {
+) -> VaultResult<Stored> {
     let root = vault_root(state)?;
-    let source =
-        fs::canonicalize(source).map_err(|e| format!("Cannot read {}: {e}", source.display()))?;
+    let source = fs::canonicalize(source)
+        .map_err(|e| VaultError::from(format!("Cannot read {}: {e}", source.display())))?;
     let canonical_root = fs::canonicalize(&root).unwrap_or(root);
     if let Ok(rel) = source.strip_prefix(&canonical_root) {
         return Ok(Stored {
@@ -129,7 +129,8 @@ pub fn import_file(
             reused: true,
         });
     }
-    let bytes = fs::read(&source).map_err(|e| format!("Cannot read {}: {e}", source.display()))?;
+    let bytes = fs::read(&source)
+        .map_err(|e| VaultError::from(format!("Cannot read {}: {e}", source.display())))?;
     let name = source
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -163,11 +164,11 @@ fn relative_path(from_dir: &str, target: &str) -> String {
     parts.join("/")
 }
 
-fn vault_root(state: &AppState) -> Result<PathBuf, String> {
+fn vault_root(state: &AppState) -> VaultResult<PathBuf> {
     let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
     guard
         .clone()
-        .ok_or_else(|| "Open a vault first".to_string())
+        .ok_or_else(|| VaultError::from("Open a vault first"))
 }
 
 fn to_slash(path: &Path) -> String {

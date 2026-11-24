@@ -262,7 +262,10 @@ fn save_file_surfaces_write_failures() {
     }
 
     let error = save_file(&state, "blocked.md", "content").unwrap_err();
-    assert!(error.contains("Failed to"), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("Failed to"),
+        "unexpected error: {error}"
+    );
 
     let _ = fs::remove_dir_all(&base);
 }
@@ -452,7 +455,9 @@ fn graph_snapshot_is_sorted_aggregated_and_includes_health_nodes() {
 #[test]
 fn graph_snapshot_requires_an_open_vault() {
     let state = AppState::new_in_memory();
-    assert_eq!(get_graph_snapshot(&state).unwrap_err(), "No vault root set");
+    let error = get_graph_snapshot(&state).unwrap_err();
+    assert!(matches!(error, VaultError::NoVault));
+    assert_eq!(error.to_string(), "No vault root set");
 }
 
 #[test]
@@ -944,9 +949,40 @@ fn write_file_refuses_a_read_only_note() {
     std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o444)).unwrap();
 
     let err = write_file(&note, "overwrite").unwrap_err();
-    assert!(err.contains("read-only"), "{err}");
+    assert!(err.is_permission_denied(), "{err}");
+    assert!(err.to_string().contains("is read-only"), "{err}");
     assert_eq!(std::fs::read_to_string(&note).unwrap(), "keep me");
 
     std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o644)).unwrap();
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn vault_errors_carry_their_kind_and_keep_their_wording() {
+    let base = std::env::temp_dir().join(format!("md_editor_err_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&base).unwrap();
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+    let missing = open_file(&state, "nope.md").unwrap_err();
+    assert!(missing.is_not_found(), "{missing:?}");
+    assert!(!missing.is_permission_denied());
+
+    let escape = open_file(&state, "../outside.md").unwrap_err();
+    assert!(matches!(escape, VaultError::OutsideVault(_)), "{escape:?}");
+    assert_eq!(
+        escape.to_string(),
+        "Path escapes the vault root: ../outside.md"
+    );
+
+    fs::write(base.join("a.md"), "a").unwrap();
+    fs::write(base.join("b.md"), "b").unwrap();
+    let clash = rename_entry(&state, "a.md", "b.md").unwrap_err();
+    assert!(matches!(clash, VaultError::AlreadyExists(_)), "{clash:?}");
+    assert!(clash.to_string().starts_with("Target already exists: "));
+
+    // Callers that still speak String convert losslessly.
+    let as_text: String = clash.into();
+    assert!(as_text.starts_with("Target already exists"));
+    let _ = fs::remove_dir_all(&base);
 }

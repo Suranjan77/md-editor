@@ -14,6 +14,8 @@ use crate::types::{
     BacklinkItem, BacklinkTarget, FileEntry, GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind,
     GraphSnapshot, SearchResult,
 };
+mod error;
+pub use error::{VaultError, VaultResult};
 pub use files::*;
 pub use graph::*;
 
@@ -58,10 +60,10 @@ fn is_symlink(path: &Path) -> bool {
 
 /// Set the vault root directory and index all markdown files.
 /// Returns the file listing for the vault.
-pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, String> {
+pub fn set_vault_root(state: &AppState, path: &str) -> VaultResult<Vec<FileEntry>> {
     let root = PathBuf::from(path);
     if !root.is_dir() {
-        return Err(format!("Not a directory: {}", path));
+        return Err(VaultError::from(format!("Not a directory: {}", path)));
     }
     let generation = state.begin_vault_change(root)?;
     loop {
@@ -72,7 +74,7 @@ pub fn set_vault_root(state: &AppState, path: &str) -> Result<Vec<FileEntry>, St
                 // snapshot was being built. Rebuild from the newer disk state
                 // instead of publishing the stale snapshot over that mutation.
             }
-            None => return Err("Vault changed while indexing".to_string()),
+            None => return Err(VaultError::from("Vault changed while indexing")),
         }
     }
 }
@@ -84,11 +86,11 @@ pub fn index_vault_for_generation(
     state: &AppState,
     path: &str,
     generation: u64,
-) -> Result<Option<Vec<FileEntry>>, String> {
+) -> VaultResult<Option<Vec<FileEntry>>> {
     let started = std::time::Instant::now();
     let root = PathBuf::from(path);
     if !root.is_dir() {
-        return Err(format!("Not a directory: {}", path));
+        return Err(VaultError::from(format!("Not a directory: {}", path)));
     }
     let content_revision = state.current_vault_content_revision();
 
@@ -216,10 +218,10 @@ pub fn index_vault_for_generation(
 }
 
 /// Open a file from the vault. Returns raw bytes.
-pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
+pub fn open_file(state: &AppState, path: &str) -> VaultResult<Vec<u8>> {
     let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let vault_root = vault_root.as_ref().ok_or(VaultError::NoVault)?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
 
     if is_image_path(&abs_path) {
@@ -233,10 +235,10 @@ pub fn open_file(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Save file content.
-pub fn save_file(state: &AppState, path: &str, content: &str) -> Result<(), String> {
+pub fn save_file(state: &AppState, path: &str, content: &str) -> VaultResult<()> {
     let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let vault_root = vault_root.as_ref().ok_or(VaultError::NoVault)?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
     write_file(&abs_path, content)?;
 
@@ -313,10 +315,10 @@ pub fn save_file_guarded(
     content: &str,
     last_known: Option<u64>,
     stamp: &str,
-) -> Result<Option<String>, String> {
+) -> VaultResult<Option<String>> {
     let vault_root = {
         let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
-        guard.as_ref().ok_or("No vault root set")?.clone()
+        guard.as_ref().ok_or(VaultError::NoVault)?.clone()
     };
     let abs = resolve_vault_path_checked(&vault_root, path)?;
     let mut conflict = None;
@@ -340,11 +342,11 @@ pub fn save_file_guarded(
 /// event, a git pull, another editor). Existing files are re-read and
 /// re-indexed; vanished files are removed from the index and search. Non-
 /// markdown paths are ignored. Safe to call redundantly — it's idempotent.
-pub fn sync_path_from_disk(state: &AppState, rel_path: &str) -> Result<(), String> {
+pub fn sync_path_from_disk(state: &AppState, rel_path: &str) -> VaultResult<()> {
     let _mutation = state.vault_mutation_guard()?;
     let vault_root = {
         let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
-        guard.as_ref().ok_or("No vault root set")?.clone()
+        guard.as_ref().ok_or(VaultError::NoVault)?.clone()
     };
     let abs = resolve_vault_path_checked(&vault_root, rel_path)?;
     if !is_markdown_path(&abs) {
@@ -383,13 +385,16 @@ pub fn sync_path_from_disk(state: &AppState, rel_path: &str) -> Result<(), Strin
 }
 
 /// Create a new empty file.
-pub fn create_file(state: &AppState, path: &str) -> Result<(), String> {
+pub fn create_file(state: &AppState, path: &str) -> VaultResult<()> {
     let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let vault_root = vault_root.as_ref().ok_or(VaultError::NoVault)?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
     if abs_path.exists() {
-        return Err(format!("File already exists: {}", abs_path.display()));
+        return Err(VaultError::from(format!(
+            "File already exists: {}",
+            abs_path.display()
+        )));
     }
     write_file(&abs_path, "")?;
 
@@ -409,16 +414,23 @@ pub fn create_file(state: &AppState, path: &str) -> Result<(), String> {
 }
 
 /// Create a new directory.
-pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
+pub fn create_dir(state: &AppState, path: &str) -> VaultResult<()> {
     let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let vault_root = vault_root.as_ref().ok_or(VaultError::NoVault)?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
     if abs_path.exists() {
-        return Err(format!("Directory already exists: {}", abs_path.display()));
+        return Err(VaultError::from(format!(
+            "Directory already exists: {}",
+            abs_path.display()
+        )));
     }
-    fs::create_dir_all(&abs_path)
-        .map_err(|e| format!("Failed to create directory {}: {}", abs_path.display(), e))
+    fs::create_dir_all(&abs_path).map_err(|e| {
+        VaultError::io(
+            format!("Failed to create directory {}", abs_path.display()),
+            e,
+        )
+    })
 }
 
 /// Rename (or move) a file or directory.
@@ -427,17 +439,17 @@ pub fn create_dir(state: &AppState, path: &str) -> Result<(), String> {
 /// it is rewritten in the files that linked to it, so backlinks survive.
 /// PDF annotation links and document identities follow renamed notes/PDFs, and
 /// directory moves rebuild the markdown graph/search index under the new path.
-pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<(), String> {
+pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> VaultResult<()> {
     let _mutation = state.vault_mutation_guard()?;
     let vault_root = {
         let guard = state.vault_root.lock().map_err(|e| e.to_string())?;
-        guard.as_ref().ok_or("No vault root set")?.clone()
+        guard.as_ref().ok_or(VaultError::NoVault)?.clone()
     };
     let abs_old = resolve_vault_path_checked(&vault_root, old_path)?;
     let abs_new = resolve_vault_path_checked(&vault_root, new_path)?;
 
     if abs_new.exists() {
-        return Err(format!("Target already exists: {}", abs_new.display()));
+        return Err(VaultError::AlreadyExists(abs_new.clone()));
     }
 
     let is_dir = abs_old.is_dir();
@@ -447,7 +459,7 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
     let new_rel = path_to_relative_string(&abs_new, &vault_root);
 
     if old_rel.is_empty() || new_rel.is_empty() {
-        return Err("Cannot rename the vault root".to_string());
+        return Err(VaultError::from("Cannot rename the vault root"));
     }
 
     // Snapshot the files that link to this note *before* mutating the index —
@@ -461,7 +473,7 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> Result<
 
     // Do the physical rename first; if it fails, nothing else has changed.
     fs::rename(&abs_old, &abs_new)
-        .map_err(|e| format!("Failed to rename {}: {}", abs_old.display(), e))?;
+        .map_err(|e| VaultError::io(format!("Failed to rename {}", abs_old.display()), e))?;
 
     if is_dir {
         rewrite_persisted_rename_paths(state, &old_rel, &new_rel, true, true, true)?;
@@ -573,8 +585,8 @@ fn rewrite_persisted_rename_paths(
     subtree: bool,
     update_pdf_documents: bool,
     update_linked_notes: bool,
-) -> Result<(), String> {
-    let scope_prefix = state.pdf_scope_prefix()?.ok_or("No vault root set")?;
+) -> VaultResult<()> {
+    let scope_prefix = state.pdf_scope_prefix()?.ok_or(VaultError::NoVault)?;
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
 
@@ -611,7 +623,7 @@ fn rewrite_persisted_rename_paths(
     }
 
     tx.commit()
-        .map_err(|e| format!("Failed to persist renamed paths: {e}"))
+        .map_err(|e| VaultError::from(format!("Failed to persist renamed paths: {e}")))
 }
 
 fn rewrite_path_column(
@@ -622,7 +634,7 @@ fn rewrite_path_column(
     new_path: &str,
     subtree: bool,
     document_scope: Option<&str>,
-) -> Result<(), String> {
+) -> VaultResult<()> {
     let (sql, changed) = if let Some(scope) = document_scope.filter(|_| subtree) {
         let prefix = format!("{}/", old_path.trim_end_matches('/'));
         let sql = format!(
@@ -662,12 +674,12 @@ fn rewrite_path_column(
     };
     changed
         .map(|_| ())
-        .map_err(|e| format!("Failed to update renamed path with `{sql}`: {e}"))
+        .map_err(|e| VaultError::from(format!("Failed to update renamed path with `{sql}`: {e}")))
 }
 
 /// Rebuild the markdown graph in two passes after a directory move and replace
 /// only markdown FTS rows, preserving already-extracted PDF search content.
-fn rebuild_markdown_index_and_search(state: &AppState, root: &Path) -> Result<(), String> {
+fn rebuild_markdown_index_and_search(state: &AppState, root: &Path) -> VaultResult<()> {
     let markdown_files = list_all_md_files(root)?;
     let mut graph_files = Vec::with_capacity(markdown_files.len());
     let mut search_rows = Vec::with_capacity(markdown_files.len());
@@ -689,16 +701,22 @@ fn rebuild_markdown_index_and_search(state: &AppState, root: &Path) -> Result<()
              WHERE lower(path) LIKE '%.md' OR lower(path) LIKE '%.markdown'",
             [],
         )
-        .map_err(|e| format!("Failed to clear markdown search index after rename: {e}"))?;
+        .map_err(|e| {
+            VaultError::from(format!(
+                "Failed to clear markdown search index after rename: {e}"
+            ))
+        })?;
         for (path, content) in search_rows {
             tx.execute(
                 "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
                 rusqlite::params![path, content],
             )
-            .map_err(|e| format!("Failed to rebuild search index for {path}: {e}"))?;
+            .map_err(|e| {
+                VaultError::from(format!("Failed to rebuild search index for {path}: {e}"))
+            })?;
         }
         tx.commit()
-            .map_err(|e| format!("Failed to commit renamed search index: {e}"))?;
+            .map_err(|e| VaultError::from(format!("Failed to commit renamed search index: {e}")))?;
     }
 
     let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
@@ -707,10 +725,10 @@ fn rebuild_markdown_index_and_search(state: &AppState, root: &Path) -> Result<()
 }
 
 /// Delete a file or directory.
-pub fn delete_entry(state: &AppState, path: &str) -> Result<(), String> {
+pub fn delete_entry(state: &AppState, path: &str) -> VaultResult<()> {
     let _mutation = state.vault_mutation_guard()?;
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let vault_root = vault_root.as_ref().ok_or(VaultError::NoVault)?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
 
     if abs_path.is_file() {
@@ -724,11 +742,15 @@ pub fn delete_entry(state: &AppState, path: &str) -> Result<(), String> {
             log::warn!("Failed to remove {path} from search index: {e}");
         }
         fs::remove_file(&abs_path)
-            .map_err(|e| format!("Failed to delete file {}: {}", abs_path.display(), e))
+            .map_err(|e| VaultError::io(format!("Failed to delete file {}", abs_path.display()), e))
     } else if abs_path.is_dir() {
         let indexed_files = list_all_md_files(&abs_path)?;
-        fs::remove_dir_all(&abs_path)
-            .map_err(|e| format!("Failed to delete directory {}: {}", abs_path.display(), e))?;
+        fs::remove_dir_all(&abs_path).map_err(|e| {
+            VaultError::io(
+                format!("Failed to delete directory {}", abs_path.display()),
+                e,
+            )
+        })?;
         {
             let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
             for indexed_file in indexed_files {
@@ -742,22 +764,29 @@ pub fn delete_entry(state: &AppState, path: &str) -> Result<(), String> {
              WHERE path = ?1 OR substr(path, 1, length(?2)) = ?2",
             rusqlite::params![path, prefix],
         )
-        .map_err(|e| format!("Failed to remove {path} subtree from search index: {e}"))?;
+        .map_err(|e| {
+            VaultError::from(format!(
+                "Failed to remove {path} subtree from search index: {e}"
+            ))
+        })?;
         Ok(())
     } else {
-        Err(format!("Path does not exist: {}", abs_path.display()))
+        Err(VaultError::from(format!(
+            "Path does not exist: {}",
+            abs_path.display()
+        )))
     }
 }
 
 /// List all entries in the vault.
-pub fn list_vault(state: &AppState) -> Result<Vec<FileEntry>, String> {
+pub fn list_vault(state: &AppState) -> VaultResult<Vec<FileEntry>> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let vault_root = vault_root.as_ref().ok_or(VaultError::NoVault)?;
     list_vault_entries(vault_root)
 }
 
 /// Full-text search across the vault using FTS5.
-pub fn search_vault(state: &AppState, query: &str) -> Result<crate::types::SearchResults, String> {
+pub fn search_vault(state: &AppState, query: &str) -> VaultResult<crate::types::SearchResults> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let fts_query = query
         .split_whitespace()
@@ -797,9 +826,9 @@ pub fn search_vault(state: &AppState, query: &str) -> Result<crate::types::Searc
 }
 
 /// Get backlinks for a file.
-pub fn get_backlinks(state: &AppState, path: &str) -> Result<Vec<String>, String> {
+pub fn get_backlinks(state: &AppState, path: &str) -> VaultResult<Vec<String>> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let vault_root = vault_root.as_ref().ok_or(VaultError::NoVault)?;
     let abs_path = resolve_vault_path(vault_root, path);
 
     let index = state.file_index.lock().map_err(|e| e.to_string())?;
@@ -812,7 +841,7 @@ pub fn get_backlinks(state: &AppState, path: &str) -> Result<Vec<String>, String
 }
 
 /// Get mixed backlinks (markdown files, PDF documents, and PDF annotations).
-pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkItem>, String> {
+pub fn get_mixed_backlinks(state: &AppState, path: &str) -> VaultResult<Vec<BacklinkItem>> {
     let (vault_root, pdf_scope_prefix, generation) = {
         let _publish = state.vault_publish_lock.lock().map_err(|e| e.to_string())?;
         let root = state
@@ -820,7 +849,7 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
             .lock()
             .map_err(|e| e.to_string())?
             .as_ref()
-            .ok_or("No vault root set")?
+            .ok_or(VaultError::NoVault)?
             .clone();
         let scope_prefix = AppState::pdf_scope_prefix_for_root(&root);
         (root, scope_prefix, state.current_vault_generation())
@@ -959,16 +988,16 @@ pub fn get_mixed_backlinks(state: &AppState, path: &str) -> Result<Vec<BacklinkI
     if state.current_vault_generation() != generation
         || state.vault_root.lock().map_err(|e| e.to_string())?.as_ref() != Some(&vault_root)
     {
-        return Err("Vault changed while reading backlinks".to_string());
+        return Err(VaultError::from("Vault changed while reading backlinks"));
     }
 
     Ok(results)
 }
 
 /// Read raw image bytes from the vault.
-pub fn read_vault_image(state: &AppState, path: &str) -> Result<Vec<u8>, String> {
+pub fn read_vault_image(state: &AppState, path: &str) -> VaultResult<Vec<u8>> {
     let vault_root = state.vault_root.lock().map_err(|e| e.to_string())?;
-    let vault_root = vault_root.as_ref().ok_or("No vault root set")?;
+    let vault_root = vault_root.as_ref().ok_or(VaultError::NoVault)?;
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
     read_image(&abs_path)
 }

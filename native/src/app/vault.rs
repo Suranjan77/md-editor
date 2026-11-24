@@ -47,7 +47,7 @@ impl MdEditor {
                                 Message::Vault(VaultMessage::VaultIndexed(
                                     generation,
                                     message_root.clone(),
-                                    result,
+                                    result.map_err(String::from),
                                 ))
                             },
                         );
@@ -309,7 +309,7 @@ impl MdEditor {
                             // Pick up links the rename rewrote in the open note.
                             return self.reload_open_note_from_disk();
                         }
-                        Err(error) => self.ui.toast = Some(error),
+                        Err(error) => self.ui.toast = Some(error.to_string()),
                     }
                     return Task::none();
                 }
@@ -323,7 +323,8 @@ impl MdEditor {
                             } else {
                                 format!("{}.md", target_path)
                             };
-                        let result = md_editor_core::vault::create_file(&self.state, &path);
+                        let result = md_editor_core::vault::create_file(&self.state, &path)
+                            .map_err(String::from);
                         if !self.reset_vault_ui(result) {
                             return Task::none();
                         }
@@ -334,7 +335,8 @@ impl MdEditor {
                         self.open_file(&path)
                     }
                     Some(views::modals::ModalType::CreateFolder) => {
-                        let result = md_editor_core::vault::create_dir(&self.state, &target_path);
+                        let result = md_editor_core::vault::create_dir(&self.state, &target_path)
+                            .map_err(String::from);
                         self.reset_vault_ui(result);
                         self.invalidate_graph();
                         Task::none()
@@ -394,7 +396,7 @@ impl MdEditor {
                         self.ui.toast = Some("Deleted".to_string());
                         self.invalidate_graph();
                     }
-                    Err(err) => self.ui.toast = Some(err),
+                    Err(err) => self.ui.toast = Some(err.to_string()),
                 }
                 Task::none()
             }
@@ -578,7 +580,7 @@ impl MdEditor {
                 Message::Vault(VaultMessage::VaultIndexed(
                     generation,
                     result_path.clone(),
-                    result,
+                    result.map_err(String::from),
                 ))
             },
         )

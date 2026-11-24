@@ -54,7 +54,7 @@ enum SaveOutcome {
     Saved,
     /// Nothing was dirty, or no document is open.
     NothingToDo,
-    Failed(String),
+    Failed(md_editor_core::vault::VaultError),
 }
 
 fn search_result_should_reload(active_path: Option<&str>, target_path: &str) -> bool {

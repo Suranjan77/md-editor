@@ -1,6 +1,7 @@
 //! The knowledge-graph snapshot: nodes for notes, PDFs and missing targets, edges from wikilinks and PDF annotations.
 
 use super::*;
+use super::{VaultError, VaultResult};
 
 /// Return a deterministic snapshot of the vault's research graph.
 ///
@@ -13,7 +14,7 @@ use super::*;
 /// The vault-root and file-index locks are held only long enough to clone their
 /// current values. Directory walking and database work happen afterwards, so a
 /// graph refresh cannot hold up editor navigation or incremental indexing.
-pub fn get_graph_snapshot(state: &AppState) -> Result<GraphSnapshot, String> {
+pub fn get_graph_snapshot(state: &AppState) -> VaultResult<GraphSnapshot> {
     // Capture the root, vault identity, PDF namespace, and link index under the
     // same short publication/mutation barrier. A concurrent A -> B switch can
     // therefore never mix A's filesystem with B's annotations or FileIndex.
@@ -25,7 +26,7 @@ pub fn get_graph_snapshot(state: &AppState) -> Result<GraphSnapshot, String> {
             .lock()
             .map_err(|e| e.to_string())?
             .as_ref()
-            .ok_or("No vault root set")?
+            .ok_or(VaultError::NoVault)?
             .clone();
         let pdf_scope_prefix = AppState::pdf_scope_prefix_for_root(&root);
         let index = state.file_index.lock().map_err(|e| e.to_string())?;
@@ -186,7 +187,9 @@ pub fn get_graph_snapshot(state: &AppState) -> Result<GraphSnapshot, String> {
         || state.current_vault_content_revision() != content_revision
         || state.vault_root.lock().map_err(|e| e.to_string())?.as_ref() != Some(&root)
     {
-        return Err("Vault changed while building graph snapshot".to_string());
+        return Err(VaultError::from(
+            "Vault changed while building graph snapshot",
+        ));
     }
 
     Ok(GraphSnapshot { nodes, edges })

@@ -847,6 +847,7 @@ fn rgba(color: Color) -> [f32; 4] {
 /// Absolute path of a vault-relative ink page, with the usual traversal check.
 fn resolve(vault_root: &str, rel_path: &str) -> Result<std::path::PathBuf, String> {
     md_editor_core::vault::resolve_vault_path_checked(std::path::Path::new(vault_root), rel_path)
+        .map_err(String::from)
 }
 
 /// Write a page to the vault.
@@ -865,7 +866,7 @@ pub fn save_to_vault(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
-    md_editor_core::vault::write_file(&path, &document.to_json()?)
+    md_editor_core::vault::write_file(&path, &document.to_json()?).map_err(String::from)
 }
 
 /// Read a page back from the vault.

@@ -79,7 +79,7 @@ impl MdEditor {
     /// persisted, in which case the caller must not proceed.
     pub(super) fn leave_active_document(&mut self) -> Result<(), String> {
         if let SaveOutcome::Failed(err) = self.save_active_document() {
-            return Err(err);
+            return Err(err.to_string());
         }
         self.park_active_buffer();
         Ok(())

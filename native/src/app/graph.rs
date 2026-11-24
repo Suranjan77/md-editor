@@ -34,7 +34,9 @@ impl MdEditor {
                 };
                 let state = self.state.clone();
                 Task::perform(
-                    async move { md_editor_core::vault::get_graph_snapshot(&state) },
+                    async move {
+                        md_editor_core::vault::get_graph_snapshot(&state).map_err(String::from)
+                    },
                     move |result| Message::Graph(GraphMessage::SnapshotLoaded(generation, result)),
                 )
             }

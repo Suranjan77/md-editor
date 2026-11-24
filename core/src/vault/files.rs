@@ -1,6 +1,7 @@
 //! Filesystem helpers: path resolution and containment, atomic writes, file-type checks and vault listing.
 
 use super::*;
+use super::{VaultError, VaultResult};
 
 // ── Internal helpers ────────────────────────────────────────────────
 
@@ -19,16 +20,17 @@ pub fn resolve_vault_path(vault_root: &Path, relative_path: &str) -> PathBuf {
 /// Like [`resolve_vault_path`] but returns an error if `relative_path` tries to
 /// escape the vault root. Use for filesystem mutations (save/create/delete/
 /// rename) and reads where operating on the wrong file would be harmful.
-pub fn resolve_vault_path_checked(
-    vault_root: &Path,
-    relative_path: &str,
-) -> Result<PathBuf, String> {
+pub fn resolve_vault_path_checked(vault_root: &Path, relative_path: &str) -> VaultResult<PathBuf> {
     let (resolved, escaped) = normalize_within_root(vault_root, relative_path);
     if escaped {
-        return Err(format!("Path escapes the vault root: {relative_path}"));
+        return Err(VaultError::OutsideVault(relative_path.to_string()));
     }
-    let canonical_root = fs::canonicalize(vault_root)
-        .map_err(|e| format!("Failed to resolve vault root {}: {e}", vault_root.display()))?;
+    let canonical_root = fs::canonicalize(vault_root).map_err(|e| {
+        VaultError::io(
+            format!("Failed to resolve vault root {}", vault_root.display()),
+            e,
+        )
+    })?;
     let mut existing = resolved.as_path();
     while fs::symlink_metadata(existing).is_err() {
         existing = existing.parent().ok_or_else(|| {
@@ -39,15 +41,13 @@ pub fn resolve_vault_path_checked(
         })?;
     }
     let canonical_existing = fs::canonicalize(existing).map_err(|e| {
-        format!(
-            "Failed to resolve path inside vault {}: {e}",
-            existing.display()
+        VaultError::io(
+            format!("Failed to resolve path inside vault {}", existing.display()),
+            e,
         )
     })?;
     if !canonical_existing.starts_with(&canonical_root) {
-        return Err(format!(
-            "Path resolves outside the vault root: {relative_path}"
-        ));
+        return Err(VaultError::OutsideVault(relative_path.to_string()));
     }
     Ok(resolved)
 }
@@ -98,15 +98,17 @@ pub(super) fn file_size_and_mtime(path: &Path) -> (u64, i64) {
     (meta.len(), mtime)
 }
 
-pub(super) fn read_file(path: &Path) -> Result<String, String> {
-    fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))
+pub(super) fn read_file(path: &Path) -> VaultResult<String> {
+    fs::read_to_string(path)
+        .map_err(|e| VaultError::io(format!("Failed to read file {}", path.display()), e))
 }
 
-pub(super) fn read_image(path: &Path) -> Result<Vec<u8>, String> {
+pub(super) fn read_image(path: &Path) -> VaultResult<Vec<u8>> {
     if !is_image_path(path) {
-        return Err(format!("Not an image: {}", path.display()));
+        return Err(VaultError::NotAnImage(path.to_path_buf()));
     }
-    fs::read(path).map_err(|e| format!("Failed to read image {}: {}", path.display(), e))
+    fs::read(path)
+        .map_err(|e| VaultError::io(format!("Failed to read image {}", path.display()), e))
 }
 
 /// Write `content` to `path` atomically.
@@ -133,12 +135,12 @@ pub(super) fn read_image(path: &Path) -> Result<Vec<u8>, String> {
 /// - A read-only destination is refused. The rename would otherwise succeed
 ///   (it needs only a writable folder) and silently replace a file the user
 ///   protected.
-pub fn write_file(path: &Path, content: &str) -> Result<(), String> {
+pub fn write_file(path: &Path, content: &str) -> VaultResult<()> {
     write_bytes(path, content.as_bytes())
 }
 
 /// [`write_file`] for binary content (attachments).
-pub fn write_bytes(path: &Path, content: &[u8]) -> Result<(), String> {
+pub fn write_bytes(path: &Path, content: &[u8]) -> VaultResult<()> {
     use std::io::Write;
 
     // Write through a symlink, not over it.
@@ -150,7 +152,7 @@ pub fn write_bytes(path: &Path, content: &[u8]) -> Result<(), String> {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    fs::create_dir_all(&parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+    fs::create_dir_all(&parent).map_err(|e| VaultError::io("Failed to create directory", e))?;
 
     // Same directory as the destination, so the rename below cannot cross a
     // filesystem boundary. The name is unique per write so concurrent saves of
@@ -167,7 +169,7 @@ pub fn write_bytes(path: &Path, content: &[u8]) -> Result<(), String> {
     // file keeps the default the platform would have given it.
     let existing_permissions = fs::metadata(path).map(|m| m.permissions()).ok();
     if existing_permissions.as_ref().is_some_and(|p| p.readonly()) {
-        return Err(format!("{} is read-only", path.display()));
+        return Err(VaultError::ReadOnly(path.to_path_buf()));
     }
 
     let write_result = (|| -> std::io::Result<()> {
@@ -182,12 +184,18 @@ pub fn write_bytes(path: &Path, content: &[u8]) -> Result<(), String> {
 
     if let Err(e) = write_result {
         let _ = fs::remove_file(&tmp_path);
-        return Err(format!("Failed to write file {}: {}", path.display(), e));
+        return Err(VaultError::io(
+            format!("Failed to write file {}", path.display()),
+            e,
+        ));
     }
 
     if let Err(e) = fs::rename(&tmp_path, path) {
         let _ = fs::remove_file(&tmp_path);
-        return Err(format!("Failed to replace file {}: {}", path.display(), e));
+        return Err(VaultError::io(
+            format!("Failed to replace file {}", path.display()),
+            e,
+        ));
     }
 
     // Best-effort: persist the directory entry itself. Not all platforms allow
@@ -245,7 +253,7 @@ pub fn is_supported_vault_path(path: &Path) -> bool {
 
 /// Every supported file and folder under `root`, as the sidebar lists them
 /// (dot/heavy folders and symlinks skipped). Directories first, then by name.
-pub fn list_vault_entries(root: &Path) -> Result<Vec<FileEntry>, String> {
+pub fn list_vault_entries(root: &Path) -> VaultResult<Vec<FileEntry>> {
     let mut entries = Vec::new();
     list_vault_recursive(root, root, &mut entries, 0)?;
     entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
@@ -261,15 +269,15 @@ pub(super) fn list_vault_recursive(
     dir: &Path,
     entries: &mut Vec<FileEntry>,
     depth: usize,
-) -> Result<(), String> {
+) -> VaultResult<()> {
     if depth >= MAX_WALK_DEPTH {
         return Ok(());
     }
     let read_dir = fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
+        .map_err(|e| VaultError::io(format!("Failed to read directory {}", dir.display()), e))?;
 
     for entry in read_dir {
-        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let entry = entry.map_err(|e| VaultError::io("Failed to read entry", e))?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
@@ -361,7 +369,7 @@ pub(super) fn graph_node_label(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-pub fn list_all_md_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn list_all_md_files(root: &Path) -> VaultResult<Vec<PathBuf>> {
     let mut files = Vec::new();
     list_all_md_files_recursive(root, &mut files, 0)?;
     Ok(files)
@@ -371,13 +379,13 @@ pub(super) fn list_all_md_files_recursive(
     dir: &Path,
     files: &mut Vec<PathBuf>,
     depth: usize,
-) -> Result<(), String> {
+) -> VaultResult<()> {
     list_files_matching(dir, files, depth, &is_markdown_path)
 }
 
 /// List every `.pdf` file in the vault, applying the same exclusion/symlink/
 /// depth guards as the markdown walker.
-pub fn list_all_pdf_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn list_all_pdf_files(root: &Path) -> VaultResult<Vec<PathBuf>> {
     let mut files = Vec::new();
     list_files_matching(root, &mut files, 0, &is_pdf_path)?;
     Ok(files)
@@ -391,15 +399,15 @@ pub(super) fn list_files_matching(
     files: &mut Vec<PathBuf>,
     depth: usize,
     keep: &dyn Fn(&Path) -> bool,
-) -> Result<(), String> {
+) -> VaultResult<()> {
     if depth >= MAX_WALK_DEPTH {
         return Ok(());
     }
     let read_dir = fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
+        .map_err(|e| VaultError::io(format!("Failed to read directory {}", dir.display()), e))?;
 
     for entry in read_dir {
-        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let entry = entry.map_err(|e| VaultError::io("Failed to read entry", e))?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
