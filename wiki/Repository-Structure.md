@@ -63,7 +63,11 @@ md-editor/
 | `logging.rs` | File logger behind `log` (`md-editor.log`, rotated 1 MB × 3, level from `MD_EDITOR_LOG`) and the panic hook. |
 | `app/mod.rs` | `MdEditor` state, `boot`, `title`, `update`, and `update_inner`, which routes each message family to a handler below. |
 | `app/{pdf,graph,ink,search,editor,vault,shortcuts,shell}.rs` | One `update_<family>` handler each; see [Native Desktop GUI](Native-Desktop-GUI.md#2-messages-and-where-they-are-handled-messagesrs-app). |
-| `app/pdf_pages.rs` | Opening PDFs, page rendering and eviction, fit, navigation, highlights. |
+| `app/pdf.rs` | `update_pdf`: a router only; each `PdfMessage` goes to a handler in the three files below or to `PdfPane::update`. |
+| `app/pdf_render.rs` | PDF load results, zoom and fit-to-width, rendered/failed pages, scrolling, page links, TOC. |
+| `app/pdf_nav.rs` | PDF link clicks and previews, PDF search results, document id → highlights and references, jumping to an annotation. |
+| `app/pdf_select.rs` | PDF text selection and copy, highlights, quick notes, linked notes, orphan report. |
+| `app/pdf_pages.rs` | Opening PDFs, page render scheduling and eviction, available width, `navigate_pdf_page`. |
 | `app/paste.rs` | Ctrl+V in a note: clipboard bitmaps and image files become attachments; otherwise text paste. |
 | `app/documents.rs` | Opening, saving, parking documents (notes, decks, images); session and layout persistence. |
 | `app/subscription.rs` | Keyboard, timers, window events, pen input, the vault watcher. |

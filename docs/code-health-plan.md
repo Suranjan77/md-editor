@@ -309,3 +309,13 @@ shell's message payloads (which must be `Clone`). `SaveOutcome::Failed` keeps th
 `VaultError`. Still stringly: the PDFium worker's internal channels (typed at the
 `PdfRenderer` boundary; restructured with W6) and `pub(super)` helpers.
 
+
+**2026-11-24 — W6: `update_pdf` split.** `app/pdf.rs` is now only the router (~80 lines);
+handlers moved to `app/pdf_render.rs` (load, zoom/fit, rendered pages, scrolling, TOC),
+`app/pdf_nav.rs` (link clicks and previews, PDF search results, document id → highlights
+and references, annotation jumps) and `app/pdf_select.rs` (selection, copy, highlights,
+quick and linked notes, orphan report; the highlight helpers moved there from
+`pdf_pages.rs`). `ZoomChanged` and `FitToWidth` share `apply_pdf_zoom`; the longest PDF
+handler is now ~70 lines. One behaviour change: a failed `save_pdf_document` is logged
+instead of silently ignored. Still to do in W6: the PDFium worker, `update_vault`,
+`DocBuffer`, and the size-lint test.

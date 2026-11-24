@@ -1,5 +1,6 @@
 //! Opening PDFs and managing their pages: rendering, links, text, fit, navigation and highlights.
 
+use super::pdf_render::scroll_pdf_to;
 use super::*;
 use crate::messages::PdfMessage;
 
@@ -424,38 +425,6 @@ impl MdEditor {
         }
     }
 
-    pub(super) fn default_pdf_note_path(&self, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
-        let pdf_filename = self
-            .pdf
-            .active_path
-            .as_deref()
-            .and_then(|pdf_path| std::path::Path::new(pdf_path).file_stem())
-            .and_then(|s| s.to_str())
-            .unwrap_or("document");
-        let clean_pdf_name = slug_fragment(pdf_filename);
-        format!(
-            "pdf-notes/{}-p{}-{}.md",
-            clean_pdf_name,
-            ann.page_index + 1,
-            &ann.id[..8.min(ann.id.len())]
-        )
-    }
-
-    pub(super) fn linked_pdf_note_file_content(
-        &self,
-        note_path: &str,
-        pdf_path: &str,
-        ann: &md_editor_core::pdf::PdfAnnotation,
-    ) -> String {
-        match md_editor_core::vault::open_file(&self.state, note_path)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-        {
-            Some(existing) => append_linked_pdf_note_section(&existing, pdf_path, ann),
-            None => new_linked_pdf_note_content(note_path, pdf_path, ann),
-        }
-    }
-
     pub(super) fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {
         let target_page = page.min(self.pdf.total_pages.saturating_sub(1));
         self.pdf.current_page = target_page;
@@ -487,125 +456,7 @@ impl MdEditor {
         }
 
         self.pdf.programmatic_scroll = true;
-        let scroll_y = self.pdf.page_offset(target_page);
-        tasks.push(operation::scroll_to(
-            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-            AbsoluteOffset {
-                x: 0.0,
-                y: scroll_y,
-            },
-        ));
+        tasks.push(scroll_pdf_to(self.pdf.page_offset(target_page)));
         Task::batch(tasks)
-    }
-
-    pub(super) fn pdf_copy_shortcut_is_active(&self) -> bool {
-        self.pdf.selection.is_some()
-            && self.pdf.active_path.is_some()
-            && (self.showing_pdf
-                || (self.ui.split_view_active
-                    && self.active_path.is_some()
-                    && self.active_panel == ActivePanel::Pdf))
-    }
-
-    /// Create a highlight annotation over the current PDF text selection.
-    /// Shared by the explicit color buttons and the cycling quick highlight.
-    pub(super) fn create_highlight(
-        &mut self,
-        color: md_editor_core::pdf::PdfAnnotationColor,
-    ) -> Task<Message> {
-        if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id)
-            && let Some(page_text) = self.pdf.page_text.get(&sel.page_index)
-        {
-            let start = sel.anchor_idx.min(sel.focus_idx);
-            let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-
-            let mut selected_chars = Vec::new();
-            for c in &page_text.chars {
-                if c.text_index >= start && c.text_index < end {
-                    selected_chars.push(c.clone());
-                }
-            }
-
-            let selected_text = text_by_char_range(&page_text.text, start, end);
-
-            let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
-
-            let id = uuid::Uuid::new_v4().to_string();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-
-            let ann = md_editor_core::pdf::PdfAnnotation {
-                id: id.clone(),
-                document_id: doc_id.clone(),
-                page_index: sel.page_index,
-                kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-                color,
-                selected_text,
-                ranges: vec![md_editor_core::pdf::PdfTextRange {
-                    start_text_index: start,
-                    end_text_index: end,
-                }],
-                rects,
-                note: None,
-                linked_note_path: None,
-                markdown_anchor: None,
-                created_at: now,
-                updated_at: now,
-            };
-
-            if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                self.ui.toast = Some(format!("Failed to save highlight: {}", e));
-            } else {
-                self.pdf
-                    .annotations
-                    .entry(sel.page_index)
-                    .or_default()
-                    .push(ann);
-                self.pdf.selection = None;
-                if let Some(ref path) = self.pdf.active_path {
-                    self.vault.backlinks =
-                        md_editor_core::vault::get_mixed_backlinks(&self.state, path)
-                            .unwrap_or_default();
-                }
-            }
-        }
-        Task::none()
-    }
-
-    /// Build a short report of "orphan" annotations: highlights whose stored
-    /// `selected_text` no longer appears in the current text of their page,
-    /// which means the underlying PDF text has drifted away from the anchor.
-    pub(super) fn pdf_orphan_report(&self) -> String {
-        let mut total = 0usize;
-        let mut orphans = 0usize;
-        let mut checked = 0usize;
-        for (page_index, anns) in &self.pdf.annotations {
-            let page_text = self.pdf.page_text.get(page_index);
-            for ann in anns {
-                total += 1;
-                let needle = ann.selected_text.trim();
-                if needle.is_empty() {
-                    continue;
-                }
-                // Only pages whose text has been loaded can be checked.
-                if let Some(pt) = page_text {
-                    checked += 1;
-                    if !pt.text.contains(needle) {
-                        orphans += 1;
-                    }
-                }
-            }
-        }
-        if checked == 0 {
-            format!(
-                "Orphan report: 0 of {total} annotations checkable (scroll pages to load text first)"
-            )
-        } else if orphans == 0 {
-            format!("Orphan report: no drift found ({checked} of {total} checked)")
-        } else {
-            format!("Orphan report: {orphans} drifted of {checked} checked ({total} total)")
-        }
     }
 }

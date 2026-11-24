@@ -2,7 +2,8 @@
 
 This page covers the **native** half of the PDF subsystem: the viewport state in
 `native/src/pdf_pane.rs`, the scheduling and cache invariants enforced in
-`native/src/app/pdf.rs` and `app/pdf_pages.rs`, and the navigation and scroll model. The engine side — the PDFium
+`native/src/app/pdf.rs` (router) with its handlers in `app/pdf_render.rs`, `app/pdf_nav.rs`
+and `app/pdf_select.rs`, `app/pdf_pages.rs`, and the navigation and scroll model. The engine side — the PDFium
 worker, TOC recovery, the reference resolver, and sidecar storage — is in
 [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md).
 
@@ -10,11 +11,11 @@ The flow of one interaction:
 
 ```text
 iced UI
-  -> Message handler in native/src/app/pdf.rs
+  -> update_pdf (native/src/app/pdf.rs) -> on_pdf_* handler
   -> iced::Task async call
   -> PdfRenderer API in core/src/pdf/renderer.rs
   -> single PDFium worker thread
-  -> typed Message result back into app/pdf.rs
+  -> typed Message result back into update_pdf
   -> generation validation, pending cleanup, cache update, optional follow-up task
 ```
 

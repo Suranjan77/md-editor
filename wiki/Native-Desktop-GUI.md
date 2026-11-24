@@ -61,7 +61,7 @@ its family:
 
 | Message | Handler | File |
 | :--- | :--- | :--- |
-| `Message::Pdf(PdfMessage)` | `update_pdf` | `app/pdf.rs` (page management in `app/pdf_pages.rs`) |
+| `Message::Pdf(PdfMessage)` | `update_pdf` | `app/pdf.rs` routes to `pdf_render.rs`, `pdf_nav.rs`, `pdf_select.rs` (page management in `app/pdf_pages.rs`) |
 | `Message::Graph(GraphMessage)` | `update_graph` | `app/graph.rs` |
 | `Message::Ink(InkMessage)` | `update_ink` | `app/ink.rs` |
 | `Message::Search(SearchMessage)` — global search and find/replace | `update_search` | `app/search.rs` |
