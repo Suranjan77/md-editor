@@ -68,7 +68,7 @@ impl Default for Interaction {
 }
 
 /// Two left-presses on the same node within this window open the document.
-const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+use crate::design::motion::MULTI_CLICK as DOUBLE_CLICK;
 
 #[derive(Debug, Clone)]
 enum Gesture {

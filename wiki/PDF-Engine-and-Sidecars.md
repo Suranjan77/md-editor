@@ -95,6 +95,18 @@ starved the subscriptions, so iced dropped input events (`TrySendError { kind: F
 `PageSizes` reads each page's box from the page tree (`pages().page_size`) without loading
 the page.
 
+**Coordinates.** Every `PdfRect` that leaves core (char boxes, search hits, annotation
+rects, links) is in the *displayed* page box: `page.width()` × `page.height()` after
+`/Rotate` and the crop box, in points. `pdf/geometry.rs::PageToView` samples PDFium's
+page-to-device transform per page; on an unrotated page cropped at the origin it is the
+plain y-flip, so stored annotations from before keep their place. The test
+`text_and_search_rects_sit_on_the_rendered_glyphs_whatever_the_page_geometry` renders
+rotated and cropped pages and checks that the rects cover ink.
+
+**Search limit.** `search_text` stops at `PDF_SEARCH_MATCH_LIMIT` (10,000) matches, and the
+find bar shows "N+ matches" when it is reached. The limit used to be a silent 250, so
+matches past roughly the 250th were unreachable.
+
 ---
 
 ## 2. Document Identity & Text Caching

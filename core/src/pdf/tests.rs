@@ -808,3 +808,167 @@ fn background_lane_holds_whole_document_work_only() {
     let (tx, _rx) = std::sync::mpsc::sync_channel(1);
     assert!(!PdfCommand::PageSizes("a".into(), tx).is_background());
 }
+
+/// One page of "MMMMMM" in 36 pt Helvetica at user-space (60, 120) on a
+/// 400×300 pt page, with the given `/Rotate` and crop box.
+fn write_geometry_fixture(
+    path: &Path,
+    rotation: PdfPageRenderRotation,
+    crop: Option<(f32, f32, f32, f32)>,
+) {
+    let pdfium = bind_pdfium().unwrap();
+    let mut doc = pdfium.create_new_pdf().unwrap();
+    let font = doc.fonts_mut().helvetica();
+    let mut page = doc
+        .pages_mut()
+        .create_page_at_end(PdfPagePaperSize::new_custom(
+            PdfPoints::new(400.0),
+            PdfPoints::new(300.0),
+        ))
+        .unwrap();
+    page.objects_mut()
+        .create_text_object(
+            PdfPoints::new(60.0),
+            PdfPoints::new(120.0),
+            "MMMMMM",
+            font,
+            PdfPoints::new(36.0),
+        )
+        .unwrap();
+    page.set_rotation(rotation);
+    if let Some((bottom, left, top, right)) = crop {
+        page.boundaries_mut()
+            .set_crop(pdfium_render::prelude::PdfRect::new_from_values(
+                bottom, left, top, right,
+            ))
+            .unwrap();
+    }
+    drop(page);
+    doc.save_to_file(path).unwrap();
+}
+
+/// Share of dark pixels inside a bottom-left-origin rect (displayed-box
+/// points) of a page rendered at `scale`.
+fn ink_in(image: &image::RgbaImage, rect: &PdfRect, page_height: f32, scale: f32) -> f32 {
+    let x0 = (rect.x * scale).max(0.0) as u32;
+    let x1 = ((rect.x + rect.width) * scale).min(image.width() as f32) as u32;
+    let y0 = ((page_height - rect.y - rect.height) * scale).max(0.0) as u32;
+    let y1 = ((page_height - rect.y) * scale).min(image.height() as f32) as u32;
+    let (mut dark, mut total) = (0u32, 0u32);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            total += 1;
+            let p = image.get_pixel(x, y);
+            if u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]) < 300 {
+                dark += 1;
+            }
+        }
+    }
+    if total == 0 {
+        0.0
+    } else {
+        dark as f32 / total as f32
+    }
+}
+
+/// Text, selection and search rects must sit on the glyphs in the rendered
+/// bitmap on rotated pages and pages whose crop box does not start at the
+/// origin, not only on plain pages. They used to be raw user space, so
+/// highlights and search hits were drawn beside the text on such pages.
+#[test]
+fn text_and_search_rects_sit_on_the_rendered_glyphs_whatever_the_page_geometry() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let dir = std::env::temp_dir().join(format!("md-pdf-geometry-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    /// Crop box as (bottom, left, top, right).
+    type Crop = Option<(f32, f32, f32, f32)>;
+    let cases: [(&str, PdfPageRenderRotation, Crop); 5] = [
+        ("plain", PdfPageRenderRotation::None, None),
+        ("rotate-90", PdfPageRenderRotation::Degrees90, None),
+        ("rotate-180", PdfPageRenderRotation::Degrees180, None),
+        (
+            "cropped",
+            PdfPageRenderRotation::None,
+            Some((50.0, 40.0, 280.0, 380.0)),
+        ),
+        (
+            "rotate-270-cropped",
+            PdfPageRenderRotation::Degrees270,
+            Some((50.0, 40.0, 280.0, 380.0)),
+        ),
+    ];
+
+    let renderer = PdfRenderer::new().unwrap();
+    let scale = 2.0;
+    for (name, rotation, crop) in cases {
+        let path = dir.join(format!("{name}.pdf"));
+        write_geometry_fixture(&path, rotation, crop);
+        let path = path.to_string_lossy().to_string();
+
+        let text = renderer.get_page_text(&path, 0).unwrap();
+        let glyphs: Vec<_> = text.chars.iter().filter(|c| c.ch == 'M').cloned().collect();
+        assert_eq!(glyphs.len(), 6, "{name}: {:?}", text.text);
+        // The box around every glyph. On a quarter-turned page the run reads
+        // vertically, so it is not one merged line.
+        let on_text = &glyphs
+            .iter()
+            .skip(1)
+            .fold(glyphs[0].bbox.clone(), |acc, c| {
+                let (x0, y0) = (acc.x.min(c.bbox.x), acc.y.min(c.bbox.y));
+                let x1 = (acc.x + acc.width).max(c.bbox.x + c.bbox.width);
+                let y1 = (acc.y + acc.height).max(c.bbox.y + c.bbox.height);
+                PdfRect {
+                    x: x0,
+                    y: y0,
+                    width: x1 - x0,
+                    height: y1 - y0,
+                }
+            });
+
+        let image = renderer.render_page(&path, 0, scale).unwrap().to_rgba8();
+        let inside = ink_in(&image, on_text, text.page_height, scale);
+        assert!(
+            inside > 0.15,
+            "{name}: the text rect {on_text:?} covers no glyphs ({inside:.3} dark)"
+        );
+        // The same box moved across the run, by its own thickness, must be blank.
+        let vertical = on_text.height > on_text.width;
+        let beside = if vertical {
+            let step = on_text.width * 1.5;
+            PdfRect {
+                x: if on_text.x > text.page_width / 2.0 {
+                    on_text.x - step
+                } else {
+                    on_text.x + step
+                },
+                ..on_text.clone()
+            }
+        } else {
+            let step = on_text.height * 1.5;
+            PdfRect {
+                y: if on_text.y > text.page_height / 2.0 {
+                    on_text.y - step
+                } else {
+                    on_text.y + step
+                },
+                ..on_text.clone()
+            }
+        };
+        let outside = ink_in(&image, &beside, text.page_height, scale);
+        assert!(
+            outside < 0.01,
+            "{name}: ink beside the text rect ({outside:.3})"
+        );
+
+        let hits = renderer.search_text(&path, "MMM", false, false).unwrap();
+        let hit = hits.first().and_then(|m| m.rects.first()).expect("a hit");
+        let overlap_x = (hit.x + hit.width).min(on_text.x + on_text.width) - hit.x.max(on_text.x);
+        let overlap_y = (hit.y + hit.height).min(on_text.y + on_text.height) - hit.y.max(on_text.y);
+        assert!(
+            overlap_x > 0.0 && overlap_y > 0.0,
+            "{name}: search hit {hit:?} is not on the text {on_text:?}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}

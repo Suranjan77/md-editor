@@ -36,6 +36,10 @@ struct OverlayRect {
 #[derive(Debug, Clone)]
 struct PdfOverlay {
     rects: Vec<OverlayRect>,
+    /// The page size the rects were computed for. If layout gives the page
+    /// less room, the bitmap underneath is squeezed to fit, so the rects are
+    /// scaled the same way instead of drifting off the text.
+    laid_out_for: (f32, f32),
 }
 
 impl<Message> canvas::Program<Message> for PdfOverlay {
@@ -50,21 +54,16 @@ impl<Message> canvas::Program<Message> for PdfOverlay {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let sx = bounds.width / self.laid_out_for.0.max(1.0);
+        let sy = bounds.height / self.laid_out_for.1.max(1.0);
 
         for item in &self.rects {
+            let (width, height) = (item.rect.width * sx, item.rect.height * sy);
             let rect = Rectangle {
-                x: item.rect.x,
-                y: item.rect.y,
-                width: if item.thin {
-                    item.rect.width
-                } else {
-                    item.rect.width.max(3.0)
-                },
-                height: if item.thin {
-                    item.rect.height
-                } else {
-                    item.rect.height.max(8.0)
-                },
+                x: item.rect.x * sx,
+                y: item.rect.y * sy,
+                width: if item.thin { width } else { width.max(3.0) },
+                height: if item.thin { height } else { height.max(8.0) },
             };
             frame.fill_rectangle(
                 Point::new(rect.x, rect.y),
@@ -112,6 +111,9 @@ pub fn search_bar<'a>(
             format!("{} of {}", index + 1, current_match_count)
         }
         _ if query.is_empty() => String::new(),
+        _ if current_match_count >= md_editor_core::pdf::PDF_SEARCH_MATCH_LIMIT => {
+            format!("{current_match_count}+ matches")
+        }
         _ => format!("{current_match_count} matches"),
     };
     let role = TextRole::MonoCaption;
@@ -425,7 +427,6 @@ pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, T
                     page_index,
                     display_size,
                     props.page_texts.get(&page_index),
-                    props.active_selection,
                     overlay,
                 )
             }
@@ -578,7 +579,6 @@ fn rendered_page<'a>(
     page_index: u16,
     (w, h): (f32, f32),
     page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
-    active_selection: Option<PdfSelection>,
     overlay_rects: Vec<OverlayRect>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let interactive = InteractivePdf::new(
@@ -587,7 +587,6 @@ fn rendered_page<'a>(
         h,
         page_index,
         page_text,
-        active_selection,
         PageEvents {
             on_left_click: Box::new(move |x, y, modifiers| {
                 Message::Pdf(PdfMessage::LeftClicked(page_index, x, y, modifiers))
@@ -602,14 +601,14 @@ fn rendered_page<'a>(
                 Message::Pdf(PdfMessage::SelectionFinished(page, start, end))
             }),
             on_selection_cleared: Box::new(|| Message::Pdf(PdfMessage::SelectionCleared)),
-            on_copy_selection: Box::new(|| Message::Pdf(PdfMessage::CopySelection)),
         },
     );
 
     container(stack![
         interactive,
         canvas(PdfOverlay {
-            rects: overlay_rects
+            rects: overlay_rects,
+            laid_out_for: (w, h),
         })
         .width(Length::Fixed(w))
         .height(Length::Fixed(h)),

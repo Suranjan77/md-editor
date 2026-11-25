@@ -20,7 +20,15 @@ pub struct State {
     pub modifiers: iced::keyboard::Modifiers,
     pub drag_start: Option<iced::Point>,
     pub is_dragging: bool,
+    /// When and where the last plain click landed, and how many came in quick
+    /// succession: two select a word, three a line.
+    pub last_click: Option<(std::time::Instant, iced::Point)>,
+    pub click_count: u8,
 }
+
+/// How far apart, in logical pixels, clicks may land and still count as one
+/// double or triple click.
+const MULTI_CLICK_SLOP: f32 = 4.0;
 
 pub struct InteractivePdf<'a, Message> {
     handle: iced::widget::image::Handle,
@@ -28,13 +36,11 @@ pub struct InteractivePdf<'a, Message> {
     height: f32,
     page_index: u16,
     page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
-    active_selection: Option<PdfSelection>,
     on_left_click: Box<dyn Fn(f32, f32, iced::keyboard::Modifiers) -> Message + 'a>,
     on_right_click: Box<dyn Fn(f32, f32) -> Message + 'a>,
     on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     on_selection_finished: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     on_selection_cleared: Box<dyn Fn() -> Message + 'a>,
-    on_copy_selection: Box<dyn Fn() -> Message + 'a>,
 }
 
 /// What a page publishes for pointer and selection events.
@@ -44,7 +50,6 @@ pub struct PageEvents<'a, Message> {
     pub on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     pub on_selection_finished: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     pub on_selection_cleared: Box<dyn Fn() -> Message + 'a>,
-    pub on_copy_selection: Box<dyn Fn() -> Message + 'a>,
 }
 
 impl<'a, Message> InteractivePdf<'a, Message> {
@@ -54,7 +59,6 @@ impl<'a, Message> InteractivePdf<'a, Message> {
         height: f32,
         page_index: u16,
         page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
-        active_selection: Option<PdfSelection>,
         events: PageEvents<'a, Message>,
     ) -> Self {
         let PageEvents {
@@ -63,7 +67,6 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             on_selection_changed,
             on_selection_finished,
             on_selection_cleared,
-            on_copy_selection,
         } = events;
         Self {
             handle,
@@ -71,13 +74,29 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             height,
             page_index,
             page_text,
-            active_selection,
             on_left_click,
             on_right_click,
             on_selection_changed,
             on_selection_finished,
             on_selection_cleared,
-            on_copy_selection,
+        }
+    }
+}
+
+/// Points → this page's pixels. `x` and `y` scale separately: when the page
+/// is laid out narrower than asked (a clamp only touches the width), the
+/// bitmap is squeezed horizontally, and hit testing must follow what is drawn.
+#[derive(Debug, Clone, Copy)]
+struct Scale {
+    x: f32,
+    y: f32,
+}
+
+impl Scale {
+    fn of(bounds: Rectangle, page_text: &md_editor_core::pdf::PdfPageText) -> Self {
+        Self {
+            x: bounds.width / page_text.page_width.max(1.0),
+            y: bounds.height / page_text.page_height.max(1.0),
         }
     }
 }
@@ -85,20 +104,20 @@ impl<'a, Message> InteractivePdf<'a, Message> {
 fn search_rect_to_view_rect(
     rect: &md_editor_core::pdf::PdfRect,
     page_height: f32,
-    zoom: f32,
+    scale: Scale,
 ) -> md_editor_core::pdf::PdfRect {
     md_editor_core::pdf::PdfRect {
-        x: rect.x * zoom,
-        y: (page_height - rect.y - rect.height) * zoom,
-        width: rect.width * zoom,
-        height: rect.height * zoom,
+        x: rect.x * scale.x,
+        y: (page_height - rect.y - rect.height) * scale.y,
+        width: rect.width * scale.x,
+        height: rect.height * scale.y,
     }
 }
 
 fn hit_test(
     page_text: &md_editor_core::pdf::PdfPageText,
     point: iced::Point,
-    zoom: f32,
+    zoom: Scale,
 ) -> Option<usize> {
     let x = point.x;
     let y = point.y;
@@ -169,6 +188,48 @@ fn hit_test(
     }
 
     best_char_idx
+}
+
+/// The word containing `index`, as an inclusive `(start, end)` text-index
+/// range; a lone symbol or space selects just itself.
+pub(crate) fn word_around(
+    page_text: &md_editor_core::pdf::PdfPageText,
+    index: usize,
+) -> Option<(usize, usize)> {
+    let chars: Vec<char> = page_text.text.chars().collect();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '\'' || c == '\u{2019}';
+    let &at = chars.get(index)?;
+    if !is_word(at) {
+        return Some((index, index));
+    }
+    let mut start = index;
+    while start > 0 && is_word(chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = index;
+    while end + 1 < chars.len() && is_word(chars[end + 1]) {
+        end += 1;
+    }
+    // Apostrophes join a word but do not end or start one ("'quoted'").
+    while start < end && !chars[start].is_alphanumeric() {
+        start += 1;
+    }
+    while end > start && !chars[end].is_alphanumeric() {
+        end -= 1;
+    }
+    Some((start, end))
+}
+
+/// The text line containing `index`, as an inclusive text-index range.
+pub(crate) fn line_around(
+    page_text: &md_editor_core::pdf::PdfPageText,
+    index: usize,
+) -> Option<(usize, usize)> {
+    page_text
+        .lines
+        .iter()
+        .find(|line| index >= line.start_text_index && index < line.end_text_index)
+        .map(|line| (line.start_text_index, line.end_text_index.saturating_sub(1)))
 }
 
 impl<'a, Message, Theme, R> Widget<Message, Theme, R> for InteractivePdf<'a, Message>
@@ -247,15 +308,6 @@ where
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => {
                 state.modifiers = *m;
             }
-            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                if (modifiers.command() || modifiers.control())
-                    && matches!(key, iced::keyboard::Key::Character(c) if c == "c")
-                    && self.active_selection.is_some()
-                {
-                    shell.publish((self.on_copy_selection)());
-                    shell.capture_event();
-                }
-            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position_in(bounds) {
                     state.drag_start = Some(position);
@@ -275,7 +327,7 @@ where
                     if dist_sq > 4.0 {
                         state.is_dragging = true;
                         if let Some(page_text) = self.page_text {
-                            let zoom = self.width / page_text.page_width;
+                            let zoom = Scale::of(bounds, page_text);
                             let start_rel = start_pos;
                             if let (Some(anchor), Some(focus)) = (
                                 hit_test(page_text, start_rel, zoom),
@@ -302,7 +354,7 @@ where
                                 current_pos.x - bounds.x,
                                 current_pos.y - bounds.y,
                             );
-                            let zoom = self.width / page_text.page_width;
+                            let zoom = Scale::of(bounds, page_text);
                             let start_rel = start_pos;
                             if let (Some(anchor), Some(focus)) = (
                                 hit_test(page_text, start_rel, zoom),
@@ -316,11 +368,45 @@ where
                             }
                         }
                     } else {
-                        shell.publish((self.on_selection_cleared)());
-                        if let Some(position) = cursor.position_in(bounds) {
-                            let x = position.x / self.width;
-                            let y = position.y / self.height;
-                            shell.publish((self.on_left_click)(x, y, state.modifiers));
+                        let now = std::time::Instant::now();
+                        let repeated = state.last_click.is_some_and(|(at, point)| {
+                            now.duration_since(at) <= crate::design::motion::MULTI_CLICK
+                                && (point.x - start_pos.x).abs() <= MULTI_CLICK_SLOP
+                                && (point.y - start_pos.y).abs() <= MULTI_CLICK_SLOP
+                        });
+                        state.click_count = if repeated {
+                            state.click_count.saturating_add(1).min(3)
+                        } else {
+                            1
+                        };
+                        state.last_click = Some((now, start_pos));
+
+                        let multi = match (state.click_count, self.page_text) {
+                            (count @ 2..=3, Some(page_text)) => {
+                                let zoom = Scale::of(bounds, page_text);
+                                hit_test(page_text, start_pos, zoom).and_then(|index| {
+                                    if count == 2 {
+                                        word_around(page_text, index)
+                                    } else {
+                                        line_around(page_text, index)
+                                    }
+                                })
+                            }
+                            _ => None,
+                        };
+                        if let Some((anchor, focus)) = multi {
+                            shell.publish((self.on_selection_finished)(
+                                self.page_index,
+                                anchor,
+                                focus,
+                            ));
+                        } else {
+                            shell.publish((self.on_selection_cleared)());
+                            if let Some(position) = cursor.position_in(bounds) {
+                                let x = position.x / bounds.width.max(1.0);
+                                let y = position.y / bounds.height.max(1.0);
+                                shell.publish((self.on_left_click)(x, y, state.modifiers));
+                            }
                         }
                     }
                     shell.capture_event();
@@ -330,8 +416,8 @@ where
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 if let Some(position) = cursor.position_in(bounds) {
-                    let x = position.x / self.width;
-                    let y = position.y / self.height;
+                    let x = position.x / bounds.width.max(1.0);
+                    let y = position.y / bounds.height.max(1.0);
                     shell.publish((self.on_right_click)(x, y));
                     shell.capture_event();
                 }
@@ -365,3 +451,6 @@ where
         Self::new(widget)
     }
 }
+
+#[cfg(test)]
+mod tests;

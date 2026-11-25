@@ -330,11 +330,14 @@ pub enum PdfMessage {
         y: f32,
         viewport_height: f32,
     },
+    /// The page list's viewport was laid out at this size (first show or resize).
+    ViewportMeasured(iced::Size),
     LeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
     RightClicked(u16, f32, f32),
     TocLoaded(String, Vec<md_editor_core::pdf::TocEntry>, bool),
     PageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     ReferencesLoaded(String, Vec<md_editor_core::references::ReferenceLink>),
+    /// A PDF search finished; the `u64` is its `SearchState::pdf_search_seq`.
     SearchResult(
         u64,
         Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>,

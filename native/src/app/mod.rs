@@ -44,10 +44,6 @@ fn search_result_should_reload(active_path: Option<&str>, target_path: &str) -> 
     active_path != Some(target_path)
 }
 
-fn pdf_search_generation_is_current(current: u64, incoming: u64) -> bool {
-    current == incoming
-}
-
 fn rename_open_path(path: &mut Option<String>, old_path: &str, new_path: &str) {
     let Some(current) = path.as_deref() else {
         return;
@@ -177,6 +173,16 @@ pub(crate) struct Probe {
     pub pdf_zoom: f32,
     pub pdf_page: u16,
     pub pdf_search_results: usize,
+    /// The picked search match, if any.
+    pub pdf_match_index: Option<usize>,
+    /// Highlights and notes on the open PDF.
+    pub pdf_annotations: usize,
+    /// Pages whose text layer has loaded (needed to select and highlight).
+    pub pdf_texts_loaded: usize,
+    /// The document id is known, so highlights can be saved.
+    pub pdf_document_ready: bool,
+    /// The text under the current PDF selection.
+    pub pdf_selected_text: Option<String>,
     pub split_view: bool,
     pub pdf_panel_active: bool,
     pub palette_query: String,
@@ -224,6 +230,16 @@ impl MdEditor {
             pdf_zoom: self.pdf.zoom,
             pdf_page: self.pdf.current_page,
             pdf_search_results: self.search.pdf_results.len(),
+            pdf_match_index: self.search.match_index,
+            pdf_annotations: self.pdf.annotations.values().map(Vec::len).sum(),
+            pdf_texts_loaded: self.pdf.page_text.len(),
+            pdf_document_ready: self.pdf.document_id.is_some(),
+            pdf_selected_text: self.pdf.selection.and_then(|sel| {
+                let text = self.pdf.page_text.get(&sel.page_index)?;
+                let start = sel.anchor_idx.min(sel.focus_idx);
+                let end = sel.anchor_idx.max(sel.focus_idx) + 1;
+                Some(text.text.chars().skip(start).take(end - start).collect())
+            }),
             split_view: self.ui.split_view_active,
             pdf_panel_active: self.active_panel == ActivePanel::Pdf,
             palette_query: self.ui.command_palette_query.clone(),

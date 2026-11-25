@@ -213,8 +213,9 @@ impl MdEditor {
             Some(index) if forward => (index + 1) % self.search.pdf_results.len(),
             Some(0) if !forward => self.search.pdf_results.len() - 1,
             Some(index) => index.saturating_sub(1),
-            None if forward => 0,
-            None => self.search.pdf_results.len() - 1,
+            // No match picked yet: start from the page being read, not from
+            // the top of the document.
+            None => first_pdf_match_from(&self.search.pdf_results, self.pdf.current_page, forward),
         };
         self.navigate_pdf_search_to_index(next_index)
     }
@@ -362,7 +363,7 @@ impl MdEditor {
         Task::batch(vec![task, nav])
     }
 
-    pub(super) fn search_pdf(&self) -> Task<Message> {
+    pub(super) fn search_pdf(&mut self) -> Task<Message> {
         let Some(path) = &self.pdf.active_path else {
             return Task::none();
         };
@@ -387,7 +388,8 @@ impl MdEditor {
         let match_case = self.search.match_case;
         let _state = self.state.clone();
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf.render_generation;
+        self.search.pdf_search_seq = self.search.pdf_search_seq.wrapping_add(1);
+        let generation = self.search.pdf_search_seq;
         Task::perform(
             super::blocking(move || {
                 let Some(renderer) = _state.pdf_renderer.as_ref() else {
@@ -402,6 +404,25 @@ impl MdEditor {
             move |result| Message::Pdf(PdfMessage::SearchResult(generation, result)),
         )
     }
+}
+
+/// The first match on or after `page` (forward), or the last one on or before
+/// it (backward), wrapping around the document when there is none.
+pub(super) fn first_pdf_match_from(
+    results: &[md_editor_core::pdf::PdfSearchMatch],
+    page: u16,
+    forward: bool,
+) -> usize {
+    let found = if forward {
+        results.iter().position(|m| m.page_index >= page)
+    } else {
+        results.iter().rposition(|m| m.page_index <= page)
+    };
+    found.unwrap_or(if forward {
+        0
+    } else {
+        results.len().saturating_sub(1)
+    })
 }
 
 pub(super) fn focus_file_search_input() -> Task<Message> {

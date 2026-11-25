@@ -230,6 +230,12 @@ impl MdEditor {
         &mut self,
         color: md_editor_core::pdf::PdfAnnotationColor,
     ) -> Task<Message> {
+        if self.pdf.selection.is_some() && self.pdf.document_id.is_none() {
+            // Highlights are keyed by the document id, computed right after
+            // opening. Say so rather than dropping the click.
+            self.ui.toast = Some("The PDF is still opening; highlight again in a moment".into());
+            return Task::none();
+        }
         if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id)
             && let Some(page_text) = self.pdf.page_text.get(&sel.page_index)
         {
@@ -279,6 +285,7 @@ impl MdEditor {
                     .push(ann);
                 self.pdf.selection = None;
                 self.refresh_pdf_backlinks();
+                self.invalidate_graph();
             }
         }
         Task::none()

@@ -38,10 +38,15 @@ impl MdEditor {
         self.search.pdf_results.clear();
         self.search.pdf_indices_by_page.clear();
         self.search.pdf_error = None;
+        self.search.match_index = None;
+        // A search still running is for the previous document.
+        self.search.pdf_search_seq = self.search.pdf_search_seq.wrapping_add(1);
         self.pdf.programmatic_scroll = false;
         self.pdf.toc_target_page = None;
         self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
+        self.pdf.document_generation = self.pdf.document_generation.wrapping_add(1);
         let generation = self.pdf.render_generation;
+        let document_generation = self.pdf.document_generation;
 
         // Reset PDF study state
         self.pdf.document_id = None;
@@ -65,7 +70,7 @@ impl MdEditor {
                     Err(_) => None,
                 }
             }),
-            move |result| Message::Pdf(PdfMessage::DocumentIdComputed(generation, result)),
+            move |result| Message::Pdf(PdfMessage::DocumentIdComputed(document_generation, result)),
         );
 
         let _state = self.state.clone();
@@ -217,7 +222,7 @@ impl MdEditor {
         };
         self.pdf.pending_links.insert(page);
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf.render_generation;
+        let generation = self.pdf.document_generation;
         let _state = self.state.clone();
 
         Task::perform(
@@ -247,7 +252,7 @@ impl MdEditor {
         };
         self.pdf.pending_text.insert(page);
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf.render_generation;
+        let generation = self.pdf.document_generation;
         let _state = self.state.clone();
 
         Task::perform(
@@ -413,6 +418,12 @@ impl MdEditor {
     }
 
     pub(super) fn pdf_available_width(&self) -> f32 {
+        // The measured pane, once the PDF has been laid out at least once.
+        if self.showing_pdf
+            && let Some(width) = self.pdf.viewport_width
+        {
+            return width;
+        }
         let sidebar_width = if self.vault.sidebar_visible {
             self.ui.sidebar_width
         } else {
@@ -428,7 +439,12 @@ impl MdEditor {
         } else {
             0.0
         };
-        let chrome_width = sidebar_width + toc_width + backlinks_width;
+        // Before the first measurement only: the Folio chrome around the sheet
+        // (activity rail, right gutter, sheet border).
+        let folio_chrome = crate::design::metrics::RAIL_WIDTH
+            + crate::design::metrics::SHEET_GUTTER
+            + 2.0 * crate::design::metrics::BORDER_WIDTH;
+        let chrome_width = sidebar_width + toc_width + backlinks_width + folio_chrome;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
         if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some()

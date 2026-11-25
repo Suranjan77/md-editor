@@ -77,7 +77,15 @@ impl MdEditor {
         } else {
             self.render_all_pdf_pages()
         };
-        Task::batch(vec![layout_task, target_task])
+        // Find was open when this document replaced the last one: search the
+        // new one too, instead of showing the query with no results.
+        let search_task = if pages > 0 && self.pdf_search_is_active() && self.search.query.len() > 1
+        {
+            self.search_pdf()
+        } else {
+            Task::none()
+        };
+        Task::batch(vec![layout_task, target_task, search_task])
     }
 
     /// `PdfMessage::ZoomChanged`: an explicit zoom, which turns fit-to-width off.
@@ -86,6 +94,22 @@ impl MdEditor {
         let relative_ratio = self.pdf_scroll_ratio_in_page(current_page);
         self.pdf.fit_to_width = false;
         self.apply_pdf_zoom(zoom, current_page, relative_ratio, false)
+    }
+
+    /// `PdfMessage::ViewportMeasured`: remember the real pane width and refit
+    /// when it changed under fit-to-width (window resize, sidebar, split).
+    pub(super) fn on_pdf_viewport_measured(&mut self, size: iced::Size) -> Task<Message> {
+        let changed = self
+            .pdf
+            .viewport_width
+            .is_none_or(|width| (width - size.width).abs() >= 1.0);
+        self.pdf.viewport_width = Some(size.width);
+        log::debug!("PDF viewport measured at {}×{}", size.width, size.height);
+        if changed && self.pdf.fit_to_width && self.pdf.total_pages > 0 {
+            Task::done(Message::Pdf(PdfMessage::FitToWidth))
+        } else {
+            Task::none()
+        }
     }
 
     /// `PdfMessage::FitToWidth`: zoom so the first page fills the available width.
@@ -337,7 +361,7 @@ impl MdEditor {
         links: Vec<md_editor_core::pdf::LinkInfo>,
     ) -> Task<Message> {
         self.pdf.pending_links.remove(&page);
-        if generation != self.pdf.render_generation {
+        if generation != self.pdf.document_generation {
             return Task::none();
         }
         self.pdf.page_links.insert(page, links);

@@ -44,7 +44,9 @@ iced UI
 | `toc_entries`, `toc_is_synthetic` | The pane's own outline, and whether it was recovered rather than embedded |
 | `pending_pages`, `pending_links`, `pending_text` | In-flight request sets, one per kind of work |
 | `text_lru` | Bounds `page_text` to 12 pages, evicting oldest first |
-| `render_generation` | Invalidates stale async results after a document, zoom, or navigation change |
+| `render_generation` | Invalidates stale **bitmaps** after a document change or a zoom that crosses a render bucket |
+| `document_generation` | Bumped only when a different document opens or the PDF closes; gates zoom-independent per-page data (text layer, links) |
+| `viewport_width` | The page list's measured width (a `sensor` around the scrollable), used by fit-to-width |
 | `programmatic_scroll` | Suppresses normal viewport scheduling for a jump's own scroll event |
 | `toc_target_page` | The page currently being navigated to |
 | `next_highlight_color` | Advances through the palette on each quick highlight |
@@ -89,6 +91,24 @@ routinely outlives the fit-to-width zoom change that bumps the generation on ope
 Generation-gating silently dropped them on first open — the tell was that a *reopened* PDF
 worked (via the synchronous cache path) while a fresh one did not. `PdfTocLoaded` is gated
 on the document path for the same reason.
+
+The same mistake hid in three more places, fixed 2026-11-25:
+
+- `DocumentIdComputed` was render-generation-gated. When the first fit-to-width crossed a
+  zoom bucket before the hash arrived, the document never got an id, so highlights could
+  not be saved, saved ones never loaded, and references never resolved. It is now gated
+  on `document_generation` and the path, which still rejects a hash from an earlier open
+  of the same file.
+- `PageTextLoaded` and `PageLinksLoaded` were too. Text and links are zoom-independent, so
+  a fit landing mid-load dropped them, and the page stayed unselectable until it was
+  scrolled away and back. They are now gated on `document_generation`.
+- PDF search results were gated on `render_generation`; they now carry
+  `SearchState::pdf_search_seq`, the id of the latest search sent, which also drops a
+  slower, older query's results. Opening a document bumps it.
+
+**Rule: gate a result on the narrowest thing it depends on.** Bitmaps depend on the zoom
+bucket (`render_generation`), text and links on the document (`document_generation`), and
+document-level artifacts on the path or `document_id`.
 
 ---
 
@@ -180,8 +200,21 @@ coordinates so it survives zoom changes, and bounded to the visible range.
 
 `views/interactive_pdf.rs` is a custom `Widget` wrapping each page bitmap. It draws the
 image, performs hit testing, and emits `PdfLeftClicked`, `PdfRightClicked`,
-`PdfSelectionChanged`, and `PdfSelectionFinished`. Click coordinates are normalized against
-the displayed page and mapped back to PDF space using the cached dimensions and zoom.
+`PdfSelectionChanged`, and `PdfSelectionFinished`. A double click selects the word under
+the pointer and a triple click the line (`word_around`, `line_around`). Copy is the global
+`Ctrl+C` (`PdfMessage::CopySelection`); pages do not handle it themselves.
+
+Hit testing and click normalization use the page's **laid-out bounds**, not the requested
+size. If layout gives a page less width than its zoom asks for, iced squeezes the bitmap,
+so the overlay canvas scales its rects by the same factors (`PdfOverlay::laid_out_for`).
+That squeeze used to be the visible bug: fit-to-width estimated the pane from the window
+width minus known panels, missed the Folio chrome, and fitted pages wider than the pane,
+so every highlight, search hit and selection drifted right of its text. Fit-to-width now
+uses the measured `viewport_width`, and refits whenever it changes.
+
+All rects (text, search, annotations, links) are in the **displayed page box**: core
+converts them with PDFium's own page-to-device transform (`pdf/geometry.rs`), so they line
+up on rotated pages and pages whose crop box does not start at the origin.
 
 `views/pdf_viewer.rs` composes each page with a dedicated canvas carrying five overlay
 layers:
@@ -298,6 +331,10 @@ When changing this code, preserve these:
     present.
 13. Reference resolution must not issue a monolithic full-document worker command from the
     UI path; extract text per page so priority renders interleave.
-14. Reference results are gated on `document_id`, never on `render_generation`.
+14. Reference results are gated on `document_id`, never on `render_generation`; text and
+    links and the document id on `document_generation`; search results on
+    `pdf_search_seq`.
+16. Never assume a page is drawn at the requested size: hit-test and overlay against the
+    laid-out bounds.
 15. Bump `references::RESOLVER_VERSION` whenever the resolver's output for the same input
     changes, so cached results are invalidated.

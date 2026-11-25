@@ -10,6 +10,8 @@ use super::metrics::{BACKLINKS_DEFAULT_WIDTH, SIDEBAR_DEFAULT_WIDTH, TOC_DEFAULT
 pub const EASE: Easing = Easing::EaseOutQuad;
 
 pub const INSTANT: Duration = Duration::ZERO;
+/// Longest gap between clicks that still counts as a double (or triple) click.
+pub const MULTI_CLICK: Duration = Duration::from_millis(400);
 pub const FAST: Duration = Duration::from_millis(100);
 pub const BASE: Duration = Duration::from_millis(160);
 pub const SLOW: Duration = Duration::from_millis(220);

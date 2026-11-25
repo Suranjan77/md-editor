@@ -63,6 +63,28 @@ code evidence, needs a device repro to close.
 | LOG-1 | S3 | **Each launch writes about 85 MB of log** and evicts the previous session's log. That makes field bugs undiagnosable and wastes disk. | iced_winit logs `Window attributes` at INFO with the window icon's RGBA bytes as a `Debug` array (two windows, two dumps). `logging.rs` has no per-target filter and no per-line cap. A line bigger than `MAX_FILE_BYTES` triggers a rotation and is then written in full, so the 1 MB × 3 budget doesn't hold. | Confirmed |
 | LOG-2 | S4 | Repeated warnings flood the log (the `TrySendError` and layout-invalidation lines). | No rate limiting or deduplication. | Confirmed |
 
+### PDF UI (second pass, 2026-11-25)
+
+Found with a new e2e scenario (`s8b_pdf_select_highlight_and_search`, which selects,
+highlights, restarts, searches and switches documents) and a rendered-ink geometry test.
+All are fixed.
+
+| ID | Sev | Finding | Root cause |
+|:--|:--|:--|:--|
+| PDF-7 | S1 | **Highlights randomly impossible, and saved ones not shown.** | `on_pdf_document_id` was gated on `render_generation`, which the first fit-to-width bumps. When the hash arrived after the fit, the document never got an id. |
+| PDF-8 | S2 | **Highlights, search hits and the selection drawn beside the text.** | Fit-to-width estimated the pane width without the Folio chrome, so pages were fitted wider than the pane. iced squeezed the bitmap while the overlay and hit testing used the full zoom. |
+| PDF-9 | S2 | **Misplaced rects on rotated or cropped pages.** | Char, search and link rects were raw user space, not the displayed page box. |
+| PDF-10 | S2 | **Text on the first pages sometimes unselectable.** | `PageTextLoaded` and `PageLinksLoaded` were gated on `render_generation`, so a fit landing mid-load dropped them, and they were never re-requested. |
+| PDF-11 | S2 | **Search found nothing past about the 250th match.** | A silent cap of 250 results in `search_text`. |
+| PDF-12 | S2 | **Search results dropped or stale.** | Results were gated on `render_generation` (dropped after a zoom change), with no guard against an older query finishing last; switching PDFs with find open showed no results for the new document. |
+| PDF-13 | S3 | The first Next jumped to page 1, not the page being read. | `navigate_pdf_search` started at index 0. |
+| PDF-14 | S4 | One Ctrl+C copied once per visible page. | Every page widget handled Ctrl+C on top of the global shortcut. |
+| PDF-15 | S4 | No double-click word or triple-click line selection. | Not implemented. |
+| PDF-16 | S4 | A highlight made while the document id was pending was silently dropped. | No feedback; it now shows a toast. |
+
+Known limits, not fixed: a selection stays within one page, and highlights saved on
+rotated or cropped pages *before* this fix keep their old, misplaced rects.
+
 ---
 
 ## 2. Fix Plan

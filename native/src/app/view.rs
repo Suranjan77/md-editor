@@ -520,6 +520,10 @@ impl MdEditor {
             })
         })
         .height(Length::Fill);
+        // Reports the pane's real size for fit-to-width (see `PdfPane::viewport_width`).
+        let pdf_pages = iced::widget::sensor(pdf_pages)
+            .on_show(|size| Message::Pdf(PdfMessage::ViewportMeasured(size)))
+            .on_resize(|size| Message::Pdf(PdfMessage::ViewportMeasured(size)));
 
         let search_bar: Element<'_, Message, Theme, iced::Renderer> = if pdf_search_active {
             views::pdf_viewer::search_bar(

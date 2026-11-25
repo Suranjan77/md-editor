@@ -284,6 +284,89 @@ fn s8_pdf_open_zoom_and_switch_mid_render() {
     app.finish();
 }
 
+/// Pump the event loop until `done` holds for the probe, for up to 5 s.
+/// Background work (PDF text, debounced search) has no fixed duration, and a
+/// fixed wait flakes on a loaded machine.
+fn wait_for<P>(
+    app: &mut Session<P>,
+    what: &str,
+    done: impl Fn(&crate::app::Probe) -> bool,
+) -> crate::app::Probe
+where
+    P: Program<State = crate::app::MdEditor, Message = Message> + 'static,
+{
+    for _ in 0..50 {
+        let probe = app.probe();
+        if done(&probe) {
+            return probe;
+        }
+        app.wait(Duration::from_millis(100));
+    }
+    let probe = app.probe();
+    assert!(done(&probe), "timed out waiting for {what}: {probe:?}");
+    probe
+}
+
+fn pdf(message: PdfMessage) -> Message {
+    Message::Pdf(message)
+}
+
+/// S8b: read a PDF like a student — select, highlight (kept across a
+/// restart), search from the page being read, and keep searching while
+/// switching documents with find open.
+#[test]
+fn s8b_pdf_select_highlight_and_search() {
+    let vault = research_vault().fixture("papers/large.pdf", "pdf/large-500-pages.pdf");
+    let mut app = boot("s8b-pdf-study", &vault, Some("papers/large.pdf"));
+    wait_for(&mut app, "page text and document id", |p| {
+        p.pdf_texts_loaded > 0 && p.pdf_document_ready
+    });
+
+    // Page 1 reads "Page 1 of 500 …": select the first word.
+    app.send(pdf(PdfMessage::SelectionFinished(0, 0, 3)));
+    assert_eq!(app.probe().pdf_selected_text.as_deref(), Some("Page"));
+    app.send(pdf(PdfMessage::QuickHighlight));
+    let probe = app.probe();
+    assert_eq!(probe.pdf_annotations, 1, "highlight not created");
+    assert_eq!(
+        probe.pdf_selected_text, None,
+        "selection kept after highlighting"
+    );
+    app.screenshot("highlight");
+
+    let mut app = app.restart("s8b-pdf-study-restart", None);
+    app.send(open("papers/large.pdf"));
+    wait_for(&mut app, "the highlight to reload", |p| {
+        p.pdf_annotations == 1
+    });
+
+    // Find opens on page 1; jump to page 120 and search from there.
+    app.send(shortcut(Shortcut::Search));
+    app.send(Message::Search(SearchMessage::QueryChanged(
+        "Stress fixture".to_string(),
+    )));
+    wait_for(&mut app, "search results", |p| p.pdf_search_results == 500);
+    app.send(pdf(PdfMessage::PageInputChanged("120".to_string())));
+    app.send(pdf(PdfMessage::PageInputSubmit));
+    assert_eq!(app.probe().pdf_page, 119);
+    app.send(Message::Search(SearchMessage::Next));
+    assert_eq!(
+        app.probe().pdf_match_index,
+        Some(119),
+        "the first Next should land on the page being read, not page 1"
+    );
+
+    // Switching PDFs with find open searches the new document; nothing stale.
+    app.send(open("papers/dummy.pdf"));
+    let probe = wait_for(&mut app, "dummy.pdf to load", |p| p.pdf_pages > 0);
+    assert_eq!(probe.pdf_search_results, 0, "stale matches from large.pdf");
+    app.send(open("papers/large.pdf"));
+    wait_for(&mut app, "large.pdf to be searched again", |p| {
+        p.pdf_search_results == 500
+    });
+    app.finish();
+}
+
 /// S8: PDF text search finds matches.
 #[test]
 fn s8_pdf_search() {

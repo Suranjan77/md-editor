@@ -281,16 +281,22 @@ impl<'a> Worker<'a> {
             .get(index as i32)
             .map_err(|e| PdfError::Other(e.to_string()))?;
         let page_height = page.height().value;
+        let to_view = super::geometry::PageToView::for_page(&page);
         let mut links = Vec::new();
         for link in page.links().iter() {
             let Ok(rect) = link.rect() else {
                 continue;
             };
+            // Displayed box, then to the top-left origin `LinkInfo` uses.
+            let view = to_view.rect(
+                rect.left().value,
+                rect.bottom().value,
+                rect.right().value,
+                rect.top().value,
+            );
             let bbox = PdfRect {
-                x: rect.left().value,
-                y: page_height - rect.top().value,
-                width: rect.width().value,
-                height: rect.height().value,
+                y: page_height - (view.y + view.height),
+                ..view
             };
             let (dest_page, dest_y, uri) = resolve_link_target(&link, page_height);
             links.push(LinkInfo {
@@ -340,11 +346,11 @@ impl<'a> Worker<'a> {
             };
             for hit in page_hits {
                 matches.push(hit);
-                if matches.len() >= 250 {
+                if matches.len() >= PDF_SEARCH_MATCH_LIMIT {
                     break;
                 }
             }
-            if matches.len() >= 250 {
+            if matches.len() >= PDF_SEARCH_MATCH_LIMIT {
                 break;
             }
             // PDFium is single-threaded, so yield to the newest priority render
@@ -546,6 +552,7 @@ fn search_single_page(
         .get(index)
         .map_err(|e| PdfError::Other(e.to_string()))?;
     let text_page = page.text().map_err(|e| PdfError::Other(e.to_string()))?;
+    let to_view = super::geometry::PageToView::for_page(&page);
     let mut page_text = String::new();
     let mut char_indices = Vec::new();
     for c in text_page.chars().iter() {
@@ -555,8 +562,8 @@ fn search_single_page(
         }
     }
     let raw_matches = match re {
-        Some(re) => regex_page_matches(&text_page, &page_text, &char_indices, re),
-        None => pdfium_page_matches(&text_page, &char_indices, query, match_case),
+        Some(re) => regex_page_matches(&text_page, &page_text, &char_indices, re, &to_view),
+        None => pdfium_page_matches(&text_page, &char_indices, query, match_case, &to_view),
     };
     let mut out = Vec::new();
     for (pos, match_len, rects) in raw_matches {
@@ -587,6 +594,7 @@ fn regex_page_matches(
     page_text: &str,
     char_indices: &[PdfPageTextCharIndex],
     re: &regex::Regex,
+    to_view: &super::geometry::PageToView,
 ) -> Vec<(usize, usize, Vec<PdfRect>)> {
     re.find_iter(page_text)
         .filter_map(|found| {
@@ -603,12 +611,12 @@ fn regex_page_matches(
                 .iter()
                 .map(|segment| {
                     let bounds = segment.bounds();
-                    PdfRect {
-                        x: bounds.left().value,
-                        y: bounds.bottom().value,
-                        width: bounds.width().value,
-                        height: bounds.height().value,
-                    }
+                    to_view.rect(
+                        bounds.left().value,
+                        bounds.bottom().value,
+                        bounds.right().value,
+                        bounds.top().value,
+                    )
                 })
                 .collect::<Vec<_>>();
             Some((match_char_idx, match_char_count, rects))
@@ -621,6 +629,7 @@ fn pdfium_page_matches(
     char_indices: &[PdfPageTextCharIndex],
     query: &str,
     match_case: bool,
+    to_view: &super::geometry::PageToView,
 ) -> Vec<(usize, usize, Vec<PdfRect>)> {
     let options = PdfSearchOptions::new().match_case(match_case);
     let Ok(search) = text_page.search(query, &options) else {
@@ -633,12 +642,12 @@ fn pdfium_page_matches(
                 .iter()
                 .map(|segment| {
                     let bounds = segment.bounds();
-                    PdfRect {
-                        x: bounds.left().value,
-                        y: bounds.bottom().value,
-                        width: bounds.width().value,
-                        height: bounds.height().value,
-                    }
+                    to_view.rect(
+                        bounds.left().value,
+                        bounds.bottom().value,
+                        bounds.right().value,
+                        bounds.top().value,
+                    )
                 })
                 .collect::<Vec<_>>();
             let mut min_char_index = None;

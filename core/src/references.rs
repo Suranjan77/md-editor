@@ -23,7 +23,8 @@ use std::collections::HashMap;
 /// cached results (keyed by document id) are discarded and recomputed.
 ///
 /// 3: bookmark-less documents resolve against the link-aware recovered outline.
-pub const RESOLVER_VERSION: u32 = 3;
+/// 4: rects are in the displayed page box (rotation and crop box applied).
+pub const RESOLVER_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum ReferenceKind {

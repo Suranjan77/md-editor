@@ -140,7 +140,7 @@ impl MdEditor {
         generation: u64,
         result: Result<Vec<md_editor_core::pdf::PdfSearchMatch>, String>,
     ) -> Task<Message> {
-        if !pdf_search_generation_is_current(self.pdf.render_generation, generation) {
+        if generation != self.search.pdf_search_seq {
             return Task::none();
         }
         let results = match result {
@@ -198,7 +198,14 @@ impl MdEditor {
         len: u64,
         mtime: Option<i64>,
     ) -> Task<Message> {
-        if generation != self.pdf.render_generation
+        // Gated on the document generation (bumped per open), not the render
+        // generation. The render generation moves with the zoom, and the
+        // fit-to-width right after opening bumps it whenever the first fit
+        // crosses a zoom bucket: the id was dropped at random, so highlights
+        // could not be saved, saved ones never loaded and references never
+        // resolved. A result from an earlier open of the same path (the file
+        // may have changed since) is still rejected.
+        if generation != self.pdf.document_generation
             || self.pdf.active_path.as_deref() != Some(path.as_str())
         {
             return Task::none();

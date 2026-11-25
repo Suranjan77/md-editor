@@ -414,6 +414,7 @@ impl MdEditor {
         self.pdf.pending_text.clear();
         self.pdf.toc_entries.clear();
         self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
+        self.pdf.document_generation = self.pdf.document_generation.wrapping_add(1);
         self.showing_pdf = false;
     }
 

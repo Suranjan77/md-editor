@@ -40,6 +40,7 @@ impl MdEditor {
                 Task::none()
             }
             PdfMessage::FitToWidth => self.on_pdf_fit_to_width(),
+            PdfMessage::ViewportMeasured(size) => self.on_pdf_viewport_measured(size),
             PdfMessage::FitToPage => self.on_pdf_fit_to_page(),
             PdfMessage::Rendered(generation, page, crate::messages::PageImage(img)) => {
                 self.on_pdf_page_rendered(generation, page, img)

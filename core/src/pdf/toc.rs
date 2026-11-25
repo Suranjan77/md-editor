@@ -69,6 +69,7 @@ pub(super) fn build_page_text(page: &PdfPage, index: u16) -> PdfResult<PdfPageTe
 
     let page_width = page.width().value;
     let page_height = page.height().value;
+    let to_view = super::geometry::PageToView::for_page(page);
 
     let mut text = String::new();
     let mut chars = Vec::new();
@@ -80,12 +81,12 @@ pub(super) fn build_page_text(page: &PdfPage, index: u16) -> PdfResult<PdfPageTe
             text.push(ch);
 
             let bbox = match c.loose_bounds() {
-                Ok(rect) => PdfRect {
-                    x: rect.left().value,
-                    y: rect.bottom().value,
-                    width: rect.width().value,
-                    height: rect.height().value,
-                },
+                Ok(rect) => to_view.rect(
+                    rect.left().value,
+                    rect.bottom().value,
+                    rect.right().value,
+                    rect.top().value,
+                ),
                 Err(_) => PdfRect {
                     x: 0.0,
                     y: 0.0,
@@ -529,10 +530,18 @@ pub(super) fn harvest_linked_toc(
             continue;
         };
         let ptext = page_texts.iter().find(|p| p.page_index as usize == pi);
+        let to_view = super::geometry::PageToView::for_page(&page);
         for link in page.links().iter() {
-            let Ok(rect) = link.rect() else {
+            let Ok(raw) = link.rect() else {
                 continue;
             };
+            // Page text is in the displayed box; match it in the same space.
+            let rect = to_view.rect(
+                raw.left().value,
+                raw.bottom().value,
+                raw.right().value,
+                raw.top().value,
+            );
             let mut dest_page: Option<u32> = None;
             if let Some(PdfAction::LocalDestination(ref local)) = link.action()
                 && let Ok(dest) = local.destination()
@@ -553,10 +562,10 @@ pub(super) fn harvest_linked_toc(
             let Some(pt) = ptext else { continue };
             let title = clean_link_title(&text_in_rect(
                 pt,
-                rect.left().value,
-                rect.bottom().value,
-                rect.right().value,
-                rect.top().value,
+                rect.x,
+                rect.y,
+                rect.x + rect.width,
+                rect.y + rect.height,
             ));
             if !is_plausible_title(&title) || !seen.insert((title.clone(), dest)) {
                 continue;
@@ -564,9 +573,9 @@ pub(super) fn harvest_linked_toc(
             raws.push(Raw {
                 title,
                 dest,
-                indent: rect.left().value,
+                indent: rect.x,
                 page_rank: rank,
-                top: rect.top().value,
+                top: rect.y + rect.height,
             });
         }
     }

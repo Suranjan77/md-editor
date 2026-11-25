@@ -56,6 +56,11 @@ pub struct SearchState {
     pub pdf_results: Vec<PdfSearchMatch>,
     pub pdf_indices_by_page: HashMap<u16, Vec<usize>>,
     pub pdf_error: Option<String>,
+    /// Id of the latest PDF search sent. A result carrying any other id is
+    /// stale: typed over, or for a document no longer open. (Results used to
+    /// be gated on the render generation, which a zoom change bumps, so a
+    /// search racing the fit-to-width right after opening was dropped.)
+    pub pdf_search_seq: u64,
     /// Set on every query keystroke; the debounce subscription fires
     /// `SearchDebounceElapsed`, which runs the search once this is old enough.
     pub pending_query_at: Option<std::time::Instant>,

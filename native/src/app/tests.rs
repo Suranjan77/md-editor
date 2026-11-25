@@ -303,9 +303,28 @@ fn same_file_search_result_does_not_reload_open_buffer() {
 }
 
 #[test]
-fn stale_pdf_search_generation_is_rejected() {
-    assert!(!pdf_search_generation_is_current(8, 7));
-    assert!(pdf_search_generation_is_current(8, 8));
+fn pdf_search_starts_from_the_page_being_read() {
+    use super::search::first_pdf_match_from;
+    let hit = |page| md_editor_core::pdf::PdfSearchMatch {
+        page_index: page,
+        context: String::new(),
+        rects: Vec::new(),
+    };
+    let results = [hit(1), hit(4), hit(4), hit(9)];
+    assert_eq!(first_pdf_match_from(&results, 4, true), 1);
+    assert_eq!(first_pdf_match_from(&results, 5, true), 3);
+    assert_eq!(
+        first_pdf_match_from(&results, 10, true),
+        0,
+        "wraps to the top"
+    );
+    assert_eq!(first_pdf_match_from(&results, 5, false), 2);
+    assert_eq!(
+        first_pdf_match_from(&results, 0, false),
+        3,
+        "wraps to the end"
+    );
+    assert_eq!(first_pdf_match_from(&[], 3, true), 0);
 }
 
 #[test]
@@ -365,7 +384,7 @@ fn graph_shortcut_is_a_noop_without_a_vault() {
 #[test]
 fn stale_pdf_identity_result_cannot_attach_to_another_document() {
     let mut app = MdEditor::new_with_startup_file(None).0;
-    app.pdf.render_generation = 8;
+    app.pdf.document_generation = 8;
     app.pdf.active_path = Some("current.pdf".to_string());
     app.pdf.document_id = None;
 
@@ -390,6 +409,19 @@ fn stale_pdf_identity_result_cannot_attach_to_another_document() {
         )),
     )));
     assert!(app.pdf.document_id.is_none());
+
+    // A zoom change bumps only the render generation; the id still lands.
+    app.pdf.render_generation = 42;
+    let _ = app.update_inner(Message::Pdf(PdfMessage::DocumentIdComputed(
+        8,
+        Some((
+            "current.pdf".to_string(),
+            "current-id".to_string(),
+            10,
+            Some(1),
+        )),
+    )));
+    assert_eq!(app.pdf.document_id.as_deref(), Some("current-id"));
 }
 
 #[test]

@@ -25,6 +25,12 @@ use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
 pub struct PdfPane {
     pub active_path: Option<String>,
+    /// Measured width of the page list's viewport, from a `sensor` around it.
+    /// Fit-to-width uses this rather than an estimate from the window width
+    /// minus known panels, which missed chrome (the activity rail, the sheet
+    /// gutters), fitted pages wider than the pane, and made iced squeeze the
+    /// bitmap under highlights and search hits drawn at the full zoom.
+    pub viewport_width: Option<f32>,
     // TODO(P3.3): add a password-entry retry flow for encrypted PDFs; the
     // current safe minimum reports the distinct password-required error.
     pub load_error: Option<String>,
@@ -72,7 +78,14 @@ pub struct PdfPane {
     pub pending_pages: HashSet<u16>,
     pub pending_links: HashSet<u16>,
 
+    /// Bumped when the page bitmaps go stale: a new document or a zoom that
+    /// crosses a render bucket. Gates rendered bitmaps only.
     pub render_generation: u64,
+    /// Bumped only when a different document opens. Gates zoom-independent
+    /// per-page data (text layer, links): gating those on `render_generation`
+    /// dropped any that arrived after the first fit-to-width, leaving the page
+    /// unselectable until it was scrolled away and back.
+    pub document_generation: u64,
     pub programmatic_scroll: bool,
     pub toc_target_page: Option<u16>,
 
@@ -85,6 +98,7 @@ impl PdfPane {
     pub fn new() -> Self {
         Self {
             active_path: None,
+            viewport_width: None,
             load_error: None,
             current_page: 0,
             total_pages: 0,
@@ -113,6 +127,7 @@ impl PdfPane {
             pending_pages: HashSet::new(),
             pending_links: HashSet::new(),
             render_generation: 0,
+            document_generation: 0,
             programmatic_scroll: false,
             toc_target_page: None,
             next_highlight_color: PdfAnnotationColor::Yellow,
@@ -163,7 +178,7 @@ impl PdfPane {
             }
             Message::Pdf(PdfMessage::PageTextLoaded(generation, page, res)) => {
                 self.pending_text.remove(&page);
-                if generation == self.render_generation
+                if generation == self.document_generation
                     && let Ok(page_text) = res
                 {
                     self.page_text.insert(page, page_text);

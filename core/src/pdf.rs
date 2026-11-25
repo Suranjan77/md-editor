@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
+mod geometry;
 mod renderer;
 mod toc;
 mod toc_synth;
@@ -234,6 +235,11 @@ pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
     }
     rects
 }
+
+/// Most matches one PDF search returns. A search that reaches it stops early,
+/// so callers should present the count as "at least". It was 250 — and silent —
+/// so a match past roughly the 250th hit in a long book could never be found.
+pub const PDF_SEARCH_MATCH_LIMIT: usize = 10_000;
 
 /// Version of the outline-recovery heuristics (`pdf/toc.rs`, `pdf/toc_synth.rs`).
 /// Bump it when they change, so outlines cached in `pdf_outline` are recovered
