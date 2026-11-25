@@ -9,7 +9,7 @@ directly. Everywhere else the canvas works with a mouse at a fixed pressure.
 
 | Piece | Where | Owns |
 | :--- | :--- | :--- |
-| State | `native/src/ink/mod.rs` → `InkState` | Document, tool and colour settings, camera, live stroke, lasso selection, radial menu |
+| State | `native/src/ink/mod.rs` → `InkState` | Document, tool and colour settings, camera, live stroke, lasso selection, radial menu; pen input and the stroke lifecycle in `ink/input.rs` |
 | Geometry | `ink/stroke.rs` | Input smoothing and pressure → filled outline. No iced or platform types |
 | Document | `ink/document.rs` | Strokes, undo/redo, paper style, the JSON file format |
 | Camera | `ink/camera.rs` | Page ⇄ screen mapping for pan and zoom |

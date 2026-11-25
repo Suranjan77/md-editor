@@ -9,7 +9,7 @@ const FUNCTION_LIMIT: usize = 150;
 
 /// Modules over the limit today, with the size they may not grow past. Split
 /// one and lower (or remove) its entry; the test fails if an entry is stale.
-const MODULE_RATCHET: &[(&str, usize)] = &[("native/src/ink/mod.rs", 879)];
+const MODULE_RATCHET: &[(&str, usize)] = &[];
 
 /// Functions over the limit today, by `path::name`, with their ceiling.
 const FUNCTION_RATCHET: &[(&str, usize)] = &[
@@ -23,7 +23,6 @@ const FUNCTION_RATCHET: &[(&str, usize)] = &[
         344,
     ),
     ("native/src/editor/highlight.rs::highlight_with_state", 187),
-    ("native/src/ink/canvas.rs::draw", 183),
     ("native/src/slides/text.rs::layout_paragraph", 185),
 ];
 
