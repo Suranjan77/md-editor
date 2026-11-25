@@ -32,6 +32,43 @@ impl MdEditor {
             },
         );
 
+        let os_theme = iced::system::theme_changes()
+            .map(|mode| Message::Settings(SettingsMessage::SystemThemeChanged(mode)));
+
+        let vault_watch = match self.vault.root.clone() {
+            Some(root) => Subscription::run_with(root, vault_watch_stream),
+            None => Subscription::none(),
+        };
+
+        let scroll_interrupt = if self.motion.editor_scroll.is_some() {
+            iced::event::listen_with(|event, _status, _window_id| match event {
+                iced::Event::Mouse(
+                    iced::mouse::Event::WheelScrolled { .. } | iced::mouse::Event::ButtonPressed(_),
+                ) => Some(Message::Editor(EditorMessage::ScrollInterrupted)),
+                _ => None,
+            })
+        } else {
+            Subscription::none()
+        };
+
+        let pen_input = Subscription::run_with("ink-pen", |_: &&str| crate::ink::pen::stream());
+
+        Subscription::batch(vec![
+            keyboard,
+            self.timer_subscriptions(),
+            scroll_interrupt,
+            self.pointer_drag_subscription(),
+            window_events(),
+            os_theme,
+            vault_watch,
+            pen_input,
+        ])
+    }
+
+    /// Timers and frame ticks that run only while something is pending:
+    /// toast expiry, autosave, search debounce, graph refresh and physics,
+    /// and motion frames.
+    fn timer_subscriptions(&self) -> Subscription<Message> {
         let toast = if let Some(text) = &self.ui.toast
             && self.ui.toast_queue.last().is_none_or(|t| !t.persistent)
         {
@@ -63,7 +100,32 @@ impl MdEditor {
             Subscription::none()
         };
 
-        let mouse_drag = if self.ui.is_resizing_split {
+        let animation = if self.motion.is_animating() {
+            iced::window::frames().map(|value| Message::Editor(EditorMessage::AnimationTick(value)))
+        } else {
+            Subscription::none()
+        };
+
+        let physics_tick = if self.graph.visible && self.graph.physics.running {
+            iced::time::every(std::time::Duration::from_millis(33))
+                .map(|_| Message::Graph(GraphMessage::PhysicsTick))
+        } else {
+            Subscription::none()
+        };
+
+        Subscription::batch(vec![
+            toast,
+            autosave,
+            search_debounce,
+            graph_refresh,
+            physics_tick,
+            animation,
+        ])
+    }
+
+    /// Mouse tracking while a split, panel or tab is dragged, or files hover.
+    fn pointer_drag_subscription(&self) -> Subscription<Message> {
+        if self.ui.is_resizing_split {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::Shell(ShellMessage::SplitViewDragging(position.x)))
@@ -99,86 +161,39 @@ impl MdEditor {
             })
         } else {
             Subscription::none()
-        };
-
-        let window_events = iced::event::listen_with(|event, _status, window_id| match event {
-            iced::Event::Window(iced::window::Event::Resized(size)) => Some(Message::Shell(
-                ShellMessage::WindowResized(window_id, size.width, size.height),
-            )),
-            iced::Event::Window(iced::window::Event::Opened { .. }) => {
-                Some(Message::Shell(ShellMessage::WindowOpened(window_id)))
-            }
-            iced::Event::Window(iced::window::Event::Closed) => {
-                Some(Message::Shell(ShellMessage::WindowClosed(window_id)))
-            }
-            iced::Event::Window(iced::window::Event::Rescaled(factor)) => Some(Message::Shell(
-                ShellMessage::WindowRescaled(window_id, factor),
-            )),
-            iced::Event::Window(iced::window::Event::CloseRequested) => {
-                Some(Message::Shell(ShellMessage::WindowCloseRequested))
-            }
-            iced::Event::Window(iced::window::Event::FileHovered(path)) => {
-                Some(Message::Shell(ShellMessage::FileHovered(path)))
-            }
-            iced::Event::Window(iced::window::Event::FilesHoveredLeft) => {
-                Some(Message::Shell(ShellMessage::FilesHoveredLeft))
-            }
-            iced::Event::Window(iced::window::Event::FileDropped(path)) => {
-                Some(Message::Shell(ShellMessage::FileDropped(path)))
-            }
-            _ => None,
-        });
-
-        let os_theme = iced::system::theme_changes()
-            .map(|mode| Message::Settings(SettingsMessage::SystemThemeChanged(mode)));
-
-        let vault_watch = match self.vault.root.clone() {
-            Some(root) => Subscription::run_with(root, vault_watch_stream),
-            None => Subscription::none(),
-        };
-
-        let animation = if self.motion.is_animating() {
-            iced::window::frames().map(|value| Message::Editor(EditorMessage::AnimationTick(value)))
-        } else {
-            Subscription::none()
-        };
-
-        let physics_tick = if self.graph.visible && self.graph.physics.running {
-            iced::time::every(std::time::Duration::from_millis(33))
-                .map(|_| Message::Graph(GraphMessage::PhysicsTick))
-        } else {
-            Subscription::none()
-        };
-
-        let scroll_interrupt = if self.motion.editor_scroll.is_some() {
-            iced::event::listen_with(|event, _status, _window_id| match event {
-                iced::Event::Mouse(
-                    iced::mouse::Event::WheelScrolled { .. } | iced::mouse::Event::ButtonPressed(_),
-                ) => Some(Message::Editor(EditorMessage::ScrollInterrupted)),
-                _ => None,
-            })
-        } else {
-            Subscription::none()
-        };
-
-        let pen_input = Subscription::run_with("ink-pen", |_: &&str| crate::ink::pen::stream());
-
-        Subscription::batch(vec![
-            keyboard,
-            animation,
-            scroll_interrupt,
-            toast,
-            autosave,
-            search_debounce,
-            graph_refresh,
-            physics_tick,
-            mouse_drag,
-            window_events,
-            os_theme,
-            vault_watch,
-            pen_input,
-        ])
+        }
     }
+}
+
+/// Window lifecycle, resize, rescale and file drag-and-drop for both windows.
+fn window_events() -> Subscription<Message> {
+    iced::event::listen_with(|event, _status, window_id| match event {
+        iced::Event::Window(iced::window::Event::Resized(size)) => Some(Message::Shell(
+            ShellMessage::WindowResized(window_id, size.width, size.height),
+        )),
+        iced::Event::Window(iced::window::Event::Opened { .. }) => {
+            Some(Message::Shell(ShellMessage::WindowOpened(window_id)))
+        }
+        iced::Event::Window(iced::window::Event::Closed) => {
+            Some(Message::Shell(ShellMessage::WindowClosed(window_id)))
+        }
+        iced::Event::Window(iced::window::Event::Rescaled(factor)) => Some(Message::Shell(
+            ShellMessage::WindowRescaled(window_id, factor),
+        )),
+        iced::Event::Window(iced::window::Event::CloseRequested) => {
+            Some(Message::Shell(ShellMessage::WindowCloseRequested))
+        }
+        iced::Event::Window(iced::window::Event::FileHovered(path)) => {
+            Some(Message::Shell(ShellMessage::FileHovered(path)))
+        }
+        iced::Event::Window(iced::window::Event::FilesHoveredLeft) => {
+            Some(Message::Shell(ShellMessage::FilesHoveredLeft))
+        }
+        iced::Event::Window(iced::window::Event::FileDropped(path)) => {
+            Some(Message::Shell(ShellMessage::FileDropped(path)))
+        }
+        _ => None,
+    })
 }
 
 pub(super) const VAULT_WATCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
@@ -338,44 +353,7 @@ pub(super) fn keyboard_message(
         if status == iced::event::Status::Captured {
             return None;
         }
-        let lower = c.to_ascii_lowercase();
-        if modifiers.shift() {
-            return match lower.as_str() {
-                "t" => Some(Message::KeyboardShortcut(Shortcut::ReopenTab)),
-                "f" => Some(Message::KeyboardShortcut(Shortcut::GlobalSearch)),
-                "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleBacklinks)),
-                "o" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
-                // Redo as most apps spell it; Ctrl+Y works too.
-                "z" => Some(Message::Ink(InkMessage::Redo)),
-                _ => None,
-            };
-        }
-        if let Some(digit) = lower
-            .chars()
-            .next()
-            .and_then(|ch| ch.to_digit(10))
-            .filter(|d| (1..=9).contains(d))
-        {
-            return Some(Message::Tabs(TabsMessage::SelectOrdinal(digit as usize)));
-        }
-        return match lower.as_str() {
-            "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
-            "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
-            "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
-            "f" => Some(Message::KeyboardShortcut(Shortcut::Search)),
-            "c" => Some(Message::Pdf(PdfMessage::CopySelection)),
-            "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
-            "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
-            "g" => Some(Message::KeyboardShortcut(Shortcut::KnowledgeGraph)),
-            "t" => Some(Message::KeyboardShortcut(Shortcut::StudyTracker)),
-            "w" => Some(Message::KeyboardShortcut(Shortcut::CloseTab)),
-            "," => Some(Message::KeyboardShortcut(Shortcut::Settings)),
-            "\\" => Some(Message::KeyboardShortcut(Shortcut::SplitView)),
-            "i" => Some(Message::Ink(InkMessage::Toggle)),
-            "z" => Some(Message::Ink(InkMessage::Undo)),
-            "y" => Some(Message::Ink(InkMessage::Redo)),
-            _ => None,
-        };
+        return ctrl_character_message(c, modifiers.shift());
     }
 
     if *key == Key::Named(Named::Delete) {
@@ -384,6 +362,61 @@ pub(super) fn keyboard_message(
         }
         return Some(Message::Ink(InkMessage::DeleteSelection));
     }
+
+    arrow_message(key, status, sidebar_focused, global_search_open)
+}
+
+/// Ctrl (or Cmd) plus a character key, with or without Shift.
+fn ctrl_character_message(c: &str, shift: bool) -> Option<Message> {
+    let lower = c.to_ascii_lowercase();
+    if shift {
+        return match lower.as_str() {
+            "t" => Some(Message::KeyboardShortcut(Shortcut::ReopenTab)),
+            "f" => Some(Message::KeyboardShortcut(Shortcut::GlobalSearch)),
+            "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleBacklinks)),
+            "o" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
+            // Redo as most apps spell it; Ctrl+Y works too.
+            "z" => Some(Message::Ink(InkMessage::Redo)),
+            _ => None,
+        };
+    }
+    if let Some(digit) = lower
+        .chars()
+        .next()
+        .and_then(|ch| ch.to_digit(10))
+        .filter(|d| (1..=9).contains(d))
+    {
+        return Some(Message::Tabs(TabsMessage::SelectOrdinal(digit as usize)));
+    }
+    match lower.as_str() {
+        "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
+        "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
+        "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
+        "f" => Some(Message::KeyboardShortcut(Shortcut::Search)),
+        "c" => Some(Message::Pdf(PdfMessage::CopySelection)),
+        "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
+        "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
+        "g" => Some(Message::KeyboardShortcut(Shortcut::KnowledgeGraph)),
+        "t" => Some(Message::KeyboardShortcut(Shortcut::StudyTracker)),
+        "w" => Some(Message::KeyboardShortcut(Shortcut::CloseTab)),
+        "," => Some(Message::KeyboardShortcut(Shortcut::Settings)),
+        "\\" => Some(Message::KeyboardShortcut(Shortcut::SplitView)),
+        "i" => Some(Message::Ink(InkMessage::Toggle)),
+        "z" => Some(Message::Ink(InkMessage::Undo)),
+        "y" => Some(Message::Ink(InkMessage::Redo)),
+        _ => None,
+    }
+}
+
+/// Arrow and page keys: global search results, the sidebar tree, or PDF scroll.
+fn arrow_message(
+    key: &iced::keyboard::Key,
+    status: iced::event::Status,
+    sidebar_focused: bool,
+    global_search_open: bool,
+) -> Option<Message> {
+    use iced::keyboard::Key;
+    use iced::keyboard::key::Named;
 
     if global_search_open {
         return match key {

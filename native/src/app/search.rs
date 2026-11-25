@@ -25,79 +25,17 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            SearchMessage::GlobalSearchSubmit => {
-                let idx = self.search.global_selected;
-                let pdf_len = self.search.pdf_results.len();
-                if idx < pdf_len
-                    && let Some(result) = self.search.pdf_results.get(idx)
-                {
-                    Task::done(Message::Pdf(PdfMessage::SearchResultClicked(
-                        result.page_index,
-                    )))
-                } else if let Some(result) = self.search.results.get(idx.saturating_sub(pdf_len)) {
-                    Task::done(Message::Search(SearchMessage::ResultClicked(
-                        result.path.clone(),
-                    )))
-                } else {
-                    Task::none()
-                }
-            }
+            SearchMessage::GlobalSearchSubmit => self.on_global_search_submit(),
             SearchMessage::Close => {
                 self.search.visible = false;
                 self.search.file_visible = false;
                 self.restore_scroll_positions()
             }
             SearchMessage::QueryChanged(q) => {
-                self.search.query = q;
-                self.search.match_index = None;
-                self.search.global_selected = 0;
-                self.search.pdf_error = None;
-                // Stale results are cleared immediately, but the actual vault
-                // FTS query and full-document PDF scan run debounced (see
-                // SearchDebounceElapsed) so they fire once per pause in
-                // typing, not once per keystroke.
-                if self.search.query.len() <= 2 || self.search.regex {
-                    self.search.results.clear();
-                    self.search.results_truncated = false;
-                }
-                if !((self.search.visible || self.pdf_search_is_active())
-                    && self.pdf.active_path.is_some()
-                    && self.search.query.len() > 1)
-                {
-                    self.search.pdf_results.clear();
-                    self.search.pdf_indices_by_page.clear();
-                }
-                self.search.pending_query_at = Some(std::time::Instant::now());
+                self.on_search_query_changed(q);
                 Task::none()
             }
-            SearchMessage::DebounceElapsed => {
-                if self
-                    .search
-                    .pending_query_at
-                    .is_some_and(|at| at.elapsed() < crate::search_state::SEARCH_DEBOUNCE)
-                {
-                    return Task::none();
-                }
-                if self.search.pending_query_at.take().is_none() {
-                    return Task::none();
-                }
-                let q = self.search.query.clone();
-                if q.len() > 2
-                    && !self.search.regex
-                    && let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q)
-                {
-                    self.search.results = res.items;
-                    self.search.results_truncated = res.truncated;
-                }
-                if (self.search.visible || self.pdf_search_is_active())
-                    && self.pdf.active_path.is_some()
-                    && q.len() > 1
-                {
-                    self.search_pdf()
-                } else {
-                    Task::none()
-                }
-            }
+            SearchMessage::DebounceElapsed => self.on_search_debounce_elapsed(),
             // Search arms that mutate only `self.search` are routed to
             // `SearchState::update`; see search_state.rs.
             m @ (SearchMessage::ReplaceChanged(_) | SearchMessage::ToggleReplaceRow) => {
@@ -106,45 +44,15 @@ impl MdEditor {
             SearchMessage::RegexToggled(value) => {
                 self.search.regex = value;
                 self.search.match_index = None;
-                if (self.search.visible || self.pdf_search_is_active())
-                    && self.pdf.active_path.is_some()
-                    && self.search.query.len() > 1
-                {
-                    self.search_pdf()
-                } else {
-                    Task::none()
-                }
+                self.rerun_pdf_search()
             }
             SearchMessage::MatchCaseToggled(value) => {
                 self.search.match_case = value;
                 self.search.match_index = None;
-                if (self.search.visible || self.pdf_search_is_active())
-                    && self.pdf.active_path.is_some()
-                    && self.search.query.len() > 1
-                {
-                    self.search_pdf()
-                } else {
-                    Task::none()
-                }
+                self.rerun_pdf_search()
             }
-            SearchMessage::Previous => {
-                if self.pdf_search_is_active() {
-                    self.navigate_pdf_search(false)
-                } else if self.editor_search_is_active() {
-                    self.navigate_file_search(false)
-                } else {
-                    Task::none()
-                }
-            }
-            SearchMessage::Next => {
-                if self.pdf_search_is_active() {
-                    self.navigate_pdf_search(true)
-                } else if self.editor_search_is_active() {
-                    self.navigate_file_search(true)
-                } else {
-                    Task::none()
-                }
-            }
+            SearchMessage::Previous => self.step_search(false),
+            SearchMessage::Next => self.step_search(true),
             SearchMessage::ReplaceOne => self.replace_current_match(),
             SearchMessage::ReplaceAll => match self.replace_all_in_current_document() {
                 Ok((count, task)) => {
@@ -156,24 +64,110 @@ impl MdEditor {
                     Task::none()
                 }
             },
-            SearchMessage::ResultClicked(path) => {
-                if !search_result_should_reload(self.active_path.as_deref(), &path) {
-                    // The open buffer is authoritative while dirty; a global
-                    // search hit for this same file must not reload disk state.
-                    self.search.visible = false;
-                    self.vault.selected_path = Some(path);
-                    return Task::none();
-                }
-                self.search.visible = false;
-                self.vault.selected_path = Some(path.clone());
-                if path.to_lowercase().ends_with(".pdf") {
-                    self.pdf.active_path = Some(path.clone());
-                    self.showing_pdf = true;
-                    self.open_pdf(&path)
-                } else {
-                    self.open_file(&path)
-                }
-            }
+            SearchMessage::ResultClicked(path) => self.on_search_result_clicked(path),
+        }
+    }
+
+    /// Whether the open PDF should be searched for the current query.
+    fn pdf_search_wanted(&self) -> bool {
+        (self.search.visible || self.pdf_search_is_active())
+            && self.pdf.active_path.is_some()
+            && self.search.query.len() > 1
+    }
+
+    fn rerun_pdf_search(&mut self) -> Task<Message> {
+        if self.pdf_search_wanted() {
+            self.search_pdf()
+        } else {
+            Task::none()
+        }
+    }
+
+    fn step_search(&mut self, forward: bool) -> Task<Message> {
+        if self.pdf_search_is_active() {
+            self.navigate_pdf_search(forward)
+        } else if self.editor_search_is_active() {
+            self.navigate_file_search(forward)
+        } else {
+            Task::none()
+        }
+    }
+
+    fn on_global_search_submit(&mut self) -> Task<Message> {
+        let idx = self.search.global_selected;
+        let pdf_len = self.search.pdf_results.len();
+        if idx < pdf_len
+            && let Some(result) = self.search.pdf_results.get(idx)
+        {
+            Task::done(Message::Pdf(PdfMessage::SearchResultClicked(
+                result.page_index,
+            )))
+        } else if let Some(result) = self.search.results.get(idx.saturating_sub(pdf_len)) {
+            Task::done(Message::Search(SearchMessage::ResultClicked(
+                result.path.clone(),
+            )))
+        } else {
+            Task::none()
+        }
+    }
+
+    fn on_search_query_changed(&mut self, q: String) {
+        self.search.query = q;
+        self.search.match_index = None;
+        self.search.global_selected = 0;
+        self.search.pdf_error = None;
+        // Stale results are cleared immediately, but the actual vault
+        // FTS query and full-document PDF scan run debounced (see
+        // SearchDebounceElapsed) so they fire once per pause in
+        // typing, not once per keystroke.
+        if self.search.query.len() <= 2 || self.search.regex {
+            self.search.results.clear();
+            self.search.results_truncated = false;
+        }
+        if !self.pdf_search_wanted() {
+            self.search.pdf_results.clear();
+            self.search.pdf_indices_by_page.clear();
+        }
+        self.search.pending_query_at = Some(std::time::Instant::now());
+    }
+
+    fn on_search_debounce_elapsed(&mut self) -> Task<Message> {
+        if self
+            .search
+            .pending_query_at
+            .is_some_and(|at| at.elapsed() < crate::search_state::SEARCH_DEBOUNCE)
+        {
+            return Task::none();
+        }
+        if self.search.pending_query_at.take().is_none() {
+            return Task::none();
+        }
+        let q = self.search.query.clone();
+        if q.len() > 2
+            && !self.search.regex
+            && let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q)
+        {
+            self.search.results = res.items;
+            self.search.results_truncated = res.truncated;
+        }
+        self.rerun_pdf_search()
+    }
+
+    fn on_search_result_clicked(&mut self, path: String) -> Task<Message> {
+        self.search.visible = false;
+        if !search_result_should_reload(self.active_path.as_deref(), &path) {
+            // The open buffer is authoritative while dirty; a global
+            // search hit for this same file must not reload disk state.
+            self.vault.selected_path = Some(path);
+            return Task::none();
+        }
+        self.vault.selected_path = Some(path.clone());
+        if path.to_lowercase().ends_with(".pdf") {
+            self.pdf.active_path = Some(path.clone());
+            self.showing_pdf = true;
+            self.open_pdf(&path)
+        } else {
+            self.open_file(&path)
         }
     }
 

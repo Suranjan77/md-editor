@@ -17,11 +17,6 @@ const MODULE_RATCHET: &[(&str, usize)] = &[
 
 /// Functions over the limit today, by `path::name`, with their ceiling.
 const FUNCTION_RATCHET: &[(&str, usize)] = &[
-    ("native/src/app/graph.rs::update_graph", 153),
-    ("native/src/app/search.rs::update_search", 171),
-    ("native/src/app/shell.rs::update_shell", 242),
-    ("native/src/app/subscription.rs::subscription", 172),
-    ("native/src/app/subscription.rs::keyboard_message", 153),
     ("native/src/editor/highlight/inline.rs::highlight_line", 161),
     (
         "native/src/editor/highlight/inline.rs::parse_inline_spans",

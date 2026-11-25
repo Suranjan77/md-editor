@@ -50,20 +50,7 @@ impl MdEditor {
                 self.ui.command_palette_query.clear();
                 Task::done(Message::KeyboardShortcut(shortcut))
             }
-            ShellMessage::OverlaySubmitCurrent => {
-                if self.ui.command_palette_visible {
-                    Task::done(Message::Vault(VaultMessage::NameModalSubmitCurrent))
-                } else if self.search.visible {
-                    Task::done(Message::Search(SearchMessage::GlobalSearchSubmit))
-                } else if self.graph.visible && self.ui.active_modal.is_none() {
-                    match self.graph.selected_path.clone() {
-                        Some(path) => Task::done(Message::Graph(GraphMessage::NodeOpen(path))),
-                        None => Task::none(),
-                    }
-                } else {
-                    Task::done(Message::Vault(VaultMessage::NameModalSubmitCurrent))
-                }
-            }
+            ShellMessage::OverlaySubmitCurrent => self.on_overlay_submit_current(),
             m @ (ShellMessage::TrackerStart
             | ShellMessage::TrackerStop
             | ShellMessage::TrackerTabSelected(_)
@@ -81,107 +68,48 @@ impl MdEditor {
             }
             ShellMessage::SplitViewToggle => self.on_split_view_toggle(),
             ShellMessage::SplitViewDragging(x_pos) => {
-                if !self.ui.is_resizing_split {
-                    return Task::none();
-                }
-                let left_chrome = if self.vault.sidebar_visible {
-                    self.ui.sidebar_width
-                } else {
-                    0.0
-                };
-                let right_chrome = if self.editor.toc_visible {
-                    self.ui.side_panel_width
-                } else {
-                    0.0
-                } + if self.vault.backlinks_visible {
-                    self.ui.side_panel_width
-                } else {
-                    0.0
-                };
-                let content_width = (self.ui.window_width - left_chrome - right_chrome).max(480.0);
-                let x_min = left_chrome + 220.0;
-                let x_max = left_chrome + content_width - 220.0;
-                let total_width = x_max - x_min;
-                if total_width > 1.0 {
-                    self.ui.split_ratio = ((x_pos - x_min) / total_width).clamp(0.25, 0.75);
-                }
+                self.on_split_view_dragging(x_pos);
                 Task::none()
             }
             ShellMessage::SplitViewDragEnd => {
                 self.ui.is_resizing_split = false;
-                self.persist_layout();
-                self.refit_pdf_if_needed()
+                self.settle_layout()
             }
-            ShellMessage::SidebarResizeStart => {
-                self.ui.resizing_panel = Some(ResizingPanel::Sidebar);
-                Task::none()
-            }
-            ShellMessage::SidePanelResizeStart => {
-                self.ui.resizing_panel = Some(ResizingPanel::SidePanel);
-                Task::none()
-            }
+            ShellMessage::SidebarResizeStart => self.start_panel_resize(ResizingPanel::Sidebar),
+            ShellMessage::SidePanelResizeStart => self.start_panel_resize(ResizingPanel::SidePanel),
             ShellMessage::PanelResizeDrag(x_pos) => {
-                match self.ui.resizing_panel {
-                    Some(ResizingPanel::Sidebar) => {
-                        self.ui.sidebar_width = x_pos.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
-                    }
-                    Some(ResizingPanel::SidePanel) => {
-                        let from_right = (self.ui.window_width - x_pos)
-                            .clamp(SIDE_PANEL_MIN_WIDTH, SIDE_PANEL_MAX_WIDTH);
-                        self.ui.side_panel_width = from_right;
-                    }
-                    None => {}
-                }
+                self.on_panel_resize_drag(x_pos);
                 Task::none()
             }
             ShellMessage::PanelResizeEnd => {
                 self.ui.resizing_panel = None;
-                self.persist_layout();
-                self.refit_pdf_if_needed()
+                self.settle_layout()
             }
             ShellMessage::ResetSidebarWidth => {
                 self.ui.sidebar_width = SIDEBAR_DEFAULT_WIDTH;
-                self.persist_layout();
-                self.refit_pdf_if_needed()
+                self.settle_layout()
             }
             ShellMessage::ResetSidePanelWidth => {
                 self.ui.side_panel_width = SIDE_PANEL_DEFAULT_WIDTH;
-                self.persist_layout();
-                self.refit_pdf_if_needed()
+                self.settle_layout()
             }
-            ShellMessage::ImageZoomIn => {
-                let next = (self.ui.image_zoom.unwrap_or(1.0) * 1.25).clamp(0.25, 4.0);
-                self.ui.image_zoom = Some(next);
-                Task::none()
-            }
-            ShellMessage::ImageZoomOut => {
-                let next = (self.ui.image_zoom.unwrap_or(1.0) / 1.25).clamp(0.25, 4.0);
-                self.ui.image_zoom = Some(next);
-                Task::none()
-            }
-            ShellMessage::ImageZoomFit => {
-                self.ui.image_zoom = None;
-                Task::none()
-            }
-            ShellMessage::ImageZoomActual => {
-                self.ui.image_zoom = Some(1.0);
-                Task::none()
-            }
+            ShellMessage::ImageZoomIn => self.set_image_zoom(Some(self.image_zoom() * 1.25)),
+            ShellMessage::ImageZoomOut => self.set_image_zoom(Some(self.image_zoom() / 1.25)),
+            ShellMessage::ImageZoomFit => self.set_image_zoom(None),
+            ShellMessage::ImageZoomActual => self.set_image_zoom(Some(1.0)),
             ShellMessage::PptxSlideInputChanged(raw) => {
                 self.ui.pptx_slide_input = Some(raw);
                 Task::none()
             }
-            ShellMessage::PptxSlideInputSubmit => {
-                if let Some(raw) = self.ui.pptx_slide_input.take()
-                    && let Ok(slide_1) = raw.trim().parse::<i32>()
-                {
-                    let width = self.pdf_available_width();
-                    let cur = self.pptx.current_slide(width) as i32 + 1;
-                    return self
-                        .pptx
-                        .update(Message::Shell(ShellMessage::PptxStep(slide_1 - cur)), width);
-                }
-                Task::none()
+            ShellMessage::PptxSlideInputSubmit => self.on_pptx_slide_input_submit(),
+            m @ (ShellMessage::PptxLoaded(..)
+            | ShellMessage::PptxScrolled { .. }
+            | ShellMessage::PptxZoomIn
+            | ShellMessage::PptxZoomOut
+            | ShellMessage::PptxZoomFit
+            | ShellMessage::PptxStep(_)) => {
+                let width = self.pdf_available_width();
+                self.pptx.update(Message::Shell(m), width)
             }
             ShellMessage::CursorMoved(x, y) => {
                 self.ui.cursor_pos = (x, y);
@@ -207,55 +135,150 @@ impl MdEditor {
                 Task::none()
             }
             ShellMessage::WindowResized(id, width, height) => {
-                if Some(id) != self.main_window {
-                    return Task::none();
-                }
-                self.ui.window_width = width;
-                self.ui.window_height = height;
-                self.persist_window_size();
-                self.refit_pdf_if_needed()
+                self.on_window_resized(id, width, height)
             }
-            ShellMessage::WindowOpened(id) => {
-                let scale = iced::window::scale_factor(id)
-                    .map(move |factor| Message::Shell(ShellMessage::WindowRescaled(id, factor)));
-                if Some(id) == self.ink_window {
-                    return Task::batch(vec![
-                        scale,
-                        iced::window::raw_id::<Message>(id)
-                            .map(|value| Message::Ink(InkMessage::PenHookReady(value))),
-                    ]);
-                }
-                scale
-            }
+            ShellMessage::WindowOpened(id) => self.on_window_opened(id),
             ShellMessage::WindowCloseRequested => {
                 let _ = self.save_active_document();
                 self.persist_session();
                 self.persist_layout();
                 Task::none()
             }
-            ShellMessage::WindowClosed(id) => {
-                if Some(id) == self.ink_window {
-                    self.ink_window_closed();
-                    return Task::none();
-                }
-                if Some(id) == self.main_window {
-                    return iced::exit();
-                }
-                Task::none()
-            }
+            ShellMessage::WindowClosed(id) => self.on_window_closed(id),
             ShellMessage::WindowRescaled(id, factor) => self.on_window_rescaled(id, factor),
-            m @ (ShellMessage::PptxLoaded(..)
-            | ShellMessage::PptxScrolled { .. }
-            | ShellMessage::PptxZoomIn
-            | ShellMessage::PptxZoomOut
-            | ShellMessage::PptxZoomFit
-            | ShellMessage::PptxStep(_)) => {
-                let width = self.pdf_available_width();
-                self.pptx.update(Message::Shell(m), width)
-            }
         }
     }
 
+    /// Enter in an overlay: submit whichever overlay is on top.
+    fn on_overlay_submit_current(&mut self) -> Task<Message> {
+        if self.ui.command_palette_visible {
+            Task::done(Message::Vault(VaultMessage::NameModalSubmitCurrent))
+        } else if self.search.visible {
+            Task::done(Message::Search(SearchMessage::GlobalSearchSubmit))
+        } else if self.graph.visible && self.ui.active_modal.is_none() {
+            match self.graph.selected_path.clone() {
+                Some(path) => Task::done(Message::Graph(GraphMessage::NodeOpen(path))),
+                None => Task::none(),
+            }
+        } else {
+            Task::done(Message::Vault(VaultMessage::NameModalSubmitCurrent))
+        }
+    }
+
+    /// A drag or reset changed the layout: save it and refit the PDF.
+    fn settle_layout(&mut self) -> Task<Message> {
+        self.persist_layout();
+        self.refit_pdf_if_needed()
+    }
+
+    fn start_panel_resize(&mut self, panel: ResizingPanel) -> Task<Message> {
+        self.ui.resizing_panel = Some(panel);
+        Task::none()
+    }
+
+    fn on_panel_resize_drag(&mut self, x_pos: f32) {
+        match self.ui.resizing_panel {
+            Some(ResizingPanel::Sidebar) => {
+                self.ui.sidebar_width = x_pos.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+            }
+            Some(ResizingPanel::SidePanel) => {
+                let from_right = (self.ui.window_width - x_pos)
+                    .clamp(SIDE_PANEL_MIN_WIDTH, SIDE_PANEL_MAX_WIDTH);
+                self.ui.side_panel_width = from_right;
+            }
+            None => {}
+        }
+    }
+
+    fn on_split_view_dragging(&mut self, x_pos: f32) {
+        if !self.ui.is_resizing_split {
+            return;
+        }
+        let left_chrome = if self.vault.sidebar_visible {
+            self.ui.sidebar_width
+        } else {
+            0.0
+        };
+        let right_chrome = if self.editor.toc_visible {
+            self.ui.side_panel_width
+        } else {
+            0.0
+        } + if self.vault.backlinks_visible {
+            self.ui.side_panel_width
+        } else {
+            0.0
+        };
+        let content_width = (self.ui.window_width - left_chrome - right_chrome).max(480.0);
+        let x_min = left_chrome + 220.0;
+        let x_max = left_chrome + content_width - 220.0;
+        let total_width = x_max - x_min;
+        if total_width > 1.0 {
+            self.ui.split_ratio = ((x_pos - x_min) / total_width).clamp(0.25, 0.75);
+        }
+    }
+
+    /// Image zoom and the presentation viewer.
+    /// The image viewer's zoom; `None` (fit) counts as 1.0 for stepping.
+    fn image_zoom(&self) -> f32 {
+        self.ui.image_zoom.unwrap_or(1.0)
+    }
+
+    fn set_image_zoom(&mut self, zoom: Option<f32>) -> Task<Message> {
+        self.ui.image_zoom = zoom.map(|z| z.clamp(0.25, 4.0));
+        Task::none()
+    }
+
+    fn on_pptx_slide_input_submit(&mut self) -> Task<Message> {
+        if let Some(raw) = self.ui.pptx_slide_input.take()
+            && let Ok(slide_1) = raw.trim().parse::<i32>()
+        {
+            let width = self.pdf_available_width();
+            let cur = self.pptx.current_slide(width) as i32 + 1;
+            return self
+                .pptx
+                .update(Message::Shell(ShellMessage::PptxStep(slide_1 - cur)), width);
+        }
+        Task::none()
+    }
+
+    fn on_window_resized(
+        &mut self,
+        id: iced::window::Id,
+        width: f32,
+        height: f32,
+    ) -> Task<Message> {
+        if Some(id) != self.main_window {
+            return Task::none();
+        }
+        self.ui.window_width = width;
+        self.ui.window_height = height;
+        self.persist_window_size();
+        self.refit_pdf_if_needed()
+    }
+
+    fn on_window_opened(&mut self, id: iced::window::Id) -> Task<Message> {
+        let scale = iced::window::scale_factor(id)
+            .map(move |factor| Message::Shell(ShellMessage::WindowRescaled(id, factor)));
+        if Some(id) == self.ink_window {
+            return Task::batch(vec![
+                scale,
+                iced::window::raw_id::<Message>(id)
+                    .map(|value| Message::Ink(InkMessage::PenHookReady(value))),
+            ]);
+        }
+        scale
+    }
+
+    fn on_window_closed(&mut self, id: iced::window::Id) -> Task<Message> {
+        if Some(id) == self.ink_window {
+            self.ink_window_closed();
+            return Task::none();
+        }
+        if Some(id) == self.main_window {
+            return iced::exit();
+        }
+        Task::none()
+    }
     fn on_split_view_toggle(&mut self) -> Task<Message> {
         if self.ui.split_view_active {
             self.ui.split_view_active = false;
