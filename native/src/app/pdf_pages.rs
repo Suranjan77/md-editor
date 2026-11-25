@@ -22,7 +22,6 @@ impl MdEditor {
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
-        self.pptx.close();
         self.showing_pdf = true;
         self.active_panel = ActivePanel::Pdf;
         self.pdf.current_page = 0;

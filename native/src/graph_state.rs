@@ -163,6 +163,11 @@ pub struct GraphState {
     /// Shared world→screen zoom applied by both render layers.
     pub zoom: f32,
     pub fit_revision: u64,
+    /// The fit revision and canvas size the shared `pan`/`zoom` were fitted
+    /// for, once the GPU layer has committed that fit. Until it matches the
+    /// current request, the label overlay frames the graph itself, exactly as
+    /// the GPU layer does, so the two never disagree.
+    pub fitted: Option<(u64, f32, f32)>,
     /// Bumped whenever the *app* (rather than a pointer gesture) sets the
     /// transform — zoom buttons, "reveal in graph". The render layer owns
     /// pan/zoom during interaction, so it needs this nudge to adopt ours.
@@ -212,6 +217,7 @@ impl GraphState {
             pan: (0.0, 0.0),
             zoom: 1.0,
             fit_revision: 0,
+            fitted: None,
             view_revision: 0,
             physics: PhysicsState::default(),
             snapshot: GraphSnapshot::default(),

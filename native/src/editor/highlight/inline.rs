@@ -130,6 +130,9 @@ fn blockquote_line(line: &str, trimmed: &str) -> StyledLine {
         is_syntax: true,
         ..StyledSpan::plain("")
     });
+    if let Some(header) = callout_header(&line[rest_start..]) {
+        return callout_line(sl, line, rest_start, header);
+    }
     // Blockquote content can contain the same inline Markdown as a
     // paragraph. Keep the quote styling while retaining actionable links.
     let content_start = sl.spans.len();
@@ -143,6 +146,63 @@ fn blockquote_line(line: &str, trimmed: &str) -> StyledLine {
             span.color = t.fg_secondary;
         }
         span.italic = true;
+    }
+    sl
+}
+
+/// `[!type]` (optionally `+`/`-` for folding) at the start of quote content:
+/// the marker's byte length and the type.
+fn callout_header(content: &str) -> Option<(usize, &str)> {
+    let rest = content.strip_prefix("[!")?;
+    let close = rest.find(']')?;
+    let kind = &rest[..close];
+    if kind.is_empty()
+        || !kind
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    let mut len = 2 + close + 1;
+    if matches!(content.as_bytes().get(len), Some(b'+' | b'-')) {
+        len += 1;
+    }
+    Some((len, kind))
+}
+
+/// The first line of a callout: the `[!type]` marker shows as the type's
+/// name in its colour, followed by the (bold) title.
+fn callout_line(
+    mut sl: StyledLine,
+    line: &str,
+    content_start: usize,
+    (marker_len, kind): (usize, &str),
+) -> StyledLine {
+    let callout = Callout::from_type(kind);
+    sl.callout = Some(callout);
+    let mut label: String = kind.replace(['-', '_'], " ");
+    if let Some(first) = label.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    let title_start = content_start + marker_len;
+    let title = &line[title_start..];
+    sl.spans.push(StyledSpan {
+        text: line[content_start..title_start].to_string(),
+        display_text: Some(if title.trim().is_empty() {
+            label
+        } else {
+            format!("{label} · ")
+        }),
+        color: callout.color(),
+        bold: true,
+        ..StyledSpan::plain("")
+    });
+    let title_from = sl.spans.len();
+    parse_inline_spans(title, &mut sl.spans);
+    for span in &mut sl.spans[title_from..] {
+        if !span.is_syntax {
+            span.bold = true;
+        }
     }
     sl
 }
@@ -207,8 +267,9 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
     while i < len {
         let c = chars[i];
         let next = chars.get(i + 1).copied();
-        let candidates: [(bool, InlineParser); 7] = [
+        let candidates: [(bool, InlineParser); 8] = [
             (c == '`', inline_code),
+            (c == '~' && next == Some('~'), strikethrough),
             (c == '*' && next == Some('*'), bold),
             (c == '*' && next != Some('*'), italic),
             (c == '[' && next == Some('['), wikilink),
@@ -290,6 +351,23 @@ fn bold(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> 
     Some(end + 2)
 }
 
+/// `~~struck~~` at `i`. As in GFM, the body is not empty and neither starts
+/// nor ends with whitespace or `~`, so `~~~~` and `~~ x ~~` stay text.
+fn strikethrough(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
+    let flanking = |c: &char| !c.is_whitespace() && *c != '~';
+    let end = find_double(chars, i + 2, '~')
+        .filter(|&end| end > i + 2 && flanking(&chars[i + 2]) && flanking(&chars[end - 1]))?;
+    let body = StyledSpan {
+        text: chars[i + 2..end].iter().collect(),
+        color: crate::design::tokens().doc_text,
+        strikethrough: true,
+        font_size: 16.0,
+        ..StyledSpan::plain("")
+    };
+    push_wrapped(spans, "~~", body, "~~", 16.0);
+    Some(end + 2)
+}
+
 /// `*italic*` at `i` (a single `*`, not `**`).
 fn italic(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
     let end = find_char(chars, i + 1, '*')?;
@@ -330,16 +408,27 @@ fn wikilink(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usi
 
 /// `[text](url)` at `i`: one span holding the raw source, displaying the text.
 fn markdown_link(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
-    let (end_text, end_url) = bracket_then_paren(chars, i + 1)?;
+    let (end_text, dest, end_url) = bracket_then_paren(chars, i + 1)?;
     spans.push(StyledSpan {
         text: chars[i..=end_url].iter().collect(),
         display_text: Some(chars[i + 1..end_text].iter().collect()),
         color: crate::design::tokens().doc_link,
         is_link: true,
-        link_target: Some(chars[end_text + 2..end_url].iter().collect()),
+        link_target: Some(link_destination(&chars[dest].iter().collect::<String>())),
         ..StyledSpan::plain("")
     });
     Some(end_url + 1)
+}
+
+/// A Markdown link destination as the link router wants it: a vault path
+/// percent-decoded (`My%20Note.md`), a URL or `pdf://` link untouched (their
+/// handlers decode their own parts).
+fn link_destination(raw: &str) -> String {
+    if raw.contains("://") || raw.starts_with("mailto:") {
+        raw.to_string()
+    } else {
+        crate::platform::percent_decode(raw)
+    }
 }
 
 /// `$math$` at `i`.
@@ -358,7 +447,7 @@ fn inline_math(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<
 
 /// `![alt](url)` at `i`; hidden in preview, since the image is drawn separately.
 fn image(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
-    let (end_alt, end_url) = bracket_then_paren(chars, i + 2)?;
+    let (end_alt, dest, end_url) = bracket_then_paren(chars, i + 2)?;
     spans.push(StyledSpan {
         text: chars[i..=end_url].iter().collect(),
         display_text: Some(String::new()),
@@ -366,21 +455,71 @@ fn image(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize>
         italic: true,
         font_size: 14.0,
         is_image: true,
-        image_path: Some(chars[end_alt + 2..end_url].iter().collect()),
+        image_path: Some(chars[dest].iter().collect()),
         image_alt: Some(chars[i + 2..end_alt].iter().collect()),
         ..StyledSpan::plain("")
     });
     Some(end_url + 1)
 }
 
-/// For `…](…)` starting at `from`: the indices of `]` and of the closing `)`.
-fn bracket_then_paren(chars: &[char], from: usize) -> Option<(usize, usize)> {
+/// For `…](destination "title")` starting at `from`: the index of `]`, the
+/// destination's range (without `<>` or the title), and the index of the
+/// closing `)`. The destination is `<...>` (spaces and parentheses allowed)
+/// or a run without spaces whose parentheses balance, so `Paper (2024).pdf`
+/// is one destination.
+fn bracket_then_paren(
+    chars: &[char],
+    from: usize,
+) -> Option<(usize, std::ops::Range<usize>, usize)> {
     let close = find_char(chars, from, ']')?;
     if chars.get(close + 1) != Some(&'(') {
         return None;
     }
-    let end = find_char(chars, close + 2, ')')?;
-    Some((close, end))
+    let mut i = close + 2;
+    while chars.get(i) == Some(&' ') {
+        i += 1;
+    }
+    let dest = if chars.get(i) == Some(&'<') {
+        let end = (i + 1..chars.len()).find(|&j| matches!(chars[j], '>' | '<'))?;
+        if chars[end] != '>' {
+            return None;
+        }
+        let dest = i + 1..end;
+        i = end + 1;
+        dest
+    } else {
+        let start = i;
+        let mut depth = 0usize;
+        while let Some(&c) = chars.get(i) {
+            match c {
+                '\\' if chars.get(i + 1).is_some_and(|n| matches!(n, '(' | ')')) => i += 1,
+                '(' => depth += 1,
+                ')' if depth == 0 => break,
+                ')' => depth -= 1,
+                c if c.is_whitespace() => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        if depth > 0 {
+            return None;
+        }
+        start..i
+    };
+    // An optional title: "…", '…' or (…), then the closing parenthesis.
+    while chars.get(i).is_some_and(|c| c.is_whitespace()) {
+        i += 1;
+    }
+    if let Some(&open @ ('"' | '\'' | '(')) = chars.get(i)
+        && i > dest.end
+    {
+        let shut = if open == '(' { ')' } else { open };
+        i = find_char(chars, i + 1, shut)? + 1;
+        while chars.get(i).is_some_and(|c| c.is_whitespace()) {
+            i += 1;
+        }
+    }
+    (chars.get(i) == Some(&')')).then_some((close, dest, i))
 }
 
 pub(super) fn detect_heading(trimmed: &str) -> Option<u8> {

@@ -24,7 +24,7 @@ use super::metrics::*;
 #[cfg(test)]
 use super::spans::is_block_editing_line;
 use super::spans::{math_source, span_is_editing};
-use super::{Editor, ImageCache, MATH_BLOCK_SCALE, MathCache, Measure, State};
+use super::{Editor, ImageCache, MathCache, Measure, State};
 use crate::editor::highlight::StyledLine;
 use crate::editor::layout_cache::{LineHeightCache, line_hash, resource_hash};
 use crate::editor::layout_tree::HeightTree;
@@ -137,7 +137,7 @@ fn math_block_height(line: &StyledLine, math_cache: &MathCache) -> f32 {
     for span in &line.spans {
         let tex = math_source(span);
         if let Some(m) = math_cache.get(tex) {
-            max_h = max_h.max(snap_up(m.height * MATH_BLOCK_SCALE + MATH_BLOCK_PADDING));
+            max_h = max_h.max(snap_up(m.block_height + MATH_BLOCK_PADDING));
         } else if !tex.is_empty() {
             // Not rendered yet: size for the source, wrapped at a nominal width.
             let visual_lines = tex

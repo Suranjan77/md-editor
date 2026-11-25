@@ -1,4 +1,4 @@
-//! The shared viewer toolbar (`pages/viewers.md`) for PDFs, slides and images: outline, editable page field, zoom field and steps, fit width/page, find, plus view-specific controls.
+//! The shared viewer toolbar (`pages/viewers.md`) for PDFs and images: outline, editable page field, zoom field and steps, fit width/page, find, plus view-specific controls.
 
 use iced::widget::{Space, container, row, text};
 use iced::{Alignment, Element, Length, Renderer, Theme};

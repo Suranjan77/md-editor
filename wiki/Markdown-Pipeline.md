@@ -207,20 +207,34 @@ just chooses `display_text` instead.
   code, math, and tables, are revealed in place. There is no mode to toggle.
 - **Fenced code** — `syntect` applies language-specific colouring, and a unit test asserts
   that highlighting preserves the full source text character for character.
+- **YAML frontmatter** — `---` alone on line 0, closed by `---` or `...` within
+  `FRONTMATTER_MAX_LINES` (200) lines, is a `yaml` code block whose fences hide like code
+  fences. Unclosed, or anywhere but the top, `---` stays a horizontal rule.
+- **Link destinations** — `[text](dest "title")` and `![alt](dest)` take `<...>` (spaces
+  and parentheses allowed) or a run without spaces whose parentheses balance
+  (`Paper (2024).pdf`); an optional title is skipped. A vault path is percent-decoded
+  (`My%20Note.md`) before the link is followed; URLs and `pdf://` links decode their own
+  parts. Generated PDF-note links encode spaces and parentheses
+  (`pdf_notes::encode_pdf_link_target`).
 
 ### Incremental highlighting (`Highlighted`)
 
 A line's highlighting is a pure function of its text and the **state it is entered in**:
 
 ```rust
-pub struct LineState { code: Option<CodeState>, in_math: bool, in_table: bool }
+pub struct LineState {
+    opens_frontmatter: bool, in_frontmatter: bool,
+    code: Option<CodeState>, math_end: Option<MathBlockEnd>, in_table: bool,
+}
 struct CodeState { lang: Option<String>, syntax: Option<(ParseState, HighlightState)> }
 ```
 
 `Highlighted` keeps, for every line, its text, the `LineState` it was entered in, and a
 `BlockStep` describing how it opens, continues or closes blocks. `update(text)`:
 
-1. finds the common prefix and suffix of old and new line texts;
+1. finds the common prefix and suffix of old and new line texts — unless whether line 0
+   opens frontmatter changed (that depends on a later closing line, so it is decided per
+   update and carried in line 0's entry state), in which case it starts from the top;
 2. re-highlights from the first changed line, starting in that line's recorded entry state;
 3. stops as soon as it reaches the kept suffix **in the same state** that line was entered
    in before — from there on nothing can differ — and splices the new lines in;

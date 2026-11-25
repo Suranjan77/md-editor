@@ -133,12 +133,7 @@ fn caches() -> (ImageCache, MathCache) {
     {
         math.insert(
             tex.to_string(),
-            MathRender {
-                inline_handle: fake_handle(10 + i as u8),
-                block_handle: fake_handle(20 + i as u8),
-                width: w,
-                height: h,
-            },
+            MathRender::uniform(fake_handle(10 + i as u8), fake_handle(20 + i as u8), w, h),
         );
     }
     (images, math)

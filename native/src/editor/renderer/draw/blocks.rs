@@ -25,6 +25,8 @@ const CARD_RADIUS: f32 = 8.0;
 /// Cards start this far left of the text column.
 const CARD_OUTSET: f32 = 16.0;
 const QUOTE_BAR_WIDTH: f32 = 4.0;
+/// Opacity of a callout's colour behind its text.
+const CALLOUT_TINT: f32 = 0.08;
 
 #[derive(PartialEq)]
 pub(super) enum BlockKind {
@@ -48,6 +50,8 @@ pub(super) struct BlockMeta {
     /// Horizontal extent, for blocks that scroll.
     pub scroll: Option<ScrollExtent>,
     pub code_lang: Option<String>,
+    /// For a quote run that opens with `> [!type]`: its callout.
+    pub callout: Option<crate::editor::highlight::Callout>,
 }
 
 impl<Message> Editor<'_, Message> {
@@ -117,6 +121,7 @@ impl<Message> Editor<'_, Message> {
                 kind,
                 scroll: self.scroll_extent::<R>(state, block_id, bounds.width, focused),
                 code_lang: lines.iter().find_map(|line| line.code_block_lang.clone()),
+                callout: first_line.callout,
             };
             blocks.insert(block_id, meta);
         }
@@ -148,12 +153,17 @@ impl<Message> Editor<'_, Message> {
 
         match meta.kind {
             BlockKind::Quote => {
-                fill(
-                    renderer,
-                    card,
-                    rounded(CARD_RADIUS),
-                    crate::design::fade(crate::design::tokens().fg_primary, 0.012),
-                );
+                let (tint, bar) = match meta.callout {
+                    Some(callout) => (
+                        crate::design::fade(callout.color(), CALLOUT_TINT),
+                        callout.color(),
+                    ),
+                    None => (
+                        crate::design::fade(crate::design::tokens().fg_primary, 0.012),
+                        crate::design::tokens().doc_quote_bar,
+                    ),
+                };
+                fill(renderer, card, rounded(CARD_RADIUS), tint);
                 fill(
                     renderer,
                     Rectangle {
@@ -169,7 +179,7 @@ impl<Message> Editor<'_, Message> {
                         },
                         ..Default::default()
                     },
-                    crate::design::tokens().doc_quote_bar,
+                    bar,
                 );
             }
             BlockKind::Table => {

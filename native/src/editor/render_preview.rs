@@ -72,12 +72,7 @@ fn math(lines: &[crate::editor::highlight::StyledLine]) -> MathCache {
         )
         .unwrap_or_else(|_| {
             let handle = bitmap(40, 20, [230, 200, 120, 255]);
-            MathRender {
-                inline_handle: handle.clone(),
-                block_handle: handle,
-                width: 40.0,
-                height: 20.0,
-            }
+            MathRender::uniform(handle.clone(), handle, 40.0, 20.0)
         });
         cache.insert(tex, render);
     }

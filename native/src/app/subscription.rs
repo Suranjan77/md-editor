@@ -14,6 +14,7 @@ impl MdEditor {
             && !self.ui.command_palette_visible
             && !self.search.visible;
         let global_search_open = self.search.visible;
+        let completion_open = self.editor.completion.is_some();
 
         // App-level keyboard handling. Returns `None` for keys we don't act on
         // so ordinary text entry (handled by the focused editor widget) doesn't
@@ -25,9 +26,12 @@ impl MdEditor {
             }
             _ => None,
         })
-        .with((sidebar_focused, global_search_open))
+        .with((sidebar_focused, global_search_open, completion_open))
         .filter_map(
-            |((sidebar_focused, global_search_open), (key, modifiers, status))| {
+            |((sidebar_focused, global_search_open, completion_open), (key, modifiers, status))| {
+                if completion_open && let Some(message) = completion_key(&key, modifiers) {
+                    return Some(message);
+                }
                 keyboard_message(&key, modifiers, status, sidebar_focused, global_search_open)
             },
         );
@@ -214,17 +218,17 @@ fn window_events() -> Subscription<Message> {
         iced::Event::Window(iced::window::Event::Rescaled(factor)) => Some(Message::Shell(
             ShellMessage::WindowRescaled(window_id, factor),
         )),
-        iced::Event::Window(iced::window::Event::CloseRequested) => {
-            Some(Message::Shell(ShellMessage::WindowCloseRequested))
-        }
+        iced::Event::Window(iced::window::Event::CloseRequested) => Some(Message::Shell(
+            ShellMessage::WindowCloseRequested(window_id),
+        )),
         iced::Event::Window(iced::window::Event::FileHovered(path)) => {
-            Some(Message::Shell(ShellMessage::FileHovered(path)))
+            Some(Message::Shell(ShellMessage::FileHovered(window_id, path)))
         }
         iced::Event::Window(iced::window::Event::FilesHoveredLeft) => {
             Some(Message::Shell(ShellMessage::FilesHoveredLeft))
         }
         iced::Event::Window(iced::window::Event::FileDropped(path)) => {
-            Some(Message::Shell(ShellMessage::FileDropped(path)))
+            Some(Message::Shell(ShellMessage::FileDropped(window_id, path)))
         }
         _ => None,
     })
@@ -304,19 +308,34 @@ pub(super) fn collect_changed_paths(
         let Ok(rel) = path.strip_prefix(root) else {
             continue;
         };
-        let skip = rel.components().any(|c| {
-            let s = c.as_os_str().to_string_lossy();
-            s.starts_with('.')
-                || matches!(
-                    s.as_ref(),
-                    "node_modules" | "target" | "build" | "dist" | "__pycache__"
-                )
-        });
-        if skip {
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        // The same folders the vault walk skips, the user's own included.
+        if md_editor_core::vault::is_excluded_rel_path(&rel) {
             continue;
         }
-        out.insert(rel.to_string_lossy().replace('\\', "/"));
+        out.insert(rel);
     }
+}
+
+/// Keys that drive an open completion popup: ↑/↓ move, Enter/Tab insert,
+/// Escape closes. The editor widget leaves these alone while it is open.
+pub(super) fn completion_key(
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Message> {
+    use iced::keyboard::Key;
+    use iced::keyboard::key::Named;
+    if modifiers.command() || modifiers.control() || modifiers.alt() {
+        return None;
+    }
+    let message = match key {
+        Key::Named(Named::ArrowDown) => EditorMessage::CompletionMove(1),
+        Key::Named(Named::ArrowUp) => EditorMessage::CompletionMove(-1),
+        Key::Named(Named::Enter | Named::Tab) => EditorMessage::CompletionAccept,
+        Key::Named(Named::Escape) => EditorMessage::CompletionClose,
+        _ => return None,
+    };
+    Some(Message::Editor(message))
 }
 
 pub(super) fn keyboard_message(

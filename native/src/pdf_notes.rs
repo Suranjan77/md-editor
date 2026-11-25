@@ -50,6 +50,18 @@ pub fn encode_pdf_link_path(path: &str) -> String {
         .replace('#', "%23")
 }
 
+/// [`encode_pdf_link_path`], plus what would end or split a Markdown link
+/// destination: spaces, parentheses and angle brackets. `decode_pdf_link_path`
+/// reverses both.
+pub fn encode_pdf_link_target(path: &str) -> String {
+    encode_pdf_link_path(path)
+        .replace(' ', "%20")
+        .replace('(', "%28")
+        .replace(')', "%29")
+        .replace('<', "%3C")
+        .replace('>', "%3E")
+}
+
 pub fn decode_pdf_link_path(path: &str) -> String {
     let bytes = path.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -75,7 +87,13 @@ pub fn append_linked_pdf_note_section(
     ann: &md_editor_core::pdf::PdfAnnotation,
 ) -> String {
     let link = pdf_annotation_link(pdf_path, ann);
-    if existing.contains(&link) {
+    // Notes written before link targets were encoded carry the raw path.
+    let legacy = format!(
+        "pdf://{pdf_path}?page={}&annotation={}",
+        ann.page_index + 1,
+        ann.id
+    );
+    if existing.contains(&link) || existing.contains(&legacy) {
         return existing.to_string();
     }
 
@@ -123,7 +141,7 @@ fn note_title_from_path(path: &str) -> String {
 fn pdf_annotation_link(pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
     format!(
         "pdf://{}?page={}&annotation={}",
-        pdf_path,
+        encode_pdf_link_target(pdf_path),
         ann.page_index + 1,
         ann.id
     )
@@ -198,7 +216,7 @@ mod tests {
         assert!(content.contains("## Page 5"));
         assert!(content.contains("> Important field result"));
         assert!(content.contains(
-            "[Open highlight in PDF](pdf://papers/My PDF File.pdf?page=5&annotation=abcdef123456)"
+            "[Open highlight in PDF](pdf://papers/My%20PDF%20File.pdf?page=5&annotation=abcdef123456)"
         ));
         assert!(content.contains("### Notes"));
         assert!(!content.contains("pdf_annotation:"));

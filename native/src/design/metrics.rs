@@ -7,6 +7,10 @@ use super::interface_scale;
 
 // ── Spacing (4px grid, MASTER §4.1) ──────────────────────────────────
 
+/// How far apart, in logical pixels, clicks may land and still count as one
+/// double or triple click (PDF pages and the editor).
+pub const MULTI_CLICK_SLOP: f32 = 4.0;
+
 pub const SPACE_0: f32 = 0.0;
 pub const SPACE_PX: f32 = 1.0;
 pub const SPACE_1: f32 = 4.0;

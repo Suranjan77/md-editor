@@ -146,7 +146,7 @@ The list is built by `core/src/pdf.rs::pdfium_candidates`.
 cargo test --workspace
 ```
 
-The suite covers both crates, plus a few opt-in renderer and slide tools that are
+The suite covers both crates, plus a few opt-in renderer tools that are
 `#[ignore]`d by default (below). They run in a few seconds
 and need no display server.
 
@@ -302,24 +302,6 @@ It uses only the widget's public API, so the same file can be dropped into an ol
 checkout to render a before/after pair. Text is shaped with system fonts, so glyphs the
 software renderer's fonts lack (the task checkmark, for one) may show as boxes.
 
-### Slide previews
-
-`native/src/slides/preview.rs` renders the slides of any `.pptx` to PNG files through the
-viewer's own widgets (`views::pptx_viewer::slide_page`) and the tiny-skia software renderer.
-Converting the same deck with `soffice --headless --convert-to pdf` and rasterising the
-result with `pdftoppm` gives a reference to compare against.
-
-```bash
-PPTX_PREVIEW_FILE=/abs/path/deck.pptx PPTX_PREVIEW_DIR=/tmp/slides \
-  cargo test -p md-editor-native slide_preview -- --ignored
-```
-
-Cargo runs the test from `native/`, so give absolute paths. `PPTX_PREVIEW_WIDTH` sets the
-slide width in pixels (default 960) and `PPTX_PREVIEW_LIMIT` caps the number of slides.
-Slide text is shaped with the fonts installed on the machine, through the substitutions the
-app makes (`slides/fonts.rs`), so a deck set in fonts you lack breaks lines slightly
-differently than it does in PowerPoint.
-
 ### Reference-resolver tools
 
 ```bash
@@ -365,7 +347,7 @@ MD Editor ships as an Arch Linux package; there is no portable build and no self
 | :--- | :--- |
 | `md-editor/PKGBUILD` | AUR `md-editor`: builds the release tagged `v$pkgver` |
 | `md-editor-git/PKGBUILD`, `.SRCINFO` | AUR `md-editor-git`: builds `main` |
-| `md-editor.desktop` | Desktop entry (`Exec=md-editor %F`, Markdown/PDF/PPTX MIME types, `StartupWMClass=md-editor`) |
+| `md-editor.desktop` | Desktop entry (`Exec=md-editor %F`, Markdown/PDF MIME types, `StartupWMClass=md-editor`) |
 
 Both PKGBUILDs download the pinned PDFium archive as a declared `source` and hand it to the
 build script through `PDFIUM_ARCHIVE`, which verifies it against `pinned_sha256`. When the

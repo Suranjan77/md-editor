@@ -99,7 +99,6 @@ impl MdEditor {
                 rename_open_path(&mut self.active_path, old_path, &new_path);
                 rename_open_path(&mut self.pdf.active_path, old_path, &new_path);
                 rename_open_path(&mut self.active_image_path, old_path, &new_path);
-                rename_open_path(&mut self.pptx.active_path, old_path, &new_path);
                 rename_open_path(&mut self.vault.selected_path, old_path, &new_path);
                 let mut graph_active = self.graph.active_path.clone();
                 rename_open_path(&mut graph_active, old_path, &new_path);
@@ -167,8 +166,7 @@ impl MdEditor {
                     .retain(|folder| !gone(Some(folder.as_str())));
                 let was_active_deleted = gone(self.active_path.as_deref())
                     || gone(self.pdf.active_path.as_deref())
-                    || gone(self.active_image_path.as_deref())
-                    || gone(self.pptx.active_path.as_deref());
+                    || gone(self.active_image_path.as_deref());
                 if gone(self.active_path.as_deref()) {
                     self.active_path = None;
                     self.editor.buffer = DocBuffer::new();
@@ -185,9 +183,6 @@ impl MdEditor {
                 }
                 if gone(self.graph.active_path.as_deref()) {
                     self.graph.set_active_path(None);
-                }
-                if gone(self.pptx.active_path.as_deref()) {
-                    self.pptx.close();
                 }
                 self.tabs.remove_deleted_path(&path);
                 self.persist_tabs();

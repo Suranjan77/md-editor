@@ -73,13 +73,9 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send 
     }
 }
 
+/// Whether `path` is an image the vault lists (`IMAGE_EXTENSIONS`, any case).
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
-    path.ends_with(".png")
-        || path.ends_with(".jpg")
-        || path.ends_with(".jpeg")
-        || path.ends_with(".gif")
-        || path.ends_with(".bmp")
-        || path.ends_with(".webp")
+    md_editor_core::vault::is_image_path(std::path::Path::new(path))
 }
 
 fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
@@ -96,7 +92,6 @@ pub struct MdEditor {
     active_path: Option<String>,
     editor: crate::editor_state::EditorPane,
     pdf: crate::pdf_pane::PdfPane,
-    pptx: crate::pptx_pane::PptxPane,
     active_image_path: Option<String>,
     active_image: Option<(iced::widget::image::Handle, f32, f32)>,
     showing_pdf: bool,
@@ -116,6 +111,7 @@ pub struct MdEditor {
 
 const SELF_WRITE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
+mod completion;
 mod documents;
 mod editor;
 mod graph;
@@ -157,6 +153,10 @@ pub(crate) struct Probe {
     pub active_tab: Option<String>,
     pub buffer: String,
     pub dirty: bool,
+    /// 0-based line of the caret in the open note.
+    pub cursor_line: usize,
+    /// Labels in the open completion popup.
+    pub completion: Vec<String>,
     pub toast: Option<String>,
     pub modal_open: bool,
     pub palette_open: bool,
@@ -177,6 +177,8 @@ pub(crate) struct Probe {
     pub pdf_match_index: Option<usize>,
     /// Highlights and notes on the open PDF.
     pub pdf_annotations: usize,
+    /// Their ids, in page order.
+    pub pdf_annotation_ids: Vec<String>,
     /// Pages whose text layer has loaded (needed to select and highlight).
     pub pdf_texts_loaded: usize,
     /// The document id is known, so highlights can be saved.
@@ -189,9 +191,6 @@ pub(crate) struct Probe {
     pub graph_nodes: usize,
     pub graph_local: bool,
     pub pdf_error: Option<String>,
-    pub pptx_path: Option<String>,
-    pub pptx_loaded: bool,
-    pub pptx_error: Option<String>,
     pub ink_window_open: bool,
     pub ink_path: Option<String>,
     pub ink_dirty: bool,
@@ -214,6 +213,13 @@ impl MdEditor {
             active_tab: self.tabs.active_tab().map(|t| t.path.clone()),
             buffer: self.editor.buffer.text(),
             dirty: self.editor.buffer.dirty,
+            cursor_line: self.editor.buffer.cursor_line,
+            completion: self
+                .editor
+                .completion
+                .iter()
+                .flat_map(|c| c.items.iter().map(|i| i.label.clone()))
+                .collect(),
             toast: self.ui.toast.clone(),
             modal_open: self.ui.active_modal.is_some(),
             palette_open: self.ui.command_palette_visible,
@@ -232,6 +238,14 @@ impl MdEditor {
             pdf_search_results: self.search.pdf_results.len(),
             pdf_match_index: self.search.match_index,
             pdf_annotations: self.pdf.annotations.values().map(Vec::len).sum(),
+            pdf_annotation_ids: {
+                let mut pages: Vec<_> = self.pdf.annotations.iter().collect();
+                pages.sort_by_key(|(page, _)| **page);
+                pages
+                    .into_iter()
+                    .flat_map(|(_, anns)| anns.iter().map(|a| a.id.clone()))
+                    .collect()
+            },
             pdf_texts_loaded: self.pdf.page_text.len(),
             pdf_document_ready: self.pdf.document_id.is_some(),
             pdf_selected_text: self.pdf.selection.and_then(|sel| {
@@ -249,9 +263,6 @@ impl MdEditor {
                 crate::graph_state::GraphScope::Local { .. }
             ),
             pdf_error: self.pdf.load_error.clone(),
-            pptx_path: self.pptx.active_path.clone(),
-            pptx_loaded: self.pptx.deck.is_some(),
-            pptx_error: self.pptx.error.clone(),
             ink_window_open: self.ink_window.is_some(),
             ink_path: self.ink.path.clone(),
             ink_dirty: self.ink.dirty,
@@ -316,7 +327,6 @@ impl MdEditor {
             active_path: None,
             editor: crate::editor_state::EditorPane::new(),
             pdf: crate::pdf_pane::PdfPane::new(),
-            pptx: crate::pptx_pane::PptxPane::new(),
             active_image_path: None,
             active_image: None,
             showing_pdf: false,
@@ -381,8 +391,6 @@ impl MdEditor {
             self.open_pdf(file_path)
         } else if is_supported_image_path(&lower) {
             self.open_image(file_path)
-        } else if lower.ends_with(".pptx") {
-            self.open_pptx(file_path)
         } else if lower.ends_with(".ink") {
             self.open_ink_page(file_path)
         } else {
@@ -416,7 +424,6 @@ impl MdEditor {
                 .or(self.active_path.as_deref())
                 .or(self.pdf.active_path.as_deref())
                 .or(self.active_image_path.as_deref())
-                .or(self.pptx.active_path.as_deref())
                 .unwrap_or("Workspace")
         )
     }

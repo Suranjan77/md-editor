@@ -1,6 +1,6 @@
 # MD Editor
 
-**A calm, local-first Markdown workspace for notes, PDFs, presentations, knowledge graphs, handwriting, search, backlinks, and study progress.**
+**A calm, local-first Markdown workspace for notes, PDFs, knowledge graphs, handwriting, search, backlinks, and study progress.**
 
 ![MD Editor intro](images/intro.gif)
 
@@ -46,7 +46,7 @@ files and gives you a familiar tree for opening, creating, and deleting notes. I
 `.git` stays out of the way, along with any folders you add in Settings. A filesystem
 watcher picks up changes made outside the app.
 
-Every note, PDF, deck and image opens in a tab that remembers its place — caret and undo
+Every note, PDF and image opens in a tab that remembers its place — caret and undo
 history, page and zoom — and the tabs come back the next time you open the vault. Dark and
 light themes, the interface scale, the reading font, text size and line width are in
 Settings (`Ctrl+,`); the whole app is usable from the keyboard (`F6` moves between regions).
@@ -103,11 +103,8 @@ PDFs open inside the app, so reading and writing happen in one place.
 PDF highlights and recognized references are stored separately, so the original PDF is never
 modified.
 
-PowerPoint decks (`.pptx`) open in a read-only slide viewer: every slide in one scrolling
-column, with slide-by-slide navigation and zoom. Slides are drawn natively — no Office or
-LibreOffice install is needed — including theme colours, placeholders inherited from layouts
-and masters, tables, pictures, and grouped shapes. Charts, SmartArt, and embedded objects
-show as labelled boxes.
+Presentations are best exported to PDF, where they get search, highlights, quick notes and
+`pdf://` links like any other paper.
 
 ### 5. Write By Hand
 
@@ -173,8 +170,7 @@ an older portable build is copied there on first run; the original is left in pl
 | --- | --- |
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
-| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` |
-| Presentations | `.pptx` (view only) |
+| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp` |
 | Handwritten pages | `.ink` |
 
 ## Supported Platforms
@@ -198,7 +194,7 @@ scripts/build-arch-package.sh -si   # builds target/arch-package/*.pkg.tar.zst a
 ```
 
 The package installs `/usr/bin/md-editor`, PDFium at `/usr/lib/md-editor/libpdfium.so`, a
-desktop entry (MD Editor opens Markdown, PDF and PowerPoint files from the file manager) and
+desktop entry (MD Editor opens Markdown and PDF files from the file manager) and
 icons. `pacman -R md-editor-git` removes them and keeps your data.
 
 ## Build From Source

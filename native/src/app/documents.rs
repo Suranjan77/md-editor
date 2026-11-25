@@ -1,7 +1,6 @@
-//! Opening, saving and parking documents (notes, PDFs, decks, images) and session persistence.
+//! Opening, saving and parking documents (notes, PDFs, images) and session persistence.
 
 use super::*;
-use crate::messages::ShellMessage;
 
 impl MdEditor {
     pub(super) fn open_file(&mut self, path: &str) -> Task<Message> {
@@ -193,7 +192,13 @@ impl MdEditor {
             .as_deref()
             .map(|root| std::path::Path::new(root).join(&resolved).exists())
             .unwrap_or(false);
-        if !exists && let Some(found) = resolve_vault_note_by_name(&self.vault.entries, link_path) {
+        // Only a bare name is found by basename; `[[sub/Name]]` names a place,
+        // as the link index resolves it.
+        let bare = !link_path.contains('/') && !link_path.starts_with('.');
+        if !exists
+            && bare
+            && let Some(found) = resolve_vault_note_by_name(&self.vault.entries, link_path)
+        {
             return found;
         }
         resolved
@@ -201,6 +206,16 @@ impl MdEditor {
 
     pub(super) fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
         let is_different = self.active_path.as_deref() != Some(path);
+
+        // Re-opening the note already on screen: flush it first, so the read
+        // below sees our own edits and the live buffer (undo history, caret)
+        // can be kept instead of rebuilt from disk.
+        if !is_different && let SaveOutcome::Failed(err) = self.save_active_document() {
+            self.ui.toast = Some(format!(
+                "Not reopening {path}: {err}. Your edits are still open here."
+            ));
+            return Task::none();
+        }
 
         // Read the incoming file *first*. Parking the outgoing buffer before
         // knowing the open will succeed would leave an empty buffer bound to
@@ -234,17 +249,25 @@ impl MdEditor {
         }
 
         let content = incoming;
+        self.editor.completion = None;
         self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&content));
         // Resume the parked buffer when it still matches disk, so
         // undo history and cursor survive a round trip; otherwise
         // the file changed underneath us and a fresh buffer is the
         // only honest option.
-        let resumed = self.editor.take_retained_matching(path, &content);
+        let keep_current = !is_different && self.editor.buffer.text() == content;
+        let resumed = if keep_current {
+            None
+        } else {
+            self.editor.take_retained_matching(path, &content)
+        };
         let resumed_scroll = resumed.as_ref().map(|(_, y)| *y);
-        let is_resumed = resumed.is_some();
-        self.editor.buffer = resumed
-            .map(|(buffer, _)| buffer)
-            .unwrap_or_else(|| DocBuffer::from_text(&content));
+        let is_resumed = keep_current || resumed.is_some();
+        if !keep_current {
+            self.editor.buffer = resumed
+                .map(|(buffer, _)| buffer)
+                .unwrap_or_else(|| DocBuffer::from_text(&content));
+        }
 
         // A buffer built fresh from disk starts at the top. If a
         // previous session left a cursor here, put it back.
@@ -260,7 +283,6 @@ impl MdEditor {
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
-        self.pptx.close();
         if !self.ui.split_view_active && !self.pdf.pending_pages.is_empty() {
             self.pdf.pending_pages.clear();
             self.pdf.pending_links.clear();
@@ -294,56 +316,14 @@ impl MdEditor {
         highlight_task
     }
 
-    /// Show a presentation in the viewer. Like an image, a presentation takes
-    /// the pane from the open note, so the note is flushed and parked first.
-    pub(super) fn open_pptx(&mut self, path: &str) -> Task<Message> {
-        if self.vault.root.is_none() {
-            self.ui.toast = Some("Open a vault before opening a presentation".to_string());
-            return Task::none();
-        }
-        if let Err(err) = self.leave_active_document() {
-            self.ui.toast = Some(format!(
-                "Not opening the presentation: {err}. Your edits are still open."
-            ));
-            return Task::none();
-        }
-        self.save_current_tab_view();
-        self.active_path = None;
-        self.clear_pdf_pane();
-        self.active_image_path = None;
-        self.active_image = None;
-        self.active_panel = ActivePanel::Markdown;
-        self.editor.toc_entries.clear();
-        self.editor.toc_is_synthetic = false;
-        self.pptx_slide_reset();
-        self.tabs.open(path, crate::tabs::TabKind::Deck, false);
-        self.persist_tabs();
-        let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
-        self.vault.backlinks =
-            md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
-        self.load_pptx(path)
-    }
-
-    /// Read and lay out the presentation at `path` off the UI thread.
-    pub(super) fn load_pptx(&mut self, path: &str) -> Task<Message> {
-        let Some(abs_path) = self.resolve_active_path(path) else {
-            return Task::none();
-        };
-        let generation = self.pptx.begin_load(path);
-        Task::perform(
-            async move { crate::slides::load_deck(&abs_path).map(Arc::new) },
-            move |result| Message::Shell(ShellMessage::PptxLoaded(generation, result)),
-        )
-    }
-
     pub(super) fn open_image(&mut self, path: &str) -> Task<Message> {
         let Some(abs_path) = self.resolve_active_path(path) else {
             self.ui.toast = Some("Open a vault before opening an image".to_string());
             return Task::none();
         };
 
-        match image::open(&abs_path) {
-            Ok(img) => {
+        match crate::raster::decode(&abs_path) {
+            Ok(decoded) => {
                 // Showing an image clears `active_path`, which detaches the
                 // open note from the buffer holding it. Flush and park it
                 // first, or those edits have nowhere left to be written to.
@@ -354,12 +334,7 @@ impl MdEditor {
                     return Task::none();
                 }
 
-                let (width, height) = img.dimensions();
-                let handle = iced::widget::image::Handle::from_rgba(
-                    width,
-                    height,
-                    img.into_rgba8().into_raw(),
-                );
+                let (handle, width, height) = decoded.handle();
                 self.save_current_tab_view();
                 self.active_path = None;
                 self.active_image_path = Some(path.to_string());
@@ -368,9 +343,8 @@ impl MdEditor {
                 self.persist_tabs();
                 self.graph.set_active_path(None);
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
-                self.active_image = Some((handle, width as f32, height as f32));
+                self.active_image = Some((handle, width, height));
                 self.clear_pdf_pane();
-                self.pptx.close();
                 self.active_panel = ActivePanel::Markdown;
                 self.editor.toc_entries.clear();
                 self.editor.toc_is_synthetic = false;
@@ -452,10 +426,6 @@ impl MdEditor {
                 crate::design::metrics::SIDE_PANEL_MIN_WIDTH,
                 crate::design::metrics::SIDE_PANEL_MAX_WIDTH,
             );
-    }
-
-    pub(super) fn pptx_slide_reset(&mut self) {
-        self.ui.pptx_slide_input = None;
     }
 
     pub(super) fn persist_layout(&self) {

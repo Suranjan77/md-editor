@@ -49,10 +49,10 @@ it says.
 | `Ctrl+C` | Copy the PDF text selection, when the PDF pane holds one |
 | `Escape` | Close the topmost overlay, in priority order; closing find, the palette or a dialog returns the keyboard to the note |
 | `Enter` | Run the palette's highlighted row; open the selected search result; open the node selected in the knowledge graph; otherwise submit the open dialog |
-| `↑` / `↓` | In vault search, move the selection; with the sidebar focused, move in the tree (`←`/`→` fold); otherwise scroll the PDF pane or the presentation |
+| `↑` / `↓` | In vault search, move the selection; with the sidebar focused, move in the tree (`←`/`→` fold); otherwise scroll the PDF pane |
 | `Delete` | Remove the lasso selection on the handwriting canvas |
 | `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` | Also undo / redo on the handwriting canvas |
-| `PageUp` / `PageDown` | Scroll the PDF pane by 520px; in a presentation, previous / next slide |
+| `PageUp` / `PageDown` | Scroll the PDF pane by 520px (in a note, the editor moves the caret instead) |
 
 Right-clicking a file, a tab or the note opens a context menu at the pointer.
 
@@ -90,12 +90,19 @@ Active only while the markdown editor has focus.
 | `Ctrl+I` | Toggle *italic* |
 | `Ctrl+E` | Toggle `inline code` |
 | `Ctrl+K` | Insert a link |
-| `Tab` | Insert four spaces |
+| `Tab` | Insert four spaces; with a selection across lines, indent each non-blank line |
+| `Shift+Tab` | Outdent the selected lines (or the caret's line) by four spaces or a tab |
 | `Enter` | New line, continuing a list marker where applicable |
 | `Backspace` / `Delete` | Delete backward / forward |
+| `Ctrl+Backspace` / `Ctrl+Delete` | Delete to the start / end of the word (one undo step) |
 | `←` `→` `↑` `↓` | Move the cursor; hold `Shift` to extend the selection |
+| `Ctrl+←` / `Ctrl+→` | Previous / next word; hold `Shift` to extend |
 | `Home` / `End` | Start / end of line; hold `Shift` to extend |
+| `Ctrl+Home` / `Ctrl+End` | Start / end of the note; hold `Shift` to extend |
+| `PageUp` / `PageDown` | Move the caret one screen up / down, keeping its column; hold `Shift` to extend |
 | `Ctrl` + click | Follow a link, including a `pdf://` deep link |
+| `[[` … / `/` at a line start | Open completion: vault files to link / blocks to insert |
+| `↑` / `↓`, `Enter` or `Tab`, `Escape` | With completion open: choose, insert, close |
 
 > **The focused editor wins.** Chords the editor acts on (`Ctrl+Z/Y/A/B/I/E/K/C/X/V`) are
 > captured by it, so the app-wide meaning of the same chord does not also fire: `Ctrl+B`
@@ -136,9 +143,10 @@ explaining why.
 
 | Gesture | Context | Action |
 | :--- | :--- | :--- |
-| Wheel | Editor / PDF / Presentation | Scroll vertically |
+| Wheel | Editor / PDF | Scroll vertically |
 | Wheel over a wide block | Editor | Scroll that table or code block horizontally, independently of the page |
 | Click and drag | Editor | Select text |
+| Double-click / triple-click | Editor | Select the word / the whole line |
 | Click and drag | PDF | Select PDF text |
 | Right-click a reference | PDF | Preview the target equation, figure, table, or section in place |
 | `Ctrl` + click a link | Editor | Follow a wikilink, a file link, or a `pdf://` deep link |

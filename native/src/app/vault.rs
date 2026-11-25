@@ -217,7 +217,6 @@ impl MdEditor {
             .active_path
             .clone()
             .or_else(|| self.pdf.active_path.clone())
-            .or_else(|| self.pptx.active_path.clone())
         {
             self.vault.backlinks = md_editor_core::vault::get_mixed_backlinks(&self.state, &active)
                 .unwrap_or_default();
@@ -227,17 +226,6 @@ impl MdEditor {
             && paths.contains(&active)
         {
             return self.reload_open_note_from_disk();
-        }
-        if let Some(deck) = self.pptx.active_path.clone()
-            && paths.contains(&deck)
-        {
-            if self
-                .resolve_active_path(&deck)
-                .is_some_and(|path| path.is_file())
-            {
-                return self.load_pptx(&deck);
-            }
-            self.pptx.close();
         }
         Task::none()
     }

@@ -1,8 +1,8 @@
-# Page override — PDF, presentation and image viewers
+# Page override — PDF and image viewers
 
 ## Shared viewer toolbar
 
-One `Toolbar` (viewer variant) for PDF, slides and images, docked at the **top** of the pane
+One `Toolbar` (viewer variant) for PDFs and images, docked at the **top** of the pane
 (today the PDF toolbar sits at the bottom with text glyphs):
 
 `[outline]  ·  [page input] / N  ·  [− zoom % +] [fit width] [fit page]  ·  [find] [more ⋯]`
@@ -28,9 +28,3 @@ One `Toolbar` (viewer variant) for PDF, slides and images, docked at the **top**
 - Selection popover (after text selection): `Popover` with Highlight (colour swatches),
   Copy, Add note, Link note — replaces the right-click-only discovery.
 - Reference link preview: `Popover` card, elevation 1, max 420px wide, Escape closes.
-
-## Presentations
-
-Slide column on `bg.canvas`, slide number + title above each slide as `caption`; current
-slide marked in the toolbar counter. "Unsupported content" boxes use `bg.raised` with a
-dashed `border.control` and an icon + label.

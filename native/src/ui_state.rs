@@ -79,7 +79,6 @@ pub struct UiState {
     // Viewer toolbar editable drafts & image zoom
     pub pdf_page_input: Option<String>,
     pub pdf_zoom_input: Option<String>,
-    pub pptx_slide_input: Option<String>,
     pub image_zoom: Option<f32>,
 
     // Keyboard region focus (`F6` / `Shift+F6`)
@@ -126,7 +125,6 @@ impl UiState {
             recent_vaults: Vec::new(),
             pdf_page_input: None,
             pdf_zoom_input: None,
-            pptx_slide_input: None,
             image_zoom: None,
             focused_region: FocusRegion::Main,
             window_width: 1200.0,

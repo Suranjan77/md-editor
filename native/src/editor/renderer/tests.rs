@@ -1062,3 +1062,34 @@ fn editor_shortcuts_are_captured_so_app_shortcuts_do_not_also_fire() {
     assert!(save.messages.is_empty());
     assert!(!save.captured, "Ctrl+S must still reach the app");
 }
+
+/// Struck text gets a thin line drawn through it; plain text does not.
+#[test]
+fn strikethrough_draws_a_line_through_the_text() {
+    let thin_quads = |doc: &str| {
+        let mut view = View::new(doc, 600.0);
+        view.draw()
+            .into_iter()
+            .filter(|call| {
+                matches!(call, super::testing::Call::Quad { bounds, .. }
+                    if bounds.height <= 1.0 && bounds.width > 10.0)
+            })
+            .count()
+    };
+    assert_eq!(thin_quads("plain words here"), 0);
+    assert!(thin_quads("plain ~~struck words~~ here") >= 1);
+}
+
+/// A `> [!danger]` quote is framed with the danger colour, a plain quote not.
+#[test]
+fn callout_quotes_take_their_colour() {
+    let uses = |doc: &str, color: iced::Color| {
+        let mut view = View::new(doc, 600.0);
+        view.draw()
+            .into_iter()
+            .any(|call| matches!(call, super::testing::Call::Quad { color: c, .. } if c == color))
+    };
+    let danger = crate::design::tokens().status_danger;
+    assert!(uses("> [!danger] Careful\n> text", danger));
+    assert!(!uses("> just a quote\n> text", danger));
+}

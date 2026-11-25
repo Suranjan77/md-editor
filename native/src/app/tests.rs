@@ -538,3 +538,23 @@ fn every_registry_chord_triggers_its_shortcut() {
         );
     }
 }
+
+#[test]
+fn loose_pdf_search_matches_hyphenated_line_breaks() {
+    let re = regex::RegexBuilder::new(&super::search::loose_pdf_pattern("the algorithm runs"))
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+    for text in [
+        "the algorithm runs",
+        "the algo-\r\nrithm\nruns",
+        "the algo\u{AD}rithm  runs",
+        "the al-\n  gorithm runs",
+    ] {
+        assert!(re.is_match(text), "{text:?}");
+    }
+    assert!(
+        !re.is_match("the algo rithm runs"),
+        "a plain space inside a word"
+    );
+}

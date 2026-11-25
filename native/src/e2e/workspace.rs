@@ -313,6 +313,7 @@ fn dropped_files_import_into_the_tree_or_the_note() {
         100.0, 150.0,
     )));
     app.send(Message::Shell(crate::messages::ShellMessage::FileDropped(
+        iced::window::Id::unique(),
         dropped.clone(),
     )));
     assert!(vault.exists("dropped.png"), "sidebar drop did not import");
@@ -321,6 +322,7 @@ fn dropped_files_import_into_the_tree_or_the_note() {
     // The same name again is refused, not overwritten.
     std::fs::write(&dropped, b"not the same bytes").unwrap();
     app.send(Message::Shell(crate::messages::ShellMessage::FileDropped(
+        iced::window::Id::unique(),
         dropped.clone(),
     )));
     app.expect_error_toast();
@@ -335,6 +337,7 @@ fn dropped_files_import_into_the_tree_or_the_note() {
         700.0, 400.0,
     )));
     app.send(Message::Shell(crate::messages::ShellMessage::FileDropped(
+        iced::window::Id::unique(),
         over_note,
     )));
     app.settle();

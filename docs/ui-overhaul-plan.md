@@ -317,5 +317,6 @@ Still open:
 - **Light paper for handwriting** (`pages/ink.md`): the paper is part of the ink document
   format, so it needs a format change.
 - README screenshots in both themes.
-- In headless e2e screenshots the graph's label layer and GPU layer disagree on positions;
-  not checked on a real GPU.
+- ~~In headless e2e screenshots the graph's label layer and GPU layer disagree on
+  positions~~ — fixed: until the GPU layer commits a fit, the labels frame the graph with
+  the same fresh fit (`GraphFrame::label_transform`).

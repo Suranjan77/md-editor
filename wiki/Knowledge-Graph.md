@@ -82,6 +82,12 @@ The view is a `stack` of two layers sharing one transform:
 node sizing, so both layers agree on where a node is. Zoom is clamped to
 `MIN_ZOOM..=MAX_ZOOM` (0.002–6.0).
 
+A fit (on open, filter, scope switch, resize) is requested by bumping `fit_revision`; the
+GPU layer draws a fresh fit at once but only commits it on its next `update`, publishing
+`SetView` with `fitted: (revision, width, height)`. Until `GraphState::fitted` matches the
+current revision and canvas size, `GraphFrame::label_transform` gives the labels that same
+fresh fit (`GraphFrame::fit`), so the two layers agree from the first frame.
+
 ## 5. Filtering and Insights
 
 `GraphState::filtered()` caches the scope-, filter- and query-reduced graph; both render

@@ -14,10 +14,24 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
     let mut block_id: usize = 0;
     let mut current_block_id: usize = 0;
     let mut code_highlighter: Option<syntect::easy::HighlightLines<'static>> = None;
+    let all: Vec<&str> = text.split('\n').collect();
+    let mut opens_frontmatter = super::frontmatter_closes(&all);
+    let mut in_frontmatter = false;
 
-    for raw_line in text.split('\n') {
+    for raw_line in all {
         let raw_line = raw_line.trim_end_matches('\r');
-        let trimmed = raw_line.trim();
+        let mut trimmed = raw_line.trim();
+
+        // YAML frontmatter is a `yaml` code block fenced by `---` / `...`.
+        if std::mem::take(&mut opens_frontmatter) {
+            in_frontmatter = true;
+            trimmed = "```yaml";
+        } else if in_frontmatter && matches!(raw_line.trim_end(), "---" | "...") {
+            in_frontmatter = false;
+            trimmed = "```";
+        } else if in_frontmatter && trimmed.starts_with("```") {
+            trimmed = "";
+        }
 
         // Stop table block if not a table row
         if in_table && !trimmed.starts_with('|') {

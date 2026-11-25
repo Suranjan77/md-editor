@@ -9,7 +9,7 @@ use super::super::flow::{Flow, ItemKind};
 use super::super::measure::{bold_font, centered_text_top, measure_width};
 use super::super::metrics::*;
 use super::super::spans::{math_source, span_is_editing};
-use super::super::{Editor, MATH_BLOCK_SCALE, MathRender, Measure, Paint};
+use super::super::{Editor, MathRender, Measure, Paint};
 use super::captions::{block_ordinal, figure_number, paint_equation_number};
 use super::primitives::{TextRun, clip_viewport, fill, rounded};
 use super::{Counters, Frame, LineBox};
@@ -18,6 +18,10 @@ use crate::editor::renderer::measure::mono_font;
 
 const IMAGE_TOP: f32 = 5.0;
 const FIGURE_CAPTION_SIZE: f32 = 13.0;
+/// A strikethrough sits this fraction of the font size above the baseline,
+/// about half the x-height.
+const STRIKE_RISE: f32 = 0.27;
+const STRIKE_THICKNESS: f32 = 1.0;
 
 impl<Message> Editor<'_, Message> {
     pub(super) fn paint_rule<R: Measure>(
@@ -85,6 +89,23 @@ impl<Message> Editor<'_, Message> {
                         span.color,
                         frame.viewport,
                     );
+                    if span.strikethrough && !text.trim().is_empty() {
+                        // Through the middle of the lower-case letters, and
+                        // on across a trailing space to join the next word.
+                        let width = measure_width::<R>(text, size, part.font);
+                        let y = row.y + flow.baseline(item.row) - size * STRIKE_RISE;
+                        fill(
+                            renderer,
+                            Rectangle {
+                                x,
+                                y: self.snap_px(y),
+                                width,
+                                height: STRIKE_THICKNESS,
+                            },
+                            Border::default(),
+                            span.color,
+                        );
+                    }
                 }
                 ItemKind::Checkbox { checked } => {
                     paint_checkbox(renderer, frame, *checked, x, row.y + flow.axis(item.row));
@@ -232,8 +253,8 @@ impl<Message> Editor<'_, Message> {
         let (extent, scroll_x) = self.row_scroll::<R>(frame, row);
         // The block bitmap is rasterized for exactly this scale (see
         // MathRender).
-        let draw_w = math.width * MATH_BLOCK_SCALE;
-        let draw_h = math.height * MATH_BLOCK_SCALE;
+        let draw_w = math.block_width;
+        let draw_h = math.block_height;
         let left = bounds.x + text_left(bounds.width);
         let draw_x = left
             + if draw_w <= extent.viewport_w {

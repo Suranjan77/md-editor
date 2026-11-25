@@ -549,3 +549,43 @@ fn stale_failure_does_not_throttle_the_new_generation() {
     assert!(state.refresh_due());
     assert_ne!(state.begin_refresh(), Some(stale_generation));
 }
+
+/// BUG-06: until the GPU layer commits a fit, the label overlay must frame the
+/// graph exactly as the GPU layer does (a fresh fit), not with the stale
+/// shared pan/zoom; once committed at this size, both use the shared one.
+#[test]
+fn labels_follow_the_pending_fit_until_it_is_committed() {
+    use crate::views::graph::GraphFrame;
+    use iced::{Point, Rectangle, Size};
+
+    let mut state = GraphState::new();
+    state.set_snapshot(sample());
+    state.set_view(500.0, -300.0, 3.0);
+    let bounds = Rectangle::new(Point::ORIGIN, Size::new(900.0, 600.0));
+
+    let frame = GraphFrame::from_state(&state);
+    let (labels, fit) = (frame.label_transform(bounds), frame.fit(bounds));
+    assert_eq!(
+        (labels.pan, labels.zoom),
+        (fit.pan, fit.zoom),
+        "pending fit"
+    );
+
+    state.fitted = Some((state.fit_revision, bounds.width, bounds.height));
+    let labels = GraphFrame::from_state(&state).label_transform(bounds);
+    assert_eq!((labels.pan.x, labels.pan.y), state.pan);
+    assert_eq!(labels.zoom, state.zoom);
+
+    // A resize makes the committed fit stale again.
+    let smaller = Rectangle::new(Point::ORIGIN, Size::new(400.0, 300.0));
+    let frame = GraphFrame::from_state(&state);
+    let (labels, fit) = (frame.label_transform(smaller), frame.fit(smaller));
+    assert_eq!((labels.pan, labels.zoom), (fit.pan, fit.zoom));
+
+    // So does a new fit request (scope switch, filter, reopen).
+    state.set_scope(GraphScope::Local { depth: 1 });
+    state.set_active_path(Some("a.md".to_string()));
+    let frame = GraphFrame::from_state(&state);
+    let (labels, fit) = (frame.label_transform(bounds), frame.fit(bounds));
+    assert_eq!((labels.pan, labels.zoom), (fit.pan, fit.zoom));
+}

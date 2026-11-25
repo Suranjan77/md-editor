@@ -235,20 +235,12 @@ pub fn is_image_path(path: &Path) -> bool {
     ext_matches(path, &IMAGE_EXTENSIONS)
 }
 
-pub fn is_pptx_path(path: &Path) -> bool {
-    ext_matches(path, &PPTX_EXTENSIONS)
-}
-
 pub fn is_ink_path(path: &Path) -> bool {
     ext_matches(path, &INK_EXTENSIONS)
 }
 
 pub fn is_supported_vault_path(path: &Path) -> bool {
-    is_markdown_path(path)
-        || is_pdf_path(path)
-        || is_pptx_path(path)
-        || is_image_path(path)
-        || is_ink_path(path)
+    is_markdown_path(path) || is_pdf_path(path) || is_image_path(path) || is_ink_path(path)
 }
 
 /// Every supported file and folder under `root`, as the sidebar lists them

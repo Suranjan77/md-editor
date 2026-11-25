@@ -118,7 +118,7 @@ impl MdEditor {
         }
     }
 
-    fn open_contextual_search(&mut self) -> Task<Message> {
+    pub(super) fn open_contextual_search(&mut self) -> Task<Message> {
         if self.ui.split_view_active && self.active_path.is_some() {
             self.search.file_visible = true;
             self.search.visible = false;

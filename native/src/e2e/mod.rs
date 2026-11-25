@@ -405,6 +405,36 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
             .is_ok()
     }
 
+    /// Run one frame the way a window would: the widgets see a redraw and
+    /// what they publish then (the editor's caret report, say) is delivered.
+    /// Screenshots alone drop those messages.
+    pub fn redraw(&mut self) {
+        use iced_test::core::{Event, clipboard, window};
+        use iced_test::runtime::user_interface::{Cache, UserInterface};
+
+        let mut messages = Vec::new();
+        let mut ui = UserInterface::build(
+            self.emulator.view(&self.program),
+            VIEWPORT,
+            Cache::default(),
+            &mut self.renderer,
+        );
+        let _ = ui.update(
+            &[Event::Window(
+                window::Event::RedrawRequested(Instant::now()),
+            )],
+            mouse::Cursor::Unavailable,
+            &mut self.renderer,
+            &mut clipboard::Null,
+            &mut messages,
+        );
+        drop(ui);
+        for message in messages {
+            self.emulator.update(&self.program, message);
+        }
+        self.settle();
+    }
+
     /// Render the current frame to `target/e2e/<session>-<n>-<label>.png`.
     pub fn screenshot(&mut self, label: &str) -> PathBuf {
         use iced_test::core::renderer::Headless as _;

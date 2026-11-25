@@ -120,7 +120,7 @@ impl MdEditor {
         // FTS query and full-document PDF scan run debounced (see
         // SearchDebounceElapsed) so they fire once per pause in
         // typing, not once per keystroke.
-        if self.search.query.len() <= 2 || self.search.regex {
+        if !vault_query_ready(&self.search.query) || self.search.regex {
             self.search.results.clear();
             self.search.results_truncated = false;
         }
@@ -143,7 +143,7 @@ impl MdEditor {
             return Task::none();
         }
         let q = self.search.query.clone();
-        if q.len() > 2
+        if vault_query_ready(&q)
             && !self.search.regex
             && let Ok(res) = md_editor_core::vault::search_vault(&self.state, &q)
         {
@@ -153,22 +153,58 @@ impl MdEditor {
         self.rerun_pdf_search()
     }
 
+    /// Open a vault search hit, then show the query in the find bar with the
+    /// match the hit points at selected (a note) or found (a PDF).
     fn on_search_result_clicked(&mut self, path: String) -> Task<Message> {
         self.search.visible = false;
-        if !search_result_should_reload(self.active_path.as_deref(), &path) {
-            // The open buffer is authoritative while dirty; a global
-            // search hit for this same file must not reload disk state.
-            self.vault.selected_path = Some(path);
-            return Task::none();
-        }
+        let line = self
+            .search
+            .results
+            .iter()
+            .find(|r| r.path == path)
+            .map_or(1, |r| r.line.max(1));
         self.vault.selected_path = Some(path.clone());
-        if path.to_lowercase().ends_with(".pdf") {
+        let is_pdf = path.to_lowercase().ends_with(".pdf");
+        // The open buffer is authoritative while dirty; a hit in the open
+        // note must not reload it from disk.
+        let open = if !search_result_should_reload(self.active_path.as_deref(), &path) {
+            Task::none()
+        } else if is_pdf {
             self.pdf.active_path = Some(path.clone());
             self.showing_pdf = true;
             self.open_pdf(&path)
         } else {
             self.open_file(&path)
+        };
+        if self.search.query.trim().is_empty() || self.search.regex {
+            return open;
         }
+        let find = self.open_contextual_search();
+        let jump = if is_pdf {
+            Task::none()
+        } else {
+            self.select_match_from_line(line.saturating_sub(1))
+        };
+        Task::batch(vec![open, find, jump])
+    }
+
+    /// Select the first in-note match on or after `line` (0-based), wrapping
+    /// to the first match.
+    fn select_match_from_line(&mut self, line: usize) -> Task<Message> {
+        self.search.ensure_matches(
+            &self.editor.buffer,
+            self.active_path.as_deref(),
+            self.editor.buffer_revision,
+        );
+        let matches = self.search.matches();
+        let len = matches.len();
+        if len == 0 {
+            return Task::none();
+        }
+        let target = matches.iter().position(|m| m.line >= line).unwrap_or(0);
+        // `navigate_file_search` steps forward onto the target.
+        self.search.match_index = Some((target + len - 1) % len);
+        self.navigate_file_search(true)
     }
 
     pub(super) fn navigate_file_search(&mut self, forward: bool) -> Task<Message> {
@@ -350,6 +386,14 @@ impl MdEditor {
         }
         let idx = self.search.match_index.unwrap_or(0).min(matches.len() - 1);
         let item = matches[idx];
+        let replacement = crate::search::replacement_for(
+            &self.editor.buffer.line_text(item.line),
+            item.start_col,
+            &self.search.query,
+            &self.search.replace,
+            self.search.regex,
+            self.search.match_case,
+        );
         self.editor.buffer.execute(EditorCommand::SetSelection {
             anchor_line: item.line,
             anchor_col: item.start_col,
@@ -357,8 +401,29 @@ impl MdEditor {
             focus_col: item.end_col,
             affinity: Affinity::Downstream,
         });
-        let replacement = self.search.replace.clone();
         let task = self.run_editor_command(EditorCommand::InsertText(replacement));
+        // Go on from the end of what was just inserted: the match list has
+        // shifted under the old index, and the replacement may itself match.
+        let after = (
+            self.editor.buffer.cursor_line,
+            self.editor.buffer.cursor_col,
+        );
+        self.search.ensure_matches(
+            &self.editor.buffer,
+            self.active_path.as_deref(),
+            self.editor.buffer_revision,
+        );
+        let remaining = self.search.matches();
+        // `navigate_file_search` steps forward, so park one before the target
+        // (the first match at or after the insertion, wrapping to the top).
+        let len = remaining.len();
+        self.search.match_index = (len > 0).then(|| {
+            let next = remaining
+                .iter()
+                .position(|m| (m.line, m.start_col) >= after)
+                .unwrap_or(0);
+            (next + len - 1) % len
+        });
         let nav = self.navigate_file_search(true);
         Task::batch(vec![task, nav])
     }
@@ -374,14 +439,7 @@ impl MdEditor {
         // (including PDF line breaks) between the query's tokens, so a phrase
         // wrapping across lines still matches. Reuses the existing regex path.
         let (query, regex) = if self.search.loose {
-            let pattern = self
-                .search
-                .query
-                .split_whitespace()
-                .map(regex::escape)
-                .collect::<Vec<_>>()
-                .join(r"\s+");
-            (pattern, true)
+            (loose_pdf_pattern(&self.search.query), true)
         } else {
             (self.search.query.clone(), self.search.regex)
         };
@@ -441,4 +499,42 @@ pub(super) fn focus_pdf_search_input() -> Task<Message> {
     operation::focus(iced::advanced::widget::Id::new(
         views::pdf_viewer::PDF_SEARCH_INPUT_ID,
     ))
+}
+
+/// Whether a vault search query is long enough to run: two characters, or a
+/// single CJK character (one is already a word there).
+pub(super) fn vault_query_ready(query: &str) -> bool {
+    let query = query.trim();
+    query.chars().count() >= 2 || query.chars().any(is_cjk)
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0x20000..=0x2FA1F)
+}
+
+/// Loose PDF search: any whitespace run (line breaks included) between the
+/// query's words, and inside a word a line break hyphenated by the typesetter
+/// (`algo-` / `rithm`, or a soft hyphen), so a phrase or word wrapped across
+/// lines still matches.
+pub(super) fn loose_pdf_pattern(query: &str) -> String {
+    // `-`, soft hyphen (U+00AD), hyphen (U+2010) or PDFium's U+0002 marker,
+    // then the line break; or a bare soft hyphen / marker.
+    const HYPHEN_BREAK: &str = r"(?:[-\x{AD}\x{2010}\x{02}]\s*[\r\n]\s*|[\x{AD}\x{02}])?";
+    query
+        .split_whitespace()
+        .map(|word| {
+            let mut out = String::new();
+            let mut prev_alnum = false;
+            for c in word.chars() {
+                if prev_alnum && c.is_alphanumeric() {
+                    out.push_str(HYPHEN_BREAK);
+                }
+                out.push_str(&regex::escape(c.encode_utf8(&mut [0; 4])));
+                prev_alnum = c.is_alphanumeric();
+            }
+            out
+        })
+        .collect::<Vec<_>>()
+        .join(r"\s+")
 }

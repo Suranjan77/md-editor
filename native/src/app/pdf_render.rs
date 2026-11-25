@@ -1,7 +1,7 @@
 //! PDF layout and rendering handlers: load results, zoom and fit, rendered pages, scrolling.
 
 use super::*;
-use crate::messages::{PdfMessage, ShellMessage};
+use crate::messages::PdfMessage;
 
 impl MdEditor {
     /// `PdfMessage::Loaded`: apply the page count (or the load error) and start layout.
@@ -302,8 +302,8 @@ impl MdEditor {
         self.render_pdf_pages_for_viewport(y, viewport_height)
     }
 
-    /// `PdfMessage::ScrollBy`: arrow and page keys. The command palette and an open
-    /// presentation take them first; otherwise they scroll the PDF when it has focus.
+    /// `PdfMessage::ScrollBy`: arrow and page keys. The command palette takes them
+    /// first; otherwise they scroll the PDF when it has focus.
     pub(super) fn on_pdf_scroll_by(&mut self, delta: f32) -> Task<Message> {
         // The palette owns the arrow keys while it is open.
         if self.ui.command_palette_visible {
@@ -321,21 +321,6 @@ impl MdEditor {
                 };
             }
             return Task::none();
-        }
-        if self.pptx.active_path.is_some() {
-            if self.search.visible || self.ui.active_modal.is_some() {
-                return Task::none();
-            }
-            let width = self.pdf_available_width();
-            // Page Up and Page Down move a whole slide; the arrows scroll.
-            return if delta.abs() > ARROW_SCROLL {
-                self.pptx.update(
-                    Message::Shell(ShellMessage::PptxStep(delta.signum() as i32)),
-                    width,
-                )
-            } else {
-                self.pptx.scroll_by(delta, width)
-            };
         }
         if self.pdf.active_path.is_none()
             || (!self.showing_pdf && !(self.ui.split_view_active && self.active_path.is_some()))

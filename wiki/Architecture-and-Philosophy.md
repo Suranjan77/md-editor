@@ -14,9 +14,8 @@ Nothing is locked inside a proprietary database, an opaque container, or a cloud
 
 - **The vault is just a directory.** Your workspace is an ordinary folder on the local
   filesystem, opened through a native folder picker.
-- **Plain files.** Markdown notes (`.md`, `.markdown`), PDFs (`.pdf`), PowerPoint
-  presentations (`.pptx`, view only), and images
-  (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` — `IMAGE_EXTENSIONS` in `core/src/vault.rs`)
+- **Plain files.** Markdown notes (`.md`, `.markdown`), PDFs (`.pdf`), and images
+  (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp` — `IMAGE_EXTENSIONS` in `core/src/vault.rs`)
   stay usable by any editor, CLI tool,
   or backup system — Git, rsync, Syncthing.
 - **No account, no network.** There are no user accounts, licence keys, or telemetry, and
@@ -82,8 +81,6 @@ immutable.
 
 - **PDFs are never rewritten.** MD Editor never modifies, re-saves, or injects annotation
   streams into a `.pdf` file.
-- **Presentations are read-only.** `core/src/pptx/` only reads a `.pptx`, and the slide
-  viewer offers no editing; there is no code path that writes one.
 - **External SQLite storage.** Highlights, quick notes, linked-note paths, and resolved
   cross-references live in the `pdf_annotations` and `pdf_references` tables, keyed by a
   content-derived `document_id`.
@@ -106,7 +103,6 @@ immutable.
 │  - Design tokens and motion, zero idle CPU             │
 │  - Command palette and fuzzy matcher                   │
 │  - Interactive PDF widget, overlays, drag selection    │
-│  - Slide viewer: text layout, layered canvases         │
 └───────────────────────────┬────────────────────────────┘
                             │ depends on
 ┌───────────────────────────▼────────────────────────────┐
@@ -118,7 +114,6 @@ immutable.
 │  - Full-text search over SQLite FTS5                   │
 │  - PDFium worker thread with a priority render queue   │
 │  - Internal reference resolver (equations/figures/…)   │
-│  - Read-only PowerPoint parser and slide model         │
 │  - Study tracker domain logic and persistence          │
 └────────────────────────────────────────────────────────┘
 ```

@@ -7,7 +7,7 @@ pkgname=md-editor-git
 _name=md-editor
 pkgver=r0
 pkgrel=1
-pkgdesc='Native, local-first workspace for Markdown notes, PDFs, presentations, a knowledge graph and handwriting'
+pkgdesc='Native, local-first workspace for Markdown notes, PDFs, a knowledge graph and handwriting'
 arch=('x86_64')
 url='https://github.com/Suranjan77/md-editor'
 # The app is GPL; the bundled PDFium library is BSD-3-Clause and Apache-2.0.

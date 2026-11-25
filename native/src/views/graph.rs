@@ -82,6 +82,7 @@ pub(crate) struct GraphFrame {
     pub pan: Vector,
     pub zoom: f32,
     pub fit_revision: u64,
+    pub fitted: Option<(u64, f32, f32)>,
     pub view_revision: u64,
 }
 
@@ -104,7 +105,29 @@ impl GraphFrame {
             pan: Vector::new(state.pan.0, state.pan.1),
             zoom: state.zoom,
             fit_revision: state.fit_revision,
+            fitted: state.fitted,
             view_revision: state.view_revision,
+        }
+    }
+
+    /// The transform that frames every node in `bounds`.
+    pub(crate) fn fit(&self, bounds: Rectangle) -> ViewTransform {
+        let points: Vec<Point> = (0..self.nodes().len()).map(|i| self.world(i)).collect();
+        fit_transform(&points, bounds)
+    }
+
+    /// The transform the label overlay draws with: the shared pan/zoom once
+    /// the GPU layer has committed the current fit at this size, otherwise
+    /// the same fresh fit the GPU layer is drawing with meanwhile.
+    pub(crate) fn label_transform(&self, bounds: Rectangle) -> ViewTransform {
+        let committed = self.fitted == Some((self.fit_revision, bounds.width, bounds.height));
+        if committed {
+            ViewTransform {
+                pan: self.pan,
+                zoom: self.zoom,
+            }
+        } else {
+            self.fit(bounds)
         }
     }
 

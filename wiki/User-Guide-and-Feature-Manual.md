@@ -27,7 +27,7 @@ MyResearchVault/
 
 1. Launch MD Editor. The welcome screen offers **Open Existing Vault**.
 2. Or press `Ctrl+O` at any time.
-3. Pick a folder. MD Editor indexes its Markdown, PDF, presentation, and image files and shows them in the
+3. Pick a folder. MD Editor indexes its Markdown, PDF, and image files and shows them in the
    sidebar tree.
 
 Indexing walks up to 32 directory levels and skips `node_modules`, `target`, `build`, `dist`,
@@ -41,12 +41,11 @@ The last vault and last open file are restored the next time you launch.
 | :--- | :--- |
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
-| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` |
-| Presentations | `.pptx` (view only) |
+| Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp` |
 | Handwritten pages | `.ink` (made with the handwriting canvas) |
 
-Images open in a dedicated preview pane. Presentations open in a read-only slide viewer —
-see [Viewing presentations](#viewing-presentations).
+Images open in a dedicated preview pane. For slides, export the deck to PDF: it then gets
+search, highlights, quick notes and `pdf://` links like any other paper.
 
 ### The sidebar
 
@@ -54,8 +53,9 @@ see [Viewing presentations](#viewing-presentations).
 - **Expand / collapse** — click a folder.
 - **New note / new folder** — the buttons in the sidebar header.
 - **Rename / delete** — select a file or folder; its row shows a rename and a delete
-  button (or press `F2`). Delete asks for confirmation first; renaming a note rewrites
-  wikilinks that point at it.
+  button (or press `F2`). Delete asks for confirmation first. Renaming or moving a note,
+  PDF, image, sketch or folder rewrites the wikilinks and Markdown links and images that
+  point at it (never inside code).
 - **Right-click** a file or folder for New note here, New folder here, Rename, Reveal in
   file manager, Copy relative path and Delete; right-click empty space for New note / New
   folder.
@@ -68,9 +68,9 @@ see [Viewing presentations](#viewing-presentations).
 
 ### Tabs
 
-Every note, PDF, presentation and image you open gets a tab; opening one that is already
+Every note, PDF and image you open gets a tab; opening one that is already
 open switches to it. Each tab remembers its own place: a note keeps its caret, scroll and
-undo history, a PDF its page and zoom, a deck its zoom and scroll.
+undo history, a PDF its page and zoom, an image its zoom.
 
 - **Switch** — click a tab, `Ctrl+Tab` for the most recently used, `Ctrl+PageDown`/`PageUp`
   in strip order, `Ctrl+1` … `Ctrl+9` by position.
@@ -130,6 +130,8 @@ MD Editor shows formatted text and lets you edit the exact source, without a mod
 | Code blocks | ```` ```rust … ``` ```` | Syntax highlighted by `syntect` |
 | LaTeX math | `$E = mc^2$`, `$$\int_0^\infty f(x)\,dx$$` | Rendered by `ratex-render`; display math is centred |
 | Blockquotes | `> quoted` | Left accent border |
+| Callouts | `> [!note] Title`, `> [!warning]`, `> [!tip]`, `> [!danger]`, … | The quote is framed in the type's colour, with its name before the title |
+| Frontmatter | `---` / `key: value` / `---` at the very top | Shown as a YAML block, not as rules |
 | Task lists | `- [ ]` / `- [x]` | Click the box to toggle it |
 | Tables | `\| A \| B \|` | Render as grids and scroll horizontally on their own |
 | Images | `![alt](path.png)` | Rendered inline with the alt text as a caption |
@@ -173,6 +175,10 @@ not deliver drops there); copy and paste, or use Insert image….
   single, so `don't`, `it's`, and `users'` come out right.
 - **List continuation** — `Enter` on a list item continues the list; ordered lists increment
   (`1.` → `2.`); `Enter` on an *empty* list item clears the marker and leaves list mode.
+- **Completion** — typing `[[` lists vault notes and files that match what follows;
+  `/` at the start of a line lists blocks to insert (headings, tasks, callouts, code, math,
+  a table, a divider). `↑`/`↓` choose, `Enter` or `Tab` inserts, `Escape` closes, and
+  clicking a row inserts it. A link to a note whose name is unique uses just the name.
 - **Word-sized undo** — one `Ctrl+Z` takes back a burst of typing, not one character. A run
   breaks at a pause, a newline, or a cursor jump.
 
@@ -317,35 +323,6 @@ the PDF's position.
 divider to resize. If fit-to-width is on, the PDF re-fits to the narrower pane while keeping
 your page and scroll position.
 
-### Viewing presentations
-
-Open a `.pptx` from the sidebar or the command palette to read it. The viewer is **view
-only** — nothing you do in it changes the file.
-
-- **Every slide in one column**, each under its number and title; hidden slides are marked
-  *Hidden*.
-- **Slide navigation** — the arrows in the toolbar, or `PageUp` / `PageDown`, move one slide
-  at a time; the arrow keys and the wheel scroll. The toolbar shows which slide you are on.
-- **Zoom** — slides fit the pane's width by default. `-` and `+` step between 50% and 300% of
-  that width, keeping your slide in view, and **Fit** returns to it.
-- **Follows the file** — if the deck changes on disk (saved from PowerPoint, pulled with
-  Git), the viewer reads it again and keeps your place.
-
-Slides are drawn by MD Editor itself, so no Office suite is needed. Text, bullets and
-numbering, shapes and lines, pictures, tables, backgrounds, theme colours and fonts, and
-content inherited from the slide layout and master are all shown. Some things are
-approximated or left out:
-
-- **Charts, SmartArt, and embedded objects** appear as labelled grey boxes.
-- **Fonts** the deck names but your system lacks are replaced — by a metric-compatible font
-  when one is installed (Liberation Sans for Arial, Carlito for Calibri), so lines break
-  where they did in PowerPoint.
-- **Radial gradients** are drawn as linear ones; shadows, glows, and 3-D effects are not
-  drawn; built-in table styles are approximated.
-- **Animations, transitions, and speaker notes** are not shown.
-
-Password-protected presentations and the old binary `.ppt` format can't be opened.
-
 ---
 
 ## 4. Handwritten Notes
@@ -382,10 +359,14 @@ Highlights every match in the document and navigates between them. Options:
 
 ### Vault search — `Ctrl+Shift+F` or the toolbar search icon
 
-Powered by SQLite FTS5 over the whole vault, covering **both Markdown notes and extracted PDF
-text**. Matches in the open PDF come first, then notes with a snippet, ranked by relevance,
-capped at 100. `↑`/`↓` move through the results and `Enter` opens one.
-The query runs 200ms after you stop typing, so a ten-character query is one scan, not ten.
+Powered by SQLite FTS5 over the whole vault, covering **Markdown notes, extracted PDF text
+and your PDF quick notes**. Matches in the open PDF come first, then notes with a snippet,
+ranked by relevance (a match in a file's name ranks highest), capped at 100. Two letters are
+enough (`ML`, `AI`; one character for Chinese, Japanese or Korean), and the last word
+matches as you type it. `↑`/`↓` move through the results and `Enter` opens one: a note opens
+with the find bar showing your query and the matching line selected; a PDF opens with its
+matches highlighted. The query runs 200ms after you stop typing, so a ten-character query
+is one scan, not ten.
 
 ### PDF search — `Ctrl+F` with the PDF pane active
 
@@ -394,8 +375,8 @@ and previous navigation.
 
 **Loose whitespace** is the toggle that matters for papers: it lets any run of whitespace
 match between your words, so a phrase still matches when it wraps across a PDF line break or
-between columns. (It does not rejoin a word hyphenated across a line break — search for
-`algo` or `rithm` separately in that case.)
+between columns, and it rejoins a word the typesetter hyphenated across a line break
+(`algo-` / `rithm` matches `algorithm`).
 
 In split view, `Ctrl+F` follows whichever pane you last touched, so markdown and PDF searches
 stay independent.

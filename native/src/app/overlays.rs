@@ -52,7 +52,6 @@ impl MdEditor {
                     icon: Some(match tab.kind {
                         TabKind::Note => Icon::FileText,
                         TabKind::Pdf => Icon::FilePdf,
-                        TabKind::Deck => Icon::Presentation,
                         TabKind::Image => Icon::Image,
                     }),
                     label: tab.path.clone(),

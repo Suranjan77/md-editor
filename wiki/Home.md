@@ -1,7 +1,7 @@
 # MD Editor Wiki
 
 **MD Editor** is a calm, native, local-first desktop workspace for Markdown notes, PDFs,
-presentations, images, a knowledge graph, handwritten notes, search, backlinks, and study
+images, a knowledge graph, handwritten notes, search, backlinks, and study
 progress. It is written in Rust on [Iced](https://github.com/iced-rs/iced) 0.14 and Google's
 [PDFium](https://pdfium.googlesource.com/pdfium/).
 
@@ -19,7 +19,6 @@ right and the page is a bug.
 | Saving, opening, file operations | `native/src/app/documents.rs`, `core/src/vault.rs` | [Data Flows & Invariants](Data-Flows-and-Durability-Invariants.md), [Core Services](Core-Services.md) |
 | PDF rendering, TOC, references | `core/src/pdf/`, `core/src/references.rs` | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) |
 | The PDF pane, highlights, linked notes | `native/src/app/pdf*.rs`, `native/src/views/pdf_viewer.rs` | [PDF Viewer Internals](PDF-Viewer-Internals.md) |
-| Presentations | `core/src/pptx/`, `native/src/slides/` | [Core Services §8](Core-Services.md#8-powerpoint-presentations-pptxrs-pptx) |
 | The knowledge graph | `native/src/graph_state.rs`, `native/src/views/graph*` | [Knowledge Graph](Knowledge-Graph.md) |
 | Handwriting | `native/src/ink/` | [Handwritten Notes](Handwritten-Notes.md) |
 | Search, wikilinks, backlinks | `core/src/file_index.rs`, `native/src/app/search.rs` | [Core Services](Core-Services.md) |
@@ -45,7 +44,6 @@ graph TB
         DocBuf["DocBuffer, undo runs<br/>editor/buffer.rs"]
         Highlighter["Incremental Markdown highlighter<br/>editor/highlight.rs"]
         PDFView["PDF pane and page widget<br/>views/pdf_viewer.rs, views/interactive_pdf.rs"]
-        SlideView["Slide viewer<br/>slides/, views/pptx_viewer.rs"]
         GraphView["Knowledge graph<br/>graph_state.rs, views/graph*, shaders/"]
         Ink["Handwriting canvas (own window)<br/>ink/, views/ink.rs"]
     end
@@ -56,14 +54,12 @@ graph TB
         Index["Wikilink and backlink index<br/>file_index.rs"]
         PDFWorker["PDFium worker, TOC recovery<br/>pdf/"]
         RefScanner["Reference resolver<br/>references.rs"]
-        PptxParser["PowerPoint reader<br/>pptx/"]
     end
 
     App --> AppState
     DocBuf --> Highlighter --> Widget
     PDFView -->|"typed commands over channels"| PDFWorker
     PDFWorker --> RefScanner
-    SlideView -->|"parsed off the UI thread"| PptxParser
     GraphView -->|"snapshot task"| Vault
     Ink -->|"atomic save of .ink"| Vault
     Index --> Vault
@@ -82,7 +78,7 @@ graph TB
 | [Architecture & Philosophy](Architecture-and-Philosophy.md) | Local-first, durability, non-destructive sidecars, threading |
 | [Repository Structure](Repository-Structure.md) | Crates and per-file responsibilities |
 | [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md) | Keystroke to atomic save, navigation, highlight creation |
-| [Core Services](Core-Services.md) | SQLite schema, paths, vault operations, wikilinks, search, presentations |
+| [Core Services](Core-Services.md) | SQLite schema, paths, vault operations, wikilinks, search |
 | [Native Desktop GUI](Native-Desktop-GUI.md) | Lifecycle, windows, message routing, sub-states, subscriptions, views |
 | [Markdown Pipeline](Markdown-Pipeline.md) | Buffer, incremental highlighting, rhythm, caret, drawing |
 | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) | PDFium worker, TOC recovery, references, annotations |

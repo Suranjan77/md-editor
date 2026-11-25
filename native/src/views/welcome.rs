@@ -59,7 +59,7 @@ pub fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Theme, Rend
             .line_height(TextRole::Display.line_height())
             .color(t.fg_primary)
             .font(TextRole::Display.font()),
-        text("A quiet, local-first desk for notes, papers, slides and ink.")
+        text("A quiet, local-first desk for notes, papers and ink.")
             .size(TextRole::Body.size())
             .line_height(TextRole::Body.line_height())
             .color(t.fg_secondary)

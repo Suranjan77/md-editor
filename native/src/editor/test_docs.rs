@@ -89,13 +89,14 @@ pub(crate) fn inline(rng: &mut Rng) -> String {
     let parts = 1 + rng.below(5);
     let mut out = Vec::new();
     for _ in 0..parts {
-        let chunk = match rng.below(9) {
+        let chunk = match rng.below(10) {
             0 => format!("**{}**", words(rng, 3)),
             1 => format!("*{}*", words(rng, 3)),
             2 => format!("`{}`", words(rng, 2)),
             3 => format!("[{}](http://x.y/{})", words(rng, 2), rng.below(99)),
             4 => format!("[[Note {}|{}]]", rng.below(9), words(rng, 2)),
             5 => rng.pick(&["$a^2$", "$x$", "$\\uncached$"]).to_string(),
+            6 => format!("~~{}~~", words(rng, 3)),
             _ => words(rng, 12),
         };
         out.push(chunk);
@@ -137,6 +138,11 @@ pub(crate) fn block(rng: &mut Rng, out: &mut Vec<String>) {
         3 => out.push(format!(
             "- [{}] {}",
             if rng.chance(0.5) { " " } else { "x" },
+            inline(rng)
+        )),
+        4 if rng.chance(0.3) => out.push(format!(
+            "> [!{}] {}",
+            rng.pick(&["note", "warning", "tip", "danger", "x"]),
             inline(rng)
         )),
         4 => out.push(format!("> {}", inline(rng))),
@@ -193,6 +199,15 @@ pub(crate) fn block(rng: &mut Rng, out: &mut Vec<String>) {
 
 pub(crate) fn document(rng: &mut Rng) -> String {
     let mut lines = Vec::new();
+    // YAML frontmatter, sometimes left unclosed (then `---` is a rule).
+    if rng.chance(0.15) {
+        lines.push("---".into());
+        lines.push(format!("title: {}", words(rng, 2)));
+        lines.push("tags: [a, b]".into());
+        if rng.chance(0.7) {
+            lines.push(rng.pick(&["---", "..."]).to_string());
+        }
+    }
     for _ in 0..1 + rng.below(9) {
         block(rng, &mut lines);
     }

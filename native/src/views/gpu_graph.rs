@@ -20,8 +20,8 @@ use iced::{Point, Rectangle, Vector, mouse};
 use crate::graph_state::{MAX_ZOOM, MIN_ZOOM};
 use crate::messages::{GraphMessage, Message};
 use crate::views::graph::{
-    GraphFrame, ViewTransform, distance, fit_transform, kind_color, node_magnitude,
-    node_screen_radius, screen_to_world, world_to_screen,
+    GraphFrame, ViewTransform, distance, kind_color, node_magnitude, node_screen_radius,
+    screen_to_world, world_to_screen,
 };
 
 mod pipeline;
@@ -105,10 +105,7 @@ impl GpuGraphProgram {
     }
 
     fn fit(&self, bounds: Rectangle) -> ViewTransform {
-        let points: Vec<Point> = (0..self.frame.nodes().len())
-            .map(|index| self.frame.world(index))
-            .collect();
-        fit_transform(&points, bounds)
+        self.frame.fit(bounds)
     }
 
     /// The transform to render/interact with. Once this widget has applied the
@@ -179,9 +176,14 @@ impl GpuGraphProgram {
             // Mirror the fit into the shared state so the label overlay adopts
             // the same framing. Publishing already schedules a redraw; no
             // capture so a coincident gesture still reaches the handlers.
-            return Some(shader::Action::publish(Message::Graph(set_view(
-                fit.pan, fit.zoom,
-            ))));
+            return Some(shader::Action::publish(Message::Graph(
+                GraphMessage::SetView {
+                    pan_x: fit.pan.x,
+                    pan_y: fit.pan.y,
+                    zoom: fit.zoom,
+                    fitted: Some((self.frame.fit_revision, bounds.width, bounds.height)),
+                },
+            )));
         }
         // Adopt a transform the app published (zoom buttons, reveal-in-graph).
         // `GraphState` already holds it, so there is nothing to publish back.
@@ -288,6 +290,7 @@ fn set_view(pan: Vector, zoom: f32) -> GraphMessage {
         pan_x: pan.x,
         pan_y: pan.y,
         zoom,
+        fitted: None,
     }
 }
 

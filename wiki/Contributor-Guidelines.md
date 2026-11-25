@@ -65,8 +65,6 @@ rediscover — each exists because something concrete broke without it.
 ### Rule 4: PDFs are immutable
 
 - Never write to a user's `.pdf`.
-- The same goes for `.pptx`: the presentation viewer is view-only, and `core/src/pptx.rs`
-  has no write path. Keep it that way.
 - Highlights, notes, bookmarks, and cross-references belong in `pdf_annotations` and
   `pdf_references`, keyed by the content-derived `document_id`.
 - Only ever create one `Pdfium` binding per process, and reach it only through

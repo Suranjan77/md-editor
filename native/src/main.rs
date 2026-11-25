@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod autocomplete;
 mod design;
 #[cfg(test)]
 mod e2e;
@@ -18,13 +19,12 @@ mod messages;
 mod pdf_notes;
 mod pdf_pane;
 mod platform;
-mod pptx_pane;
+mod raster;
 mod search;
 mod search_state;
 mod shortcuts;
 #[cfg(test)]
 mod size_lint;
-mod slides;
 mod tabs;
 #[cfg(test)]
 mod test_support;

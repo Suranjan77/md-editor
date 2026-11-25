@@ -1,4 +1,4 @@
-//! Window lifecycle, split view, panel resize, context menus, drag-and-drop, tracker and presentations.
+//! Window lifecycle, split view, panel resize, context menus, drag-and-drop, tracker and image zoom.
 
 use super::*;
 use crate::design::metrics::{
@@ -97,25 +97,12 @@ impl MdEditor {
             ShellMessage::ImageZoomOut => self.set_image_zoom(Some(self.image_zoom() / 1.25)),
             ShellMessage::ImageZoomFit => self.set_image_zoom(None),
             ShellMessage::ImageZoomActual => self.set_image_zoom(Some(1.0)),
-            ShellMessage::PptxSlideInputChanged(raw) => {
-                self.ui.pptx_slide_input = Some(raw);
-                Task::none()
-            }
-            ShellMessage::PptxSlideInputSubmit => self.on_pptx_slide_input_submit(),
-            m @ (ShellMessage::PptxLoaded(..)
-            | ShellMessage::PptxScrolled { .. }
-            | ShellMessage::PptxZoomIn
-            | ShellMessage::PptxZoomOut
-            | ShellMessage::PptxZoomFit
-            | ShellMessage::PptxStep(_)) => {
-                let width = self.pdf_available_width();
-                self.pptx.update(Message::Shell(m), width)
-            }
             ShellMessage::CursorMoved(x, y) => {
                 self.ui.cursor_pos = (x, y);
                 Task::none()
             }
-            ShellMessage::FileHovered(path) => {
+            ShellMessage::FileHovered(id, _) if Some(id) == self.ink_window => Task::none(),
+            ShellMessage::FileHovered(_, path) => {
                 if !self.ui.hovered_drop_files.contains(&path) {
                     self.ui.hovered_drop_files.push(path);
                 }
@@ -125,7 +112,11 @@ impl MdEditor {
                 self.ui.hovered_drop_files.clear();
                 Task::none()
             }
-            ShellMessage::FileDropped(path) => self.on_file_dropped(path),
+            ShellMessage::FileDropped(id, _) if Some(id) == self.ink_window => {
+                self.ui.toast = Some("Drop files on the main window to add them".to_string());
+                Task::none()
+            }
+            ShellMessage::FileDropped(_, path) => self.on_file_dropped(path),
             ShellMessage::FocusRegionNext => {
                 self.cycle_focus_region(true);
                 Task::none()
@@ -138,7 +129,10 @@ impl MdEditor {
                 self.on_window_resized(id, width, height)
             }
             ShellMessage::WindowOpened(id) => self.on_window_opened(id),
-            ShellMessage::WindowCloseRequested => {
+            ShellMessage::WindowCloseRequested(id) if Some(id) == self.ink_window => {
+                self.flush_ink_page()
+            }
+            ShellMessage::WindowCloseRequested(_) => {
                 let _ = self.save_active_document();
                 let ink = self.flush_ink_page();
                 self.persist_session();
@@ -218,7 +212,7 @@ impl MdEditor {
         }
     }
 
-    /// Image zoom and the presentation viewer.
+    /// Image zoom.
     /// The image viewer's zoom; `None` (fit) counts as 1.0 for stepping.
     fn image_zoom(&self) -> f32 {
         self.ui.image_zoom.unwrap_or(1.0)
@@ -226,19 +220,6 @@ impl MdEditor {
 
     fn set_image_zoom(&mut self, zoom: Option<f32>) -> Task<Message> {
         self.ui.image_zoom = zoom.map(|z| z.clamp(0.25, 4.0));
-        Task::none()
-    }
-
-    fn on_pptx_slide_input_submit(&mut self) -> Task<Message> {
-        if let Some(raw) = self.ui.pptx_slide_input.take()
-            && let Ok(slide_1) = raw.trim().parse::<i32>()
-        {
-            let width = self.pdf_available_width();
-            let cur = self.pptx.current_slide(width) as i32 + 1;
-            return self
-                .pptx
-                .update(Message::Shell(ShellMessage::PptxStep(slide_1 - cur)), width);
-        }
         Task::none()
     }
 

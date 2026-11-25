@@ -4,6 +4,9 @@
 //! published as an [`EditorCommand`] for the app to apply. What it does own is
 //! pointer state — focus, the in-progress drag selection, block scrollbars.
 
+#[cfg(test)]
+mod tests;
+
 use iced::advanced::graphics::core::event::Event;
 use iced::advanced::{Clipboard, Shell, clipboard};
 use iced::keyboard::{self, key::Named};
@@ -171,6 +174,25 @@ impl<Message> Editor<'_, Message> {
         }));
         state.is_dragging = true;
 
+        let clicks = count_click(state, pos);
+        if clicks > 1 {
+            // The buffer owns a word or line selection now; a drag would
+            // replace it with a character selection.
+            state.is_dragging = false;
+            state.selection_anchor = None;
+            state.selection_focus = None;
+            let command = if clicks == 2 {
+                EditorCommand::SelectWord {
+                    line: line_idx,
+                    col,
+                }
+            } else {
+                EditorCommand::SelectLine { line: line_idx }
+            };
+            shell.publish((self.on_pointer_command)(command));
+            return;
+        }
+
         let Some(span) = span else {
             return;
         };
@@ -307,7 +329,7 @@ impl<Message> Editor<'_, Message> {
         // Editing and navigation keys first — they must never fall through to
         // character input.
         if let keyboard::Key::Named(named) = key
-            && self.on_named_key::<R>(state, named, modifiers.shift(), available_width, shell)
+            && self.on_named_key::<R>(state, named, modifiers, available_width, shell)
         {
             return;
         }
@@ -343,20 +365,48 @@ impl<Message> Editor<'_, Message> {
         &self,
         state: &mut State,
         named: Named,
-        extend: bool,
+        modifiers: keyboard::Modifiers,
         available_width: f32,
         shell: &mut Shell<'_, Message>,
     ) -> bool {
+        if self.completion_open
+            && matches!(
+                named,
+                Named::ArrowUp | Named::ArrowDown | Named::Enter | Named::Tab | Named::Escape
+            )
+        {
+            return true;
+        }
+        let extend = modifiers.shift();
+        let ctrl = modifiers.command() || modifiers.control();
         let movement = |movement| EditorCommand::MoveCursor { movement, extend };
+        let multi_line = self
+            .buffer
+            .selection
+            .is_some_and(|(start_line, _, end_line, _)| start_line != end_line);
         let command = match named {
+            // Ctrl+Tab and Ctrl+PageUp/PageDown switch document tabs (app-wide).
+            Named::Tab | Named::PageUp | Named::PageDown if ctrl => return false,
+            Named::Backspace if ctrl => EditorCommand::DeleteWordBackward,
+            Named::Delete if ctrl => EditorCommand::DeleteWordForward,
             Named::Backspace => EditorCommand::DeleteBackward,
             Named::Delete => EditorCommand::DeleteForward,
             Named::Enter => EditorCommand::InsertText("\n".to_string()),
+            Named::Tab if extend => EditorCommand::OutdentLines,
+            Named::Tab if multi_line => EditorCommand::IndentLines,
             Named::Tab => EditorCommand::InsertText("    ".to_string()),
+            Named::ArrowLeft if ctrl => movement(Movement::WordLeft),
+            Named::ArrowRight if ctrl => movement(Movement::WordRight),
+            Named::Home if ctrl => movement(Movement::DocStart),
+            Named::End if ctrl => movement(Movement::DocEnd),
             Named::ArrowLeft => movement(Movement::Left),
             Named::ArrowRight => movement(Movement::Right),
             Named::Home => movement(Movement::Home),
             Named::End => movement(Movement::End),
+            Named::PageUp | Named::PageDown => {
+                self.move_by_page(state, named == Named::PageDown, extend, shell);
+                return true;
+            }
             Named::ArrowUp => {
                 self.move_vertically::<R>(state, -1.0, extend, available_width, shell);
                 return true;
@@ -470,6 +520,65 @@ impl<Message> Editor<'_, Message> {
         }
     }
 
+    /// PageUp / PageDown: move the caret one screen (less a line) up or down,
+    /// keeping its column; at the first or last screen, to the document edge.
+    fn move_by_page(
+        &self,
+        state: &mut State,
+        down: bool,
+        extend: bool,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let count = self.lines.len();
+        if count == 0 {
+            return;
+        }
+        let (line, col) = (self.buffer.cursor_line, self.buffer.cursor_col);
+        let line_height = state.layout_tree.get_height(line.min(count - 1)).max(1.0);
+        let page = (state.viewport_height - line_height).max(line_height);
+        let y = state.layout_tree.prefix_sum(line);
+        let target_y = if down { y + page } else { y - page };
+        let edge = if down {
+            target_y >= state.layout_tree.prefix_sum(count)
+        } else {
+            target_y < 0.0
+        };
+        let command = match (edge, down) {
+            (true, false) => EditorCommand::MoveCursor {
+                movement: Movement::DocStart,
+                extend,
+            },
+            (true, true) => EditorCommand::MoveCursor {
+                movement: Movement::DocEnd,
+                extend,
+            },
+            _ => {
+                let target = state.layout_tree.find_line_at_y(target_y).min(count - 1);
+                let (anchor_line, anchor_col) = self
+                    .buffer
+                    .selection
+                    .map(|(sl, sc, _, _)| (sl, sc))
+                    .unwrap_or((line, col));
+                if extend {
+                    EditorCommand::SetSelection {
+                        anchor_line,
+                        anchor_col,
+                        focus_line: target,
+                        focus_col: col,
+                        affinity: Default::default(),
+                    }
+                } else {
+                    EditorCommand::SetCursor {
+                        line: target,
+                        col,
+                        affinity: Default::default(),
+                    }
+                }
+            }
+        };
+        self.send_edit(state, shell, command);
+    }
+
     /// Publish a keyboard command. The buffer now owns the selection, so the
     /// pointer selection is dropped.
     fn send_edit(&self, state: &mut State, shell: &mut Shell<'_, Message>, command: EditorCommand) {
@@ -477,6 +586,24 @@ impl<Message> Editor<'_, Message> {
         state.selection_anchor = None;
         state.selection_focus = None;
     }
+}
+
+/// Record a press at `pos` and return how many presses in a row (1–3, then
+/// back to 1) landed close together in time and place.
+fn count_click(state: &mut State, pos: Point) -> u8 {
+    let now = std::time::Instant::now();
+    let repeated = state.last_click.is_some_and(|(at, point)| {
+        now.duration_since(at) <= crate::design::motion::MULTI_CLICK
+            && (point.x - pos.x).abs() <= crate::design::metrics::MULTI_CLICK_SLOP
+            && (point.y - pos.y).abs() <= crate::design::metrics::MULTI_CLICK_SLOP
+    });
+    state.click_count = if repeated && state.click_count < 3 {
+        state.click_count + 1
+    } else {
+        1
+    };
+    state.last_click = Some((now, pos));
+    state.click_count
 }
 
 /// The cursor position relative to `bounds`, even outside them.

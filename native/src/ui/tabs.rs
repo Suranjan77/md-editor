@@ -191,7 +191,6 @@ fn tab_label<'a, Message: 'a>(item: &DocTabItem<'a>) -> Element<'a, Message, The
     let kind_icon = match item.tab.kind {
         TabKind::Note => Icon::FileText,
         TabKind::Pdf => Icon::FilePdf,
-        TabKind::Deck => Icon::Presentation,
         TabKind::Image => Icon::Image,
     };
     let icon_col = if missing {

@@ -11,6 +11,7 @@ mod backlinks;
 mod error;
 mod files;
 mod graph;
+mod relink;
 mod rename;
 
 use crate::types::{
@@ -23,10 +24,9 @@ pub use files::*;
 pub use graph::*;
 pub use rename::*;
 
-pub const IMAGE_EXTENSIONS: [&str; 8] = ["jpeg", "jpg", "png", "gif", "bmp", "svg", "webp", "avif"];
+pub const IMAGE_EXTENSIONS: [&str; 7] = ["jpeg", "jpg", "png", "gif", "bmp", "svg", "webp"];
 const MARKDOWN_EXTENSIONS: [&str; 2] = ["md", "markdown"];
 const PDF_EXTENSIONS: [&str; 1] = ["pdf"];
-const PPTX_EXTENSIONS: [&str; 1] = ["pptx"];
 /// Handwritten pages written by the native ink canvas.
 const INK_EXTENSIONS: [&str; 1] = ["ink"];
 
@@ -80,6 +80,16 @@ fn is_excluded_dir(name: &str) -> bool {
         || USER_EXCLUDED_DIRS
             .read()
             .is_ok_and(|names| names.iter().any(|excluded| excluded == name))
+}
+
+/// Whether `rel_path` (vault-relative), or any folder on the way to it, is one
+/// the vault skips: dot-names, heavy build folders and the user's exclusions.
+/// For filesystem watchers, which see changes the walk never visits.
+pub fn is_excluded_rel_path(rel_path: &str) -> bool {
+    rel_path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .any(is_excluded_dir)
 }
 
 /// Whether any folder on the way to `rel_path` (vault-relative) is excluded.
@@ -447,8 +457,16 @@ pub fn delete_entry(state: &AppState, path: &str) -> VaultResult<()> {
     let abs_path = resolve_vault_path_checked(vault_root, path)?;
 
     if abs_path.is_file() {
-        let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
-        index.remove_file(&abs_path);
+        // Delete first: a file that cannot be removed (permissions, a
+        // read-only mount) must stay indexed and searchable.
+        fs::remove_file(&abs_path).map_err(|e| {
+            VaultError::io(format!("Failed to delete file {}", abs_path.display()), e)
+        })?;
+        state
+            .file_index
+            .lock()
+            .map_err(|e| e.to_string())?
+            .remove_file(&abs_path);
         let db = state.db.lock().map_err(|e| e.to_string())?;
         if let Err(e) = db.execute(
             "DELETE FROM file_search WHERE path = ?1",
@@ -456,24 +474,35 @@ pub fn delete_entry(state: &AppState, path: &str) -> VaultResult<()> {
         ) {
             log::warn!("Failed to remove {path} from search index: {e}");
         }
-        fs::remove_file(&abs_path)
-            .map_err(|e| VaultError::io(format!("Failed to delete file {}", abs_path.display()), e))
+        Ok(())
     } else if abs_path.is_dir() {
         let indexed_files = list_all_md_files(&abs_path)?;
-        fs::remove_dir_all(&abs_path).map_err(|e| {
-            VaultError::io(
-                format!("Failed to delete directory {}", abs_path.display()),
-                e,
-            )
-        })?;
+        let removed = fs::remove_dir_all(&abs_path);
+        // `remove_dir_all` can fail part-way; unindex exactly what is gone.
+        let gone: Vec<PathBuf> = indexed_files
+            .into_iter()
+            .filter(|file| !file.exists())
+            .collect();
         {
             let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
-            for indexed_file in indexed_files {
-                index.remove_file(&indexed_file);
+            for file in &gone {
+                index.remove_file(file);
             }
         }
-        let prefix = format!("{}/", path.trim_end_matches('/'));
         let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Err(e) = removed {
+            for file in &gone {
+                let _ = db.execute(
+                    "DELETE FROM file_search WHERE path = ?1",
+                    rusqlite::params![path_to_relative_string(file, vault_root)],
+                );
+            }
+            return Err(VaultError::io(
+                format!("Failed to delete directory {}", abs_path.display()),
+                e,
+            ));
+        }
+        let prefix = format!("{}/", path.trim_end_matches('/'));
         db.execute(
             "DELETE FROM file_search
              WHERE path = ?1 OR substr(path, 1, length(?2)) = ?2",

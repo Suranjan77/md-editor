@@ -150,3 +150,18 @@ fn rename_delete_and_session_round_trip() {
     restored.remove_deleted_path("archive");
     assert_eq!(restored.len(), 1);
 }
+
+#[test]
+fn restore_skips_tabs_whose_saved_view_no_longer_parses() {
+    // A session saved while `.pptx` decks still opened in tabs.
+    let raw = r#"{"tabs":[
+        {"path":"a.md","view":"Note"},
+        {"path":"deck.pptx","view":{"Deck":{"zoom":1.0,"scroll_x":0.0,"scroll_y":0.0}}},
+        {"path":"b.md","view":"Note"}
+    ],"active_path":"b.md","recent_paths":[]}"#;
+    let mut tabs = Tabs::new();
+    assert!(tabs.restore_from_json(raw, |_| true));
+    let paths: Vec<_> = tabs.list().iter().map(|t| t.path.as_str()).collect();
+    assert_eq!(paths, ["a.md", "b.md"]);
+    assert_eq!(tabs.active_tab().map(|t| t.path.as_str()), Some("b.md"));
+}

@@ -155,8 +155,8 @@ impl MdEditor {
         let Some(ref pdf_path) = self.pdf.active_path else {
             return Task::none();
         };
-        let content = self.linked_pdf_note_file_content(&note_path, pdf_path, &ann);
-        if let Err(e) = md_editor_core::vault::save_file(&self.state, &note_path, &content) {
+        let pdf_path = pdf_path.clone();
+        if let Err(e) = self.write_linked_pdf_note(&note_path, &pdf_path, &ann) {
             self.ui.toast = Some(format!("Failed to create linked note: {}", e));
             return Task::none();
         }
@@ -181,6 +181,41 @@ impl MdEditor {
         self.ui.toast = Some(format!("Linked note: {}", note_path));
         self.invalidate_graph();
         Task::done(Message::Pdf(PdfMessage::OpenLinkedNote(note_path)))
+    }
+
+    /// Add the highlight's section to `note_path`. A note open in the editor is
+    /// edited in its buffer (one undo step) and flushed, so unsaved typing and
+    /// undo history survive; a parked note gets the same edit, so its history
+    /// still matches disk when it is resumed.
+    fn write_linked_pdf_note(
+        &mut self,
+        note_path: &str,
+        pdf_path: &str,
+        ann: &md_editor_core::pdf::PdfAnnotation,
+    ) -> Result<(), String> {
+        if self.active_path.as_deref() == Some(note_path) {
+            let current = self.editor.buffer.text();
+            let updated = append_linked_pdf_note_section(&current, pdf_path, ann);
+            if updated != current {
+                self.editor.buffer.replace_all_text(&updated);
+                self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+                self.editor.mark_dirty_now();
+                self.editor.toc_entries = views::toc::get_toc(&updated);
+            }
+            return match self.save_active_document() {
+                SaveOutcome::Failed(err) => Err(err.to_string()),
+                SaveOutcome::Saved | SaveOutcome::NothingToDo => Ok(()),
+            };
+        }
+        let content = self.linked_pdf_note_file_content(note_path, pdf_path, ann);
+        md_editor_core::vault::save_file(&self.state, note_path, &content)
+            .map_err(|e| e.to_string())?;
+        self.note_self_write(note_path);
+        self.editor.update_retained(note_path, |buffer| {
+            buffer.replace_all_text(&content);
+            buffer.mark_saved();
+        });
+        Ok(())
     }
 
     pub(super) fn default_pdf_note_path(&self, ann: &md_editor_core::pdf::PdfAnnotation) -> String {

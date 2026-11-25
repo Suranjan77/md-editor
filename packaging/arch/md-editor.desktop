@@ -2,11 +2,11 @@
 Type=Application
 Name=MD Editor
 GenericName=Markdown Editor
-Comment=Local-first workspace for Markdown notes, PDFs and presentations
+Comment=Local-first workspace for Markdown notes and PDFs
 Exec=md-editor %F
 Icon=md-editor
 Terminal=false
-MimeType=text/markdown;application/pdf;application/vnd.openxmlformats-officedocument.presentationml.presentation;inode/directory;
+MimeType=text/markdown;application/pdf;inode/directory;
 Categories=Office;TextEditor;Utility;
 Keywords=markdown;notes;pdf;wiki;knowledge;
 StartupWMClass=md-editor

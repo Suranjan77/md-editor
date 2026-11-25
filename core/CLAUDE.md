@@ -13,11 +13,11 @@ Headless engine. Everything here must run in a test without a display or GPU.
   snapshots) captures `current_vault_generation()` and the root under
   `vault_publish_lock`, and drops its result if the generation moved. Do not hold these
   locks across disk or PDFium work.
-- **PDFs and decks are read-only.** Annotations live in `pdf_annotations` /
+- **PDFs are read-only.** Annotations live in `pdf_annotations` /
   `pdf_references`, keyed by the vault-scoped `document_id`. One `Pdfium` binding per
   process, reached only through `pdf/`.
 - **Typed errors.** Public functions return the module error (`VaultError`, `StateError`,
-  `PdfError`, `PptxError`, thiserror); `Display` is user-facing wording. Never add a
+  `PdfError`, thiserror); `Display` is user-facing wording. Never add a
   public `Result<_, String>`.
 - **Schema changes** go in `state.rs` as a new `user_version` migration; never edit an old
   one.

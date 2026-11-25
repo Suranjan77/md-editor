@@ -123,6 +123,10 @@ impl DocBuffer {
             }
             Movement::Up => self.vertical_offset(-1),
             Movement::Down => self.vertical_offset(1),
+            Movement::WordLeft => self.word_start_before(self.cursor_offset),
+            Movement::WordRight => self.word_end_after(self.cursor_offset),
+            Movement::DocStart => 0,
+            Movement::DocEnd => self.rope.len_chars(),
         };
 
         if extend {

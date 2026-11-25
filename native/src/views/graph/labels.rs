@@ -47,10 +47,7 @@ impl canvas::Program<Message> for GraphLabels {
             return vec![frame.into_geometry()];
         }
 
-        let transform = ViewTransform {
-            pan: self.frame.pan,
-            zoom: self.frame.zoom,
-        };
+        let transform = self.frame.label_transform(bounds);
         let focus_mask = self.frame.focus_mask();
         let focus = focus_mask.as_ref().map(|(focus, _)| *focus);
         let in_focus = |index: usize| {

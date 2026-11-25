@@ -341,13 +341,6 @@ impl MdEditor {
         if self.showing_pdf && self.pdf.active_path.is_some() {
             return self.build_pdf_view();
         }
-        if self.pptx.active_path.is_some() {
-            return views::pptx_viewer::view(
-                &self.pptx,
-                self.pdf_available_width(),
-                self.ui.pptx_slide_input.as_deref(),
-            );
-        }
         if self.active_image.is_some() {
             return self.build_image_view();
         }
@@ -419,7 +412,8 @@ impl MdEditor {
                 .reveal_caret(self.editor.reveal_request, |view| {
                     Message::Editor(EditorMessage::CaretView(view))
                 })
-                .layout_revision(self.editor.layout_revision()),
+                .layout_revision(self.editor.layout_revision())
+                .completion_open(self.editor.completion.is_some()),
             )
             .padding(EDITOR_PADDING)
             .width(Length::Fill),
@@ -439,6 +433,21 @@ impl MdEditor {
                 })
             })
             .height(Length::Fill);
+        let editor_scroll: Element<'_, Message, Theme, iced::Renderer> =
+            match (&self.editor.completion, &self.editor.caret_view) {
+                (Some(completion), Some(caret)) => iced::widget::stack![
+                    editor_scroll,
+                    views::completion::view(
+                        completion,
+                        caret,
+                        EDITOR_PADDING,
+                        self.editor.viewport_width,
+                    )
+                ]
+                .height(Length::Fill)
+                .into(),
+                _ => editor_scroll.into(),
+            };
 
         let file_bar: Element<'_, Message, Theme, iced::Renderer> = if editor_search_active {
             views::search::file_bar(views::search::FileBarProps {
@@ -761,8 +770,7 @@ impl MdEditor {
                 self.active_path
                     .as_deref()
                     .or(self.pdf.active_path.as_deref())
-                    .or(self.active_image_path.as_deref())
-                    .or(self.pptx.active_path.as_deref()),
+                    .or(self.active_image_path.as_deref()),
             )),
             focused: self.ui.focused_region == FocusRegion::StatusBar,
         })

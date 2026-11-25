@@ -111,8 +111,6 @@ fn file_icon(path: &str) -> Icon {
     let lower = path.to_lowercase();
     if lower.ends_with(".pdf") {
         Icon::FilePdf
-    } else if lower.ends_with(".pptx") {
-        Icon::Presentation
     } else if crate::app::is_supported_image_path(&lower) {
         Icon::Image
     } else if lower.ends_with(".ink") {

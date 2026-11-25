@@ -30,8 +30,8 @@ literals, and `views/` and `app/` have no colour literals.
 
 Two rules about colour:
 
-- **Chrome follows the theme, content does not.** Highlight colours on a PDF page, ink on
-  the handwriting paper and the content of slides keep their colours in both themes.
+- **Chrome follows the theme, content does not.** Highlight colours on a PDF page and ink on
+  the handwriting paper keep their colours in both themes.
 - **Never colour alone.** Selection, status and kinds always pair the colour with an icon,
   a label, a filled glyph or an outline (the active find match has an outline; graph kinds
   have icons in the legend and inspector).

@@ -2,29 +2,63 @@
 
 use super::*;
 
-/// Full-text search across the vault using FTS5.
+/// Most results a vault search returns.
+const SEARCH_LIMIT: usize = 100;
+
+/// Full-text search across the vault: note and PDF text through FTS5, plus
+/// PDF quick notes. Every term must match; the last also matches as a prefix,
+/// so results come while the word is still being typed. A hit in a file's
+/// path ranks above one in its body.
+///
+/// `line` is the 1-based line of the first match in a note, the 1-based page
+/// of a PDF quick note, and 0 for PDF text (the page is found by PDF search).
 pub fn search_vault(state: &AppState, query: &str) -> VaultResult<crate::types::SearchResults> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    let fts_query = query
-        .split_whitespace()
-        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+    let terms: Vec<&str> = query.split_whitespace().collect();
+    if terms.is_empty() {
+        return Ok(crate::types::SearchResults::default());
+    }
+    let fts_query = terms
+        .iter()
+        .enumerate()
+        .map(|(i, term)| {
+            let quoted = format!("\"{}\"", term.replace('"', "\"\""));
+            if i + 1 == terms.len() {
+                format!("{quoted}*")
+            } else {
+                quoted
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ");
+    let scope = state.pdf_scope_prefix()?;
+    let lowered: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
 
+    let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
         .prepare(
-            "SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15) FROM file_search WHERE content MATCH ?1 ORDER BY rank LIMIT 101",
+            "SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15), content
+             FROM file_search WHERE file_search MATCH ?1
+             ORDER BY bm25(file_search, 10.0, 1.0) LIMIT ?2",
         )
         .map_err(|e| e.to_string())?;
-
     let rows = stmt
-        .query_map(rusqlite::params![&fts_query], |row| {
-            Ok(SearchResult {
-                path: row.get(0)?,
-                line: 1,
-                context: row.get(1)?,
-            })
-        })
+        .query_map(
+            rusqlite::params![&fts_query, (SEARCH_LIMIT + 1) as i64],
+            |row| {
+                let path: String = row.get(0)?;
+                let content: String = row.get(2)?;
+                let line = if is_markdown_path(Path::new(&path)) {
+                    first_match_line(&content, &lowered)
+                } else {
+                    0
+                };
+                Ok(SearchResult {
+                    path,
+                    line,
+                    context: row.get(1)?,
+                })
+            },
+        )
         .map_err(|e| e.to_string())?;
 
     let mut results = Vec::new();
@@ -34,12 +68,73 @@ pub fn search_vault(state: &AppState, query: &str) -> VaultResult<crate::types::
             Err(e) => log::warn!("Skipping malformed file_search row: {e}"),
         }
     }
-    let truncated = results.len() > 100;
-    results.truncate(100);
+    drop(stmt);
+    if let Some(scope) = scope {
+        results.extend(search_pdf_notes(&db, &scope, &lowered)?);
+    }
+    let truncated = results.len() > SEARCH_LIMIT;
+    results.truncate(SEARCH_LIMIT);
     Ok(crate::types::SearchResults {
         items: results,
         truncated,
     })
+}
+
+/// 1-based line of the first occurrence of the first term, or 1.
+fn first_match_line(content: &str, terms: &[String]) -> usize {
+    let lower = content.to_lowercase();
+    terms
+        .first()
+        .and_then(|term| lower.find(term.as_str()))
+        .map_or(1, |at| lower[..at].matches('\n').count() + 1)
+}
+
+/// PDF quick notes in this vault containing every term.
+fn search_pdf_notes(
+    db: &rusqlite::Connection,
+    scope: &str,
+    terms: &[String],
+) -> VaultResult<Vec<SearchResult>> {
+    let mut stmt = db
+        .prepare(
+            "SELECT d.vault_relative_path, a.page_index, a.note
+             FROM pdf_annotations a JOIN pdf_documents d ON d.document_id = a.document_id
+             WHERE substr(a.document_id, 1, length(?1)) = ?1
+               AND a.note IS NOT NULL AND a.note != ''
+             ORDER BY d.vault_relative_path, a.page_index",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![scope], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut hits = Vec::new();
+    for (path, page, note) in rows.flatten() {
+        let lower = note.to_lowercase();
+        if terms.iter().all(|term| lower.contains(term.as_str())) {
+            hits.push(SearchResult {
+                path: path.replace('\\', "/"),
+                line: (page.max(0) + 1) as usize,
+                context: format!("Note, page {}: {}", page.max(0) + 1, note_excerpt(&note)),
+            });
+        }
+    }
+    Ok(hits)
+}
+
+fn note_excerpt(note: &str) -> String {
+    const MAX: usize = 120;
+    let flat = note.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= MAX {
+        flat
+    } else {
+        format!("{}...", flat.chars().take(MAX).collect::<String>())
+    }
 }
 
 /// Get backlinks for a file.

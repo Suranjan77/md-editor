@@ -11,7 +11,7 @@ use iced::{Point, mouse};
 use super::measure::{measure_width, span_font};
 use super::metrics::*;
 use super::spans::math_source;
-use super::{Editor, MATH_BLOCK_SCALE, Measure, State};
+use super::{Editor, Measure, State};
 use crate::editor::highlight::StyledLine;
 use crate::editor::renderer::measure::mono_font;
 use crate::editor::renderer::metrics::scaled;
@@ -192,7 +192,10 @@ impl<Message> Editor<'_, Message> {
                 .find(|tex| !tex.is_empty())?;
             Some(ScrollExtent {
                 viewport_w: math_viewport_width(available_width),
-                content_w: math_block_width::<R>(self.math_cache.get(tex).map(|m| m.width), tex),
+                content_w: math_block_width::<R>(
+                    self.math_cache.get(tex).map(|m| m.block_width),
+                    tex,
+                ),
             })
         } else {
             None
@@ -301,7 +304,7 @@ impl<Message> Editor<'_, Message> {
 /// while it hasn't rendered.
 pub(super) fn math_block_width<R: Measure>(rendered_width: Option<f32>, tex: &str) -> f32 {
     match rendered_width {
-        Some(width) => width * MATH_BLOCK_SCALE,
+        Some(width) => width,
         None => tex
             .lines()
             .map(|line| measure_width::<R>(line, math_source_font_size(), mono_font()))

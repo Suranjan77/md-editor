@@ -5,10 +5,28 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+mod code_spans;
+
+pub(crate) use code_spans::{code_ranges, in_code};
+
 /// `[[target]]` / `[[target|alias]]` wikilink matcher. Compiled once and
 /// reused — `update_file` runs this for every file during indexing.
 static WIKILINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").expect("valid regex"));
+
+/// Wikilinks in `content` outside code (fenced blocks and inline code spans),
+/// so `[[nodiscard]]` in C++ or `[[ -f x ]]` in a shell snippet is not a link.
+fn wikilinks(content: &str) -> impl Iterator<Item = regex::Captures<'_>> {
+    let code = code_spans::code_ranges(content);
+    WIKILINK_RE
+        .captures_iter(content)
+        .filter(move |cap| !code_spans::in_code(&code, cap.get(0).map_or(0, |m| m.start())))
+}
+
+/// Byte ranges of every `[[...]]` in `content`, code included.
+pub(crate) fn wikilink_ranges(content: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    WIKILINK_RE.find_iter(content).map(|m| m.range())
+}
 
 /// In-memory graph of wikilink references between files.
 #[derive(Debug)]
@@ -24,6 +42,10 @@ pub struct FileIndex {
     /// the navigator does (basename match, shortest path wins), so backlinks
     /// agree with where clicking the link actually navigates.
     names: HashMap<String, BTreeSet<PathBuf>>,
+    /// file path → the wikilink targets written in it, as written. Kept so a
+    /// file appearing or disappearing can re-resolve exactly the links that
+    /// name it, without re-reading their files.
+    links: HashMap<PathBuf, Vec<String>>,
 }
 
 impl FileIndex {
@@ -33,6 +55,7 @@ impl FileIndex {
             incoming: HashMap::new(),
             vault_root,
             names: HashMap::new(),
+            links: HashMap::new(),
         }
     }
 
@@ -44,18 +67,13 @@ impl FileIndex {
         self.outgoing.clear();
         self.incoming.clear();
         self.names.clear();
+        self.links.clear();
         for (path, _) in files {
             self.add_name(path);
         }
         for (path, content) in files {
-            let targets = self.extract_targets(content, path);
-            for target in &targets {
-                self.incoming
-                    .entry(target.clone())
-                    .or_default()
-                    .insert(path.clone());
-            }
-            self.outgoing.insert(path.clone(), targets);
+            self.links.insert(path.clone(), raw_targets(content));
+            self.resolve_outgoing(path);
         }
     }
 
@@ -64,53 +82,81 @@ impl FileIndex {
     /// prefer [`FileIndex::rebuild`], which resolves bare links against the
     /// complete file set.
     pub fn update_file(&mut self, file_path: &Path, content: &str) {
-        if let Some(old_targets) = self.outgoing.remove(file_path) {
+        let is_new = self.add_name(file_path);
+        self.links
+            .insert(file_path.to_path_buf(), raw_targets(content));
+        self.resolve_outgoing(file_path);
+        if is_new {
+            // A new name can claim links that dangled, or that resolved by
+            // basename to a longer path, anywhere in the vault.
+            self.rebind(file_path);
+        }
+    }
+
+    /// Remove a file from the index entirely. Links to it from other files
+    /// are re-resolved: to another file with its name, or left dangling.
+    pub fn remove_file(&mut self, file_path: &Path) {
+        self.clear_outgoing(file_path);
+        self.links.remove(file_path);
+        self.incoming.remove(file_path);
+        if self.remove_name(file_path) {
+            self.rebind(file_path);
+        }
+    }
+
+    /// Drop `source`'s outgoing edges and their `incoming` mirror.
+    fn clear_outgoing(&mut self, source: &Path) {
+        if let Some(old_targets) = self.outgoing.remove(source) {
             for target in &old_targets {
                 if let Some(incoming_set) = self.incoming.get_mut(target) {
-                    incoming_set.remove(file_path);
+                    incoming_set.remove(source);
+                    if incoming_set.is_empty() {
+                        self.incoming.remove(target);
+                    }
                 }
             }
         }
+    }
 
-        self.add_name(file_path);
-        let target_set = self.extract_targets(content, file_path);
-
-        for target in &target_set {
+    /// (Re)compute `source`'s outgoing edges from its recorded link targets.
+    fn resolve_outgoing(&mut self, source: &Path) {
+        self.clear_outgoing(source);
+        let targets: HashSet<PathBuf> = self
+            .links
+            .get(source)
+            .into_iter()
+            .flatten()
+            .filter_map(|target| self.resolve_link(target, source))
+            .collect();
+        for target in &targets {
             self.incoming
                 .entry(target.clone())
                 .or_default()
-                .insert(file_path.to_path_buf());
+                .insert(source.to_path_buf());
         }
-
-        self.outgoing.insert(file_path.to_path_buf(), target_set);
+        self.outgoing.insert(source.to_path_buf(), targets);
     }
 
-    /// Remove a file from the index entirely.
-    pub fn remove_file(&mut self, file_path: &Path) {
-        if let Some(old_targets) = self.outgoing.remove(file_path) {
-            for target in &old_targets {
-                if let Some(incoming_set) = self.incoming.get_mut(target) {
-                    incoming_set.remove(file_path);
-                }
-            }
+    /// Re-resolve every file with a link whose basename is `changed`'s.
+    fn rebind(&mut self, changed: &Path) {
+        let Some(stem) = stem_lower(changed) else {
+            return;
+        };
+        let sources: Vec<PathBuf> = self
+            .links
+            .iter()
+            .filter(|(source, targets)| {
+                targets.iter().any(|target| {
+                    resolve_wikilink_target(target, &self.vault_root, source)
+                        .and_then(|candidate| stem_lower(&candidate))
+                        .is_some_and(|s| s == stem)
+                })
+            })
+            .map(|(source, _)| source.clone())
+            .collect();
+        for source in sources {
+            self.resolve_outgoing(&source);
         }
-        self.incoming.remove(file_path);
-        self.remove_name(file_path);
-    }
-
-    /// Resolve every wikilink in `content` to the file it actually points at,
-    /// using path-based resolution first and falling back to basename matching
-    /// across subfolders (mirroring the navigator).
-    fn extract_targets(&self, content: &str, file_path: &Path) -> HashSet<PathBuf> {
-        let mut set = HashSet::new();
-        for cap in WIKILINK_RE.captures_iter(content) {
-            if let Some(target) = cap.get(1)
-                && let Some(resolved) = self.resolve_link(target.as_str(), file_path)
-            {
-                set.insert(resolved);
-            }
-        }
-        set
     }
 
     /// Resolve a single wikilink target to the file it points at.
@@ -122,7 +168,7 @@ impl FileIndex {
     /// a forward reference during incremental indexing, or a dangling link —
     /// the path-based candidate is kept so the link still records a backlink
     /// that a later-created file at that location inherits.
-    fn resolve_link(&self, target: &str, file_path: &Path) -> Option<PathBuf> {
+    pub(crate) fn resolve_link(&self, target: &str, file_path: &Path) -> Option<PathBuf> {
         let candidate = resolve_wikilink_target(target, &self.vault_root, file_path)?;
         let Some(stem) = candidate
             .file_stem()
@@ -130,9 +176,21 @@ impl FileIndex {
         else {
             return Some(candidate);
         };
+        let (path_part, _) = target.trim().split_once('#').unwrap_or((target.trim(), ""));
+        let qualified = path_part.contains('/') || path_part.starts_with('.');
         match self.names.get(&stem) {
             // Exact path is a known file — use it directly.
             Some(known) if known.contains(&candidate) => Some(candidate),
+            // `[[sub/Name]]` names a place: only `sub/Name.markdown` may stand
+            // in for `sub/Name.md`, never a same-named file elsewhere.
+            Some(known) if qualified => {
+                let twin = candidate.with_extension("markdown");
+                Some(if known.contains(&twin) {
+                    twin
+                } else {
+                    candidate
+                })
+            }
             // Basename match: shortest path wins (BTreeSet iterates in path
             // order, giving a deterministic tie-break).
             Some(known) => known.iter().min_by_key(|p| p.as_os_str().len()).cloned(),
@@ -141,24 +199,29 @@ impl FileIndex {
         }
     }
 
-    fn add_name(&mut self, path: &Path) {
-        if let Some(stem) = stem_lower(path) {
+    /// Register `path` by name; whether it was not known before.
+    fn add_name(&mut self, path: &Path) -> bool {
+        stem_lower(path).is_some_and(|stem| {
             self.names
                 .entry(stem)
                 .or_default()
-                .insert(path.to_path_buf());
-        }
+                .insert(path.to_path_buf())
+        })
     }
 
-    fn remove_name(&mut self, path: &Path) {
-        if let Some(stem) = stem_lower(path)
-            && let Some(set) = self.names.get_mut(&stem)
-        {
-            set.remove(path);
-            if set.is_empty() {
-                self.names.remove(&stem);
-            }
+    /// Forget `path`'s name; whether it was known.
+    fn remove_name(&mut self, path: &Path) -> bool {
+        let Some(stem) = stem_lower(path) else {
+            return false;
+        };
+        let Some(set) = self.names.get_mut(&stem) else {
+            return false;
+        };
+        let removed = set.remove(path);
+        if set.is_empty() {
+            self.names.remove(&stem);
         }
+        removed
     }
 
     /// Get all files that link to the given file (backlinks).
@@ -178,6 +241,13 @@ impl FileIndex {
     }
 }
 
+/// The wikilink targets in `content` (outside code), as written.
+fn raw_targets(content: &str) -> Vec<String> {
+    wikilinks(content)
+        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
 /// Lowercased file stem (filename without extension), used as the basename key
 /// for bare-link resolution.
 fn stem_lower(path: &Path) -> Option<String> {
@@ -187,7 +257,7 @@ fn stem_lower(path: &Path) -> Option<String> {
 #[cfg(test)]
 fn extract_wikilinks(content: &str, vault_root: &Path, file_path: &Path) -> Vec<PathBuf> {
     let mut links = Vec::new();
-    for cap in WIKILINK_RE.captures_iter(content) {
+    for cap in wikilinks(content) {
         if let Some(target) = cap.get(1)
             && let Some(resolved) = resolve_wikilink_target(target.as_str(), vault_root, file_path)
         {
@@ -248,6 +318,10 @@ pub fn resolve_wikilink_target(
         }
     }
     let mut normalized: PathBuf = components.into_iter().collect();
+    // `..` that climbs out of the vault points at nothing in it.
+    if !normalized.starts_with(vault_root) {
+        return None;
+    }
     if !crate::vault::is_supported_vault_path(&normalized) {
         let mut name = normalized.into_os_string();
         name.push(".md");
@@ -298,9 +372,13 @@ fn rewrite_links_resolved(
     resolve: impl Fn(&str) -> Option<PathBuf>,
 ) -> Option<String> {
     let mut changed = false;
+    let code = code_spans::code_ranges(content);
     let result = WIKILINK_RE.replace_all(content, |caps: &regex::Captures| {
         let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("");
         let target = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        if code_spans::in_code(&code, caps.get(0).map_or(0, |m| m.start())) {
+            return whole.to_string();
+        }
         match resolve(target) {
             Some(resolved)
                 if resolved == *old_abs
@@ -446,5 +524,72 @@ mod tests {
             resolve_wikilink_target("paper.pdf", &root, &source),
             Some(root.join("paper.pdf"))
         );
+    }
+
+    #[test]
+    fn wikilinks_inside_code_are_neither_indexed_nor_rewritten() {
+        let root = PathBuf::from("/vault");
+        let file = root.join("note.md");
+        let content =
+            "Real [[likely]].\n\n```cpp\n[[likely]] if (x) {}\n```\n\nInline `[[likely]]` too.\n";
+        assert_eq!(extract_wikilinks(content, &root, &file).len(), 1);
+
+        let updated =
+            rewrite_links_to(content, &root, &file, &root.join("likely.md"), "probable").unwrap();
+        assert_eq!(
+            updated,
+            "Real [[probable]].\n\n```cpp\n[[likely]] if (x) {}\n```\n\nInline `[[likely]]` too.\n"
+        );
+    }
+
+    #[test]
+    fn path_qualified_links_do_not_fall_back_to_a_same_named_file_elsewhere() {
+        let root = PathBuf::from("/vault");
+        let mut index = FileIndex::new(root.clone());
+        index.rebuild(&[
+            (root.join("notes/topic.md"), String::new()),
+            (root.join("a.md"), "[[archive/topic]] [[topic]]".to_string()),
+        ]);
+        let mut out = index.get_outgoing_links(&root.join("a.md"));
+        out.sort();
+        assert_eq!(
+            out,
+            vec![root.join("archive/topic.md"), root.join("notes/topic.md")]
+        );
+    }
+
+    #[test]
+    fn dotdot_out_of_the_vault_resolves_to_nothing() {
+        let root = PathBuf::from("/vault");
+        let note = root.join("sub/a.md");
+        assert_eq!(
+            resolve_wikilink_target("../../etc/passwd", &root, &note),
+            None
+        );
+        assert_eq!(
+            resolve_wikilink_target("../b", &root, &note),
+            Some(root.join("b.md"))
+        );
+    }
+
+    #[test]
+    fn creating_and_deleting_a_note_rebinds_links_that_name_it() {
+        let root = PathBuf::from("/vault");
+        let mut index = FileIndex::new(root.clone());
+        let a = root.join("a.md");
+        index.update_file(&a, "See [[Topic]].");
+        assert_eq!(index.get_outgoing_links(&a), vec![root.join("Topic.md")]);
+
+        // `sub/Topic.md` appears later: the dangling link now finds it.
+        let topic = root.join("sub/Topic.md");
+        index.update_file(&topic, "");
+        assert_eq!(index.get_outgoing_links(&a), vec![topic.clone()]);
+        assert_eq!(index.get_backlinks(&topic), vec![a.clone()]);
+        assert!(index.get_backlinks(&root.join("Topic.md")).is_empty());
+
+        // Deleting it leaves the link dangling again, not pointing at a ghost.
+        index.remove_file(&topic);
+        assert_eq!(index.get_outgoing_links(&a), vec![root.join("Topic.md")]);
+        assert!(index.get_backlinks(&topic).is_empty());
     }
 }

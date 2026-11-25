@@ -20,12 +20,7 @@ fn layout_revision_names_the_lines_and_resources_laid_out() {
     let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0; 4]);
     pane.math_cache.insert(
         "x".into(),
-        crate::editor::renderer::MathRender {
-            inline_handle: handle.clone(),
-            block_handle: handle.clone(),
-            width: 10.0,
-            height: 10.0,
-        },
+        crate::editor::renderer::MathRender::uniform(handle.clone(), handle.clone(), 10.0, 10.0),
     );
     let with_math = pane.layout_revision();
     assert_ne!(with_math, initial, "an equation arrived");
@@ -180,4 +175,22 @@ fn image_link_paths_unwrap_angle_brackets_and_decode() {
         "attachments/Pasted image 1.png"
     );
     assert_eq!(image_link_path("my%20pic.png"), "my pic.png");
+}
+
+/// BUG-13: `$…$` renders in text style (limits beside the sum, small
+/// fractions), `$$…$$` in display style.
+#[test]
+fn inline_math_uses_text_style_and_block_math_display_style() {
+    let render = render_latex_task(
+        r"\sum_{i=1}^n \frac{a}{b}",
+        1.0,
+        crate::design::tokens().doc_math,
+    )
+    .expect("renders");
+    let block_unscaled = render.block_height / crate::editor::renderer::MATH_BLOCK_SCALE;
+    assert!(
+        render.height < block_unscaled * 0.8,
+        "inline {} vs display {block_unscaled}",
+        render.height
+    );
 }

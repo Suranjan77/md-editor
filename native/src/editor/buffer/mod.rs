@@ -10,6 +10,7 @@ mod format;
 mod lists;
 mod movement;
 mod undo;
+mod words;
 
 #[cfg(test)]
 mod tests;
@@ -78,6 +79,12 @@ pub enum Movement {
     Down,
     Home,
     End,
+    /// Ctrl+Left / Ctrl+Right.
+    WordLeft,
+    WordRight,
+    /// Ctrl+Home / Ctrl+End.
+    DocStart,
+    DocEnd,
 }
 
 /// Which side of a row break the caret is on. Where a wrapped line breaks,
@@ -133,6 +140,21 @@ pub enum EditorCommand {
     TypePaired(char),
     Undo,
     Redo,
+    /// Ctrl+Backspace / Ctrl+Delete: delete to the word boundary (or the selection).
+    DeleteWordBackward,
+    DeleteWordForward,
+    /// Tab over a multi-line selection / Shift+Tab: one indent level per line.
+    IndentLines,
+    OutdentLines,
+    /// Double-click: select the word at this position.
+    SelectWord {
+        line: usize,
+        col: usize,
+    },
+    /// Triple-click: select this whole line.
+    SelectLine {
+        line: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -176,6 +198,9 @@ pub struct DocBuffer {
     pub(super) saved_revision: u64,
     pub(super) next_revision: u64,
     pub(super) eol: &'static str,
+    /// `(revision, words)` from the last [`Self::word_count`]: the status bar
+    /// asks every frame, and a revision names one text.
+    word_count_cache: std::cell::Cell<Option<(u64, usize)>>,
 }
 
 impl Default for DocBuffer {
@@ -207,6 +232,7 @@ impl DocBuffer {
             saved_revision: 0,
             next_revision: 1,
             eol: dominant_eol(text),
+            word_count_cache: std::cell::Cell::new(None),
         };
         buffer.sync_public_state();
         buffer
@@ -216,12 +242,26 @@ impl DocBuffer {
         self.rope.to_string()
     }
 
-    /// Approximate word count of the buffer, used by the status bar.
+    /// Whitespace-separated words in the buffer, for the status bar. Counted
+    /// across the rope's chunks (a word split between two chunks is one
+    /// word), and cached per revision.
     pub fn word_count(&self) -> usize {
-        self.rope
-            .chunks()
-            .map(|chunk| chunk.split_whitespace().count())
-            .sum()
+        if let Some((revision, words)) = self.word_count_cache.get()
+            && revision == self.revision
+        {
+            return words;
+        }
+        let mut words = 0;
+        let mut in_word = false;
+        for c in self.rope.chunks().flat_map(str::chars) {
+            let space = c.is_whitespace();
+            if !space && !in_word {
+                words += 1;
+            }
+            in_word = !space;
+        }
+        self.word_count_cache.set(Some((self.revision, words)));
+        words
     }
 
     /// Replace the whole document, discarding undo history.
@@ -335,6 +375,18 @@ impl DocBuffer {
                 } else {
                     CommandResult::default()
                 }
+            }
+            EditorCommand::DeleteWordBackward => self.delete_word(false),
+            EditorCommand::DeleteWordForward => self.delete_word(true),
+            EditorCommand::IndentLines => self.indent_lines(),
+            EditorCommand::OutdentLines => self.outdent_lines(),
+            EditorCommand::SelectWord { line, col } => {
+                self.select_word_at(line, col);
+                CommandResult::default()
+            }
+            EditorCommand::SelectLine { line } => {
+                self.select_line(line);
+                CommandResult::default()
             }
         }
     }

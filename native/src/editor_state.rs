@@ -60,6 +60,10 @@ pub struct EditorPane {
     pub reveal_request: u64,
     /// The request not yet answered, and how it wants the caret shown.
     reveal_pending: Option<(u64, crate::editor::renderer::Reveal)>,
+    /// Where the caret was last reported, for anchoring the completion popup.
+    pub caret_view: Option<crate::editor::renderer::CaretView>,
+    /// The open `[[` / `/` completion, if any.
+    pub completion: Option<crate::autocomplete::Completion>,
 
     pub image_cache: HashMap<String, (Handle, f32, f32)>,
     pub math_cache: HashMap<String, crate::editor::renderer::MathRender>,
@@ -99,6 +103,8 @@ impl EditorPane {
             viewport_height: 720.0,
             reveal_request: 0,
             reveal_pending: None,
+            caret_view: None,
+            completion: None,
             image_cache: HashMap::new(),
             math_cache: HashMap::new(),
             math_scale_factor: 1.0,
@@ -190,6 +196,13 @@ impl EditorPane {
         self.retained.remove(path)
     }
 
+    /// Apply `edit` to the parked buffer for `path`, if there is one.
+    pub fn update_retained(&mut self, path: &str, edit: impl FnOnce(&mut DocBuffer)) {
+        if let Some((buffer, _)) = self.retained.get_mut(path) {
+            edit(buffer);
+        }
+    }
+
     /// Drop the parked buffer for `path`, and for anything under it when
     /// `path` is a folder. Used when an entry is deleted or renamed so stale
     /// history cannot be resurrected under a new file.
@@ -271,11 +284,8 @@ impl EditorPane {
                     && !self.image_cache.contains_key(path)
                 {
                     let img_path = base_path.join(image_link_path(path));
-                    if let Ok(img) = image::open(&img_path) {
-                        let (width, height) = img.dimensions();
-                        let handle = Handle::from_rgba(width, height, img.into_rgba8().into_raw());
-                        self.image_cache
-                            .insert(path.clone(), (handle, width as f32, height as f32));
+                    if let Ok(decoded) = crate::raster::decode(&img_path) {
+                        self.image_cache.insert(path.clone(), decoded.handle());
                     }
                 }
             }
@@ -344,55 +354,61 @@ pub(crate) fn render_latex_task(
     // pixels) means both draw 1:1 on the device grid — resampling at a
     // fractional ratio renders thin glyph strokes alternately crisp and
     // blurry.
-    let render_at = |device_pixel_ratio: f32| -> Result<(Handle, f32, f32), String> {
-        let options = RenderOptions {
-            font_size: 24.0,
-            padding: 4.0,
-            background_color: RatexColor {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 0.0,
-            },
-            font_dir: String::new(),
-            device_pixel_ratio,
+    let render_at =
+        |device_pixel_ratio: f32, style: MathStyle| -> Result<(Handle, f32, f32), String> {
+            let options = RenderOptions {
+                font_size: 24.0,
+                padding: 4.0,
+                background_color: RatexColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 0.0,
+                },
+                font_dir: String::new(),
+                device_pixel_ratio,
+            };
+
+            let layout_opts = LayoutOptions::default()
+                .with_style(style)
+                .with_color(RatexColor {
+                    r: ink.r,
+                    g: ink.g,
+                    b: ink.b,
+                    a: 1.0,
+                });
+
+            let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
+            let lbox = layout(&ast, &layout_opts);
+            let display_list = to_display_list(&lbox);
+            let bytes = render_to_png(&display_list, &options)
+                .map_err(|e| format!("Render error: {:?}", e))?;
+
+            let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+            let (w, h) = img.dimensions();
+            // Logical size = bitmap pixels / raster DPR; layout works in logical
+            // units, so this is DPR-invariant.
+            Ok((
+                Handle::from_bytes(bytes),
+                w as f32 / device_pixel_ratio,
+                h as f32 / device_pixel_ratio,
+            ))
         };
 
-        let layout_opts = LayoutOptions::default()
-            .with_style(MathStyle::Display)
-            .with_color(RatexColor {
-                r: ink.r,
-                g: ink.g,
-                b: ink.b,
-                a: 1.0,
-            });
-
-        let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
-        let lbox = layout(&ast, &layout_opts);
-        let display_list = to_display_list(&lbox);
-        let bytes =
-            render_to_png(&display_list, &options).map_err(|e| format!("Render error: {:?}", e))?;
-
-        let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-        let (w, h) = img.dimensions();
-        // Logical size = bitmap pixels / raster DPR; layout works in logical
-        // units, so this is DPR-invariant.
-        Ok((
-            Handle::from_bytes(bytes),
-            w as f32 / device_pixel_ratio,
-            h as f32 / device_pixel_ratio,
-        ))
-    };
-
     let scale = scale_factor.clamp(1.0, 6.0);
-    let (inline_handle, width, height) = render_at(scale)?;
-    let (block_handle, _, _) =
-        render_at((crate::editor::renderer::MATH_BLOCK_SCALE * scale).min(6.0))?;
+    let block_scale = crate::editor::renderer::MATH_BLOCK_SCALE;
+    // `$…$` in a line takes text style (smaller limits and fractions), as in
+    // LaTeX; `$$…$$` display style.
+    let (inline_handle, width, height) = render_at(scale, MathStyle::Text)?;
+    let (block_handle, block_w, block_h) =
+        render_at((block_scale * scale).min(6.0), MathStyle::Display)?;
     Ok(crate::editor::renderer::MathRender {
         inline_handle,
         block_handle,
         width,
         height,
+        block_width: block_w * block_scale,
+        block_height: block_h * block_scale,
     })
 }
 

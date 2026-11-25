@@ -24,7 +24,6 @@ pub enum Icon {
     LayoutPanelLeft,
     PanelRight,
     ListTree,
-    Presentation,
     Link,
     Network,
     Pen,
@@ -114,7 +113,6 @@ impl Icon {
             Self::LayoutPanelLeft => include_bytes!("../../assets/icons/sidebar.svg"),
             Self::PanelRight => include_bytes!("../../assets/icons/panel-right.svg"),
             Self::ListTree => include_bytes!("../../assets/icons/list-tree.svg"),
-            Self::Presentation => include_bytes!("../../assets/icons/presentation.svg"),
             Self::Link => include_bytes!("../../assets/icons/link.svg"),
             Self::Network => include_bytes!("../../assets/icons/network.svg"),
             Self::Pen => include_bytes!("../../assets/icons/pen.svg"),
@@ -181,8 +179,6 @@ impl Icon {
         let lower = path.to_ascii_lowercase();
         if lower.ends_with(".pdf") {
             Self::FilePdf
-        } else if lower.ends_with(".pptx") {
-            Self::Presentation
         } else if lower.ends_with(".ink") {
             Self::Pen
         } else if lower.ends_with(".png")
@@ -192,7 +188,6 @@ impl Icon {
             || lower.ends_with(".bmp")
             || lower.ends_with(".webp")
             || lower.ends_with(".svg")
-            || lower.ends_with(".avif")
         {
             Self::Image
         } else if lower.ends_with(".md") || lower.ends_with(".markdown") {

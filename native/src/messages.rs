@@ -170,6 +170,8 @@ pub enum GraphMessage {
         pan_x: f32,
         pan_y: f32,
         zoom: f32,
+        /// When this is a fit: the fit revision and canvas size it frames.
+        fitted: Option<(u64, f32, f32)>,
     },
     /// Node currently under the cursor, or `None` when the cursor leaves all nodes.
     Hovered(Option<String>),
@@ -184,7 +186,7 @@ pub enum ContextMenuTarget {
     Editor,
 }
 
-/// Shell chrome: command palette, toasts, split view, resize handles, context menus, drag-and-drop, windows, study tracker and presentations.
+/// Shell chrome: command palette, toasts, split view, resize handles, context menus, drag-and-drop, windows, study tracker and image zoom.
 #[derive(Debug, Clone)]
 pub enum ShellMessage {
     CommandPaletteOpen,
@@ -193,26 +195,6 @@ pub enum ShellMessage {
     /// A vault file picked from the palette's search results.
     CommandPaletteFileClicked(String),
     OverlaySubmitCurrent,
-    /// Load generation, then the prepared deck or why it could not be read.
-    PptxLoaded(
-        u64,
-        Result<std::sync::Arc<crate::slides::LoadedDeck>, String>,
-    ),
-    PptxScrolled {
-        x: f32,
-        y: f32,
-        viewport_height: f32,
-    },
-    PptxZoomIn,
-    PptxZoomOut,
-    PptxZoomFit,
-    // Handled; the deck viewer's slide-number field is not built yet (UI overhaul §3).
-    #[allow(dead_code)]
-    PptxSlideInputChanged(String),
-    #[allow(dead_code)]
-    PptxSlideInputSubmit,
-    /// Move this many slides; negative moves back.
-    PptxStep(i32),
     ImageZoomIn,
     ImageZoomOut,
     ImageZoomFit,
@@ -249,17 +231,19 @@ pub enum ShellMessage {
     OpenContextMenu(ContextMenuTarget, f32, f32),
     CloseContextMenu,
     CursorMoved(f32, f32),
-    FileHovered(std::path::PathBuf),
+    /// A file dragged over, and dropped on, the given window.
+    FileHovered(iced::window::Id, std::path::PathBuf),
     FilesHoveredLeft,
-    FileDropped(std::path::PathBuf),
+    FileDropped(iced::window::Id, std::path::PathBuf),
     FocusRegionNext,
     FocusRegionPrev,
     WindowResized(iced::window::Id, f32, f32),
     WindowOpened(iced::window::Id),
     WindowClosed(iced::window::Id),
     WindowRescaled(iced::window::Id, f32),
-    /// The window manager asked to close; flush unsaved work, then exit.
-    WindowCloseRequested,
+    /// The window manager asked to close this window: for the main window,
+    /// flush unsaved work before it exits; for the ink window, its page.
+    WindowCloseRequested(iced::window::Id),
 }
 
 /// The Markdown editor, autosave, math rendering, image insertion and the outline. Handled by `app/editor.rs`.
@@ -302,6 +286,14 @@ pub enum EditorMessage {
     ),
     ToggleTOC,
     TocClicked(usize),
+    /// Move the completion popup's selection by this many rows.
+    CompletionMove(isize),
+    /// Insert the selected completion (`Enter` / `Tab`).
+    CompletionAccept,
+    /// Insert this completion (clicked).
+    CompletionPick(usize),
+    /// Close the completion popup (`Escape`).
+    CompletionClose,
 }
 
 /// The PDF viewer and its study tools. Handled by `app/pdf.rs`.

@@ -114,7 +114,17 @@ fn apply_graph_view(graph: &mut GraphState, message: GraphMessage) {
         GraphMessage::PhysicsTick => {
             graph.physics_tick();
         }
-        GraphMessage::SetView { pan_x, pan_y, zoom } => graph.set_view(pan_x, pan_y, zoom),
+        GraphMessage::SetView {
+            pan_x,
+            pan_y,
+            zoom,
+            fitted,
+        } => {
+            graph.set_view(pan_x, pan_y, zoom);
+            if fitted.is_some() {
+                graph.fitted = fitted;
+            }
+        }
         GraphMessage::Hovered(path) => graph.set_hovered(path),
         // Handled by `update_graph`; listed so a new variant must be routed.
         GraphMessage::Toggle

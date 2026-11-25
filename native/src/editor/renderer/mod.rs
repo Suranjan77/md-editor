@@ -59,18 +59,41 @@ pub const MATH_BLOCK_SCALE: f32 = 1.2;
 /// the main region, or closing find, puts the keyboard back in the note.
 pub const EDITOR_ID: &str = "md_editor_note";
 
-/// A rendered equation. Two bitmaps are rasterized per TeX string — one at
-/// inline display scale and one at block display scale (`MATH_BLOCK_SCALE`
-/// larger) — so each context draws its bitmap 1:1 on device pixels instead of
-/// resampling one bitmap at a fractional ratio (which blurs thin strokes).
-/// `width`/`height` are the logical layout size shared by both; block layout
-/// multiplies by `MATH_BLOCK_SCALE`.
+/// A rendered equation. Two bitmaps are rasterized per TeX string: inline
+/// (text style, as `$…$` sits in a line) and block (display style, as `$$…$$`
+/// stands alone, `MATH_BLOCK_SCALE` larger). Each is rasterized for the size
+/// it is drawn at, so it lands 1:1 on device pixels instead of being resampled
+/// at a fractional ratio (which blurs thin strokes). `width`/`height` are the
+/// inline layout size; `block_width`/`block_height` the block's, scale included.
 #[derive(Debug, Clone)]
 pub struct MathRender {
     pub inline_handle: iced::widget::image::Handle,
     pub block_handle: iced::widget::image::Handle,
     pub width: f32,
     pub height: f32,
+    pub block_width: f32,
+    pub block_height: f32,
+}
+
+impl MathRender {
+    /// A render whose block form is its inline form scaled by
+    /// `MATH_BLOCK_SCALE` (tests and previews with stand-in bitmaps).
+    #[cfg(test)]
+    pub fn uniform(
+        inline_handle: iced::widget::image::Handle,
+        block_handle: iced::widget::image::Handle,
+        width: f32,
+        height: f32,
+    ) -> Self {
+        Self {
+            inline_handle,
+            block_handle,
+            width,
+            height,
+            block_width: width * MATH_BLOCK_SCALE,
+            block_height: height * MATH_BLOCK_SCALE,
+        }
+    }
 }
 
 /// Decoded images keyed by path: handle plus natural width and height.
@@ -115,6 +138,8 @@ pub struct Editor<'a, Message> {
     /// Names the lines and the resources they show; see
     /// [`Editor::layout_revision`].
     layout_revision: Option<u64>,
+    /// A completion popup is open: its navigation keys belong to the app.
+    completion_open: bool,
 }
 
 /// Everything a layout depends on: while it is unchanged, so is the layout.
@@ -149,6 +174,12 @@ impl widget::operation::Focusable for State {
 /// Widget state persisted across frames in the iced tree.
 #[derive(Default)]
 pub struct State {
+    /// Height of the visible part of the document, for PageUp / PageDown.
+    viewport_height: f32,
+    /// The last press and how many presses in a row landed there (1–3), for
+    /// double-click word and triple-click line selection.
+    last_click: Option<(std::time::Instant, iced::Point)>,
+    click_count: u8,
     /// A left-button drag is extending the pointer selection.
     is_dragging: bool,
     is_focused: bool,
@@ -214,7 +245,15 @@ impl<'a, Message> Editor<'a, Message> {
             reveal_request: 0,
             on_caret_view: None,
             layout_revision: None,
+            completion_open: false,
         }
+    }
+
+    /// While a completion popup is open, leave ↑ ↓ Enter Tab Escape to the
+    /// app, which drives the popup with them.
+    pub fn completion_open(mut self, open: bool) -> Self {
+        self.completion_open = open;
+        self
     }
 
     /// Hand Ctrl+V to the app instead of inserting clipboard text here.
@@ -360,6 +399,7 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State>();
+        state.viewport_height = viewport.height;
         if let Event::Window(iced::window::Event::RedrawRequested(now)) = event {
             self.report_caret::<R>(state, layout.bounds(), *viewport, shell);
             let place = self.caret_place::<R>(state, layout.bounds(), *viewport);

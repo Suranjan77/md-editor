@@ -395,7 +395,7 @@ fn about_section<'a>(vault_root: Option<&'a str>) -> Element<'a, Message, Theme,
                 .size(TextRole::Title.size())
                 .color(t.fg_primary)
                 .font(TextRole::Title.font()),
-            text("Local-first research workspace for Markdown, PDFs, presentations, knowledge graphs and ink.")
+            text("Local-first research workspace for Markdown, PDFs, knowledge graphs and ink.")
                 .size(TextRole::Caption.size())
                 .color(t.fg_secondary)
                 .font(TextRole::Caption.font()),

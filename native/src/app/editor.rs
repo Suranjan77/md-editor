@@ -87,7 +87,14 @@ impl MdEditor {
                 self.editor.viewport_height = viewport_height;
                 Task::none()
             }
-            EditorMessage::CaretView(view) => self.reveal_caret(view),
+            EditorMessage::CaretView(view) => {
+                self.editor.caret_view = Some(view);
+                self.reveal_caret(view)
+            }
+            m @ (EditorMessage::CompletionMove(_)
+            | EditorMessage::CompletionAccept
+            | EditorMessage::CompletionPick(_)
+            | EditorMessage::CompletionClose) => self.update_completion_message(m),
             EditorMessage::ScrollInterrupted => {
                 self.motion.editor_scroll = None;
                 Task::none()
@@ -205,6 +212,7 @@ impl MdEditor {
     ) -> Task<Message> {
         self.active_panel = ActivePanel::Markdown;
         let result = self.editor.buffer.execute(command);
+        self.refresh_completion(result.text_changed);
         if result.text_changed {
             self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
             // Restart the autosave countdown on every edit, so a write happens

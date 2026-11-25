@@ -13,7 +13,6 @@ const MAX_REOPEN_STACK: usize = 10;
 pub enum TabKind {
     Note,
     Pdf,
-    Deck,
     Image,
 }
 
@@ -24,8 +23,6 @@ impl TabKind {
             Some(Self::Note)
         } else if lower.ends_with(".pdf") {
             Some(Self::Pdf)
-        } else if lower.ends_with(".pptx") {
-            Some(Self::Deck)
         } else if lower.ends_with(".png")
             || lower.ends_with(".jpg")
             || lower.ends_with(".jpeg")
@@ -33,7 +30,6 @@ impl TabKind {
             || lower.ends_with(".bmp")
             || lower.ends_with(".webp")
             || lower.ends_with(".svg")
-            || lower.ends_with(".avif")
         {
             Some(Self::Image)
         } else {
@@ -53,12 +49,6 @@ pub enum TabView {
         fit_to_width: bool,
         scroll_y: f32,
     },
-    Deck {
-        zoom: f32,
-        #[serde(default)]
-        scroll_x: f32,
-        scroll_y: f32,
-    },
     Image {
         zoom: f32,
         fit: bool,
@@ -73,11 +63,6 @@ impl TabView {
                 page: 0,
                 zoom: 1.5,
                 fit_to_width: true,
-                scroll_y: 0.0,
-            },
-            TabKind::Deck => Self::Deck {
-                zoom: 1.0,
-                scroll_x: 0.0,
                 scroll_y: 0.0,
             },
             TabKind::Image => Self::Image {
@@ -132,7 +117,15 @@ struct PersistedTabs {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedTab {
     path: String,
-    view: TabView,
+    /// `None` when a saved view no longer parses (e.g. a removed tab kind), so one stale
+    /// entry drops that tab instead of the whole session.
+    #[serde(deserialize_with = "lenient_view")]
+    view: Option<TabView>,
+}
+
+fn lenient_view<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<TabView>, D::Error> {
+    let raw = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value(raw).ok())
 }
 
 #[derive(Debug, Clone)]
@@ -523,7 +516,7 @@ impl Tabs {
                 .iter()
                 .map(|t| PersistedTab {
                     path: t.path.clone(),
-                    view: t.view.clone(),
+                    view: Some(t.view.clone()),
                 })
                 .collect(),
             active_path,
@@ -538,7 +531,7 @@ impl Tabs {
         };
         self.clear();
         for item in persisted.tabs {
-            let Some(kind) = TabKind::from_path(&item.path) else {
+            let (Some(kind), Some(view)) = (TabKind::from_path(&item.path), item.view) else {
                 continue;
             };
             if !exists(&item.path) {
@@ -549,7 +542,7 @@ impl Tabs {
                 id,
                 kind,
                 path: item.path,
-                view: item.view,
+                view,
                 missing: false,
             });
         }

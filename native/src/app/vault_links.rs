@@ -172,9 +172,6 @@ impl MdEditor {
         } else if is_supported_image_path(&lower) {
             self.ui.split_view_active = false;
             self.open_image(resolved_path)
-        } else if lower.ends_with(".pptx") {
-            self.ui.split_view_active = false;
-            self.open_pptx(resolved_path)
         } else if lower.ends_with(".ink") {
             self.open_ink_page(resolved_path)
         } else {

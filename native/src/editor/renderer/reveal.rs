@@ -8,7 +8,7 @@
 use iced::Rectangle;
 use iced::advanced::Shell;
 
-use super::metrics::{body_row, content_bounds};
+use super::metrics::{body_row, content_bounds, text_left};
 use super::{Editor, Measure, State};
 
 /// How the caret should be brought into view.
@@ -28,6 +28,8 @@ pub struct CaretView {
     pub request: u64,
     pub caret_top: f32,
     pub caret_bottom: f32,
+    /// Widget-relative x of the caret (for anchoring popups to it).
+    pub caret_x: f32,
     pub viewport_top: f32,
     pub viewport_height: f32,
     /// Height of the whole widget.
@@ -89,6 +91,7 @@ impl<Message> Editor<'_, Message> {
             request: self.reveal_request,
             caret_top,
             caret_bottom: caret_top + caret.height,
+            caret_x: bounds.x - layout_bounds.x + text_left(bounds.width) + caret.x,
             viewport_top: viewport.y - layout_bounds.y,
             viewport_height: viewport.height,
             height: layout_bounds.height,
@@ -105,6 +108,7 @@ mod tests {
             request: 1,
             caret_top,
             caret_bottom: caret_top + 19.0,
+            caret_x: 0.0,
             viewport_top,
             viewport_height: 600.0,
             height: 5000.0,

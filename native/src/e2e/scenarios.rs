@@ -4,7 +4,7 @@
 
 use super::{Vault, boot};
 
-/// A small but varied vault: linked notes, every block type, a PDF, a deck.
+/// A small but varied vault: linked notes, every block type, a PDF.
 pub(crate) fn research_vault() -> Vault {
     Vault::new("research")
         .file(
@@ -20,7 +20,6 @@ pub(crate) fn research_vault() -> Vault {
             "# Optimizers\n\nAdam keeps moving averages of the gradient ($m_t$) and its square ($v_t$).\n\nSee [[Attention]] and the paper in `papers/`.\n",
         )
         .fixture("papers/dummy.pdf", "pdf/dummy.pdf")
-        .fixture("slides/deck.pptx", "pptx/fixture.pptx")
 }
 
 #[test]
@@ -306,4 +305,171 @@ fn s17_read_only_note() {
     );
     assert!(probe.buffer.contains("edit "));
     assert!(probe.toast.is_some_and(|t| t.contains("read-only")));
+}
+
+fn search(message: crate::messages::SearchMessage) -> Message {
+    Message::Search(message)
+}
+
+/// BUG-05: Replace walks every match in order, never skipping one, and in
+/// regex mode expands capture groups like Replace All.
+#[test]
+fn s6b_replace_one_visits_every_match_and_expands_captures() {
+    use crate::messages::SearchMessage;
+
+    let vault = Vault::new("replace").file("n.md", "x1 x2 x3 x4\n");
+    let mut app = boot("s6b-replace", &vault, Some("n.md"));
+    app.send(search(SearchMessage::QueryChanged("x".to_string())));
+    app.wait(Duration::from_millis(300));
+    app.send(search(SearchMessage::ReplaceChanged("yy".to_string())));
+    for _ in 0..4 {
+        app.send(search(SearchMessage::ReplaceOne));
+    }
+    assert_eq!(app.probe().buffer, "yy1 yy2 yy3 yy4\n");
+
+    // A replacement containing the query moves on past itself.
+    app.send(search(SearchMessage::QueryChanged("y".to_string())));
+    app.wait(Duration::from_millis(300));
+    app.send(search(SearchMessage::ReplaceChanged("yz".to_string())));
+    app.send(search(SearchMessage::ReplaceOne));
+    app.send(search(SearchMessage::ReplaceOne));
+    assert_eq!(app.probe().buffer, "yzyz1 yy2 yy3 yy4\n");
+
+    app.send(search(SearchMessage::RegexToggled(true)));
+    app.send(search(SearchMessage::QueryChanged(r"y+(\d)".to_string())));
+    app.wait(Duration::from_millis(300));
+    app.send(search(SearchMessage::ReplaceChanged("<$1>".to_string())));
+    app.send(search(SearchMessage::ReplaceOne));
+    app.send(search(SearchMessage::ReplaceOne));
+    assert_eq!(app.probe().buffer, "yzyz1 <2> <3> yy4\n");
+    app.finish();
+}
+
+/// BUG-09: a two-letter vault search finds the note, and opening the hit
+/// shows the query in the find bar with the match on its line selected.
+#[test]
+fn s5b_vault_search_hit_opens_at_the_match() {
+    use crate::messages::SearchMessage;
+
+    let vault = Vault::new("search-jump")
+        .file("Index.md", "# Index\n")
+        .file(
+            "notes/ml.md",
+            "# ML notes\n\nintro\n\nmore\n\nWhy ML works.\n",
+        );
+    let mut app = boot("s5b-search-jump", &vault, Some("Index.md"));
+    app.send(search(SearchMessage::GlobalSearchOpen));
+    app.send(search(SearchMessage::QueryChanged("works".to_string())));
+    let mut results = Vec::new();
+    for _ in 0..30 {
+        app.wait(Duration::from_millis(100));
+        app.settle();
+        results = app.probe().search_results;
+        if !results.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(results, ["notes/ml.md"]);
+
+    app.send(search(SearchMessage::ResultClicked(
+        "notes/ml.md".to_string(),
+    )));
+    let probe = app.probe();
+    assert_eq!(probe.active_path.as_deref(), Some("notes/ml.md"));
+    assert!(
+        probe.file_search_visible,
+        "find bar not opened with the query"
+    );
+    assert_eq!(probe.cursor_line, 6, "caret not on the matching line");
+
+    // Two letters are enough to search the vault.
+    app.send(search(SearchMessage::GlobalSearchOpen));
+    app.send(search(SearchMessage::QueryChanged("ML".to_string())));
+    let mut found = false;
+    for _ in 0..30 {
+        app.wait(Duration::from_millis(100));
+        app.settle();
+        if app
+            .probe()
+            .search_results
+            .iter()
+            .any(|p| p == "notes/ml.md")
+        {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "two-letter query found nothing");
+    app.finish();
+}
+
+/// `[[` suggests notes and inserts the chosen link (over an auto-paired
+/// `]]`); `/` at a line start inserts a block; Escape and moving away close.
+#[test]
+fn s3b_inline_completion_for_links_and_blocks() {
+    use crate::editor::buffer::{EditorCommand, Movement};
+    use crate::messages::EditorMessage;
+
+    let vault = research_vault();
+    let mut app = boot("s3b-completion", &vault, Some("Index.md"));
+    app.send(edit(EditorCommand::MoveCursor {
+        movement: Movement::DocEnd,
+        extend: false,
+    }));
+    app.send(insert("\nSee [[opt"));
+    assert_eq!(
+        app.probe().completion.first().map(String::as_str),
+        Some("Optimizers")
+    );
+    app.redraw();
+    app.screenshot("link-popup");
+    app.send(Message::Editor(EditorMessage::CompletionAccept));
+    let probe = app.probe();
+    assert!(
+        probe.buffer.ends_with("See [[Optimizers]]"),
+        "{}",
+        probe.buffer
+    );
+    assert!(probe.completion.is_empty());
+
+    // An auto-paired `]]` after the caret is replaced, not doubled.
+    app.send(insert(" [[]]"));
+    for _ in 0..2 {
+        app.send(edit(EditorCommand::MoveCursor {
+            movement: Movement::Left,
+            extend: false,
+        }));
+    }
+    app.send(insert("Atte"));
+    assert!(!app.probe().completion.is_empty());
+    app.send(Message::Editor(EditorMessage::CompletionAccept));
+    assert!(app.probe().buffer.ends_with("[[Optimizers]] [[Attention]]"));
+
+    // `/` at a line start: blocks, narrowed as you type; Escape closes.
+    app.send(insert("\n/tab"));
+    assert_eq!(
+        app.probe().completion.first().map(String::as_str),
+        Some("Table")
+    );
+    app.redraw();
+    app.screenshot("slash-popup");
+    app.send(Message::Editor(EditorMessage::CompletionClose));
+    assert!(app.probe().completion.is_empty());
+    app.send(insert("l"));
+    assert_eq!(
+        app.probe().completion.first().map(String::as_str),
+        Some("Table")
+    );
+    app.send(Message::Editor(EditorMessage::CompletionAccept));
+    assert!(app.probe().buffer.contains("\n| Column 1 | Column 2 |"));
+
+    // Moving the caret away closes the popup without typing.
+    app.send(insert("\n[[In"));
+    assert!(!app.probe().completion.is_empty());
+    app.send(edit(EditorCommand::MoveCursor {
+        movement: Movement::Home,
+        extend: false,
+    }));
+    assert!(app.probe().completion.is_empty());
+    app.finish();
 }

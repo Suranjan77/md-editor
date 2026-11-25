@@ -26,9 +26,7 @@ pub struct State {
     pub click_count: u8,
 }
 
-/// How far apart, in logical pixels, clicks may land and still count as one
-/// double or triple click.
-const MULTI_CLICK_SLOP: f32 = 4.0;
+use crate::design::metrics::MULTI_CLICK_SLOP;
 
 pub struct InteractivePdf<'a, Message> {
     handle: iced::widget::image::Handle,

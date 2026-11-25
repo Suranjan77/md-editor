@@ -70,7 +70,7 @@ its family:
 | `Message::Tabs(TabsMessage)` — the document tab strip | `update_tabs` | `app/tabs_handler.rs` |
 | `Message::Settings(SettingsMessage)` — the Settings page | `update_settings` | `app/settings_handler.rs` |
 | `Message::KeyboardShortcut(Shortcut)` | `update_shortcuts` | `app/shortcuts.rs` |
-| `Message::Shell(ShellMessage)` — windows, split view, command palette, toasts, study tracker, presentations | `update_shell` | `app/shell.rs` |
+| `Message::Shell(ShellMessage)` — windows, split view, command palette, toasts, study tracker, image zoom | `update_shell` | `app/shell.rs` |
 
 Construct a message as `Message::Pdf(PdfMessage::FitToWidth)`, or `PdfMessage::FitToWidth.into()`
 where the target type is known. Sub-states (`UiState`, `TrackerState`, `PdfPane`, …) still
@@ -110,7 +110,6 @@ classDiagram
         +SearchState search
         +TrackerState tracker
         +PdfPane pdf
-        +PptxPane pptx
         +GraphState graph
         +InkState ink
         +Option~Id~ main_window
@@ -177,14 +176,6 @@ classDiagram
         +Option~PdfSelection~ selection
         +u64 render_generation
     }
-    class PptxPane {
-        +Option~String~ active_path
-        +Option~Arc~LoadedDeck~~ deck
-        +Option~String~ error
-        +u64 generation
-        +f32 zoom
-        +f32 scroll_y
-    }
 
     MdEditor *-- EditorPane
     MdEditor *-- VaultState
@@ -192,7 +183,6 @@ classDiagram
     MdEditor *-- SearchState
     MdEditor *-- TrackerState
     MdEditor *-- PdfPane
-    MdEditor *-- PptxPane
 ```
 
 - **`EditorPane`** (`editor_state.rs`) — the active `DocBuffer`, its `Highlighted` lines
@@ -223,12 +213,6 @@ classDiagram
 - **`InkState`** (`ink/mod.rs`) — the handwriting surface: the open `.ink` document and its
   path, tool and colour settings, the camera, the in-progress stroke, and selection. See
   [Handwritten Notes](Handwritten-Notes.md).
-- **`PptxPane`** (`pptx_pane.rs`) — the open presentation: the prepared `LoadedDeck`, the
-  load `generation` (bumped by every load and by closing, so the result of a slow parse the
-  reader has since left is dropped when it lands), the error to show, zoom as a multiple of
-  fit-to-width, and the scroll position the slide counter and slide stepping are derived
-  from. A reload triggered by the vault watcher keeps the old deck on screen until the new
-  one is ready, and a reload that fails keeps it rather than flashing an error.
 
 ---
 
@@ -293,8 +277,8 @@ pointer.
 - **Command palette** (`command_palette.rs`) — the `Ctrl+P` overlay; commands come from the
   shortcut registry (`shortcuts.rs`) and interleave with vault files, capped at
   `MAX_RESULTS = 40`.
-- **Viewer toolbar** (`viewer_toolbar.rs`) — shared by PDFs, presentations and images:
-  outline, an editable page (or slide) field, zoom steps and an editable zoom field, fit
+- **Viewer toolbar** (`viewer_toolbar.rs`) — shared by PDFs and images:
+  outline, an editable page field, zoom steps and an editable zoom field, fit
   width / fit page, find, plus the view's own tools in the middle.
 - **PDF viewer** (`pdf_viewer.rs`) and **interactive PDF** (`interactive_pdf.rs`) — the
   toolbar (highlight swatches from the content palette when text is selected, the focused
@@ -302,10 +286,6 @@ pointer.
   with page-sized placeholders while pages render; page bitmaps wrapped in a custom `Widget`
   for hit testing and drag selection, and canvas overlays for annotations, focus outlines,
   search matches, the live selection, and reference underlines.
-- **Presentation viewer** (`pptx_viewer.rs`, with `slides/`) — every slide in one scrolling
-  column under its number and title. A deck is parsed and all its text laid out once, off
-  the UI thread (`slides::load_deck`), in points, so zooming and resizing never lay text out
-  again. Each slide is a `stack` of canvases, one per layer from `slides::layer_ranges`.
 - **Knowledge graph** (`graph.rs`, `graph/`, `gpu_graph.rs`) — a GPU canvas for nodes and
   edges with a label overlay, a toolbar of `Segmented` scope and depth, search and filter
   chips, a legend card and viewport controls over the canvas, and an inspector `Panel`. See

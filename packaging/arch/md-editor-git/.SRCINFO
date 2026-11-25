@@ -1,5 +1,5 @@
 pkgbase = md-editor-git
-	pkgdesc = Native, local-first workspace for Markdown notes, PDFs, presentations, a knowledge graph and handwriting
+	pkgdesc = Native, local-first workspace for Markdown notes, PDFs, a knowledge graph and handwriting
 	pkgver = r0
 	pkgrel = 1
 	url = https://github.com/Suranjan77/md-editor

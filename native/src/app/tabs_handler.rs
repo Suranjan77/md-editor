@@ -109,16 +109,6 @@ impl MdEditor {
                 },
             );
         }
-        if let Some(ref deck_path) = self.pptx.active_path {
-            self.tabs.save_view_by_path(
-                deck_path,
-                TabView::Deck {
-                    zoom: self.pptx.zoom,
-                    scroll_x: self.pptx.scroll_x,
-                    scroll_y: self.pptx.scroll_y,
-                },
-            );
-        }
         if let Some(ref img_path) = self.active_image_path {
             self.tabs.save_view_by_path(
                 img_path,
@@ -186,25 +176,6 @@ impl MdEditor {
                 self.persist_tabs();
                 task
             }
-            TabKind::Deck => {
-                let task = self.open_pptx(&target.path);
-                if self.pptx.active_path.as_deref() == Some(target.path.as_str()) {
-                    if let TabView::Deck {
-                        zoom,
-                        scroll_x,
-                        scroll_y,
-                    } = target.view
-                    {
-                        self.pptx.zoom = zoom;
-                        self.pptx.scroll_x = scroll_x;
-                        self.pptx.scroll_y = scroll_y;
-                    }
-                    self.tabs.activate(id);
-                    self.reveal_in_sidebar(&target.path);
-                    self.persist_tabs();
-                }
-                task
-            }
             TabKind::Image => {
                 let task = self.open_image(&target.path);
                 if self.active_image_path.as_deref() == Some(target.path.as_str()) {
@@ -243,7 +214,7 @@ impl MdEditor {
                 self.persist_tabs();
                 Task::batch(vec![task, self.refit_pdf_if_needed()])
             }
-            TabKind::Deck | TabKind::Image => {
+            TabKind::Image => {
                 self.ui.split_view_active = false;
                 self.activate_tab(id)
             }
@@ -291,11 +262,6 @@ impl MdEditor {
                     self.clear_pdf_pane();
                 }
             }
-            TabKind::Deck => {
-                if self.pptx.active_path.as_deref() == Some(&closed.path) {
-                    self.pptx.close();
-                }
-            }
             TabKind::Image => {
                 if self.active_image_path.as_deref() == Some(&closed.path) {
                     self.active_image_path = None;
@@ -335,9 +301,6 @@ impl MdEditor {
             if self.pdf.active_path.as_deref() == Some(&closed.path) {
                 self.clear_pdf_pane();
             }
-            if self.pptx.active_path.as_deref() == Some(&closed.path) {
-                self.pptx.close();
-            }
             if self.active_image_path.as_deref() == Some(&closed.path) {
                 self.active_image_path = None;
                 self.active_image = None;
@@ -375,7 +338,6 @@ impl MdEditor {
             if was_active
                 || (self.active_path.is_none()
                     && self.pdf.active_path.is_none()
-                    && self.pptx.active_path.is_none()
                     && self.active_image_path.is_none())
             {
                 return self.activate_tab(next_id);
@@ -425,7 +387,6 @@ impl MdEditor {
         self.editor.highlight = Default::default();
         self.editor.toc_entries.clear();
         self.clear_pdf_pane();
-        self.pptx.close();
         self.active_image_path = None;
         self.active_image = None;
         self.vault.backlinks.clear();

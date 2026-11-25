@@ -9,12 +9,12 @@ engine, and **`md-editor-native`**, the Iced desktop app. Core never depends on 
 
 ```
 md-editor/
-├── core/                 md-editor-core: vault, index, search, SQLite, PDF and PPTX readers
+├── core/                 md-editor-core: vault, index, search, SQLite, PDF reader
 ├── native/               md-editor-native: the Iced app (shell, editor widget, viewers, graph, ink)
 │   └── shaders/          WGSL for the knowledge-graph GPU layer
 ├── wiki/                 This documentation (authoritative)
 ├── docs/                 The Field Handbook PDF and its HTML sources (a periodic snapshot)
-├── tests-fixtures/       Sample PDFs and a generated .pptx used by tests
+├── tests-fixtures/       Sample PDFs used by tests
 ├── images/               README screenshots
 ├── .github/workflows/    CI: quality gate (ci.yml) and Windows/Linux release builds
 ├── packaging/arch/       PKGBUILDs (AUR md-editor, md-editor-git) and the desktop entry
@@ -41,17 +41,18 @@ md-editor/
 | `src/config.rs` | `get_sys_config` / `set_sys_config` over `settings`, and `read_startup_value` for use before `AppState` exists. |
 | `src/vault.rs` | The vault API: indexing for a generation, open/save/create/delete, `read_vault_image`. |
 | `src/vault/backlinks.rs` | `search_vault`, incoming and mixed (note + PDF annotation) backlinks. |
-| `src/vault/rename.rs` | Renaming files and folders while rewriting wikilinks, search rows and PDF sidecars. |
+| `src/vault/rename.rs` | Renaming files and folders while rewriting links, search rows and PDF sidecars. |
+| `src/vault/relink.rs` | The link fixes a rename needs: wikilinks and Markdown links/images to the moved entry, and relative links out of moved notes. |
 | `src/vault/files.rs` | Path jailing (`resolve_vault_path_checked`), the atomic `write_file` / `write_bytes`, file-type checks, tree listing. Tests in `files/tests.rs`. |
 | `src/vault/graph.rs` | `get_graph_snapshot`: knowledge-graph nodes and edges. See [Knowledge Graph](Knowledge-Graph.md). |
 | `src/file_index.rs` | Wikilink parsing (`[[target\|alias]]`), resolution (exact path, then shortest matching basename), outgoing and incoming maps. |
+| `src/file_index/code_spans.rs` | Byte ranges of fenced code and inline code spans, where `[[...]]` is not a link. |
 | `src/pdf.rs` | PDF data types, `compute_provisional_id`, render-scale buckets, `bind_pdfium`. |
 | `src/pdf/renderer.rs` | `PdfRenderer`, the handle the app talks to. |
 | `src/pdf/worker.rs` | The PDFium worker thread: 3-document LRU cache, priority and standard queues, one handler per command (render, text, links, search, previews). |
 | `src/pdf/toc.rs` | Page-text extraction and outline recovery: embedded bookmarks, printed contents pages, dot leaders. Tests in `toc/tests.rs`. |
 | `src/pdf/toc_synth.rs` | The typographic fallback: synthesizing an outline from heading-like lines. |
 | `src/references.rs` | Pure resolver from page text to equation, figure, table and section references. Never touches PDFium. |
-| `src/pptx.rs`, `src/pptx/` | Read-only PowerPoint reader. `model` is the resolved slide model; `package`, `xml`, `theme`, `color`, `fill`, `text`, `placeholder`, `geometry`, `numbering`, `table_style`, `slide` and `slide_content` (tables and text bodies) do the reading and inheritance. See [Core Services](Core-Services.md#8-powerpoint-presentations-pptxrs-pptx). |
 | `src/tracker.rs` | `StudySession` and tracker key/value persistence. |
 | `src/attachments.rs` | Images pasted into notes: attachments folder, naming, SHA-256 dedupe, import, relative Markdown links. |
 | `src/types.rs` | Plain data for the UI: `FileEntry`, `SearchResult(s)`, backlinks, `GraphSnapshot`. |
@@ -79,11 +80,12 @@ md-editor/
 | `app/settings_handler.rs` | `update_settings`, plus restoring and persisting theme, scale, motion, editor typography, attachments and recent vaults. |
 | `app/vault_entries.rs` | Creating, renaming and deleting vault entries; name-modal validation. |
 | `app/vault_links.rs` | Sidebar clicks, internal / external / `pdf://` link routing, sidebar keyboard navigation. |
-| `app/documents.rs` | Opening, saving, parking documents (notes, decks, images); session and layout persistence. |
+| `app/documents.rs` | Opening, saving, parking documents (notes, PDFs, images); session and layout persistence. |
 | `app/subscription.rs` | Keyboard, timers, window events, pen input, the vault watcher. |
 | `app/view.rs` | `view(window)`: the shell window (activity rail, sidebar, tab strip, document sheet, side panels, status bar) and the ink window. |
 | `app/overlays.rs` | Layers above the shell: drop hint, tab overflow, context menus (one builder per target), vault search, palette, dialogs, PDF link preview, toasts; `anchor_context_menu`. |
 | `app/links.rs` | Wikilink, relative-link and heading-anchor resolution. |
+| `app/completion.rs` | The `[[` / `/` completion popup: opened and narrowed after each editor command, accepted as one undo step. |
 | `messages.rs` | `Message` and its families (`VaultMessage`, `TabsMessage`, `SettingsMessage`, …), `Shortcut`, `TrackerTab`. |
 | `shortcuts.rs` | The shortcut registry: one table feeding key handling, menus, tooltips, the palette and the Settings shortcut list. |
 | `tabs.rs`, `tabs/tests.rs` | `Tabs`: strip order, active tab, MRU, reopen stack, duplicate-name labels, per-tab view state, session JSON. |
@@ -102,7 +104,6 @@ md-editor/
 | `search_state.rs` | Query, flags, results, memoized in-document matches. |
 | `tracker_state.rs` | Timer, sessions, tracker values, active tab. |
 | `pdf_pane.rs` | PDF viewport, page caches, annotations, selection, render generation. |
-| `pptx_pane.rs` | Open deck, load generation, zoom, scroll. |
 | `graph_state.rs`, `graph_state/` | `GraphState`, with the force simulation in `physics`, initial placement in `layout`, and filtering plus read-only queries (stats, backlinks, related, hubs) in `queries`. |
 | `ink/` | `InkState` and the handwriting engine; see [Handwritten Notes](Handwritten-Notes.md). |
 
@@ -110,8 +111,8 @@ md-editor/
 
 | Path | Responsibility |
 | :--- | :--- |
-| `buffer/` | `DocBuffer` over `ropey::Rope`. `mod.rs`: state, command router, revision-based dirty tracking, line-ending preservation; `edit` (insert/delete/replace), `format` (inline wrappers, auto-pairing), `lists` (continuation, checkboxes), `movement` (grapheme-aware caret and selection), `undo` (transactions with inverse ops, run coalescing). |
-| `highlight.rs`, `highlight/` | `Highlighted`: incremental Markdown → `StyledLine`s (block state machine here, `inline` spans, `code` via syntect). `reference.rs` is the old highlighter kept as a test oracle. |
+| `buffer/` | `DocBuffer` over `ropey::Rope`. `mod.rs`: state, command router, revision-based dirty tracking, line-ending preservation; `edit` (insert/delete/replace), `format` (inline wrappers, auto-pairing), `lists` (continuation, checkboxes), `movement` (grapheme-aware caret and selection), `undo` (transactions with inverse ops, run coalescing), `words` (word motion and deletion, word/line selection, block indent and outdent). |
+| `highlight.rs`, `highlight/` | `Highlighted`: incremental Markdown → `StyledLine`s (block state machine here, `inline` spans, `code` via syntect). `reference.rs` is the old highlighter kept as a test oracle; `callout` maps `> [!type]` to a colour family. |
 | `layout_tree.rs` | `HeightTree`, a Fenwick tree over line heights. |
 | `layout_cache.rs` | `LineHeightCache` keys so lines are remeasured only when needed. |
 | `renderer/mod.rs` | The `Editor` widget, `State`, `LayoutKey`, `MathRender`; `Widget` methods delegate to the modules below. |
@@ -128,22 +129,23 @@ md-editor/
 | `renderer/testing.rs`, `tests.rs`, `properties.rs` | A recording renderer and `View` driver, behavioural tests, seeded property suites. |
 | `render_preview.rs`, `render_snapshot_tests.rs`, `test_docs.rs` | Opt-in PNG previews and draw-call transcripts; the seeded test-document generator. |
 
-### Views and viewers (`src/views/`, `src/slides/`)
+### Views and viewers (`src/views/`)
 
 | Path | Responsibility |
 | :--- | :--- |
 | `views/sidebar.rs`, `rail.rs`, `breadcrumbs.rs`, `welcome.rs`, `toast.rs`, `settings.rs` | Shell chrome (file tree, activity rail, status-bar breadcrumbs) and the Settings page (`Ctrl+,`). |
-| `views/viewer_toolbar.rs` | The shared viewer toolbar for PDFs, slides and images: outline, page field, zoom field, fit, find. |
+| `views/viewer_toolbar.rs` | The shared viewer toolbar for PDFs and images: outline, page field, zoom field, fit, find. |
 | `views/modals.rs`, `link_note_picker.rs`, `command_palette.rs` | Dialogs and the `Ctrl+P` palette (registry and fuzzy ranking via `fuzzy.rs`). |
 | `views/search.rs`, `toc.rs`, `backlinks.rs` | Side panels. |
 | `views/pdf_viewer.rs`, `interactive_pdf.rs` | The PDF pane and the per-page widget. See [PDF Viewer Internals](PDF-Viewer-Internals.md). |
-| `views/pptx_viewer.rs`, `slides/` | The slide viewer; `slides/` prepares decks off the UI thread and draws slides on layered canvases. |
 | `views/graph.rs`, `graph/`, `gpu_graph.rs` (+`gpu_graph/pipeline.rs`) | The knowledge graph: toolbar, inspector, label overlay, and the GPU layer (`gpu_graph.rs` handles pointer interaction; `pipeline.rs` holds the wgpu instance layouts and render pipeline). |
 | `views/ink.rs` | The handwriting window's toolbar and palette. |
 | `views/tracker.rs`, `tracker/` | The study tracker: dashboard in `tracker.rs`, the other tabs in `tracker/sections.rs`, the JSON config model in `tracker/config.rs`. |
 | `design/` | The design system ([MASTER](../docs/design-system/md-editor/MASTER.md)): `palette` (Dark/Light token tables), `type_scale`, `metrics` (spacing, sizes, panel widths), `motion` (panel animations, springs, reduced motion), `fonts` (bundled Inter, JetBrains Mono, Source Serif); `mod.rs` holds the runtime theme, scale and typography settings. Guardrail tests in `design/tests.rs`; `design/setting.rs` makes those settings per-thread under `cargo test`. |
 | `ui/` | Component library built only from `design` tokens: buttons, fields, menus, dialogs, toasts, panels, tab strip, status bar, tree and list rows, icons (Phosphor SVGs in `assets/icons/`). `ui/gallery.rs` renders every component in both themes at several scales; `ui/context_anchor.rs` stamps the pointer position onto context-menu messages. |
-| `pdf_notes.rs`, `search.rs` | Linked-note helpers for PDF highlights; in-note line matching. |
+| `pdf_notes.rs`, `search.rs` | Linked-note helpers for PDF highlights; in-note line matching, regex replacement expansion. |
+| `autocomplete.rs`, `views/completion.rs` | Completion triggers and suggestions (vault files for `[[`, block templates for `/`), and the popup drawn under the caret. |
+| `raster.rs` | Decoding image files for the image viewer and images in notes: raster formats by content, SVG through `resvg` at 2× density. |
 
 ---
 

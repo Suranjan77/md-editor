@@ -277,11 +277,20 @@ Compiled once and reused for every file during indexing. It matches both bare
 (`[[Note Name]]`) and aliased (`[[Note Name|Display Text]]`) links; only the target is
 captured, since the alias affects display, not resolution.
 
+Matches inside code are not links: `file_index/code_spans.rs` finds fenced blocks
+(```` ``` ```` / `~~~`, an unclosed fence runs to the end) and inline code spans (a backtick
+run closed by an equal run in the same paragraph), and both indexing and rename rewriting
+skip any `[[...]]` that starts inside them. So `[[nodiscard]]` in C++ or `[[ -f x ]]` in a
+shell snippet never becomes a graph node, and a rename never edits code.
+
 ### Resolution Algorithm
 
 `resolve_link(target, from_file)` proceeds in order:
 
-1. **Exact path match** — handles `[[subfolder/Note]]` and root-level `[[Note]]`.
+1. **Exact path match** — handles `[[subfolder/Note]]` and root-level `[[Note]]`. A
+   path-qualified link (`[[archive/topic]]`, `[[./x]]`) stops here: only its `.markdown`
+   twin may stand in, never a same-named note elsewhere (the navigator agrees). A `..` that
+   climbs out of the vault resolves to nothing.
 2. **Shortest basename match** — for a bare name, look up all known files whose lowercased
    stem matches. `names: HashMap<String, BTreeSet<PathBuf>>` keeps candidates ordered, so
    the shortest path wins deterministically and the link, the click-through, and the
@@ -306,24 +315,54 @@ a map lookup. `rebuild()` runs in two passes — register every filename first, 
 links — because a bare `[[Name]]` must be able to reach a file that appears later in the
 listing or in another subfolder. `update_file()` does the same incrementally for a single
 edit, first removing the file's previous outgoing edges from every target's `incoming` set.
+The index keeps each file's link targets as written (`links`), so when a note appears or
+disappears, `rebind` re-resolves exactly the links that name it: a dangling `[[Topic]]`
+picks up a new `sub/Topic.md`, and links to a deleted note fall back to another note of
+that name or dangle again.
+
+### Keeping Links Intact on Rename (`vault/rename.rs`, `vault/relink.rs`)
+
+`rename_entry` plans every link fix *before* moving anything, while links still resolve the
+way the user wrote them, then moves the entry and writes the fixed notes. The plan
+(`relink::relink_note`, run on each note that is moving or names the entry) covers:
+
+- **Wikilinks** to the renamed file — any type (`.md`, `.pdf`, images, `.ink`) — or to
+  anything under a renamed folder, resolved as the index resolves them. A link is rewritten
+  to the new vault-relative path (notes without their extension, keeping `#anchor` and
+  `|alias`) only when its text would no longer reach the target: a bare `[[note]]` survives a
+  folder move, since notes resolve by basename.
+- **Markdown links and images** (`[text](path)`, `![alt](path)`, `<...>` and `%20` forms,
+  `#`/`?` suffixes kept), resolved relative to the note first (as images load), then to
+  the vault.
+- **Relative links out of a moved note** (`[[../index]]`, `![](../img/a.png)`), recomputed
+  from its new folder.
+
+Links in code, URLs and anchors are left alone. A note that cannot be written (read-only)
+keeps its old links and the rename still stands. A folder rename then rebuilds the index and
+markdown search rows; a file rename re-indexes just the rewritten notes.
 
 ---
 
-## 6. Full-Text Search (`vault.rs::search_vault`)
+## 6. Full-Text Search (`vault/backlinks.rs::search_vault`)
 
-The query is wrapped in double quotes (with embedded quotes doubled) so it is treated as an
-FTS5 phrase rather than as query syntax:
+Each whitespace-separated term is quoted (embedded quotes doubled) so it is a literal FTS5
+string, not query syntax; every term must match, and the **last one matches as a prefix**
+(`"trans"*`), so results arrive while a word is still being typed:
 
 ```sql
-SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15)
+SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15), content
 FROM file_search
-WHERE content MATCH ?1
-ORDER BY rank
-LIMIT 100;
+WHERE file_search MATCH ?1               -- path and content
+ORDER BY bm25(file_search, 10.0, 1.0)    -- a hit in the path outranks one in the body
+LIMIT 101;
 ```
 
-Results carry the path and a highlighted snippet. Because both Markdown notes and extracted
-PDF text are indexed into the same table, one global search covers both.
+Both Markdown notes and extracted PDF text are indexed into the same table. Each result
+carries its path, a highlighted snippet and a `line`: the 1-based line of the first match in
+a note (so opening the hit can select it), 0 for PDF text. **PDF quick notes**
+(`pdf_annotations.note`, this vault's documents only) are matched too — every term, case
+insensitively — and reported with their 1-based page and the note as context. Results are
+capped at 100, with `truncated` set when there were more.
 
 ---
 
@@ -349,58 +388,3 @@ branches on the active document's type and returns `BacklinkItem`s whose `source
 
 The `BacklinkTarget::PdfDocument { path }` variant is defined in `core/src/types.rs` and
 rendered by `views/backlinks.rs`, but no query currently emits it.
-
----
-
-## 8. PowerPoint Presentations (`pptx.rs`, `pptx/`)
-
-`pptx::load_presentation(path)` reads a `.pptx` into a `Presentation`: the slide size and a
-list of `Slide`s whose elements — `Shape`, `Picture`, `Table`, or `Unsupported` — carry
-resolved geometry, fills, lines, and text, with every length in points. Nothing in the model
-refers back to the XML, so the viewer draws it without knowing the format. The module never
-writes: presentations are reference material, like PDFs.
-
-### Reading the package
-
-A `.pptx` is a zip of XML parts linked by relationship files. The reader follows
-`_rels/.rels` to the presentation, the presentation to its slides, each slide to its layout,
-each layout to its master, and the master to its theme, reading every part once. Parts are
-parsed with `roxmltree`, which refuses DTDs and so entity expansion. The zip is read with
-limits that do not trust the archive's own directory: `MAX_PART_BYTES` (64 MB) per part,
-checked against both the declared and the actually inflated size, and `MAX_PACKAGE_BYTES`
-(512 MB) for the whole package. A password-protected file and a legacy `.ppt` are both OLE
-compound files; `COMPOUND_FILE_MAGIC` recognises them, and they are refused with a message
-that says so.
-
-### Resolving inheritance
-
-Most of what a shape looks like is inherited. For text, lowest priority first:
-
-1. the presentation's `defaultTextStyle`;
-2. the master's `titleStyle`, `bodyStyle`, or `otherStyle`, chosen by placeholder type;
-3. the master placeholder's, then the layout placeholder's, `lstStyle` and `bodyPr`;
-4. the shape's theme font reference (`fontRef`);
-5. the shape's own `lstStyle`, then paragraph and run properties.
-
-A slide placeholder finds its layout placeholder by `idx`, then by type, and its master
-placeholder by type (`master_kind`). Position, fill, and outline fall back along the same
-chain. Colours go through the master's `clrMap`, with layout and slide overrides, to the
-theme, and DrawingML's `lumMod`, `lumOff`, `satMod`, `tint`, `shade`, and `alpha` modifiers
-are applied. Theme style references (`fillRef`, `lnRef`, `bgRef`) instantiate the theme's
-numbered styles with the reference's colour. Groups compose their child transforms,
-rotation included, so every element ends up in slide coordinates.
-
-### What degrades
-
-- Charts, SmartArt graphics, and embedded objects become `ElementKind::Unsupported` with a
-  label; so do EMF, WMF, and SVG-only pictures.
-- Preset geometries outside `preset_geometry`'s list draw as rectangles, and custom
-  geometry whose points are guide formulas rather than numbers is skipped.
-- Built-in table styles are not stored in the file, only their ids. `table_look`
-  approximates the Medium Style 2 family — PowerPoint's default — and treats unknown ids as
-  its accent-1 variant. Explicit cell formatting always wins.
-- A slide whose XML cannot be parsed becomes a slide saying so; the rest of the deck opens.
-
-The tests in `pptx/tests.rs` run mostly against `tests-fixtures/pptx/fixture.pptx`.
-That deck is generated by `make_fixture.py` from python-pptx's default template, so it
-exercises genuine master and layout inheritance rather than absolute positioning.

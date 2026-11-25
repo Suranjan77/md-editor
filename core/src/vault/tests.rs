@@ -1009,7 +1009,17 @@ fn user_excluded_folders_are_parsed_and_skipped_by_every_walker() {
     let entries = list_vault_entries(root).unwrap();
     let md = list_all_md_files(root).unwrap();
     let pdf = list_all_pdf_files(root).unwrap();
+    // The vault watcher filters its events through the same rule.
+    let watcher_skips = [
+        is_excluded_rel_path("zz-user-excluded/hidden.md"),
+        is_excluded_rel_path("zz-user-excluded"),
+        is_excluded_rel_path("node_modules/x.md"),
+        is_excluded_rel_path("a/.git/HEAD"),
+    ];
+    let watcher_keeps = !is_excluded_rel_path("notes/zz-user-excluded.md");
     set_user_excluded_dirs(Vec::new());
+    assert_eq!(watcher_skips, [true; 4]);
+    assert!(watcher_keeps);
 
     assert!(
         entries
@@ -1029,4 +1039,144 @@ fn user_excluded_folders_are_parsed_and_skipped_by_every_walker() {
     assert!(is_in_excluded_dir(".git/notes.md"));
     assert!(!is_in_excluded_dir("notes/node_modules.md"));
     let _ = std::fs::remove_dir_all(&base);
+}
+
+fn temp_vault(files: &[(&str, &str)]) -> (std::path::PathBuf, AppState) {
+    let base = std::env::temp_dir().join(format!("md_relink_{}", uuid::Uuid::new_v4()));
+    for (rel, content) in files {
+        let path = base.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+    (base, state)
+}
+
+#[test]
+fn directory_rename_rewrites_path_qualified_links_into_it() {
+    let (base, state) = temp_vault(&[
+        (
+            "index.md",
+            "[[topics/attention|Attention]] and [[attention]]\n",
+        ),
+        ("topics/attention.md", "Back to [[../index]].\n"),
+    ]);
+    fs::create_dir_all(base.join("archive")).unwrap();
+
+    rename_entry(&state, "topics", "archive/topics").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(base.join("index.md")).unwrap(),
+        "[[archive/topics/attention|Attention]] and [[attention]]\n"
+    );
+    assert_eq!(
+        fs::read_to_string(base.join("archive/topics/attention.md")).unwrap(),
+        "Back to [[index]].\n"
+    );
+    let index = state.file_index.lock().unwrap();
+    let mut backlinks = index.get_backlinks(&base.join("archive/topics/attention.md"));
+    backlinks.sort();
+    assert_eq!(backlinks, vec![base.join("index.md")]);
+    drop(index);
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn image_and_ink_renames_rewrite_links_to_them() {
+    let (base, state) = temp_vault(&[
+        ("notes/a.md", "![d](diagram.png)\n\n[[sketch.ink]]\n"),
+        ("notes/diagram.png", "png"),
+        ("sketch.ink", "{}"),
+    ]);
+    fs::create_dir_all(base.join("figures")).unwrap();
+    fs::create_dir_all(base.join("ink")).unwrap();
+
+    rename_entry(&state, "notes/diagram.png", "figures/diagram.png").unwrap();
+    rename_entry(&state, "sketch.ink", "ink/sketch.ink").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(base.join("notes/a.md")).unwrap(),
+        "![d](../figures/diagram.png)\n\n[[ink/sketch.ink]]\n"
+    );
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn search_finds_prefixes_and_two_letter_terms_and_reports_the_line() {
+    let (base, state) = temp_vault(&[
+        (
+            "notes/ml.md",
+            "# Intro\n\nplain text\n\nWe use ML for transformers.\n",
+        ),
+        ("other.md", "nothing relevant\n"),
+        ("transformers-overview.md", "short\n"),
+    ]);
+    let hits = search_vault(&state, "ML").unwrap().items;
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!((hits[0].path.as_str(), hits[0].line), ("notes/ml.md", 5));
+
+    // The last term matches as a prefix, as it is being typed; a file whose
+    // name matches ranks first.
+    let hits = search_vault(&state, "transfor").unwrap().items;
+    let paths: Vec<_> = hits.iter().map(|h| h.path.as_str()).collect();
+    assert_eq!(paths, ["transformers-overview.md", "notes/ml.md"]);
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn search_includes_pdf_quick_notes_with_their_page() {
+    let (base, state) = temp_vault(&[("a.md", "x\n")]);
+    state
+        .save_pdf_document("paper", "papers/p.pdf", 1, None)
+        .unwrap();
+    insert_annotation_link(&state, "ann", "paper", "a.md");
+    let id = state.pdf_storage_document_id("paper").unwrap();
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE pdf_annotations SET note = 'Check the Lemma here', page_index = 3 WHERE document_id = ?1",
+            rusqlite::params![id],
+        )
+        .unwrap();
+
+    let hits = search_vault(&state, "lemma check").unwrap().items;
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!((hits[0].path.as_str(), hits[0].line), ("papers/p.pdf", 4));
+    assert!(hits[0].context.contains("Check the Lemma"));
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_cannot_be_deleted_stays_indexed_and_searchable() {
+    use std::os::unix::fs::PermissionsExt;
+    let (base, state) = temp_vault(&[
+        ("locked/note.md", "unique-delete-token\n"),
+        ("a.md", "[[locked/note]]\n"),
+    ]);
+    // A read-only folder: its files cannot be unlinked.
+    fs::set_permissions(base.join("locked"), fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = base.join("locked/probe");
+    let can_write = fs::write(&probe, "").is_ok();
+    let _ = fs::remove_file(&probe);
+    if !can_write {
+        assert!(delete_entry(&state, "locked/note.md").is_err());
+        assert_eq!(
+            search_vault(&state, "unique-delete-token")
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        let index = state.file_index.lock().unwrap();
+        assert_eq!(
+            index.get_backlinks(&base.join("locked/note.md")),
+            vec![base.join("a.md")]
+        );
+    }
+    fs::set_permissions(base.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = fs::remove_dir_all(base);
 }

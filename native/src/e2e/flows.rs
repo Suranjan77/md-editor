@@ -52,7 +52,8 @@ fn s1_boot_vault_with_every_file_type() {
     let vault = research_vault()
         .file("node_modules/ignored.md", "# ignored\n")
         .file(".hidden/secret.md", "# hidden\n")
-        .file("notes/unsupported.xyz", "?");
+        .file("notes/unsupported.xyz", "?")
+        .file("slides/deck.pptx", "not a supported type");
     std::fs::create_dir_all(vault.root.join("images")).unwrap();
     std::fs::write(vault.root.join("images/dot.png"), tiny_png()).unwrap();
     let mut app = boot("s1-types", &vault, None);
@@ -62,7 +63,6 @@ fn s1_boot_vault_with_every_file_type() {
         "Index.md",
         "notes/Attention.md",
         "papers/dummy.pdf",
-        "slides/deck.pptx",
         "images/dot.png",
     ] {
         assert!(entries.iter().any(|e| e == expected), "{expected} missing");
@@ -71,12 +71,11 @@ fn s1_boot_vault_with_every_file_type() {
         "node_modules/ignored.md",
         ".hidden/secret.md",
         "notes/unsupported.xyz",
+        "slides/deck.pptx",
     ] {
         assert!(!entries.iter().any(|e| e == hidden), "{hidden} listed");
     }
 
-    app.send(open("slides/deck.pptx"));
-    assert!(app.probe().pptx_loaded, "deck did not load");
     app.send(open("images/dot.png"));
     app.screenshot("image");
     app.send(open("papers/dummy.pdf"));
@@ -309,6 +308,72 @@ where
 
 fn pdf(message: PdfMessage) -> Message {
     Message::Pdf(message)
+}
+
+/// BUG-01: linking a highlight to the note already open beside the PDF keeps
+/// the typing not yet autosaved and the undo history.
+#[test]
+fn s8c_link_highlight_to_open_note_keeps_unsaved_edits() {
+    let vault = research_vault().fixture("papers/large.pdf", "pdf/large-500-pages.pdf");
+    let mut app = boot("s8c-link-open-note", &vault, Some("papers/large.pdf"));
+    wait_for(&mut app, "page text and document id", |p| {
+        p.pdf_texts_loaded > 0 && p.pdf_document_ready
+    });
+
+    // First highlight, linked to Index.md: opens it beside the PDF.
+    app.send(pdf(PdfMessage::SelectionFinished(0, 0, 3)));
+    app.send(pdf(PdfMessage::QuickHighlight));
+    let first = app.probe().pdf_annotation_ids[0].clone();
+    app.send(pdf(PdfMessage::LinkNote(first, "Index.md".to_string())));
+    let probe = app.probe();
+    assert!(probe.split_view, "{probe:?}");
+    assert_eq!(probe.active_path.as_deref(), Some("Index.md"));
+
+    // Type, then link a second highlight before autosave fires.
+    app.send(edit(EditorCommand::SelectAll));
+    app.send(edit(EditorCommand::MoveCursor {
+        movement: crate::editor::buffer::Movement::Right,
+        extend: false,
+    }));
+    app.send_quick(edit(EditorCommand::InsertText(
+        "\n\nUNSAVED THOUGHT".to_string(),
+    )));
+    assert!(app.probe().dirty);
+    app.send_quick(pdf(PdfMessage::SelectionFinished(0, 5, 5)));
+    app.send_quick(pdf(PdfMessage::QuickHighlight));
+    let ids = app.probe().pdf_annotation_ids;
+    let second = ids.iter().find(|id| **id != ids[0]).unwrap().clone();
+    assert!(
+        app.probe().dirty,
+        "edits saved before the link: test proves nothing"
+    );
+    app.send(pdf(PdfMessage::LinkNote(
+        second.clone(),
+        "Index.md".to_string(),
+    )));
+
+    let probe = app.probe();
+    assert_eq!(probe.active_path.as_deref(), Some("Index.md"));
+    assert!(probe.buffer.contains("UNSAVED THOUGHT"), "{}", probe.buffer);
+    assert!(probe.buffer.contains(&second), "second section missing");
+    assert!(!probe.dirty, "linking should flush the note");
+    assert_eq!(
+        vault.read("Index.md"),
+        probe.buffer,
+        "disk differs from editor"
+    );
+
+    // The link is one undo step; the typing is still undoable after it.
+    app.send(edit(EditorCommand::Undo));
+    let probe = app.probe();
+    assert!(!probe.buffer.contains(&second), "undo kept the section");
+    assert!(probe.buffer.contains("UNSAVED THOUGHT"));
+    app.send(edit(EditorCommand::Undo));
+    assert!(
+        !app.probe().buffer.contains("UNSAVED THOUGHT"),
+        "typing not undoable"
+    );
+    app.finish();
 }
 
 /// S8b: read a PDF like a student — select, highlight (kept across a

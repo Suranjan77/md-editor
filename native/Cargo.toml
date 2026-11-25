@@ -21,6 +21,8 @@ rfd = "0.17.2"
 arboard = { version = "3.7", default-features = false, features = ["image-data", "wayland-data-control"] }
 ropey = "1.6"
 image = "0.25"
+# SVG images in notes and the image viewer; the same resvg iced's `svg` feature uses.
+resvg = "0.45"
 chrono = "0.4"
 log = { version = "0.4", features = ["std"] }
 serde = { version = "1.0.228", features = ["derive"] }

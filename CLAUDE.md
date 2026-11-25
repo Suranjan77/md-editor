@@ -1,6 +1,6 @@
 # MD Editor
 
-Native, local-first desktop workspace for Markdown notes, PDFs, presentations, a knowledge
+Native, local-first desktop workspace for Markdown notes, PDFs, a knowledge
 graph and handwritten notes. Rust 2024, Iced 0.14, PDFium. GPL-3.0-or-later. Ships as an
 Arch Linux package (`packaging/arch/`); data and log live in XDG dirs, never beside the exe.
 
@@ -27,7 +27,7 @@ with an undefined `FPDF_*` symbol, a stale library is cached: delete
 ## Map
 
 - `core/` — headless engine, no UI deps: `vault.rs` (+`vault/`), `file_index.rs`,
-  `state.rs` (SQLite), `pdf.rs` (+`pdf/` worker, TOC), `pptx.rs` (+`pptx/`), `references.rs`.
+  `state.rs` (SQLite), `pdf.rs` (+`pdf/` worker, TOC), `references.rs`.
 - `native/src/app/` — the shell. `mod.rs::update_inner` routes each `Message` family (`Message::Pdf(PdfMessage)`, …) to
   `update_<family>` in `pdf.rs`, `graph.rs`, `ink.rs`, `search.rs`, `editor.rs`,
   `vault.rs`, `tabs_handler.rs`, `settings_handler.rs`, `shortcuts.rs` or `shell.rs`.

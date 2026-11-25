@@ -1,5 +1,6 @@
 //! Renaming files and directories while preserving wikilinks, search rows, and PDF sidecars.
 
+use super::relink;
 use super::*;
 
 /// Rename (or move) a file or directory, rewriting incoming wikilinks and
@@ -27,15 +28,13 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> VaultRe
         return Err(VaultError::from("Cannot rename the vault root"));
     }
 
-    let backlinks: Vec<PathBuf> = if is_md_file || is_pdf_file {
-        let index = state.file_index.lock().map_err(|e| e.to_string())?;
-        index.get_backlinks(&abs_old)
-    } else {
-        Vec::new()
-    };
+    // Plan link rewrites against the vault as it is now, before the move.
+    let relinks = plan_relinks(state, &vault_root, &old_rel, &new_rel)?;
 
     fs::rename(&abs_old, &abs_new)
         .map_err(|e| VaultError::io(format!("Failed to rename {}", abs_old.display()), e))?;
+
+    let rewritten = write_relinks(relinks);
 
     if is_dir {
         rewrite_persisted_rename_paths(state, &old_rel, &new_rel, true, true, true)?;
@@ -43,79 +42,123 @@ pub fn rename_entry(state: &AppState, old_path: &str, new_path: &str) -> VaultRe
         return Ok(());
     }
 
-    if !is_md_file && !is_pdf_file {
-        return Ok(());
-    }
-
-    let relative_target = abs_new.strip_prefix(&vault_root).unwrap_or(&abs_new);
-    let new_link_target = if is_md_file {
-        relative_target.with_extension("")
-    } else {
-        relative_target.to_path_buf()
-    };
-    let new_rel_str = new_link_target.to_string_lossy().replace('\\', "/");
-
-    apply_backlink_rewrites(
-        state,
-        &vault_root,
-        &backlinks,
-        &abs_old,
-        &abs_new,
-        &new_rel_str,
-    )?;
+    reindex_rewritten(state, &vault_root, &rewritten, &abs_new)?;
 
     if is_pdf_file {
         rewrite_persisted_rename_paths(state, &old_rel, &new_rel, false, true, false)?;
-        return Ok(());
+    } else if is_md_file {
+        rekey_renamed_markdown(state, &abs_old, &abs_new, &old_rel, &new_rel)?;
+        rewrite_persisted_rename_paths(state, &old_rel, &new_rel, false, false, true)?;
     }
-
-    rekey_renamed_markdown(state, &abs_old, &abs_new, &old_rel, &new_rel)?;
-    rewrite_persisted_rename_paths(state, &old_rel, &new_rel, false, false, true)?;
     Ok(())
 }
 
-fn apply_backlink_rewrites(
+/// A note whose links a rename breaks: where it is now, where it will be, and
+/// its content with those links fixed.
+struct Relink {
+    new_abs: PathBuf,
+    content: String,
+}
+
+/// Every note with a link that moving `old_rel` to `new_rel` would break —
+/// wikilinks and Markdown links or images to the moved file or anything under
+/// the moved folder, and relative links out of notes that move — with the
+/// fix. Read before the move, so links resolve as the user wrote them.
+fn plan_relinks(
+    state: &AppState,
+    root: &Path,
+    old_rel: &str,
+    new_rel: &str,
+) -> VaultResult<Vec<Relink>> {
+    let mv = relink::Move {
+        old: old_rel,
+        new: new_rel,
+    };
+    // A note can only link to the moved entry if it names it somewhere.
+    let name = Path::new(old_rel)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let name_encoded = name.replace(' ', "%20");
+    let index = state.file_index.lock().map_err(|e| e.to_string())?;
+    let exists = |rel: &str| root.join(rel).exists();
+    let resolve = |target: &str, note: &str| {
+        index
+            .resolve_link(target, &root.join(note))
+            .map(|abs| path_to_relative_string(&abs, root))
+    };
+    let old = relink::OldVault {
+        exists: &exists,
+        resolve_wikilink: &resolve,
+    };
+    let mut plan = Vec::new();
+    for abs in list_all_md_files(root)? {
+        let rel = path_to_relative_string(&abs, root);
+        let moved = mv.map(&rel);
+        let Ok(content) = read_file(&abs) else {
+            continue;
+        };
+        if moved.is_none() {
+            let lower = content.to_lowercase();
+            if !lower.contains(&name) && !lower.contains(&name_encoded) {
+                continue;
+            }
+        }
+        let note_new = moved.unwrap_or_else(|| rel.clone());
+        if let Some(content) = relink::relink_note(&content, &rel, &note_new, mv, &old) {
+            plan.push(Relink {
+                new_abs: root.join(&note_new),
+                content,
+            });
+        }
+    }
+    Ok(plan)
+}
+
+/// Write the planned notes (now at their new paths). A note that cannot be
+/// written (read-only, say) keeps its old links; the rename still stands.
+fn write_relinks(plan: Vec<Relink>) -> Vec<Relink> {
+    plan.into_iter()
+        .filter(
+            |relink| match write_file(&relink.new_abs, &relink.content) {
+                Ok(()) => true,
+                Err(e) => {
+                    log::warn!(
+                        "Renamed, but could not update links in {}: {e}",
+                        relink.new_abs.display()
+                    );
+                    false
+                }
+            },
+        )
+        .collect()
+}
+
+/// Refresh the index and search rows of rewritten notes. The renamed note
+/// itself is re-keyed separately.
+fn reindex_rewritten(
     state: &AppState,
     vault_root: &Path,
-    backlinks: &[PathBuf],
-    abs_old: &Path,
-    abs_new: &Path,
-    new_rel_str: &str,
+    rewritten: &[Relink],
+    renamed: &Path,
 ) -> VaultResult<()> {
-    let rewrites: Vec<(PathBuf, PathBuf, String)> = {
-        let index = state.file_index.lock().map_err(|e| e.to_string())?;
-        backlinks
-            .iter()
-            .filter_map(|bl| {
-                let stored_path = if bl == abs_old { abs_new } else { bl.as_path() };
-                let content = read_file(stored_path).ok()?;
-                let updated = index.rewrite_links_to(&content, bl, abs_old, new_rel_str)?;
-                Some((bl.clone(), stored_path.to_path_buf(), updated))
-            })
-            .collect()
-    };
-    for (bl, stored_path, updated) in &rewrites {
-        if write_file(stored_path, updated).is_err() {
-            continue;
-        }
-        {
-            let mut index = state.file_index.lock().map_err(|e| e.to_string())?;
-            if stored_path != bl {
-                index.remove_file(bl);
-            }
-            index.update_file(stored_path, updated);
-        }
-        let bl_rel = path_to_relative_string(stored_path, vault_root);
+    for relink in rewritten.iter().filter(|r| r.new_abs != renamed) {
+        state
+            .file_index
+            .lock()
+            .map_err(|e| e.to_string())?
+            .update_file(&relink.new_abs, &relink.content);
+        let rel = path_to_relative_string(&relink.new_abs, vault_root);
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let _ = db.execute(
             "DELETE FROM file_search WHERE path = ?1",
-            rusqlite::params![bl_rel],
+            rusqlite::params![rel],
         );
         if let Err(e) = db.execute(
             "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
-            rusqlite::params![bl_rel, updated],
+            rusqlite::params![rel, relink.content],
         ) {
-            log::warn!("Failed to reindex {bl_rel} after rename: {e}");
+            log::warn!("Failed to reindex {rel} after rename: {e}");
         }
     }
     Ok(())

@@ -27,6 +27,7 @@ pub fn line_hash(line: &StyledLine) -> u64 {
     line.is_math_block.hash(&mut hasher);
     line.code_block_lang.hash(&mut hasher);
     line.is_blockquote.hash(&mut hasher);
+    line.callout.hash(&mut hasher);
     line.is_block_fence.hash(&mut hasher);
     line.is_table_row.hash(&mut hasher);
     for span in &line.spans {
@@ -59,7 +60,14 @@ pub fn resource_hash(
             tex.hash(&mut hasher);
             math_cache
                 .get(tex)
-                .map(|m| (m.width.to_bits(), m.height.to_bits()))
+                .map(|m| {
+                    (
+                        m.width.to_bits(),
+                        m.height.to_bits(),
+                        m.block_width.to_bits(),
+                        m.block_height.to_bits(),
+                    )
+                })
                 .hash(&mut hasher);
         }
     }
@@ -71,6 +79,7 @@ fn hash_span(span: &crate::editor::highlight::StyledSpan, hasher: &mut impl Hash
     span.display_text.hash(hasher);
     span.bold.hash(hasher);
     span.italic.hash(hasher);
+    span.strikethrough.hash(hasher);
     span.font_size.to_bits().hash(hasher);
     span.is_code.hash(hasher);
     span.is_link.hash(hasher);

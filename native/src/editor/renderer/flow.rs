@@ -280,6 +280,11 @@ impl<'a> Flow<'a> {
 
     /// Top of the iced text box that puts text of `font_size` in `font` on
     /// `row`'s baseline.
+    /// The baseline of a row, relative to the line's top.
+    pub fn baseline(&self, row: usize) -> f32 {
+        self.rows[row].baseline
+    }
+
     pub fn text_top(&self, row: usize, font_size: f32, font: iced::Font) -> f32 {
         self.rows[row].baseline - font_metrics(font).baseline_in_box(font_size)
     }
