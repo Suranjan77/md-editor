@@ -81,7 +81,7 @@ pub fn view<'a>(
     .width(Length::Fixed(SIDEBAR_MIN_WIDTH))
     .height(Length::Fill)
     .style(move |_| container::Style {
-        background: Some(Background::Color(t.bg_surface)),
+        background: Some(Background::Color(t.bg_canvas)),
         border: Border {
             color: t.border_subtle,
             width: 1.0,

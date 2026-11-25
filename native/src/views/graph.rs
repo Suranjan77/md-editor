@@ -162,7 +162,7 @@ pub fn view(state: &GraphState) -> Element<'_, Message, Theme, Renderer> {
         .style(|_| {
             let t = tokens();
             container::Style {
-                background: Some(Background::Color(t.bg_canvas)),
+                background: Some(Background::Color(t.bg_inset)),
                 border: Border {
                     color: t.border_subtle,
                     width: BORDER_WIDTH,
@@ -182,7 +182,7 @@ pub fn view(state: &GraphState) -> Element<'_, Message, Theme, Renderer> {
         .height(Length::Fill)
         .padding(SPACE_3)
         .style(|_| container::Style {
-            background: Some(Background::Color(tokens().bg_surface)),
+            background: Some(Background::Color(tokens().bg_canvas)),
             ..Default::default()
         })
         .into()

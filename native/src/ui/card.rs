@@ -12,7 +12,7 @@ pub fn card<'a, Message: 'a>(
     body: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let t = design::tokens();
-    let bg = t.bg_raised;
+    let bg = t.bg_inset;
     let border = t.border_default;
 
     container(body)

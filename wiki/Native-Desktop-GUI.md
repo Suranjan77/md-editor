@@ -269,23 +269,26 @@ Animation frames are armed the same way, from `motion.is_animating()`; see
 
 Every view is built from the shared components in `ui/` and the tokens in `design/`; see
 [Design System & Motion](Design-Tokens-Motion-and-Palette.md). The shell (`app/view.rs`) is
-toolbar, tab strip, sidebar, main pane, side panel and status bar, with `SplitHandle`s
-between panes; `ui::context_anchor` wraps the window so a right click opens its menu at the
+the "Folio" layout: activity rail, sidebar, tab strip, the document *sheet* (a rounded
+surface on the chrome ground holding the main pane), side panels and status bar, with
+`SplitHandle`s between panes; `ui::context_anchor` wraps the window so a right click opens its menu at the
 pointer.
 
-- **Toolbar** (`toolbar.rs`) — sidebar toggle, breadcrumb path with the save state
-  (Saved · Saving · Unsaved · Save failed), then grouped `IconButton`s for search, palette,
-  split view, outline, backlinks, graph, handwriting, tracker and Settings.
+- **Activity rail** (`rail.rs`) — the 48px icon column at the left edge: Files (sidebar),
+  search, command palette; graph, handwriting, tracker; theme switch and Settings. It is the
+  `FocusRegion::Toolbar` region for F6.
 - **Tab strip** (`ui::tab_strip`, state in `tabs.rs`) — one tab per open document, with a
   dirty dot, a missing badge, drag to reorder, middle-click to close, a right-click menu and
-  an overflow list.
+  an overflow list. The active tab shares the sheet's colour. Its trailing end holds the
+  document toggles: split view, outline, backlinks.
 - **Sidebar** (`sidebar.rs`) — a `Panel` with a filter field and the file tree of
   `TreeRow`s (indent guides, file-type icons, ellipsis with tooltip). Selecting a row shows
   rename and delete; right-click opens the file menu. New entries go into the selected
   folder, or beside the selected file, only while that row is visible in the tree;
   otherwise into the vault root.
-- **Status bar** (`ui::status_bar`) — save state, line and column, words, selection, indexing
-  and the vault's name; hidden in focus mode.
+- **Status bar** (`ui::status_bar`) — breadcrumbs (`breadcrumbs.rs`: vault › folders ›
+  document, folders clickable), save state, line and column, words, selection and indexing;
+  hidden in focus mode.
 - **Settings** (`settings.rs`) — Appearance, Editor, Files, Keyboard and About.
 - **Command palette** (`command_palette.rs`) — the `Ctrl+P` overlay; commands come from the
   shortcut registry (`shortcuts.rs`) and interleave with vault files, capped at

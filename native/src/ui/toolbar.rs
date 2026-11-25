@@ -26,7 +26,8 @@ pub fn toolbar_frame<'a, Message: 'a>(
     focused: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
     let t = design::tokens();
-    let bg = t.bg_surface;
+    // Toolbars live inside the document sheet, so they share its ground.
+    let bg = t.bg_canvas;
     let border_col = t.border_subtle;
 
     let bar = container(

@@ -1,13 +1,13 @@
 //! `StatusBar`: bottom workspace bar showing save state, cursor Ln/Col, word/selection counts, indexing and vault name (MASTER §6).
 
-use iced::widget::{Space, column, container, row, text};
+use iced::widget::{Space, container, row, text};
 use iced::{Alignment, Background, Color, Element, Length, Renderer, Theme};
 
 use super::focus::ring_border;
 use super::icon::{Icon, icon};
 use crate::design;
 use crate::design::TextRole;
-use crate::design::metrics::{IconSize, SPACE_0, SPACE_1, SPACE_3, SPACE_PX, STATUS_BAR_HEIGHT};
+use crate::design::metrics::{IconSize, SPACE_1, SPACE_3, SPACE_4, STATUS_BAR_HEIGHT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaveStatus {
@@ -18,29 +18,25 @@ pub enum SaveStatus {
     Idle,
 }
 
-pub struct StatusBarProps<'a> {
+pub struct StatusBarProps<'a, Message> {
     pub save_status: SaveStatus,
     pub cursor_line_col: Option<(usize, usize)>,
     pub word_count: Option<usize>,
     pub selection_chars: Option<usize>,
     pub indexing: bool,
-    pub vault_name: Option<&'a str>,
+    /// Leading content, usually the vault › folder › file breadcrumbs.
+    pub leading: Option<Element<'a, Message, Theme, Renderer>>,
     pub focused: bool,
 }
 
 pub fn status_bar<'a, Message: 'a>(
-    props: StatusBarProps<'a>,
+    props: StatusBarProps<'a, Message>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let t = design::tokens();
 
     let mut left: Vec<Element<'a, Message, Theme, Renderer>> = Vec::new();
-    if let Some(vault) = props.vault_name.filter(|s| !s.is_empty()) {
-        left.push(segment(
-            Icon::Folder,
-            t.fg_tertiary,
-            vault.to_string(),
-            t.fg_secondary,
-        ));
+    if let Some(leading) = props.leading {
+        left.push(leading);
     }
     let save = match props.save_status {
         SaveStatus::Saved => Some((Icon::Check, t.status_success, "Saved", t.fg_tertiary)),
@@ -80,22 +76,15 @@ pub fn status_bar<'a, Message: 'a>(
     }
     if let Some((ln, col)) = props.cursor_line_col {
         right.push(mono_label(
-            format!("Ln {}, Col {}", ln + 1, col + 1),
+            // Already 1-based: the shell converts from the buffer's 0-based caret.
+            format!("Ln {ln}, Col {col}"),
             t.fg_secondary,
         ));
     }
 
-    let top_line = container(Space::new())
-        .width(Length::Fill)
-        .height(Length::Fixed(SPACE_PX))
-        .style(move |_| container::Style {
-            background: Some(Background::Color(t.border_subtle)),
-            ..Default::default()
-        });
-
     let bar = container(
         row![
-            row(left).spacing(SPACE_3).align_y(Alignment::Center),
+            row(left).spacing(SPACE_4).align_y(Alignment::Center),
             Space::new().width(Length::Fill),
             row(right).spacing(SPACE_3).align_y(Alignment::Center),
         ]
@@ -105,16 +94,14 @@ pub fn status_bar<'a, Message: 'a>(
     .height(Length::Fixed(STATUS_BAR_HEIGHT))
     .padding([0.0, SPACE_3])
     .align_y(Alignment::Center)
+    .clip(true)
     .style(move |_| container::Style {
         background: Some(Background::Color(t.bg_surface)),
         border: ring_border(props.focused, 0.0, None),
         ..Default::default()
     });
 
-    column![top_line, bar]
-        .spacing(SPACE_0)
-        .width(Length::Fill)
-        .into()
+    bar.into()
 }
 
 /// A left-side segment: small icon plus caption text.

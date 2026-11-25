@@ -281,14 +281,15 @@ pub fn view<'a>(
     container(
         column![
             input,
-            scrollable(list).height(Length::Fixed(PALETTE_MAX_LIST_HEIGHT)),
+            // Shrinks to the results, up to the cap, instead of reserving the full height.
+            container(scrollable(list).height(Length::Shrink)).max_height(PALETTE_MAX_LIST_HEIGHT),
         ]
         .spacing(SPACE_0),
     )
     .width(Length::Fixed(PALETTE_WIDTH))
     .padding([SPACE_0, SPACE_0])
     .style(move |_| container::Style {
-        background: Some(Background::Color(fade(t.bg_raised, opacity))),
+        background: Some(Background::Color(fade(t.bg_popover, opacity))),
         border: Border {
             color: fade(t.border_control, opacity),
             width: 1.0,

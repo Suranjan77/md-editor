@@ -11,8 +11,8 @@ use super::list_row::ellipsize_single_line;
 use super::tooltip::{TooltipPosition, with_tooltip};
 use crate::design;
 use crate::design::metrics::{
-    BORDER_WIDTH, ControlSize, FOCUS_RING_WIDTH, IconSize, RADIUS_MD, RADIUS_SM, SPACE_0, SPACE_1,
-    SPACE_2, SPACE_PX, TAB_STRIP_HEIGHT,
+    BORDER_WIDTH, ControlSize, FOCUS_RING_WIDTH, IconSize, RADIUS_LG, RADIUS_MD, RADIUS_SM,
+    SPACE_0, SPACE_1, SPACE_2, SPACE_PX, TAB_STRIP_HEIGHT,
 };
 use crate::design::{TextRole, fade};
 use crate::tabs::{Tab, TabId, TabKind};
@@ -132,6 +132,7 @@ pub fn tab_strip<'a, Message: Clone + 'a>(
     dragging: Option<TabId>,
     overflow_open: bool,
     events: TabStripEvents<Message>,
+    actions: Vec<Element<'a, Message, Theme, Renderer>>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let t = design::tokens();
     let mut tab_cells: Vec<Element<'a, Message, Theme, Renderer>> = Vec::with_capacity(items.len());
@@ -140,14 +141,14 @@ pub fn tab_strip<'a, Message: Clone + 'a>(
         tab_cells.push(doc_tab(idx, item, dragging, &events));
     }
 
-    let strip_scroll = scrollable(row(tab_cells).spacing(SPACE_0).align_y(Alignment::Center))
+    let strip_scroll = scrollable(row(tab_cells).spacing(SPACE_1).align_y(Alignment::End))
         .direction(Direction::Horizontal(
             Scrollbar::new().width(0).scroller_width(0),
         ))
         .width(Length::Fill)
         .height(Length::Fixed(TAB_STRIP_HEIGHT));
 
-    let trailing = row![
+    let mut trailing = row![
         IconButton::new(Icon::Plus, "New note")
             .shortcut("Ctrl+N")
             .size(ControlSize::Sm)
@@ -159,30 +160,25 @@ pub fn tab_strip<'a, Message: Clone + 'a>(
     ]
     .spacing(SPACE_1)
     .align_y(Alignment::Center);
+    if !actions.is_empty() {
+        trailing = trailing.push(super::toolbar::toolbar_separator());
+        for action in actions {
+            trailing = trailing.push(action);
+        }
+    }
 
+    // Folio: the strip sits on the chrome ground; the active tab shares the sheet's
+    // colour below it, so the two read as one surface.
     let bg = t.bg_surface;
-    let bottom = t.border_subtle;
-    column![
-        container(
-            row![strip_scroll, container(trailing).padding([0.0, SPACE_2])]
-                .align_y(Alignment::Center),
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(TAB_STRIP_HEIGHT))
-        .style(move |_| container::Style {
-            background: Some(Background::Color(bg)),
-            ..Default::default()
-        }),
-        container(Space::new())
-            .width(Length::Fill)
-            .height(Length::Fixed(SPACE_PX))
-            .style(move |_| container::Style {
-                background: Some(Background::Color(bottom)),
-                ..Default::default()
-            }),
-    ]
-    .spacing(SPACE_0)
+    container(
+        row![strip_scroll, container(trailing).padding([0.0, SPACE_2])].align_y(Alignment::Center),
+    )
     .width(Length::Fill)
+    .height(Length::Fixed(TAB_STRIP_HEIGHT))
+    .style(move |_| container::Style {
+        background: Some(Background::Color(bg)),
+        ..Default::default()
+    })
     .into()
 }
 
@@ -294,51 +290,35 @@ fn doc_tab<'a, Message: Clone + 'a>(
     } else if is_split {
         t.accent_muted
     } else {
-        t.bg_surface
+        Color::TRANSPARENT
     };
-    let top_bar = if is_active {
+    // A border would draw a line between the active tab and the sheet, so only a
+    // dragged tab gets one.
+    let edge = if is_dragging {
         t.accent
-    } else if is_split {
-        fade(t.accent, 0.55)
     } else {
         Color::TRANSPARENT
     };
-
-    let indicator = container(Space::new())
-        .width(Length::Fill)
-        .height(Length::Fixed(FOCUS_RING_WIDTH))
-        .style(move |_| container::Style {
-            background: Some(Background::Color(top_bar)),
-            ..Default::default()
-        });
-
-    let chip_border = if is_dragging {
-        t.accent
-    } else {
-        t.border_subtle
-    };
+    let tab_height = TAB_STRIP_HEIGHT - SPACE_1;
 
     let chip = container(
-        column![
-            indicator,
-            container(
-                row![select_btn, close_btn]
-                    .spacing(SPACE_1)
-                    .align_y(Alignment::Center),
-            )
-            .padding([0.0, SPACE_1])
-            .height(Length::Fixed(TAB_STRIP_HEIGHT - FOCUS_RING_WIDTH))
+        row![select_btn, close_btn]
+            .spacing(SPACE_0)
             .align_y(Alignment::Center),
-        ]
-        .spacing(SPACE_0),
     )
-    .height(Length::Fixed(TAB_STRIP_HEIGHT))
+    .padding([0.0, SPACE_1])
+    .height(Length::Fixed(tab_height))
+    .align_y(Alignment::Center)
     .style(move |_| container::Style {
         background: Some(Background::Color(tab_bg)),
         border: Border {
-            color: chip_border,
-            width: BORDER_WIDTH,
-            radius: 0.0.into(),
+            color: edge,
+            width: if edge == Color::TRANSPARENT {
+                0.0
+            } else {
+                BORDER_WIDTH
+            },
+            radius: iced::border::Radius::new(RADIUS_LG).bottom(0.0),
         },
         ..Default::default()
     });

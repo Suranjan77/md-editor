@@ -1,15 +1,19 @@
 //! Building the UI: decomposed regional builders for the shell window and detached handwriting window.
 
 use super::*;
-use crate::design::metrics::{SPACE_0, SPACE_2, SPACE_5};
+use crate::design::metrics::{
+    BORDER_WIDTH, ControlSize, Elevation, SHEET_GUTTER, SHEET_RADIUS, SPACE_0, SPACE_2, SPACE_5,
+};
 use crate::design::tokens;
+use crate::messages::Shortcut;
 use crate::messages::{
     ContextMenuTarget, EditorMessage, GraphMessage, Message, PdfMessage, ShellMessage, TabsMessage,
     VaultMessage,
 };
+use crate::shortcuts;
 use crate::tabs::TabKind;
 use crate::ui::{
-    Button, ButtonVariant, DocTabItem, FocusRegion, Icon, SaveStatus, StatusBarProps,
+    Button, ButtonVariant, DocTabItem, FocusRegion, Icon, IconButton, SaveStatus, StatusBarProps,
     TabStripEvents, empty_state, split_handle, status_bar, tab_strip,
 };
 use iced::widget::column;
@@ -87,19 +91,51 @@ impl MdEditor {
         }
 
         let t = tokens();
-        let toolbar = self.build_toolbar();
+        let rail = self.build_rail();
         let tab_bar = self.build_tab_strip();
         let sidebar = self.build_sidebar();
         let main_content = self.build_main_pane();
         let right_panels = self.build_right_panels();
         let bottom_bar = self.build_status_bar();
 
-        let center_column = column![toolbar, tab_bar, main_content]
-            .spacing(SPACE_0)
+        // Folio shell: the document lives on a rounded "sheet" that floats on the chrome
+        // ground; tabs sit on the chrome above it, the active one sharing its colour.
+        let sheet = container(main_content)
             .width(Length::Fill)
-            .height(Length::Fill);
+            .height(Length::Fill)
+            .clip(true)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(t.bg_canvas)),
+                border: iced::Border {
+                    color: t.border_subtle,
+                    width: BORDER_WIDTH,
+                    radius: SHEET_RADIUS.into(),
+                },
+                shadow: Elevation::Sheet.shadow(),
+                ..Default::default()
+            });
 
-        let body_row = row![sidebar, center_column, right_panels]
+        let has_tabs = !self.tabs.is_empty() && !self.graph.visible && !self.ui.settings_visible;
+        let center_column = container(
+            column![tab_bar, sheet]
+                .spacing(SPACE_0)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .padding(iced::Padding {
+            top: if has_tabs { SPACE_0 } else { SHEET_GUTTER },
+            right: if self.right_panels_open() {
+                SPACE_0
+            } else {
+                SHEET_GUTTER
+            },
+            bottom: SPACE_0,
+            left: SPACE_0,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let body_row = row![rail, sidebar, center_column, right_panels]
             .spacing(SPACE_0)
             .height(Length::Fill);
 
@@ -112,7 +148,7 @@ impl MdEditor {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(move |_| container::Style {
-            background: Some(iced::Background::Color(t.bg_canvas)),
+            background: Some(iced::Background::Color(t.bg_surface)),
             ..Default::default()
         });
 
@@ -121,31 +157,57 @@ impl MdEditor {
         crate::ui::context_anchor(stack(layers), super::overlays::anchor_context_menu).into()
     }
 
-    fn build_toolbar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        views::toolbar::view(views::toolbar::ToolbarProps {
-            active_path: self.active_path.as_deref(),
-            active_pdf_path: self
-                .pdf
-                .active_path
-                .as_deref()
-                .or(self.active_image_path.as_deref())
-                .or(self.pptx.active_path.as_deref()),
-            dirty: self.editor.buffer.dirty,
-            saving: self.editor.autosave_pending_since.is_some(),
-            save_failed: self.ui.last_save_failed,
+    fn build_rail(&self) -> Element<'_, Message, Theme, iced::Renderer> {
+        views::rail::view(views::rail::RailProps {
             sidebar_visible: self.vault.sidebar_visible,
-            backlinks_visible: self.vault.backlinks_visible,
             graph_visible: self.graph.visible,
             tracker_visible: self.tracker.visible,
             settings_visible: self.ui.settings_visible,
-            toc_visible: self.editor.toc_visible,
-            toc_available: self.active_path.is_some() || self.pdf.active_path.is_some(),
-            split_view_active: self.ui.split_view_active,
-            split_available: self.tabs.mru_of_kind(TabKind::Note).is_some()
-                && self.tabs.mru_of_kind(TabKind::Pdf).is_some(),
             ink_visible: self.ink.is_visible(),
             region_focused: self.ui.focused_region == FocusRegion::Toolbar,
         })
+    }
+
+    fn right_panels_open(&self) -> bool {
+        !self.graph.visible
+            && !self.ui.settings_visible
+            && (self.motion.toc_width() >= 1.0 || self.motion.backlinks_width() >= 1.0)
+    }
+
+    /// Document-scoped toggles at the trailing end of the tab strip.
+    fn document_actions(&self) -> Vec<Element<'_, Message, Theme, iced::Renderer>> {
+        let mut actions = Vec::new();
+        let split_available = self.tabs.mru_of_kind(TabKind::Note).is_some()
+            && self.tabs.mru_of_kind(TabKind::Pdf).is_some();
+        if split_available {
+            actions.push(
+                IconButton::new(Icon::Split, "Split view")
+                    .shortcut(shortcuts::chord(Shortcut::SplitView))
+                    .size(ControlSize::Sm)
+                    .selected(self.ui.split_view_active)
+                    .on_press(Message::Shell(ShellMessage::SplitViewToggle))
+                    .build(),
+            );
+        }
+        if self.active_path.is_some() || self.pdf.active_path.is_some() {
+            actions.push(
+                IconButton::new(Icon::ListTree, "Outline")
+                    .shortcut(shortcuts::chord(Shortcut::TableOfContents))
+                    .size(ControlSize::Sm)
+                    .selected(self.editor.toc_visible)
+                    .on_press(Message::Editor(EditorMessage::ToggleTOC))
+                    .build(),
+            );
+        }
+        actions.push(
+            IconButton::new(Icon::Link, "Backlinks")
+                .shortcut(shortcuts::chord(Shortcut::ToggleBacklinks))
+                .size(ControlSize::Sm)
+                .selected(self.vault.backlinks_visible)
+                .on_press(Message::KeyboardShortcut(Shortcut::ToggleBacklinks))
+                .build(),
+        );
+        actions
     }
 
     fn build_tab_strip(&self) -> Element<'_, Message, Theme, iced::Renderer> {
@@ -206,6 +268,7 @@ impl MdEditor {
                 on_new_tab: Message::Vault(VaultMessage::CreateFileDialog),
                 on_toggle_overflow: Message::Tabs(TabsMessage::ToggleOverflowMenu),
             },
+            self.document_actions(),
         )
     }
 
@@ -689,7 +752,14 @@ impl MdEditor {
             word_count,
             selection_chars,
             indexing: self.vault.indexing,
-            vault_name,
+            leading: Some(views::breadcrumbs::view(
+                vault_name,
+                self.active_path
+                    .as_deref()
+                    .or(self.pdf.active_path.as_deref())
+                    .or(self.active_image_path.as_deref())
+                    .or(self.pptx.active_path.as_deref()),
+            )),
             focused: self.ui.focused_region == FocusRegion::StatusBar,
         })
     }

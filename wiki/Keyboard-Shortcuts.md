@@ -44,7 +44,7 @@ it says.
 | `Ctrl+Shift+PageDown` / `Ctrl+Shift+PageUp` | Move the tab right / left |
 | `Ctrl+1` … `Ctrl+8`, `Ctrl+9` | Go to that tab; `Ctrl+9` is always the last |
 | `F2` | Rename the selected file |
-| `F6` / `Shift+F6` | Move focus between regions: toolbar → sidebar → main → side panel → status bar. Landing on the main region puts the keyboard in the note |
+| `F6` / `Shift+F6` | Move focus between regions: activity rail → sidebar → main → side panel → status bar. Landing on the main region puts the keyboard in the note |
 | `F11` | Focus mode (hide the panels) |
 | `Ctrl+C` | Copy the PDF text selection, when the PDF pane holds one |
 | `Escape` | Close the topmost overlay, in priority order; closing find, the palette or a dialog returns the keyboard to the note |
@@ -115,13 +115,13 @@ Active only while the markdown editor has focus.
 | `Escape` | Close the palette |
 
 Four commands have **no key binding of their own** and are reachable only from the palette
-(or the toolbar, where noted):
+(or a button, where noted):
 
-| Command | Also on the toolbar? |
+| Command | Also a button? |
 | :--- | :--- |
-| Toggle Backlinks | no |
-| Study Tracker | yes |
-| Split View | yes |
+| Toggle Backlinks | yes, at the end of the tab strip |
+| Study Tracker | yes, on the activity rail |
+| Split View | yes, at the end of the tab strip |
 | Focus Mode | no |
 
 **Focus Mode** is a one-shot action, not a toggle: it hides the sidebar, the backlinks panel,

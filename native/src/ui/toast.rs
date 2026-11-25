@@ -124,7 +124,7 @@ pub fn toast<'a, Message: Clone + 'a>(
             .build(),
     );
 
-    let bg = fade(t.bg_overlay, opacity);
+    let bg = fade(t.bg_popover, opacity);
     let border_col = fade(
         if kind == ToastKind::Error {
             t.status_danger

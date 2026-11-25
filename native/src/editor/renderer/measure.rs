@@ -108,6 +108,18 @@ pub(super) fn mono_font() -> iced::Font {
     crate::design::fonts::MONO_FONT
 }
 
+/// Headings: Source Serif at semibold (italic when the span is emphasised).
+pub(super) fn heading_font(italic: bool) -> iced::Font {
+    iced::Font {
+        style: if italic {
+            iced::font::Style::Italic
+        } else {
+            iced::font::Style::Normal
+        },
+        ..crate::design::fonts::SERIF_FONT_SEMIBOLD
+    }
+}
+
 /// The body font at bold weight.
 pub(super) fn bold_font() -> iced::Font {
     iced::Font {
@@ -120,6 +132,10 @@ pub(super) fn bold_font() -> iced::Font {
 pub(super) fn span_font(span: &StyledSpan, line: &StyledLine) -> iced::Font {
     if span.is_code || line.is_code_block || line.is_math_block {
         mono_font()
+    } else if span.is_heading {
+        // Folio: headings are always set in the serif display face, whatever the
+        // body reading font, so a note's structure reads at a glance.
+        heading_font(span.italic)
     } else if span.bold {
         bold_font()
     } else if span.italic {

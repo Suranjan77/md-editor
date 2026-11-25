@@ -1,15 +1,16 @@
 //! Welcome view shown when no vault is open: wordmark, Open/Create actions, recent vaults and shortcut hints.
 
 use iced::widget::{Column, Space, column, container, image, row, text};
-use iced::{Alignment, Background, Element, Length, Renderer, Theme};
+use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
 use crate::design::metrics::{
-    DIALOG_WIDTH_SM, SPACE_1, SPACE_2, SPACE_3, SPACE_4, SPACE_5, WELCOME_LOGO_PX,
+    BORDER_WIDTH, DIALOG_WIDTH_MD, Elevation, RADIUS_XL, SPACE_1, SPACE_2, SPACE_3, SPACE_5,
+    SPACE_6, SPACE_PX, WELCOME_LOGO_PX,
 };
 use crate::design::{TextRole, tokens};
 use crate::messages::{Message, Shortcut, VaultMessage};
 use crate::shortcuts;
-use crate::ui::{Button, ButtonVariant, Icon, ListRowProps, card, kbd, list_row};
+use crate::ui::{Button, ButtonVariant, Icon, ListRowProps, kbd, list_row};
 
 pub fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Theme, Renderer> {
     let t = tokens();
@@ -53,14 +54,16 @@ pub fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Theme, Rend
 
     let mut center_col = column![
         logo,
-        text("Md-editor")
+        text("MD Editor")
             .size(TextRole::Display.size())
+            .line_height(TextRole::Display.line_height())
             .color(t.fg_primary)
             .font(TextRole::Display.font()),
-        text("Quiet, local-first research workspace for Markdown, PDFs, decks and ink")
-            .size(TextRole::Caption.size())
+        text("A quiet, local-first desk for notes, papers, slides and ink.")
+            .size(TextRole::Body.size())
+            .line_height(TextRole::Body.line_height())
             .color(t.fg_secondary)
-            .font(TextRole::Caption.font()),
+            .font(TextRole::Body.font()),
         Space::new().height(Length::Fixed(SPACE_3)),
         actions,
         hints,
@@ -87,31 +90,53 @@ pub fn view<'a>(recent_vaults: &'a [String]) -> Element<'a, Message, Theme, Rend
             })
         });
 
-        let recent_card = container(card(
-            column![
-                text("Recent vaults")
-                    .size(TextRole::Caption.size())
-                    .color(t.fg_tertiary)
-                    .font(crate::design::fonts::UI_FONT_SEMIBOLD),
-                Column::with_children(rows).spacing(SPACE_1),
-            ]
-            .spacing(SPACE_2),
-        ))
-        .width(Length::Fixed(DIALOG_WIDTH_SM));
+        let rule_col = t.border_subtle;
+        let recent = column![
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fixed(SPACE_PX))
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(rule_col)),
+                    ..Default::default()
+                }),
+            text("Recent vaults")
+                .size(TextRole::Label.size())
+                .line_height(TextRole::Label.line_height())
+                .color(t.fg_tertiary)
+                .font(TextRole::Label.font()),
+            Column::with_children(rows).spacing(SPACE_1),
+        ]
+        .spacing(SPACE_3)
+        .width(Length::Fill);
 
         center_col = center_col
-            .push(Space::new().height(Length::Fixed(SPACE_4)))
-            .push(recent_card);
+            .push(Space::new().height(Length::Fixed(SPACE_2)))
+            .push(recent);
     }
 
-    container(center_col)
+    // Folio: one paper sheet resting on the chrome ground.
+    let sheet = container(center_col)
+        .width(Length::Fixed(DIALOG_WIDTH_MD))
+        .padding([SPACE_6, SPACE_6])
+        .style(move |_| container::Style {
+            background: Some(Background::Color(t.bg_canvas)),
+            border: Border {
+                color: t.border_subtle,
+                width: BORDER_WIDTH,
+                radius: RADIUS_XL.into(),
+            },
+            shadow: Elevation::Dialog.shadow(),
+            ..Default::default()
+        });
+
+    container(sheet)
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(SPACE_5)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
         .style(move |_| container::Style {
-            background: Some(Background::Color(t.bg_canvas)),
+            background: Some(Background::Color(t.bg_surface)),
             ..Default::default()
         })
         .into()

@@ -116,6 +116,7 @@ fn build_gallery_sheet<'a>(sample_tab: &'a Tab) -> Element<'a, GalleryMsg, Theme
             on_new_tab: GalleryMsg::Noop,
             on_toggle_overflow: GalleryMsg::Noop,
         },
+        Vec::new(),
     );
 
     let tabs_and_bars = column![
@@ -210,7 +211,7 @@ fn build_gallery_sheet<'a>(sample_tab: &'a Tab) -> Element<'a, GalleryMsg, Theme
         word_count: Some(420),
         selection_chars: Some(12),
         indexing: false,
-        vault_name: Some("research-vault"),
+        leading: None,
         focused: false,
     });
 

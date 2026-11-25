@@ -80,7 +80,7 @@ md-editor/
 | `app/vault_links.rs` | Sidebar clicks, internal / external / `pdf://` link routing, sidebar keyboard navigation. |
 | `app/documents.rs` | Opening, saving, parking documents (notes, decks, images); session and layout persistence. |
 | `app/subscription.rs` | Keyboard, timers, window events, pen input, the vault watcher. |
-| `app/view.rs` | `view(window)`: the shell window (toolbar, tab strip, sidebar, main pane, side panels, status bar) and the ink window. |
+| `app/view.rs` | `view(window)`: the shell window (activity rail, sidebar, tab strip, document sheet, side panels, status bar) and the ink window. |
 | `app/overlays.rs` | Layers above the shell: drop hint, tab overflow, context menus (one builder per target), vault search, palette, dialogs, PDF link preview, toasts; `anchor_context_menu`. |
 | `app/links.rs` | Wikilink, relative-link and heading-anchor resolution. |
 | `messages.rs` | `Message` and its families (`VaultMessage`, `TabsMessage`, `SettingsMessage`, …), `Shortcut`, `TrackerTab`. |
@@ -131,7 +131,7 @@ md-editor/
 
 | Path | Responsibility |
 | :--- | :--- |
-| `views/sidebar.rs`, `toolbar.rs`, `welcome.rs`, `toast.rs`, `settings.rs` | Shell chrome and the Settings page (`Ctrl+,`). |
+| `views/sidebar.rs`, `rail.rs`, `breadcrumbs.rs`, `welcome.rs`, `toast.rs`, `settings.rs` | Shell chrome (file tree, activity rail, status-bar breadcrumbs) and the Settings page (`Ctrl+,`). |
 | `views/viewer_toolbar.rs` | The shared viewer toolbar for PDFs, slides and images: outline, page field, zoom field, fit, find. |
 | `views/modals.rs`, `link_note_picker.rs`, `command_palette.rs` | Dialogs and the `Ctrl+P` palette (registry and fuzzy ranking via `fuzzy.rs`). |
 | `views/search.rs`, `toc.rs`, `backlinks.rs` | Side panels. |

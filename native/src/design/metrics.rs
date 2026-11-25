@@ -113,6 +113,8 @@ pub const BORDER_WIDTH: f32 = 1.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Elevation {
     Flat,
+    /// The document sheet resting on the chrome ground: a soft, short shadow.
+    Sheet,
     Popover,
     Dialog,
     Toast,
@@ -125,6 +127,16 @@ impl Elevation {
                 color: Color::TRANSPARENT,
                 offset: Vector::new(0.0, 0.0),
                 blur_radius: 0.0,
+            },
+            Self::Sheet => Shadow {
+                color: Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.10,
+                },
+                offset: Vector::new(0.0, 1.0),
+                blur_radius: 4.0,
             },
             Self::Popover => Shadow {
                 color: Color {
@@ -163,8 +175,14 @@ impl Elevation {
 // ── Shell layout dimensions ──────────────────────────────────────────
 
 pub const TOOLBAR_HEIGHT: f32 = 40.0;
-pub const TAB_STRIP_HEIGHT: f32 = 36.0;
-pub const STATUS_BAR_HEIGHT: f32 = 24.0;
+pub const TAB_STRIP_HEIGHT: f32 = 38.0;
+pub const STATUS_BAR_HEIGHT: f32 = 26.0;
+/// Width of the activity rail at the window's left edge (Folio shell).
+pub const RAIL_WIDTH: f32 = 48.0;
+/// Corner radius of the document sheet that floats on the chrome ground.
+pub const SHEET_RADIUS: f32 = RADIUS_LG;
+/// Gap between the document sheet and the window edge / status bar.
+pub const SHEET_GUTTER: f32 = SPACE_2;
 pub const SPLIT_HANDLE_THICKNESS: f32 = 6.0;
 
 pub const SIDEBAR_DEFAULT_WIDTH: f32 = 260.0;

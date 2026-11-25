@@ -5,7 +5,8 @@ use iced::widget::text::LineHeight;
 use iced::{Font, Pixels};
 
 use super::fonts::{
-    MONO_FONT, MONO_FONT_SEMIBOLD, UI_FONT, UI_FONT_BOLD, UI_FONT_MEDIUM, UI_FONT_SEMIBOLD,
+    MONO_FONT, MONO_FONT_SEMIBOLD, SERIF_FONT_BOLD, SERIF_FONT_SEMIBOLD, UI_FONT, UI_FONT_MEDIUM,
+    UI_FONT_SEMIBOLD,
 };
 use super::interface_scale;
 
@@ -23,9 +24,9 @@ pub enum TextRole {
     TitleSm,
     /// 16 / 24 · 600 — Dialog titles, view titles.
     Title,
-    /// 20 / 28 · 600 — Settings sections, tracker headers, stat values.
+    /// 20 / 28 · Serif 600 — Settings sections, tracker headers, stat values.
     Heading,
-    /// 32 / 40 · 700 — Welcome wordmark only.
+    /// 32 / 40 · Serif 700 — Welcome wordmark only.
     Display,
     /// 12 / 16 · Mono 400 — Shortcut keys, counters, compact tabular figures.
     MonoCaption,
@@ -71,8 +72,10 @@ impl TextRole {
         match self {
             Self::Caption | Self::Body => UI_FONT,
             Self::Label => UI_FONT_MEDIUM,
-            Self::BodyStrong | Self::TitleSm | Self::Title | Self::Heading => UI_FONT_SEMIBOLD,
-            Self::Display => UI_FONT_BOLD,
+            Self::BodyStrong | Self::TitleSm | Self::Title => UI_FONT_SEMIBOLD,
+            // Folio: the two display roles use the serif face, echoing document headings.
+            Self::Heading => SERIF_FONT_SEMIBOLD,
+            Self::Display => SERIF_FONT_BOLD,
             Self::MonoCaption | Self::MonoBody => MONO_FONT,
             Self::MonoStrong => MONO_FONT_SEMIBOLD,
         }

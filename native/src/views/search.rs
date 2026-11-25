@@ -288,7 +288,7 @@ pub fn view<'a>(props: SearchProps<'a>) -> Element<'a, Message, Theme, Renderer>
     .width(Length::Fixed(PALETTE_WIDTH))
     .padding(SPACE_3)
     .style(move |_| iced::widget::container::Style {
-        background: Some(iced::Background::Color(t.bg_raised)),
+        background: Some(iced::Background::Color(t.bg_popover)),
         border: iced::Border {
             color: t.border_default,
             width: BORDER_WIDTH,

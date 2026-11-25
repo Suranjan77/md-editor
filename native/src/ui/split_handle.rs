@@ -13,7 +13,13 @@ pub fn split_handle<'a, Message: Clone + 'a>(
     on_double_click_reset: Message,
 ) -> Element<'a, Message, Theme, Renderer> {
     let t = design::tokens();
-    let line_col = if dragging { t.accent } else { t.border_subtle };
+    // Folio: the gutter between chrome and sheet already reads as a divider, so the
+    // handle only shows itself while dragging.
+    let line_col = if dragging {
+        t.accent
+    } else {
+        iced::Color::TRANSPARENT
+    };
     let bg_col = if dragging {
         t.accent_muted
     } else {

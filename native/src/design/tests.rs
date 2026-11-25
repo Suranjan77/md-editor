@@ -34,6 +34,8 @@ fn assert_pairs(theme_name: &str, t: &Tokens) {
         ("bg.surface", t.bg_surface),
         ("bg.raised", t.bg_raised),
         ("bg.overlay", t.bg_overlay),
+        ("bg.inset", t.bg_inset),
+        ("bg.popover", t.bg_popover),
     ];
     for (fg_name, fg) in [
         ("fg.primary", t.fg_primary),
@@ -62,6 +64,7 @@ fn assert_pairs(theme_name: &str, t: &Tokens) {
             ("bg.canvas", t.bg_canvas),
             ("bg.surface", t.bg_surface),
             ("bg.raised", t.bg_raised),
+            ("bg.inset", t.bg_inset),
         ] {
             let ratio = contrast_ratio(fg, bg);
             assert!(

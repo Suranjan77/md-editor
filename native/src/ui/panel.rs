@@ -6,7 +6,7 @@ use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 use super::focus::ring_border;
 use crate::design;
 use crate::design::TextRole;
-use crate::design::metrics::{BORDER_WIDTH, SPACE_0, SPACE_1, SPACE_2, SPACE_3, SPACE_PX};
+use crate::design::metrics::{SPACE_0, SPACE_1, SPACE_3, SPACE_PX, TAB_STRIP_HEIGHT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelSide {
@@ -52,7 +52,9 @@ pub fn panel<'a, Message: 'a>(
             .spacing(SPACE_1)
             .align_y(Alignment::Center),
     )
-    .padding([SPACE_2, SPACE_3])
+    .padding([SPACE_0, SPACE_3])
+    .height(Length::Fixed(TAB_STRIP_HEIGHT))
+    .align_y(Alignment::Center)
     .width(Length::Fill);
 
     let divider_col = t.border_subtle;
@@ -65,24 +67,13 @@ pub fn panel<'a, Message: 'a>(
         });
 
     let bg = t.bg_surface;
-    let edge = t.border_default;
-    let inner = column![header, divider, body.into()]
+    // Folio: panels sit on the chrome ground; the gutter and the sheet's edge separate
+    // them from the document, so they carry no side rule of their own.
+    let _ = side;
+    let framed = column![header, divider, body.into()]
         .spacing(SPACE_0)
         .width(Length::Fill)
         .height(Length::Fill);
-
-    let side_line = container(Space::new())
-        .width(Length::Fixed(BORDER_WIDTH))
-        .height(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(edge)),
-            ..Default::default()
-        });
-
-    let framed: Element<'a, Message, Theme, Renderer> = match side {
-        PanelSide::Left => row![inner, side_line].height(Length::Fill).into(),
-        PanelSide::Right => row![side_line, inner].height(Length::Fill).into(),
-    };
 
     container(framed)
         .width(Length::Fill)

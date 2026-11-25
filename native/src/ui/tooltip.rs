@@ -43,7 +43,7 @@ pub fn with_tooltip<'a, Message: 'a>(
             .into(),
     };
 
-    let bg = t.bg_raised;
+    let bg = t.bg_popover;
     let border_col = t.border_default;
     let tip_box = container(tip_row).padding([SPACE_1, SPACE_2]);
     let delay = if reduced_motion() {

@@ -127,7 +127,7 @@ impl<'a, Message: Clone + 'a> TextField<'a, Message> {
                         (t.border_control, BORDER_WIDTH)
                     };
                     text_input::Style {
-                        background: Background::Color(t.bg_raised),
+                        background: Background::Color(t.bg_canvas),
                         border: Border {
                             color: border_col,
                             width: border_w,
@@ -166,7 +166,7 @@ impl<'a, Message: Clone + 'a> TextField<'a, Message> {
                         .build(),
                 );
             }
-            let bg = t.bg_raised;
+            let bg = t.bg_canvas;
             let border_col = if has_error {
                 t.status_danger
             } else {

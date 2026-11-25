@@ -9,14 +9,16 @@ and a fuzzy matcher whose scores are comparable across commands and files.
 ## 1. Design system (`native/src/design/`, `native/src/ui/`)
 
 The specification is [`docs/design-system/md-editor/MASTER.md`](../docs/design-system/md-editor/MASTER.md)
-with per-surface overrides in `pages/` (editor, viewers, graph, ink, tracker). The code:
+with per-surface overrides in `pages/` (editor, viewers, graph, ink, tracker). The current
+visual language is **Folio** (MASTER §0): warm paper-and-ink palette, a document sheet
+floating on the chrome ground, an activity rail, and serif headings. The code:
 
 | Module | Holds |
 | :--- | :--- |
 | `design/palette.rs` | `Tokens`: the semantic colour roles (`bg.*`, `fg.*`, `border.*`, `accent`, `status.*`, `doc.*`, `viewer_ground`) as two tables, `DARK` and `LIGHT`; `ContentHue`, the user-content palette (highlight colours) that does not change with the theme; `fade()` |
 | `design/type_scale.rs` | `TextRole` (`Caption`, `Label`, `Body`, `BodyStrong`, `TitleSm`, `Title`, `Heading`, `Display`, `Mono*`): size, line height and font per role, scaled by the interface scale, never below 12px |
-| `design/metrics.rs` | The 4px spacing grid `SPACE_0` … `SPACE_7`, control and icon sizes, radii, `Elevation` shadows, toolbar/tab/status heights, panel default widths and drag limits, dialog widths |
-| `design/fonts.rs` | The bundled faces: Inter (UI and sans reading), JetBrains Mono (code, figures), Source Serif (serif reading) |
+| `design/metrics.rs` | The 4px spacing grid `SPACE_0` … `SPACE_7`, control and icon sizes, radii, `Elevation` shadows, toolbar/tab/status heights, the rail width and sheet radius/gutter, panel default widths and drag limits, dialog widths |
+| `design/fonts.rs` | The bundled faces: Inter (UI and sans reading), JetBrains Mono (code, figures), Source Serif (headings, display roles, serif reading) |
 | `design/motion.rs` | Durations, easing, reduced motion, the panel `Motion` state and `Spring` (section 2) |
 | `design/mod.rs` | The runtime settings: theme mode and active theme (`tokens()` returns the active table), interface scale, reading font, editor font size, line width, and `theme_revision()`, which caches fold in so a change repaints everything |
 | `design/setting.rs` | `Setting`: those values are process-wide in the app and per-thread under `cargo test`, so tests that switch theme or size do not disturb each other |
@@ -36,8 +38,8 @@ Two rules about colour:
 
 The editor reads its typography from the same settings: `editor/renderer/metrics.rs`
 scales the highlighter's sizes to the chosen body size (`scaled`), caps the column at the
-chosen line width (`max_content_width`), and `measure::body_font` picks Inter or Source
-Serif.
+chosen line width (`max_content_width`), `measure::body_font` picks Inter or Source
+Serif for the body, and `measure::heading_font` sets headings in Source Serif regardless.
 
 ---
 

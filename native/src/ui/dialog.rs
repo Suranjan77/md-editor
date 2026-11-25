@@ -51,7 +51,7 @@ pub fn dialog<'a, Message: Clone + 'a>(
         );
     }
 
-    let card_bg = fade(t.bg_raised, opacity);
+    let card_bg = fade(t.bg_popover, opacity);
     let card_border = fade(t.border_default, opacity);
     let mut shadow = Elevation::Dialog.shadow();
     shadow.color = fade(shadow.color, opacity);

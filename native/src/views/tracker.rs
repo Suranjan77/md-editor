@@ -136,7 +136,7 @@ fn activity_chart<'a>(sessions: &[StudySession]) -> Element<'a, Message, Theme, 
     .padding(SPACE_3)
     .width(Length::Fill)
     .style(|_| container::Style {
-        background: Some(Background::Color(tokens().bg_surface)),
+        background: Some(Background::Color(tokens().bg_inset)),
         border: iced::Border {
             color: tokens().border_subtle,
             width: 1.0,
@@ -174,7 +174,7 @@ fn curriculum_panel<'a>(phases: Vec<PhaseConfig>) -> Element<'a, Message, Theme,
             )
             .padding(SPACE_2)
             .style(|_| container::Style {
-                background: Some(Background::Color(tokens().bg_surface)),
+                background: Some(Background::Color(tokens().bg_inset)),
                 border: iced::Border {
                     color: tokens().border_subtle,
                     width: 1.0,

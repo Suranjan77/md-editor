@@ -11,7 +11,7 @@ pub fn popover<'a, Message: 'a>(
     max_width: Option<f32>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let t = design::tokens();
-    let bg = t.bg_raised;
+    let bg = t.bg_popover;
     let border = t.border_default;
 
     container(content)
