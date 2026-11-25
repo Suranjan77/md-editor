@@ -359,30 +359,7 @@ fn layout_paragraph(
         Some((bullet, _, width)) => bullet_x + width + bullet.size * BULLET_GAP,
         None => bullet_x,
     };
-
-    let mut lines = Vec::new();
-    let mut line = Line::new(first_start);
-    for (index, word) in words.iter().enumerate() {
-        if word.is_break {
-            line.break_size = Some(word.drawn_size);
-            lines.push(std::mem::replace(
-                &mut line,
-                Line::new(paragraph.margin_left),
-            ));
-            continue;
-        }
-        if !line.items.is_empty()
-            && line.start + line.cursor + word.width > wrap_width + FIT_EPSILON
-        {
-            lines.push(std::mem::replace(
-                &mut line,
-                Line::new(paragraph.margin_left),
-            ));
-        }
-        line.items.push((index, line.cursor));
-        line.cursor += word.width + word.space;
-    }
-    lines.push(line);
+    let lines = wrap_lines(&words, paragraph.margin_left, first_start, wrap_width);
 
     let mut y = top;
     for (line_index, line) in lines.iter().enumerate() {
@@ -409,7 +386,6 @@ fn layout_paragraph(
             Align::Right => room - natural,
             Align::Left | Align::Justify => 0.0,
         };
-        let origin = line.start + shift;
 
         if line_index == 0
             && let Some((bullet, font, _)) = &bullet
@@ -424,97 +400,155 @@ fn layout_paragraph(
             });
         }
 
+        // Consecutive words from the same run are placed as one segment.
+        let row = LineRow {
+            origin: line.start + shift,
+            y,
+            height,
+            baseline,
+        };
         let mut k = 0;
         while k < line.items.len() {
-            let (first_word, first_x) = line.items[k];
-            let run = words[first_word].run;
-            let mut text = String::new();
-            let mut end = k;
-            while end < line.items.len() && words[line.items[end].0].run == run {
-                let word = &words[line.items[end].0];
-                text.push_str(&word.text);
-                let next_same_run = line
-                    .items
-                    .get(end + 1)
-                    .is_some_and(|&(next, _)| words[next].run == run);
-                if next_same_run {
-                    text.push_str(&word.trailing);
-                }
-                end += 1;
-            }
-            let (last_word, last_x) = line.items[end - 1];
-            let width = last_x + words[last_word].width - first_x;
-            let x = origin + first_x;
-
-            let style = &paragraph.runs[run].style;
-            let word = &words[first_word];
-            let run_baseline = baseline - style.baseline * style.size;
-            if let Some(color) = style.highlight {
-                laid.highlights.push(TextRect {
-                    x,
-                    y,
-                    width,
-                    height,
-                    color,
-                });
-            }
-            if style.color.a > 0 && !text.trim().is_empty() {
-                let top = box_top(run_baseline, word.drawn_size, word.font, metrics);
-                if word.tracking == 0.0 {
-                    laid.runs.push(PlacedRun {
-                        text,
-                        x,
-                        y: top,
-                        size: word.drawn_size,
-                        font: word.font,
-                        color: style.color,
-                    });
-                } else {
-                    // iced text has no letter spacing, so tracked text is
-                    // placed a character at a time.
-                    let mut char_x = x;
-                    for ch in text.chars() {
-                        let glyph = ch.to_string();
-                        let advance =
-                            metrics.width(&glyph, word.font, word.drawn_size) + word.tracking;
-                        if !ch.is_whitespace() {
-                            laid.runs.push(PlacedRun {
-                                text: glyph,
-                                x: char_x,
-                                y: top,
-                                size: word.drawn_size,
-                                font: word.font,
-                                color: style.color,
-                            });
-                        }
-                        char_x += advance;
-                    }
-                }
-            }
-            let thickness = (word.drawn_size * 0.06).max(0.5);
-            if style.underline {
-                laid.rules.push(TextRect {
-                    x,
-                    y: run_baseline + word.drawn_size * 0.1,
-                    width,
-                    height: thickness,
-                    color: style.color,
-                });
-            }
-            if style.strike {
-                laid.rules.push(TextRect {
-                    x,
-                    y: run_baseline - word.drawn_size * 0.3,
-                    width,
-                    height: thickness,
-                    color: style.color,
-                });
-            }
+            let run = words[line.items[k].0].run;
+            let end = k + line.items[k..]
+                .iter()
+                .take_while(|&&(i, _)| words[i].run == run)
+                .count();
+            place_segment(&line.items[k..end], &words, paragraph, row, metrics, laid);
             k = end;
         }
         y += height;
     }
     y
+}
+
+/// Greedy line breaking: the first line starts at `first_start` (after any
+/// bullet), the rest at the paragraph margin.
+fn wrap_lines(words: &[Word], margin_left: f32, first_start: f32, wrap_width: f32) -> Vec<Line> {
+    let mut lines = Vec::new();
+    let mut line = Line::new(first_start);
+    for (index, word) in words.iter().enumerate() {
+        if word.is_break {
+            line.break_size = Some(word.drawn_size);
+            lines.push(std::mem::replace(&mut line, Line::new(margin_left)));
+            continue;
+        }
+        if !line.items.is_empty()
+            && line.start + line.cursor + word.width > wrap_width + FIT_EPSILON
+        {
+            lines.push(std::mem::replace(&mut line, Line::new(margin_left)));
+        }
+        line.items.push((index, line.cursor));
+        line.cursor += word.width + word.space;
+    }
+    lines.push(line);
+    lines
+}
+
+/// Where one laid-out line sits: its left edge after alignment, its top,
+/// height and baseline.
+#[derive(Clone, Copy)]
+struct LineRow {
+    origin: f32,
+    y: f32,
+    height: f32,
+    baseline: f32,
+}
+
+/// Place one same-run stretch of a line: its highlight, its text and any
+/// underline or strike rule.
+fn place_segment(
+    items: &[(usize, f32)],
+    words: &[Word],
+    paragraph: &Paragraph,
+    row: LineRow,
+    metrics: &dyn TextMetrics,
+    laid: &mut LaidText,
+) {
+    let (first_word, first_x) = items[0];
+    let (last_word, last_x) = items[items.len() - 1];
+    let mut text = String::new();
+    for (n, &(index, _)) in items.iter().enumerate() {
+        text.push_str(&words[index].text);
+        if n + 1 < items.len() {
+            text.push_str(&words[index].trailing);
+        }
+    }
+    let width = last_x + words[last_word].width - first_x;
+    let x = row.origin + first_x;
+
+    let word = &words[first_word];
+    let style = &paragraph.runs[word.run].style;
+    let run_baseline = row.baseline - style.baseline * style.size;
+    if let Some(color) = style.highlight {
+        laid.highlights.push(TextRect {
+            x,
+            y: row.y,
+            width,
+            height: row.height,
+            color,
+        });
+    }
+    if style.color.a > 0 && !text.trim().is_empty() {
+        let top = box_top(run_baseline, word.drawn_size, word.font, metrics);
+        push_text(laid, text, x, top, word, style.color, metrics);
+    }
+    let thickness = (word.drawn_size * 0.06).max(0.5);
+    let mut rule = |y| {
+        laid.rules.push(TextRect {
+            x,
+            y,
+            width,
+            height: thickness,
+            color: style.color,
+        })
+    };
+    if style.underline {
+        rule(run_baseline + word.drawn_size * 0.1);
+    }
+    if style.strike {
+        rule(run_baseline - word.drawn_size * 0.3);
+    }
+}
+
+/// Push a run of text; tracked text is placed a character at a time, since
+/// iced text has no letter spacing.
+fn push_text(
+    laid: &mut LaidText,
+    text: String,
+    x: f32,
+    top: f32,
+    word: &Word,
+    color: Rgba,
+    metrics: &dyn TextMetrics,
+) {
+    if word.tracking == 0.0 {
+        laid.runs.push(PlacedRun {
+            text,
+            x,
+            y: top,
+            size: word.drawn_size,
+            font: word.font,
+            color,
+        });
+        return;
+    }
+    let mut char_x = x;
+    for ch in text.chars() {
+        let glyph = ch.to_string();
+        let advance = metrics.width(&glyph, word.font, word.drawn_size) + word.tracking;
+        if !ch.is_whitespace() {
+            laid.runs.push(PlacedRun {
+                text: glyph,
+                x: char_x,
+                y: top,
+                size: word.drawn_size,
+                font: word.font,
+                color,
+            });
+        }
+        char_x += advance;
+    }
 }
 
 /// Top of a one-font-size-tall iced text box whose glyphs sit on `baseline`.

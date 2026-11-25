@@ -23,7 +23,6 @@ const FUNCTION_RATCHET: &[(&str, usize)] = &[
         344,
     ),
     ("native/src/editor/highlight.rs::highlight_with_state", 187),
-    ("native/src/slides/text.rs::layout_paragraph", 185),
 ];
 
 fn workspace_root() -> PathBuf {
