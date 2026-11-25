@@ -328,13 +328,14 @@ your page and scroll position.
 ## 4. Handwritten Notes
 
 `Ctrl+I` opens a handwriting canvas in its own window — put it on a tablet or a second
-monitor beside your notes. On Windows a pen's pressure shapes each stroke; elsewhere, and
-with a mouse, strokes have a fixed weight.
+monitor beside your notes. A pen's pressure shapes each stroke (Windows, and Linux on
+Wayland); with a mouse, strokes have a fixed weight.
 
 - **Tools**: pen, highlighter (drawn behind writing), eraser (rub out part of a stroke, or
   whole strokes), and lasso (circle strokes, then drag them or press `Delete`).
 - **Paper**: plain, ruled, grid, or dotted.
-- **Quick menu**: press the pen's barrel button for a ring of tools and colours at the nib.
+- **Pen buttons**: hold the lower side button (or flip to the eraser end) to erase. Press
+  the upper side button for a ring of tools and colours at the nib.
 - `Ctrl+Z` / `Ctrl+Y` undo and redo; `Ctrl+S` saves.
 
 A page is saved beside the open note (`Week1.md` → `Week1.ink`), or at the vault root as

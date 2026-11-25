@@ -24,7 +24,7 @@ and why when it isn't.
 | Camera | `ink/camera.rs` | Page ⇄ screen mapping for pan and zoom |
 | Canvas | `ink/canvas.rs` | The iced canvas: a retained cache for finished strokes, the live stroke redrawn per frame |
 | Pen input | `ink/pen.rs`, `ink/pen_win.rs`, `ink/pen_wayland.rs` | Sample type and the stream into iced; the Windows and Wayland capture hooks |
-| Radial menu | `ink/radial.rs` | The ring summoned at the nib with the pen's barrel button |
+| Radial menu | `ink/radial.rs` | The ring summoned at the nib with the pen's upper side button |
 | Chrome | `native/src/views/ink.rs` | Toolbar and colour palette |
 | Messages | `native/src/app/ink.rs` → `update_ink` | Every `Ink*` message; opening, closing and saving pages |
 
@@ -38,8 +38,11 @@ and why when it isn't.
   out only what is under the tip; or whole-stroke), and lasso (circle strokes, then drag to
   move or `Delete` to remove).
 - **Paper** — plain, ruled, grid, or dotted (the default).
-- **Radial menu** — press the pen's barrel button: tools on the inner ring, colours on the
-  outer one; the centre cancels.
+- **Pen buttons** — the eraser end, or holding the lower side button, erases whatever tool
+  is selected (the eraser ring shows while hovering). The upper side button opens the
+  **radial menu**: tools on the inner ring, colours on the outer one; the centre cancels.
+  On Wayland the mapping is in `ink/pen_wayland.rs::sample_for`; Windows reports a single
+  barrel button, which opens the menu.
 - `Ctrl+Z` / `Ctrl+Y` undo and redo on the canvas, `Ctrl+S` saves the page while the canvas
   is in front, and `Escape` clears a lasso selection.
 - Finishing a stroke near the bottom edge scrolls the page up, so the next line has room.

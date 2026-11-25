@@ -127,7 +127,7 @@ unsafe extern "system" fn subclass_proc(
             y: 0.0,
             pressure: 0.0,
             eraser: false,
-            barrel: false,
+            menu: false,
         });
     }
 
@@ -242,7 +242,7 @@ unsafe fn handle_pointer(hwnd: HWND, msg: u32, wparam: WPARAM) -> bool {
             y,
             pressure,
             eraser: info.penFlags & (PEN_FLAG_INVERTED | PEN_FLAG_ERASER) != 0,
-            barrel: info.penFlags & PEN_FLAG_BARREL != 0,
+            menu: info.penFlags & PEN_FLAG_BARREL != 0,
         });
     }
 
@@ -278,7 +278,7 @@ unsafe fn report_hover(hwnd: HWND, pointer_id: u32) -> bool {
                 y,
                 pressure: 0.0,
                 eraser: false,
-                barrel: false,
+                menu: false,
             });
         }
         return false;
@@ -291,7 +291,7 @@ unsafe fn report_hover(hwnd: HWND, pointer_id: u32) -> bool {
         y,
         pressure: 0.0,
         eraser: info.penFlags & (PEN_FLAG_INVERTED | PEN_FLAG_ERASER) != 0,
-        barrel: info.penFlags & PEN_FLAG_BARREL != 0,
+        menu: info.penFlags & PEN_FLAG_BARREL != 0,
     });
     true
 }

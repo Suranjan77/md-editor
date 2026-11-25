@@ -4,7 +4,8 @@
 //! Once the app binds the tablet protocol, the compositor stops turning the pen
 //! into a mouse. winit then offers each tool frame here first: frames on the
 //! ink surface are claimed and fed to [`super::pen::emit`] with pressure,
-//! eraser and barrel state. The rest go back to winit, which replays them as
+//! eraser and side-button state (lower button erases, upper opens the radial
+//! menu). The rest go back to winit, which replays them as
 //! ordinary cursor and left-button events so the pen still presses toolbar
 //! buttons. These are the same rules as the Windows hook in `pen_win.rs`.
 
@@ -39,6 +40,17 @@ pub fn install() -> Result<(), String> {
 static ROUTER: Mutex<Router> = Mutex::new(Router::new());
 
 fn handle(event: &TabletToolEvent) -> bool {
+    log::trace!(
+        "tablet {:?} at {:?} pressure {:?} eraser {} barrel {} barrel2 {} (capturing {}, window match {})",
+        event.phase,
+        event.position,
+        event.pressure,
+        event.eraser,
+        event.barrel,
+        event.barrel2,
+        super::pen::is_capturing(),
+        u64::from(event.window_id) == super::pen::hooked_window(),
+    );
     if !super::pen::is_capturing() || u64::from(event.window_id) != super::pen::hooked_window() {
         return false;
     }
@@ -50,20 +62,29 @@ fn handle(event: &TabletToolEvent) -> bool {
     };
     let (phases, claimed) = router.route(event.phase, on_canvas);
     drop(router);
+    log::trace!("  on canvas {on_canvas}, emits {phases:?}, claimed {claimed}");
 
     for phase in phases {
-        super::pen::emit(PenSample {
-            phase,
-            x,
-            y,
-            pressure: event
-                .pressure
-                .map_or(PRESSURE_UNAVAILABLE, |p| (p as f32).clamp(0.0, 1.0)),
-            eraser: event.eraser,
-            barrel: event.barrel,
-        });
+        super::pen::emit(sample_for(event, phase));
     }
     claimed
+}
+
+/// The ink sample for one tool frame, at `phase`.
+pub(crate) fn sample_for(event: &TabletToolEvent, phase: PenPhase) -> PenSample {
+    PenSample {
+        phase,
+        x: event.position.x as f32,
+        y: event.position.y as f32,
+        pressure: event
+            .pressure
+            .map_or(PRESSURE_UNAVAILABLE, |p| (p as f32).clamp(0.0, 1.0)),
+        // The lower side button (BTN_STYLUS) erases while held, for pens
+        // without an eraser end; the upper one (BTN_STYLUS2) opens the radial
+        // menu.
+        eraser: event.eraser || event.barrel,
+        menu: event.barrel2,
+    }
 }
 
 /// Decides, for each tool phase, which samples the ink surface sees and

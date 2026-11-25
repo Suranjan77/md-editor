@@ -54,6 +54,9 @@ pub struct InkSurface<'a> {
     pub live_options: StrokeOptions,
     pub color: Color,
     pub tool: Tool,
+    /// The pen would erase whatever tool is selected (eraser end, or the
+    /// erase side button held), so it aims with the eraser ring.
+    pub pen_erases: bool,
     pub eraser_radius: f32,
     /// A stroke is currently being laid down, by pen or mouse.
     pub drawing: bool,
@@ -370,9 +373,8 @@ impl InkSurface<'_> {
         // Positioned from `hover` rather than iced's cursor: pen input never
         // reaches iced, so its cursor keeps returning the last place the
         // *mouse* was and the ring would sit frozen there.
-        if self.tool == Tool::Eraser
-            && let Some(position) = self.hover
-        {
+        let erasing = self.tool == Tool::Eraser || self.pen_erases;
+        if erasing && let Some(position) = self.hover {
             overlay.stroke(
                 &canvas::Path::circle(Point::new(position.x, position.y), self.eraser_radius),
                 canvas::Stroke::default()
@@ -385,7 +387,7 @@ impl InkSurface<'_> {
         // aiming mechanism, and it shows the *mark* rather than a pointer:
         // sized to the current brush at the current zoom.
         if let (Some(position), false) = (self.hover, self.drawing)
-            && self.tool != Tool::Eraser
+            && !erasing
             && self.radial.is_none()
         {
             let radius = (self.live_options.size * 0.5 * self.camera.zoom).max(2.0);

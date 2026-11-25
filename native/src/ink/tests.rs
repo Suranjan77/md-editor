@@ -19,7 +19,7 @@ fn sample(phase: PenPhase, x: f32, y: f32, pressure: f32) -> PenSample {
         x,
         y,
         pressure,
-        barrel: false,
+        menu: false,
         eraser: false,
     }
 }
@@ -533,7 +533,7 @@ fn hover_sample(x: f32, y: f32) -> PenSample {
         y,
         pressure: 0.0,
         eraser: false,
-        barrel: false,
+        menu: false,
     }
 }
 
@@ -707,7 +707,7 @@ fn the_barrel_button_opens_the_menu_instead_of_drawing() {
     let mut ink = surface();
     let mut press = hover_sample(300.0, 140.0);
     press.phase = PenPhase::Down;
-    press.barrel = true;
+    press.menu = true;
     press.pressure = 0.7;
 
     ink.apply_samples(&[press], 1.0);
@@ -725,7 +725,7 @@ fn the_menu_applies_the_slot_the_pen_lifts_on() {
 
     let mut press = hover_sample(300.0, 240.0);
     press.phase = PenPhase::Down;
-    press.barrel = true;
+    press.menu = true;
     ink.apply_samples(&[press], 1.0);
 
     // Flick right, into the second tool slot, then lift.
@@ -750,7 +750,7 @@ fn lifting_in_the_dead_zone_cancels_the_menu() {
 
     let mut press = hover_sample(300.0, 240.0);
     press.phase = PenPhase::Down;
-    press.barrel = true;
+    press.menu = true;
     ink.apply_samples(&[press], 1.0);
 
     let mut lifted = press;
@@ -768,7 +768,7 @@ fn the_menu_can_set_a_colour_without_touching_the_tool() {
 
     let mut press = hover_sample(400.0, 340.0);
     press.phase = PenPhase::Down;
-    press.barrel = true;
+    press.menu = true;
     ink.apply_samples(&[press], 1.0);
 
     // Straight up into the outer ring is the first colour slot; walk round
@@ -831,4 +831,22 @@ fn vault_round_trip_preserves_the_page() {
     assert_eq!(loaded.strokes(), ink.document.strokes());
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn hovering_with_the_erase_button_aims_the_eraser_until_the_mouse_moves() {
+    let mut ink = surface();
+    let mut hover = hover_sample(300.0, 140.0);
+    hover.eraser = true;
+    ink.apply_samples(&[hover], 1.0);
+    assert!(ink.pen_erases(), "the ring shows while the button is held");
+
+    hover.eraser = false;
+    ink.apply_samples(&[hover], 1.0);
+    assert!(!ink.pen_erases(), "and goes once it is released");
+
+    hover.eraser = true;
+    ink.apply_samples(&[hover], 1.0);
+    ink.set_hover(Vec2::new(10.0, 10.0));
+    assert!(!ink.pen_erases(), "the mouse never erases by hovering");
 }

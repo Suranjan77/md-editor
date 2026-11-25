@@ -250,6 +250,8 @@ pub struct InkState {
     /// Where the pen is hovering, in surface-local screen pixels, when it is
     /// in range but not touching.
     hover: Option<Vec2>,
+    /// The pen in range would erase: its eraser end, or the erase button held.
+    pen_eraser: bool,
     /// The radial menu, while it is open.
     radial: Option<radial::RadialMenu>,
 
@@ -293,6 +295,7 @@ impl InkState {
             drawing: false,
             erasing: false,
             hover: None,
+            pen_eraser: false,
             radial: None,
             lasso: Vec::new(),
             selection: Vec::new(),

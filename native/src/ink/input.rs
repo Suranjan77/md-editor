@@ -11,6 +11,7 @@ impl InkState {
         for sample in samples {
             if sample.phase == PenPhase::Leave {
                 changed |= self.hover.take().is_some();
+                self.pen_eraser = false;
                 continue;
             }
 
@@ -24,10 +25,11 @@ impl InkState {
                     // Cheap and constant, so it is worth a redraw every time:
                     // this indicator is how the surface is aimed.
                     self.hover = Some(position);
+                    self.pen_eraser = sample.eraser;
                     changed = true;
                 }
                 PenPhase::Down => {
-                    if sample.barrel {
+                    if sample.menu {
                         // The side button summons the menu instead of drawing.
                         self.radial = Some(radial::RadialMenu::new(position));
                     } else {
@@ -37,6 +39,7 @@ impl InkState {
                 }
                 PenPhase::Move => {
                     self.hover = Some(position);
+                    self.pen_eraser = sample.eraser;
                     if let Some(menu) = &mut self.radial {
                         menu.cursor = position;
                         changed = true;
@@ -69,6 +72,14 @@ impl InkState {
 
     pub fn set_hover(&mut self, position: Vec2) {
         self.hover = Some(position);
+        // The mouse moved last, so the pen's eraser state no longer applies.
+        self.pen_eraser = false;
+    }
+
+    /// The pen in range is set to erase (eraser end, or the erase side button
+    /// held), so the aiming indicator should be the eraser ring.
+    pub fn pen_erases(&self) -> bool {
+        self.pen_eraser
     }
 
     pub fn radial_menu(&self) -> Option<radial::RadialMenu> {

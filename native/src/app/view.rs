@@ -62,6 +62,7 @@ impl MdEditor {
                     live_options,
                     color: live_color,
                     tool: self.ink.tool,
+                    pen_erases: self.ink.pen_erases(),
                     eraser_radius: self.ink.eraser_screen_radius(),
                     drawing: self.ink.is_drawing(),
                     hover: self.ink.hover(),

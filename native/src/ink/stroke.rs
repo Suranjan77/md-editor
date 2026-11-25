@@ -104,7 +104,10 @@ impl Default for StrokeOptions {
     fn default() -> Self {
         Self {
             size: 3.2,
-            thinning: 0.62,
+            // Strong enough that a light hand and a firm one read as different
+            // line weights at the small default size; at 0.62 a light stroke
+            // was only ~30% thinner, which looked like no pressure at all.
+            thinning: 0.85,
             streamline: 0.42,
             taper_start: 1.6,
             taper_end: 5.0,
@@ -172,16 +175,20 @@ pub fn streamline(raw: &[InkPoint], streamline: f32) -> Vec<InkPoint> {
     out
 }
 
+/// Exponent of the pressure response curve in [`radius_at`].
+const PRESSURE_EXPONENT: f32 = 0.75;
+
 /// Half-width of the stroke at `pressure`, before tapering.
 fn radius_at(pressure: f32, opts: &StrokeOptions) -> f32 {
     let base = opts.size * 0.5;
     if opts.thinning <= f32::EPSILON {
         return base.max(opts.min_radius);
     }
-    // A square-root response keeps light strokes legible: raw pressure spends
-    // most of its range near the bottom, so a linear map makes ordinary
-    // handwriting look uniformly thin.
-    let eased = pressure.clamp(0.0, 1.0).sqrt();
+    // A gentle ease-out keeps light strokes legible: raw pressure spends most
+    // of its range near the bottom, so a linear map makes ordinary handwriting
+    // look uniformly thin. A square root went too far the other way and
+    // flattened the whole working range (0.2..0.8) into near-equal widths.
+    let eased = pressure.clamp(0.0, 1.0).powf(PRESSURE_EXPONENT);
     let thinning = opts.thinning.clamp(0.0, 1.0);
     let scale = (1.0 - thinning) + eased * thinning;
     (base * scale).max(opts.min_radius)

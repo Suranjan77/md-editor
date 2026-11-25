@@ -44,11 +44,12 @@ pub struct PenSample {
     pub y: f32,
     /// Normalized pen pressure, `0.0..=1.0`.
     pub pressure: f32,
-    /// The pen is inverted (eraser end) — erase instead of draw.
+    /// Erase instead of draw: the pen is inverted (eraser end), or the side
+    /// button the platform hook maps to erasing is held.
     pub eraser: bool,
-    /// A barrel (side) button is held. Used to summon the radial menu at the
-    /// nib rather than making the user travel to the toolbar.
-    pub barrel: bool,
+    /// The side button that summons the radial menu at the nib is held, so
+    /// the user need not travel to the toolbar.
+    pub menu: bool,
 }
 
 /// Whether the platform hook should claim pen messages.
