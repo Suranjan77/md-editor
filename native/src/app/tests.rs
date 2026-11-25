@@ -384,10 +384,13 @@ fn ctrl_shortcuts_a_focused_widget_captured_do_not_fire_app_actions() {
     let b = Key::Character("b".into());
 
     // Ctrl+B in the editor is bold (captured): the sidebar must not toggle.
-    assert!(super::subscription::keyboard_message(&b, Modifiers::CTRL, Status::Captured).is_none());
+    assert!(
+        super::subscription::keyboard_message(&b, Modifiers::CTRL, Status::Captured, false, false)
+            .is_none()
+    );
     // Nothing focused claimed it: the app shortcut runs.
     assert!(matches!(
-        super::subscription::keyboard_message(&b, Modifiers::CTRL, Status::Ignored),
+        super::subscription::keyboard_message(&b, Modifiers::CTRL, Status::Ignored, false, false),
         Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar))
     ));
     // Unmodified keys and Escape keep working regardless.
@@ -395,7 +398,9 @@ fn ctrl_shortcuts_a_focused_widget_captured_do_not_fire_app_actions() {
         super::subscription::keyboard_message(
             &Key::Named(iced::keyboard::key::Named::Escape),
             Modifiers::empty(),
-            Status::Captured
+            Status::Captured,
+            false,
+            false,
         ),
         Some(Message::KeyboardShortcut(Shortcut::Escape))
     ));
@@ -430,4 +435,59 @@ fn literal_replace_all_inserts_dollar_signs_verbatim() {
     app.search.replace = "$2$1".to_string();
     let _ = app.replace_all_in_current_document().unwrap();
     assert_eq!(app.editor.buffer.text(), "1a 2b");
+}
+
+/// Parse a registry chord ("Ctrl Shift T", "F6", "Esc") into what the
+/// keyboard subscription receives.
+fn parse_chord(chord: &str) -> (iced::keyboard::Key, iced::keyboard::Modifiers) {
+    use iced::keyboard::key::Named;
+    use iced::keyboard::{Key, Modifiers};
+    let mut modifiers = Modifiers::empty();
+    let mut key = None;
+    for part in chord.split_whitespace() {
+        match part {
+            "Ctrl" => modifiers |= Modifiers::CTRL,
+            "Shift" => modifiers |= Modifiers::SHIFT,
+            "Tab" => key = Some(Key::Named(Named::Tab)),
+            "Esc" => key = Some(Key::Named(Named::Escape)),
+            "F2" => key = Some(Key::Named(Named::F2)),
+            "F6" => key = Some(Key::Named(Named::F6)),
+            "F11" => key = Some(Key::Named(Named::F11)),
+            other => key = Some(Key::Character(other.to_lowercase().into())),
+        }
+    }
+    (key.expect("chord names a key"), modifiers)
+}
+
+/// The shortcut registry is what menus, tooltips, the palette and Settings
+/// show; the keyboard subscription must do what it says, or a tooltip lies.
+#[test]
+fn every_registry_chord_triggers_its_shortcut() {
+    use crate::messages::{InkMessage, TabsMessage};
+    for spec in crate::shortcuts::REGISTRY
+        .iter()
+        .filter(|s| !s.chord.is_empty())
+    {
+        let (key, modifiers) = parse_chord(spec.chord);
+        let message = super::subscription::keyboard_message(
+            &key,
+            modifiers,
+            iced::event::Status::Ignored,
+            false,
+            false,
+        );
+        let matches = match (&message, spec.shortcut) {
+            (Some(Message::KeyboardShortcut(got)), want) => *got == want,
+            // Equivalents the registry names by their user-facing shortcut.
+            (Some(Message::Tabs(TabsMessage::MruNext)), Shortcut::NextTab)
+            | (Some(Message::Tabs(TabsMessage::MruPrevious)), Shortcut::PreviousTab)
+            | (Some(Message::Ink(InkMessage::Toggle)), Shortcut::Handwriting) => true,
+            _ => false,
+        };
+        assert!(
+            matches,
+            "{} ({}) produced {message:?}",
+            spec.label, spec.chord
+        );
+    }
 }

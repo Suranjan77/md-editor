@@ -161,7 +161,7 @@ graph TD
     NativeTests --> HighlightT["editor/highlight/tests.rs — concealing, fences, incremental = fresh"]
     NativeTests --> RendererT["editor/renderer/ — invariants, caret, hit testing, motion, painting"]
     NativeTests --> TreeT["editor/layout_tree.rs — exact prefix sums and find_line_at_y"]
-    NativeTests --> MotionT["motion.rs — springs, panel widths, settling"]
+    NativeTests --> MotionT["design/motion.rs — springs, panel widths, settling"]
     NativeTests --> FuzzyT["fuzzy.rs — ordering, word starts, initials"]
     NativeTests --> PaletteT["views/command_palette.rs — ranking, caps, activation"]
     NativeTests --> AppT["app/tests.rs — PDF page slots, offsets, note paths"]

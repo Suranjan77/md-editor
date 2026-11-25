@@ -22,6 +22,7 @@ mod flows;
 mod monkey;
 mod scenarios;
 mod telemetry;
+mod workspace;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -66,6 +67,13 @@ pub(crate) const VIEWPORT: iced::Size = iced::Size::new(1200.0, 800.0);
 /// one at a time.
 static SERIAL: Mutex<()> = Mutex::new(());
 
+/// Hold this while a test creates a headless renderer or changes the global
+/// design state (theme, interface scale): running alongside an emulator
+/// session crashes the renderer and repaints that session in the wrong theme.
+pub(crate) fn exclusive() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
 /// Where screenshots and the telemetry report are written.
 pub(crate) fn artifacts_dir() -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -78,6 +86,7 @@ pub(crate) fn artifacts_dir() -> PathBuf {
 
 fn isolate_data_dir() {
     crate::test_support::isolate_data_dir();
+    crate::test_support::load_bundled_fonts();
 }
 
 /// A throwaway vault on disk.
@@ -371,6 +380,14 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
     pub fn click_at(&mut self, x: f32, y: f32) {
         let _ = self.instruct(Instruction::Interact(Interaction::Mouse(Mouse::Click {
             button: mouse::Button::Left,
+            target: Some(Target::Point(iced::Point::new(x, y))),
+        })));
+    }
+
+    /// Right-click a point of the viewport.
+    pub fn right_click_at(&mut self, x: f32, y: f32) {
+        let _ = self.instruct(Instruction::Interact(Interaction::Mouse(Mouse::Click {
+            button: mouse::Button::Right,
             target: Some(Target::Point(iced::Point::new(x, y))),
         })));
     }

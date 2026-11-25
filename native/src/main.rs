@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod design;
 #[cfg(test)]
 mod e2e;
 mod editor;
@@ -14,18 +15,21 @@ mod graph_state;
 mod ink;
 mod logging;
 mod messages;
-mod motion;
 mod pdf_notes;
 mod pdf_pane;
 mod platform;
 mod pptx_pane;
 mod search;
 mod search_state;
+mod shortcuts;
+#[cfg(test)]
+mod size_lint;
 mod slides;
+mod tabs;
 #[cfg(test)]
 mod test_support;
-mod theme;
 mod tracker_state;
+mod ui;
 mod ui_state;
 mod vault_state;
 mod views;
@@ -88,14 +92,18 @@ pub(crate) fn program(
     main_window: iced::window::Settings,
     startup_path: Option<std::path::PathBuf>,
 ) -> iced::Daemon<impl iced_program::Program<State = app::MdEditor, Message = messages::Message>> {
-    iced::daemon(
+    let mut d = iced::daemon(
         move || app::MdEditor::boot(main_window.clone(), startup_path.clone()),
         app::MdEditor::update,
         app::MdEditor::view,
     )
-    .title(app::MdEditor::title)
-    .theme(|state: &app::MdEditor, _window| state.theme())
-    .subscription(app::MdEditor::subscription)
+    .default_font(design::fonts::UI_FONT);
+    for bytes in design::fonts::BUNDLED_FONTS {
+        d = d.font(*bytes);
+    }
+    d.title(app::MdEditor::title)
+        .theme(|state: &app::MdEditor, _window| state.theme())
+        .subscription(app::MdEditor::subscription)
 }
 
 /// Settings for the detached handwriting window.

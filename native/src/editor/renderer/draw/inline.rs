@@ -14,7 +14,7 @@ use super::captions::{block_ordinal, figure_number, paint_equation_number};
 use super::primitives::{TextRun, clip_viewport, fill, rounded};
 use super::{Counters, Frame, LineBox};
 use crate::editor::highlight::StyledSpan;
-use crate::theme;
+use crate::editor::renderer::measure::mono_font;
 
 const IMAGE_TOP: f32 = 5.0;
 const FIGURE_CAPTION_SIZE: f32 = 13.0;
@@ -37,7 +37,7 @@ impl<Message> Editor<'_, Message> {
                 height: 2.0,
             },
             rounded(1.0),
-            theme::ACCENT_GLOW,
+            crate::design::tokens().border_control,
         );
     }
 
@@ -161,7 +161,7 @@ impl<Message> Editor<'_, Message> {
             .draw(
                 renderer,
                 Point::new(draw_x + draw_w / 2.0, row.y + draw_h + 12.0),
-                theme::TEXT_MUTED,
+                crate::design::tokens().doc_syntax,
                 frame.viewport,
             );
     }
@@ -303,25 +303,24 @@ impl<Message> Editor<'_, Message> {
             },
         );
 
-        let source_row = row_height(MATH_SOURCE_FONT_SIZE);
-        let text_offset =
-            centered_text_top(source_row, MATH_SOURCE_FONT_SIZE, iced::Font::MONOSPACE);
+        let source_row = row_height(math_source_font_size());
+        let text_offset = centered_text_top(source_row, math_source_font_size(), mono_font());
         let paint_source = |renderer: &mut R| {
             let mut row_top = row.y + MATH_BLOCK_PADDING / 2.0;
             for source_line in tex.lines() {
                 TextRun::new(
                     source_line,
-                    MATH_SOURCE_FONT_SIZE,
+                    math_source_font_size(),
                     Size::new(
                         extent.content_w.max(1.0),
-                        MATH_SOURCE_FONT_SIZE * LINE_BOX_FACTOR,
+                        math_source_font_size() * LINE_BOX_FACTOR,
                     ),
                 )
-                .font(iced::Font::MONOSPACE)
+                .font(mono_font())
                 .draw(
                     renderer,
                     Point::new(left - scroll_x, row_top + text_offset),
-                    theme::TEXT_SECONDARY,
+                    crate::design::tokens().doc_math_source,
                     viewport,
                 );
                 row_top += source_row;
@@ -369,7 +368,7 @@ fn paint_checkbox<R: Measure>(
             renderer,
             box_rect,
             Border {
-                color: theme::BORDER,
+                color: crate::design::tokens().border_control,
                 width: 1.5,
                 radius: 4.0.into(),
             },
@@ -378,7 +377,12 @@ fn paint_checkbox<R: Measure>(
         return;
     }
 
-    fill(renderer, box_rect, rounded(4.0), theme::ACCENT);
+    fill(
+        renderer,
+        box_rect,
+        rounded(4.0),
+        crate::design::tokens().accent,
+    );
     let check_size = 13.0;
     let check_w = measure_width::<R>("✓", check_size, bold_font());
     TextRun::new("✓", check_size, Size::new(check_w, CHECKBOX_SIZE))
@@ -389,7 +393,7 @@ fn paint_checkbox<R: Measure>(
                 x + (CHECKBOX_SIZE - check_w) / 2.0,
                 box_y + (CHECKBOX_SIZE - check_size) / 2.0 - 0.5,
             ),
-            theme::BG_PRIMARY,
+            crate::design::tokens().on_accent,
             frame.viewport,
         );
 }

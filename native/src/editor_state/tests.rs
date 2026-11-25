@@ -125,7 +125,8 @@ mod math_blocks {
 
         assert_eq!(tex, "\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}");
         let crate::editor::renderer::MathRender { width, height, .. } =
-            render_latex_task(tex, 1.0).expect("align block should render");
+            render_latex_task(tex, 1.0, crate::design::tokens().doc_math)
+                .expect("align block should render");
         assert!(width > 0.0);
         assert!(height > 24.0, "both align rows should have visible height");
         assert!(!lines[6].is_math_block);
@@ -139,7 +140,8 @@ mod math_blocks {
 
         assert_eq!(tex, "\\begin {align}\na &= b \\nonumber\n\\end {align}");
         let crate::editor::renderer::MathRender { width, height, .. } =
-            render_latex_task(tex, 1.0).expect("align with nonumber should render");
+            render_latex_task(tex, 1.0, crate::design::tokens().doc_math)
+                .expect("align with nonumber should render");
         assert!(width > 0.0);
         assert!(height > 0.0);
         assert!(!lines[3].is_math_block);
@@ -161,7 +163,8 @@ After";
 
         assert_eq!(tex.lines().count(), 6);
         let crate::editor::renderer::MathRender { width, height, .. } =
-            render_latex_task(tex, 1.0).expect("the linalg align block should render");
+            render_latex_task(tex, 1.0, crate::design::tokens().doc_math)
+                .expect("the linalg align block should render");
         assert!(width > 0.0);
         assert!(height > 80.0, "all four align rows should be visible");
         assert!(!lines[8].is_math_block);

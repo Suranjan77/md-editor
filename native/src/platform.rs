@@ -45,6 +45,74 @@ pub fn open_external(target: &str) {
     let _ = std::process::Command::new("xdg-open").arg(target).spawn();
 }
 
+/// Reveal `path` in the system file manager (selecting it or opening its parent folder).
+pub fn reveal_in_file_manager(path: &std::path::Path) {
+    let folder = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    open_external(&folder.to_string_lossy());
+}
+
+/// Detect whether the OS desktop session requests reduced animations.
+///
+/// Linux inspects GTK 4 / GTK 3 `settings.ini` (`gtk-enable-animations`);
+/// Windows queries `SPI_GETCLIENTAREAANIMATION`; macOS checks `MD_EDITOR_REDUCE_MOTION`
+/// or defaults off without spawning subprocesses during boot.
+pub fn os_prefers_reduced_motion() -> bool {
+    if let Ok(val) = std::env::var("MD_EDITOR_REDUCE_MOTION") {
+        let low = val.trim().to_ascii_lowercase();
+        if matches!(low.as_str(), "1" | "true" | "on") {
+            return true;
+        }
+        if matches!(low.as_str(), "0" | "false" | "off") {
+            return false;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+        };
+        let mut enabled: i32 = 1;
+        // SAFETY: `enabled` is a valid aligned `BOOL` (`i32`) buffer matching
+        // `SPI_GETCLIENTAREAANIMATION`'s documented `pvParam` layout.
+        let ok = unsafe {
+            SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut enabled).cast(), 0)
+        };
+        if ok != 0 {
+            return enabled == 0;
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let config_base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .map(|h| h.join(".config"))
+            });
+        if let Some(base) = config_base {
+            for rel in ["gtk-4.0/settings.ini", "gtk-3.0/settings.ini"] {
+                if let Ok(contents) = std::fs::read_to_string(base.join(rel)) {
+                    for line in contents.lines() {
+                        if let Some((k, v)) = line.split_once('=')
+                            && k.trim() == "gtk-enable-animations"
+                        {
+                            let v = v.trim().to_ascii_lowercase();
+                            return matches!(v.as_str(), "0" | "false");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// What the clipboard holds, as far as pasting into a note cares.
 #[derive(Clone, PartialEq, Eq)]
 pub enum ClipboardPayload {

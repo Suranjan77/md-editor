@@ -16,24 +16,45 @@ On macOS, `Cmd` works everywhere `Ctrl` does — both layers test
 
 ## Application Layer
 
+The labels and chords shown in tooltips, menus, the command palette and Settings → Keyboard
+all come from one registry, `native/src/shortcuts.rs`; `app/tests.rs`
+(`every_registry_chord_triggers_its_shortcut`) checks that each chord there really does what
+it says.
+
 | Shortcut | Action |
 | :--- | :--- |
-| `Ctrl+P` | Open the command palette |
+| `Ctrl+P` | Command palette |
 | `Ctrl+O` | Open a folder as a vault |
-| `Ctrl+N` | New file |
-| `Ctrl+S` | Save the active note immediately, with a confirming toast; saves the ink page instead while the handwriting canvas is in front |
-| `Ctrl+F` | Search — routed to the active pane, see below |
+| `Ctrl+N` | New note |
+| `Ctrl+S` | Save now (the ink page instead while the handwriting canvas is in front) |
+| `Ctrl+F` | Find — routed to the active pane, see below |
+| `Ctrl+Shift+F` | Search the vault (and the open PDF) |
+| `Ctrl+,` | Settings |
 | `Ctrl+B` | Toggle the sidebar (bold instead while the editor has focus) |
-| `Ctrl+T` | Toggle the table of contents |
-| `Ctrl+G` | Open the knowledge graph |
-| `Ctrl+I` | Open or close the handwriting canvas (italic instead while the editor has focus) |
+| `Ctrl+Shift+B` | Toggle backlinks |
+| `Ctrl+Shift+O` | Toggle the outline |
+| `Ctrl+\` | Split view: note beside the PDF |
+| `Ctrl+G` | Knowledge graph |
+| `Ctrl+T` | Study tracker |
+| `Ctrl+I` | Handwriting canvas (italic instead while the editor has focus) |
+| `Ctrl+W` | Close the tab |
+| `Ctrl+Shift+T` | Reopen the last closed tab (skips files deleted since) |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Most recently used tab, forward / back |
+| `Ctrl+PageDown` / `Ctrl+PageUp` | Next / previous tab in strip order |
+| `Ctrl+Shift+PageDown` / `Ctrl+Shift+PageUp` | Move the tab right / left |
+| `Ctrl+1` … `Ctrl+8`, `Ctrl+9` | Go to that tab; `Ctrl+9` is always the last |
+| `F2` | Rename the selected file |
+| `F6` / `Shift+F6` | Move focus between regions: toolbar → sidebar → main → side panel → status bar. Landing on the main region puts the keyboard in the note |
+| `F11` | Focus mode (hide the panels) |
 | `Ctrl+C` | Copy the PDF text selection, when the PDF pane holds one |
-| `Escape` | Close the topmost overlay, in priority order |
-| `Enter` | Run the palette's highlighted row; submit global search; open the node selected in the knowledge graph; otherwise submit the open name modal |
+| `Escape` | Close the topmost overlay, in priority order; closing find, the palette or a dialog returns the keyboard to the note |
+| `Enter` | Run the palette's highlighted row; open the selected search result; open the node selected in the knowledge graph; otherwise submit the open dialog |
+| `↑` / `↓` | In vault search, move the selection; with the sidebar focused, move in the tree (`←`/`→` fold); otherwise scroll the PDF pane or the presentation |
 | `Delete` | Remove the lasso selection on the handwriting canvas |
-| `Ctrl+Z` / `Ctrl+Y` | Also undo / redo on the handwriting canvas (no effect while it is closed) |
-| `↑` / `↓` | Scroll the PDF pane or the presentation by 64px |
-| `PageUp` / `PageDown` | Scroll the PDF pane by 520px; in a presentation, go to the previous or next slide |
+| `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` | Also undo / redo on the handwriting canvas |
+| `PageUp` / `PageDown` | Scroll the PDF pane by 520px; in a presentation, previous / next slide |
+
+Right-clicking a file, a tab or the note opens a context menu at the pointer.
 
 ### What `Ctrl+F` does
 

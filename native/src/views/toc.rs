@@ -1,10 +1,14 @@
-//! Table of contents: Markdown headings and the PDF outline.
+//! Outline panel: Markdown headings and PDF bookmarks/synthesized headings.
 
-use iced::widget::{Space, button, column, container, scrollable, text};
-use iced::{Element, Length, Padding, Renderer, Theme};
+use iced::widget::{Column, button, container, scrollable, text};
+use iced::{Background, Border, Element, Length, Padding, Renderer, Theme};
 
+use crate::design::metrics::{RADIUS_SM, SPACE_0, SPACE_1, SPACE_2, SPACE_3};
+use crate::design::{TextRole, tokens};
 use crate::messages::{EditorMessage, Message};
-use crate::theme;
+use crate::ui::{
+    BadgeTone, Icon, IconButton, PanelSide, badge, ellipsize_single_line, empty_state, panel,
+};
 
 pub struct TocEntry {
     pub level: u8,
@@ -46,89 +50,122 @@ pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
     toc
 }
 
-pub fn view<'a>(toc: &'a [TocEntry], is_synthetic: bool) -> Element<'a, Message, Theme, Renderer> {
-    let title = text("Table of Contents")
-        .size(theme::TEXT_MD)
-        .color(theme::TEXT_PRIMARY);
+/// Find the index of the active outline entry for `current_line_or_page`.
+pub fn active_toc_index(toc: &[TocEntry], current_line_or_page: usize) -> Option<usize> {
+    toc.iter()
+        .rposition(|entry| entry.line <= current_line_or_page)
+}
 
-    // Subtle badge so the user knows a bookmark-less PDF's outline was
-    // generated heuristically from page text rather than embedded bookmarks.
-    let badge: Element<'a, Message, Theme, Renderer> = if is_synthetic {
-        container(
-            text("Generated")
-                .size(theme::TEXT_SM)
-                .color(theme::TEXT_MUTED),
+pub fn view<'a>(
+    toc: &'a [TocEntry],
+    is_synthetic: bool,
+    current_pos: usize,
+    width: f32,
+    focused: bool,
+) -> Element<'a, Message, Theme, Renderer> {
+    let t = tokens();
+    let active_idx = active_toc_index(toc, current_pos);
+
+    let mut header_actions = Vec::with_capacity(2);
+    if is_synthetic {
+        header_actions.push(badge("Generated", BadgeTone::Neutral, None));
+    }
+    header_actions.push(
+        IconButton::new(Icon::X, "Close outline")
+            .on_press(Message::Editor(EditorMessage::ToggleTOC))
+            .build(),
+    );
+
+    let body: Element<'a, Message, Theme, Renderer> = if toc.is_empty() {
+        empty_state(
+            Icon::ListTree,
+            "No headings",
+            "Add # headings to navigate sections from the outline.",
+            None,
         )
-        .padding(Padding {
-            top: 2.0,
-            right: 6.0,
-            bottom: 2.0,
-            left: 6.0,
-        })
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(theme::BG_PRIMARY)),
-            border: iced::Border {
-                color: theme::BORDER,
-                width: 1.0,
-                radius: theme::RADIUS_SM.into(),
-            },
-            ..Default::default()
-        })
-        .into()
     } else {
-        Space::new().height(Length::Fixed(0.0)).into()
+        let items = toc.iter().enumerate().map(|(idx, entry)| {
+            let is_current = active_idx == Some(idx);
+            let indent = (entry.level.saturating_sub(1) as f32) * SPACE_3;
+            let (label, _) = ellipsize_single_line(&entry.text, 34);
+
+            container(
+                button(
+                    text(label)
+                        .size(TextRole::Caption.size())
+                        .color(if is_current {
+                            t.fg_primary
+                        } else {
+                            t.fg_secondary
+                        })
+                        .font(if is_current {
+                            crate::design::fonts::UI_FONT_MEDIUM
+                        } else {
+                            TextRole::Caption.font()
+                        }),
+                )
+                .on_press(Message::Editor(EditorMessage::TocClicked(entry.line)))
+                .padding([SPACE_1, SPACE_2])
+                .width(Length::Fill)
+                .style(move |_, status| {
+                    let hovered =
+                        matches!(status, button::Status::Hovered | button::Status::Pressed);
+                    let bg = if is_current {
+                        Some(Background::Color(t.bg_overlay))
+                    } else if hovered {
+                        Some(Background::Color(t.bg_raised))
+                    } else {
+                        None
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: if is_current {
+                            t.fg_primary
+                        } else {
+                            t.fg_secondary
+                        },
+                        border: Border {
+                            radius: RADIUS_SM.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                }),
+            )
+            .padding(Padding {
+                top: SPACE_0,
+                right: SPACE_0,
+                bottom: SPACE_0,
+                left: indent,
+            })
+            .into()
+        });
+
+        scrollable(
+            Column::with_children(items)
+                .spacing(SPACE_1 * 0.5)
+                .padding([SPACE_2, SPACE_3]),
+        )
+        .height(Length::Fill)
+        .into()
     };
 
-    let items = toc.iter().map(|entry| {
-        let indent = (entry.level.saturating_sub(1) as f32) * 15.0;
-
-        container(
-            button(
-                text(&entry.text)
-                    .size(theme::TEXT_BASE)
-                    .color(theme::TEXT_SECONDARY),
-            )
-            .on_press(Message::Editor(EditorMessage::TocClicked(entry.line)))
-            .padding([theme::SPACE_2, theme::SPACE_3])
-            .style(button::text)
-            .width(Length::Fill),
-        )
-        .padding(Padding {
-            top: 0.0,
-            right: 0.0,
-            bottom: 0.0,
-            left: indent,
-        })
-        .into()
-    });
-
-    container(
-        column![
-            title,
-            badge,
-            Space::new().height(Length::Fixed(10.0)),
-            scrollable(column(items).spacing(theme::SPACE_1))
-        ]
-        .spacing(theme::SPACE_2)
-        .padding(theme::SPACE_5),
-    )
-    .width(Length::Fixed(250.0))
+    container(panel(
+        "Outline",
+        None,
+        header_actions,
+        body,
+        PanelSide::Right,
+        focused,
+    ))
+    .width(Length::Fixed(width))
     .height(Length::Fill)
-    .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
-        border: iced::Border {
-            color: theme::BORDER,
-            width: 1.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    })
     .into()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::get_toc;
+    use super::{active_toc_index, get_toc};
 
     #[test]
     fn toc_skips_fenced_comments_and_tags() {
@@ -137,6 +174,8 @@ mod tests {
         assert_eq!(toc.len(), 2);
         assert_eq!((toc[0].text.as_str(), toc[0].line), ("Real", 0));
         assert_eq!((toc[1].text.as_str(), toc[1].line), ("Heading", 6));
+        assert_eq!(active_toc_index(&toc, 3), Some(0));
+        assert_eq!(active_toc_index(&toc, 8), Some(1));
     }
 
     #[test]

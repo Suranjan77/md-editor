@@ -19,6 +19,22 @@ pub(crate) fn isolate_data_dir() {
     );
 }
 
+/// Register the bundled fonts with the renderer's font system. The real app
+/// does this from `program`'s settings, but `iced_test::Emulator` ignores
+/// `settings.fonts`, so without this every headless screenshot falls back to
+/// system faces (serif for semibold and bold). Idempotent.
+pub(crate) fn load_bundled_fonts() {
+    static LOADED: std::sync::Once = std::sync::Once::new();
+    LOADED.call_once(|| {
+        let mut fonts = iced::advanced::graphics::text::font_system()
+            .write()
+            .expect("font system lock");
+        for bytes in crate::design::fonts::BUNDLED_FONTS {
+            fonts.load_font(std::borrow::Cow::Borrowed(bytes));
+        }
+    });
+}
+
 #[test]
 fn building_the_app_never_uses_the_real_data_dir() {
     let _ = crate::app::MdEditor::new_with_startup_file(None);

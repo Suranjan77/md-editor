@@ -15,6 +15,7 @@ use super::scroll::table_columns;
 use super::{Editor, Measure, State};
 use crate::editor::buffer::{EditorCommand, Movement};
 use crate::editor::highlight::{StyledLine, StyledSpan};
+use crate::editor::renderer::metrics::scaled;
 
 /// The parsed cell span (link or checkbox) whose source text covers `col` in
 /// a raw table row. Cells are found in the row's source in order, so a cell
@@ -272,7 +273,8 @@ impl<Message> Editor<'_, Message> {
                     if text.is_empty() {
                         continue;
                     }
-                    let span_w = measure_width::<R>(text, span.font_size, span_font(span, line));
+                    let span_w =
+                        measure_width::<R>(text, scaled(span.font_size), span_font(span, line));
                     if table_x >= span_x && table_x < span_x + span_w {
                         return Some(span);
                     }

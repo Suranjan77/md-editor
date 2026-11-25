@@ -10,7 +10,37 @@ impl MdEditor {
             // Layout and rendering (pdf_render.rs).
             PdfMessage::Loaded(generation, result) => self.on_pdf_loaded(generation, result),
             PdfMessage::ZoomChanged(zoom) => self.on_pdf_zoom_changed(zoom),
+            PdfMessage::ZoomInputChanged(raw) => {
+                self.ui.pdf_zoom_input = Some(raw);
+                Task::none()
+            }
+            PdfMessage::ZoomInputSubmit => {
+                if let Some(raw) = self.ui.pdf_zoom_input.take()
+                    && let Ok(pct) = raw.trim().trim_end_matches('%').parse::<f32>()
+                {
+                    let zoom = (pct / 100.0).clamp(0.25, 4.0);
+                    return self.on_pdf_zoom_changed(zoom);
+                }
+                Task::none()
+            }
+            PdfMessage::PageInputChanged(raw) => {
+                self.ui.pdf_page_input = Some(raw);
+                Task::none()
+            }
+            PdfMessage::PageInputSubmit => {
+                if let Some(raw) = self.ui.pdf_page_input.take()
+                    && let Ok(page_1) = raw.trim().parse::<u16>()
+                    && self.pdf.total_pages > 0
+                {
+                    let target = page_1
+                        .saturating_sub(1)
+                        .min(self.pdf.total_pages.saturating_sub(1));
+                    return self.navigate_pdf_page(target);
+                }
+                Task::none()
+            }
             PdfMessage::FitToWidth => self.on_pdf_fit_to_width(),
+            PdfMessage::FitToPage => self.on_pdf_fit_to_page(),
             PdfMessage::Rendered(generation, page, crate::messages::PageImage(img)) => {
                 self.on_pdf_page_rendered(generation, page, img)
             }

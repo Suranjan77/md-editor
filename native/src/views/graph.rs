@@ -3,9 +3,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use iced::widget::{
-    Space, button, canvas, column, container, row, scrollable, stack, text, text_input, tooltip,
-};
+use iced::widget::{Space, canvas, column, container, row, scrollable, stack, text};
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme,
     Vector, mouse,
@@ -13,29 +11,52 @@ use iced::{
 
 use md_editor_core::types::{GraphNode, GraphNodeKind, GraphSnapshot};
 
+use crate::design::metrics::{BORDER_WIDTH, IconSize, RADIUS_LG, SPACE_3};
+use crate::design::{TextRole, tokens};
 use crate::graph_state::{
     EmptyReason, FilteredGraph, GraphPoint, GraphScope, GraphState, MIN_ZOOM,
 };
 use crate::messages::Message;
-use crate::theme;
+use crate::ui::{Icon, IconButton, icon};
 use crate::views::gpu_graph::GpuGraphProgram;
-use crate::views::icons::{self, Icon};
 
 mod geometry;
 mod inspector;
 mod labels;
 mod layers;
 mod toolbar;
-mod widgets;
 
 pub(crate) use geometry::*;
 use inspector::*;
 pub(crate) use labels::*;
 use layers::*;
 use toolbar::*;
-use widgets::*;
 
-const INSPECTOR_WIDTH: f32 = 324.0;
+/// Same width as the other right-hand panels.
+const INSPECTOR_WIDTH: f32 = crate::design::metrics::INSPECTOR_DEFAULT_WIDTH;
+
+/// Text in a type role and colour.
+fn role_text<'a>(content: impl Into<String>, role: TextRole, color: Color) -> Element<'a, Message> {
+    text(content.into())
+        .size(role.size())
+        .line_height(role.line_height())
+        .font(role.font())
+        .color(color)
+        .into()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GraphSummary {
+    nodes: usize,
+    links: usize,
+}
+
+fn summarize(graph: &GraphSnapshot) -> GraphSummary {
+    GraphSummary {
+        nodes: graph.nodes.len(),
+        links: graph.edges.iter().map(|edge| edge.weight.max(1)).sum(),
+    }
+}
 /// Below this node count every label fits on screen, so the density budget is
 /// skipped and everything is drawn.
 const LABEL_ALL_BELOW: usize = 60;
@@ -138,27 +159,30 @@ pub fn view(state: &GraphState) -> Element<'_, Message, Theme, Renderer> {
     let canvas_panel = container(canvas_layers(state, frame))
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(theme::BG_PRIMARY)),
-            border: Border {
-                color: theme::BORDER_SUBTLE,
-                width: 1.0,
-                radius: 10.0.into(),
-            },
-            ..Default::default()
+        .style(|_| {
+            let t = tokens();
+            container::Style {
+                background: Some(Background::Color(t.bg_canvas)),
+                border: Border {
+                    color: t.border_subtle,
+                    width: BORDER_WIDTH,
+                    radius: RADIUS_LG.into(),
+                },
+                ..Default::default()
+            }
         });
 
-    let mut body = row![canvas_panel].spacing(10).height(Length::Fill);
+    let mut body = row![canvas_panel].spacing(SPACE_3).height(Length::Fill);
     if state.inspector_visible {
         body = body.push(inspector(state));
     }
 
-    container(column![toolbar(state, &summary, &stats), body].spacing(10))
+    container(column![toolbar(state, &summary, &stats), body].spacing(SPACE_3))
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(12)
+        .padding(SPACE_3)
         .style(|_| container::Style {
-            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.88))),
+            background: Some(Background::Color(tokens().bg_surface)),
             ..Default::default()
         })
         .into()

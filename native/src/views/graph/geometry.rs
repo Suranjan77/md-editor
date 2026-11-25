@@ -21,9 +21,9 @@ impl Default for ViewTransform {
 
 pub(crate) fn kind_color(kind: GraphNodeKind) -> Color {
     match kind {
-        GraphNodeKind::Markdown => theme::ACCENT,
-        GraphNodeKind::Pdf => Color::from_rgb8(111, 170, 220),
-        GraphNodeKind::Missing => theme::DANGER,
+        GraphNodeKind::Markdown => crate::design::tokens().accent,
+        GraphNodeKind::Pdf => crate::design::tokens().status_info,
+        GraphNodeKind::Missing => crate::design::tokens().fg_tertiary,
     }
 }
 
@@ -100,11 +100,14 @@ pub(super) fn draw_hover_card(
 
     let card =
         canvas::Path::rounded_rectangle(Point::new(x, y), Size::new(width, height), 7.0.into());
-    frame.fill(&card, Color::from_rgba(0.07, 0.08, 0.09, 0.97));
+    frame.fill(
+        &card,
+        crate::design::fade(crate::design::tokens().bg_raised, 0.97),
+    );
     frame.stroke(
         &card,
         canvas::Stroke::default()
-            .with_color(theme::BORDER)
+            .with_color(crate::design::tokens().border_default)
             .with_width(1.0),
     );
     frame.fill(
@@ -114,14 +117,14 @@ pub(super) fn draw_hover_card(
     frame.fill_text(canvas::Text {
         content: truncate_label(&node.label, 30),
         position: Point::new(x + 23.0, y + 8.0),
-        color: theme::TEXT_PRIMARY,
+        color: crate::design::tokens().fg_primary,
         size: iced::Pixels(12.0),
         ..canvas::Text::default()
     });
     frame.fill_text(canvas::Text {
         content: format!("{kind_label} · {detail}"),
         position: Point::new(x + 11.0, y + 26.0),
-        color: theme::TEXT_SECONDARY,
+        color: crate::design::tokens().fg_secondary,
         size: iced::Pixels(9.5),
         max_width: width - 22.0,
         ..canvas::Text::default()
@@ -129,7 +132,7 @@ pub(super) fn draw_hover_card(
     frame.fill_text(canvas::Text {
         content: node.path.clone(),
         position: Point::new(x + 11.0, y + 42.0),
-        color: theme::TEXT_MUTED,
+        color: crate::design::tokens().fg_tertiary,
         size: iced::Pixels(9.0),
         max_width: width - 22.0,
         ..canvas::Text::default()

@@ -23,6 +23,8 @@ use super::spans::{math_source, source_col_after_span, span_is_editing};
 use super::{MathCache, Measure};
 pub(super) use crate::editor::buffer::Affinity;
 use crate::editor::highlight::StyledLine;
+use crate::editor::renderer::measure::body_font;
+use crate::editor::renderer::metrics::{body_font_size, scaled};
 
 /// A line broken into rows. Positions are relative to the line's text origin:
 /// the left edge of the text column and the top of the line's body.
@@ -208,7 +210,7 @@ impl<'a> Flow<'a> {
         for (span_idx, span) in line.spans.iter().enumerate() {
             let span_end_col = source_col_after_span(span, span_start_col);
             let revealed = span_is_editing(line, span_idx, block_editing, active_col);
-            let font_size = span.font_size;
+            let font_size = scaled(span.font_size);
             let font = span_font(span, line);
             let atom = |advance, kind| Item {
                 span_idx,
@@ -293,8 +295,8 @@ impl<'a> Flow<'a> {
             return CaretSpot {
                 x: 0.0,
                 row: 0,
-                font_size: DEFAULT_FONT_SIZE,
-                font: iced::Font::DEFAULT,
+                font_size: body_font_size(),
+                font: body_font(),
             };
         };
         // Downstream, the first item still covering `col`: a column on a
@@ -504,7 +506,7 @@ impl Builder {
         let axis_offset = if metrics.axis_size > 0.0 {
             metrics.axis_offset
         } else {
-            font_metrics(iced::Font::DEFAULT).x_height * DEFAULT_FONT_SIZE / 2.0
+            font_metrics(body_font()).x_height * body_font_size() / 2.0
         };
         let half = metrics.centered / 2.0;
         let ascent = metrics.text_ascent.max(half + axis_offset);
@@ -580,7 +582,7 @@ impl Builder {
         let text = span.visible_text(revealed);
         let map = SourceMap::of(&span.text, text);
         let font = span_font(span, line);
-        let font_size = span.font_size;
+        let font_size = scaled(span.font_size);
         let total_chars = text.chars().count();
 
         let units = if map == SourceMap::Atomic {
@@ -670,7 +672,7 @@ impl Builder {
 
     fn finish<'a>(mut self, line: &'a StyledLine) -> Flow<'a> {
         if self.items.is_empty() {
-            self.row.add_text(DEFAULT_FONT_SIZE, iced::Font::DEFAULT);
+            self.row.add_text(body_font_size(), body_font());
         }
         self.break_row();
         Flow {

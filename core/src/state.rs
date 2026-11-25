@@ -1,6 +1,7 @@
-//! `AppState`: the shared SQLite connection, schema and migrations, vault generation, and PDF sidecar queries.
+//! `AppState`: the shared SQLite connection, schema and migrations, and vault generation state.
 
 mod error;
+mod pdf_store;
 pub use error::{StateError, StateResult};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -9,13 +10,12 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use rusqlite::{Connection, OptionalExtension};
-use sha2::{Digest, Sha256};
+use rusqlite::Connection;
 
 use crate::file_index::FileIndex;
-use crate::pdf::{
-    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect, PdfRenderer, PdfTextRange,
-};
+use crate::pdf::PdfRenderer;
+#[cfg(test)]
+use crate::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind};
 
 /// Application-wide shared state.
 /// Wrap in `Arc<AppState>` when sharing across threads.
@@ -79,9 +79,6 @@ impl AppState {
                 )
             }
         };
-        // WAL keeps writes fast (and would allow concurrent reads if we ever add
-        // a second connection); synchronous=NORMAL is the safe, recommended
-        // pairing for WAL. Best-effort — fall back silently if unsupported.
         let _ = db.pragma_update(None, "journal_mode", "WAL");
         let _ = db.pragma_update(None, "synchronous", "NORMAL");
         let _ = db.busy_timeout(Duration::from_secs(5));
@@ -121,9 +118,7 @@ impl AppState {
         self.startup_notice.lock().ok()?.take()
     }
 
-    /// Declare the vault the UI intends to use and invalidate older indexing
-    /// work. Publishing an index uses the same lock, making the generation
-    /// check and the multi-store update atomic with respect to another switch.
+    /// Declare the vault the UI intends to use and invalidate older indexing work.
     pub fn begin_vault_change(&self, root: PathBuf) -> StateResult<u64> {
         let _publish = self.vault_publish_lock.lock()?;
         let _mutation = self.vault_mutation_lock.lock()?;
@@ -160,481 +155,12 @@ impl AppState {
     pub(crate) fn vault_publish_mutation_lock(&self) -> StateResult<MutexGuard<'_, ()>> {
         self.vault_mutation_lock.lock().map_err(StateError::from)
     }
-
-    /// Stable namespace for PDF persistence belonging to the active vault.
-    /// Existing databases used unscoped document IDs; `save_pdf_document`
-    /// adopts those rows once when a PDF is first opened after this change.
-    pub(crate) fn pdf_scope_prefix(&self) -> StateResult<Option<String>> {
-        let root = {
-            let guard = self.vault_root.lock()?;
-            guard.clone()
-        };
-        let Some(root) = root else {
-            // In-memory unit tests and non-vault callers retain the legacy raw
-            // key behavior. User-facing PDF operations always have a root.
-            return Ok(None);
-        };
-        Ok(Some(Self::pdf_scope_prefix_for_root(&root)))
-    }
-
-    pub(crate) fn pdf_scope_prefix_for_root(root: &Path) -> String {
-        let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-        let normalized = canonical.to_string_lossy().replace('\\', "/");
-        let mut hasher = Sha256::new();
-        hasher.update(normalized.as_bytes());
-        format!("{:x}:", hasher.finalize())
-    }
-
-    pub(crate) fn pdf_storage_document_id(&self, document_id: &str) -> StateResult<String> {
-        Ok(match self.pdf_scope_prefix()? {
-            Some(prefix) => format!("{prefix}{document_id}"),
-            None => document_id.to_string(),
-        })
-    }
-
-    pub(crate) fn stored_pdf_document_id_for_vault(
-        &self,
-        vault_root: &Path,
-        rel_path: &str,
-        file_size: u64,
-        modified_at: Option<i64>,
-    ) -> Option<String> {
-        let prefix = Self::pdf_scope_prefix_for_root(vault_root);
-        let db = self.db.lock().ok()?;
-        let storage_id: String = db
-            .query_row(
-                "SELECT document_id FROM pdf_documents
-                 WHERE vault_relative_path = ?1 AND file_size = ?2
-                   AND (modified_at = ?3 OR (modified_at IS NULL AND ?3 IS NULL))
-                   AND substr(document_id, 1, length(?4)) = ?4
-                 ORDER BY updated_at DESC LIMIT 1",
-                rusqlite::params![rel_path, file_size as i64, modified_at, &prefix],
-                |row| row.get(0),
-            )
-            .ok()?;
-        storage_id.strip_prefix(&prefix).map(str::to_string)
-    }
-
-    pub fn save_pdf_document(
-        &self,
-        document_id: &str,
-        vault_relative_path: &str,
-        file_size: u64,
-        modified_at: Option<i64>,
-    ) -> StateResult<()> {
-        let scope_prefix = self.pdf_scope_prefix()?;
-        // Derive both values from the same root read. Re-reading the active
-        // vault here would let a concurrent switch combine one vault's storage
-        // namespace with another vault's reconciliation query.
-        let storage_document_id = match scope_prefix.as_deref() {
-            Some(prefix) => format!("{prefix}{document_id}"),
-            None => document_id.to_string(),
-        };
-        let db = self.db.lock()?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-
-        let tx = db.unchecked_transaction()?;
-
-        let existing_new: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pdf_documents WHERE document_id = ?1)",
-            [&storage_document_id],
-            |row| row.get(0),
-        )?;
-        if !existing_new {
-            // Path is the durable user-facing identity. Prefer a size match,
-            // but adopt the newest same-path row even after a replacement so
-            // annotations are preserved instead of silently orphaned.
-            let previous_id: Option<String> = if let Some(prefix) = scope_prefix.as_deref() {
-                tx.query_row(
-                    "SELECT document_id FROM pdf_documents
-                     WHERE vault_relative_path = ?1 AND document_id != ?2
-                       AND (substr(document_id, 1, length(?4)) = ?4
-                            OR instr(document_id, ':') = 0)
-                     ORDER BY (substr(document_id, 1, length(?4)) = ?4) DESC,
-                              (file_size = ?3) DESC, updated_at DESC
-                     LIMIT 1",
-                    rusqlite::params![
-                        vault_relative_path,
-                        storage_document_id,
-                        file_size as i64,
-                        prefix
-                    ],
-                    |row| row.get(0),
-                )
-                .optional()?
-            } else {
-                tx.query_row(
-                    "SELECT document_id FROM pdf_documents
-                     WHERE vault_relative_path = ?1 AND document_id != ?2
-                     ORDER BY (file_size = ?3) DESC, updated_at DESC
-                     LIMIT 1",
-                    rusqlite::params![vault_relative_path, storage_document_id, file_size as i64],
-                    |row| row.get(0),
-                )
-                .optional()?
-            };
-            if let Some(previous_id) = previous_id {
-                tx.execute(
-                    "UPDATE pdf_annotations SET document_id = ?1 WHERE document_id = ?2",
-                    rusqlite::params![storage_document_id, previous_id],
-                )
-                .map_err(|e| format!("Failed to reconcile pdf annotations: {e}"))?;
-                tx.execute(
-                    "UPDATE pdf_references SET document_id = ?1 WHERE document_id = ?2",
-                    rusqlite::params![storage_document_id, previous_id],
-                )
-                .map_err(|e| format!("Failed to reconcile pdf references: {e}"))?;
-                tx.execute(
-                    "UPDATE pdf_documents SET document_id = ?1 WHERE document_id = ?2",
-                    rusqlite::params![storage_document_id, previous_id],
-                )
-                .map_err(|e| format!("Failed to reconcile pdf document: {e}"))?;
-            }
-        }
-
-        tx.execute(
-            "INSERT INTO pdf_documents (document_id, vault_relative_path, file_size, modified_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-             ON CONFLICT(document_id) DO UPDATE SET
-                vault_relative_path = excluded.vault_relative_path,
-                file_size = excluded.file_size,
-                modified_at = excluded.modified_at,
-                updated_at = excluded.updated_at",
-            rusqlite::params![
-                storage_document_id,
-                vault_relative_path,
-                file_size as i64,
-                modified_at,
-                now
-            ],
-        )
-        .map_err(|e| format!("Failed to save pdf document: {e}"))?;
-
-        tx.commit()?;
-
-        Ok(())
-    }
-
-    pub fn get_pdf_path_by_id(&self, document_id: &str) -> StateResult<Option<String>> {
-        let storage_document_id = self.pdf_storage_document_id(document_id)?;
-        let db = self.db.lock()?;
-        let mut stmt =
-            db.prepare("SELECT vault_relative_path FROM pdf_documents WHERE document_id = ?1")?;
-        let mut rows = stmt.query([storage_document_id])?;
-        if let Some(row) = rows.next()? {
-            let path: String = row.get(0)?;
-            Ok(Some(path))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn save_pdf_annotation(&self, ann: &PdfAnnotation) -> StateResult<()> {
-        let storage_document_id = self.pdf_storage_document_id(&ann.document_id)?;
-        let db = self.db.lock()?;
-        let ranges_json = serde_json::to_string(&ann.ranges)
-            .map_err(|e| format!("Failed to serialize ranges: {e}"))?;
-        let rects_json = serde_json::to_string(&ann.rects)
-            .map_err(|e| format!("Failed to serialize rects: {e}"))?;
-
-        db.execute(
-            "INSERT INTO pdf_annotations (
-                id, document_id, page_index, kind, color, selected_text,
-                ranges_json, rects_json, note, linked_note_path, markdown_anchor,
-                created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-             ON CONFLICT(id) DO UPDATE SET
-                color = excluded.color,
-                selected_text = excluded.selected_text,
-                ranges_json = excluded.ranges_json,
-                rects_json = excluded.rects_json,
-                note = excluded.note,
-                linked_note_path = excluded.linked_note_path,
-                markdown_anchor = excluded.markdown_anchor,
-                updated_at = excluded.updated_at",
-            rusqlite::params![
-                ann.id,
-                storage_document_id,
-                ann.page_index as i32,
-                ann.kind.as_str(),
-                ann.color.as_str(),
-                ann.selected_text,
-                ranges_json,
-                rects_json,
-                ann.note,
-                ann.linked_note_path,
-                ann.markdown_anchor,
-                ann.created_at,
-                ann.updated_at,
-            ],
-        )
-        .map_err(|e| format!("Failed to save pdf annotation: {e}"))?;
-
-        Ok(())
-    }
-
-    pub fn delete_pdf_annotation(&self, id: &str) -> StateResult<()> {
-        let scope_prefix = self.pdf_scope_prefix()?;
-        let db = self.db.lock()?;
-        let deleted = if let Some(prefix) = scope_prefix {
-            db.execute(
-                "DELETE FROM pdf_annotations
-                 WHERE id = ?1 AND substr(document_id, 1, length(?2)) = ?2",
-                rusqlite::params![id, prefix],
-            )
-        } else {
-            db.execute("DELETE FROM pdf_annotations WHERE id = ?1", [id])
-        };
-        deleted.map_err(|e| format!("Failed to delete pdf annotation: {e}"))?;
-        Ok(())
-    }
-
-    /// Cached resolved internal references for a document, or `None` if the
-    /// document has not been scanned yet. Keyed by `document_id` (a content
-    /// hash), so the cache is valid until the file changes.
-    pub fn get_pdf_references(
-        &self,
-        document_id: &str,
-    ) -> Option<Vec<crate::references::ReferenceLink>> {
-        let storage_document_id = self.pdf_storage_document_id(document_id).ok()?;
-        let db = self.db.lock().ok()?;
-        let json: String = db
-            .query_row(
-                "SELECT links_json FROM pdf_references WHERE document_id = ?1",
-                [storage_document_id],
-                |row| row.get(0),
-            )
-            .ok()?;
-        // Stored as (resolver_version, links); ignore entries from an older
-        // resolver so an algorithm change doesn't serve stale results.
-        let (version, links): (u32, Vec<crate::references::ReferenceLink>) =
-            serde_json::from_str(&json).ok()?;
-        (version == crate::references::RESOLVER_VERSION).then_some(links)
-    }
-
-    /// Store resolved references for a document. Best-effort; the one-time text
-    /// scan that produced these is the expensive part, so caching avoids
-    /// repeating it on every open.
-    pub fn put_pdf_references(
-        &self,
-        document_id: &str,
-        links: &[crate::references::ReferenceLink],
-    ) {
-        let Ok(storage_document_id) = self.pdf_storage_document_id(document_id) else {
-            return;
-        };
-        let Ok(db) = self.db.lock() else {
-            return;
-        };
-        let Ok(json) = serde_json::to_string(&(crate::references::RESOLVER_VERSION, links)) else {
-            return;
-        };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        if let Err(e) = db.execute(
-            "INSERT INTO pdf_references (document_id, links_json, updated_at)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(document_id) DO UPDATE SET
-                links_json = excluded.links_json,
-                updated_at = excluded.updated_at",
-            rusqlite::params![storage_document_id, json, now],
-        ) {
-            log::warn!("Failed to cache PDF references for {document_id}: {e}");
-        }
-    }
-
-    /// Return cached extracted text for a PDF if the cache entry's size and
-    /// modified-time match the current file (i.e. the PDF is unchanged since it
-    /// was last indexed). Returns `None` on any mismatch or error.
-    pub fn get_cached_pdf_text(
-        &self,
-        rel_path: &str,
-        file_size: u64,
-        modified_at: i64,
-    ) -> Option<String> {
-        let key = self.pdf_cache_key(rel_path).ok()?;
-        self.get_cached_pdf_text_by_key(&key, file_size, modified_at)
-    }
-
-    pub(crate) fn get_cached_pdf_text_for_vault(
-        &self,
-        vault_root: &Path,
-        rel_path: &str,
-        file_size: u64,
-        modified_at: i64,
-    ) -> Option<String> {
-        let key = format!(
-            "{}{}",
-            Self::pdf_scope_prefix_for_root(vault_root),
-            rel_path
-        );
-        self.get_cached_pdf_text_by_key(&key, file_size, modified_at)
-    }
-
-    fn get_cached_pdf_text_by_key(
-        &self,
-        key: &str,
-        file_size: u64,
-        modified_at: i64,
-    ) -> Option<String> {
-        let db = self.db.lock().ok()?;
-        db.query_row(
-            "SELECT content FROM pdf_text_cache
-             WHERE path = ?1 AND file_size = ?2 AND modified_at = ?3",
-            rusqlite::params![key, file_size as i64, modified_at],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-    }
-
-    /// Store extracted PDF text keyed by path + size + modified-time so an
-    /// unchanged PDF is not re-extracted on the next vault open. Best-effort.
-    pub fn put_cached_pdf_text(
-        &self,
-        rel_path: &str,
-        file_size: u64,
-        modified_at: i64,
-        content: &str,
-    ) {
-        let Ok(key) = self.pdf_cache_key(rel_path) else {
-            return;
-        };
-        self.put_cached_pdf_text_by_key(&key, file_size, modified_at, content);
-    }
-
-    pub(crate) fn put_cached_pdf_text_for_vault(
-        &self,
-        vault_root: &Path,
-        rel_path: &str,
-        file_size: u64,
-        modified_at: i64,
-        content: &str,
-    ) {
-        let key = format!(
-            "{}{}",
-            Self::pdf_scope_prefix_for_root(vault_root),
-            rel_path
-        );
-        self.put_cached_pdf_text_by_key(&key, file_size, modified_at, content);
-    }
-
-    fn pdf_cache_key(&self, rel_path: &str) -> StateResult<String> {
-        Ok(match self.pdf_scope_prefix()? {
-            Some(prefix) => format!("{prefix}{rel_path}"),
-            None => rel_path.to_string(),
-        })
-    }
-
-    fn put_cached_pdf_text_by_key(
-        &self,
-        key: &str,
-        file_size: u64,
-        modified_at: i64,
-        content: &str,
-    ) {
-        let Ok(db) = self.db.lock() else {
-            return;
-        };
-        if let Err(e) = db.execute(
-            "INSERT INTO pdf_text_cache (path, file_size, modified_at, content)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(path) DO UPDATE SET
-                file_size = excluded.file_size,
-                modified_at = excluded.modified_at,
-                content = excluded.content",
-            rusqlite::params![key, file_size as i64, modified_at, content],
-        ) {
-            log::warn!("Failed to cache PDF text for {key}: {e}");
-        }
-    }
-
-    pub fn get_pdf_annotations(
-        &self,
-        document_id: &str,
-        page_index: Option<u16>,
-    ) -> StateResult<Vec<PdfAnnotation>> {
-        let storage_document_id = self.pdf_storage_document_id(document_id)?;
-        let db = self.db.lock()?;
-        let query = if page_index.is_some() {
-            "SELECT id, document_id, page_index, kind, color, selected_text,
-                    ranges_json, rects_json, note, linked_note_path, markdown_anchor,
-                    created_at, updated_at
-             FROM pdf_annotations
-             WHERE document_id = ?1 AND page_index = ?2
-             ORDER BY created_at ASC"
-        } else {
-            "SELECT id, document_id, page_index, kind, color, selected_text,
-                    ranges_json, rects_json, note, linked_note_path, markdown_anchor,
-                    created_at, updated_at
-             FROM pdf_annotations
-             WHERE document_id = ?1
-             ORDER BY created_at ASC"
-        };
-
-        let mut stmt = db.prepare(query)?;
-        let mut rows = if let Some(page) = page_index {
-            stmt.query(rusqlite::params![storage_document_id, page as i32])?
-        } else {
-            stmt.query(rusqlite::params![storage_document_id])?
-        };
-
-        let mut annotations = Vec::new();
-        while let Some(row) = rows.next()? {
-            let id: String = row.get(0)?;
-            let _stored_doc_id: String = row.get(1)?;
-            let page_idx: i32 = row.get(2)?;
-            let kind_str: String = row.get(3)?;
-            let color_str: String = row.get(4)?;
-            let selected_text: String = row.get(5)?;
-            let ranges_json: String = row.get(6)?;
-            let rects_json: String = row.get(7)?;
-            let note: Option<String> = row.get(8)?;
-            let linked_note_path: Option<String> = row.get(9)?;
-            let markdown_anchor: Option<String> = row.get(10)?;
-            let created_at: i64 = row.get(11)?;
-            let updated_at: i64 = row.get(12)?;
-
-            let kind = PdfAnnotationKind::parse(&kind_str)?;
-            let color = PdfAnnotationColor::parse(&color_str)?;
-            let ranges: Vec<PdfTextRange> = serde_json::from_str(&ranges_json)
-                .map_err(|e| format!("Failed to parse ranges JSON: {e}"))?;
-            let rects: Vec<PdfRect> = serde_json::from_str(&rects_json)
-                .map_err(|e| format!("Failed to parse rects JSON: {e}"))?;
-
-            annotations.push(PdfAnnotation {
-                id,
-                document_id: document_id.to_string(),
-                page_index: page_idx as u16,
-                kind,
-                color,
-                selected_text,
-                ranges,
-                rects,
-                note,
-                linked_note_path,
-                markdown_anchor,
-                created_at,
-                updated_at,
-            });
-        }
-
-        Ok(annotations)
-    }
 }
 
 /// Current on-disk schema version. Bump this and add a corresponding arm in
 /// [`apply_migrations`] whenever the schema changes.
 const SCHEMA_VERSION: i64 = 1;
 
-/// Create all tables/indexes (idempotent) and run version migrations.
-///
-/// Shared by both the on-disk and in-memory constructors so the schema lives
-/// in exactly one place.
 fn init_schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS settings (
@@ -721,19 +247,8 @@ fn init_schema(db: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Apply incremental migrations based on `PRAGMA user_version`.
-///
-/// New schema changes should be expressed as additive steps here, each
-/// bumping `user_version`, rather than editing the base DDL above (which only
-/// runs for fresh databases via `IF NOT EXISTS`).
 fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
     let mut version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-
-    // Example shape for future migrations:
-    // if version < 2 {
-    //     db.execute_batch("ALTER TABLE ...;")?;
-    //     version = 2;
-    // }
 
     if version < SCHEMA_VERSION {
         version = SCHEMA_VERSION;
@@ -787,10 +302,6 @@ pub fn settings_db_path() -> PathBuf {
     }
     dir.push(DB_FILE_NAME);
 
-    // One-time migration: earlier, portable builds kept the database beside
-    // the executable. If the per-user location has no database yet but that
-    // one does, copy it over so users keep their settings, highlights and
-    // study history.
     if !dir.exists()
         && data_dir_override().is_none()
         && let Some(portable) = portable_db_path()
@@ -802,8 +313,7 @@ pub fn settings_db_path() -> PathBuf {
     dir
 }
 
-/// Read the last window geometry without constructing PDF services. This is
-/// used before Iced creates the first window.
+/// Read the last window geometry without constructing PDF services.
 pub fn persisted_window_size() -> Option<(f32, f32)> {
     let db = Connection::open(settings_db_path()).ok()?;
     let read = |key: &str| -> Option<f32> {
@@ -819,14 +329,10 @@ pub fn persisted_window_size() -> Option<(f32, f32)> {
     (width >= 640.0 && height >= 480.0).then_some((width, height))
 }
 
-/// Where portable builds kept the database: beside the executable.
 fn portable_db_path() -> Option<PathBuf> {
     Some(std::env::current_exe().ok()?.parent()?.join(DB_FILE_NAME))
 }
 
-/// Copy a legacy database (and its WAL sidecars, if any) to `new_path` when the
-/// new location is empty and the legacy file exists in a different place. The
-/// legacy file is left in place so nothing is lost if the copy is interrupted.
 fn migrate_legacy_db(legacy: &Path, new_path: &Path) {
     if legacy == new_path || !legacy.exists() || new_path.exists() {
         return;
@@ -835,8 +341,6 @@ fn migrate_legacy_db(legacy: &Path, new_path: &Path) {
         log::warn!("Failed to migrate legacy settings database: {e}");
         return;
     }
-    // Best-effort: bring along WAL/SHM sidecars so any not-yet-checkpointed
-    // writes survive the move.
     for suffix in ["-wal", "-shm"] {
         let from = sidecar(legacy, suffix);
         if from.exists() {
@@ -857,21 +361,17 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 }
 
 /// Overrides the data directory (database and log), and disables migration
-/// from the portable location. Used by headless end-to-end tests so a run never reads
-/// or copies the user's real settings; also handy for a throwaway profile.
+/// from the portable location.
 pub const DATA_DIR_ENV: &str = "MD_EDITOR_DATA_DIR";
 
 static DATA_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
-/// Pin the data directory for this process, as [`DATA_DIR_ENV`] does, without
-/// touching the environment (which is unsound while other threads run).
-/// Returns `false` if a different directory was already pinned.
+/// Pin the data directory for this process without touching the environment.
 pub fn override_data_dir(dir: PathBuf) -> bool {
     DATA_DIR_OVERRIDE.get_or_init(|| dir.clone()) == &dir
 }
 
 fn data_dir_override() -> Option<PathBuf> {
-    // Core's own tests never reach the user's real data directory.
     #[cfg(test)]
     DATA_DIR_OVERRIDE.get_or_init(|| {
         std::env::temp_dir().join(format!("md-editor-core-test-data-{}", std::process::id()))
@@ -883,9 +383,7 @@ fn data_dir_override() -> Option<PathBuf> {
     })
 }
 
-/// Directory holding the settings database: [`DATA_DIR_ENV`] if set, else
-/// `$XDG_DATA_HOME/md-editor` (default `~/.local/share/md-editor`), else the
-/// current directory.
+/// Directory holding the settings database.
 pub fn data_dir() -> PathBuf {
     if let Some(dir) = data_dir_override() {
         return dir;
@@ -898,9 +396,7 @@ pub fn data_dir() -> PathBuf {
     .map_or_else(|| PathBuf::from("."), |base| base.join(APP_DIR_NAME))
 }
 
-/// Directory holding `md-editor.log`: the data directory when
-/// [`DATA_DIR_ENV`] overrides it (so a throwaway profile stays in one place),
-/// else `$XDG_STATE_HOME/md-editor` (default `~/.local/state/md-editor`).
+/// Directory holding `md-editor.log`.
 pub fn log_dir() -> PathBuf {
     if let Some(dir) = data_dir_override() {
         return dir;
@@ -915,9 +411,6 @@ pub fn log_dir() -> PathBuf {
 
 const APP_DIR_NAME: &str = "md-editor";
 
-/// Resolve an XDG base directory: the variable's value when it is an absolute
-/// path (the spec says relative values must be ignored), else
-/// `$HOME/<default_rel>`.
 fn xdg_dir(
     var: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,

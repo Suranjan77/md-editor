@@ -41,6 +41,7 @@ struct DocMatchKey {
 pub struct SearchState {
     pub visible: bool,
     pub file_visible: bool,
+    pub replace_visible: bool,
     pub query: String,
     pub replace: String,
     pub regex: bool,
@@ -49,6 +50,7 @@ pub struct SearchState {
     /// survive PDF line breaks / dropped newlines.
     pub loose: bool,
     pub match_index: Option<usize>,
+    pub global_selected: usize,
     pub results: Vec<SearchResult>,
     pub results_truncated: bool,
     pub pdf_results: Vec<PdfSearchMatch>,
@@ -76,6 +78,10 @@ impl SearchState {
         match message {
             Message::Search(SearchMessage::ReplaceChanged(replace)) => {
                 self.replace = replace;
+                Task::none()
+            }
+            Message::Search(SearchMessage::ToggleReplaceRow) => {
+                self.replace_visible = !self.replace_visible;
                 Task::none()
             }
             _ => Task::none(),

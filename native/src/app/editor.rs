@@ -10,6 +10,22 @@ impl MdEditor {
             EditorMessage::Command(command) => self.run_editor_command(command),
             EditorMessage::Paste => self.paste(),
             EditorMessage::Pasted(payload) => self.pasted(payload),
+            EditorMessage::InsertImageDialog => self.insert_image_dialog(),
+            EditorMessage::ImagesPicked(files) => {
+                if files.is_empty() {
+                    Task::none()
+                } else {
+                    self.insert_files(&files)
+                }
+            }
+            EditorMessage::OpenContextMenu(x, y) => {
+                self.ui.context_menu = Some(crate::ui_state::ActiveContextMenu {
+                    target: crate::messages::ContextMenuTarget::Editor,
+                    x,
+                    y,
+                });
+                Task::none()
+            }
             EditorMessage::CommandNoScroll(command) => {
                 self.run_editor_command_with_scroll(command, false)
             }
@@ -26,7 +42,13 @@ impl MdEditor {
                         self.ui.toast = Some("No unsaved changes".to_string())
                     }
                     SaveOutcome::NothingToDo => {}
-                    SaveOutcome::Failed(err) => self.ui.toast = Some(format!("Save failed: {err}")),
+                    SaveOutcome::Failed(err) => {
+                        self.ui.notify(
+                            crate::ui::ToastKind::Error,
+                            format!("Save failed: {err}"),
+                            true,
+                        );
+                    }
                 }
                 Task::none()
             }
@@ -71,7 +93,10 @@ impl MdEditor {
                 Task::none()
             }
             EditorMessage::TocClicked(index) => {
-                if self.pdf.active_path.is_some() {
+                if self.pdf.active_path.is_some()
+                    && (self.showing_pdf
+                        || (self.ui.split_view_active && self.active_panel == ActivePanel::Pdf))
+                {
                     let target_page = (index as u16).min(self.pdf.total_pages.saturating_sub(1));
                     self.navigate_pdf_page(target_page)
                 } else {
@@ -85,13 +110,8 @@ impl MdEditor {
                 }
             }
             EditorMessage::ToggleTOC => {
-                if self.pdf.active_path.is_some()
-                    && (self.showing_pdf
-                        || (self.ui.split_view_active && self.active_path.is_some()))
-                {
+                if self.active_path.is_some() || self.pdf.active_path.is_some() {
                     self.editor.toc_visible = !self.editor.toc_visible;
-                    // The TOC panel changes the PDF pane width — re-fit so pages
-                    // don't render stretched at the old width.
                     return self.refit_pdf_if_needed();
                 }
                 Task::none()
@@ -233,6 +253,10 @@ pub(super) fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bo
             | EditorCommand::FormatItalic
             | EditorCommand::FormatInlineCode
             | EditorCommand::InsertLink
+            | EditorCommand::InsertTable
+            | EditorCommand::InsertMath
+            | EditorCommand::InsertCheckbox
+            | EditorCommand::InsertBlock(_)
             | EditorCommand::Undo
             | EditorCommand::Redo
     )

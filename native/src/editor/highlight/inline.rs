@@ -24,7 +24,7 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: hash_part.to_string(),
             display_text: Some(String::new()),
-            color: theme::TEXT_MUTED,
+            color: crate::design::tokens().doc_syntax,
             is_syntax: true,
             font_size: heading_size(level),
             is_heading: true,
@@ -36,7 +36,7 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: display.to_string(),
             display_text: None,
-            color: theme::ACCENT,
+            color: crate::design::tokens().doc_text,
             bold: true,
             font_size: heading_size(level),
             is_heading: true,
@@ -52,7 +52,7 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line.to_string(),
             display_text: Some(String::new()),
-            color: theme::BORDER,
+            color: crate::design::tokens().doc_quote_bar,
             is_rule: true,
             is_syntax: true,
             ..StyledSpan::plain("")
@@ -73,7 +73,7 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line[..rest_start].to_string(),
             display_text: Some(String::new()),
-            color: theme::ACCENT,
+            color: crate::design::tokens().doc_syntax,
             is_syntax: true,
             ..StyledSpan::plain("")
         });
@@ -84,8 +84,11 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         if sl.spans.len() == content_start {
             sl.spans.push(StyledSpan::plain(""));
         }
+        let t = crate::design::tokens();
         for span in &mut sl.spans[content_start..] {
-            span.color = theme::ACCENT;
+            if span.color == t.doc_text {
+                span.color = t.fg_secondary;
+            }
             span.italic = true;
         }
         return sl;
@@ -104,9 +107,9 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
                 "☐ ".to_string()
             }),
             color: if is_checked {
-                theme::ACCENT
+                crate::design::tokens().doc_link
             } else {
-                theme::TEXT_MUTED
+                crate::design::tokens().doc_syntax
             },
             is_checkbox: true,
             is_checked,
@@ -117,7 +120,7 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         parse_inline_spans(&line[checkbox_end..], &mut sl.spans);
         if is_checked {
             for span in &mut sl.spans[start_idx..] {
-                span.color = theme::TEXT_MUTED;
+                span.color = crate::design::tokens().doc_syntax;
             }
         }
         return sl;
@@ -130,7 +133,7 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line[..bullet_end].to_string(),
             display_text: Some("  • ".to_string()),
-            color: theme::ACCENT,
+            color: crate::design::tokens().doc_link,
             is_list_marker: true,
             ..StyledSpan::plain("")
         });
@@ -144,7 +147,7 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         sl.spans.push(StyledSpan {
             text: line[..prefix_end].to_string(),
             display_text: None,
-            color: theme::ACCENT,
+            color: crate::design::tokens().doc_link,
             is_list_marker: true,
             ..StyledSpan::plain("")
         });
@@ -191,18 +194,26 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
             if let Some(end) = find_char(&chars, i + 1, '`') {
                 let code_text: String = chars[i + 1..end].iter().collect();
                 // Opening backtick — syntax marker
-                spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 14.0));
+                spans.push(StyledSpan::syntax(
+                    "`",
+                    crate::design::tokens().doc_syntax,
+                    14.0,
+                ));
                 // Code content
                 spans.push(StyledSpan {
                     text: code_text,
                     display_text: None,
-                    color: theme::ACCENT_SECONDARY,
+                    color: crate::design::tokens().doc_code_fg,
                     font_size: 14.0,
                     is_code: true,
                     ..StyledSpan::plain("")
                 });
                 // Closing backtick — syntax marker
-                spans.push(StyledSpan::syntax("`", theme::TEXT_MUTED, 14.0));
+                spans.push(StyledSpan::syntax(
+                    "`",
+                    crate::design::tokens().doc_syntax,
+                    14.0,
+                ));
                 i = end + 1;
                 continue;
             }
@@ -217,17 +228,25 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
             if let Some(end) = find_double(&chars, i + 2, '*') {
                 let bold_text: String = chars[i + 2..end].iter().collect();
                 // Opening ** — syntax marker
-                spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax(
+                    "**",
+                    crate::design::tokens().doc_syntax,
+                    16.0,
+                ));
                 // Bold text
                 spans.push(StyledSpan {
                     text: bold_text,
-                    color: theme::TEXT_PRIMARY,
+                    color: crate::design::tokens().doc_text,
                     bold: true,
                     font_size: 16.0,
                     ..StyledSpan::plain("")
                 });
                 // Closing ** — syntax marker
-                spans.push(StyledSpan::syntax("**", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax(
+                    "**",
+                    crate::design::tokens().doc_syntax,
+                    16.0,
+                ));
                 i = end + 2;
                 continue;
             }
@@ -241,15 +260,23 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
             }
             if let Some(end) = find_char(&chars, i + 1, '*') {
                 let italic_text: String = chars[i + 1..end].iter().collect();
-                spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax(
+                    "*",
+                    crate::design::tokens().doc_syntax,
+                    16.0,
+                ));
                 spans.push(StyledSpan {
                     text: italic_text,
-                    color: theme::TEXT_PRIMARY,
+                    color: crate::design::tokens().doc_text,
                     italic: true,
                     font_size: 16.0,
                     ..StyledSpan::plain("")
                 });
-                spans.push(StyledSpan::syntax("*", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax(
+                    "*",
+                    crate::design::tokens().doc_syntax,
+                    16.0,
+                ));
                 i = end + 1;
                 continue;
             }
@@ -272,17 +299,25 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                     .map(|d| d.to_string())
                     .unwrap_or_else(|| extract_display_name(target));
                 // [[ — syntax marker
-                spans.push(StyledSpan::syntax("[[", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax(
+                    "[[",
+                    crate::design::tokens().doc_syntax,
+                    16.0,
+                ));
                 spans.push(StyledSpan {
                     text: link_text.clone(),
                     display_text: Some(display.to_string()),
-                    color: theme::ACCENT,
+                    color: crate::design::tokens().doc_link,
                     is_link: true,
                     link_target: Some(target.to_string()),
                     ..StyledSpan::plain("")
                 });
                 // ]] — syntax marker
-                spans.push(StyledSpan::syntax("]]", theme::TEXT_MUTED, 16.0));
+                spans.push(StyledSpan::syntax(
+                    "]]",
+                    crate::design::tokens().doc_syntax,
+                    16.0,
+                ));
                 i = end + 2;
                 continue;
             }
@@ -306,7 +341,7 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan {
                     text: raw,
                     display_text: Some(link_display.clone()),
-                    color: theme::ACCENT,
+                    color: crate::design::tokens().doc_link,
                     is_link: true,
                     link_target: Some(url),
                     ..StyledSpan::plain("")
@@ -326,7 +361,7 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 let math_raw: String = chars[i..=end].iter().collect();
                 spans.push(StyledSpan {
                     text: math_raw,
-                    color: theme::WARNING,
+                    color: crate::design::tokens().doc_math,
                     italic: true,
                     font_size: 16.0,
                     is_math: true,
@@ -354,7 +389,7 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
                 spans.push(StyledSpan {
                     text: raw,
                     display_text: Some(String::new()), // hidden in preview, image is drawn separately
-                    color: theme::WARNING,
+                    color: crate::design::tokens().doc_math,
                     italic: true,
                     font_size: 14.0,
                     is_image: true,
@@ -474,13 +509,13 @@ pub(super) fn detect_numbered_list(trimmed: &str) -> Option<usize> {
     None
 }
 
+/// A ×1.25 modular scale from the 17px body (`pages/editor.md`): H1 33,
+/// H2 27, H3 21; H4–H6 stay at body size and differ by weight and spacing.
 pub(super) fn heading_size(level: u8) -> f32 {
     match level {
-        1 => 34.0,
-        2 => 28.0,
-        3 => 23.0,
-        4 => 20.0,
-        5 => 18.0,
+        1 => 33.0,
+        2 => 27.0,
+        3 => 21.0,
         _ => 17.0,
     }
 }

@@ -1,28 +1,4 @@
-//! Read-only PowerPoint (`.pptx`) presentations.
-//!
-//! A `.pptx` file is a zip package of XML parts. This module reads one into a
-//! [`Presentation`]: slides as lists of positioned elements whose geometry,
-//! fills, lines and text styles are already *resolved*, so the native viewer
-//! can draw them without knowing anything about the format.
-//!
-//! Resolution is most of the work. A shape rarely says how it looks: a title
-//! placeholder takes its position from the slide layout, its size from the
-//! slide master, its colour from the theme through the master's colour map,
-//! and its alignment from the master's title style. The chain followed here,
-//! lowest priority first, is:
-//!
-//! presentation `defaultTextStyle` → master `txStyles` → master placeholder →
-//! layout placeholder → the shape's `style` font reference → the shape's own
-//! `lstStyle` → paragraph and run properties.
-//!
-//! What is not modelled degrades instead of failing: charts, SmartArt and
-//! embedded objects become [`ElementKind::Unsupported`] boxes, unknown preset
-//! geometries draw as rectangles, and a slide whose XML cannot be read becomes
-//! a slide saying so. Presentations are reference material in the same sense
-//! PDFs are, so nothing here ever writes to the file.
-//!
-//! Every length in the model is in points (1/72 inch); the XML's English
-//! Metric Units are converted on the way in.
+//! Read-only PowerPoint (`.pptx`) presentations: zip package loader, XML resolution, and slide assembly.
 
 mod error;
 pub use error::{PptxError, PptxResult};
@@ -34,21 +10,18 @@ use roxmltree::{Document, Node};
 
 /// English Metric Units per point.
 const EMU_PER_POINT: f64 = 12_700.0;
-/// Largest single part — XML or media — read out of a package. The declared
-/// size in the zip directory is checked first, and inflation is bounded too,
-/// because a hostile archive can lie about it.
+/// Largest single part — XML or media — read out of a package.
 const MAX_PART_BYTES: u64 = 64 * 1024 * 1024;
 /// Largest total of inflated bytes read from one package.
 const MAX_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_SLIDES: usize = 5_000;
-/// Groups nest; a malicious file could nest them until the stack overflows.
+/// Maximum group nesting depth.
 const MAX_TREE_DEPTH: usize = 64;
 /// Font size when nothing in the style chain sets one.
 const DEFAULT_FONT_SIZE: f32 = 18.0;
 /// Line width when a line is drawn but its width is not given: 0.75pt.
 const DEFAULT_LINE_WIDTH: f32 = 0.75;
-/// Magic number of an OLE compound file. A `.pptx` saved with a password is
-/// wrapped in one, and so is every legacy binary `.ppt`.
+/// Magic number of an OLE compound file (password-protected `.pptx` or `.ppt`).
 const COMPOUND_FILE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 
 mod color;
@@ -59,6 +32,7 @@ mod numbering;
 mod package;
 mod placeholder;
 mod slide;
+mod slide_content;
 mod table_style;
 mod text;
 mod theme;
@@ -135,15 +109,7 @@ fn read_presentation<R: Read + Seek>(package: &mut Package<R>) -> PptxResult<Pre
     let default_style = child(presentation, "defaultTextStyle")
         .map(parse_list_style)
         .unwrap_or_default();
-    let default_table_style = presentation_rels
-        .values()
-        .find(|rel| rel.kind == "tableStyles" && !rel.external)
-        .and_then(|rel| package.read_text(&rel.target).ok().flatten())
-        .and_then(|xml| {
-            let doc = Document::parse(xml.trim_start_matches('\u{feff}')).ok()?;
-            doc.root_element().attribute("def").map(str::to_string)
-        })
-        .unwrap_or_default();
+    let default_table_style = read_default_table_style(package, &presentation_rels);
 
     let slide_parts: Vec<String> = child(presentation, "sldIdLst")
         .into_iter()
@@ -154,12 +120,65 @@ fn read_presentation<R: Read + Seek>(package: &mut Package<R>) -> PptxResult<Pre
         .take(MAX_SLIDES)
         .collect();
 
-    // Discover the layouts, masters and themes the slides use, then read
-    // every part once. Documents borrow their text, so all text is loaded
-    // before any document is parsed.
+    let (rels, theme_parts) = discover_slide_relationships(package, &slide_parts)?;
+
+    let mut texts: HashMap<String, String> = HashMap::new();
+    for part in rels.keys().chain(theme_parts.iter()) {
+        if let Some(text) = package.read_text(part)? {
+            texts.insert(part.clone(), text);
+        }
+    }
+    let docs: HashMap<String, Document> = texts
+        .iter()
+        .filter_map(|(part, text)| Some((part.clone(), parse_xml(text, part).ok()?)))
+        .collect();
+
+    let (slides, media_parts) = build_presentation_slides(
+        &slide_parts,
+        &docs,
+        &rels,
+        &default_style,
+        &default_table_style,
+        (width, height),
+    );
+
+    let mut media = HashMap::new();
+    for part in media_parts {
+        if let Ok(Some(bytes)) = package.read(&part) {
+            media.insert(part, bytes);
+        }
+    }
+
+    Ok(Presentation {
+        width,
+        height,
+        slides,
+        media,
+    })
+}
+
+fn read_default_table_style<R: Read + Seek>(
+    package: &mut Package<R>,
+    presentation_rels: &Relationships,
+) -> String {
+    presentation_rels
+        .values()
+        .find(|rel| rel.kind == "tableStyles" && !rel.external)
+        .and_then(|rel| package.read_text(&rel.target).ok().flatten())
+        .and_then(|xml| {
+            let doc = Document::parse(xml.trim_start_matches('\u{feff}')).ok()?;
+            doc.root_element().attribute("def").map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
+fn discover_slide_relationships<R: Read + Seek>(
+    package: &mut Package<R>,
+    slide_parts: &[String],
+) -> PptxResult<(HashMap<String, Relationships>, HashSet<String>)> {
     let mut rels: HashMap<String, Relationships> = HashMap::new();
     let mut theme_parts = HashSet::new();
-    for slide in &slide_parts {
+    for slide in slide_parts {
         let slide_rels = read_relationships(package, slide)?;
         if let Some(layout) = target_of(&slide_rels, "slideLayout")
             && !rels.contains_key(&layout)
@@ -178,24 +197,21 @@ fn read_presentation<R: Read + Seek>(package: &mut Package<R>) -> PptxResult<Pre
         }
         rels.insert(slide.clone(), slide_rels);
     }
+    Ok((rels, theme_parts))
+}
 
-    let mut texts: HashMap<String, String> = HashMap::new();
-    for part in rels.keys().chain(theme_parts.iter()) {
-        if let Some(text) = package.read_text(part)? {
-            texts.insert(part.clone(), text);
-        }
-    }
-    // A part that is not well-formed XML is left out; whatever needed it
-    // degrades (a slide says it could not be read, a layout is ignored).
-    let docs: HashMap<String, Document> = texts
-        .iter()
-        .filter_map(|(part, text)| Some((part.clone(), parse_xml(text, part).ok()?)))
-        .collect();
-
+fn build_presentation_slides<'i>(
+    slide_parts: &[String],
+    docs: &HashMap<String, Document<'i>>,
+    rels: &HashMap<String, Relationships>,
+    default_style: &ListStyle,
+    default_table_style: &str,
+    (width, height): (f32, f32),
+) -> (Vec<Slide>, HashSet<String>) {
     let fallback_theme = Theme::fallback();
     let mut themes: HashMap<String, Theme> = HashMap::new();
     let mut master_styles: HashMap<String, TextStyles> = HashMap::new();
-    for (part, part_rels) in &rels {
+    for (part, part_rels) in rels {
         let Some(root) = docs.get(part).map(Document::root_element) else {
             continue;
         };
@@ -229,11 +245,11 @@ fn read_presentation<R: Read + Seek>(package: &mut Package<R>) -> PptxResult<Pre
                 .as_ref()
                 .and_then(|master| themes.get(master))
                 .unwrap_or(&fallback_theme),
-            default_style: &default_style,
+            default_style,
             text_styles: master_part.as_ref().and_then(|m| master_styles.get(m)),
-            master: template(master_part.as_deref(), &docs, &rels),
-            layout: template(layout_part.as_deref(), &docs, &rels),
-            default_table_style: &default_table_style,
+            master: template(master_part.as_deref(), docs, rels),
+            layout: template(layout_part.as_deref(), docs, rels),
+            default_table_style,
             color_map: HashMap::new(),
             number,
             title: None,
@@ -241,22 +257,7 @@ fn read_presentation<R: Read + Seek>(package: &mut Package<R>) -> PptxResult<Pre
         };
         slides.push(builder.build(doc.root_element(), slide_rels));
     }
-
-    // An image that cannot be read (too large, corrupt entry) is dropped; the
-    // viewer draws its frame empty rather than refusing the whole deck.
-    let mut media = HashMap::new();
-    for part in media_parts {
-        if let Ok(Some(bytes)) = package.read(&part) {
-            media.insert(part, bytes);
-        }
-    }
-
-    Ok(Presentation {
-        width,
-        height,
-        slides,
-        media,
-    })
+    (slides, media_parts)
 }
 
 fn unreadable_slide(number: usize, width: f32, height: f32) -> Slide {

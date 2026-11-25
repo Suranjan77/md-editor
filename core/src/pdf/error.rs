@@ -1,4 +1,4 @@
-//! `PdfError`: what `PdfRenderer` calls fail with. The worker thread still reports strings internally; they are classified here, at the public boundary.
+//! `PdfError`: typed errors returned by the PDF engine and worker channels.
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PdfError {
@@ -15,7 +15,7 @@ pub enum PdfError {
 }
 
 impl PdfError {
-    /// Classify a worker's error string.
+    /// Classify a legacy error string into a typed [`PdfError`].
     pub(crate) fn from_worker(message: String) -> Self {
         match message.as_str() {
             "Skipped" => Self::Skipped,

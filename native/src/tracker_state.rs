@@ -65,6 +65,12 @@ impl TrackerState {
         tracker
     }
 
+    /// How many sessions are logged (e2e probes).
+    #[cfg(test)]
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
+    }
+
     pub fn toggle_visible(&mut self) {
         self.visible = !self.visible;
     }

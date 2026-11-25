@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 md-editor-core = { path = "../core" }
-iced = { version = "0.14", features = ["canvas", "image", "advanced", "tokio"] }
+iced = { version = "0.14", features = ["canvas", "image", "advanced", "tokio", "svg"] }
 # The `Program` trait the iced builders implement; named so `main::program`
 # can be handed to `iced_test`'s emulator. Already in the tree via iced.
 iced_program = "0.14"

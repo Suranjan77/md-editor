@@ -3,7 +3,7 @@
 **Scope:** exactly two features. (1) Document tabs. (2) Getting images into notes by pasting
 from the clipboard or dropping files. Nothing else.
 
-**Date:** 2026-11-23 · **Status:** images I1–I3 done (2026-11-24, see Part 2 §2.8); tabs not started. Visual design follows the
+**Date:** 2026-11-23 · **Status:** images I1–I5 and tabs T1–T5 implemented (2026-11-24), with e2e flows in `e2e/workspace.rs` (§1.6, §2.8). Drops insert at the caret, not the drop point. Visual design follows the
 [design system](design-system/md-editor/MASTER.md); behaviour is verified with the
 [e2e harness](e2e-bug-discovery-plan.md); code lands under the rules of the
 [code health plan](code-health-plan.md).
@@ -103,6 +103,15 @@ pub enum TabView {               // what is restored when the tab is activated
   tabs; `Ctrl+Shift+T` after closing.
 - Telemetry budget: activating a note tab < 16 ms update in release (it is a buffer swap);
   a PDF tab < 50 ms before first page is requested.
+
+### 1.6 Progress (2026-11-24)
+
+`native/src/tabs.rs` (`Tabs`: strip order, MRU, reopen stack capped at 10, duplicate-name
+labels, per-tab `TabView`, session JSON) with unit tests in `tabs/tests.rs`;
+`app/tabs_handler.rs` (activate, close with flush-or-refuse, close others, reopen skipping
+deleted files, MRU and ordinal switching, drag reorder, split-view pairing, per-vault
+persistence under `tabs:<vault>`); `ui::tab_strip` (dirty dot, missing badge, middle-click
+close, right-click menu, overflow menu). E2E: switching, flush on close, reopen, rename, relaunch restore (`e2e/workspace.rs`).
 
 ---
 

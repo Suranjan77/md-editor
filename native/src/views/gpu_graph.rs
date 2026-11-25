@@ -22,7 +22,6 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::graph_state::{MAX_ZOOM, MIN_ZOOM};
 use crate::messages::{GraphMessage, Message};
-use crate::theme;
 use crate::views::graph::{
     GraphFrame, ViewTransform, distance, fit_transform, kind_color, node_magnitude,
     node_screen_radius, screen_to_world, world_to_screen,
@@ -754,6 +753,7 @@ impl shader::Program<Message> for GpuGraphProgram {
             });
         }
 
+        let tokens = crate::design::tokens();
         let mut edges = Vec::with_capacity(self.frame.graph.snapshot.edges.len());
         for (edge, &(source, target)) in self
             .frame
@@ -771,14 +771,18 @@ impl shader::Program<Message> for GpuGraphProgram {
             let focused = focus.is_some_and(|focus| source == focus || target == focus);
             let weight = edge.weight.max(1) as f32;
             // Links are the whole point of the view, so even the quietest state
-            // stays visible against the near-black canvas.
-            const LINK: iced::Color = iced::Color::from_rgb(0.52, 0.60, 0.62);
+            // stays visible against the canvas (`pages/graph.md`: `border.control`).
+            let link = tokens.border_control;
             let (color, alpha, thickness) = if focused {
-                (theme::ACCENT_GLOW, 0.95, 1.8 + weight.ln() * 0.5)
+                (
+                    crate::design::fade(tokens.accent, 0.5),
+                    0.95,
+                    1.8 + weight.ln() * 0.5,
+                )
             } else if focus.is_some() {
-                (LINK, 0.24, 1.0 + weight.ln() * 0.4)
+                (link, 0.24, 1.0 + weight.ln() * 0.4)
             } else {
-                (LINK, 0.48, 1.0 + weight.ln() * 0.4)
+                (link, 0.48, 1.0 + weight.ln() * 0.4)
             };
             edges.push(EdgeInstance {
                 p0: [from.x, from.y],

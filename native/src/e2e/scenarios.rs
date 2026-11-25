@@ -234,16 +234,20 @@ fn s11_tracker_manual_sessions() {
         )));
         app.send(Message::Shell(ShellMessage::TrackerManualAdd));
     }
-    // Nothing was accepted: the total is still zero (an accepted "inf" would
-    // read "infh", a negative "-1.0h").
-    assert!(app.shows("0.0h"), "an invalid session was accepted");
+    // Nothing was accepted.
+    assert_eq!(
+        app.probe().tracker_sessions,
+        0,
+        "an invalid session was accepted"
+    );
+    assert!(app.shows("0m"), "the total should read 0m");
     app.send(Message::Shell(ShellMessage::TrackerManualHoursChanged(
         "2.5".to_string(),
     )));
     app.send(Message::Shell(ShellMessage::TrackerManualAdd));
     app.screenshot("tracker");
-    assert!(app.shows("2.5h"), "total not shown");
-    assert!(!app.shows("-0.0h"));
+    assert_eq!(app.probe().tracker_sessions, 1);
+    assert!(app.shows("2h 30m"), "total not shown as hours and minutes");
     app.finish();
 }
 

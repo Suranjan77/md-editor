@@ -43,16 +43,24 @@ Use it for:
 Choose a folder and MD Editor turns it into a working vault. The sidebar indexes supported
 files and gives you a familiar tree for opening, creating, and deleting notes. Indexing skips
 `node_modules`, `target`, `build`, `dist`, `__pycache__`, `.trash`, and every dotfolder, so
-`.git` stays out of the way. A filesystem watcher picks up changes made outside the app.
+`.git` stays out of the way, along with any folders you add in Settings. A filesystem
+watcher picks up changes made outside the app.
+
+Every note, PDF, deck and image opens in a tab that remembers its place — caret and undo
+history, page and zoom — and the tabs come back the next time you open the vault. Dark and
+light themes, the interface scale, the reading font, text size and line width are in
+Settings (`Ctrl+,`); the whole app is usable from the keyboard (`F6` moves between regions).
 
 ### 2. Write In Markdown
 
 - Hybrid live preview: markers hide when the cursor is elsewhere and reappear on the line
   you are editing, so you always edit real source.
 - Headings, emphasis, links, blockquotes, task checkboxes, tables, images, and math.
+- Paste a screenshot, paste or drop image files, or use Insert image…: they are stored as
+  attachments in the vault and linked from the note.
 - Fenced code blocks with syntax highlighting.
 - Wide tables and code blocks scroll horizontally on their own.
-- In-file search with regex, match case, and replace-all.
+- In-file find with regex and match case, replace one at a time or all at once.
 - Auto-pairing of brackets and quotes, with contraction apostrophes left alone.
 - List continuation, including numbered lists that increment.
 - Undo grouped into word-sized runs, preserved when you switch between notes.

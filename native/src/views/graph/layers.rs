@@ -1,7 +1,11 @@
 //! Canvas layers: GPU graph, label overlay, legend, viewport controls and empty states.
 
 use super::*;
+use crate::design::metrics::{
+    BORDER_WIDTH, ControlSize, Elevation, RADIUS_LG, SPACE_1, SPACE_2, SPACE_3,
+};
 use crate::messages::GraphMessage;
+use crate::ui::{Button, card, toolbar_separator};
 use iced::widget::column;
 
 // ──────────────────────────── canvas layers ─────────────────────────
@@ -57,7 +61,7 @@ pub(super) fn canvas_layers<'a>(state: &'a GraphState, frame: GraphFrame) -> Ele
         )
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(12),
+        .padding(SPACE_3),
     );
 
     layers.into()
@@ -71,45 +75,51 @@ pub(super) fn hairball_notice<'a>(state: &'a GraphState) -> Element<'a, Message>
     let total = stats.documents() + stats.missing;
     floating(
         row![
-            text(format!(
-                "{} of {total} notes have no links — the canvas is mostly isolated dots.",
-                stats.unconnected
-            ))
-            .size(10)
-            .color(theme::TEXT_SECONDARY),
-            button(text("Hide unlinked").size(10))
+            role_text(
+                format!(
+                    "{} of {total} notes have no links — the canvas is mostly isolated dots.",
+                    stats.unconnected
+                ),
+                TextRole::Caption,
+                tokens().fg_secondary,
+            ),
+            Button::primary("Hide unlinked")
+                .size(ControlSize::Sm)
                 .on_press(Message::Graph(GraphMessage::ShowOrphansToggled(false)))
-                .padding([4, 9])
-                .style(primary_style),
+                .build(),
         ]
-        .spacing(10)
+        .spacing(SPACE_3)
         .align_y(Alignment::Center),
     )
 }
 
+/// Kind legend: an icon and a name per kind, so colour is never the only cue.
 pub(super) fn legend<'a>() -> Element<'a, Message> {
-    let swatch = |color: Color, label: &'a str| {
+    let t = tokens();
+    let entry = |which: Icon, kind: GraphNodeKind, label: &'a str| {
         row![
-            text("●").size(9).color(color),
-            text(label).size(10).color(theme::TEXT_MUTED),
+            icon(which, IconSize::Sm.px(), kind_color(kind)),
+            role_text(label, TextRole::Caption, t.fg_secondary),
         ]
-        .spacing(4)
+        .spacing(SPACE_1)
         .align_y(Alignment::Center)
     };
 
     floating(
         column![
             row![
-                swatch(kind_color(GraphNodeKind::Markdown), "Note"),
-                swatch(kind_color(GraphNodeKind::Pdf), "PDF"),
-                swatch(kind_color(GraphNodeKind::Missing), "Unresolved"),
+                entry(Icon::FileText, GraphNodeKind::Markdown, "Note"),
+                entry(Icon::FilePdf, GraphNodeKind::Pdf, "PDF"),
+                entry(Icon::WarningCircle, GraphNodeKind::Missing, "Unresolved"),
             ]
-            .spacing(10),
-            text("Double-click opens · drag to move · right-click pins")
-                .size(9)
-                .color(theme::TEXT_MUTED),
+            .spacing(SPACE_3),
+            role_text(
+                "Double-click opens · drag to move · right-click pins",
+                TextRole::Caption,
+                t.fg_tertiary,
+            ),
         ]
-        .spacing(5),
+        .spacing(SPACE_1),
     )
 }
 
@@ -124,83 +134,66 @@ pub(super) fn viewport_controls<'a>(state: &'a GraphState) -> Element<'a, Messag
 
     floating(
         row![
-            hinted(
-                icon_button(
-                    Icon::Minus,
-                    false,
-                    zoom > MIN_ZOOM,
-                    Message::Graph(GraphMessage::ZoomBy(0.8))
-                ),
-                "Zoom out",
-            ),
-            text(zoom_label)
-                .size(10)
-                .color(theme::TEXT_SECONDARY)
-                .width(Length::Fixed(42.0))
-                .align_x(Alignment::Center),
-            hinted(
-                icon_button(
-                    Icon::Plus,
-                    false,
-                    true,
-                    Message::Graph(GraphMessage::ZoomBy(1.25))
-                ),
-                "Zoom in",
-            ),
-            divider(),
-            hinted(
-                icon_button(
-                    Icon::Maximize,
-                    false,
-                    true,
-                    Message::Graph(GraphMessage::FitView)
-                ),
-                "Fit graph to view",
-            ),
-            hinted(
-                icon_button(
-                    if running { Icon::Pause } else { Icon::Play },
-                    running,
-                    true,
-                    Message::Graph(GraphMessage::PhysicsToggled),
-                ),
+            IconButton::new(Icon::Minus, "Zoom out")
+                .size(ControlSize::Sm)
+                .on_press_maybe(
+                    (zoom > MIN_ZOOM).then_some(Message::Graph(GraphMessage::ZoomBy(0.8)))
+                )
+                .build(),
+            container(role_text(
+                zoom_label,
+                TextRole::MonoCaption,
+                tokens().fg_secondary
+            ))
+            .width(Length::Fixed(ZOOM_LABEL_WIDTH))
+            .center_x(Length::Fixed(ZOOM_LABEL_WIDTH)),
+            IconButton::new(Icon::Plus, "Zoom in")
+                .size(ControlSize::Sm)
+                .on_press(Message::Graph(GraphMessage::ZoomBy(1.25)))
+                .build(),
+            toolbar_separator(),
+            IconButton::new(Icon::Maximize, "Fit graph to view")
+                .size(ControlSize::Sm)
+                .on_press(Message::Graph(GraphMessage::FitView))
+                .build(),
+            IconButton::new(
+                if running { Icon::Pause } else { Icon::Play },
                 if running {
                     "Pause layout — arrange nodes by hand"
                 } else {
                     "Resume layout"
                 },
-            ),
-            hinted(
-                icon_button(
-                    Icon::Refresh,
-                    false,
-                    true,
-                    Message::Graph(GraphMessage::ResetLayout)
-                ),
-                "Rebuild layout from scratch",
-            ),
+            )
+            .size(ControlSize::Sm)
+            .selected(running)
+            .on_press(Message::Graph(GraphMessage::PhysicsToggled))
+            .build(),
+            IconButton::new(Icon::Refresh, "Rebuild layout from scratch")
+                .size(ControlSize::Sm)
+                .on_press(Message::Graph(GraphMessage::ResetLayout))
+                .build(),
         ]
-        .spacing(3)
+        .spacing(SPACE_1)
         .align_y(Alignment::Center),
     )
 }
 
 pub(super) fn empty_state<'a>(state: &'a GraphState) -> Element<'a, Message> {
-    let (headline, detail, action): (String, String, Option<(&'a str, Message)>) =
+    let (headline, detail, action): (String, &str, Option<(&'a str, Message)>) =
         match state.empty_reason() {
             EmptyReason::Loading => (
                 "Reading the vault…".to_string(),
-                "Building the link graph from your notes.".to_string(),
+                "Building the link graph from your notes.",
                 None,
             ),
             EmptyReason::NoDocuments => (
                 "Nothing to graph yet".to_string(),
-                "Add notes with [[wiki links]] and they will appear here.".to_string(),
+                "Add notes with [[wiki links]] and they will appear here.",
                 None,
             ),
             EmptyReason::NeedsActiveDocument => (
                 "No note in focus".to_string(),
-                "This view maps the neighbourhood around the note you have open.".to_string(),
+                "This view maps the neighbourhood around the note you have open.",
                 Some((
                     "Show the whole vault",
                     Message::Graph(GraphMessage::ScopeGlobal),
@@ -208,7 +201,7 @@ pub(super) fn empty_state<'a>(state: &'a GraphState) -> Element<'a, Message> {
             ),
             EmptyReason::NoSearchMatch => (
                 format!("No matches for “{}”", state.query.trim()),
-                "Search looks at note titles and paths.".to_string(),
+                "Search looks at note titles and paths.",
                 Some((
                     "Clear search",
                     Message::Graph(GraphMessage::QueryChanged(String::new())),
@@ -216,37 +209,39 @@ pub(super) fn empty_state<'a>(state: &'a GraphState) -> Element<'a, Message> {
             ),
             EmptyReason::FiltersHideEverything => (
                 "Filters hide every node".to_string(),
-                "Turn a chip back on in the toolbar to bring nodes back.".to_string(),
+                "Turn a chip back on in the toolbar to bring nodes back.",
                 Some(("Reset filters", Message::Graph(GraphMessage::FiltersReset))),
             ),
         };
+    let action = action.map(|(label, message)| Button::primary(label).on_press(message).build());
+    card(crate::ui::empty_state(
+        Icon::Network,
+        &headline,
+        detail,
+        action,
+    ))
+}
 
-    let mut content = column![
-        text(headline).size(14).color(theme::TEXT_PRIMARY),
-        text(detail).size(11).color(theme::TEXT_MUTED),
-    ]
-    .spacing(6)
-    .align_x(Alignment::Center);
-
-    if let Some((label, message)) = action {
-        content = content.push(
-            button(text(label).size(11))
-                .on_press(message)
-                .padding([7, 13])
-                .style(primary_style),
-        );
-    }
-
+/// A control cluster over the canvas: translucent so the graph behind stays
+/// legible, opaque enough to read against nodes.
+fn floating<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(content)
-        .padding([18, 24])
-        .style(|_| container::Style {
-            background: Some(Background::Color(theme::BG_SECONDARY)),
-            border: Border {
-                color: theme::BORDER,
-                width: 1.0,
-                radius: 10.0.into(),
-            },
-            ..Default::default()
+        .padding([SPACE_2, SPACE_3])
+        .style(|_| {
+            let t = tokens();
+            container::Style {
+                background: Some(Background::Color(crate::design::fade(t.bg_raised, 0.92))),
+                border: Border {
+                    color: t.border_default,
+                    width: BORDER_WIDTH,
+                    radius: RADIUS_LG.into(),
+                },
+                shadow: Elevation::Popover.shadow(),
+                ..Default::default()
+            }
         })
         .into()
 }
+
+/// Room for "100%" in tabular figures.
+const ZOOM_LABEL_WIDTH: f32 = 44.0;

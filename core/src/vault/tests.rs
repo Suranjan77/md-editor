@@ -986,3 +986,47 @@ fn vault_errors_carry_their_kind_and_keep_their_wording() {
     assert!(as_text.starts_with("Target already exists"));
     let _ = fs::remove_dir_all(&base);
 }
+
+#[test]
+fn user_excluded_folders_are_parsed_and_skipped_by_every_walker() {
+    assert_eq!(
+        parse_excluded_dirs(" drafts, /archive/ ,, a/b, drafts"),
+        vec!["archive".to_string(), "drafts".to_string()]
+    );
+
+    let base = std::env::temp_dir().join(format!("md_user_excluded_{}", uuid::Uuid::new_v4()));
+    let root = base.as_path();
+    // A name no other test uses: the exclusion list is process-wide.
+    std::fs::create_dir_all(root.join("zz-user-excluded/inner")).unwrap();
+    std::fs::write(root.join("zz-user-excluded/inner/hidden.md"), "x").unwrap();
+    std::fs::write(root.join("zz-user-excluded/hidden.pdf"), "x").unwrap();
+    std::fs::write(root.join("kept.md"), "x").unwrap();
+
+    assert!(set_user_excluded_dirs(vec!["zz-user-excluded".to_string()]));
+    assert!(!set_user_excluded_dirs(vec![
+        "zz-user-excluded".to_string()
+    ]));
+    let entries = list_vault_entries(root).unwrap();
+    let md = list_all_md_files(root).unwrap();
+    let pdf = list_all_pdf_files(root).unwrap();
+    set_user_excluded_dirs(Vec::new());
+
+    assert!(
+        entries
+            .iter()
+            .all(|e| !e.path.starts_with("zz-user-excluded"))
+    );
+    assert!(entries.iter().any(|e| e.path == "kept.md"));
+    assert_eq!(md.len(), 1);
+    assert!(pdf.is_empty());
+    assert!(
+        list_vault_entries(root)
+            .unwrap()
+            .iter()
+            .any(|e| e.path == "zz-user-excluded")
+    );
+    assert!(is_in_excluded_dir("node_modules/pkg/readme.md"));
+    assert!(is_in_excluded_dir(".git/notes.md"));
+    assert!(!is_in_excluded_dir("notes/node_modules.md"));
+    let _ = std::fs::remove_dir_all(&base);
+}

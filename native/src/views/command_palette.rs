@@ -1,65 +1,47 @@
-//! The Ctrl+P palette: command registry, fuzzy ranking over commands and files, and its view.
+//! The Ctrl+P Command Palette: unified command registry, fuzzy ranking, section headers and create-note fallback.
 
 use iced::widget::{Space, button, column, container, row, scrollable, text};
-use iced::{Alignment, Element, Length, Renderer, Theme};
+use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
+use crate::design::metrics::{
+    Elevation, IconSize, PALETTE_MAX_LIST_HEIGHT, PALETTE_WIDTH, RADIUS_LG, RADIUS_SM, SPACE_0,
+    SPACE_1, SPACE_2, SPACE_3,
+};
+use crate::design::{TextRole, fade, tokens};
 use crate::fuzzy;
 use crate::messages::{Message, ShellMessage, Shortcut, VaultMessage};
-use crate::theme;
+use crate::shortcuts;
+use crate::ui::{Button, ButtonVariant, Icon, TextField, ellipsize_single_line, icon, kbd};
 
-/// Widget id of the palette's query field, so the shell can put the caret in
-/// it the moment the palette opens. Without this the palette can only be
-/// clicked, which defeats the point of a command palette.
 pub const PALETTE_INPUT_ID: &str = "command_palette_input";
 
-/// Most results shown at once. Beyond this the list stops being scannable and
-/// the answer is a longer query, not more scrolling.
 const MAX_RESULTS: usize = 40;
 
 pub struct Command {
     pub name: String,
     pub shortcut: Shortcut,
-    pub icon: String,
+    pub icon: Icon,
 }
 
-/// The command registry.
-///
-/// Every action the palette can run is declared here rather than being
-/// discovered from the toolbar or the keymap, so a command exists in exactly
-/// one place and the palette and the shortcut list cannot drift apart.
+/// Build the palette command list from the single-source-of-truth shortcut registry.
 pub fn get_commands() -> Vec<Command> {
-    let entry = |name: &str, shortcut, icon: &str| Command {
-        name: name.to_string(),
-        shortcut,
-        icon: icon.to_string(),
-    };
-
-    vec![
-        entry("New File", Shortcut::NewFile, "+"),
-        entry("Open Vault", Shortcut::OpenVault, "O"),
-        entry("Save File", Shortcut::Save, "S"),
-        entry("Search Vault", Shortcut::Search, "/"),
-        entry("Toggle Sidebar", Shortcut::ToggleSidebar, "S"),
-        entry("Toggle Backlinks", Shortcut::ToggleBacklinks, "B"),
-        entry("Open Knowledge Graph", Shortcut::KnowledgeGraph, "G"),
-        entry("Handwriting Canvas", Shortcut::Handwriting, "H"),
-        entry("Table of Contents", Shortcut::TableOfContents, "T"),
-        entry("Study Tracker", Shortcut::StudyTracker, "R"),
-        entry("Split View", Shortcut::SplitView, "|"),
-        entry("Focus Mode", Shortcut::FocusMode, "F"),
-    ]
+    shortcuts::REGISTRY
+        .iter()
+        .filter(|spec| spec.in_palette)
+        .map(|spec| Command {
+            name: spec.label.to_string(),
+            shortcut: spec.shortcut,
+            icon: spec.icon,
+        })
+        .collect()
 }
 
-/// What activating a palette row does. Returned to the shell so keyboard
-/// selection can run the same thing a click would, without the shell needing
-/// to know how results are ranked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteAction {
     Command(Shortcut),
     OpenFile(String),
 }
 
-/// The action for the row at `index`, if there is one.
 pub fn action_at(
     query: &str,
     commands: &[Command],
@@ -74,8 +56,6 @@ pub fn action_at(
         })
 }
 
-/// How many rows the current query produces, so the shell can clamp the
-/// selection without duplicating the ranking rules.
 pub fn result_count(
     query: &str,
     commands: &[Command],
@@ -84,12 +64,9 @@ pub fn result_count(
     rank(query, commands, entries).len()
 }
 
-/// One ranked row in the palette: either a command to run or a vault file to
-/// open. Both are scored by the same matcher so they can be interleaved by
-/// relevance rather than segregated into fixed sections.
 enum Hit<'a> {
     Command(&'a Command),
-    File { path: &'a str, badge: &'static str },
+    File { path: &'a str, file_icon: Icon },
 }
 
 fn rank<'a>(
@@ -97,8 +74,6 @@ fn rank<'a>(
     commands: &'a [Command],
     entries: &'a [md_editor_core::types::FileEntry],
 ) -> Vec<Hit<'a>> {
-    // With no query the palette is a menu of what the app can do; files would
-    // just be an arbitrary slice of the vault.
     if query.trim().is_empty() {
         return commands.iter().map(Hit::Command).collect();
     }
@@ -108,9 +83,6 @@ fn rank<'a>(
 
     for command in commands {
         if let Some(score) = fuzzy::score(&command.name, query) {
-            // Commands edge out files at equal relevance: the palette is
-            // primarily a way to act, and a file is one keystroke further
-            // away in the sidebar anyway.
             scored.push((score + 8, Hit::Command(command)));
         }
     }
@@ -124,90 +96,85 @@ fn rank<'a>(
                 score,
                 Hit::File {
                     path: &entry.path,
-                    badge: file_badge(&entry.path),
+                    file_icon: file_icon(&entry.path),
                 },
             ));
         }
     }
 
-    // Sort by descending score. The sort is stable, so equal scores keep
-    // registry order for commands and vault order for files.
     scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
     scored.truncate(MAX_RESULTS);
     scored.into_iter().map(|(_, hit)| hit).collect()
 }
 
-/// The one-letter marker for a file's kind in the results list.
-fn file_badge(path: &str) -> &'static str {
+fn file_icon(path: &str) -> Icon {
     let lower = path.to_lowercase();
     if lower.ends_with(".pdf") {
-        "P"
+        Icon::FilePdf
     } else if lower.ends_with(".pptx") {
-        "S"
+        Icon::Presentation
+    } else if crate::app::is_supported_image_path(&lower) {
+        Icon::Image
+    } else if lower.ends_with(".ink") {
+        Icon::Pen
     } else {
-        "M"
+        Icon::FileText
     }
 }
 
-fn badge<'a>(glyph: &'a str, opacity: f32) -> Element<'a, Message, Theme, Renderer> {
-    container(
-        text(glyph)
-            .size(theme::TEXT_SM)
-            .color(theme::fade(theme::TEXT_SECONDARY, opacity)),
-    )
-    .width(Length::Fixed(24.0))
-    .height(Length::Fixed(24.0))
-    .center_x(Length::Fixed(24.0))
-    .center_y(Length::Fixed(24.0))
-    .style(move |_| container::Style {
-        background: Some(iced::Background::Color(theme::fade(
-            theme::BG_TERTIARY,
-            opacity,
-        ))),
-        border: iced::Border {
-            color: theme::fade(theme::BORDER, opacity),
-            width: 1.0,
-            radius: theme::RADIUS_MD.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-fn row_button<'a>(
-    icon: Element<'a, Message, Theme, Renderer>,
-    label: Element<'a, Message, Theme, Renderer>,
+fn palette_row<'a>(
+    lead_icon: Icon,
+    label: String,
     trailing: Element<'a, Message, Theme, Renderer>,
     on_press: Message,
     is_selected: bool,
     opacity: f32,
 ) -> Element<'a, Message, Theme, Renderer> {
+    let t = tokens();
+    let icon_color = fade(
+        if is_selected {
+            t.accent
+        } else {
+            t.fg_secondary
+        },
+        opacity,
+    );
+    let fg = fade(t.fg_primary, opacity);
+
     button(
-        row![icon, label, Space::new().width(Length::Fill), trailing]
-            .spacing(theme::SPACE_4)
-            .align_y(Alignment::Center)
-            .padding([theme::SPACE_3, theme::SPACE_4]),
+        row![
+            icon(lead_icon, IconSize::Md.px(), icon_color),
+            text(label)
+                .size(TextRole::Caption.size())
+                .color(fg)
+                .font(if is_selected {
+                    crate::design::fonts::UI_FONT_MEDIUM
+                } else {
+                    TextRole::Caption.font()
+                }),
+            Space::new().width(Length::Fill),
+            trailing,
+        ]
+        .spacing(SPACE_3)
+        .align_y(Alignment::Center)
+        .padding([SPACE_2, SPACE_3]),
     )
     .width(Length::Fill)
     .on_press(on_press)
     .style(move |_, status| {
-        // The keyboard selection has to be visible, or the arrow keys move an
-        // invisible cursor and Enter is a guess. Hover is shown too, more
-        // faintly, so the pointer and the keyboard agree about what a row is.
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
         let fill = if is_selected {
-            Some(theme::fade(theme::BG_TERTIARY, opacity))
+            Some(fade(t.bg_overlay, opacity))
         } else if hovered {
-            Some(theme::fade(theme::BG_TERTIARY, opacity * 0.5))
+            Some(fade(t.bg_raised, opacity))
         } else {
             None
         };
-
         button::Style {
-            background: fill.map(iced::Background::Color),
-            text_color: theme::fade(theme::TEXT_PRIMARY, opacity),
-            border: iced::Border {
-                radius: theme::RADIUS_SM.into(),
+            background: fill.map(Background::Color),
+            text_color: fg,
+            border: Border {
+                radius: RADIUS_SM.into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -217,64 +184,92 @@ fn row_button<'a>(
 }
 
 pub fn view<'a>(
-    query: &str,
+    query: &'a str,
     commands: &'a [Command],
     entries: &'a [md_editor_core::types::FileEntry],
     selected: usize,
     opacity: f32,
 ) -> Element<'a, Message, Theme, Renderer> {
-    let input = iced::widget::text_input("Search commands and files…", query)
-        .id(iced::advanced::widget::Id::new(PALETTE_INPUT_ID))
-        .on_input(|value| Message::Shell(ShellMessage::CommandPaletteQueryChanged(value)))
-        .on_submit(Message::Vault(VaultMessage::NameModalSubmitCurrent))
-        .padding(theme::SPACE_4)
-        .size(theme::TEXT_MD);
+    let t = tokens();
+
+    let input = container(
+        TextField::search("Search commands and files…", query)
+            .id(PALETTE_INPUT_ID)
+            .on_input(|value| Message::Shell(ShellMessage::CommandPaletteQueryChanged(value)))
+            .on_submit(Message::Vault(VaultMessage::NameModalSubmitCurrent))
+            .build(),
+    )
+    .padding(SPACE_3);
 
     let hits = rank(query, commands, entries);
-    let mut list = column![].spacing(theme::SPACE_2);
+    let mut list = column![].spacing(SPACE_1).padding([SPACE_1, SPACE_2]);
 
     if hits.is_empty() {
+        let trimmed = query.trim();
+        let mut fallback = column![
+            text("No matching commands or files")
+                .size(TextRole::Caption.size())
+                .color(fade(t.fg_secondary, opacity))
+                .font(TextRole::Caption.font())
+        ]
+        .spacing(SPACE_2)
+        .padding(SPACE_3);
+
+        if !trimmed.is_empty() {
+            fallback = fallback.push(
+                Button::new(format!("No matches — create note '{trimmed}'"))
+                    .variant(ButtonVariant::Secondary)
+                    .icon(Icon::FilePlus)
+                    .on_press(Message::Vault(VaultMessage::CreateNoteFromPalette(
+                        trimmed.to_string(),
+                    )))
+                    .build(),
+            );
+        }
+        list = list.push(fallback);
+    } else if query.trim().is_empty() {
         list = list.push(
             container(
-                text("No matching commands or files")
-                    .size(theme::TEXT_BASE)
-                    .color(theme::fade(theme::TEXT_MUTED, opacity)),
+                text("Commands")
+                    .size(TextRole::Caption.size())
+                    .color(fade(t.fg_tertiary, opacity))
+                    .font(crate::design::fonts::UI_FONT_SEMIBOLD),
             )
-            .padding([theme::SPACE_4, theme::SPACE_4]),
+            .padding([SPACE_1, SPACE_3]),
         );
     }
 
     for (index, hit) in hits.into_iter().enumerate() {
         let is_selected = index == selected;
         list = list.push(match hit {
-            Hit::Command(command) => row_button(
-                badge(&command.icon, opacity),
-                text(&command.name)
-                    .size(theme::TEXT_BASE)
-                    .color(theme::fade(theme::TEXT_PRIMARY, opacity))
-                    .into(),
-                text(shortcut_label(command.shortcut))
-                    .size(theme::TEXT_SM)
-                    .color(theme::fade(theme::TEXT_MUTED, opacity))
-                    .into(),
-                Message::Shell(ShellMessage::CommandPaletteCommandClicked(command.shortcut)),
-                is_selected,
-                opacity,
-            ),
-            Hit::File { path, badge: glyph } => {
+            Hit::Command(command) => {
+                let chord = shortcuts::chord(command.shortcut);
+                let trailing: Element<'a, Message, Theme, Renderer> = if chord.is_empty() {
+                    Space::new().width(Length::Fixed(SPACE_0)).into()
+                } else {
+                    kbd(chord)
+                };
+                palette_row(
+                    command.icon,
+                    command.name.clone(),
+                    trailing,
+                    Message::Shell(ShellMessage::CommandPaletteCommandClicked(command.shortcut)),
+                    is_selected,
+                    opacity,
+                )
+            }
+            Hit::File { path, file_icon } => {
                 let name = path.rsplit('/').next().unwrap_or(path);
                 let folder = path.strip_suffix(name).unwrap_or("").trim_end_matches('/');
-
-                row_button(
-                    badge(glyph, opacity),
-                    text(name)
-                        .size(theme::TEXT_BASE)
-                        .color(theme::fade(theme::TEXT_PRIMARY, opacity))
-                        .into(),
-                    text(folder)
-                        .size(theme::TEXT_SM)
-                        .color(theme::fade(theme::TEXT_MUTED, opacity))
-                        .into(),
+                let trailing = text(ellipsize_single_line(folder, 28).0)
+                    .size(TextRole::Caption.size())
+                    .color(fade(t.fg_tertiary, opacity))
+                    .font(TextRole::Caption.font())
+                    .into();
+                palette_row(
+                    file_icon,
+                    ellipsize_single_line(name, 42).0,
+                    trailing,
                     Message::Shell(ShellMessage::CommandPaletteFileClicked(path.to_string())),
                     is_selected,
                     opacity,
@@ -285,51 +280,24 @@ pub fn view<'a>(
 
     container(
         column![
-            container(input).style(move |_| container::Style {
-                border: iced::Border {
-                    color: theme::fade(theme::BORDER, opacity),
-                    width: 0.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            }),
-            scrollable(list).height(Length::Fixed(320.0)),
+            input,
+            scrollable(list).height(Length::Fixed(PALETTE_MAX_LIST_HEIGHT)),
         ]
-        .spacing(theme::SPACE_0),
+        .spacing(SPACE_0),
     )
-    .width(Length::Fixed(520.0))
+    .width(Length::Fixed(PALETTE_WIDTH))
+    .padding([SPACE_0, SPACE_0])
     .style(move |_| container::Style {
-        background: Some(iced::Background::Color(theme::fade(
-            theme::BG_SECONDARY,
-            opacity,
-        ))),
-        border: iced::Border {
-            color: theme::fade(theme::BORDER, opacity),
+        background: Some(Background::Color(fade(t.bg_raised, opacity))),
+        border: Border {
+            color: fade(t.border_control, opacity),
             width: 1.0,
-            radius: theme::RADIUS_MD.into(),
+            radius: RADIUS_LG.into(),
         },
+        shadow: Elevation::Popover.shadow(),
         ..Default::default()
     })
     .into()
-}
-
-fn shortcut_label(shortcut: Shortcut) -> &'static str {
-    match shortcut {
-        Shortcut::Save => "Ctrl S",
-        Shortcut::OpenVault => "Ctrl O",
-        Shortcut::NewFile => "Ctrl N",
-        Shortcut::Search => "Ctrl F",
-        Shortcut::CommandPalette => "Ctrl P",
-        Shortcut::ToggleSidebar => "Ctrl B",
-        Shortcut::ToggleBacklinks => "Backlinks",
-        Shortcut::KnowledgeGraph => "Ctrl G",
-        Shortcut::FocusMode => "Focus",
-        Shortcut::TableOfContents => "Ctrl T",
-        Shortcut::StudyTracker => "Tracker",
-        Shortcut::SplitView => "Split",
-        Shortcut::Handwriting => "Ctrl I",
-        Shortcut::Escape => "Esc",
-    }
 }
 
 #[cfg(test)]
@@ -397,13 +365,11 @@ mod tests {
         let commands = get_commands();
         let entries = vec![entry("notes/attention.md", false)];
 
-        // Row 0 with an empty query is the first registered command.
         assert_eq!(
             action_at("", &commands, &entries, 0),
             Some(PaletteAction::Command(Shortcut::NewFile))
         );
 
-        // A file query resolves to opening that file.
         let hits = rank("attention", &commands, &entries);
         let file_row = hits
             .iter()

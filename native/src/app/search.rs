@@ -9,18 +9,32 @@ impl MdEditor {
         match message {
             SearchMessage::GlobalSearchOpen => {
                 self.search.visible = true;
+                self.search.global_selected = 0;
                 if self.pdf.active_path.is_some() && !self.search.query.trim().is_empty() {
                     Task::batch(vec![self.search_pdf(), focus_global_search_input()])
                 } else {
                     focus_global_search_input()
                 }
             }
+            SearchMessage::GlobalSearchMoveSelection(delta) => {
+                let total = self.search.pdf_results.len() + self.search.results.len();
+                if total > 0 {
+                    let cur = self.search.global_selected as isize;
+                    self.search.global_selected =
+                        (cur + delta).clamp(0, total as isize - 1) as usize;
+                }
+                Task::none()
+            }
             SearchMessage::GlobalSearchSubmit => {
-                if let Some(result) = self.search.pdf_results.first() {
+                let idx = self.search.global_selected;
+                let pdf_len = self.search.pdf_results.len();
+                if idx < pdf_len
+                    && let Some(result) = self.search.pdf_results.get(idx)
+                {
                     Task::done(Message::Pdf(PdfMessage::SearchResultClicked(
                         result.page_index,
                     )))
-                } else if let Some(result) = self.search.results.first() {
+                } else if let Some(result) = self.search.results.get(idx.saturating_sub(pdf_len)) {
                     Task::done(Message::Search(SearchMessage::ResultClicked(
                         result.path.clone(),
                     )))
@@ -36,6 +50,7 @@ impl MdEditor {
             SearchMessage::QueryChanged(q) => {
                 self.search.query = q;
                 self.search.match_index = None;
+                self.search.global_selected = 0;
                 self.search.pdf_error = None;
                 // Stale results are cleared immediately, but the actual vault
                 // FTS query and full-document PDF scan run debounced (see
@@ -85,7 +100,9 @@ impl MdEditor {
             }
             // Search arms that mutate only `self.search` are routed to
             // `SearchState::update`; see search_state.rs.
-            m @ SearchMessage::ReplaceChanged(_) => self.search.update(Message::Search(m)),
+            m @ (SearchMessage::ReplaceChanged(_) | SearchMessage::ToggleReplaceRow) => {
+                self.search.update(Message::Search(m))
+            }
             SearchMessage::RegexToggled(value) => {
                 self.search.regex = value;
                 self.search.match_index = None;
@@ -128,6 +145,7 @@ impl MdEditor {
                     Task::none()
                 }
             }
+            SearchMessage::ReplaceOne => self.replace_current_match(),
             SearchMessage::ReplaceAll => match self.replace_all_in_current_document() {
                 Ok((count, task)) => {
                     self.ui.toast = Some(format!("Replaced {} matches", count));
@@ -320,6 +338,34 @@ impl MdEditor {
             return Ok((count, task));
         }
         Ok((count, Task::none()))
+    }
+
+    pub(super) fn replace_current_match(&mut self) -> Task<Message> {
+        if self.active_path.is_none() || self.search.query.is_empty() {
+            return Task::none();
+        }
+        self.search.ensure_matches(
+            &self.editor.buffer,
+            self.active_path.as_deref(),
+            self.editor.buffer_revision,
+        );
+        let matches = self.search.matches().to_vec();
+        if matches.is_empty() {
+            return Task::none();
+        }
+        let idx = self.search.match_index.unwrap_or(0).min(matches.len() - 1);
+        let item = matches[idx];
+        self.editor.buffer.execute(EditorCommand::SetSelection {
+            anchor_line: item.line,
+            anchor_col: item.start_col,
+            focus_line: item.line,
+            focus_col: item.end_col,
+            affinity: Affinity::Downstream,
+        });
+        let replacement = self.search.replace.clone();
+        let task = self.run_editor_command(EditorCommand::InsertText(replacement));
+        let nav = self.navigate_file_search(true);
+        Task::batch(vec![task, nav])
     }
 
     pub(super) fn search_pdf(&self) -> Task<Message> {

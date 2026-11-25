@@ -53,9 +53,48 @@ see [Viewing presentations](#viewing-presentations).
 - **Open** — click any file.
 - **Expand / collapse** — click a folder.
 - **New note / new folder** — the buttons in the sidebar header.
-- **Rename / delete** — select a file or folder; its row shows a rename (✎) and a delete
-  button. Delete asks for confirmation first; renaming a note rewrites wikilinks that
-  point at it.
+- **Rename / delete** — select a file or folder; its row shows a rename and a delete
+  button (or press `F2`). Delete asks for confirmation first; renaming a note rewrites
+  wikilinks that point at it.
+- **Right-click** a file or folder for New note here, New folder here, Rename, Reveal in
+  file manager, Copy relative path and Delete; right-click empty space for New note / New
+  folder.
+- **Filter** — the field at the top narrows the tree to matching paths.
+- **Keyboard** — `F6` until the sidebar is focused, then `↑`/`↓` to move, `←`/`→` to fold,
+  `Enter` to open.
+- **Drop files** onto the tree to copy them into the vault (into the selected folder). A
+  file with the same name is never overwritten; you get a warning instead.
+- **Width** — drag the edge; double-click it to reset.
+
+### Tabs
+
+Every note, PDF, presentation and image you open gets a tab; opening one that is already
+open switches to it. Each tab remembers its own place: a note keeps its caret, scroll and
+undo history, a PDF its page and zoom, a deck its zoom and scroll.
+
+- **Switch** — click a tab, `Ctrl+Tab` for the most recently used, `Ctrl+PageDown`/`PageUp`
+  in strip order, `Ctrl+1` … `Ctrl+9` by position.
+- **Close** — the ×, a middle-click, or `Ctrl+W`. Closing a note writes your edits first;
+  if they cannot be written the tab stays open. `Ctrl+Shift+T` reopens what you closed.
+- **Reorder** — drag a tab, or `Ctrl+Shift+PageDown`/`PageUp`.
+- **Open without switching** — middle-click a file in the sidebar.
+- **Right-click** a tab for Close, Close others, Reveal in sidebar and Copy relative path;
+  the ▾ at the end lists every tab.
+- Tabs follow renames, show a "missing" mark when the file is deleted outside the app, and
+  come back per vault the next time you open it.
+
+### Settings — `Ctrl+,`
+
+- **Appearance** — theme (System, Dark, Light), interface scale (90–130%), reduced motion
+  (System, Standard, Reduced).
+- **Editor** — reading font (Inter or Source Serif), font size (14–22px) and line width
+  (Narrow 640, Default 720, Wide 880). Changes apply to the open note at once.
+- **Files** — where pasted and dropped images go (vault root, beside the note, or a
+  folder you choose), and folders to leave out of the vault (comma-separated names, applied
+  with Enter or Apply; `node_modules`, `target`, `build`, `dist` and dot-folders are always
+  left out).
+- **Keyboard** — every shortcut, from the same list the tooltips and palette use.
+- **About** — version, licence, and where your data and log live.
 
 ### External changes
 
@@ -112,11 +151,15 @@ MD Editor shows formatted text and lets you edit the exact source, without a mod
   in one step; the image file stays in the vault.
 - Paths with spaces are written as `![](<attachments/Pasted image ….png>)`, the CommonMark
   form; `%20`-encoded paths load too.
-- The folder is the `attachments_folder` setting: `root` (default, `attachments/` at the
-  vault root), `beside-note` (`attachments/` next to the note), or a vault-relative folder.
+- The folder is set in Settings → Files: the vault root (default, `attachments/`), beside
+  the note (`attachments/` next to it), or a vault-relative folder of your choice.
+- **Insert image…** (command palette, or right-click in the note) picks image files with a
+  file dialog and inserts them the same way.
+- **Dropping** image files onto the note inserts them at the caret; dropping onto the
+  sidebar copies them into the vault instead.
 
 Dragging files onto the window is not supported on Wayland yet (the windowing library does
-not deliver drops there); copy and paste instead.
+not deliver drops there); copy and paste, or use Insert image….
 
 ### Smart editing
 
@@ -161,7 +204,7 @@ You do not have to think about it:
 
 ### Table of contents
 
-`Ctrl+T` opens an outline of the document's headings. For a PDF it shows the outline instead
+`Ctrl+Shift+O` opens an outline of the document's headings. For a PDF it shows the outline instead
 (see below). In split view each pane keeps its own.
 
 ### Knowledge graph
@@ -207,6 +250,10 @@ Open any `.pdf` from the sidebar to enter the integrated reader.
 
 ### Viewing
 
+- **The toolbar** above the page: outline, the page field (type a number, `Enter` jumps),
+  zoom out / in, the zoom field (type a percentage), fit width, fit page, and find. With
+  text selected it shows the highlight colours; with a highlight focused, its note, linked
+  note, copy and delete actions.
 - **Continuous scrolling** through the document.
 - **Fit-to-width** (on by default) and manual zoom. Fit-to-width — automatic or via the fit
   button — stops at 200% so a wide pane doesn't blow pages up; the zoom buttons still go to
@@ -328,13 +375,15 @@ Highlights every match in the document and navigates between them. Options:
 
 - **Regex** — treat the query as a regular expression.
 - **Match case**.
-- **Replace / Replace all** — replace-all is an ordinary edit: it is undoable and arms
-  autosave like any other change.
+- **Replace** — the arrow at the left of the find bar opens the replace row. Replace (or
+  `Enter` in the replace field) replaces the current match and moves to the next; Replace
+  all replaces every match as one ordinary edit, undoable and autosaved like any other.
 
-### Global vault search — the toolbar search icon
+### Vault search — `Ctrl+Shift+F` or the toolbar search icon
 
 Powered by SQLite FTS5 over the whole vault, covering **both Markdown notes and extracted PDF
-text**. Results show the path and a highlighted snippet, ranked by relevance, capped at 100.
+text**. Matches in the open PDF come first, then notes with a snippet, ranked by relevance,
+capped at 100. `↑`/`↓` move through the results and `Enter` opens one.
 The query runs 200ms after you stop typing, so a ten-character query is one scan, not ten.
 
 ### PDF search — `Ctrl+F` with the PDF pane active

@@ -4,7 +4,7 @@ use super::*;
 
 /// Syntax-highlight one line of a code block, advancing its state.
 pub(super) fn highlight_code_spans(line: &str, code: &mut CodeState) -> Vec<StyledSpan> {
-    let plain = || vec![code_span(line, theme::TEXT_PRIMARY)];
+    let plain = || vec![code_span(line, crate::design::tokens().doc_text)];
     let Some((syntax_set, _)) = syntect_defaults() else {
         return plain();
     };
@@ -53,18 +53,24 @@ pub(super) fn start_code_syntax(lang: Option<&str>) -> Option<(ParseState, Highl
 }
 
 /// The code highlighter for the editor's syntax theme.
+/// The syntect highlighter for the active theme: a dark scheme on the dark
+/// canvas, a light one on paper.
 pub(super) fn code_highlighter() -> Option<&'static Highlighter<'static>> {
-    static HIGHLIGHTER: OnceLock<Option<Highlighter<'static>>> = OnceLock::new();
-    HIGHLIGHTER
-        .get_or_init(|| {
-            let (_, theme_set) = syntect_defaults()?;
-            let theme = theme_set
-                .themes
-                .get("base16-ocean.dark")
-                .or_else(|| theme_set.themes.values().next())?;
-            Some(Highlighter::new(theme))
-        })
-        .as_ref()
+    static DARK: OnceLock<Option<Highlighter<'static>>> = OnceLock::new();
+    static LIGHT: OnceLock<Option<Highlighter<'static>>> = OnceLock::new();
+    let (cell, name) = match crate::design::active_theme() {
+        crate::design::ActiveTheme::Dark => (&DARK, "base16-ocean.dark"),
+        crate::design::ActiveTheme::Light => (&LIGHT, "InspiredGitHub"),
+    };
+    cell.get_or_init(|| {
+        let (_, theme_set) = syntect_defaults()?;
+        let theme = theme_set
+            .themes
+            .get(name)
+            .or_else(|| theme_set.themes.values().next())?;
+        Some(Highlighter::new(theme))
+    })
+    .as_ref()
 }
 
 pub(super) fn code_span(text: &str, color: Color) -> StyledSpan {

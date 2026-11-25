@@ -68,7 +68,7 @@ fn slide_preview() {
             &Rectangle { ..bounds },
         );
         let size = Size::new(bounds.width as u32, bounds.height as u32);
-        let pixels = renderer.screenshot(size, 1.0, crate::theme::BG_PRIMARY);
+        let pixels = renderer.screenshot(size, 1.0, crate::design::tokens().bg_canvas);
         let path = format!("{dir}/slide-{:02}.png", index + 1);
         image::save_buffer(
             &path,

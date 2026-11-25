@@ -319,3 +319,15 @@ quick and linked notes, orphan report; the highlight helpers moved there from
 handler is now ~70 lines. One behaviour change: a failed `save_pdf_document` is logged
 instead of silently ignored. Still to do in W6: the PDFium worker, `update_vault`,
 `DocBuffer`, and the size-lint test.
+
+**2026-11-24 — W6: worker, vault, `DocBuffer` and core splits.** The PDFium worker loop is
+`core/src/pdf/worker.rs` (one handler per command); TOC synthesis is `pdf/toc_synth.rs`;
+PDF sidecar queries moved to `state/pdf_store.rs`; `vault/backlinks.rs` and `vault/rename.rs`
+split out of `vault.rs`; `pptx/slide_content.rs` out of `slide.rs`. `update_vault` delegates
+to `app/vault_entries.rs` and `app/vault_links.rs`. `DocBuffer` is `editor/buffer/` (`edit`,
+`format`, `lists`, `movement`, `undo`). Still to do in W6: the size-lint test (no function
+> 150 lines, no non-test module > ~800 lines — `app/view.rs` is ~1100 lines today).
+Along the way the subscription's keyboard listener passes its context flags through
+`Subscription::with` (a capturing closure does not compile for `listen_with`), and the UI
+gallery test holds the e2e lock, since a headless renderer created alongside an emulator
+session crashed the test binary.

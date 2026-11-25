@@ -9,34 +9,22 @@ use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 use image::GenericImageView;
 use std::sync::Arc;
 
+use crate::design::motion::{Motion, SCROLL_STIFFNESS, ScrollGlide, Spring};
 use crate::editor::buffer::{Affinity, DocBuffer, EditorCommand};
 use crate::editor::renderer::{CaretView, Reveal};
 use crate::messages::{Message, Shortcut};
-use crate::motion::{SCROLL_STIFFNESS, ScrollGlide, Spring};
 use crate::pdf_notes::{
     append_linked_pdf_note_section, new_linked_pdf_note_content, normalize_note_path, slug_fragment,
 };
-use crate::theme as app_theme;
 use crate::views;
 use crate::views::pdf_viewer::PDF_PAGE_LIST_PADDING;
 
 const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
 const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
-/// How far one arrow key press scrolls a PDF or a presentation.
 const ARROW_SCROLL: f32 = 64.0;
-/// Space around the editor widget inside its scrollable.
-const EDITOR_PADDING: f32 = app_theme::SPACE_6;
-/// Upper bound on PDF supersampling. The actual factor tracks the display's
-/// scale factor (see `MdEditor::pdf_supersample`); this caps bitmap cost on
-/// unusually high-DPI displays.
+const EDITOR_PADDING: f32 = crate::design::metrics::SPACE_5;
 const PDF_SUPERSAMPLE_MAX: f32 = 3.0;
-/// Highest zoom fit-to-width will pick, whether automatic or from the fit
-/// button. Manual zoom still goes to 4.0; this only stops a wide pane from
-/// blowing a small page up past a comfortable reading size.
 const PDF_FIT_MAX_ZOOM: f32 = 2.0;
-/// How many pages beyond the rendered window keep their cached bitmap before
-/// being evicted. Bounds resident bitmap memory for long PDFs while leaving
-/// enough slack that ordinary scrolling reuses cached pages.
 const PDF_PAGE_BITMAP_EVICT_MARGIN: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,13 +34,8 @@ enum ActivePanel {
     Ink,
 }
 
-/// Result of attempting to persist the active document. Callers decide how
-/// loudly to report each case: an explicit `Ctrl+S` confirms success, autosave
-/// stays silent unless it fails, and a file switch refuses to proceed on
-/// failure rather than navigating away from unsaved work.
 enum SaveOutcome {
     Saved,
-    /// Nothing was dirty, or no document is open.
     NothingToDo,
     Failed(md_editor_core::vault::VaultError),
 }
@@ -92,65 +75,34 @@ fn text_by_char_range(text: &str, start: usize, end: usize) -> String {
     if start >= end {
         return String::new();
     }
-
     text.chars().skip(start).take(end - start).collect()
 }
 
 pub struct MdEditor {
     state: Arc<md_editor_core::state::AppState>,
-    // Vault navigation: root, file tree, sidebar selection/expansion, backlinks
     vault: crate::vault_state::VaultState,
+    tabs: crate::tabs::Tabs,
     active_path: Option<String>,
-
-    // Editor pane: buffer, highlighting, TOC, scroll/viewport, resource caches
     editor: crate::editor_state::EditorPane,
-
-    // PDF viewer (document pages, geometry, annotations, render bookkeeping)
     pdf: crate::pdf_pane::PdfPane,
-
-    // Presentation viewer (prepared deck, zoom, scroll position)
     pptx: crate::pptx_pane::PptxPane,
-
-    // Image viewer + active-viewer mode flag (shell-level routing)
     active_image_path: Option<String>,
     active_image: Option<(iced::widget::image::Handle, f32, f32)>,
     showing_pdf: bool,
-
-    // Study tracker
     tracker: crate::tracker_state::TrackerState,
-
-    // Research graph: cached vault topology, layout, filters, and selection
     graph: crate::graph_state::GraphState,
-    // Handwritten notes surface, shown in its own window
     ink: crate::ink::InkState,
-
-    /// The shell window. Closing it exits the app.
     main_window: Option<iced::window::Id>,
-    /// The handwriting window, while it is open.
     ink_window: Option<iced::window::Id>,
-
-    // Shell UI chrome: modals, command palette, toast, split view, window size
     ui: crate::ui_state::UiState,
-
-    // Search (query/replace, vault + PDF results, in-document match cache)
     search: crate::search_state::SearchState,
     active_panel: ActivePanel,
-
-    /// Paths this app wrote very recently, so the vault watcher can tell our
-    /// own saves apart from genuine external edits.
+    last_os_theme: crate::design::ActiveTheme,
     self_writes: std::collections::HashMap<String, std::time::Instant>,
-    /// Whether the current run of autosave failures has already been reported.
-    /// Retries continue quietly; only the first failure raises a toast.
     autosave_failure_reported: bool,
-
-    /// In-flight UI transitions (panels opening, toasts fading). Mirrors the
-    /// visibility flags that live on the sub-states; see [`crate::motion`].
-    motion: crate::motion::Motion,
+    motion: Motion,
 }
 
-/// How long a path stays marked as "we just wrote this". Comfortably longer
-/// than the vault watcher's debounce, short enough that a real external edit
-/// arriving later is never mistaken for our own.
 const SELF_WRITE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
 mod documents;
@@ -158,17 +110,22 @@ mod editor;
 mod graph;
 mod ink;
 mod links;
-mod paste;
+mod overlays;
+pub(crate) mod paste;
 mod pdf;
 mod pdf_nav;
 mod pdf_pages;
 mod pdf_render;
 mod pdf_select;
 mod search;
+mod settings_handler;
 mod shell;
 mod shortcuts;
 mod subscription;
+mod tabs_handler;
 mod vault;
+pub(crate) mod vault_entries;
+mod vault_links;
 mod view;
 
 #[cfg(test)]
@@ -178,19 +135,21 @@ use ink::derive_ink_path;
 use links::*;
 use search::{focus_file_search_input, focus_global_search_input, focus_pdf_search_input};
 
-/// What an end-to-end test can observe about the app. The e2e harness takes
-/// one after every update (`e2e::latest_probe`) and a final one at the end.
+/// What an end-to-end test can observe about the app.
 #[cfg(test)]
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // fields are read by scenarios as they are written
+#[allow(dead_code)]
 pub(crate) struct Probe {
     pub vault_root: Option<String>,
     pub active_path: Option<String>,
+    pub open_tabs: Vec<String>,
+    pub active_tab: Option<String>,
     pub buffer: String,
     pub dirty: bool,
     pub toast: Option<String>,
     pub modal_open: bool,
     pub palette_open: bool,
+    pub settings_open: bool,
     pub graph_visible: bool,
     pub tracker_visible: bool,
     pub search_visible: bool,
@@ -217,6 +176,11 @@ pub(crate) struct Probe {
     pub ink_dirty: bool,
     pub ink_strokes: usize,
     pub entries: Vec<String>,
+    /// Where the open context menu was placed, in window coordinates.
+    pub context_menu: Option<(f32, f32)>,
+    pub light_theme: bool,
+    pub editor_font_size: f32,
+    pub tracker_sessions: usize,
 }
 
 #[cfg(test)]
@@ -225,11 +189,14 @@ impl MdEditor {
         Probe {
             vault_root: self.vault.root.clone(),
             active_path: self.active_path.clone(),
+            open_tabs: self.tabs.list().iter().map(|t| t.path.clone()).collect(),
+            active_tab: self.tabs.active_tab().map(|t| t.path.clone()),
             buffer: self.editor.buffer.text(),
             dirty: self.editor.buffer.dirty,
             toast: self.ui.toast.clone(),
             modal_open: self.ui.active_modal.is_some(),
             palette_open: self.ui.command_palette_visible,
+            settings_open: self.ui.settings_visible,
             graph_visible: self.graph.visible,
             tracker_visible: self.tracker.visible,
             search_visible: self.search.visible,
@@ -259,21 +226,32 @@ impl MdEditor {
             ink_dirty: self.ink.dirty,
             ink_strokes: self.ink.document.strokes().len(),
             entries: self.vault.entries.iter().map(|e| e.path.clone()).collect(),
+            context_menu: self.ui.context_menu.as_ref().map(|menu| (menu.x, menu.y)),
+            light_theme: crate::design::active_theme() == crate::design::ActiveTheme::Light,
+            editor_font_size: crate::design::editor_font_size(),
+            tracker_sessions: self.tracker.session_count(),
         }
     }
 }
 
 impl MdEditor {
-    /// `startup_file` is a path passed on the command line (typically by the
-    /// OS "open with" handler). When set it overrides the remembered
-    /// last-vault/last-file: a file inside the last vault opens in that vault,
-    /// any other file opens with its parent directory as the vault, and a
-    /// directory opens as a vault.
-    /// Build the app and open its shell window.
-    ///
-    /// The app runs as a daemon (the handwriting canvas has its own window),
-    /// and a daemon starts with no windows, so opening the main one is part of
-    /// booting rather than something the runtime does for us.
+    /// An overlay with a text field that holds the keyboard is open.
+    fn text_overlay_open(&self) -> bool {
+        self.ui.command_palette_visible
+            || self.search.visible
+            || self.search.file_visible
+            || self.ui.active_modal.is_some()
+    }
+
+    /// The note editor is on screen (alone or in split view).
+    fn note_is_showing(&self) -> bool {
+        self.active_path.is_some()
+            && (!self.showing_pdf || self.ui.split_view_active)
+            && !self.graph.visible
+            && !self.tracker.visible
+            && !self.ui.settings_visible
+    }
+
     pub fn boot(
         main_window: iced::window::Settings,
         startup_file: Option<std::path::PathBuf>,
@@ -287,7 +265,6 @@ impl MdEditor {
     pub fn new_with_startup_file(
         startup_file: Option<std::path::PathBuf>,
     ) -> (Self, Task<Message>) {
-        // Tests must never open the user's real settings database.
         #[cfg(test)]
         crate::test_support::isolate_data_dir();
         let state = Arc::new(md_editor_core::state::AppState::new());
@@ -304,6 +281,7 @@ impl MdEditor {
         let mut app = Self {
             state: state.clone(),
             vault: crate::vault_state::VaultState::new(),
+            tabs: crate::tabs::Tabs::new(),
             active_path: None,
             editor: crate::editor_state::EditorPane::new(),
             pdf: crate::pdf_pane::PdfPane::new(),
@@ -319,17 +297,16 @@ impl MdEditor {
             ui: crate::ui_state::UiState::new(),
             search: crate::search_state::SearchState::new(),
             active_panel: ActivePanel::Markdown,
+            last_os_theme: crate::design::ActiveTheme::Dark,
             self_writes: std::collections::HashMap::new(),
             autosave_failure_reported: false,
-            motion: crate::motion::Motion::new(),
+            motion: Motion::new(),
         };
         app.ui.toast = startup_notice;
+        app.restore_design_settings();
         app.restore_layout();
+        app.ui.sync_legacy_toast();
 
-        // Seed the geometry the window was actually restored at. Without this,
-        // every layout computation (PDF fit-to-width, editor viewport, modal
-        // sizing) would use the 1200x800 default until the first resize event
-        // arrived — and on a platform that emits none, forever.
         let restored = crate::restore_window_size();
         app.ui.window_width = restored.width;
         app.ui.window_height = restored.height;
@@ -346,12 +323,8 @@ impl MdEditor {
         } else if let Some(path) = last_vault {
             if std::path::Path::new(&path).is_dir() {
                 let index_task = app.open_vault(&path);
-                // The remembered file belongs to that vault; restore it only
-                // once the vault is actually open.
-                if app.vault.root.is_some()
-                    && let Some(file_path) = last_file
-                {
-                    task = app.open_startup_file(&file_path);
+                if app.vault.root.is_some() {
+                    task = app.restore_vault_tabs(&path, last_file.as_deref());
                 }
                 task = Task::batch(vec![index_task, task]);
             } else {
@@ -359,16 +332,14 @@ impl MdEditor {
                 app.ui.toast = Some(format!(
                     "The last vault, {path}, was moved or deleted. Open a folder to continue."
                 ));
+                app.ui.sync_legacy_toast();
             }
         }
 
         (app, task)
     }
 
-    /// Open a vault-relative file by extension (markdown, PDF, or image);
-    /// unsupported extensions are ignored.
     fn open_startup_file(&mut self, file_path: &str) -> Task<Message> {
-        // Select the reopened file so its row offers delete without a click.
         self.vault.selected_path = Some(file_path.to_string());
         let lower = file_path.to_lowercase();
         if lower.ends_with(".md") || lower.ends_with(".markdown") {
@@ -396,35 +367,55 @@ impl MdEditor {
                 self.ink.path.as_deref().unwrap_or("Unsaved page")
             );
         }
-
         if self.graph.visible {
             return format!(
                 "{}Md-editor — Knowledge Graph",
                 if self.editor.buffer.dirty { "● " } else { "" }
             );
         }
+        if self.ui.settings_visible {
+            return "Md-editor — Settings".to_string();
+        }
         format!(
             "{}Md-editor — {}",
             if self.editor.buffer.dirty { "● " } else { "" },
-            self.active_path
-                .as_deref()
+            self.tabs
+                .active_tab()
+                .map(|t| t.path.as_str())
+                .or(self.active_path.as_deref())
                 .or(self.pdf.active_path.as_deref())
                 .or(self.active_image_path.as_deref())
                 .or(self.pptx.active_path.as_deref())
-                .unwrap_or("New File")
+                .unwrap_or("Workspace")
         )
     }
 
     pub fn theme(&self) -> Theme {
-        app_theme::md_editor_theme()
+        crate::design::iced_theme()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        let task = self.update_inner(message);
+        let overlay_was_open = self.text_overlay_open();
+        let region_before = self.ui.focused_region;
+        let mut task = self.update_inner(message);
+        // Give the keyboard back to the note when the overlay that took it
+        // closes, and when F6 lands on the main region.
+        let entered_main = region_before != crate::ui::FocusRegion::Main
+            && self.ui.focused_region == crate::ui::FocusRegion::Main;
+        if (overlay_was_open && !self.text_overlay_open() || entered_main) && self.note_is_showing()
+        {
+            task = Task::batch(vec![
+                task,
+                iced::widget::operation::focus(iced::advanced::widget::Id::new(
+                    crate::editor::renderer::EDITOR_ID,
+                )),
+            ]);
+        }
 
-        // Point every transition at the flags that own the real state. Doing
-        // it here, once, means a flag flipped anywhere animates without the
-        // code that flipped it having to know motion exists.
+        self.ui.sync_legacy_toast();
+        self.motion.sidebar_target_width = self.ui.sidebar_width;
+        self.motion.toc_target_width = self.ui.side_panel_width;
+        self.motion.backlinks_target_width = self.ui.side_panel_width;
         self.motion.sync(
             self.vault.sidebar_visible,
             self.editor.toc_visible,
@@ -432,8 +423,6 @@ impl MdEditor {
             self.ui.toast.as_deref(),
             self.ui.command_palette_visible,
         );
-        // Refresh the memoized search-match cache once per message so the
-        // subsequent view() can read it without rescanning the buffer.
         self.search.ensure_matches(
             &self.editor.buffer,
             self.active_path.as_deref(),
@@ -442,11 +431,11 @@ impl MdEditor {
         task
     }
 
-    /// Route a message to the handler for its family. Each `update_*` method
-    /// lives in the file of the same name under `app/`.
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Vault(m) => self.update_vault(m),
+            Message::Tabs(m) => self.update_tabs(m),
+            Message::Settings(m) => self.update_settings(m),
             Message::Graph(m) => self.update_graph(m),
             Message::Shell(m) => self.update_shell(m),
             Message::Editor(m) => self.update_editor(m),
@@ -458,15 +447,10 @@ impl MdEditor {
     }
 }
 
-/// Resolve a path passed on the command line to `(vault_root, vault_relative_file)`.
-/// A directory becomes the vault itself; a file inside `last_vault` reuses that
-/// vault; any other file uses its parent directory as the vault.
 fn resolve_startup_target(
     path: &std::path::Path,
     last_vault: Option<&str>,
 ) -> Option<(String, Option<String>)> {
-    // `std::path::absolute` (not `canonicalize`) to avoid `\\?\` verbatim
-    // prefixes on Windows, which would leak into stored vault paths.
     let abs = std::path::absolute(path).ok()?;
     if abs.is_dir() {
         return Some((abs.to_string_lossy().to_string(), None));

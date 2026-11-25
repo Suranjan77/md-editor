@@ -26,7 +26,7 @@
 - [PDF Viewer Internals](PDF-Viewer-Internals.md)
 - [Knowledge Graph](Knowledge-Graph.md)
 - [Handwritten Notes](Handwritten-Notes.md)
-- [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md)
+- [Design System & Motion](Design-Tokens-Motion-and-Palette.md)
 - [Study Tracker](Study-Tracker.md)
 
 ---

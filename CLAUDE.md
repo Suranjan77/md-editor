@@ -26,10 +26,12 @@ with an undefined `FPDF_*` symbol, a stale library is cached: delete
   `state.rs` (SQLite), `pdf.rs` (+`pdf/` worker, TOC), `pptx.rs` (+`pptx/`), `references.rs`.
 - `native/src/app/` — the shell. `mod.rs::update_inner` routes each `Message` family (`Message::Pdf(PdfMessage)`, …) to
   `update_<family>` in `pdf.rs`, `graph.rs`, `ink.rs`, `search.rs`, `editor.rs`,
-  `vault.rs`, `shortcuts.rs` or `shell.rs`. Shared machinery: `documents.rs`,
-  `subscription.rs`, `view.rs`, `links.rs`.
+  `vault.rs`, `tabs_handler.rs`, `settings_handler.rs`, `shortcuts.rs` or `shell.rs`.
+  Shared machinery: `documents.rs`, `subscription.rs`, `view.rs`, `links.rs`.
 - `native/src/editor/` — buffer, incremental highlighter, the custom editor widget.
 - `native/src/views/` — stateless view builders. `*_state.rs` / `*_pane.rs` — sub-states.
+- `native/src/design/` — design tokens and runtime theme/scale; `native/src/ui/` — the
+  component library (gallery test in `ui/gallery.rs`); `tabs.rs` — document tabs.
 - `native/src/ink/`, `graph_state.rs` — handwriting and the knowledge graph.
 
 Every `.rs` file starts with a one-line `//!` summary: `grep -rm1 '^//!' core/src native/src`
@@ -41,8 +43,9 @@ is the fastest map. Tests for `foo.rs` live in `foo/tests.rs`.
   arm in that family's `app/<family>.rs` handler. Handlers match exhaustively, so the
   compiler finds the missing arm. A new family needs a `Message` variant and an arm in
   `app/mod.rs::update_inner`.
-- New shortcut: `Shortcut` in `messages.rs`, key in `app/subscription.rs`, handler in
-  `app/shortcuts.rs`, palette entry in `views/command_palette.rs`.
+- New shortcut: `Shortcut` in `messages.rs`, an entry in the `shortcuts.rs` registry (which
+  feeds the palette, tooltips and the Settings list), key in `app/subscription.rs`, handler
+  in `app/shortcuts.rs`.
 - New file type in the vault: extension list and `is_supported_vault_path` in
   `core/src/vault.rs` / `vault/files.rs`, open path in `app/mod.rs::open_startup_file` and
   the sidebar/link handlers, icon in `views/sidebar.rs`.
@@ -56,8 +59,9 @@ is the fastest map. Tests for `foo.rs` live in `foo/tests.rs`.
   edit as a conflict copy instead of overwriting it.
   Notes autosave 400 ms after typing; switching documents flushes first. Never drop a dirty
   buffer.
-- Sizes, colours and durations come from `native/src/theme.rs` and `motion.rs` — no literals
-  in views.
+- Sizes, colours, type and durations come from `native/src/design/` (`metrics`, `palette`,
+  `type_scale`, `motion`) — no literals in views. Build chrome from `native/src/ui/`
+  components.
 - Editor renderer invariants (draw only visible lines, layout caching, one wrapper) are in
   `native/src/editor/CLAUDE.md`; core invariants in `core/CLAUDE.md`.
 - The app is an iced daemon with two windows (shell + ink). Window events carry an id;

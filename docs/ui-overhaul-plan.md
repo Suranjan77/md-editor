@@ -8,7 +8,7 @@ keyboard, without regressing the editor's performance or the app's zero-idle-CPU
 with page overrides in [`pages/`](design-system/md-editor/pages/). This plan turns it into
 code. Produced with the UI/UX Pro Max skill (provenance in MASTER).
 
-**Date:** 2026-11-23 · **Status:** proposed, nothing implemented.
+**Date:** 2026-11-23 · **Status:** Phases 0–6 implemented (2026-11-24), with the deviations and open items listed in §7.
 
 **Companion plan:** [Bug Discovery — Headless End-to-End Testing](e2e-bug-discovery-plan.md).
 Its harness (`native/src/e2e/`) already runs the real app headlessly and takes screenshots;
@@ -251,3 +251,71 @@ safe areas, touch targets in pt/dp, orientation — are replaced by desktop equi
 2. **0.2 + 0.5 Tokens and guardrails (ratchet)** — makes every later PR measurable.
 3. **0.6 + 1.x `icon`, `Button`, `IconButton`, `Tooltip`** — then migrate the toolbar (2.2)
    as the first visible end-to-end slice.
+
+## 7. Progress
+
+**2026-11-24 — Phases 0–2, first pass (uncommitted at hand-over, then made to build).**
+
+Landed: bundled fonts (0.1), `design/` tokens with runtime Dark/Light and interface scale
+(0.2, 0.3), reduced-motion preference with OS default (0.4), guardrail tests for contrast,
+the 12 px floor and token-only `ui/` (0.5), Phosphor SVG icons (0.6, except the canvas set
+still used by graph, ink, deck and search); the `ui/` component library with a gallery test
+in both themes at 90/100/130 % (Phase 1); toolbar, tab strip, sidebar `TreeRow`s with
+context menus, `Panel`-based outline and backlinks, status bar, toast queue with Retry,
+`Dialog` modals with inline validation, welcome with recent vaults, and a Settings page
+(2.1–2.10). The old `native/src/motion.rs` is gone (its springs and tests live in
+`design/motion.rs`).
+
+**2026-11-24 — Phases 3–6 and the gaps from the first pass.**
+
+- **Editor (3.1–3.2):** body size, reading font and line width from Settings apply live
+  (`metrics::body_font_size`/`scaled`, `measure::body_font`, `max_content_width`; the line
+  height cache is invalidated on `theme_revision`). Heading scale 33 · 27 · 21 · 17; rows
+  are never shorter than iced's text box. All highlighter and renderer colours are `doc.*`
+  roles; switching theme re-highlights (`Highlighted` remembers its theme) and re-renders
+  math in the new ink (`MathRendered` carries its colour, stale renders are dropped).
+  Code blocks use `base16-ocean.dark` / `InspiredGitHub` per theme. The active find match
+  has a 1px outline. Bundled Inter / JetBrains Mono / Source Serif.
+- **Viewers (3.5, 3.8):** `views/viewer_toolbar.rs` at the top of PDFs, decks and images:
+  editable page/slide field, zoom field, fit width/page, find. PDF highlight swatches use
+  `ContentHue`; placeholders are page-sized; errors are `EmptyState`s.
+- **Find and search (4.1, 4.2):** find bar with replace expander, icon toggles, "N of M",
+  Replace and Replace all; vault search grouped (open PDF, notes) on `ListRow`s with the
+  keyboard selection shown, a truncation row and empty states.
+- **Tracker (4.3):** stat cards, one primary Start/Stop action, underline tabs, a 14-day
+  bar chart with a value tooltip per bar and an empty state, `1h 05m` durations, inline
+  JSON errors with Save kept enabled.
+- **Graph (4.4):** toolbar on `Segmented`/`TextField`/filter chips, inspector as a standard
+  `Panel` with stat cards, legend card with icons per kind, kinds coloured
+  `accent`/`status.info`/`fg.tertiary`; `views/graph/widgets.rs` deleted.
+- **Ink (4.5):** toolbar on components (filled icon for the active tool, segmented widths
+  and paper, Unsaved chip, primary Save), 28px swatches with a focus ring.
+- **Keyboard (5.1–5.2):** the sidebar and side panels show the focus ring when focused;
+  F6 into the main region, and closing the palette, find or a dialog, put the keyboard back
+  in the note (the editor is `Focusable`). Every registry chord is checked against the key
+  handler by a test; `Ctrl+Shift+Z` redoes on the ink canvas.
+- **Finish (6):** `theme.rs` and the canvas icon set are deleted; the colour lint covers
+  `views/` and `app/` at zero tolerance; wiki pages rewritten (Design System & Motion,
+  Native Desktop GUI views, Keyboard Shortcuts, User Guide).
+- **Gaps closed from the first pass:** excluded folders apply to the index, tree and
+  watcher; context menus open at the pointer (`ui::context_anchor`); the PDF page/zoom
+  fields, Fit page, the find bar's replace, and the deck's slide field are all reachable.
+- **Fixes found on the way:** `Button`, chips, segmented items, menu and tree rows
+  top-aligned their labels; the editor test harness clicked at a hard-coded 880px; app boot
+  reset the body size to 16 (the spec and default are 17); theme, scale and typography were
+  process-global and raced between parallel tests (`design::Setting`); a dropped file could
+  overwrite a vault file of the same name.
+
+Still open:
+
+- **3.3 reveal styling** (no italic source switch on reveal) — untouched; it needs the
+  renderer property suites at 3,000 cases around a behaviour change.
+- **3.6** loading shimmer and **3.7** the PDF selection popover (selection tools live in the
+  toolbar instead); **3.8** checkerboard behind transparent images.
+- **4.4** shape-coded node kinds in the GPU shader (kinds are told apart by colour on the
+  canvas and by icon in the legend and inspector), keyboard navigation between nodes.
+- **Light paper for handwriting** (`pages/ink.md`): the paper is part of the ink document
+  format, so it needs a format change.
+- README screenshots in both themes.
+- In headless e2e screenshots the graph's label layer and GPU layer disagree on positions;
+  not checked on a real GPU.

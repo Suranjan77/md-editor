@@ -1,4 +1,4 @@
-//! Pasting into a note: clipboard bitmaps and image files become attachments in the vault plus an image line; anything else is pasted as text.
+//! Pasting, picking and dropping images/files into notes or the vault tree.
 
 use super::*;
 use crate::editor::buffer::EditorCommand;
@@ -54,6 +54,122 @@ impl MdEditor {
         }
     }
 
+    /// Open native file picker for `"Insert Image…"` (I3).
+    pub(super) fn insert_image_dialog(&mut self) -> Task<Message> {
+        if self.active_path.is_none() || self.vault.root.is_none() {
+            self.ui.toast = Some("Open a note in a vault to insert images".to_string());
+            return Task::none();
+        }
+        self.ui.context_menu = None;
+        Task::perform(
+            async {
+                let picked = rfd::AsyncFileDialog::new()
+                    .set_title("Insert Image")
+                    .add_filter(
+                        "Images",
+                        &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"],
+                    )
+                    .pick_files()
+                    .await;
+                picked
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|f| f.path().to_path_buf())
+                    .collect::<Vec<_>>()
+            },
+            |files| Message::Editor(EditorMessage::ImagesPicked(files)),
+        )
+    }
+
+    /// Handle OS file drag-and-drop onto the sidebar or editor (I4).
+    pub(super) fn on_file_dropped(&mut self, path: std::path::PathBuf) -> Task<Message> {
+        self.ui.hovered_drop_files.clear();
+        if self.vault.root.is_none() {
+            self.ui.toast = Some("Open a vault before dropping files".to_string());
+            return Task::none();
+        }
+
+        let sidebar_right = if self.vault.sidebar_visible {
+            self.ui.sidebar_width
+        } else {
+            0.0
+        };
+        let over_sidebar = self.ui.cursor_pos.0 < sidebar_right;
+
+        if over_sidebar {
+            return self.import_dropped_into_sidebar(&path);
+        }
+
+        if self.active_path.is_some()
+            && (!self.showing_pdf || self.ui.split_view_active)
+            && !self.graph.visible
+            && !self.tracker.visible
+            && !self.ui.settings_visible
+        {
+            return self.insert_files(&[path]);
+        }
+
+        self.import_dropped_into_sidebar(&path)
+    }
+
+    fn import_dropped_into_sidebar(&mut self, file: &std::path::Path) -> Task<Message> {
+        if !md_editor_core::vault::is_supported_vault_path(file) {
+            self.ui.toast = Some("Unsupported file type for vault".to_string());
+            return Task::none();
+        }
+        let Some(file_name) = file.file_name().and_then(|n| n.to_str()) else {
+            return Task::none();
+        };
+        let Ok(bytes) = std::fs::read(file) else {
+            self.ui.toast = Some("Could not read dropped file".to_string());
+            return Task::none();
+        };
+        let parent = Self::new_entry_parent(
+            self.vault.selected_path.as_deref(),
+            &self.vault.entries,
+            &self.vault.expanded_folders,
+        );
+        let rel = match parent {
+            Some(dir) if !dir.is_empty() => format!("{}/{file_name}", dir.trim_end_matches('/')),
+            _ => file_name.to_string(),
+        };
+        let Some(root) = self.vault.root.clone() else {
+            return Task::none();
+        };
+        let abs = match md_editor_core::vault::resolve_vault_path_checked(
+            std::path::Path::new(&root),
+            &rel,
+        ) {
+            Ok(abs) => abs,
+            Err(err) => {
+                self.ui.toast = Some(format!("Could not import {file_name}: {err}"));
+                return Task::none();
+            }
+        };
+        if abs.exists() {
+            // Never overwrite a vault file with a dropped one of the same name.
+            self.ui.notify(
+                crate::ui::ToastKind::Warning,
+                format!("Not imported: {rel} already exists in the vault"),
+                false,
+            );
+            return Task::none();
+        }
+        match md_editor_core::vault::write_bytes(&abs, &bytes) {
+            Ok(()) => {
+                self.note_self_write(&rel);
+                self.vault.entries =
+                    md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+                self.reveal_in_sidebar(&rel);
+                self.ui.toast = Some(format!("Added {rel}"));
+            }
+            Err(err) => {
+                self.ui.toast = Some(format!("Could not import {file_name}: {err}"));
+            }
+        }
+        Task::none()
+    }
+
     /// Images are imported (copied into the vault unless already in it);
     /// notes and PDFs already in the vault become wikilinks; anything else is
     /// refused with a toast.
@@ -105,8 +221,6 @@ impl MdEditor {
         task
     }
 
-    /// Insert one line per image (and per link) at the caret, as one undo
-    /// step, and show the new files in the tree at once.
     fn insert_attachments(&mut self, images: Vec<String>, links: Vec<String>) -> Task<Message> {
         let note = self.active_path.clone();
         let mut lines: Vec<String> = images
@@ -115,6 +229,7 @@ impl MdEditor {
             .collect();
         lines.extend(links);
         if let Some(first) = images.first() {
+            self.note_self_write(first);
             self.ui.toast = Some(if images.len() == 1 {
                 format!("Added {first}")
             } else {
@@ -133,7 +248,6 @@ impl MdEditor {
     }
 }
 
-/// The ordinary text paste, through iced's clipboard.
 fn paste_text() -> Task<Message> {
     iced::clipboard::read().and_then(|text| {
         Task::done(Message::Editor(EditorMessage::Command(

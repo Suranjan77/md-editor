@@ -17,13 +17,15 @@ rediscover — each exists because something concrete broke without it.
 ### Rule 2: Use the design tokens
 
 - No hardcoded dimensions, padding, font sizes, or hex colours in view modules.
-- Sizes come from `TEXT_XS` … `TEXT_DISPLAY`, gaps from `SPACE_0` … `SPACE_6`, radii from
-  `RADIUS_SM` / `RADIUS_MD` / `RADIUS_LG`, and colours from the palette — all in
-  `native/src/theme.rs`.
-- Animations use `Easing::EaseOutQuad` and one of `FAST`, `PANEL`, `OVERLAY` from
-  `native/src/motion.rs`. A new duration needs a reason, not a preference.
+- Text picks a `TextRole` (`design/type_scale.rs`, never below 12px); gaps come from
+  `SPACE_0` … `SPACE_7` and sizes, radii and elevation from `design/metrics.rs`; colours from
+  the semantic roles of `design::tokens()` (Dark and Light), and user content colours from
+  `ContentHue`. Build controls from `native/src/ui/` components rather than raw widgets.
+- Animations use `EASE` and one of `FAST`, `BASE`, `SLOW` from
+  `native/src/design/motion.rs`, through `duration()` so reduced motion turns them off. A new
+  duration needs a reason, not a preference.
 - Motion that follows something moving — the editor scrolling to the caret, the caret
-  gliding — uses the closed-form critically damped `Spring` in `motion.rs`, sampled at the
+  gliding — uses the closed-form critically damped `Spring` in `design/motion.rs`, sampled at the
   frame's time. Never integrate motion step by step per frame.
 - A panel's animated open width must match the width it actually lays out at, or the clip
   that produces the slide crops it permanently.

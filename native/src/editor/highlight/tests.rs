@@ -419,7 +419,7 @@ fn code_highlighting_preserves_full_source_text() {
         lines[1]
             .spans
             .iter()
-            .any(|span| span.color != crate::theme::TEXT_PRIMARY)
+            .any(|span| span.color != crate::design::tokens().doc_text)
     );
 }
 

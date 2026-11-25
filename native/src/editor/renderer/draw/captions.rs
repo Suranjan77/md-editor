@@ -12,7 +12,7 @@ use super::super::measure::{bold_font, measure_width};
 use super::super::metrics::BLOCK_CAPTION_HEIGHT;
 use super::primitives::{TextRun, fill, rounded};
 use crate::editor::highlight::{StyledLine, StyledSpan};
-use crate::theme;
+use crate::editor::renderer::measure::body_font;
 
 const CAPTION_SIZE: f32 = 11.0;
 const EQUATION_NUMBER_SIZE: f32 = 14.0;
@@ -51,7 +51,7 @@ pub(super) fn paint_block_caption<R: Measure>(
         .draw(
             renderer,
             Point::new(x + width / 2.0, top + BLOCK_CAPTION_HEIGHT / 2.0),
-            theme::TEXT_MUTED,
+            crate::design::tokens().doc_syntax,
             viewport,
         );
 }
@@ -82,14 +82,19 @@ pub(super) fn paint_language_badge<R: Measure>(
     }
     let text_w = measure_width::<R>(&badge_text, CAPTION_SIZE, bold_font());
     let rect = badge_rect(block_x, block_w, block_top, text_w);
-    fill(renderer, rect, rounded(4.0), theme::BG_TERTIARY);
+    fill(
+        renderer,
+        rect,
+        rounded(4.0),
+        crate::design::tokens().bg_overlay,
+    );
     TextRun::new(badge_text, CAPTION_SIZE, rect.size())
         .font(bold_font())
         .align(Horizontal::Center, Vertical::Center)
         .draw(
             renderer,
             Point::new(rect.x + rect.width / 2.0, rect.y + rect.height / 2.0),
-            theme::ACCENT,
+            crate::design::tokens().accent,
             viewport,
         );
 }
@@ -104,13 +109,13 @@ pub(super) fn paint_equation_number<R: Measure>(
     viewport: Rectangle,
 ) {
     let label = format!("({})", number);
-    let width = measure_width::<R>(&label, EQUATION_NUMBER_SIZE, iced::Font::DEFAULT);
+    let width = measure_width::<R>(&label, EQUATION_NUMBER_SIZE, body_font());
     TextRun::new(label, EQUATION_NUMBER_SIZE, Size::new(width, height))
         .align(Horizontal::Left, Vertical::Center)
         .draw(
             renderer,
             Point::new(right - width, center_y),
-            theme::TEXT_MUTED,
+            crate::design::tokens().doc_syntax,
             viewport,
         );
 }

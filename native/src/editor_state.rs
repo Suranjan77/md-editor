@@ -124,6 +124,7 @@ impl EditorPane {
             self.image_cache.len(),
             self.math_cache.len(),
             self.math_scale_factor.to_bits(),
+            crate::design::theme_revision(),
         )
             .hash(&mut hasher);
         hasher.finish()
@@ -233,11 +234,13 @@ impl EditorPane {
     /// shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Editor(EditorMessage::MathRendered(tex, scale, res)) => {
+            Message::Editor(EditorMessage::MathRendered(tex, scale, ink, res)) => {
                 // Drop results rasterized for a display scale we've since
                 // moved away from (the cache was flushed on rescale; a stale
                 // insert would stay blurry until the next flush).
+                // Also drop renders in a colour from before a theme switch.
                 if (scale - self.math_scale_factor).abs() < 0.01
+                    && ink == crate::design::tokens().doc_math
                     && let Ok(render) = res
                 {
                     self.math_cache.insert(tex, render);
@@ -298,15 +301,22 @@ impl EditorPane {
                         .to_string();
                     if !tex.is_empty() && !self.math_cache.contains_key(&tex) {
                         let tex_clone = tex.clone();
+                        // Chosen here, on the UI thread, not when the task runs.
+                        let ink = crate::design::tokens().doc_math;
                         tasks.push(Task::perform(
                             async move {
                                 (
                                     tex_clone.clone(),
-                                    render_latex_task(&tex_clone, scale_factor),
+                                    render_latex_task(&tex_clone, scale_factor, ink),
                                 )
                             },
                             move |(t, r)| {
-                                Message::Editor(EditorMessage::MathRendered(t, scale_factor, r))
+                                Message::Editor(EditorMessage::MathRendered(
+                                    t,
+                                    scale_factor,
+                                    ink,
+                                    r,
+                                ))
                             },
                         ));
                     }
@@ -320,6 +330,7 @@ impl EditorPane {
 pub(crate) fn render_latex_task(
     tex: &str,
     scale_factor: f32,
+    ink: iced::Color,
 ) -> Result<crate::editor::renderer::MathRender, String> {
     use ratex_layout::{LayoutOptions, layout, to_display_list};
     use ratex_parser::parser::parse;
@@ -350,9 +361,9 @@ pub(crate) fn render_latex_task(
         let layout_opts = LayoutOptions::default()
             .with_style(MathStyle::Display)
             .with_color(RatexColor {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
+                r: ink.r,
+                g: ink.g,
+                b: ink.b,
                 a: 1.0,
             });
 

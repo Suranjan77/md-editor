@@ -1,4 +1,4 @@
-//! PDF engine: shared data types, document identity, and the PDFium binding. The worker lives in `renderer`, TOC recovery in `toc`.
+//! PDF engine: shared data types, document identity, and the PDFium binding.
 
 mod error;
 pub use error::{PdfError, PdfResult};
@@ -10,9 +10,13 @@ use std::path::{Path, PathBuf};
 
 mod renderer;
 mod toc;
+mod toc_synth;
+mod worker;
 
 pub use renderer::*;
 pub use toc::*;
+pub use toc_synth::synthesize_toc;
+pub(crate) use toc_synth::{is_caps_heading, is_plausible_title, numbered_heading_depth};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PdfTextChar {
@@ -169,14 +173,14 @@ pub fn compute_provisional_id(
     Ok((id, file_len, modified))
 }
 
-fn format_pdf_load_error(error: PdfiumError) -> String {
+pub(super) fn pdf_load_error(error: PdfiumError) -> PdfError {
     if matches!(
         error,
         PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError)
     ) {
-        "Password required to open PDF".to_string()
+        PdfError::PasswordRequired
     } else {
-        format!("Failed to load PDF: {error:?}")
+        PdfError::Other(format!("Failed to load PDF: {error:?}"))
     }
 }
 
@@ -200,9 +204,6 @@ pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
 
                 let overlap = r_y_max.min(c_y_max) - r_y_min.max(c_y_min);
                 let min_h = r.height.min(c.bbox.height);
-
-                // Characters should be moving left-to-right (c.bbox.x >= r.x)
-                // and horizontal gap should not be too large
                 let horizontal_gap = c.bbox.x - (r.x + r.width);
 
                 if overlap > 0.0
@@ -210,7 +211,6 @@ pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
                     && c.bbox.x >= r.x
                     && horizontal_gap < 3.0 * min_h.max(4.0)
                 {
-                    // Merge
                     let x_min = r.x;
                     let x_max = (r.x + r.width).max(c.bbox.x + c.bbox.width);
                     let y_min = r.y.min(c.bbox.y);
@@ -220,8 +220,8 @@ pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
                     r.width = x_max - x_min;
                     r.height = y_max - y_min;
                 } else {
-                    rects.push(current.take().expect("matched Some above"));
-                    current = Some(c.bbox.clone());
+                    let prev = std::mem::replace(r, c.bbox.clone());
+                    rects.push(prev);
                 }
             }
             None => {

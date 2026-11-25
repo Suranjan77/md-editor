@@ -424,3 +424,6 @@ pub(super) fn list_files_matching(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

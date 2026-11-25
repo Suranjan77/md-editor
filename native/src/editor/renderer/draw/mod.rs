@@ -34,7 +34,6 @@ use super::selection::TextRange;
 use super::spans::span_is_editing;
 use super::{Editor, Paint, State};
 use crate::editor::highlight::StyledLine;
-use crate::theme;
 use blocks::BlockMeta;
 use overlays::paint_selection;
 use primitives::paint_scrollbar;
@@ -116,7 +115,7 @@ impl<Message> Editor<'_, Message> {
                 border: Border::default(),
                 ..Default::default()
             },
-            theme::BG_PRIMARY,
+            crate::design::tokens().bg_canvas,
         );
 
         let (visible_start, visible_end) = self.visible_lines(state, bounds, viewport);

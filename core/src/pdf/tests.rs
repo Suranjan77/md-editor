@@ -539,11 +539,201 @@ fn test_pdf_text_extraction_and_hashing() {
 
 #[test]
 fn password_load_error_is_distinct() {
+    let err = pdf_load_error(PdfiumError::PdfiumLibraryInternalError(
+        PdfiumInternalError::PasswordError,
+    ));
+    assert_eq!(err, PdfError::PasswordRequired);
+    assert_eq!(err.to_string(), "Password required to open PDF");
+}
+
+#[test]
+fn pdf_renderer_commands_visible_window_and_priority_render() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let renderer = PdfRenderer::new().unwrap();
+    let dummy = "../tests-fixtures/pdf/dummy.pdf";
+    let large = "../tests-fixtures/pdf/large-500-pages.pdf";
+
+    assert_eq!(renderer.page_count(dummy).unwrap(), 1);
+    assert_eq!(renderer.page_count(large).unwrap(), 500);
+
+    let img = renderer.render_page(dummy, 0, 1.0).unwrap();
+    assert!(img.width() > 0 && img.height() > 0);
+
+    // Restrict visible range on `large` to pages 10..=12 (buffered window 8..=14).
+    renderer.set_visible_range(10, 12, large);
     assert_eq!(
-        format_pdf_load_error(PdfiumError::PdfiumLibraryInternalError(
-            PdfiumInternalError::PasswordError
-        )),
-        "Password required to open PDF"
+        renderer.render_page(large, 0, 0.5).unwrap_err(),
+        PdfError::Skipped
+    );
+    assert_eq!(
+        renderer.render_page(large, 25, 0.5).unwrap_err(),
+        PdfError::Skipped
+    );
+    // Inside buffered window succeeds.
+    assert!(renderer.render_page(large, 10, 0.5).is_ok());
+    assert!(renderer.render_page(large, 14, 0.5).is_ok());
+    // A different document path is not skipped by `large`'s visible range.
+    assert!(renderer.render_page(dummy, 0, 0.5).is_ok());
+
+    // Priority render bypasses the visible-range filter even far outside 8..=14.
+    let priority_img = renderer.render_page_priority(large, 250, 0.5).unwrap();
+    assert!(priority_img.width() > 0 && priority_img.height() > 0);
+}
+
+#[test]
+fn pdf_search_empty_invalid_regex_and_cancellation() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let renderer = PdfRenderer::new().unwrap();
+    let dummy = "../tests-fixtures/pdf/dummy.pdf";
+    let large = "../tests-fixtures/pdf/large-500-pages.pdf";
+
+    // Empty and whitespace-only queries short-circuit cleanly.
+    assert!(
+        renderer
+            .search_text(dummy, "", false, false)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        renderer
+            .search_text(dummy, "   \t ", true, false)
+            .unwrap()
+            .is_empty()
+    );
+
+    // Invalid regex returns a typed PdfError::Other.
+    let err = renderer
+        .search_text(dummy, "[unclosed(", true, false)
+        .unwrap_err();
+    assert!(
+        matches!(&err, PdfError::Other(msg) if msg.contains("Invalid PDF search regex")),
+        "unexpected error: {err:?}"
+    );
+
+    // Search cancellation when the command sender disconnects mid-search.
+    let pdfium = bind_pdfium().unwrap();
+    let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+    let (_prio_tx, prio_rx) = std::sync::mpsc::channel();
+    let visible = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let mut worker = worker::Worker::new(&pdfium, cmd_rx, prio_rx, visible);
+
+    let (resp_tx, resp_rx) = std::sync::mpsc::sync_channel(1);
+    cmd_tx
+        .send(PdfCommand::SearchText(
+            large.to_string(),
+            "nonexistent_term_xyz".to_string(),
+            false,
+            false,
+            resp_tx,
+        ))
+        .unwrap();
+    // Disconnect the sender before running the queued command so `Worker` sees
+    // the abandoned channel and cancels the 500-page scan immediately.
+    let cmd = cmd_rx_from_worker(&mut worker);
+    drop(cmd_tx);
+    worker.handle_command(cmd);
+    assert_eq!(resp_rx.recv().unwrap().unwrap_err(), PdfError::WorkerGone);
+}
+
+fn cmd_rx_from_worker(worker: &mut worker::Worker<'_>) -> PdfCommand {
+    worker.receiver.recv().unwrap()
+}
+
+struct TestTempDir(PathBuf);
+
+impl TestTempDir {
+    fn new() -> Self {
+        let dir = std::env::temp_dir().join(format!("md-editor-pdf-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn worker_three_document_lru_cache_promotes_hits_and_evicts_oldest() {
+    // 1. Pure LRU helper check.
+    let mut cache: VecDeque<(String, usize)> = VecDeque::new();
+    for (k, v) in [("a", 1), ("b", 2), ("c", 3)] {
+        worker::lru_get_or_insert_with(&mut cache, worker::DOC_CACHE_CAPACITY, k, || Ok(v))
+            .unwrap();
+    }
+    assert_eq!(
+        cache.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+        vec!["a", "b", "c"]
+    );
+    // Access "a" -> promoted to most-recent ("b" becomes oldest).
+    assert_eq!(
+        *worker::lru_get_or_insert_with(&mut cache, worker::DOC_CACHE_CAPACITY, "a", || {
+            panic!("must hit cache")
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        cache.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+        vec!["b", "c", "a"]
+    );
+    // Insert 4th document "d" -> evicts "b" (the oldest).
+    worker::lru_get_or_insert_with(&mut cache, worker::DOC_CACHE_CAPACITY, "d", || Ok(4)).unwrap();
+    assert_eq!(cache.len(), 3);
+    assert_eq!(
+        cache.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+        vec!["c", "a", "d"]
+    );
+
+    // 2. Real `Worker` check with 4 distinct PDF files on disk.
+    let _guard = TEST_LOCK.lock().unwrap();
+    let pdfium = bind_pdfium().unwrap();
+    let tmp = TestTempDir::new();
+    let src_bytes = std::fs::read("../tests-fixtures/pdf/dummy.pdf").unwrap();
+    let paths: Vec<String> = (1..=4)
+        .map(|n| {
+            let p = tmp.path().join(format!("doc_{n}.pdf"));
+            std::fs::write(&p, &src_bytes).unwrap();
+            p.to_string_lossy().to_string()
+        })
+        .collect();
+
+    let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+    let (_prio_tx, prio_rx) = std::sync::mpsc::channel();
+    let visible = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let mut worker = worker::Worker::new(&pdfium, cmd_rx, prio_rx, visible);
+
+    for p in &paths[0..3] {
+        assert_eq!(worker.page_count(p).unwrap(), 1);
+    }
+    assert_eq!(worker.documents.len(), 3);
+    // Touch paths[0] so it moves to MRU and paths[1] becomes the eviction victim.
+    assert_eq!(worker.page_count(&paths[0]).unwrap(), 1);
+    assert_eq!(
+        worker
+            .documents
+            .iter()
+            .map(|(p, _)| p.as_str())
+            .collect::<Vec<_>>(),
+        vec![paths[1].as_str(), paths[2].as_str(), paths[0].as_str()]
+    );
+
+    // Opening paths[3] evicts paths[1].
+    assert_eq!(worker.page_count(&paths[3]).unwrap(), 1);
+    assert_eq!(worker.documents.len(), 3);
+    assert_eq!(
+        worker
+            .documents
+            .iter()
+            .map(|(p, _)| p.as_str())
+            .collect::<Vec<_>>(),
+        vec![paths[2].as_str(), paths[0].as_str(), paths[3].as_str()]
     );
 }
 

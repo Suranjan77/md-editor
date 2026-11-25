@@ -1,5 +1,5 @@
 //! The presentation viewer: every slide of the open deck in one continuous
-//! scrolling column, with a toolbar to step between slides and zoom.
+//! scrolling column, under the shared viewer toolbar (slide field, steps, zoom).
 //!
 //! Each slide is a stack of canvases, one per layer from
 //! [`crate::slides::layer_ranges`], so shapes, pictures and text keep the
@@ -7,28 +7,30 @@
 
 use std::sync::Arc;
 
-use iced::widget::{Space, button, canvas, column, container, row, scrollable, stack, text};
+use iced::widget::{Space, canvas, column, container, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
+use crate::design::metrics::{ControlSize, SPACE_2, SPACE_3, SPACE_4, SPACE_5};
+use crate::design::{TextRole, tokens};
 use crate::messages::{Message, ShellMessage};
 use crate::pptx_pane::PptxPane;
 use crate::slides::LoadedDeck;
 use crate::slides::draw::{SlideLayer, SlidePart};
-use crate::theme;
-use crate::views::icons::{self, Icon};
+use crate::ui::{Icon, IconButton, badge, empty_state};
+use crate::views::viewer_toolbar::{self, PositionField, ViewerToolbar, ZoomControls};
 
 pub const PPTX_SCROLLABLE_ID: &str = "pptx_scrollable";
 /// Space around the column of slides.
-pub const SLIDE_LIST_PADDING: f32 = theme::SPACE_6;
+pub const SLIDE_LIST_PADDING: f32 = SPACE_5;
 /// Gap between one slide and the next slide's label.
-pub const SLIDE_SPACING: f32 = theme::SPACE_5;
+pub const SLIDE_SPACING: f32 = SPACE_4;
 /// Height of the number-and-title row above each slide.
-pub const SLIDE_LABEL_HEIGHT: f32 = theme::SPACE_6;
+pub const SLIDE_LABEL_HEIGHT: f32 = SPACE_5;
 /// Width of the rule drawn around each slide.
 const SLIDE_BORDER: f32 = 1.0;
 /// Width kept free for the vertical scrollbar, so a slide fitted to the pane
 /// never needs a horizontal one.
-const SCROLLBAR_GUTTER: f32 = theme::SPACE_4;
+const SCROLLBAR_GUTTER: f32 = SPACE_3;
 /// Narrowest a slide is shown at, however narrow the pane.
 const MIN_SLIDE_WIDTH: f32 = 160.0;
 
@@ -61,30 +63,41 @@ pub fn slide_metrics(deck: &LoadedDeck, available_width: f32, zoom: f32) -> Slid
     }
 }
 
-pub fn view<'a>(pane: &'a PptxPane, available_width: f32) -> Element<'a, Message, Theme, Renderer> {
+pub fn view<'a>(
+    pane: &'a PptxPane,
+    available_width: f32,
+    slide_draft: Option<&'a str>,
+) -> Element<'a, Message, Theme, Renderer> {
     let Some(deck) = &pane.deck else {
-        let (message, color) = match &pane.error {
-            Some(err) => (
-                format!("This presentation can't be shown. {err}"),
-                theme::DANGER,
+        let body = match &pane.error {
+            Some(err) => empty_state(
+                Icon::WarningCircle,
+                "This presentation can't be shown",
+                &err.to_string(),
+                None,
             ),
-            None => ("Loading presentation…".to_string(), theme::TEXT_MUTED),
+            None => empty_state(
+                Icon::Presentation,
+                "Loading presentation…",
+                "Slides appear as soon as the deck is read.",
+                None,
+            ),
         };
-        return container(text(message).size(theme::TEXT_BASE).color(color))
+        return container(body)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
             .padding(SLIDE_LIST_PADDING)
             .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+                background: Some(iced::Background::Color(tokens().viewer_ground)),
                 ..Default::default()
             })
             .into();
     };
     column![
+        toolbar(pane, deck, available_width, slide_draft),
         slide_list(deck, available_width, pane.zoom),
-        toolbar(pane, deck, available_width)
     ]
     .height(Length::Fill)
     .into()
@@ -136,21 +149,25 @@ fn slide_list<'a>(
         .align_x(Alignment::Center);
 
     for (index, slide) in deck.slides.iter().enumerate() {
+        let t = tokens();
+        let role = TextRole::Caption;
         let mut label = row![
             text(slide.number.to_string())
-                .size(theme::TEXT_SM)
-                .color(theme::TEXT_SECONDARY)
+                .size(role.size())
+                .font(TextRole::MonoCaption.font())
+                .color(t.fg_secondary)
         ]
-        .spacing(theme::SPACE_3)
+        .spacing(SPACE_2)
         .align_y(Alignment::Center);
         if slide.hidden {
-            label = label.push(text("Hidden").size(theme::TEXT_XS).color(theme::TEXT_MUTED));
+            label = label.push(badge("Hidden", crate::ui::BadgeTone::Neutral, None));
         }
         if let Some(title) = &slide.title {
             label = label.push(
                 text(title.clone())
-                    .size(theme::TEXT_SM)
-                    .color(theme::TEXT_MUTED)
+                    .size(role.size())
+                    .font(role.font())
+                    .color(t.fg_tertiary)
                     .wrapping(text::Wrapping::None),
             );
         }
@@ -158,7 +175,7 @@ fn slide_list<'a>(
         let page = container(slide_page(deck, index, metrics.width, metrics.height))
             .padding(SLIDE_BORDER)
             .style(|_| container::Style {
-                background: Some(iced::Background::Color(theme::BORDER_SUBTLE)),
+                background: Some(iced::Background::Color(tokens().border_subtle)),
                 ..Default::default()
             });
 
@@ -203,7 +220,7 @@ fn slide_list<'a>(
             .height(Length::Fill),
     )
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_PRIMARY)),
+        background: Some(iced::Background::Color(tokens().viewer_ground)),
         ..Default::default()
     })
     .into()
@@ -213,63 +230,50 @@ fn toolbar<'a>(
     pane: &PptxPane,
     deck: &LoadedDeck,
     available_width: f32,
+    slide_draft: Option<&'a str>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let count = deck.slides.len();
     let current = pane.current_slide(available_width);
-    let position = if count == 0 {
-        "No slides".to_string()
-    } else {
-        format!("{} / {}", current + 1, count)
-    };
-    let zoom = if (pane.zoom - 1.0).abs() < 0.01 {
-        "Fit".to_string()
-    } else {
-        format!("{:.0}%", pane.zoom * 100.0)
-    };
+    let steps = row![
+        IconButton::new(Icon::ChevronUp, "Previous slide")
+            .size(ControlSize::Sm)
+            .on_press_maybe((current > 0).then_some(Message::Shell(ShellMessage::PptxStep(-1))))
+            .build(),
+        IconButton::new(Icon::ChevronDown, "Next slide")
+            .size(ControlSize::Sm)
+            .on_press_maybe(
+                (current + 1 < count).then_some(Message::Shell(ShellMessage::PptxStep(1))),
+            )
+            .build(),
+    ]
+    .spacing(SPACE_2)
+    .align_y(Alignment::Center);
 
-    container(
-        row![
-            button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
-                .on_press_maybe((current > 0).then_some(Message::Shell(ShellMessage::PptxStep(-1))))
-                .padding(theme::SPACE_3)
-                .style(button::text),
-            text(position)
-                .size(theme::TEXT_SM)
-                .color(theme::TEXT_SECONDARY),
-            button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
-                .on_press_maybe(
-                    (current + 1 < count).then_some(Message::Shell(ShellMessage::PptxStep(1)))
-                )
-                .padding(theme::SPACE_3)
-                .style(button::text),
-            Space::new().width(Length::Fill),
-            button(text("-").size(theme::TEXT_MD))
-                .on_press(Message::Shell(ShellMessage::PptxZoomOut))
-                .padding([theme::SPACE_2, theme::SPACE_4])
-                .style(button::text),
-            text(zoom).size(theme::TEXT_SM).color(theme::TEXT_MUTED),
-            button(text("+").size(theme::TEXT_MD))
-                .on_press(Message::Shell(ShellMessage::PptxZoomIn))
-                .padding([theme::SPACE_2, theme::SPACE_4])
-                .style(button::text),
-            button(text("Fit").size(theme::TEXT_SM))
-                .on_press(Message::Shell(ShellMessage::PptxZoomFit))
-                .padding([theme::SPACE_2, theme::SPACE_4])
-                .style(button::text),
-        ]
-        .spacing(theme::SPACE_4)
-        .align_y(Alignment::Center)
-        .padding([theme::SPACE_3, theme::SPACE_4]),
-    )
-    .width(Length::Fill)
-    .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
-        border: iced::Border {
-            color: theme::BORDER,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..Default::default()
+    viewer_toolbar::view(ViewerToolbar {
+        outline: None,
+        position: Some(PositionField {
+            current: current + 1,
+            total: count,
+            draft: slide_draft,
+            on_input: |raw| Message::Shell(ShellMessage::PptxSlideInputChanged(raw)),
+            on_submit: Message::Shell(ShellMessage::PptxSlideInputSubmit),
+            noun: "Slide",
+        }),
+        zoom: Some(ZoomControls {
+            percent: (pane.zoom * 100.0).round() as u32,
+            draft: None,
+            on_input: None,
+            on_submit: None,
+            zoom_out: Message::Shell(ShellMessage::PptxZoomOut),
+            zoom_in: Message::Shell(ShellMessage::PptxZoomIn),
+            fit_width: Some((
+                (pane.zoom - 1.0).abs() < 0.01,
+                Message::Shell(ShellMessage::PptxZoomFit),
+            )),
+            fit_page: None,
+        }),
+        find: None,
+        context: vec![steps.into()],
+        title: None,
     })
-    .into()
 }

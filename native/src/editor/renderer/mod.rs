@@ -55,6 +55,10 @@ pub use reveal::{CaretView, Reveal};
 /// pixels instead of being upscaled from a smaller bitmap.
 pub const MATH_BLOCK_SCALE: f32 = 1.2;
 
+/// Widget id of the note editor, for `iced::widget::operation::focus`: F6 into
+/// the main region, or closing find, puts the keyboard back in the note.
+pub const EDITOR_ID: &str = "md_editor_note";
+
 /// A rendered equation. Two bitmaps are rasterized per TeX string — one at
 /// inline display scale and one at block display scale (`MATH_BLOCK_SCALE`
 /// larger) — so each context draws its bitmap 1:1 on device pixels instead of
@@ -125,6 +129,23 @@ struct LayoutKey {
     cursor: (usize, usize),
 }
 
+impl widget::operation::Focusable for State {
+    fn is_focused(&self) -> bool {
+        self.is_focused
+    }
+
+    fn focus(&mut self) {
+        self.is_focused = true;
+    }
+
+    /// Losing focus to another widget also ends a pointer selection in
+    /// progress, as clicking outside the editor does.
+    fn unfocus(&mut self) {
+        self.is_focused = false;
+        self.is_dragging = false;
+    }
+}
+
 /// Widget state persisted across frames in the iced tree.
 #[derive(Default)]
 pub struct State {
@@ -145,6 +166,9 @@ pub struct State {
     layout_tree: HeightTree,
     line_height_cache: Vec<LineHeightCache>,
     last_layout_width: f32,
+    /// `design::theme_revision` the line heights were measured at: a new body
+    /// size or reading font changes every line's height.
+    last_typography: u64,
     /// First and last line index of every code, table, math and quote block.
     block_ranges: HashMap<usize, (usize, usize)>,
     /// Per line, the caption band above its body and the gutter below it, as
@@ -278,9 +302,20 @@ where
         }
     }
 
+    fn operate(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        _renderer: &R,
+        operation: &mut dyn widget::Operation,
+    ) {
+        let state = tree.state.downcast_mut::<State>();
+        operation.focusable(Some(&widget::Id::new(EDITOR_ID)), layout.bounds(), state);
+    }
+
     fn layout(&mut self, tree: &mut widget::Tree, _renderer: &R, limits: &Limits) -> Node {
         let state = tree.state.downcast_mut::<State>();
-        let max_width = limits.max().width.min(metrics::MAX_CONTENT_WIDTH);
+        let max_width = limits.max().width.min(metrics::max_content_width());
         let key = self.layout_revision.map(|revision| LayoutKey {
             revision,
             lines: self.lines.len(),

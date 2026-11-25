@@ -3,9 +3,8 @@
 The single source of truth for how MD Editor looks, moves and behaves. Page files in
 `pages/` override this file for one surface; where they are silent, this file applies.
 
-**Status:** proposed (2026-11-23). Implemented by the plan in
-[`docs/ui-overhaul-plan.md`](../../ui-overhaul-plan.md). Until then `native/src/theme.rs`
-and `motion.rs` describe what ships.
+**Status:** implemented (2026-11-24) in `native/src/design/` and `native/src/ui/`, by the plan
+in [`docs/ui-overhaul-plan.md`](../../ui-overhaul-plan.md); deviations are listed in its §7.
 
 **Provenance.** Generated with the UI/UX Pro Max skill (v2.15.0):
 `--design-system` for "note-taking knowledge management research desktop productivity" and

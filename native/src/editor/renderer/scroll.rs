@@ -13,6 +13,8 @@ use super::metrics::*;
 use super::spans::math_source;
 use super::{Editor, MATH_BLOCK_SCALE, Measure, State};
 use crate::editor::highlight::StyledLine;
+use crate::editor::renderer::measure::mono_font;
+use crate::editor::renderer::metrics::scaled;
 
 const MIN_THUMB_WIDTH: f32 = 32.0;
 /// Pixels scrolled per wheel "line".
@@ -116,7 +118,7 @@ pub(super) fn table_columns<R: Measure>(rows: &[StyledLine]) -> Vec<f32> {
                 .map(|span| {
                     measure_width::<R>(
                         span.visible_text(false),
-                        span.font_size,
+                        scaled(span.font_size),
                         span_font(span, row),
                     )
                 })
@@ -166,8 +168,8 @@ impl<Message> Editor<'_, Message> {
                         .map(|span| {
                             measure_width::<R>(
                                 span.visible_text(is_editing),
-                                CODE_FONT_SIZE,
-                                iced::Font::MONOSPACE,
+                                code_font_size(),
+                                mono_font(),
                             )
                         })
                         .sum::<f32>()
@@ -302,7 +304,7 @@ pub(super) fn math_block_width<R: Measure>(rendered_width: Option<f32>, tex: &st
         Some(width) => width * MATH_BLOCK_SCALE,
         None => tex
             .lines()
-            .map(|line| measure_width::<R>(line, MATH_SOURCE_FONT_SIZE, iced::Font::MONOSPACE))
+            .map(|line| measure_width::<R>(line, math_source_font_size(), mono_font()))
             .fold(0.0, f32::max),
     }
 }

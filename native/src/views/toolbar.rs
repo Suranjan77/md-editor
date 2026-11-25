@@ -1,222 +1,223 @@
-//! The top bar.
+//! Top application toolbar: sidebar toggle, clickable path breadcrumbs, save badge and grouped action buttons.
 
-use iced::widget::{Button, Space, button, container, row, text, tooltip};
+use iced::widget::{Row, Space, button, row, text};
 use iced::{Alignment, Background, Border, Element, Length, Renderer, Theme};
 
+use crate::design::metrics::{RADIUS_SM, SPACE_0, SPACE_1, SPACE_2, SPACE_3};
+use crate::design::{TextRole, tokens};
 use crate::messages::{
-    EditorMessage, GraphMessage, InkMessage, Message, SearchMessage, ShellMessage, VaultMessage,
+    EditorMessage, GraphMessage, InkMessage, Message, SearchMessage, SettingsMessage, ShellMessage,
+    Shortcut, VaultMessage,
 };
-use crate::theme;
-use crate::views::icons::{self, Icon};
+use crate::shortcuts;
+use crate::ui::{
+    BadgeTone, Button, ButtonVariant, Icon, IconButton, badge, toolbar_frame, toolbar_separator,
+};
 
 /// Everything the top toolbar renders from.
 pub struct ToolbarProps<'a> {
     pub active_path: Option<&'a str>,
     pub active_pdf_path: Option<&'a str>,
     pub dirty: bool,
+    pub saving: bool,
+    pub save_failed: bool,
     pub sidebar_visible: bool,
     pub backlinks_visible: bool,
     pub graph_visible: bool,
     pub tracker_visible: bool,
+    pub settings_visible: bool,
     pub toc_visible: bool,
     pub toc_available: bool,
     pub split_view_active: bool,
     pub split_available: bool,
     pub ink_visible: bool,
+    pub region_focused: bool,
 }
 
 pub fn view<'a>(props: ToolbarProps<'a>) -> Element<'a, Message, Theme, Renderer> {
-    let ToolbarProps {
-        active_path,
-        active_pdf_path,
-        dirty,
-        sidebar_visible,
-        backlinks_visible,
-        graph_visible,
-        tracker_visible,
-        toc_visible,
-        toc_available,
-        split_view_active,
-        split_available,
-        ink_visible,
-    } = props;
-    let sidebar_toggle: Button<'_, Message, Theme, Renderer> = button(icons::view(
-        Icon::LayoutPanelLeft,
-        if sidebar_visible {
-            theme::ACCENT
-        } else {
-            theme::TEXT_MUTED
-        },
-        18.0,
-    ))
-    .on_press(Message::Vault(VaultMessage::SidebarToggle))
-    .padding(theme::SPACE_3)
-    .style(button::text);
+    let sidebar_btn = IconButton::new(Icon::LayoutPanelLeft, "Toggle sidebar")
+        .shortcut(shortcuts::chord(Shortcut::ToggleSidebar))
+        .selected(props.sidebar_visible)
+        .on_press(Message::Vault(VaultMessage::SidebarToggle))
+        .build();
 
-    let path_display = if let Some(path) = active_path.or(active_pdf_path) {
+    let breadcrumbs = build_breadcrumbs(props.active_path.or(props.active_pdf_path));
+
+    let status_pill: Element<'a, Message, Theme, Renderer> = if props.save_failed {
         row![
-            text(path)
-                .size(theme::TEXT_BASE)
-                .color(theme::TEXT_PRIMARY)
-                .font(iced::Font::default()),
-            text(if dirty {
-                " • Unsaved changes"
-            } else {
-                " • Saved"
-            })
-            .size(theme::TEXT_SM)
-            .color(theme::TEXT_MUTED),
+            badge("Save failed", BadgeTone::Danger, None),
+            Button::new("Retry")
+                .variant(ButtonVariant::Secondary)
+                .icon(Icon::Redo)
+                .on_press(Message::Shell(ShellMessage::RetrySave))
+                .build(),
         ]
-        .spacing(theme::SPACE_3)
+        .spacing(SPACE_2)
         .align_y(Alignment::Center)
-    } else {
-        row![
-            text("No file open")
-                .size(theme::TEXT_BASE)
-                .color(theme::TEXT_MUTED)
-        ]
-    };
-
-    let split_button: Element<'_, Message, Theme, Renderer> = if split_available {
-        button(icons::view(
-            Icon::Split,
-            if split_view_active {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            },
-            18.0,
-        ))
-        .on_press(Message::Shell(ShellMessage::SplitViewToggle))
-        .padding(theme::SPACE_3)
-        .style(button::text)
         .into()
+    } else if props.dirty {
+        badge(
+            if props.saving { "Saving…" } else { "Unsaved" },
+            BadgeTone::Warning,
+            None,
+        )
+    } else if props.active_path.is_some() {
+        badge("Saved", BadgeTone::Neutral, None)
     } else {
-        Space::new().width(Length::Fixed(0.0)).into()
+        Space::new().width(Length::Fixed(SPACE_0)).into()
     };
 
-    let toc_button: Element<'_, Message, Theme, Renderer> = if toc_available {
-        button(icons::view(
-            Icon::ListTree,
-            if toc_visible {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            },
-            18.0,
-        ))
-        .on_press(Message::Editor(EditorMessage::ToggleTOC))
-        .padding(theme::SPACE_3)
-        .style(button::text)
-        .into()
-    } else {
-        Space::new().width(Length::Fixed(0.0)).into()
-    };
-
-    let actions = row![
-        button(icons::view(Icon::Search, theme::TEXT_MUTED, 18.0))
+    let nav_group = row![
+        IconButton::new(Icon::Search, "Search vault")
+            .shortcut(shortcuts::chord(Shortcut::GlobalSearch))
             .on_press(Message::Search(SearchMessage::GlobalSearchOpen))
-            .padding(theme::SPACE_3)
-            .style(button::text),
-        button(icons::view(Icon::Command, theme::TEXT_MUTED, 18.0))
+            .build(),
+        IconButton::new(Icon::Command, "Command palette")
+            .shortcut(shortcuts::chord(Shortcut::CommandPalette))
             .on_press(Message::Shell(ShellMessage::CommandPaletteOpen))
-            .padding(theme::SPACE_3)
-            .style(button::text),
-        button(icons::view(
-            Icon::Network,
-            if graph_visible {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            },
-            18.0,
-        ))
-        .on_press(Message::Graph(GraphMessage::Toggle))
-        .padding(8)
-        .style(button::text),
-        button(icons::view(
-            Icon::Link,
-            if backlinks_visible {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            },
-            18.0,
-        ))
-        .on_press(Message::KeyboardShortcut(
-            crate::messages::Shortcut::ToggleBacklinks,
-        ))
-        .padding(8)
-        .style(button::text),
-        toc_button,
-        split_button,
-        tooltip(
-            button(icons::view(
-                Icon::Pen,
-                if ink_visible {
-                    theme::ACCENT
-                } else {
-                    theme::TEXT_MUTED
-                },
-                18.0,
-            ))
+            .build(),
+    ]
+    .spacing(SPACE_1)
+    .align_y(Alignment::Center);
+
+    let mut panels_row = Row::new().spacing(SPACE_1).align_y(Alignment::Center);
+    if props.split_available {
+        panels_row = panels_row.push(
+            IconButton::new(Icon::Split, "Split view")
+                .shortcut(shortcuts::chord(Shortcut::SplitView))
+                .selected(props.split_view_active)
+                .on_press(Message::Shell(ShellMessage::SplitViewToggle))
+                .build(),
+        );
+    }
+    if props.toc_available {
+        panels_row = panels_row.push(
+            IconButton::new(Icon::ListTree, "Outline")
+                .shortcut(shortcuts::chord(Shortcut::TableOfContents))
+                .selected(props.toc_visible)
+                .on_press(Message::Editor(EditorMessage::ToggleTOC))
+                .build(),
+        );
+    }
+    panels_row = panels_row.push(
+        IconButton::new(Icon::Link, "Backlinks")
+            .shortcut(shortcuts::chord(Shortcut::ToggleBacklinks))
+            .selected(props.backlinks_visible)
+            .on_press(Message::KeyboardShortcut(Shortcut::ToggleBacklinks))
+            .build(),
+    );
+
+    let workspaces_group = row![
+        IconButton::new(Icon::Network, "Knowledge graph")
+            .shortcut(shortcuts::chord(Shortcut::KnowledgeGraph))
+            .selected(props.graph_visible)
+            .on_press(Message::Graph(GraphMessage::Toggle))
+            .build(),
+        IconButton::new(Icon::Pen, "Handwriting canvas")
+            .shortcut(shortcuts::chord(Shortcut::Handwriting))
+            .selected(props.ink_visible)
             .on_press(Message::Ink(InkMessage::Toggle))
-            .padding(8)
-            .style(button::text),
-            container(
-                text("Handwriting  Ctrl I")
-                    .size(11)
-                    .color(theme::TEXT_SECONDARY)
+            .build(),
+        IconButton::new(Icon::Clock, "Study tracker")
+            .shortcut(shortcuts::chord(Shortcut::StudyTracker))
+            .selected(props.tracker_visible)
+            .on_press(Message::Shell(ShellMessage::TrackerToggle))
+            .build(),
+    ]
+    .spacing(SPACE_1)
+    .align_y(Alignment::Center);
+
+    let app_group = row![
+        IconButton::new(Icon::Gear, "Settings")
+            .shortcut(shortcuts::chord(Shortcut::Settings))
+            .selected(props.settings_visible)
+            .on_press(Message::Settings(SettingsMessage::Toggle))
+            .build(),
+    ]
+    .spacing(SPACE_1)
+    .align_y(Alignment::Center);
+
+    toolbar_frame(
+        vec![
+            sidebar_btn,
+            toolbar_separator(),
+            breadcrumbs,
+            status_pill,
+            Space::new().width(Length::Fill).into(),
+            nav_group.into(),
+            toolbar_separator(),
+            panels_row.into(),
+            toolbar_separator(),
+            workspaces_group.into(),
+            toolbar_separator(),
+            app_group.into(),
+        ],
+        props.region_focused,
+    )
+}
+
+fn build_breadcrumbs<'a>(path: Option<&'a str>) -> Element<'a, Message, Theme, Renderer> {
+    let t = tokens();
+    let Some(path) = path else {
+        return text("No document open")
+            .size(TextRole::Caption.size())
+            .color(t.fg_tertiary)
+            .font(TextRole::Caption.font())
+            .into();
+    };
+
+    let parts: Vec<&str> = path.split('/').collect();
+    let mut row = Row::new().spacing(SPACE_1).align_y(Alignment::Center);
+    let mut accum = String::new();
+
+    for (idx, part) in parts.iter().enumerate() {
+        if idx > 0 {
+            accum.push('/');
+            row = row.push(
+                text("/")
+                    .size(TextRole::Caption.size())
+                    .color(t.fg_tertiary)
+                    .font(TextRole::Caption.font()),
+            );
+        }
+        accum.push_str(part);
+        let is_last = idx + 1 == parts.len();
+        if is_last {
+            row = row.push(
+                text(*part)
+                    .size(TextRole::Caption.size())
+                    .color(t.fg_primary)
+                    .font(crate::design::fonts::UI_FONT_MEDIUM),
+            );
+        } else {
+            let folder_path = accum.clone();
+            let crumb = button(
+                text(*part)
+                    .size(TextRole::Caption.size())
+                    .color(t.fg_secondary)
+                    .font(TextRole::Caption.font()),
             )
-            .padding([4, 8])
-            .style(|_| container::Style {
-                background: Some(Background::Color(theme::BG_TERTIARY)),
-                border: Border {
-                    color: theme::BORDER,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            }),
-            tooltip::Position::Bottom,
-        ),
-        button(icons::view(
-            Icon::Clock,
-            if tracker_visible {
-                theme::ACCENT
-            } else {
-                theme::TEXT_MUTED
-            },
-            18.0
-        ))
-        .on_press(Message::Shell(ShellMessage::TrackerToggle))
-        .padding(theme::SPACE_3)
-        .style(button::text),
-    ]
-    .spacing(theme::SPACE_2);
+            .padding([SPACE_1 * 0.5, SPACE_1])
+            .on_press(Message::Vault(VaultMessage::SidebarFolderToggled(
+                folder_path,
+            )))
+            .style(move |_, status| {
+                let bg = matches!(status, button::Status::Hovered | button::Status::Pressed)
+                    .then_some(Background::Color(t.bg_raised));
+                button::Style {
+                    background: bg,
+                    text_color: t.fg_secondary,
+                    border: Border {
+                        radius: RADIUS_SM.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            });
+            row = row.push(crumb);
+        }
+        let _ = SPACE_3;
+    }
 
-    let content = row![
-        sidebar_toggle,
-        Space::new().width(Length::Fixed(16.0)),
-        path_display,
-        Space::new().width(Length::Fill),
-        actions,
-        Space::new().width(Length::Fixed(8.0)),
-    ]
-    .align_y(Alignment::Center)
-    .padding([theme::SPACE_2, theme::SPACE_4]);
-
-    container(content)
-        .width(Length::Fill)
-        .height(Length::Fixed(48.0))
-        .style(|_| container::Style {
-            background: Some(Background::Color(theme::BG_PRIMARY)),
-            border: Border {
-                color: theme::BORDER,
-                width: 1.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
+    row.into()
 }

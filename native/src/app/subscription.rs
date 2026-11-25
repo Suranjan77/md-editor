@@ -1,30 +1,40 @@
-//! Subscriptions: keyboard, timers, window events, pen input and the vault watcher.
+//! Subscriptions: keyboard, timers, OS theme, drag-and-drop, window events, pen input and vault watcher.
 
 use super::*;
 use crate::messages::{
-    EditorMessage, GraphMessage, InkMessage, PdfMessage, SearchMessage, ShellMessage, VaultMessage,
+    EditorMessage, GraphMessage, InkMessage, PdfMessage, SearchMessage, SettingsMessage,
+    ShellMessage, SidebarNavKey, TabsMessage, VaultMessage,
 };
 
 impl MdEditor {
     pub fn subscription(&self) -> Subscription<Message> {
-        // App-level keyboard handling. Returns `None` for keys we don't act on
-        // so unhandled keystrokes (ordinary text entry, handled by the focused
-        // editor widget) don't each spawn a redundant update cycle. The
-        // context-sensitive messages below are gated in their own handlers
-        // (e.g. PdfScrollBy only scrolls when the PDF pane is the active
-        // target, NameModalSubmitCurrent is a no-op without an open modal).
-        let keyboard = iced::event::listen_with(|event, status, _window_id| {
-            let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) =
-                event
-            else {
-                return None;
-            };
-            keyboard_message(&key, modifiers, status)
-        });
+        let sidebar_focused = self.ui.focused_region == crate::ui::FocusRegion::Sidebar
+            && self.vault.sidebar_visible
+            && self.ui.active_modal.is_none()
+            && !self.ui.command_palette_visible
+            && !self.search.visible;
+        let global_search_open = self.search.visible;
 
-        let toast = if let Some(text) = &self.ui.toast {
-            // Keyed on the text, so a new toast restarts the 3 s timer
-            // instead of inheriting what was left of the previous one's.
+        // App-level keyboard handling. Returns `None` for keys we don't act on
+        // so ordinary text entry (handled by the focused editor widget) doesn't
+        // spawn a redundant update cycle. `listen_with` takes a plain `fn`, so
+        // the context flags ride along via `with` instead of a capture.
+        let keyboard = iced::event::listen_with(|event, status, _window_id| match event {
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                Some((key, modifiers, status))
+            }
+            _ => None,
+        })
+        .with((sidebar_focused, global_search_open))
+        .filter_map(
+            |((sidebar_focused, global_search_open), (key, modifiers, status))| {
+                keyboard_message(&key, modifiers, status, sidebar_focused, global_search_open)
+            },
+        );
+
+        let toast = if let Some(text) = &self.ui.toast
+            && self.ui.toast_queue.last().is_none_or(|t| !t.persistent)
+        {
             iced::time::every(std::time::Duration::from_secs(3))
                 .with(text.clone())
                 .map(|_| Message::Shell(ShellMessage::ToastHide))
@@ -32,10 +42,6 @@ impl MdEditor {
             Subscription::none()
         };
 
-        // Armed only while there are unwritten edits, so an idle app ticks for
-        // nothing. The tick is finer than the debounce because its phase is
-        // independent of the last keystroke: polling at the debounce itself
-        // would let a write land up to two windows after typing stopped.
         let autosave = if self.editor.autosave_pending_since.is_some() {
             iced::time::every(crate::editor_state::AUTOSAVE_POLL)
                 .map(|_| Message::Editor(EditorMessage::AutosaveElapsed))
@@ -50,8 +56,6 @@ impl MdEditor {
             Subscription::none()
         };
 
-        // Vault writes and watcher notifications often arrive in bursts. Wait
-        // briefly, then build one graph snapshot away from the UI thread.
         let graph_refresh = if self.graph.visible && self.graph.refresh_due() {
             iced::time::every(std::time::Duration::from_millis(200))
                 .map(|_| Message::Graph(GraphMessage::Refresh))
@@ -69,6 +73,30 @@ impl MdEditor {
                 )) => Some(Message::Shell(ShellMessage::SplitViewDragEnd)),
                 _ => None,
             })
+        } else if self.ui.resizing_panel.is_some() {
+            iced::event::listen_with(|event, _status, _window_id| match event {
+                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                    Some(Message::Shell(ShellMessage::PanelResizeDrag(position.x)))
+                }
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::Shell(ShellMessage::PanelResizeEnd)),
+                _ => None,
+            })
+        } else if self.ui.dragging_tab.is_some() {
+            iced::event::listen_with(|event, _status, _window_id| match event {
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::Tabs(TabsMessage::DragEnd)),
+                _ => None,
+            })
+        } else if !self.ui.hovered_drop_files.is_empty() {
+            iced::event::listen_with(|event, _status, _window_id| match event {
+                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => Some(
+                    Message::Shell(ShellMessage::CursorMoved(position.x, position.y)),
+                ),
+                _ => None,
+            })
         } else {
             Subscription::none()
         };
@@ -77,37 +105,38 @@ impl MdEditor {
             iced::Event::Window(iced::window::Event::Resized(size)) => Some(Message::Shell(
                 ShellMessage::WindowResized(window_id, size.width, size.height),
             )),
-            // Captured so we can query the initial scale factor — a static
-            // HiDPI monitor may never emit `Rescaled`.
             iced::Event::Window(iced::window::Event::Opened { .. }) => {
                 Some(Message::Shell(ShellMessage::WindowOpened(window_id)))
             }
-            // A daemon keeps running with no windows, so closing has to be
-            // handled explicitly or the process would linger invisibly.
             iced::Event::Window(iced::window::Event::Closed) => {
                 Some(Message::Shell(ShellMessage::WindowClosed(window_id)))
             }
             iced::Event::Window(iced::window::Event::Rescaled(factor)) => Some(Message::Shell(
                 ShellMessage::WindowRescaled(window_id, factor),
             )),
-            // Intercepted rather than letting the window close directly, so the
-            // last few hundred milliseconds of typing are written before exit.
             iced::Event::Window(iced::window::Event::CloseRequested) => {
                 Some(Message::Shell(ShellMessage::WindowCloseRequested))
+            }
+            iced::Event::Window(iced::window::Event::FileHovered(path)) => {
+                Some(Message::Shell(ShellMessage::FileHovered(path)))
+            }
+            iced::Event::Window(iced::window::Event::FilesHoveredLeft) => {
+                Some(Message::Shell(ShellMessage::FilesHoveredLeft))
+            }
+            iced::Event::Window(iced::window::Event::FileDropped(path)) => {
+                Some(Message::Shell(ShellMessage::FileDropped(path)))
             }
             _ => None,
         });
 
-        // Watch the vault root for external changes so the index, search, and
-        // file tree stay current without reopening the vault. Keyed by the root
-        // path so it re-subscribes (and re-watches) when the vault changes.
+        let os_theme = iced::system::theme_changes()
+            .map(|mode| Message::Settings(SettingsMessage::SystemThemeChanged(mode)));
+
         let vault_watch = match self.vault.root.clone() {
             Some(root) => Subscription::run_with(root, vault_watch_stream),
             None => Subscription::none(),
         };
 
-        // Redraw every frame only while something is actually moving; a
-        // settled UI subscribes to nothing.
         let animation = if self.motion.is_animating() {
             iced::window::frames().map(|value| Message::Editor(EditorMessage::AnimationTick(value)))
         } else {
@@ -121,7 +150,6 @@ impl MdEditor {
             Subscription::none()
         };
 
-        // A wheel turn or a click takes the page back from a scroll in flight.
         let scroll_interrupt = if self.motion.editor_scroll.is_some() {
             iced::event::listen_with(|event, _status, _window_id| match event {
                 iced::Event::Mouse(
@@ -133,11 +161,6 @@ impl MdEditor {
             Subscription::none()
         };
 
-        // Captured pen samples. Deliberately always-on rather than gated on
-        // the surface being visible: the stream consumes the process-wide
-        // receiver, so tearing it down and rebuilding it would leave the
-        // second instance with nothing to read. Nothing is produced while the
-        // surface is hidden anyway — the window hook stops claiming pen input.
         let pen_input = Subscription::run_with("ink-pen", |_: &&str| crate::ink::pen::stream());
 
         Subscription::batch(vec![
@@ -151,22 +174,16 @@ impl MdEditor {
             physics_tick,
             mouse_drag,
             window_events,
+            os_theme,
             vault_watch,
             pen_input,
         ])
     }
 }
 
-/// Debounce window for coalescing filesystem-watcher events. Editors and tools
-/// often write a file as several rapid operations (write + rename of a temp
-/// file); coalescing avoids a re-index storm.
 pub(super) const VAULT_WATCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
 
-/// Stream factory for [`iced::Subscription::run_with`]: watches `root`
-/// recursively and emits a debounced [`VaultMessage::VaultFilesChanged`] listing the
-/// vault-relative paths that changed. Must be a plain `fn` (not a closure) to
-/// satisfy `run_with`; the root is threaded in via the `&String` argument.
-#[allow(clippy::ptr_arg)] // `run_with` passes its data back as `&String`
+#[allow(clippy::ptr_arg)]
 pub(super) fn vault_watch_stream(
     root: &String,
 ) -> std::pin::Pin<Box<dyn iced::futures::Stream<Item = Message> + Send>> {
@@ -197,17 +214,14 @@ pub(super) fn vault_watch_stream(
                 log::warn!("Failed to watch vault root {}: {e}", root_path.display());
                 return;
             }
-            // Hold the watcher for the lifetime of this stream; dropping it stops
-            // delivery.
             let _watcher = watcher;
 
             loop {
                 let Some(first) = rx.recv().await else {
-                    break; // sender dropped — watcher gone
+                    break;
                 };
                 let mut changed = std::collections::BTreeSet::new();
                 collect_changed_paths(&first, &root_path, &mut changed);
-                // Drain the burst within the debounce window.
                 while let Ok(Some(event)) =
                     tokio::time::timeout(VAULT_WATCH_DEBOUNCE, rx.recv()).await
                 {
@@ -220,7 +234,7 @@ pub(super) fn vault_watch_stream(
                         .await
                         .is_err()
                     {
-                        break; // receiver dropped — subscription ended
+                        break;
                     }
                 }
             }
@@ -228,8 +242,6 @@ pub(super) fn vault_watch_stream(
     ))
 }
 
-/// Collect the vault-relative paths touched by a watcher `event`, skipping
-/// access-only events, dotfiles, and excluded directories.
 pub(super) fn collect_changed_paths(
     event: &notify::Event,
     root: &std::path::Path,
@@ -243,7 +255,6 @@ pub(super) fn collect_changed_paths(
         let Ok(rel) = path.strip_prefix(root) else {
             continue;
         };
-        // Ignore dotfiles/dot-dirs and well-known heavy directories.
         let skip = rel.components().any(|c| {
             let s = c.as_os_str().to_string_lossy();
             s.starts_with('.')
@@ -259,13 +270,12 @@ pub(super) fn collect_changed_paths(
     }
 }
 
-/// The app-level message for a key press, or `None` for keys the app does not
-/// act on (ordinary text entry goes to the focused widget). `status` is
-/// whether a widget already captured the event.
 pub(super) fn keyboard_message(
     key: &iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
     status: iced::event::Status,
+    sidebar_focused: bool,
+    global_search_open: bool,
 ) -> Option<Message> {
     use iced::keyboard::Key;
     use iced::keyboard::key::Named;
@@ -273,19 +283,82 @@ pub(super) fn keyboard_message(
     if *key == Key::Named(Named::Escape) {
         return Some(Message::KeyboardShortcut(Shortcut::Escape));
     }
+    if *key == Key::Named(Named::F6) {
+        return if modifiers.shift() {
+            Some(Message::KeyboardShortcut(Shortcut::CycleFocusPrev))
+        } else {
+            Some(Message::KeyboardShortcut(Shortcut::CycleFocusNext))
+        };
+    }
+    if *key == Key::Named(Named::F11) {
+        return Some(Message::KeyboardShortcut(Shortcut::FocusMode));
+    }
+    if *key == Key::Named(Named::F2) && status != iced::event::Status::Captured {
+        return Some(Message::KeyboardShortcut(Shortcut::RenameEntry));
+    }
+
+    let ctrl = modifiers.command() || modifiers.control();
+    if ctrl {
+        match key {
+            Key::Named(Named::Tab) => {
+                return if modifiers.shift() {
+                    Some(Message::Tabs(TabsMessage::MruPrevious))
+                } else {
+                    Some(Message::Tabs(TabsMessage::MruNext))
+                };
+            }
+            Key::Named(Named::PageUp) => {
+                return if modifiers.shift() {
+                    Some(Message::Tabs(TabsMessage::MoveBy(-1)))
+                } else {
+                    Some(Message::Tabs(TabsMessage::Previous))
+                };
+            }
+            Key::Named(Named::PageDown) => {
+                return if modifiers.shift() {
+                    Some(Message::Tabs(TabsMessage::MoveBy(1)))
+                } else {
+                    Some(Message::Tabs(TabsMessage::Next))
+                };
+            }
+            _ => {}
+        }
+    }
+
     if *key == Key::Named(Named::Enter) {
+        if sidebar_focused && status != iced::event::Status::Captured {
+            return Some(Message::Vault(VaultMessage::SidebarKeyNav(
+                SidebarNavKey::Enter,
+            )));
+        }
         return Some(Message::Shell(ShellMessage::OverlaySubmitCurrent));
     }
-    if (modifiers.command() || modifiers.control())
-        && let Key::Character(c) = key.as_ref()
-    {
-        // A focused widget that acted on the chord (the editor's Ctrl+B
-        // bold, a text field's Ctrl+C) owns it; don't fire the app
-        // shortcut on top.
+
+    if ctrl && let Key::Character(c) = key.as_ref() {
         if status == iced::event::Status::Captured {
             return None;
         }
-        return match c {
+        let lower = c.to_ascii_lowercase();
+        if modifiers.shift() {
+            return match lower.as_str() {
+                "t" => Some(Message::KeyboardShortcut(Shortcut::ReopenTab)),
+                "f" => Some(Message::KeyboardShortcut(Shortcut::GlobalSearch)),
+                "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleBacklinks)),
+                "o" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
+                // Redo as most apps spell it; Ctrl+Y works too.
+                "z" => Some(Message::Ink(InkMessage::Redo)),
+                _ => None,
+            };
+        }
+        if let Some(digit) = lower
+            .chars()
+            .next()
+            .and_then(|ch| ch.to_digit(10))
+            .filter(|d| (1..=9).contains(d))
+        {
+            return Some(Message::Tabs(TabsMessage::SelectOrdinal(digit as usize)));
+        }
+        return match lower.as_str() {
             "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
             "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
             "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
@@ -294,22 +367,54 @@ pub(super) fn keyboard_message(
             "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
             "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar)),
             "g" => Some(Message::KeyboardShortcut(Shortcut::KnowledgeGraph)),
-            "t" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
+            "t" => Some(Message::KeyboardShortcut(Shortcut::StudyTracker)),
+            "w" => Some(Message::KeyboardShortcut(Shortcut::CloseTab)),
+            "," => Some(Message::KeyboardShortcut(Shortcut::Settings)),
+            "\\" => Some(Message::KeyboardShortcut(Shortcut::SplitView)),
             "i" => Some(Message::Ink(InkMessage::Toggle)),
-            // Undo/redo for the ink surface. These are no-ops while it
-            // is hidden, and the listener does not capture the event,
-            // so the editor's own handling of Ctrl+Z is unaffected.
             "z" => Some(Message::Ink(InkMessage::Undo)),
             "y" => Some(Message::Ink(InkMessage::Redo)),
             _ => None,
         };
     }
-    // Removes the ink selection; a no-op while the surface is hidden,
-    // and the listener does not capture, so the editor still sees the
-    // keystroke normally.
+
     if *key == Key::Named(Named::Delete) {
+        if sidebar_focused && status != iced::event::Status::Captured {
+            return None;
+        }
         return Some(Message::Ink(InkMessage::DeleteSelection));
     }
+
+    if global_search_open {
+        return match key {
+            Key::Named(Named::ArrowDown) => {
+                Some(Message::Search(SearchMessage::GlobalSearchMoveSelection(1)))
+            }
+            Key::Named(Named::ArrowUp) => Some(Message::Search(
+                SearchMessage::GlobalSearchMoveSelection(-1),
+            )),
+            _ => None,
+        };
+    }
+
+    if sidebar_focused && status != iced::event::Status::Captured {
+        return match key {
+            Key::Named(Named::ArrowDown) => Some(Message::Vault(VaultMessage::SidebarKeyNav(
+                SidebarNavKey::Down,
+            ))),
+            Key::Named(Named::ArrowUp) => Some(Message::Vault(VaultMessage::SidebarKeyNav(
+                SidebarNavKey::Up,
+            ))),
+            Key::Named(Named::ArrowLeft) => Some(Message::Vault(VaultMessage::SidebarKeyNav(
+                SidebarNavKey::Left,
+            ))),
+            Key::Named(Named::ArrowRight) => Some(Message::Vault(VaultMessage::SidebarKeyNav(
+                SidebarNavKey::Right,
+            ))),
+            _ => None,
+        };
+    }
+
     match key {
         Key::Named(Named::ArrowDown) => Some(Message::Pdf(PdfMessage::ScrollBy(ARROW_SCROLL))),
         Key::Named(Named::ArrowUp) => Some(Message::Pdf(PdfMessage::ScrollBy(-ARROW_SCROLL))),

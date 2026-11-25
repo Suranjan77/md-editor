@@ -35,7 +35,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(String::new()),
-                    color: theme::TEXT_MUTED,
+                    color: crate::design::tokens().doc_syntax,
                     is_syntax: true,
                     font_size: 13.0,
                     is_code: true,
@@ -66,7 +66,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(String::new()),
-                    color: theme::TEXT_MUTED,
+                    color: crate::design::tokens().doc_syntax,
                     is_syntax: true,
                     font_size: 14.0,
                     is_code: true,
@@ -107,7 +107,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(String::new()),
-                color: theme::WARNING,
+                color: crate::design::tokens().doc_math,
                 is_syntax: true,
                 is_math: true,
                 font_size: 16.0,
@@ -130,7 +130,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(inline_math.to_string()),
-                    color: theme::WARNING,
+                    color: crate::design::tokens().doc_math,
                     italic: true,
                     font_size: 16.0,
                     is_math: true,
@@ -149,7 +149,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(trimmed.to_string()),
-                    color: theme::WARNING,
+                    color: crate::design::tokens().doc_math,
                     italic: true,
                     font_size: 16.0,
                     is_math: true,
@@ -169,7 +169,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(String::new()),
-                color: theme::WARNING,
+                color: crate::design::tokens().doc_math,
                 is_syntax: true,
                 is_math: true,
                 font_size: 16.0,
@@ -187,7 +187,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: None,
-                color: theme::WARNING,
+                color: crate::design::tokens().doc_math,
                 italic: true,
                 font_size: 16.0,
                 is_math: true,
@@ -214,8 +214,11 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
             if is_separator {
                 // We can mark this as an empty row or skip spans, but let's just make it a row
-                sl.spans
-                    .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
+                sl.spans.push(StyledSpan::syntax(
+                    raw_line,
+                    crate::design::tokens().doc_syntax,
+                    16.0,
+                ));
             } else {
                 let mut parts = trimmed.split('|').collect::<Vec<_>>();
                 if parts.first() == Some(&"") {
@@ -352,7 +355,7 @@ pub fn highlight_code_spans(
     lang: Option<&str>,
 ) -> Vec<StyledSpan> {
     let Some((syntax_set, _)) = syntect_defaults() else {
-        return vec![code_span(line, theme::TEXT_PRIMARY)];
+        return vec![code_span(line, crate::design::tokens().doc_text)];
     };
 
     if highlighter.is_none() {
@@ -360,7 +363,7 @@ pub fn highlight_code_spans(
     }
 
     let Some(highlighter) = highlighter.as_mut() else {
-        return vec![code_span(line, theme::TEXT_PRIMARY)];
+        return vec![code_span(line, crate::design::tokens().doc_text)];
     };
 
     let terminated = format!("{line}\n");
@@ -379,12 +382,12 @@ pub fn highlight_code_spans(
                 })
                 .collect::<Vec<_>>();
             if spans.is_empty() {
-                vec![code_span(line, theme::TEXT_PRIMARY)]
+                vec![code_span(line, crate::design::tokens().doc_text)]
             } else {
                 spans
             }
         }
-        Err(_) => vec![code_span(line, theme::TEXT_PRIMARY)],
+        Err(_) => vec![code_span(line, crate::design::tokens().doc_text)],
     }
 }
 

@@ -1,8 +1,10 @@
-//! `Message`: one nested enum per feature family (routed by `app/mod.rs::update_inner`), plus `Shortcut` and `TrackerTab`.
+//! `Message`: one nested enum per feature family (routed by `app/mod.rs::update_inner`), plus `Shortcut`, `SettingsSection` and `TrackerTab`.
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Vault(VaultMessage),
+    Tabs(TabsMessage),
+    Settings(SettingsMessage),
     Graph(GraphMessage),
     Shell(ShellMessage),
     Editor(EditorMessage),
@@ -12,11 +14,85 @@ pub enum Message {
     KeyboardShortcut(Shortcut),
 }
 
-/// Vault lifecycle, the file tree, and the name/delete/link-note modals. Handled by `app/vault.rs`.
+/// Document tab strip and tab lifecycle. Handled by `app/tabs_handler.rs`.
+#[derive(Debug, Clone)]
+pub enum TabsMessage {
+    Activate(crate::tabs::TabId),
+    OpenBackground(String),
+    Close(crate::tabs::TabId),
+    CloseActive,
+    CloseOthers(crate::tabs::TabId),
+    Reopen,
+    Next,
+    Previous,
+    MruNext,
+    MruPrevious,
+    SelectOrdinal(usize),
+    MoveBy(isize),
+    DragStart(crate::tabs::TabId),
+    DragOver(usize),
+    DragEnd,
+    ToggleOverflowMenu,
+}
+
+/// Settings view sections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSection {
+    Appearance,
+    Editor,
+    Files,
+    Keyboard,
+    About,
+}
+
+/// Attachments destination mode in Settings -> Files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentsMode {
+    VaultRoot,
+    BesideNote,
+    Custom,
+}
+
+/// Application preferences. Handled by `app/settings_handler.rs`.
+#[derive(Debug, Clone)]
+pub enum SettingsMessage {
+    Toggle,
+    Close,
+    SelectSection(SettingsSection),
+    ThemeModeSelected(crate::design::ThemeMode),
+    SystemThemeChanged(iced::theme::Mode),
+    InterfaceScaleSelected(u32),
+    ReducedMotionSelected(crate::design::motion::ReducedMotionPref),
+    ReadingFontSelected(crate::design::ReadingFont),
+    EditorFontSizeChanged(f32),
+    ContentMeasureSelected(crate::design::ContentMeasure),
+    AttachmentsModeSelected(AttachmentsMode),
+    AttachmentsCustomChanged(String),
+    PickAttachmentsFolder,
+    AttachmentsFolderPicked(Option<String>),
+    ExcludedFoldersChanged(String),
+    /// Apply the edited excluded-folders list and re-index the vault.
+    ExcludedFoldersApply,
+}
+
+/// Keyboard navigation inside the file-tree sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarNavKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+}
+
+/// Vault lifecycle, the file tree, and the name/delete/link-note modals. Handled by `app/vault*.rs`.
 #[derive(Debug, Clone)]
 pub enum VaultMessage {
     OpenVaultDialog,
+    CreateVaultDialog,
     VaultOpened(Option<String>),
+    VaultCreated(Option<String>),
+    OpenRecentVault(String),
     VaultIndexed(
         u64,
         String,
@@ -24,12 +100,19 @@ pub enum VaultMessage {
     ),
     CreateFileDialog,
     CreateFolderDialog,
+    NewNoteInFolder(String),
+    NewFolderInFolder(String),
+    CreateNoteFromPalette(String),
     SidebarToggle,
+    SidebarFilterChanged(String),
+    SidebarKeyNav(SidebarNavKey),
     SidebarFileClicked(String),
     SidebarFolderToggled(String),
     /// Empty space in the file tree was clicked: drop the selection so new
     /// entries go to the vault root.
     SidebarSelectionCleared,
+    RevealInFileManager(String),
+    CopyRelativePath(String),
     NameModalInputChanged(String),
     NameModalSubmit(String),
     NameModalSubmitCurrent,
@@ -92,7 +175,16 @@ pub enum GraphMessage {
     Hovered(Option<String>),
 }
 
-/// Shell chrome: command palette, toasts, split view, windows, study tracker and presentations. Handled by `app/shell.rs`.
+/// Target surface of an open right-click context menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextMenuTarget {
+    SidebarEntry { path: String, is_dir: bool },
+    SidebarEmpty,
+    Tab(crate::tabs::TabId),
+    Editor,
+}
+
+/// Shell chrome: command palette, toasts, split view, resize handles, context menus, drag-and-drop, windows, study tracker and presentations.
 #[derive(Debug, Clone)]
 pub enum ShellMessage {
     CommandPaletteOpen,
@@ -114,8 +206,17 @@ pub enum ShellMessage {
     PptxZoomIn,
     PptxZoomOut,
     PptxZoomFit,
+    // Handled; the deck viewer's slide-number field is not built yet (UI overhaul §3).
+    #[allow(dead_code)]
+    PptxSlideInputChanged(String),
+    #[allow(dead_code)]
+    PptxSlideInputSubmit,
     /// Move this many slides; negative moves back.
     PptxStep(i32),
+    ImageZoomIn,
+    ImageZoomOut,
+    ImageZoomFit,
+    ImageZoomActual,
     TrackerToggle,
     TrackerStart,
     TrackerStop,
@@ -132,10 +233,27 @@ pub enum ShellMessage {
     TrackerSessionDelete(i64),
     ShowToast(String),
     ToastHide,
+    DismissToast(u64),
+    RetrySave,
     SplitViewToggle,
     SplitViewDragStart,
     SplitViewDragging(f32),
     SplitViewDragEnd,
+    SplitViewReset,
+    SidebarResizeStart,
+    SidePanelResizeStart,
+    PanelResizeDrag(f32),
+    PanelResizeEnd,
+    ResetSidebarWidth,
+    ResetSidePanelWidth,
+    OpenContextMenu(ContextMenuTarget, f32, f32),
+    CloseContextMenu,
+    CursorMoved(f32, f32),
+    FileHovered(std::path::PathBuf),
+    FilesHoveredLeft,
+    FileDropped(std::path::PathBuf),
+    FocusRegionNext,
+    FocusRegionPrev,
     WindowResized(iced::window::Id, f32, f32),
     WindowOpened(iced::window::Id),
     WindowClosed(iced::window::Id),
@@ -144,7 +262,7 @@ pub enum ShellMessage {
     WindowCloseRequested,
 }
 
-/// The Markdown editor, autosave, math rendering and the outline. Handled by `app/editor.rs`.
+/// The Markdown editor, autosave, math rendering, image insertion and the outline. Handled by `app/editor.rs`.
 #[derive(Debug, Clone)]
 pub enum EditorMessage {
     /// Ctrl+V in the editor: read the clipboard (off the UI thread) and paste
@@ -152,6 +270,12 @@ pub enum EditorMessage {
     Paste,
     /// What the clipboard held.
     Pasted(crate::platform::ClipboardPayload),
+    /// Open file dialog to pick images to insert at the caret.
+    InsertImageDialog,
+    /// Images picked from the file dialog.
+    ImagesPicked(Vec<std::path::PathBuf>),
+    /// Right-click inside the editor at window coordinates `(x, y)`.
+    OpenContextMenu(f32, f32),
     Command(crate::editor::buffer::EditorCommand),
     CommandNoScroll(crate::editor::buffer::EditorCommand),
     Save,
@@ -169,10 +293,11 @@ pub enum EditorMessage {
     AutosaveElapsed,
     /// A frame is being prepared; advance in-flight UI transitions.
     AnimationTick(std::time::Instant),
-    // tex, scale factor the bitmaps were rasterized for, render result
+    /// TeX, the display scale and the ink colour it was rasterized for, and the result.
     MathRendered(
         String,
         f32,
+        iced::Color,
         Result<crate::editor::renderer::MathRender, String>,
     ),
     ToggleTOC,
@@ -183,8 +308,20 @@ pub enum EditorMessage {
 #[derive(Debug, Clone)]
 pub enum PdfMessage {
     ZoomChanged(f32),
+    // The editable page/zoom fields and Fit-page button are handled but the PDF
+    // toolbar (`views/pdf_viewer.rs`) does not show them yet (UI overhaul §3).
+    #[allow(dead_code)]
+    ZoomInputChanged(String),
+    #[allow(dead_code)]
+    ZoomInputSubmit,
+    #[allow(dead_code)]
+    PageInputChanged(String),
+    #[allow(dead_code)]
+    PageInputSubmit,
     FitToWidth,
-    Loaded(u64, Result<u16, String>), // render generation, total pages or load error
+    #[allow(dead_code)]
+    FitToPage,
+    Loaded(u64, Result<u16, String>),
     PageSizesLoaded(u64, String, Vec<(f32, f32)>),
     Rendered(u64, u16, PageImage),
     RenderFailed(u64, u16),
@@ -195,10 +332,6 @@ pub enum PdfMessage {
     },
     LeftClicked(u16, f32, f32, iced::keyboard::Modifiers),
     RightClicked(u16, f32, f32),
-    // vault-relative path the TOC belongs to, outline entries, synthetic flag.
-    // Gated on the path (not the render generation): the TOC is a
-    // document-level artifact and must survive the zoom/fit generation bumps
-    // that happen while it is still being extracted.
     TocLoaded(String, Vec<md_editor_core::pdf::TocEntry>, bool),
     PageLinksLoaded(u64, u16, Vec<md_editor_core::pdf::LinkInfo>),
     ReferencesLoaded(String, Vec<md_editor_core::references::ReferenceLink>),
@@ -237,6 +370,10 @@ pub enum PdfMessage {
 pub enum SearchMessage {
     GlobalSearchOpen,
     Close,
+    // Handled; the find bar (`views/search.rs`) has no replace toggle or
+    // replace-one button yet (UI overhaul §3).
+    #[allow(dead_code)]
+    ToggleReplaceRow,
     QueryChanged(String),
     DebounceElapsed,
     ReplaceChanged(String),
@@ -244,8 +381,11 @@ pub enum SearchMessage {
     MatchCaseToggled(bool),
     Previous,
     Next,
+    #[allow(dead_code)]
+    ReplaceOne,
     ReplaceAll,
     ResultClicked(String),
+    GlobalSearchMoveSelection(isize),
     GlobalSearchSubmit,
 }
 
@@ -253,34 +393,19 @@ pub enum SearchMessage {
 #[derive(Debug, Clone)]
 pub enum InkMessage {
     Toggle,
-    /// Raw window handle, once resolved, so pen capture can be installed.
     PenHookReady(u64),
-    /// A batch of captured pen samples, in window-client physical pixels.
     PenSamples(Vec<crate::ink::pen::PenSample>),
-    /// Mouse fallback, in surface-local logical pixels.
     PointerDown(f32, f32),
     PointerMove(f32, f32),
     PointerUp,
-    /// Mouse moved over the canvas without drawing, in surface-local logical
-    /// pixels. Keeps the aiming indicators live for mouse users.
     HoverMoved(f32, f32),
     ToolSelected(crate::ink::Tool),
     EraserModeSelected(crate::ink::EraserMode),
     PaperSelected(crate::ink::document::PaperStyle),
     ColorSelected(iced::Color),
     SizeSelected(f32),
-    /// Shift the view by a screen-space delta.
-    Pan {
-        dx: f32,
-        dy: f32,
-    },
-    /// Zoom about a surface-local anchor, in scroll-wheel notches.
-    Zoom {
-        x: f32,
-        y: f32,
-        notches: f32,
-    },
-    /// Zoom about the middle of the surface, in wheel-equivalent notches.
+    Pan { dx: f32, dy: f32 },
+    Zoom { x: f32, y: f32, notches: f32 },
     ZoomStep(f32),
     ResetView,
     DeleteSelection,
@@ -294,6 +419,18 @@ pub enum InkMessage {
 impl From<VaultMessage> for Message {
     fn from(message: VaultMessage) -> Self {
         Message::Vault(message)
+    }
+}
+
+impl From<TabsMessage> for Message {
+    fn from(message: TabsMessage) -> Self {
+        Message::Tabs(message)
+    }
+}
+
+impl From<SettingsMessage> for Message {
+    fn from(message: SettingsMessage) -> Self {
+        Message::Settings(message)
     }
 }
 
@@ -333,9 +470,7 @@ impl From<InkMessage> for Message {
     }
 }
 
-/// A rendered PDF page. Wrapped so `Debug` prints its size, not its pixels:
-/// iced formats every message for its debug spans (Comet, the e2e
-/// telemetry), and a derived `Debug` of a page bitmap took ~100 ms.
+/// A rendered PDF page. Wrapped so `Debug` prints its size, not its pixels.
 #[derive(Clone)]
 pub struct PageImage(pub image::DynamicImage);
 
@@ -360,8 +495,14 @@ pub enum Shortcut {
     Save,
     OpenVault,
     NewFile,
+    InsertImage,
     Search,
+    GlobalSearch,
     CommandPalette,
+    CloseTab,
+    ReopenTab,
+    NextTab,
+    PreviousTab,
     ToggleSidebar,
     ToggleBacklinks,
     KnowledgeGraph,
@@ -370,5 +511,9 @@ pub enum Shortcut {
     StudyTracker,
     SplitView,
     Handwriting,
+    Settings,
+    RenameEntry,
+    CycleFocusNext,
+    CycleFocusPrev,
     Escape,
 }

@@ -475,7 +475,7 @@ is drawn. So:
    caret is within a comfort margin (two body rows, or a quarter of the viewport) of an
    edge, and then only by the amount that restores the margin; `Center` puts it mid-view.
    The target is clamped to the scrollable range and reached with a critically damped
-   `Spring` (`motion.rs`), retargeted with its momentum if typing continues mid-glide.
+   `Spring` (`design/motion.rs`), retargeted with its momentum if typing continues mid-glide.
    A jump further than two viewports cuts to one viewport short and glides the rest. A wheel
    turn or click cancels the glide.
 

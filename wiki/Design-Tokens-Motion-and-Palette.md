@@ -1,83 +1,47 @@
-# Design Tokens, Motion & Command Palette
+# Design System, Motion & Command Palette
 
-MD Editor gets its polish from three small, strict systems: a token set that leaves no room
-for arbitrary numbers, a motion vocabulary of one curve and three durations, and a fuzzy
-matcher whose scores are comparable across commands and files.
-
----
-
-## 1. Design Tokens (`native/src/theme.rs`)
-
-Everything the chrome draws — sidebar, toolbar, panels, modals, tracker — takes its colour,
-size, spacing, and radius from this one module. The module's own comment records why: the
-app had *eleven* distinct font sizes and *seventeen* distinct spacing values before the
-scales existed, and that is the visual noise that reads as "unpolished" without ever being
-nameable.
-
-Document typography — heading sizes and code/math scale *inside* a note — is a separate
-concern owned by the markdown renderer.
-
-### The six-step type scale
-
-| Token | Size | Intended use |
-| :--- | :--- | :--- |
-| `TEXT_XS` | 8.0 | Fine print: badges, counters, gutter numbers |
-| `TEXT_SM` | 10.0 | Secondary text: captions, metadata, tree affordances |
-| `TEXT_BASE` | 11.0 | Default UI text: controls, button labels, palette rows |
-| `TEXT_MD` | 14.0 | Emphasised UI text and section headings |
-| `TEXT_LG` | 16.0 | Panel and dialog titles |
-| `TEXT_DISPLAY` | 42.0 | The welcome-screen wordmark — deliberately the only display size |
-
-### The seven-step spacing scale
-
-A 2px grid, growing roughly geometrically so adjacent steps stay visibly distinct.
-
-```
-SPACE_0  (0px)  ─── flush, no gap
-SPACE_1  (2px)  ─── hairline separation between tightly related items
-SPACE_2  (4px)  ─── within a control: icon to label
-SPACE_3  (6px)  ─── default gap between siblings; default control padding
-SPACE_4 (12px)  ─── between grouped rows; comfortable control padding
-SPACE_5 (16px)  ─── between groups within a panel
-SPACE_6 (24px)  ─── between major regions
-```
-
-### Corner radii
-
-- `RADIUS_SM` (2.0) — chips, badges, inline markers.
-- `RADIUS_MD` (6.0) — buttons, inputs, list rows.
-- `RADIUS_LG` (10.0) — panels, cards, modals.
-
-### Colour palette
-
-The app ships one theme, a dark palette registered with iced as *"MD Editor Premium Dark"*.
-
-| Swatch | Token | Hex | Role |
-| :---: | :--- | :--- | :--- |
-| ![#0d0e10](https://dummyimage.com/16x16/0d0e10/0d0e10.png) | `BG_PRIMARY` | `#0d0e10` | Window and panel ground |
-| ![#181a1d](https://dummyimage.com/16x16/181a1d/181a1d.png) | `BG_SECONDARY` | `#181a1d` | Raised surfaces |
-| ![#23262b](https://dummyimage.com/16x16/23262b/23262b.png) | `BG_TERTIARY` | `#23262b` | Inputs, hovered rows |
-| ![#334b47](https://dummyimage.com/16x16/334b47/334b47.png) | `BG_SURFACE` | `#334b47` | Selected/active surface |
-| ![#45484e](https://dummyimage.com/16x16/45484e/45484e.png) | `BORDER` | `#45484e` | Standard borders |
-| ![#1d2024](https://dummyimage.com/16x16/1d2024/1d2024.png) | `BORDER_SUBTLE` | `#1d2024` | Hairline dividers |
-| ![#e3e5ed](https://dummyimage.com/16x16/e3e5ed/e3e5ed.png) | `TEXT_PRIMARY` | `#e3e5ed` | Body and default UI text |
-| ![#a9abb2](https://dummyimage.com/16x16/a9abb2/a9abb2.png) | `TEXT_SECONDARY` | `#a9abb2` | Secondary text |
-| ![#9d9ea3](https://dummyimage.com/16x16/9d9ea3/9d9ea3.png) | `TEXT_MUTED` | `#9d9ea3` | Captions, placeholders, disabled |
-| ![#b1ccc6](https://dummyimage.com/16x16/b1ccc6/b1ccc6.png) | `ACCENT` | `#b1ccc6` | Primary accent, active state |
-| ![#cde8e2](https://dummyimage.com/16x16/cde8e2/cde8e2.png) | `ACCENT_SECONDARY` | `#cde8e2` | Lighter accent |
-| ![#b1ccc6](https://dummyimage.com/16x16/b1ccc6/b1ccc6.png) | `ACCENT_GLOW` | `#b1ccc6` @ 50% | Focus rings, rules |
-| ![#b1ccc6](https://dummyimage.com/16x16/b1ccc6/b1ccc6.png) | `ACCENT_DIM` | `#b1ccc6` @ 20% | Subtle accent fills |
-| ![#ee7d77](https://dummyimage.com/16x16/ee7d77/ee7d77.png) | `DANGER` | `#ee7d77` | Destructive actions, errors |
-| ![#d9f2d2](https://dummyimage.com/16x16/d9f2d2/d9f2d2.png) | `SUCCESS` | `#d9f2d2` | Confirmations |
-| ![#bfdad4](https://dummyimage.com/16x16/bfdad4/bfdad4.png) | `WARNING` | `#bfdad4` | Cautions |
-
-`fade(color, opacity)` scales a colour's own alpha. Fading a whole overlay means scaling
-every colour it draws by the same factor, and routing that through one helper is what keeps
-a half-faded panel internally consistent instead of some parts leading others.
+MD Editor gets its polish from three small, strict systems: a design system that leaves no
+room for arbitrary numbers or colours, a motion vocabulary of one curve and three durations,
+and a fuzzy matcher whose scores are comparable across commands and files.
 
 ---
 
-## 2. Motion (`native/src/motion.rs`)
+## 1. Design system (`native/src/design/`, `native/src/ui/`)
+
+The specification is [`docs/design-system/md-editor/MASTER.md`](../docs/design-system/md-editor/MASTER.md)
+with per-surface overrides in `pages/` (editor, viewers, graph, ink, tracker). The code:
+
+| Module | Holds |
+| :--- | :--- |
+| `design/palette.rs` | `Tokens`: the semantic colour roles (`bg.*`, `fg.*`, `border.*`, `accent`, `status.*`, `doc.*`, `viewer_ground`) as two tables, `DARK` and `LIGHT`; `ContentHue`, the user-content palette (highlight colours) that does not change with the theme; `fade()` |
+| `design/type_scale.rs` | `TextRole` (`Caption`, `Label`, `Body`, `BodyStrong`, `TitleSm`, `Title`, `Heading`, `Display`, `Mono*`): size, line height and font per role, scaled by the interface scale, never below 12px |
+| `design/metrics.rs` | The 4px spacing grid `SPACE_0` … `SPACE_7`, control and icon sizes, radii, `Elevation` shadows, toolbar/tab/status heights, panel default widths and drag limits, dialog widths |
+| `design/fonts.rs` | The bundled faces: Inter (UI and sans reading), JetBrains Mono (code, figures), Source Serif (serif reading) |
+| `design/motion.rs` | Durations, easing, reduced motion, the panel `Motion` state and `Spring` (section 2) |
+| `design/mod.rs` | The runtime settings: theme mode and active theme (`tokens()` returns the active table), interface scale, reading font, editor font size, line width, and `theme_revision()`, which caches fold in so a change repaints everything |
+| `design/setting.rs` | `Setting`: those values are process-wide in the app and per-thread under `cargo test`, so tests that switch theme or size do not disturb each other |
+| `ui/` | The components (`Button`, `IconButton`, `TextField`, `Segmented`, `Toggle`, `Menu`, `Dialog`, `Toast`, `Panel`, `TabStrip`, `StatusBar`, `TreeRow`, `ListRow`, …), built only from the above. `ui/gallery.rs` renders every one in both themes at 90/100/130% |
+
+Rules, enforced by tests in `design/tests.rs`: every documented foreground/background pair
+meets WCAG contrast in both themes; no UI role is below 12px; `ui/` has no colour or motion
+literals, and `views/` and `app/` have no colour literals.
+
+Two rules about colour:
+
+- **Chrome follows the theme, content does not.** Highlight colours on a PDF page, ink on
+  the handwriting paper and the content of slides keep their colours in both themes.
+- **Never colour alone.** Selection, status and kinds always pair the colour with an icon,
+  a label, a filled glyph or an outline (the active find match has an outline; graph kinds
+  have icons in the legend and inspector).
+
+The editor reads its typography from the same settings: `editor/renderer/metrics.rs`
+scales the highlighter's sizes to the chosen body size (`scaled`), caps the column at the
+chosen line width (`max_content_width`), and `measure::body_font` picks Inter or Source
+Serif.
+
+---
+
+## 2. Motion (`native/src/design/motion.rs`)
 
 Before this module the app had no motion at all: panels appeared and vanished between one
 frame and the next. Nothing is *missing* from a snapshot of an instant UI — it just feels
@@ -97,21 +61,21 @@ landing a toast is. Symmetric or accelerating curves read as mechanical by compa
 ### Three durations
 
 ```
-FAST    (120ms) ─── small, frequent transitions: a toast arriving, a chip changing state
-OVERLAY (140ms) ─── overlays that cover the workspace: the command palette, modals
-PANEL   (180ms) ─── layout-level transitions: a side panel opening or closing
+FAST (100ms) ─── small, frequent transitions: a toast arriving, a chip changing state
+BASE (160ms) ─── layout-level transitions: a side panel opening or closing
+SLOW (220ms) ─── overlays that cover the workspace: the command palette
 ```
+
+Exits run at 65% of their entry (`exit_duration`). Everything goes through `duration()`,
+which returns zero under reduced motion (Settings → Appearance, defaulting to the OS
+preference).
 
 ### Panel widths
 
 A panel's open width must match the width it actually lays out at, or the clip that produces
-the slide crops it permanently:
-
-```
-SIDEBAR_WIDTH   260.0   (views::sidebar)
-TOC_WIDTH       250.0   (views::toc)
-BACKLINKS_WIDTH 220.0   (views::backlinks)
-```
+the slide crops it permanently. Widths are the user's (drag the split handles; double-click
+resets to `SIDEBAR_DEFAULT_WIDTH` / `SIDE_PANEL_DEFAULT_WIDTH`), so `MdEditor::update` copies
+them into `Motion`'s `*_target_width` before each sync.
 
 ### The `Motion` struct
 

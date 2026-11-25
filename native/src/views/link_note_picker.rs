@@ -1,18 +1,21 @@
-//! The picker for attaching a PDF highlight to a note.
+//! Picker body for attaching a PDF highlight to an existing or new Markdown note.
 
-use iced::advanced::text::Wrapping;
-use iced::widget::{Column, Space, button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Background, Border, Color, Element, Length, Renderer, Theme};
+use iced::widget::{Column, column, container, scrollable, text};
+use iced::{Background, Border, Element, Length, Renderer, Theme};
 
+use crate::design::metrics::{PICKER_LIST_HEIGHT, RADIUS_MD, SPACE_1, SPACE_2, SPACE_3};
+use crate::design::{TextRole, tokens};
 use crate::messages::{Message, VaultMessage};
-use crate::theme;
-use crate::views::icons::{self, Icon};
+use crate::ui::{Icon, ListRowProps, TextField, list_row};
 
 pub fn view<'a>(
-    input_value: &str,
-    search_query: &str,
+    input_value: &'a str,
+    modal_error: Option<&'a str>,
+    search_query: &'a str,
     vault_entries: &'a [md_editor_core::types::FileEntry],
 ) -> Element<'a, Message, Theme, Renderer> {
+    let t = tokens();
+
     let mut entries: Vec<&md_editor_core::types::FileEntry> = vault_entries
         .iter()
         .filter(|entry| is_pickable_note_target(entry) && matches_query(&entry.path, search_query))
@@ -26,66 +29,81 @@ pub fn view<'a>(
 
     let mut items: Vec<Element<'a, Message, Theme, Renderer>> = Vec::new();
     if search_query.trim().is_empty() || matches_query("Vault root", search_query) {
-        items.push(picker_row(
-            "",
+        let selected = input_value.is_empty() || !input_value.contains('/');
+        items.push(list_row(ListRowProps::simple(
             "Vault root",
-            true,
-            input_value.is_empty() || !input_value.contains('/'),
-        ));
+            Some(Icon::Folder),
+            selected,
+            Message::Vault(VaultMessage::PdfLinkNoteFolderSelected(String::new())),
+        )));
     }
 
     for entry in entries {
         let selected = normalize_for_compare(input_value) == normalize_for_compare(&entry.path);
-        items.push(picker_row(&entry.path, &entry.path, entry.is_dir, selected));
+        let msg = if entry.is_dir {
+            Message::Vault(VaultMessage::PdfLinkNoteFolderSelected(entry.path.clone()))
+        } else {
+            Message::Vault(VaultMessage::PdfLinkNoteFileSelected(entry.path.clone()))
+        };
+        let leading = if entry.is_dir {
+            Icon::Folder
+        } else {
+            Icon::FileText
+        };
+        items.push(list_row(ListRowProps::simple(
+            &entry.path,
+            Some(leading),
+            selected,
+            msg,
+        )));
     }
 
     let list: Element<'a, Message, Theme, Renderer> = if items.is_empty() {
-        column![text("No matching folders or markdown notes.").color(theme::TEXT_MUTED)].into()
+        container(
+            text("No matching folders or notes.")
+                .size(TextRole::Caption.size())
+                .color(t.fg_tertiary)
+                .font(TextRole::Caption.font()),
+        )
+        .padding(SPACE_3)
+        .into()
     } else {
-        Column::with_children(items).spacing(theme::SPACE_1).into()
+        Column::with_children(items).spacing(SPACE_1 * 0.5).into()
     };
 
+    let mut path_field = TextField::new("pdf-notes/example.md", input_value)
+        .on_input(|value| Message::Vault(VaultMessage::NameModalInputChanged(value)));
+    if let Some(err) = modal_error {
+        path_field = path_field.error(Some(err.to_string()));
+    }
+
     column![
-        text("Link PDF Highlight")
-            .size(theme::TEXT_LG)
-            .color(theme::TEXT_PRIMARY),
-        text("Select an existing note, or select a folder and edit the note filename.")
-            .size(theme::TEXT_SM)
-            .color(theme::TEXT_MUTED),
-        text_input("Search folders and notes...", search_query)
+        text("Select an existing note, or choose a folder and customize the filename.")
+            .size(TextRole::Caption.size())
+            .color(t.fg_secondary)
+            .font(TextRole::Caption.font()),
+        TextField::search("Search folders and notes…", search_query)
             .on_input(|value| Message::Vault(VaultMessage::PdfLinkNotePickerSearchChanged(value)))
-            .padding(theme::SPACE_4),
-        container(scrollable(list).height(Length::Fixed(300.0)))
-            .height(Length::Fixed(300.0))
-            .padding(theme::SPACE_3)
-            .style(|_| container::Style {
-                background: Some(Background::Color(theme::BG_PRIMARY)),
+            .build(),
+        container(scrollable(list).height(Length::Fixed(PICKER_LIST_HEIGHT)))
+            .height(Length::Fixed(PICKER_LIST_HEIGHT))
+            .padding(SPACE_2)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(t.bg_canvas)),
                 border: Border {
-                    color: theme::BORDER,
+                    color: t.border_subtle,
                     width: 1.0,
-                    radius: theme::RADIUS_MD.into(),
+                    radius: RADIUS_MD.into(),
                 },
                 ..Default::default()
             }),
-        text_input("pdf-notes/example.md", input_value)
-            .on_input(|value| Message::Vault(VaultMessage::NameModalInputChanged(value)))
-            .padding(theme::SPACE_4),
-        row![
-            button(text("Cancel").size(theme::TEXT_BASE))
-                .on_press(Message::Vault(VaultMessage::NameModalCancel))
-                .padding([theme::SPACE_3, theme::SPACE_6])
-                .style(button::text),
-            button(text("Link Note").size(theme::TEXT_BASE))
-                .on_press(Message::Vault(VaultMessage::NameModalSubmit(
-                    input_value.to_string()
-                )))
-                .padding([theme::SPACE_3, theme::SPACE_6])
-                .style(button::primary),
-        ]
-        .spacing(theme::SPACE_4)
-        .align_y(Alignment::Center)
+        text("Target note path")
+            .size(TextRole::Label.size())
+            .color(t.fg_secondary)
+            .font(TextRole::Label.font()),
+        path_field.build(),
     ]
-    .spacing(theme::SPACE_4)
+    .spacing(SPACE_3)
     .into()
 }
 
@@ -101,57 +119,6 @@ fn matches_query(path: &str, query: &str) -> bool {
         .split_whitespace()
         .map(str::to_lowercase)
         .all(|term| haystack.contains(&term))
-}
-
-fn picker_row<'a>(
-    path: &str,
-    label: &'a str,
-    is_dir: bool,
-    selected: bool,
-) -> Element<'a, Message, Theme, Renderer> {
-    let icon = if is_dir { Icon::Folder } else { Icon::FileText };
-    let color = if selected {
-        theme::TEXT_PRIMARY
-    } else {
-        theme::TEXT_SECONDARY
-    };
-    let msg = if is_dir {
-        Message::Vault(VaultMessage::PdfLinkNoteFolderSelected(path.to_string()))
-    } else {
-        Message::Vault(VaultMessage::PdfLinkNoteFileSelected(path.to_string()))
-    };
-
-    let content = row![
-        icons::view(icon, color, 15.0),
-        text(label)
-            .size(theme::TEXT_BASE)
-            .color(color)
-            .wrapping(Wrapping::WordOrGlyph)
-            .width(Length::Fill),
-        Space::new().width(Length::Fixed(1.0)),
-    ]
-    .spacing(theme::SPACE_3)
-    .align_y(Alignment::Center);
-
-    let style = move |theme: &Theme, status: button::Status| {
-        let mut style = button::text(theme, status);
-        style.border.radius = 6.0.into();
-        if selected {
-            style.background = Some(Background::Color(crate::theme::BG_TERTIARY));
-            style.border.color = crate::theme::BORDER;
-            style.border.width = 1.0;
-        } else if status == button::Status::Hovered {
-            style.background = Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)));
-        }
-        style
-    };
-
-    button(content)
-        .on_press(msg)
-        .padding([theme::SPACE_3, theme::SPACE_4])
-        .width(Length::Fill)
-        .style(style)
-        .into()
 }
 
 fn normalize_for_compare(path: &str) -> String {

@@ -127,6 +127,23 @@ impl MdEditor {
         self.apply_pdf_zoom(next_zoom, current_page, relative_ratio, is_initial)
     }
 
+    /// `PdfMessage::FitToPage`: zoom so the entire current page fits vertically inside the viewport.
+    pub(super) fn on_pdf_fit_to_page(&mut self) -> Task<Message> {
+        let current_page = self.pdf.page_at_scroll(self.pdf.scroll_y);
+        self.pdf.fit_to_width = false;
+        let (_, page_h) = self
+            .pdf
+            .page_sizes
+            .get(current_page as usize)
+            .and_then(|s| *s)
+            .or_else(|| self.pdf.first_page_size())
+            .unwrap_or((612.0, 792.0));
+        let available_h = (self.ui.window_height - 140.0).max(240.0);
+        let next_zoom = (available_h / page_h.max(1.0)).clamp(0.25, 4.0);
+        let next_zoom = (next_zoom * 100.0).round() / 100.0;
+        self.apply_pdf_zoom(next_zoom, current_page, 0.0, true)
+    }
+
     /// How far into `page` the viewport top sits, as a fraction of the page height.
     fn pdf_scroll_ratio_in_page(&self, page: u16) -> f32 {
         if self.pdf.scroll_y < PDF_PAGE_LIST_PADDING {

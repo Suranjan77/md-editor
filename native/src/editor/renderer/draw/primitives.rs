@@ -9,7 +9,7 @@ use super::super::measure::shaping_for;
 use super::super::metrics::LINE_BOX_FACTOR;
 use super::super::scroll::{ScrollExtent, scrollbar_geometry};
 use super::super::{Measure, State};
-use crate::theme;
+use crate::editor::renderer::measure::body_font;
 
 const SCROLLBAR_THICKNESS: f32 = 4.0;
 
@@ -50,7 +50,7 @@ impl TextRun {
             content: content.into(),
             bounds,
             size,
-            font: iced::Font::DEFAULT,
+            font: body_font(),
             align_x: Horizontal::Left,
             align_y: Vertical::Top,
             wrapping: text::Wrapping::None,
@@ -153,7 +153,7 @@ pub(super) fn paint_scrollbar<R: Measure>(
             height: SCROLLBAR_THICKNESS,
         },
         radius,
-        Color::from_rgba(1.0, 1.0, 1.0, 0.06),
+        crate::design::fade(crate::design::tokens().fg_primary, 0.06),
     );
     fill(
         renderer,
@@ -164,7 +164,7 @@ pub(super) fn paint_scrollbar<R: Measure>(
             height: SCROLLBAR_THICKNESS,
         },
         radius,
-        theme::ACCENT_DIM,
+        crate::design::fade(crate::design::tokens().fg_tertiary, 0.6),
     );
 }
 

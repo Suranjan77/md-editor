@@ -1,10 +1,10 @@
-//! The inspector panel: the selected node, its links, related notes and vault insights.
+//! The inspector panel: the selected node, its links, related notes and vault insights, as a standard right `Panel`.
 
 use super::*;
+use crate::design::metrics::{ControlSize, SPACE_1, SPACE_2, SPACE_3};
 use crate::messages::GraphMessage;
+use crate::ui::{Button, ListRowProps, PanelSide, list_row, panel, stat_card};
 use iced::widget::column;
-
-// ─────────────────────────────── inspector ──────────────────────────
 
 pub(super) fn inspector<'a>(state: &'a GraphState) -> Element<'a, Message> {
     let selected = state
@@ -15,92 +15,109 @@ pub(super) fn inspector<'a>(state: &'a GraphState) -> Element<'a, Message> {
     // Node detail and vault-wide insights are alternatives, not a stack: a
     // selected node gets the whole panel, and the insight lists come back the
     // moment nothing is selected. That keeps the panel one screen tall.
-    let content = match selected {
-        Some(node) => node_card(state, node),
-        None => insights(state),
-    };
+    let (title, actions, content): (&str, Vec<Element<'a, Message>>, Element<'a, Message>) =
+        match selected {
+            Some(node) => (
+                "Node",
+                vec![
+                    IconButton::new(Icon::X, "Clear selection")
+                        .size(ControlSize::Sm)
+                        .on_press(Message::Graph(GraphMessage::NodeSelected(None)))
+                        .build(),
+                ],
+                node_card(state, node),
+            ),
+            None => ("Overview", Vec::new(), insights(state)),
+        };
 
-    container(scrollable(container(content).padding(11)).height(Length::Fill))
-        .width(Length::Fixed(INSPECTOR_WIDTH))
-        .height(Length::Fill)
-        .style(panel_style)
-        .into()
+    container(panel(
+        title,
+        None,
+        actions,
+        scrollable(container(content).padding(SPACE_3)).height(Length::Fill),
+        PanelSide::Right,
+        false,
+    ))
+    .width(Length::Fixed(INSPECTOR_WIDTH))
+    .height(Length::Fill)
+    .into()
 }
 
 pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Element<'a, Message> {
+    let t = tokens();
     let kind_label = match node.kind {
         GraphNodeKind::Markdown => "Markdown note",
         GraphNodeKind::Pdf => "PDF reference",
         GraphNodeKind::Missing => "Unresolved link target",
     };
+    let kind_icon = match node.kind {
+        GraphNodeKind::Markdown => Icon::FileText,
+        GraphNodeKind::Pdf => Icon::FilePdf,
+        GraphNodeKind::Missing => Icon::WarningCircle,
+    };
     let pinned = state.is_pinned(&node.path);
 
     let header = column![
         row![
-            text("●").size(9).color(kind_color(node.kind)),
-            text(kind_label).size(10).color(kind_color(node.kind)),
-            Space::new().width(Length::Fill),
-            button(text("Clear").size(10))
-                .on_press(Message::Graph(GraphMessage::NodeSelected(None)))
-                .padding([3, 7])
-                .style(ghost_style),
+            icon(kind_icon, IconSize::Sm.px(), kind_color(node.kind)),
+            role_text(kind_label, TextRole::Caption, t.fg_secondary),
         ]
-        .spacing(5)
+        .spacing(SPACE_1)
         .align_y(Alignment::Center),
-        text(node.label.clone()).size(16).color(theme::TEXT_PRIMARY),
-        text(node.path.clone()).size(9).color(theme::TEXT_MUTED),
+        role_text(node.label.clone(), TextRole::Title, t.fg_primary),
+        role_text(node.path.clone(), TextRole::MonoCaption, t.fg_tertiary),
     ]
-    .spacing(4);
+    .spacing(SPACE_1);
 
     let actions = row![
-        button(text("Open note").size(11))
+        Button::primary("Open")
+            .size(ControlSize::Sm)
+            .icon(Icon::ArrowSquareOut)
             .on_press_maybe(
                 node.exists
                     .then(|| Message::Graph(GraphMessage::NodeOpen(node.path.clone())))
             )
-            .padding([7, 12])
-            .style(primary_style),
-        hinted(
-            icon_button(
-                Icon::Target,
-                false,
-                true,
-                Message::Graph(GraphMessage::NodeFocused(node.path.clone())),
-            ),
-            "Center on this node",
-        ),
-        hinted(
-            icon_button(
-                Icon::Pin,
-                pinned,
-                true,
-                Message::Graph(GraphMessage::PinToggled(node.path.clone())),
-            ),
+            .build(),
+        IconButton::new(Icon::Target, "Centre on this node")
+            .on_press(Message::Graph(GraphMessage::NodeFocused(node.path.clone())))
+            .build(),
+        IconButton::new(
+            Icon::Pin,
             if pinned {
                 "Release — let the layout move it again"
             } else {
                 "Pin — hold this node in place"
             },
-        ),
+        )
+        .selected(pinned)
+        .on_press(Message::Graph(GraphMessage::PinToggled(node.path.clone())))
+        .build(),
     ]
-    .spacing(6)
+    .spacing(SPACE_2)
     .align_y(Alignment::Center);
 
     let mut card = column![
         header,
         actions,
         row![
-            metric("In", node.incoming),
-            metric("Out", node.outgoing),
-            metric("Degree", node.incoming + node.outgoing),
+            stat_card("In", &node.incoming.to_string(), None, None),
+            stat_card("Out", &node.outgoing.to_string(), None, None),
+            stat_card(
+                "Degree",
+                &(node.incoming + node.outgoing).to_string(),
+                None,
+                None
+            ),
         ]
-        .spacing(6),
+        .spacing(SPACE_2),
     ]
-    .spacing(10);
+    .spacing(SPACE_3);
 
     if !node.exists {
-        card = card.push(note_banner(
-            "Nothing links here yet — this target does not exist on disk.",
+        card = card.push(crate::ui::badge(
+            "No file on disk — only links point here",
+            crate::ui::BadgeTone::Danger,
+            Some(Icon::WarningCircle),
         ));
     }
 
@@ -119,32 +136,15 @@ pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Eleme
         })
         .collect();
 
-    card = card
-        .push(node_list(
-            "LINKS TO",
-            outgoing,
-            theme::TEXT_SECONDARY,
-            "Nothing yet",
-        ))
-        .push(node_list(
-            "LINKED FROM",
-            incoming,
-            theme::TEXT_SECONDARY,
-            "No backlinks",
-        ))
-        .push(link_list(
-            "SIMILAR NOTES",
-            related,
-            theme::ACCENT_SECONDARY,
-            "No shared neighbours",
-        ));
-
-    card.into()
+    card.push(node_list("Links to", outgoing, "Nothing yet"))
+        .push(node_list("Linked from", incoming, "No backlinks"))
+        .push(link_list("Similar notes", related, "No shared neighbours"))
+        .into()
 }
 
 pub(super) fn insights<'a>(state: &'a GraphState) -> Element<'a, Message> {
+    let t = tokens();
     let stats = state.stats();
-
     let hubs = state
         .hubs(6)
         .into_iter()
@@ -166,81 +166,28 @@ pub(super) fn insights<'a>(state: &'a GraphState) -> Element<'a, Message> {
         .collect();
 
     column![
-        column![
-            text("VAULT OVERVIEW").size(9).color(theme::ACCENT),
-            text(format!(
-                "{} documents · {} connections · {} clusters",
-                stats.documents(),
-                stats.connections,
-                stats.components
-            ))
-            .size(11)
-            .color(theme::TEXT_SECONDARY),
-            text("Select a node on the canvas to inspect it.")
-                .size(10)
-                .color(theme::TEXT_MUTED),
+        row![
+            stat_card("Notes", &stats.documents().to_string(), None, None),
+            stat_card("Links", &stats.connections.to_string(), None, None),
+            stat_card("Clusters", &stats.components.to_string(), None, None),
         ]
-        .spacing(4),
-        link_list(
-            "MOST CONNECTED",
-            hubs,
-            theme::ACCENT,
-            "No links in this vault yet",
+        .spacing(SPACE_2),
+        role_text(
+            "Select a node on the canvas to inspect it.",
+            TextRole::Caption,
+            t.fg_tertiary
         ),
-        link_list(
-            "UNLINKED NOTES",
-            orphans,
-            theme::WARNING,
-            "Every note is connected",
-        ),
-        link_list("BROKEN LINKS", unresolved, theme::DANGER, "No broken links",),
+        link_list("Most connected", hubs, "No links in this vault yet"),
+        link_list("Unlinked notes", orphans, "Every note is connected"),
+        link_list("Broken links", unresolved, "No broken links"),
     ]
-    .spacing(10)
-    .into()
-}
-
-pub(super) fn note_banner<'a>(message: &'a str) -> Element<'a, Message> {
-    container(text(message).size(10).color(theme::DANGER))
-        .padding([7, 9])
-        .width(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(theme::BG_PRIMARY)),
-            border: Border {
-                color: theme::DANGER,
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
-}
-
-pub(super) fn metric<'a>(label: &'static str, value: usize) -> Element<'a, Message> {
-    container(
-        column![
-            text(value.to_string()).size(15).color(theme::ACCENT),
-            text(label).size(9).color(theme::TEXT_MUTED),
-        ]
-        .spacing(1)
-        .align_x(Alignment::Center),
-    )
-    .padding([7, 8])
-    .width(Length::FillPortion(1))
-    .style(|_| container::Style {
-        background: Some(Background::Color(theme::BG_TERTIARY)),
-        border: Border {
-            radius: 6.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    })
+    .spacing(SPACE_3)
     .into()
 }
 
 pub(super) fn node_list<'a>(
     title: &'static str,
     nodes: Vec<GraphNode>,
-    accent: Color,
     empty: &'static str,
 ) -> Element<'a, Message> {
     let items = nodes
@@ -250,54 +197,35 @@ pub(super) fn node_list<'a>(
             (node.path, node.label, format!("{degree} links"))
         })
         .collect();
-    link_list(title, items, accent, empty)
+    link_list(title, items, empty)
 }
 
-/// A titled list where every row reveals its node on the canvas. Clicking a
-/// name in the inspector and *not* being shown where it is was the main way to
-/// get lost in the old panel, so rows recenter the view rather than only
-/// changing the selection.
+/// A titled list where every row reveals its node on the canvas: clicking a
+/// name and *not* being shown where it is was the main way to get lost, so
+/// rows recentre the view rather than only changing the selection.
 pub(super) fn link_list<'a>(
     title: &'static str,
     items: Vec<(String, String, String)>,
-    accent: Color,
     empty: &'static str,
 ) -> Element<'a, Message> {
-    let mut list = column![].spacing(1);
+    let t = tokens();
+    let mut list = column![role_text(title, TextRole::Label, t.fg_tertiary)].spacing(SPACE_1);
     if items.is_empty() {
-        list = list.push(text(empty).size(10).color(theme::TEXT_MUTED));
-    } else {
-        for (path, label, detail) in items {
-            list = list.push(
-                button(
-                    row![
-                        text("●").size(7).color(accent),
-                        text(label).size(11),
-                        Space::new().width(Length::Fill),
-                        text(detail).size(9).color(theme::TEXT_MUTED),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                )
-                .on_press(Message::Graph(GraphMessage::NodeFocused(path)))
-                .padding([5, 6])
-                .width(Length::Fill)
-                .style(row_style),
-            );
-        }
+        list = list.push(role_text(empty, TextRole::Caption, t.fg_tertiary));
     }
-
-    container(column![text(title).size(9).color(accent), list,].spacing(5))
-        .padding(9)
-        .width(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(theme::BG_PRIMARY)),
-            border: Border {
-                color: theme::BORDER_SUBTLE,
-                width: 1.0,
-                radius: 7.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
+    for (path, label, detail) in items {
+        list = list.push(list_row(ListRowProps {
+            title: label.into(),
+            subtitle: Some(detail.into()),
+            leading_icon: None,
+            shortcut: None,
+            selected: false,
+            active_doc: false,
+            focused: false,
+            drag_over: false,
+            max_title_chars: 30,
+            on_press: Some(Message::Graph(GraphMessage::NodeFocused(path))),
+        }));
+    }
+    list.into()
 }

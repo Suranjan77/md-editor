@@ -22,18 +22,35 @@ pub(super) const TOP_PAD: f32 = 24.0;
 /// Space below the last line.
 pub(super) const BOTTOM_PAD: f32 = 80.0;
 
-/// Maximum width of the editor's content column. On wider viewports the
+/// Maximum width of the editor's content column: the user's line-width
+/// setting (Settings → Editor: 640 / 720 / 880). On wider viewports the
 /// content is centered with automatic side margins, like a web reader,
 /// instead of stretching edge to edge.
-pub(super) const MAX_CONTENT_WIDTH: f32 = 880.0;
+pub(super) fn max_content_width() -> f32 {
+    crate::design::content_measure().max_width_px()
+}
 
 // ── Vertical rhythm ──────────────────────────────────────────────────
 
 /// Every vertical measure — row heights, margins, gaps — is a multiple of
 /// this, so baselines of text in different blocks share one grid.
 pub(super) const GRID: f32 = 4.0;
-/// Body text size, and the size assumed when a line gives no better answer.
+/// Body size the highlighter authors its span sizes for. Rendered sizes are
+/// these scaled to the user's body size; see [`scaled`].
 pub(super) const DEFAULT_FONT_SIZE: f32 = 17.0;
+
+/// Body text size (Settings → Editor → Font size), and the size assumed when
+/// a line gives no better answer.
+pub(super) fn body_font_size() -> f32 {
+    crate::design::editor_font_size()
+}
+
+/// A size authored for a [`DEFAULT_FONT_SIZE`] body, at the user's body size.
+/// Every size the renderer reads from a span goes through this, so layout,
+/// painting and hit testing agree.
+pub(super) fn scaled(size: f32) -> f32 {
+    size * body_font_size() / DEFAULT_FONT_SIZE
+}
 /// Height of iced's text line box relative to font size; glyphs are centred
 /// in it. Painters position text through this.
 pub(super) const LINE_BOX_FACTOR: f32 = 1.3;
@@ -41,7 +58,7 @@ pub(super) const LINE_BOX_FACTOR: f32 = 1.3;
 /// [`DISPLAY_LINE_HEIGHT`] by [`DISPLAY_SIZE`]: large type needs less leading.
 const BODY_LINE_HEIGHT: f32 = 1.6;
 const DISPLAY_LINE_HEIGHT: f32 = 1.2;
-const DISPLAY_SIZE: f32 = 34.0;
+const DISPLAY_SIZE: f32 = 33.0;
 
 /// The nearest multiple of [`GRID`], at least one.
 pub(super) fn snap(value: f32) -> f32 {
@@ -55,14 +72,17 @@ pub(super) fn snap_up(value: f32) -> f32 {
 
 /// Height of a row of text at `font_size`, on the grid.
 pub(super) fn row_height(font_size: f32) -> f32 {
-    let t = ((font_size - DEFAULT_FONT_SIZE) / (DISPLAY_SIZE - DEFAULT_FONT_SIZE)).clamp(0.0, 1.0);
+    let body = body_font_size();
+    let display = scaled(DISPLAY_SIZE);
+    let t = ((font_size - body) / (display - body)).clamp(0.0, 1.0);
     let factor = BODY_LINE_HEIGHT + (DISPLAY_LINE_HEIGHT - BODY_LINE_HEIGHT) * t;
-    snap(font_size * factor)
+    // Never shorter than iced's text box, or wrapped display rows overlap.
+    snap(font_size * factor).max(snap_up(font_size * LINE_BOX_FACTOR))
 }
 
-/// A row of body text: 28px.
+/// A row of body text: 28px at the default 17px body.
 pub(super) fn body_row() -> f32 {
-    row_height(DEFAULT_FONT_SIZE)
+    row_height(body_font_size())
 }
 
 /// A blank line: the gap between paragraphs. Tall enough to hold the caret.
@@ -90,7 +110,10 @@ pub(super) const HORIZONTAL_SCROLLBAR_GUTTER: f32 = 16.0;
 /// Distance from a code or math block's bottom edge to its scrollbar.
 pub(super) const SCROLLBAR_BOTTOM_OFFSET: f32 = 7.0;
 
-pub(super) const CODE_FONT_SIZE: f32 = 15.0;
+/// Code block text, scaled with the body size.
+pub(super) fn code_font_size() -> f32 {
+    scaled(15.0)
+}
 /// Space kept between the caret and the edge of a code block's viewport when
 /// the block scrolls to follow it.
 pub(super) const CODE_CARET_MARGIN: f32 = 24.0;
@@ -112,7 +135,9 @@ pub(super) const TABLE_EDGE_PADDING: f32 = 12.0;
 // ── Math ─────────────────────────────────────────────────────────────
 
 /// Size of TeX source shown for block math that has not rendered.
-pub(super) const MATH_SOURCE_FONT_SIZE: f32 = 16.0;
+pub(super) fn math_source_font_size() -> f32 {
+    scaled(16.0)
+}
 pub(super) const MATH_BLOCK_MIN_HEIGHT: f32 = 72.0;
 /// Vertical padding around block math, and — at full width — how much
 /// narrower its viewport is than the text column.
@@ -138,12 +163,12 @@ pub(super) const IMAGE_CAPTION_SPACE: f32 = 40.0;
 // ── Geometry ─────────────────────────────────────────────────────────
 
 /// Returns the centered content rectangle for a raw widget bounds. When the
-/// widget is wider than [`MAX_CONTENT_WIDTH`] the content column is capped and
+/// widget is wider than [`max_content_width`] the content column is capped and
 /// horizontally centered, leaving equal auto margins on each side. All
 /// horizontal layout/hit-testing derives from this rectangle, so callers can
 /// treat it as the editor's effective bounds.
 pub(super) fn content_bounds(raw: Rectangle) -> Rectangle {
-    let width = raw.width.min(MAX_CONTENT_WIDTH);
+    let width = raw.width.min(max_content_width());
     let inset = ((raw.width - width) / 2.0).max(0.0);
     Rectangle {
         x: raw.x + inset,

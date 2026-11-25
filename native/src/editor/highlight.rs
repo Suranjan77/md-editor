@@ -5,8 +5,6 @@ use std::sync::OnceLock;
 use syntect::highlighting::{HighlightIterator, HighlightState, Highlighter};
 use syntect::parsing::{ParseState, ScopeStack};
 
-use crate::theme;
-
 mod code;
 mod inline;
 
@@ -53,7 +51,7 @@ impl StyledSpan {
         Self {
             text: text.to_string(),
             display_text: None,
-            color: theme::TEXT_PRIMARY,
+            color: crate::design::tokens().doc_text,
             bold: false,
             italic: false,
             font_size: 17.0,
@@ -216,6 +214,8 @@ pub struct Highlighted {
     /// Changes whenever `lines` does, and never repeats, even across
     /// instances: a revision names one set of lines.
     revision: u64,
+    /// Theme the colours were chosen for; a switch re-highlights everything.
+    theme: Option<crate::design::ActiveTheme>,
 }
 
 /// A revision no `Highlighted` has had before.
@@ -241,6 +241,13 @@ impl Highlighted {
     /// Bring the lines in step with `text`. Returns the range of lines that
     /// were re-highlighted.
     pub fn update(&mut self, text: &str) -> std::ops::Range<usize> {
+        let theme = crate::design::active_theme();
+        if self.theme != Some(theme) {
+            *self = Self {
+                theme: Some(theme),
+                ..Self::default()
+            };
+        }
         let texts: Vec<&str> = text.split('\n').collect();
         let (old_n, new_n) = (self.sources.len(), texts.len());
 
@@ -348,7 +355,7 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
         sl.spans.push(StyledSpan {
             text: raw_line.to_string(),
             display_text: Some(String::new()),
-            color: theme::TEXT_MUTED,
+            color: crate::design::tokens().doc_syntax,
             is_syntax: true,
             font_size,
             is_code: true,
@@ -382,7 +389,7 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
         sl.spans.push(StyledSpan {
             text: raw_line.to_string(),
             display_text: Some(String::new()),
-            color: theme::WARNING,
+            color: crate::design::tokens().doc_math,
             is_syntax: true,
             is_math: true,
             font_size: 16.0,
@@ -418,7 +425,7 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(inline_math.to_string()),
-                color: theme::WARNING,
+                color: crate::design::tokens().doc_math,
                 italic: true,
                 font_size: 16.0,
                 is_math: true,
@@ -441,7 +448,7 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
         sl.spans.push(StyledSpan {
             text: raw_line.to_string(),
             display_text: None,
-            color: theme::WARNING,
+            color: crate::design::tokens().doc_math,
             italic: true,
             font_size: 16.0,
             is_math: true,
@@ -468,8 +475,11 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
             .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
         if is_separator {
             step.presentation = Presentation::Concealed;
-            sl.spans
-                .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
+            sl.spans.push(StyledSpan::syntax(
+                raw_line,
+                crate::design::tokens().doc_syntax,
+                16.0,
+            ));
         } else {
             step.presentation = Presentation::Shown;
             let mut parts = trimmed.split('|').collect::<Vec<_>>();

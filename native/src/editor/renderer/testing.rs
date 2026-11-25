@@ -304,6 +304,9 @@ type Wd<'a> = Editor<'a, String>;
 
 impl View {
     pub fn new(doc: &str, width: f32) -> Self {
+        // Measurement uses the real font system: register the bundled faces
+        // the editor asks for, or every family falls back to a system font.
+        crate::test_support::load_bundled_fonts();
         let buffer = DocBuffer::from_text(doc);
         let lines = highlight_markdown(doc);
         let mut view = Self {
@@ -561,7 +564,10 @@ impl View {
     /// Focus the editor without moving the buffer's caret.
     pub fn focus(&mut self) {
         let (line, col) = (self.buffer.cursor_line, self.buffer.cursor_col);
-        self.click(Point::new(self.width.min(880.0) - 1.0, 1.0));
+        self.click(Point::new(
+            self.width.min(super::metrics::max_content_width()) - 1.0,
+            1.0,
+        ));
         self.set_cursor(line, col);
     }
 }

@@ -11,7 +11,12 @@ impl MdEditor {
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
+        self.save_current_tab_view();
         self.pdf.active_path = Some(path.to_string());
+        self.tabs.open(path, crate::tabs::TabKind::Pdf, false);
+        self.persist_tabs();
+        self.ui.pdf_page_input = None;
+        self.ui.pdf_zoom_input = None;
         self.graph.set_active_path(Some(path.to_string()));
         self.pdf.load_error = None;
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
@@ -404,13 +409,17 @@ impl MdEditor {
 
     pub(super) fn pdf_available_width(&self) -> f32 {
         let sidebar_width = if self.vault.sidebar_visible {
-            260.0
+            self.ui.sidebar_width
         } else {
             0.0
         };
-        let toc_width = if self.editor.toc_visible { 260.0 } else { 0.0 };
+        let toc_width = if self.editor.toc_visible {
+            self.ui.side_panel_width
+        } else {
+            0.0
+        };
         let backlinks_width = if self.vault.backlinks_visible {
-            260.0
+            self.ui.side_panel_width
         } else {
             0.0
         };

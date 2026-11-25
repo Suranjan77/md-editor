@@ -24,7 +24,7 @@ right and the page is a bug.
 | Handwriting | `native/src/ink/` | [Handwritten Notes](Handwritten-Notes.md) |
 | Search, wikilinks, backlinks | `core/src/file_index.rs`, `native/src/app/search.rs` | [Core Services](Core-Services.md) |
 | The study tracker | `native/src/views/tracker.rs`, `core/src/tracker.rs` | [Study Tracker](Study-Tracker.md) |
-| Colours, spacing, animation | `native/src/theme.rs`, `native/src/motion.rs` | [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md) |
+| Colours, spacing, animation | `native/src/design/`, components in `native/src/ui/` | [Design System & Motion](Design-Tokens-Motion-and-Palette.md) |
 | The database schema | `core/src/state.rs` | [Core Services](Core-Services.md) |
 
 Every source file opens with a one-line `//!` summary: `grep -rm1 '^//!' core/src native/src`
@@ -89,7 +89,7 @@ graph TB
 | [PDF Viewer Internals](PDF-Viewer-Internals.md) | PDF pane state, generations, navigation, zoom |
 | [Knowledge Graph](Knowledge-Graph.md) | Snapshot, refresh, layout, simulation, GPU rendering, insights |
 | [Handwritten Notes](Handwritten-Notes.md) | Ink window, pen capture, strokes, the `.ink` format |
-| [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md) | Type scale, spacing, colours, easing, springs |
+| [Design System & Motion](Design-Tokens-Motion-and-Palette.md) | Type scale, spacing, colours, easing, springs |
 | [Study Tracker](Study-Tracker.md) | Timer, sessions, curriculum config, storage |
 | [Developer Guide & Testing](Developer-Guide-and-Testing.md) | Toolchain, builds, PDFium, test suites |
 | [Release Checklist](Release-Checklist.md) | Pre-release verification and packaging |

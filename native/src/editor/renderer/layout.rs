@@ -116,7 +116,7 @@ fn line_body_height<R: Measure>(
     }
 
     if line.is_code_block {
-        return row_height(CODE_FONT_SIZE);
+        return row_height(code_font_size());
     }
 
     if line.is_table_row && !is_editing {
@@ -150,7 +150,7 @@ fn math_block_height(line: &StyledLine, math_cache: &MathCache) -> f32 {
                 .sum::<f32>()
                 .max(1.0);
             max_h =
-                max_h.max(visual_lines * row_height(MATH_SOURCE_FONT_SIZE) + MATH_BLOCK_PADDING);
+                max_h.max(visual_lines * row_height(math_source_font_size()) + MATH_BLOCK_PADDING);
         }
     }
     max_h
@@ -462,11 +462,14 @@ impl<Message> Editor<'_, Message> {
         if state.line_height_cache.len() != n {
             state.line_height_cache = vec![LineHeightCache::default(); n];
         }
-        if (state.last_layout_width - max_width).abs() > 0.5 {
+        let typography = crate::design::theme_revision();
+        if (state.last_layout_width - max_width).abs() > 0.5 || state.last_typography != typography
+        {
             for cache in &mut state.line_height_cache {
                 cache.valid = false;
             }
             state.last_layout_width = max_width;
+            state.last_typography = typography;
         }
 
         let mut walk = HeightWalk::default();
