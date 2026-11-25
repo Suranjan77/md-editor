@@ -15,9 +15,10 @@ const LARGE_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 impl MdEditor {
     /// Ctrl+V in the editor: read the clipboard off the UI thread.
     pub(super) fn paste(&mut self) -> Task<Message> {
-        Task::perform(async { crate::platform::read_clipboard() }, |payload| {
-            Message::Editor(EditorMessage::Pasted(payload))
-        })
+        Task::perform(
+            super::blocking(crate::platform::read_clipboard),
+            |payload| Message::Editor(EditorMessage::Pasted(payload)),
+        )
     }
 
     pub(super) fn pasted(&mut self, payload: ClipboardPayload) -> Task<Message> {

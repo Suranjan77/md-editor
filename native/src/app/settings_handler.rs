@@ -155,7 +155,7 @@ impl MdEditor {
         if changed {
             // Span colours come from the theme: re-highlight the open note.
             self.editor.refresh_highlighting();
-            self.editor.math_cache.clear();
+            self.editor.forget_math();
             return self.editor.load_math(self.ui.scale_factor);
         }
         Task::none()

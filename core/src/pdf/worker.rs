@@ -565,18 +565,19 @@ fn search_single_page(
         Some(re) => regex_page_matches(&text_page, &page_text, &char_indices, re, &to_view),
         None => pdfium_page_matches(&text_page, &char_indices, query, match_case, &to_view),
     };
+    // Byte offset of every char, so each match's context is a slice rather
+    // than a walk from the start of the page.
+    let mut offsets: Vec<usize> = page_text.char_indices().map(|(i, _)| i).collect();
+    offsets.push(page_text.len());
+    let last = offsets.len() - 1;
     let mut out = Vec::new();
     for (pos, match_len, rects) in raw_matches {
         if rects.is_empty() {
             continue;
         }
-        let start = pos.saturating_sub(48);
-        let take = match_len + 96;
-        let context = page_text
-            .chars()
-            .skip(start)
-            .take(take)
-            .collect::<String>()
+        let start = pos.saturating_sub(48).min(last);
+        let end = (start + match_len + 96).min(last);
+        let context = page_text[offsets[start]..offsets[end]]
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
@@ -596,9 +597,14 @@ fn regex_page_matches(
     re: &regex::Regex,
     to_view: &super::geometry::PageToView,
 ) -> Vec<(usize, usize, Vec<PdfRect>)> {
+    // Matches come in order: count chars from the previous match, not from
+    // the start of the page each time.
+    let mut counted = (0usize, 0usize); // (byte offset, chars before it)
     re.find_iter(page_text)
         .filter_map(|found| {
-            let match_char_idx = page_text[..found.start()].chars().count();
+            counted.1 += page_text[counted.0..found.start()].chars().count();
+            counted.0 = found.start();
+            let match_char_idx = counted.1;
             let match_char_count = found.as_str().chars().count();
             if match_char_idx >= char_indices.len() || match_char_count == 0 {
                 return None;

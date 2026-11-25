@@ -194,3 +194,32 @@ fn inline_math_uses_text_style_and_block_math_display_style() {
         render.height
     );
 }
+
+/// Each equation renders once however often it repeats, is not respawned
+/// on every keystroke while rendering, and a failure is not retried.
+#[test]
+fn math_renders_once_per_tex_and_failures_are_not_retried() {
+    let mut pane = EditorPane::new();
+    pane.buffer
+        .insert_at_cursor("$x_i$ $x_i$ $x_i$ and $\\bad{$");
+    pane.refresh_highlighting();
+    let _ = pane.load_math(1.0);
+    assert_eq!(pane.pending_math.len(), 2, "{:?}", pane.pending_math);
+    let _ = pane.load_math(1.0);
+    assert_eq!(pane.pending_math.len(), 2, "nothing respawned");
+
+    let ink = crate::design::tokens().doc_math;
+    let _ = pane.update(Message::Editor(EditorMessage::MathRendered(
+        "\\bad{".into(),
+        1.0,
+        ink,
+        Err("parse".into()),
+    )));
+    assert!(pane.failed_math.contains("\\bad{"));
+    assert_eq!(pane.pending_math.len(), 1);
+    let _ = pane.load_math(1.0);
+    assert!(!pane.pending_math.contains("\\bad{"), "failure retried");
+
+    pane.forget_math();
+    assert!(pane.pending_math.is_empty() && pane.failed_math.is_empty());
+}

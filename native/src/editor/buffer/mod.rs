@@ -242,6 +242,22 @@ impl DocBuffer {
         self.rope.to_string()
     }
 
+    /// The document's lines without their line breaks, borrowed from the
+    /// rope where a line sits in one chunk.
+    pub fn lines(&self) -> impl Iterator<Item = std::borrow::Cow<'_, str>> {
+        self.rope.lines().map(|line| match line.as_str() {
+            Some(s) => std::borrow::Cow::Borrowed(s.trim_end_matches(['\n', '\r'])),
+            None => {
+                std::borrow::Cow::Owned(line.to_string().trim_end_matches(['\n', '\r']).to_string())
+            }
+        })
+    }
+
+    /// The outline (headings) of the document.
+    pub fn toc(&self) -> Vec<crate::views::toc::TocEntry> {
+        crate::views::toc::toc_from_lines(self.lines())
+    }
+
     /// Whitespace-separated words in the buffer, for the status bar. Counted
     /// across the rope's chunks (a word split between two chunks is one
     /// word), and cached per revision.

@@ -366,6 +366,9 @@ pub struct ContinuousProps<'a> {
     pub page_sizes: &'a [Option<(f32, f32)>],
     pub placeholder_page_size: Option<(f32, f32)>,
     pub search_matches: &'a [md_editor_core::pdf::PdfSearchMatch],
+    /// Page → indices into `search_matches`, so a page finds its matches
+    /// without scanning every one.
+    pub search_by_page: &'a std::collections::HashMap<u16, Vec<usize>>,
     pub active_search_index: Option<usize>,
     pub page_texts: &'a std::collections::HashMap<u16, md_editor_core::pdf::PdfPageText>,
     pub annotations: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::PdfAnnotation>>,
@@ -373,6 +376,10 @@ pub struct ContinuousProps<'a> {
     pub active_selection: Option<PdfSelection>,
     pub focused_annotation_id: Option<&'a str>,
     pub load_error: Option<&'a str>,
+    /// The list's scroll offset and visible height: pages more than a screen
+    /// away are laid out as spacers, not widgets.
+    pub scroll_y: f32,
+    pub viewport_height: f32,
 }
 
 pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, Theme, Renderer> {
@@ -411,13 +418,39 @@ pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, T
         placeholder_display_size.1 / zoom.max(0.01),
     );
 
-    for (i, page_opt) in props.pages.iter().enumerate() {
-        let (page_width, page_height) = props
+    let size_of = |i: usize| {
+        props
             .page_sizes
             .get(i)
             .and_then(|size| *size)
-            .unwrap_or((pw, ph));
-        let display_size = (page_width * zoom, page_height * zoom);
+            .unwrap_or((pw, ph))
+    };
+    let display: Vec<(f32, f32)> = (0..props.pages.len())
+        .map(|i| {
+            let (w, h) = size_of(i);
+            (w * zoom, h * zoom)
+        })
+        .collect();
+    let (first, last) = visible_pages(&display, props.scroll_y, props.viewport_height);
+    // Spacers stand in for the pages outside the window, exactly as tall as
+    // those pages and the gaps between them, and as wide as the widest, so
+    // scroll offsets and horizontal extent are unchanged.
+    let spacer = |range: std::ops::Range<usize>| {
+        let pages = &display[range];
+        let height = pages.iter().map(|d| d.1).sum::<f32>()
+            + PDF_PAGE_SPACING * pages.len().saturating_sub(1) as f32;
+        let width = pages.iter().map(|d| d.0).fold(0.0, f32::max);
+        Space::new()
+            .width(Length::Fixed(width))
+            .height(Length::Fixed(height))
+    };
+    if first > 0 {
+        page_list = page_list.push(spacer(0..first));
+    }
+
+    for (i, page_opt) in props.pages.iter().enumerate().take(last + 1).skip(first) {
+        let (_, page_height) = size_of(i);
+        let display_size = display[i];
         page_list = page_list.push(match page_opt {
             Some(handle) => {
                 let page_index = i as u16;
@@ -433,6 +466,9 @@ pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, T
             None => placeholder_page(i, display_size),
         });
     }
+    if last + 1 < display.len() {
+        page_list = page_list.push(spacer(last + 1..display.len()));
+    }
 
     container(page_list)
         .width(Length::Fill)
@@ -442,6 +478,40 @@ pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, T
             ..Default::default()
         })
         .into()
+}
+
+/// Viewport height assumed before the list has reported one.
+const FALLBACK_VIEWPORT: f32 = 1200.0;
+
+/// The first and last page to lay out as widgets: those within one screen of
+/// the visible part of the list (`display` holds each page's laid-out size).
+pub(crate) fn visible_pages(
+    display: &[(f32, f32)],
+    scroll_y: f32,
+    viewport: f32,
+) -> (usize, usize) {
+    let last_index = display.len().saturating_sub(1);
+    let viewport = if viewport > 0.0 {
+        viewport
+    } else {
+        FALLBACK_VIEWPORT
+    };
+    let (from, to) = (scroll_y - viewport, scroll_y + 2.0 * viewport);
+    let mut top = PDF_PAGE_LIST_PADDING;
+    let (mut first, mut last) = (None, 0);
+    for (i, (_, h)) in display.iter().enumerate() {
+        let bottom = top + h;
+        if bottom >= from && top <= to {
+            first.get_or_insert(i);
+            last = i;
+        }
+        top = bottom + PDF_PAGE_SPACING;
+    }
+    match first {
+        Some(first) => (first, last),
+        // Scrolled past everything (a stale offset): show the end.
+        None => (last_index, last_index),
+    }
 }
 
 /// The pane before any page exists: loading, or why the PDF failed to open.
@@ -501,8 +571,11 @@ impl ContinuousProps<'_> {
                 });
             }
         }
-        for (idx, result) in self.search_matches.iter().enumerate() {
-            if result.page_index == page_index && Some(idx) != self.active_search_index {
+        for &idx in self.search_by_page.get(&page_index).into_iter().flatten() {
+            if let Some(result) = self.search_matches.get(idx)
+                && result.page_index == page_index
+                && Some(idx) != self.active_search_index
+            {
                 overlay_rects.extend(
                     result
                         .rects
@@ -659,5 +732,25 @@ mod tests {
             empty_pdf_state_message(Some("Could not open 'locked.pdf': Password required")),
             "Could not open 'locked.pdf': Password required"
         );
+    }
+
+    #[test]
+    fn only_pages_near_the_viewport_are_laid_out() {
+        let pages = vec![(600.0, 800.0); 1000];
+        let step = 800.0 + crate::views::pdf_viewer::PDF_PAGE_SPACING;
+        assert_eq!(
+            crate::views::pdf_viewer::visible_pages(&pages, 0.0, 700.0),
+            (0, 1)
+        );
+        let (first, last) = crate::views::pdf_viewer::visible_pages(&pages, 400.0 * step, 700.0);
+        assert!(first <= 400 && last >= 401, "{first}..{last}");
+        assert!(last - first < 8, "{first}..{last}");
+        assert_eq!(
+            crate::views::pdf_viewer::visible_pages(&pages, 1e9, 700.0),
+            (999, 999)
+        );
+        // Before the list reports its height, a generous window is used.
+        let (_, last) = crate::views::pdf_viewer::visible_pages(&pages, 0.0, 0.0);
+        assert!(last >= 1);
     }
 }

@@ -473,3 +473,45 @@ fn s3b_inline_completion_for_links_and_blocks() {
     assert!(app.probe().completion.is_empty());
     app.finish();
 }
+
+fn png(width: u32) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    image::RgbaImage::from_pixel(width, 1, image::Rgba([9, 9, 9, 255]))
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encode png");
+    bytes
+}
+
+/// Images decode off the UI thread; a missing one shows once the file
+/// appears; `img.png` in two folders is each note's own image.
+#[test]
+fn s14b_note_images_load_refresh_and_stay_per_folder() {
+    let vault = Vault::new("note-images")
+        .file("a/note.md", "# A\n\n![x](img.png)\n")
+        .file("b/note.md", "# B\n\n![x](img.png)\n");
+    std::fs::write(vault.root.join("b/img.png"), png(7)).unwrap();
+    let mut app = boot("s14b-note-images", &vault, Some("a/note.md"));
+    assert!(
+        app.probe().images.is_empty(),
+        "a/img.png does not exist yet"
+    );
+
+    std::fs::write(vault.root.join("a/img.png"), png(3)).unwrap();
+    app.send(Message::Vault(VaultMessage::VaultFilesChanged(vec![
+        "a/img.png".to_string(),
+    ])));
+    assert_eq!(app.probe().images, [("img.png".to_string(), 3.0)]);
+
+    app.send(Message::Vault(VaultMessage::SidebarFileClicked(
+        "b/note.md".to_string(),
+    )));
+    assert_eq!(
+        app.probe().images,
+        [("img.png".to_string(), 7.0)],
+        "b's note showed a's image"
+    );
+    app.finish();
+}

@@ -57,6 +57,7 @@ fn page(index: u16, lines: &[(&str, f32, f32)]) -> PdfPageText {
         });
     }
     PdfPageText {
+        offsets: Default::default(),
         page_index: index,
         page_width: PAGE_W,
         page_height: PAGE_H,

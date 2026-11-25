@@ -56,6 +56,7 @@ fn page_fixture(page_index: u16, lines: &[(&str, f32)]) -> PdfPageText {
         });
     }
     PdfPageText {
+        offsets: Default::default(),
         page_index,
         page_width: 600.0,
         page_height: 800.0,
@@ -89,6 +90,7 @@ fn page_fixture_xy(page_index: u16, lines: &[(&str, f32, f32, f32)]) -> PdfPageT
         });
     }
     PdfPageText {
+        offsets: Default::default(),
         page_index,
         page_width: 595.0,
         page_height: 842.0,
@@ -971,4 +973,14 @@ fn text_and_search_rects_sit_on_the_rendered_glyphs_whatever_the_page_geometry()
         );
     }
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn text_range_slices_by_char_and_clamps() {
+    let mut page = page_fixture(0, &[("αβγ δ", 10.0)]);
+    page.text = "αβγ δ€".to_string();
+    page.offsets = Default::default();
+    assert_eq!(page.text_range(1, 3), "βγ");
+    assert_eq!(page.text_range(4, 99), "δ€");
+    assert_eq!(page.text_range(5, 2), "");
 }

@@ -134,13 +134,13 @@ impl MdEditor {
                 let index_root = root.clone();
                 let message_root = root.clone();
                 return Task::perform(
-                    async move {
+                    super::blocking(move || {
                         md_editor_core::vault::index_vault_for_generation(
                             &state,
                             &index_root,
                             generation,
                         )
-                    },
+                    }),
                     move |result| {
                         Message::Vault(VaultMessage::VaultIndexed(
                             generation,
@@ -227,6 +227,16 @@ impl MdEditor {
         {
             return self.reload_open_note_from_disk();
         }
+        // An image appeared, changed or went away: decode the note's images
+        // afresh (a missing one may exist now).
+        if self.active_path.is_some()
+            && paths
+                .iter()
+                .any(|path| crate::app::is_supported_image_path(path))
+        {
+            self.editor.forget_images();
+            return self.load_editor_resources();
+        }
         Task::none()
     }
 
@@ -291,7 +301,9 @@ impl MdEditor {
         let path = path.to_string();
         let result_path = path.clone();
         Task::perform(
-            async move { md_editor_core::vault::index_vault_for_generation(&state, &path, generation) },
+            super::blocking(move || {
+                md_editor_core::vault::index_vault_for_generation(&state, &path, generation)
+            }),
             move |result| {
                 Message::Vault(VaultMessage::VaultIndexed(
                     generation,
@@ -314,7 +326,9 @@ impl MdEditor {
         let state = self.state.clone();
         let result_root = root.clone();
         Task::perform(
-            async move { md_editor_core::vault::index_vault_for_generation(&state, &root, generation) },
+            super::blocking(move || {
+                md_editor_core::vault::index_vault_for_generation(&state, &root, generation)
+            }),
             move |result| {
                 Message::Vault(VaultMessage::VaultIndexed(
                     generation,

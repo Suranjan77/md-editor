@@ -77,6 +77,23 @@ impl FileIndex {
         }
     }
 
+    /// [`FileIndex::rebuild`] from each file's link targets as written (see
+    /// [`raw_targets`]), for files that were not re-read.
+    pub fn rebuild_from_links(&mut self, files: Vec<(PathBuf, Vec<String>)>) {
+        self.outgoing.clear();
+        self.incoming.clear();
+        self.names.clear();
+        self.links.clear();
+        for (path, _) in &files {
+            self.add_name(path);
+        }
+        let paths: Vec<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+        self.links.extend(files);
+        for path in paths {
+            self.resolve_outgoing(&path);
+        }
+    }
+
     /// Extract wikilinks from document text and update the index for a given
     /// file. Used for incremental single-file edits; for a full vault build
     /// prefer [`FileIndex::rebuild`], which resolves bare links against the
@@ -242,7 +259,7 @@ impl FileIndex {
 }
 
 /// The wikilink targets in `content` (outside code), as written.
-fn raw_targets(content: &str) -> Vec<String> {
+pub(crate) fn raw_targets(content: &str) -> Vec<String> {
     wikilinks(content)
         .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
         .collect()

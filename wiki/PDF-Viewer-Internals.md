@@ -176,6 +176,15 @@ placeholder slots scale with zoom.
 Page-size metadata drives loading placeholder dimensions, `pdf_page_offset(page)`,
 `pdf_page_at_scroll(scroll_y)`, viewport range detection, and the fit-to-width calculation.
 
+**Only pages near the viewport are widgets.** `view_continuous` lays out real page (or
+placeholder) widgets only for the pages within one screen above and two below the visible
+part (`visible_pages`, from `PdfPane::scroll_y` and `viewport_height`); the pages before and
+after collapse into one `Space` each, as tall as those slots and the gaps between them and
+as wide as the widest, so scroll offsets and horizontal extent are exactly what the full
+list would give. A 1,000-page document lays out a handful of widgets per frame. Search
+highlights for a page come from `SearchState::pdf_indices_by_page`, not a scan of every
+match.
+
 ---
 
 ## 5. Link & Text Extraction

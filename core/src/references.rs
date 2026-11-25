@@ -579,7 +579,7 @@ fn leading_section_number(title: &str) -> Option<String> {
 
 /// Text of a char range `[start, end)` of a page (1:1 string/char mapping).
 fn line_slice(page: &PdfPageText, start: usize, end: usize) -> String {
-    page.text.chars().skip(start).take(end - start).collect()
+    page.text_range(start, end).to_string()
 }
 
 #[cfg(test)]

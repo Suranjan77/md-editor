@@ -5,6 +5,7 @@ use md_editor_core::pdf::{PdfPageText, PdfRect, PdfTextLine};
 
 fn page(text: &str, lines: &[(usize, usize)]) -> PdfPageText {
     PdfPageText {
+        offsets: Default::default(),
         page_index: 0,
         page_width: 600.0,
         page_height: 800.0,

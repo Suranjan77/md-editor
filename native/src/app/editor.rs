@@ -87,6 +87,13 @@ impl MdEditor {
                 self.editor.viewport_height = viewport_height;
                 Task::none()
             }
+            EditorMessage::ImageLoaded(key, abs, result) => {
+                let root = self.vault.root.clone();
+                let active = self.active_path.clone();
+                self.editor
+                    .image_loaded(key, abs, result, root.as_deref(), active.as_deref());
+                Task::none()
+            }
             EditorMessage::CaretView(view) => {
                 self.editor.caret_view = Some(view);
                 self.reveal_caret(view)
@@ -136,10 +143,11 @@ impl MdEditor {
     /// relative to the active document, so the vault root + active path are
     /// supplied from the shell.
     pub(super) fn load_editor_resources(&mut self) -> Task<Message> {
-        if let (Some(root), Some(path)) = (self.vault.root.clone(), self.active_path.clone()) {
-            self.editor.load_images(&root, &path);
-        }
-        self.editor.load_math(self.ui.scale_factor)
+        let images = match (self.vault.root.clone(), self.active_path.clone()) {
+            (Some(root), Some(path)) => self.editor.load_images(&root, &path),
+            _ => Task::none(),
+        };
+        Task::batch(vec![images, self.editor.load_math(self.ui.scale_factor)])
     }
 
     /// Scroll the editor the way the answered reveal request asked, now that
@@ -221,11 +229,11 @@ impl MdEditor {
         }
         let content_task = if result.projection_changed {
             if result.text_changed {
-                self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
+                self.editor.toc_entries = self.editor.buffer.toc();
             }
             self.highlight_all()
         } else if result.text_changed {
-            self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
+            self.editor.toc_entries = self.editor.buffer.toc();
             Task::none()
         } else {
             Task::none()

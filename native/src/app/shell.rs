@@ -303,7 +303,7 @@ impl MdEditor {
             return Task::none();
         }
         self.ui.scale_factor = factor;
-        self.editor.math_cache.clear();
+        self.editor.forget_math();
         let math_task = self.editor.load_math(factor);
         if self.pdf.active_path.is_some() && self.pdf.total_pages > 0 {
             self.pdf.pages = vec![None; self.pdf.total_pages as usize];

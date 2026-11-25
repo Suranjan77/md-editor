@@ -250,6 +250,11 @@ impl MdEditor {
 
         let content = incoming;
         self.editor.completion = None;
+        if is_different {
+            // Image links are relative to the note: a cached `img.png` from
+            // another folder is not this note's `img.png`.
+            self.editor.forget_images();
+        }
         self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&content));
         // Resume the parked buffer when it still matches disk, so
         // undo history and cursor survive a round trip; otherwise

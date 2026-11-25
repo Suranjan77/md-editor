@@ -65,7 +65,7 @@ fn rename_open_path(path: &mut Option<String>, old_path: &str, new_path: &str) {
 /// threads: opening a PDF queues a dozen renderer calls, and once every worker
 /// waited on PDFium, nothing polled the subscriptions, so iced dropped input
 /// events (`TrySendError { kind: Full }` in the log) and timers stalled.
-pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+pub(crate) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
     match tokio::task::spawn_blocking(work).await {
         Ok(value) => value,
         // Keep the panic a panic, with its original payload.
@@ -157,6 +157,8 @@ pub(crate) struct Probe {
     pub cursor_line: usize,
     /// Labels in the open completion popup.
     pub completion: Vec<String>,
+    /// Decoded images of the open note: link text and pixel width.
+    pub images: Vec<(String, f32)>,
     pub toast: Option<String>,
     pub modal_open: bool,
     pub palette_open: bool,
@@ -220,6 +222,16 @@ impl MdEditor {
                 .iter()
                 .flat_map(|c| c.items.iter().map(|i| i.label.clone()))
                 .collect(),
+            images: {
+                let mut images: Vec<_> = self
+                    .editor
+                    .image_cache
+                    .iter()
+                    .map(|(key, (_, width, _))| (key.clone(), *width))
+                    .collect();
+                images.sort_by(|a, b| a.0.cmp(&b.0));
+                images
+            },
             toast: self.ui.toast.clone(),
             modal_open: self.ui.active_modal.is_some(),
             palette_open: self.ui.command_palette_visible,

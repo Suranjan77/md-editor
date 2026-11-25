@@ -11,6 +11,7 @@ mod backlinks;
 mod error;
 mod files;
 mod graph;
+mod indexing;
 mod relink;
 mod rename;
 
@@ -22,6 +23,7 @@ pub use backlinks::*;
 pub use error::{VaultError, VaultResult};
 pub use files::*;
 pub use graph::*;
+pub use indexing::index_vault_for_generation;
 pub use rename::*;
 
 pub const IMAGE_EXTENSIONS: [&str; 7] = ["jpeg", "jpg", "png", "gif", "bmp", "svg", "webp"];
@@ -120,127 +122,6 @@ pub fn set_vault_root(state: &AppState, path: &str) -> VaultResult<Vec<FileEntry
             None => return Err(VaultError::from("Vault changed while indexing")),
         }
     }
-}
-
-/// Build and publish an index only if `generation` is still the requested vault.
-pub fn index_vault_for_generation(
-    state: &AppState,
-    path: &str,
-    generation: u64,
-) -> VaultResult<Option<Vec<FileEntry>>> {
-    let started = std::time::Instant::now();
-    let root = PathBuf::from(path);
-    if !root.is_dir() {
-        return Err(VaultError::from(format!("Not a directory: {}", path)));
-    }
-    let content_revision = state.current_vault_content_revision();
-
-    let md_files = list_all_md_files(&root)?;
-    let mut index = FileIndex::new(root.clone());
-    let mut indexed: Vec<(String, String)> = Vec::with_capacity(md_files.len());
-    let mut for_graph: Vec<(PathBuf, String)> = Vec::with_capacity(md_files.len());
-    for file_path in md_files {
-        if let Ok(content) = read_file(&file_path) {
-            let rel_path = path_to_relative_string(&file_path, &root);
-            indexed.push((rel_path, content.clone()));
-            for_graph.push((file_path, content));
-        }
-    }
-    index.rebuild(&for_graph);
-
-    let (pdf_indexed, pdf_documents) = collect_vault_pdfs(state, &root);
-    let entries = list_vault_entries(&root)?;
-
-    let _publish = state.vault_publish_lock.lock().map_err(|e| e.to_string())?;
-    let _mutation = state.vault_publish_mutation_lock()?;
-    if state.current_vault_generation() != generation
-        || state.current_vault_content_revision() != content_revision
-        || state.vault_root.lock().map_err(|e| e.to_string())?.as_ref() != Some(&root)
-    {
-        return Ok(None);
-    }
-    {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
-        let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM file_search", [])
-            .map_err(|e| e.to_string())?;
-        for (rel_path, content) in indexed.iter().chain(pdf_indexed.iter()) {
-            if let Err(e) = tx.execute(
-                "INSERT INTO file_search (path, content) VALUES (?1, ?2)",
-                rusqlite::params![rel_path, content],
-            ) {
-                log::warn!("Failed to index {rel_path} for search: {e}");
-            }
-        }
-        tx.commit().map_err(|e| e.to_string())?;
-    }
-    {
-        let mut file_index = state.file_index.lock().map_err(|e| e.to_string())?;
-        *file_index = index;
-    }
-    let pdf_count = pdf_documents.len();
-    for (document_id, rel_path, size, modified_at) in pdf_documents {
-        if let Err(error) = state.save_pdf_document(&document_id, &rel_path, size, modified_at) {
-            log::warn!("Failed to scope PDF document {rel_path}: {error}");
-        }
-    }
-
-    log::info!(
-        "Indexed vault {path}: {} notes, {} PDFs in {:?}",
-        indexed.len(),
-        pdf_count,
-        started.elapsed()
-    );
-    Ok(Some(entries))
-}
-
-#[allow(clippy::type_complexity)]
-fn collect_vault_pdfs(
-    state: &AppState,
-    root: &Path,
-) -> (
-    Vec<(String, String)>,
-    Vec<(String, String, u64, Option<i64>)>,
-) {
-    let mut pdf_indexed = Vec::new();
-    let mut pdf_documents = Vec::new();
-    for pdf_path in list_all_pdf_files(root).unwrap_or_default() {
-        let rel_path = path_to_relative_string(&pdf_path, root);
-        let (file_size, modified_at) = file_size_and_mtime(&pdf_path);
-        let identity = state
-            .stored_pdf_document_id_for_vault(root, &rel_path, file_size, Some(modified_at))
-            .map(|document_id| (document_id, file_size, Some(modified_at)))
-            .or_else(|| crate::pdf::compute_provisional_id(&pdf_path).ok());
-        if let Some((document_id, size, modified)) = identity {
-            pdf_documents.push((document_id, rel_path.clone(), size, modified));
-        }
-
-        if let Some(renderer) = state.pdf_renderer.as_ref() {
-            let text = if let Some(cached) =
-                state.get_cached_pdf_text_for_vault(root, &rel_path, file_size, modified_at)
-            {
-                cached
-            } else {
-                match renderer.extract_document_text(&pdf_path.to_string_lossy()) {
-                    Ok(text) => {
-                        state.put_cached_pdf_text_for_vault(
-                            root,
-                            &rel_path,
-                            file_size,
-                            modified_at,
-                            &text,
-                        );
-                        text
-                    }
-                    Err(_) => continue,
-                }
-            };
-            if !text.trim().is_empty() {
-                pdf_indexed.push((rel_path, text));
-            }
-        }
-    }
-    (pdf_indexed, pdf_documents)
 }
 
 /// Open a file from the vault. Returns raw bytes.

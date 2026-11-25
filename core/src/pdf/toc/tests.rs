@@ -24,6 +24,7 @@ fn page_with_lines(page_index: u16, lines: &[(&str, f32, f32, f32)]) -> PdfPageT
         });
     }
     PdfPageText {
+        offsets: Default::default(),
         page_index,
         page_width: 612.0,
         page_height: 792.0,

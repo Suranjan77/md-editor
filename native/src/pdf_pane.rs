@@ -39,6 +39,8 @@ pub struct PdfPane {
     pub zoom: f32,
     pub fit_to_width: bool,
     pub scroll_y: f32,
+    /// Visible height of the page list, as last scrolled (0 until known).
+    pub viewport_height: f32,
 
     pub pages: Vec<Option<Handle>>,
     pub dimensions: Vec<Option<(u32, u32)>>,
@@ -105,6 +107,7 @@ impl PdfPane {
             zoom: 1.5,
             fit_to_width: true,
             scroll_y: 0.0,
+            viewport_height: 0.0,
             pages: Vec::new(),
             dimensions: Vec::new(),
             page_sizes: Vec::new(),

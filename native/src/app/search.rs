@@ -364,7 +364,7 @@ impl MdEditor {
             // Replace-all is an edit like any other: it arms autosave, so the
             // result reaches disk without waiting for an explicit save.
             self.editor.mark_dirty_now();
-            self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
+            self.editor.toc_entries = self.editor.buffer.toc();
             let task = self.highlight_all();
             return Ok((count, task));
         }

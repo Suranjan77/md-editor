@@ -165,16 +165,13 @@ pub(super) fn build_page_text(page: &PdfPage, index: u16) -> PdfResult<PdfPageTe
         text,
         chars,
         lines,
+        offsets: Default::default(),
     })
 }
 
 /// Text of a single line, sliced out of the page's character buffer.
 pub(super) fn line_text(page: &PdfPageText, line: &PdfTextLine) -> String {
-    page.text
-        .chars()
-        .skip(line.start_text_index)
-        .take(line.end_text_index.saturating_sub(line.start_text_index))
-        .collect::<String>()
+    page.text_range(line.start_text_index, line.end_text_index)
         .trim()
         .to_string()
 }

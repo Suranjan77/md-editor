@@ -311,6 +311,23 @@ pub struct LineHeightCache {
 Margins depend on neighbouring lines, so they are never cached: they are recomputed by a
 cheap walk on every layout.
 
+### Images and math (`EditorPane::load_images`, `load_math`)
+
+Both run after each re-highlight and only start work that is not already done or doomed:
+
+- **Images** decode on a blocking thread (`raster::decode`), reported back as
+  `EditorMessage::ImageLoaded`, which is kept only if the link still resolves to that file
+  from the note now open. Files being decoded and files that failed (missing, unreadable)
+  are remembered, so a broken image costs nothing per keystroke. The cache is keyed by link
+  text, so it is dropped on a document switch (`img.png` means another file in another
+  folder) and when an image file changes on disk; `images_revision` makes such a refresh
+  re-lay out the line even when the cache's size is unchanged.
+- **Math** renders each TeX string once however often it repeats, on a blocking thread;
+  strings being rendered and strings that failed to parse are not respawned on every
+  keystroke. A rescale or theme switch drops all three (`forget_math`).
+- **Outline**: `DocBuffer::toc` reads headings straight from the rope, without copying the
+  document.
+
 ---
 
 ## 5. The Widget (`renderer/`)

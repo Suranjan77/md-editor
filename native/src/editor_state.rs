@@ -66,7 +66,18 @@ pub struct EditorPane {
     pub completion: Option<crate::autocomplete::Completion>,
 
     pub image_cache: HashMap<String, (Handle, f32, f32)>,
+    /// Bumped whenever `image_cache` changes, so a refreshed image of a new
+    /// size re-lays out its line even when the cache's length is unchanged.
+    images_revision: u64,
+    /// Images being decoded off the UI thread, and those that failed (missing,
+    /// unreadable) — neither is tried again on every keystroke. Absolute paths.
+    pending_images: std::collections::HashSet<std::path::PathBuf>,
+    failed_images: std::collections::HashSet<std::path::PathBuf>,
     pub math_cache: HashMap<String, crate::editor::renderer::MathRender>,
+    /// TeX being rendered, and TeX that failed to parse: rendered once, not
+    /// once per keystroke or per repeat in the note.
+    pending_math: std::collections::HashSet<String>,
+    failed_math: std::collections::HashSet<String>,
     /// Display scale the current math_cache contents were rasterized for.
     math_scale_factor: f32,
 
@@ -106,7 +117,12 @@ impl EditorPane {
             caret_view: None,
             completion: None,
             image_cache: HashMap::new(),
+            images_revision: 0,
+            pending_images: Default::default(),
+            failed_images: Default::default(),
             math_cache: HashMap::new(),
+            pending_math: Default::default(),
+            failed_math: Default::default(),
             math_scale_factor: 1.0,
             retained: HashMap::new(),
             retained_order: Vec::new(),
@@ -128,6 +144,7 @@ impl EditorPane {
         (
             self.highlight.revision(),
             self.image_cache.len(),
+            self.images_revision,
             self.math_cache.len(),
             self.math_scale_factor.to_bits(),
             crate::design::theme_revision(),
@@ -254,10 +271,22 @@ impl EditorPane {
                 // Also drop renders in a colour from before a theme switch.
                 if (scale - self.math_scale_factor).abs() < 0.01
                     && ink == crate::design::tokens().doc_math
-                    && let Ok(render) = res
                 {
-                    self.math_cache.insert(tex, render);
+                    match res {
+                        Ok(render) => {
+                            self.math_cache.insert(tex.clone(), render);
+                        }
+                        Err(_) => {
+                            // Half-typed TeX fails a new way per keystroke;
+                            // keep the memory of failures bounded.
+                            if self.failed_math.len() > MAX_FAILED_MATH {
+                                self.failed_math.clear();
+                            }
+                            self.failed_math.insert(tex.clone());
+                        }
+                    }
                 }
+                self.pending_math.remove(&tex);
                 Task::none()
             }
             _ => Task::none(),
@@ -266,30 +295,90 @@ impl EditorPane {
 
     // ── Resource loading for rendered content ────────────────────────
 
-    /// Synchronously load any not-yet-cached images referenced by the
-    /// highlighted lines, resolving paths relative to the active document.
-    pub fn load_images(&mut self, vault_root: &str, active_path: &str) {
-        let Some(base_path) = std::path::Path::new(vault_root)
-            .join(active_path)
-            .parent()
-            .map(|path| path.to_path_buf())
-        else {
-            return;
+    /// Decode, off the UI thread, every image the highlighted lines show that
+    /// is neither cached, nor being decoded, nor known to fail. Paths resolve
+    /// relative to the active document.
+    pub fn load_images(&mut self, vault_root: &str, active_path: &str) -> Task<Message> {
+        let Some(base_path) = image_base(vault_root, active_path) else {
+            return Task::none();
         };
-
+        let mut tasks = Vec::new();
         for line in &self.highlight.lines {
             for span in &line.spans {
-                if span.is_image
-                    && let Some(path) = &span.image_path
-                    && !self.image_cache.contains_key(path)
-                {
-                    let img_path = base_path.join(image_link_path(path));
-                    if let Ok(decoded) = crate::raster::decode(&img_path) {
-                        self.image_cache.insert(path.clone(), decoded.handle());
-                    }
+                let Some(key) = span.image_path.as_ref().filter(|_| span.is_image) else {
+                    continue;
+                };
+                if self.image_cache.contains_key(key) {
+                    continue;
                 }
+                let abs = base_path.join(image_link_path(key));
+                if self.failed_images.contains(&abs) || !self.pending_images.insert(abs.clone()) {
+                    continue;
+                }
+                let key = key.clone();
+                tasks.push(Task::perform(
+                    crate::app::blocking({
+                        let abs = abs.clone();
+                        move || crate::raster::decode(&abs).map(crate::raster::Decoded::handle)
+                    }),
+                    move |result| {
+                        Message::Editor(EditorMessage::ImageLoaded(
+                            key.clone(),
+                            abs.clone(),
+                            result,
+                        ))
+                    },
+                ));
             }
         }
+        Task::batch(tasks)
+    }
+
+    /// A decode finished. It is kept only if `key` still resolves to `abs`
+    /// from the document open now.
+    pub fn image_loaded(
+        &mut self,
+        key: String,
+        abs: std::path::PathBuf,
+        result: Result<(Handle, f32, f32), String>,
+        vault_root: Option<&str>,
+        active_path: Option<&str>,
+    ) {
+        if !self.pending_images.remove(&abs) {
+            return; // forgotten (document switched, file changed) meanwhile
+        }
+        let current = vault_root
+            .zip(active_path)
+            .and_then(|(root, active)| image_base(root, active))
+            .map(|base| base.join(image_link_path(&key)));
+        match result {
+            Ok(image) if current.as_ref() == Some(&abs) => {
+                self.image_cache.insert(key, image);
+                self.images_revision = self.images_revision.wrapping_add(1);
+            }
+            Ok(_) => {}
+            Err(_) => {
+                self.failed_images.insert(abs);
+            }
+        }
+    }
+
+    /// Drop every decoded image and what is known about missing ones: on a
+    /// document switch (links are relative to the note) or when image files
+    /// change on disk.
+    pub fn forget_images(&mut self) {
+        self.image_cache.clear();
+        self.pending_images.clear();
+        self.failed_images.clear();
+        self.images_revision = self.images_revision.wrapping_add(1);
+    }
+
+    /// Drop rendered math (a new display scale or ink colour) and the record
+    /// of renders in flight or failed.
+    pub fn forget_math(&mut self) {
+        self.math_cache.clear();
+        self.pending_math.clear();
+        self.failed_math.clear();
     }
 
     /// Spawn render tasks for any not-yet-cached math spans. `scale_factor` is
@@ -309,17 +398,19 @@ impl EditorPane {
                         .trim_matches('$')
                         .trim()
                         .to_string();
-                    if !tex.is_empty() && !self.math_cache.contains_key(&tex) {
+                    if !tex.is_empty()
+                        && !self.math_cache.contains_key(&tex)
+                        && !self.failed_math.contains(&tex)
+                        && self.pending_math.insert(tex.clone())
+                    {
                         let tex_clone = tex.clone();
                         // Chosen here, on the UI thread, not when the task runs.
                         let ink = crate::design::tokens().doc_math;
                         tasks.push(Task::perform(
-                            async move {
-                                (
-                                    tex_clone.clone(),
-                                    render_latex_task(&tex_clone, scale_factor, ink),
-                                )
-                            },
+                            crate::app::blocking(move || {
+                                let render = render_latex_task(&tex_clone, scale_factor, ink);
+                                (tex_clone, render)
+                            }),
                             move |(t, r)| {
                                 Message::Editor(EditorMessage::MathRendered(
                                     t,
@@ -414,6 +505,17 @@ pub(crate) fn render_latex_task(
 
 /// The file an image link points at: `<…>` (CommonMark's form for paths with
 /// spaces) unwrapped and `%XX` escapes decoded.
+/// Most failed TeX strings remembered before the record is reset.
+const MAX_FAILED_MATH: usize = 1000;
+
+/// The folder images in `active_path` resolve against.
+fn image_base(vault_root: &str, active_path: &str) -> Option<std::path::PathBuf> {
+    std::path::Path::new(vault_root)
+        .join(active_path)
+        .parent()
+        .map(std::path::Path::to_path_buf)
+}
+
 pub(crate) fn image_link_path(link: &str) -> String {
     let link = link.trim();
     let link = link

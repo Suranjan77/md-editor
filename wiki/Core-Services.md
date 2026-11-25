@@ -126,8 +126,12 @@ erDiagram
    | `tracker_config` | tracker Config tab | The tracker's JSON curriculum |
 
 2. **`file_search`** — an FTS5 virtual table over `(path, content)`, holding both Markdown
-   note text and extracted PDF text. Rebuilt wholesale inside one transaction whenever a
-   vault is opened.
+   note text and extracted PDF text, for one vault at a time.
+   **`vault_file_meta`** (schema v3) — for each file whose `file_search` row is current:
+   `(scope, path, size, modified_ns, links_json)`, the vault scope being the same hash
+   `pdf_documents` ids are prefixed with, and `links_json` a note's wikilink targets as
+   written. Reopening a vault reads only files whose size or mtime differ (see Vault
+   Indexing). Rows and records are cleared together whenever another vault is opened.
 3. **`pdf_documents`** — known PDFs by content id, with their vault-relative path, size, and
    timestamps. When a PDF is copied or restored and its id changes, rows recorded for the
    same path *and the same size* are adopted under the new id so annotations are not orphaned.
@@ -210,13 +214,21 @@ touching the file.
 
 Deliberately two-phase, so the UI thread is never blocked behind disk or PDFium work:
 
-1. **Phase 1 (no locks held)** — walk every Markdown file, read it, build a fresh
-   `FileIndex` with its two-pass rebuild, and collect `(relative path, content)` rows.
-2. **Phase 1b (no locks held)** — for each PDF, reuse `pdf_text_cache` when size and mtime
-   match, otherwise run PDFium extraction and cache the result. Skipped entirely when no
-   renderer is available.
-3. **Phase 2 (short-lived locks)** — publish the vault root, replace the whole `file_search`
-   table inside one transaction, and swap in the new `FileIndex`.
+(`vault/indexing.rs`.)
+
+1. **Phase 1 (no locks held)** — one walk (`list_vault_entries`) gives the tree, the notes
+   and the PDFs. A note whose size and mtime (ns) match its `vault_file_meta` record is
+   not read: its recorded link targets feed `FileIndex::rebuild_from_links`. Changed and
+   new notes are read, and their links extracted (`raw_targets`).
+2. **Phase 1b (no locks held)** — every PDF's identity is resolved for annotation scoping;
+   only new or changed PDFs have their text taken from `pdf_text_cache` or extracted. A
+   PDF whose text could not be read gets no record, so it is retried next time (for
+   example once PDFium is available).
+3. **Phase 2 (short-lived locks)** — publish the vault root; in one transaction delete the
+   rows and records of files that are gone and rewrite those of changed files (the
+   whole table when this is a different vault, or the first index); swap in the new
+   `FileIndex`. `begin_vault_change` keeps the rows when the same vault is reopened and
+   clears rows and records together otherwise.
 
 ### Atomic Write Protocol
 

@@ -1180,3 +1180,73 @@ fn a_file_that_cannot_be_deleted_stays_indexed_and_searchable() {
     fs::set_permissions(base.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
     let _ = fs::remove_dir_all(base);
 }
+
+fn search_paths(state: &AppState, query: &str) -> Vec<String> {
+    let mut paths: Vec<String> = search_vault(state, query)
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|item| item.path)
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn reopening_a_vault_rereads_only_changed_files() {
+    let (base, state) = temp_vault(&[
+        ("a.md", "alpha [[b]]\n"),
+        ("b.md", "bravo\n"),
+        ("c.md", "charlie\n"),
+    ]);
+    // Tamper with a's row: if reopening re-read a.md, the row would be fixed.
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE file_search SET content = 'tampered' WHERE path = 'a.md'",
+            [],
+        )
+        .unwrap();
+    // Change c (size differs), delete b's neighbour d appears.
+    fs::write(base.join("c.md"), "charlie edited longer\n").unwrap();
+    fs::write(base.join("d.md"), "delta\n").unwrap();
+
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+    assert_eq!(
+        search_paths(&state, "tampered"),
+        ["a.md"],
+        "unchanged a.md was re-read"
+    );
+    assert_eq!(search_paths(&state, "edited"), ["c.md"]);
+    assert_eq!(search_paths(&state, "delta"), ["d.md"]);
+    // Links of the file that was not read still count.
+    let index = state.file_index.lock().unwrap();
+    assert_eq!(
+        index.get_backlinks(&base.join("b.md")),
+        vec![base.join("a.md")]
+    );
+    drop(index);
+
+    fs::remove_file(base.join("d.md")).unwrap();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+    assert!(
+        search_paths(&state, "delta").is_empty(),
+        "deleted file still indexed"
+    );
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn switching_vaults_reindexes_and_never_mixes_rows() {
+    let (first, state) = temp_vault(&[("one.md", "shared-term first\n")]);
+    let (second, _) = temp_vault(&[("two.md", "shared-term second\n")]);
+    set_vault_root(&state, second.to_str().unwrap()).unwrap();
+    assert_eq!(search_paths(&state, "shared-term"), ["two.md"]);
+    set_vault_root(&state, first.to_str().unwrap()).unwrap();
+    assert_eq!(search_paths(&state, "shared-term"), ["one.md"]);
+    let _ = fs::remove_dir_all(first);
+    let _ = fs::remove_dir_all(second);
+}

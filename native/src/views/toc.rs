@@ -10,6 +10,7 @@ use crate::ui::{
     BadgeTone, Icon, IconButton, PanelSide, badge, ellipsize_single_line, empty_state, panel,
 };
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct TocEntry {
     pub level: u8,
     pub text: String,
@@ -17,9 +18,16 @@ pub struct TocEntry {
 }
 
 pub fn get_toc(buffer_text: &str) -> Vec<TocEntry> {
+    toc_from_lines(buffer_text.split('\n'))
+}
+
+/// [`get_toc`] over a note's lines, so the open buffer's outline is read
+/// straight from its rope instead of a copy of the whole document.
+pub fn toc_from_lines<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Vec<TocEntry> {
     let mut toc = Vec::new();
     let mut fence: Option<(char, usize)> = None;
-    for (i, line) in buffer_text.split('\n').enumerate() {
+    for (i, line) in lines.enumerate() {
+        let line = line.as_ref();
         let trimmed = line.trim_start();
         let marker = trimmed.chars().next().filter(|c| *c == '\x60' || *c == '~');
         let marker_len = marker

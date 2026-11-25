@@ -42,6 +42,32 @@ pub struct PdfPageText {
     pub text: String,
     pub chars: Vec<PdfTextChar>,
     pub lines: Vec<PdfTextLine>,
+    /// Byte offset of each char of `text`, built on first use; see
+    /// [`PdfPageText::text_range`].
+    #[serde(skip)]
+    pub offsets: CharOffsets,
+}
+
+/// Lazily built char → byte offsets of a page's text.
+#[derive(Clone, Debug, Default)]
+pub struct CharOffsets(std::sync::OnceLock<Vec<usize>>);
+
+impl PdfPageText {
+    /// The text of chars `[start, end)` (clamped), in O(1) once the page's
+    /// offsets are built, instead of walking the text from its start.
+    pub fn text_range(&self, start: usize, end: usize) -> &str {
+        let offsets = self.offsets.0.get_or_init(|| {
+            let mut offsets: Vec<usize> = self.text.char_indices().map(|(i, _)| i).collect();
+            offsets.push(self.text.len());
+            offsets
+        });
+        let last = offsets.len() - 1;
+        let (start, end) = (start.min(last), end.min(last));
+        if start >= end {
+            return "";
+        }
+        &self.text[offsets[start]..offsets[end]]
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]

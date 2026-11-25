@@ -41,6 +41,7 @@ md-editor/
 | `src/config.rs` | `get_sys_config` / `set_sys_config` over `settings`, and `read_startup_value` for use before `AppState` exists. |
 | `src/vault.rs` | The vault API: indexing for a generation, open/save/create/delete, `read_vault_image`. |
 | `src/vault/backlinks.rs` | `search_vault`, incoming and mixed (note + PDF annotation) backlinks. |
+| `src/vault/indexing.rs` | `index_vault_for_generation`: one walk, then only changed notes and PDFs re-read and re-indexed (`vault_file_meta`). |
 | `src/vault/rename.rs` | Renaming files and folders while rewriting links, search rows and PDF sidecars. |
 | `src/vault/relink.rs` | The link fixes a rename needs: wikilinks and Markdown links/images to the moved entry, and relative links out of moved notes. |
 | `src/vault/files.rs` | Path jailing (`resolve_vault_path_checked`), the atomic `write_file` / `write_bytes`, file-type checks, tree listing. Tests in `files/tests.rs`. |

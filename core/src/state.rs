@@ -120,12 +120,27 @@ impl AppState {
 
     /// Declare the vault the UI intends to use and invalidate older indexing work.
     pub fn begin_vault_change(&self, root: PathBuf) -> StateResult<u64> {
+        // Outside the locks: it touches the filesystem (canonicalize).
+        let scope = Self::pdf_scope_prefix_for_root(&root);
         let _publish = self.vault_publish_lock.lock()?;
         let _mutation = self.vault_mutation_lock.lock()?;
         {
+            // Another vault's rows must not show while this one indexes; the
+            // same vault's rows stay, so reopening re-reads only what changed
+            // (`vault/indexing.rs`). Rows and their records go together.
             let db = self.db.lock()?;
-            db.execute("DELETE FROM file_search", [])
-                .map_err(|e| format!("Failed to clear previous vault search index: {e}"))?;
+            let same_vault: bool = db
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM vault_file_meta WHERE scope = ?1)
+                       AND NOT EXISTS(SELECT 1 FROM vault_file_meta WHERE scope != ?1)",
+                    rusqlite::params![scope],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if !same_vault {
+                db.execute_batch("DELETE FROM file_search; DELETE FROM vault_file_meta;")
+                    .map_err(|e| format!("Failed to clear previous vault search index: {e}"))?;
+            }
         }
         *self.file_index.lock()? = FileIndex::new(root.clone());
         let generation = self
@@ -159,7 +174,7 @@ impl AppState {
 
 /// Current on-disk schema version. Bump this and add a corresponding arm in
 /// [`apply_migrations`] whenever the schema changes.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 fn init_schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch(
@@ -258,6 +273,21 @@ fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
                 document_id TEXT PRIMARY KEY,
                 outline_json TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
+            );",
+        )?;
+    }
+
+    // v3: what the search index last read of each vault file, so reopening a
+    // vault re-reads only the files that changed.
+    if version < 3 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS vault_file_meta (
+                scope TEXT NOT NULL,
+                path TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                modified_ns INTEGER NOT NULL,
+                links_json TEXT NOT NULL,
+                PRIMARY KEY (scope, path)
             );",
         )?;
     }

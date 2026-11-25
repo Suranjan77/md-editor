@@ -124,3 +124,21 @@ fn word_count_does_not_split_words_at_rope_chunk_boundaries() {
     b.execute(EditorCommand::Undo);
     assert_eq!(b.word_count(), 3);
 }
+
+#[test]
+fn outline_from_the_rope_matches_the_outline_from_text() {
+    use crate::editor::test_docs::{Rng, document};
+    for seed in 0..300 {
+        let mut doc = document(&mut Rng::new(seed));
+        if seed % 3 == 0 {
+            // Long enough to span rope chunks.
+            doc = format!("{}\n# Late heading\n{doc}", "filler line\n".repeat(400));
+        }
+        let buffer = DocBuffer::from_text(&doc);
+        assert_eq!(
+            buffer.toc(),
+            crate::views::toc::get_toc(&doc),
+            "seed {seed}"
+        );
+    }
+}

@@ -283,6 +283,7 @@ impl MdEditor {
     pub(super) fn on_pdf_scrolled(&mut self, y: f32, viewport_height: f32) -> Task<Message> {
         self.active_panel = ActivePanel::Pdf;
         self.pdf.scroll_y = y;
+        self.pdf.viewport_height = viewport_height;
         let new_page = self.pdf.page_at_scroll(y + viewport_height * 0.33);
         if self.pdf.programmatic_scroll {
             self.pdf.programmatic_scroll = false;

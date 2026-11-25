@@ -286,6 +286,13 @@ pub enum EditorMessage {
     ),
     ToggleTOC,
     TocClicked(usize),
+    /// An image in the note finished decoding: its link text, the file, and
+    /// the image (handle, width, height) or why it could not be read.
+    ImageLoaded(
+        String,
+        std::path::PathBuf,
+        Result<(iced::widget::image::Handle, f32, f32), String>,
+    ),
     /// Move the completion popup's selection by this many rows.
     CompletionMove(isize),
     /// Insert the selected completion (`Enter` / `Tab`).

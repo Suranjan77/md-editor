@@ -512,6 +512,7 @@ impl MdEditor {
                 } else {
                     &[]
                 },
+                search_by_page: &self.search.pdf_indices_by_page,
                 active_search_index: self.search.match_index,
                 page_texts: &self.pdf.page_text,
                 annotations: &self.pdf.annotations,
@@ -519,6 +520,8 @@ impl MdEditor {
                 active_selection: self.pdf.selection,
                 focused_annotation_id: self.pdf.focused_annotation_id.as_deref(),
                 load_error: self.pdf.load_error.as_deref(),
+                scroll_y: self.pdf.scroll_y,
+                viewport_height: self.pdf.viewport_height,
             },
         ))
         .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
