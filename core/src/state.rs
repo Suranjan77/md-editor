@@ -159,7 +159,7 @@ impl AppState {
 
 /// Current on-disk schema version. Bump this and add a corresponding arm in
 /// [`apply_migrations`] whenever the schema changes.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 fn init_schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch(
@@ -249,6 +249,18 @@ fn init_schema(db: &Connection) -> rusqlite::Result<()> {
 
 fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
     let mut version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+
+    // v2: cache recovered outlines of bookmark-less PDFs, so reopening one
+    // does not rescan every page.
+    if version < 2 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pdf_outline (
+                document_id TEXT PRIMARY KEY,
+                outline_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );",
+        )?;
+    }
 
     if version < SCHEMA_VERSION {
         version = SCHEMA_VERSION;

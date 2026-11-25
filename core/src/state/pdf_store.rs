@@ -201,6 +201,50 @@ impl AppState {
         (version == crate::references::RESOLVER_VERSION).then_some(links)
     }
 
+    /// Cached recovered outline of a bookmark-less document, or `None` if not
+    /// recovered yet (or recovered by an older [`crate::pdf::OUTLINE_VERSION`]).
+    pub fn get_pdf_outline(&self, document_id: &str) -> Option<Vec<crate::pdf::TocEntry>> {
+        let storage_document_id = self.pdf_storage_document_id(document_id).ok()?;
+        let db = self.db.lock().ok()?;
+        let json: String = db
+            .query_row(
+                "SELECT outline_json FROM pdf_outline WHERE document_id = ?1",
+                [storage_document_id],
+                |row| row.get(0),
+            )
+            .ok()?;
+        let (version, outline): (u32, Vec<crate::pdf::TocEntry>) =
+            serde_json::from_str(&json).ok()?;
+        (version == crate::pdf::OUTLINE_VERSION).then_some(outline)
+    }
+
+    /// Store a recovered outline for a document. Best-effort.
+    pub fn put_pdf_outline(&self, document_id: &str, outline: &[crate::pdf::TocEntry]) {
+        let Ok(storage_document_id) = self.pdf_storage_document_id(document_id) else {
+            return;
+        };
+        let Ok(db) = self.db.lock() else {
+            return;
+        };
+        let Ok(json) = serde_json::to_string(&(crate::pdf::OUTLINE_VERSION, outline)) else {
+            return;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        if let Err(e) = db.execute(
+            "INSERT INTO pdf_outline (document_id, outline_json, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(document_id) DO UPDATE SET
+                outline_json = excluded.outline_json,
+                updated_at = excluded.updated_at",
+            rusqlite::params![storage_document_id, json, now],
+        ) {
+            log::warn!("Failed to cache pdf outline: {e}");
+        }
+    }
+
     /// Store resolved references for a document. Best-effort.
     pub fn put_pdf_references(
         &self,
@@ -463,6 +507,11 @@ fn reconcile_previous_pdf_document(
             rusqlite::params![storage_document_id, previous_id],
         )
         .map_err(|e| format!("Failed to reconcile pdf references: {e}"))?;
+        tx.execute(
+            "UPDATE pdf_outline SET document_id = ?1 WHERE document_id = ?2",
+            rusqlite::params![storage_document_id, previous_id],
+        )
+        .map_err(|e| format!("Failed to reconcile pdf outline: {e}"))?;
         tx.execute(
             "UPDATE pdf_documents SET document_id = ?1 WHERE document_id = ?2",
             rusqlite::params![storage_document_id, previous_id],

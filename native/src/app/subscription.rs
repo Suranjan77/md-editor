@@ -106,6 +106,13 @@ impl MdEditor {
             Subscription::none()
         };
 
+        let ink_autosave = if self.ink.dirty && self.vault.root.is_some() {
+            iced::time::every(crate::ink::INK_AUTOSAVE_DELAY)
+                .map(|_| Message::Ink(InkMessage::AutosaveElapsed))
+        } else {
+            Subscription::none()
+        };
+
         let physics_tick = if self.graph.visible && self.graph.physics.running {
             iced::time::every(std::time::Duration::from_millis(33))
                 .map(|_| Message::Graph(GraphMessage::PhysicsTick))
@@ -120,49 +127,76 @@ impl MdEditor {
             graph_refresh,
             physics_tick,
             animation,
+            ink_autosave,
         ])
     }
 
     /// Mouse tracking while a split, panel or tab is dragged, or files hover.
     fn pointer_drag_subscription(&self) -> Subscription<Message> {
-        if self.ui.is_resizing_split {
-            iced::event::listen_with(|event, _status, _window_id| match event {
-                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
-                    Some(Message::Shell(ShellMessage::SplitViewDragging(position.x)))
+        use iced::mouse::{Button, Event as Mouse};
+
+        // Each listener reports the window an event came from; `main_window_only`
+        // drops cursor motion from the ink window, where the pen moving over the
+        // canvas would otherwise drag the shell's split or panel edge. Releases
+        // are accepted from any window, so a drag can always end.
+        let listener = if self.ui.is_resizing_split {
+            iced::event::listen_with(|event, _status, window| match event {
+                iced::Event::Mouse(Mouse::CursorMoved { position }) => Some((
+                    Message::Shell(ShellMessage::SplitViewDragging(position.x)),
+                    Some(window),
+                )),
+                iced::Event::Mouse(Mouse::ButtonReleased(Button::Left)) => {
+                    Some((Message::Shell(ShellMessage::SplitViewDragEnd), None))
                 }
-                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
-                    iced::mouse::Button::Left,
-                )) => Some(Message::Shell(ShellMessage::SplitViewDragEnd)),
                 _ => None,
             })
         } else if self.ui.resizing_panel.is_some() {
-            iced::event::listen_with(|event, _status, _window_id| match event {
-                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
-                    Some(Message::Shell(ShellMessage::PanelResizeDrag(position.x)))
+            iced::event::listen_with(|event, _status, window| match event {
+                iced::Event::Mouse(Mouse::CursorMoved { position }) => Some((
+                    Message::Shell(ShellMessage::PanelResizeDrag(position.x)),
+                    Some(window),
+                )),
+                iced::Event::Mouse(Mouse::ButtonReleased(Button::Left)) => {
+                    Some((Message::Shell(ShellMessage::PanelResizeEnd), None))
                 }
-                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
-                    iced::mouse::Button::Left,
-                )) => Some(Message::Shell(ShellMessage::PanelResizeEnd)),
                 _ => None,
             })
         } else if self.ui.dragging_tab.is_some() {
-            iced::event::listen_with(|event, _status, _window_id| match event {
-                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
-                    iced::mouse::Button::Left,
-                )) => Some(Message::Tabs(TabsMessage::DragEnd)),
+            iced::event::listen_with(|event, _status, _window| match event {
+                iced::Event::Mouse(Mouse::ButtonReleased(Button::Left)) => {
+                    Some((Message::Tabs(TabsMessage::DragEnd), None))
+                }
                 _ => None,
             })
         } else if !self.ui.hovered_drop_files.is_empty() {
-            iced::event::listen_with(|event, _status, _window_id| match event {
-                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => Some(
+            iced::event::listen_with(|event, _status, window| match event {
+                iced::Event::Mouse(Mouse::CursorMoved { position }) => Some((
                     Message::Shell(ShellMessage::CursorMoved(position.x, position.y)),
-                ),
+                    Some(window),
+                )),
                 _ => None,
             })
         } else {
-            Subscription::none()
-        }
+            return Subscription::none();
+        };
+        main_window_only(listener, self.main_window)
     }
+}
+
+/// Keep a listener's messages from the main window, plus those tagged `None`
+/// (any window). Before the main window id is known, everything passes.
+fn main_window_only(
+    listener: Subscription<(Message, Option<iced::window::Id>)>,
+    main_window: Option<iced::window::Id>,
+) -> Subscription<Message> {
+    listener
+        .with(main_window)
+        .filter_map(
+            |(main_window, (message, window))| match (main_window, window) {
+                (Some(main), Some(window)) if main != window => None,
+                _ => Some(message),
+            },
+        )
 }
 
 /// Window lifecycle, resize, rescale and file drag-and-drop for both windows.

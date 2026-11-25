@@ -404,8 +404,15 @@ pub enum InkMessage {
     PaperSelected(crate::ink::document::PaperStyle),
     ColorSelected(iced::Color),
     SizeSelected(f32),
-    Pan { dx: f32, dy: f32 },
-    Zoom { x: f32, y: f32, notches: f32 },
+    Pan {
+        dx: f32,
+        dy: f32,
+    },
+    Zoom {
+        x: f32,
+        y: f32,
+        notches: f32,
+    },
     ZoomStep(f32),
     ResetView,
     DeleteSelection,
@@ -414,6 +421,8 @@ pub enum InkMessage {
     Clear,
     Save,
     Saved(Result<String, String>),
+    /// The ink autosave delay passed with unsaved strokes on the page.
+    AutosaveElapsed,
 }
 
 impl From<VaultMessage> for Message {

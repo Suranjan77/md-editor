@@ -101,8 +101,14 @@ impl InkState {
         true
     }
 
-    /// Pull the page up when the pen writes into the bottom margin, so a line
-    /// can be continued without stopping to pan.
+    /// Pull the page up once a stroke has ended in the bottom margin, so the
+    /// next line has room without stopping to pan.
+    ///
+    /// Only ever between strokes. Panning mid-stroke moves the page under a nib
+    /// that stays put on the glass, so every later sample lands further down the
+    /// page: the stroke is smeared across the gap, and because each sample in
+    /// the margin panned again, the page ran away while writing (the "page
+    /// split" bug). Note apps that scroll while writing all do it at pen-up.
     ///
     /// Takes a **screen** position because the margin is a property of the
     /// window, not of the page.
@@ -115,8 +121,8 @@ impl InkState {
             return false;
         }
 
-        // Pin the nib at the threshold rather than jumping: a discrete scroll
-        // mid-letter is disorienting.
+        // Lift the line just written to the threshold, leaving the margin free
+        // for the next one.
         self.camera.pan_by(Vec2::new(0.0, threshold - screen_y));
         self.cache.clear();
         true
@@ -165,6 +171,7 @@ impl InkState {
         }
 
         self.drawing = true;
+        self.last_screen = Some(screen);
         self.live.push(InkPoint {
             pos: position,
             pressure,
@@ -210,9 +217,7 @@ impl InkState {
             pos: position,
             pressure,
         });
-        // Advancing moves the camera, so it must happen after the sample is
-        // recorded in page space — the stroke itself does not move.
-        self.advance_if_near_bottom(screen.y);
+        self.last_screen = Some(screen);
         true
     }
 
@@ -275,6 +280,11 @@ impl InkState {
         self.document.push(stroke);
         self.live.clear();
         self.invalidate();
+        // The stroke is committed in page space, so moving the view now leaves
+        // it exactly where it was written.
+        if let Some(screen) = self.last_screen.take() {
+            self.advance_if_near_bottom(screen.y);
+        }
         true
     }
 
@@ -339,7 +349,19 @@ impl InkState {
         }
         self.drawing = false;
         self.erasing = false;
-        self.drag_from = None;
+        self.last_screen = None;
+        // A selection drag moves the strokes as it goes, with no history until
+        // release. Cancelling must put them back, or the page changes with
+        // nothing to undo and no unsaved marker.
+        if self.drag_from.take().is_some() {
+            let moved = self.drag_total;
+            if moved.x != 0.0 || moved.y != 0.0 {
+                let selection = self.selection.clone();
+                self.document
+                    .translate_without_history(&selection, Vec2::new(0.0, 0.0).sub(moved));
+                self.cache.clear();
+            }
+        }
         self.drag_total = Vec2::new(0.0, 0.0);
     }
 

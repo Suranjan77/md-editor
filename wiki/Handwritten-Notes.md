@@ -3,9 +3,18 @@
 A pressure-sensitive ink canvas in its own window, so it can sit on a tablet or second
 monitor beside the notes. Pages are saved into the vault as `.ink` files.
 
-**Platform support.** Pen pressure is captured on Windows only (`ink/pen_win.rs`); iced
-drops pressure when it converts pointer events, so the app reads the Win32 pointer stack
-directly. Everywhere else the canvas works with a mouse at a fixed pressure.
+**Platform support.** iced drops pressure when it converts pointer events, so the app
+captures the pen below it:
+
+- **Windows** — the Win32 pointer stack (`ink/pen_win.rs`).
+- **Linux, Wayland** — the tablet protocol `zwp_tablet_v2` (`ink/pen_wayland.rs`), through
+  a tablet hook in the vendored winit (`vendor/winit`, applied with `[patch.crates-io]`;
+  the change is `vendor/winit/md-editor-patches/`). This needs a compositor that
+  offers the protocol (Hyprland, GNOME, KDE and sway all do).
+- **Elsewhere** (X11, macOS) — the canvas works with a mouse at a fixed pressure.
+
+The log says `Pen input ready` when capture is installed, or `Pen input unavailable: …`
+and why when it isn't.
 
 | Piece | Where | Owns |
 | :--- | :--- | :--- |
@@ -14,7 +23,7 @@ directly. Everywhere else the canvas works with a mouse at a fixed pressure.
 | Document | `ink/document.rs` | Strokes, undo/redo, paper style, the JSON file format |
 | Camera | `ink/camera.rs` | Page ⇄ screen mapping for pan and zoom |
 | Canvas | `ink/canvas.rs` | The iced canvas: a retained cache for finished strokes, the live stroke redrawn per frame |
-| Pen input | `ink/pen.rs`, `ink/pen_win.rs` | Sample type and the stream into iced; the Windows capture hook |
+| Pen input | `ink/pen.rs`, `ink/pen_win.rs`, `ink/pen_wayland.rs` | Sample type and the stream into iced; the Windows and Wayland capture hooks |
 | Radial menu | `ink/radial.rs` | The ring summoned at the nib with the pen's barrel button |
 | Chrome | `native/src/views/ink.rs` | Toolbar and colour palette |
 | Messages | `native/src/app/ink.rs` → `update_ink` | Every `Ink*` message; opening, closing and saving pages |
@@ -33,15 +42,19 @@ directly. Everywhere else the canvas works with a mouse at a fixed pressure.
   outer one; the centre cancels.
 - `Ctrl+Z` / `Ctrl+Y` undo and redo on the canvas, `Ctrl+S` saves the page while the canvas
   is in front, and `Escape` clears a lasso selection.
-- Writing near the bottom edge scrolls the page up, so a sentence never runs out of room.
+- Finishing a stroke near the bottom edge scrolls the page up, so the next line has room.
+  The page never moves while the pen is down: that would slide the page under a nib that
+  stays put and smear the stroke (`ink/input.rs::advance_if_near_bottom`).
 
-Pages are **not autosaved**. Closing the window keeps the page in memory for the session,
-but unsaved strokes are lost when the app exits.
+Pages **autosave** one second after a change (`INK_AUTOSAVE_DELAY`, never mid-stroke), and
+are also written when the ink window closes, when the app quits, and before another page
+replaces the one on the canvas. A page is only replaced once it is safely on disk.
 
 ## 2. Saving and the File Format
 
-`Ctrl+S` writes the page to its existing path, or on first save derives one
-(`app/ink.rs::derive_ink_path`):
+A save writes the page to its existing path, or on first save derives one
+(`app/ink.rs::derive_ink_path`), taking the first free `-2`, `-3`, … suffix
+(`unique_ink_path`) so a note's existing page is never overwritten:
 
 - beside the open note, with its extension replaced — `notes/lecture.md` →
   `notes/lecture.ink`;
@@ -60,7 +73,9 @@ crisply at any zoom and survives retuned smoothing.
 ```mermaid
 flowchart LR
     Pen["Pen (WM_POINTER*)"] --> Hook["pen_win: window subclass"]
+    Tablet["Pen (zwp_tablet_tool_v2)"] --> WHook["vendor/winit tablet hook → pen_wayland"]
     Hook --> Stream["pen::stream()"]
+    WHook --> Stream
     Stream -->|"InkPenSamples"| Update["update_ink"]
     Mouse["Mouse on canvas"] -->|"InkPointerDown/Move/Up"| Update
     Update --> State["InkState: smooth, extend live stroke"]
@@ -69,6 +84,13 @@ flowchart LR
 
 - The Win32 hook is attached to whichever window holds the canvas, and re-attached each
   time it is reopened (`WindowOpened` → `InkPenHookReady` with the raw window id).
+- On Wayland, binding the tablet protocol stops the compositor from emulating a mouse for
+  the pen. winit offers each tool frame to `pen_wayland` first. Frames on the canvas are
+  claimed (`pen_wayland::Router`, the same rules as `pen_win`: a stroke that starts on the
+  canvas owns the pen until it lifts, and hover over the canvas hides the system cursor).
+  winit turns every unclaimed frame back into cursor and left-button events, so the pen
+  still presses toolbar buttons and works in the main window. Window decorations are left
+  to the compositor.
 - The pen stream is always subscribed: it consumes a process-wide receiver, so tearing it
   down would leave a second subscription with nothing to read. It is silent unless the ink
   window has claimed pen capture.

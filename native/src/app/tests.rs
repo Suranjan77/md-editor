@@ -87,6 +87,21 @@ fn ink_path_only_strips_an_extension_from_the_final_component() {
 }
 
 #[test]
+fn a_new_ink_page_never_takes_an_existing_pages_path() {
+    use super::ink::unique_ink_path;
+    let taken = ["notes/algebra.ink", "notes/algebra-2.ink"];
+    let is_taken = |p: &str| taken.contains(&p);
+    assert_eq!(
+        unique_ink_path("notes/fresh.ink", is_taken),
+        "notes/fresh.ink"
+    );
+    assert_eq!(
+        unique_ink_path("notes/algebra.ink", is_taken),
+        "notes/algebra-3.ink"
+    );
+}
+
+#[test]
 fn test_resolve_relative_link_path() {
     assert_eq!(
         resolve_relative_link_path(None, Some("notes/math.md"), "../science/chemistry"),

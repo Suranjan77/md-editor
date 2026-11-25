@@ -18,6 +18,7 @@ md-editor/
 ├── images/               README screenshots
 ├── .github/workflows/    CI: quality gate (ci.yml) and Windows/Linux release builds
 ├── packaging/arch/       PKGBUILDs (AUR md-editor, md-editor-git) and the desktop entry
+├── vendor/winit/         Vendored winit 0.30.13 plus Wayland tablet input, patched in via [patch.crates-io]
 ├── scripts/              clippy-ratchet.sh (clippy gate), build-arch-package.sh (package from the tree)
 ├── clippy-baseline.txt   Allowed clippy warning count; only goes down
 ├── clippy.toml, deny.toml  Lint config for tests; licence/ban policy for cargo-deny
@@ -65,7 +66,7 @@ md-editor/
 | :--- | :--- |
 | `main.rs` | CLI (a path to open), logging init, window size restore, the iced daemon. |
 | `build.rs` | Embeds the Windows icon and version resource. |
-| `logging.rs` | File logger behind `log` (`md-editor.log`, rotated 1 MB × 3, level from `MD_EDITOR_LOG`) and the panic hook. |
+| `logging.rs` | File logger behind `log` (`md-editor.log`, rotated 1 MB × 3, per-target levels from `MD_EDITOR_LOG`, long lines truncated, repeats collapsed) and the panic hook. |
 | `app/mod.rs` | `MdEditor` state, `boot`, `title`, `update`, and `update_inner`, which routes each message family to a handler below. |
 | `app/{pdf,graph,ink,search,editor,vault,shortcuts,shell}.rs` | One `update_<family>` handler each; see [Native Desktop GUI](Native-Desktop-GUI.md#2-messages-and-where-they-are-handled-messagesrs-app). |
 | `app/pdf.rs` | `update_pdf`: a router only; each `PdfMessage` goes to a handler in the three files below or to `PdfPane::update`. |
@@ -160,4 +161,9 @@ md-editor/
    `ratex-render`).
 3. **FFI containment.** `pdfium-render` is used only under `core/src/pdf/`; exactly one
    `Pdfium` binding exists per process. Win32 calls stay in `native/src/platform.rs` and
-   `native/src/ink/pen_win.rs`.
+   `native/src/ink/pen_win.rs`; the winit tablet hook is used only in
+   `native/src/ink/pen_wayland.rs`.
+4. **Vendored winit.** `vendor/winit` replaces crates.io winit for the whole build, so it
+   must stay at the exact version iced resolves to. Every change to it is also kept as a
+   patch in `vendor/winit/md-editor-patches/`: when iced moves to a newer winit, vendor the
+   new release and reapply the patches (or drop the ones upstream has absorbed).

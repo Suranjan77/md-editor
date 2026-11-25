@@ -35,8 +35,14 @@ ratex-layout = "0.1.7"
 ratex-types = "0.1.7"
 uuid = { version = "1", features = ["v4"] }
 notify = "8"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
 bytemuck = { version = "1.25.1", features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Wayland tablet input for pen pressure. Resolves to the vendored copy
+# (`vendor/winit`, see `[patch.crates-io]` in the workspace manifest), the same
+# winit iced uses, so the hook sees iced's own windows.
+winit = { version = "0.30", default-features = false, features = ["wayland"] }
 
 [target.'cfg(windows)'.dependencies]
 # ShellExecuteW for external links, plus the pointer input stack and window

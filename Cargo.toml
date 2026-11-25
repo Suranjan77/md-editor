@@ -1,5 +1,7 @@
 [workspace]
 members = ["core", "native"]
+# Sub-repos built as patched dependencies, not workspace members.
+exclude = ["vendor"]
 resolver = "2"
 
 [workspace.package]
@@ -27,3 +29,9 @@ print_stderr = "warn"
 large_enum_variant = "warn"
 # Not enabled: needless_pass_by_value. It flags the props-struct-by-value
 # pattern views use (and that W6 prescribes) and iced's by-value events.
+
+# winit with Wayland tablet (zwp_tablet_v2) input, so a pen reports pressure,
+# eraser and barrel buttons on Linux. A vendored copy of the exact release
+# iced 0.14 resolves to; our changes are in vendor/winit/md-editor-patches/.
+[patch.crates-io]
+winit = { path = "vendor/winit" }

@@ -64,8 +64,12 @@ cargo build --release        # optimized binary
 
 `native/src/logging.rs` installs a `log` logger at startup. Records go to `md-editor.log` in
 the data directory (beside the settings database), rotated at 1 MB with three old files
-kept (`.1`–`.3`); warnings and errors are echoed to stderr. `MD_EDITOR_LOG` sets the level
-(`error`, `warn`, `info` — the default — `debug`, `trace`, `off`). A panic hook logs the
+kept (`.1`–`.3`); warnings and errors are echoed to stderr. `MD_EDITOR_LOG` is a
+comma-separated list: a bare level for the app's own crates (`error`, `warn`, `info` — the
+default — `debug`, `trace`, `off`) and `target=level` overrides matched by module-path
+prefix, e.g. `debug,iced_winit=info`. Other crates default to `warn` (iced_winit logs each
+window's icon pixels at `info`). Lines over 8 KB are truncated, and a run of identical
+messages is written once plus a "repeated N more times" line. A panic hook logs the
 panic with a backtrace before the default hook runs. Core logs through the same facade.
 
 Release output:

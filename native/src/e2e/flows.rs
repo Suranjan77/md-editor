@@ -3,12 +3,13 @@
 use std::time::Duration;
 
 use super::scenarios::research_vault;
-use super::{Vault, boot, boot_with_path};
+use super::{Session, Vault, boot, boot_with_path};
 use crate::editor::buffer::{Affinity, EditorCommand};
 use crate::messages::{
     EditorMessage, GraphMessage, InkMessage, Message, PdfMessage, SearchMessage, ShellMessage,
     Shortcut, VaultMessage,
 };
+use iced_program::Program;
 
 fn open(path: &str) -> Message {
     Message::Vault(VaultMessage::SidebarFileClicked(path.to_string()))
@@ -155,9 +156,17 @@ fn s5_vault_search() {
     app.send(Message::Search(SearchMessage::QueryChanged(
         "moving averages".to_string(),
     )));
-    app.wait(Duration::from_millis(500));
-    app.settle();
-    let results = app.probe().search_results;
+    // The query runs after a debounce; under a loaded test machine that can
+    // take longer than any fixed wait, so poll for it (bounded).
+    let mut results = Vec::new();
+    for _ in 0..30 {
+        app.wait(Duration::from_millis(100));
+        app.settle();
+        results = app.probe().search_results;
+        if results.iter().any(|r| r == "notes/Optimizers.md") {
+            break;
+        }
+    }
     assert!(
         results.iter().any(|r| r == "notes/Optimizers.md"),
         "search results: {results:?}"
@@ -493,6 +502,69 @@ fn s12_handwriting_save_and_reopen() {
     let probe = app.probe();
     assert_eq!(probe.ink_path.as_deref(), Some(saved.as_str()));
     assert_eq!(probe.ink_strokes, 2, "strokes lost on reopen");
+    app.finish();
+}
+
+/// Draw one straight mouse stroke on the canvas without letting the event
+/// loop run, so autosave has not fired when it returns.
+fn draw_stroke<P>(app: &mut Session<P>, start: (f32, f32), end: (f32, f32))
+where
+    P: Program<State = crate::app::MdEditor, Message = Message> + 'static,
+{
+    app.send_quick(ink(InkMessage::PointerDown(start.0, start.1)));
+    for i in 1..=8 {
+        let t = i as f32 / 8.0;
+        app.send_quick(ink(InkMessage::PointerMove(
+            start.0 + (end.0 - start.0) * t,
+            start.1 + (end.1 - start.1) * t,
+        )));
+    }
+    app.send_quick(ink(InkMessage::PointerUp));
+}
+
+/// S12b: handwritten pages are never lost — autosaved without Ctrl+S, a new
+/// page beside a note never overwrites the note's existing page, and opening
+/// another page writes the current one first.
+#[test]
+fn s12b_handwriting_is_never_lost() {
+    let vault = research_vault();
+    let mut app = boot("s12b-ink-durability", &vault, Some("notes/Attention.md"));
+
+    app.send(ink(InkMessage::Toggle));
+    draw_stroke(&mut app, (40.0, 40.0), (200.0, 120.0));
+    assert!(app.probe().ink_dirty);
+    app.wait(Duration::from_millis(1500));
+    let probe = app.probe();
+    assert!(!probe.ink_dirty, "the page was not autosaved");
+    assert_eq!(probe.ink_path.as_deref(), Some("notes/Attention.ink"));
+    let first_page = vault.read("notes/Attention.ink");
+
+    // A fresh session starts a new page for the same note.
+    let mut app = app.restart("s12b-ink-durability-restart", None);
+    app.send(ink(InkMessage::Toggle));
+    draw_stroke(&mut app, (60.0, 200.0), (260.0, 220.0));
+    app.wait(Duration::from_millis(1500));
+    let second = app.probe().ink_path.expect("second page saved");
+    assert_eq!(second, "notes/Attention-2.ink");
+    assert_eq!(
+        vault.read("notes/Attention.ink"),
+        first_page,
+        "the note's first page was overwritten"
+    );
+
+    // Unsaved strokes survive switching to another page.
+    draw_stroke(&mut app, (60.0, 300.0), (260.0, 320.0));
+    assert!(app.probe().ink_dirty);
+    app.send_quick(open("notes/Attention.ink"));
+    let probe = app.probe();
+    assert_eq!(probe.ink_path.as_deref(), Some("notes/Attention.ink"));
+    assert_eq!(probe.ink_strokes, 1);
+    app.send(open(&second));
+    assert_eq!(
+        app.probe().ink_strokes,
+        2,
+        "strokes drawn before switching pages were lost"
+    );
     app.finish();
 }
 

@@ -146,7 +146,14 @@ impl canvas::Program<Message> for InkSurface<'_> {
                 )
             }
             Event::Mouse(CursorMoved { .. }) => {
-                let position = cursor.position_in(bounds)?;
+                // A drag that runs off the edge keeps going, unclamped, so the
+                // stroke keeps its shape; only hover is limited to the surface.
+                let position = if state.drawing || state.panning {
+                    let absolute = cursor.position()?;
+                    Point::new(absolute.x - bounds.x, absolute.y - bounds.y)
+                } else {
+                    cursor.position_in(bounds)?
+                };
                 let previous = state.last_cursor.replace(position);
 
                 if state.panning {

@@ -481,3 +481,58 @@ fn clearing_settings_keeps_study_history() {
     );
     assert_eq!(crate::tracker::get_sessions(&state).unwrap().len(), 1);
 }
+
+#[test]
+fn recovered_pdf_outline_is_cached_and_follows_a_document_id_change() {
+    use crate::pdf::TocEntry;
+
+    let state = AppState::new_in_memory();
+    state
+        .save_pdf_document("old-id", "papers/b.pdf", 4321, Some(100))
+        .unwrap();
+    assert_eq!(state.get_pdf_outline("old-id"), None, "nothing cached yet");
+
+    let outline = vec![TocEntry {
+        title: "1 Introduction".to_string(),
+        page_index: Some(2),
+        children: vec![TocEntry {
+            title: "1.1 Motivation".to_string(),
+            page_index: Some(3),
+            children: Vec::new(),
+        }],
+    }];
+    state.put_pdf_outline("old-id", &outline);
+    assert_eq!(state.get_pdf_outline("old-id"), Some(outline.clone()));
+
+    // An empty outline is a real answer ("no structure found") and is cached
+    // too, so the document is not rescanned on every open.
+    state.put_pdf_outline("old-id", &[]);
+    assert_eq!(state.get_pdf_outline("old-id"), Some(Vec::new()));
+    state.put_pdf_outline("old-id", &outline);
+
+    // The id moves with the file, as annotations and references do.
+    state
+        .save_pdf_document("new-id", "papers/b.pdf", 4321, Some(200))
+        .unwrap();
+    assert_eq!(state.get_pdf_outline("new-id"), Some(outline));
+}
+
+#[test]
+fn an_outline_cached_by_an_older_recovery_version_is_ignored() {
+    let state = AppState::new_in_memory();
+    state
+        .save_pdf_document("doc", "papers/c.pdf", 1, Some(1))
+        .unwrap();
+    {
+        let db = state.db.lock().unwrap();
+        db.execute(
+            "INSERT INTO pdf_outline (document_id, outline_json, updated_at) VALUES (?1, ?2, 0)",
+            rusqlite::params![
+                state.pdf_storage_document_id("doc").unwrap(),
+                format!("[{}, []]", crate::pdf::OUTLINE_VERSION + 99)
+            ],
+        )
+        .unwrap();
+    }
+    assert_eq!(state.get_pdf_outline("doc"), None);
+}

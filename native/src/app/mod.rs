@@ -62,6 +62,21 @@ fn rename_open_path(path: &mut Option<String>, old_path: &str, new_path: &str) {
     }
 }
 
+/// Run blocking work — every `PdfRenderer` call waits on the PDFium worker, and
+/// some read files — on tokio's blocking pool instead of inside an async task.
+///
+/// Blocking inside `Task::perform` futures parked the executor's worker
+/// threads: opening a PDF queues a dozen renderer calls, and once every worker
+/// waited on PDFium, nothing polled the subscriptions, so iced dropped input
+/// events (`TrySendError { kind: Full }` in the log) and timers stalled.
+pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(value) => value,
+        // Keep the panic a panic, with its original payload.
+        Err(error) => std::panic::resume_unwind(error.into_panic()),
+    }
+}
+
 pub(crate) fn is_supported_image_path(path: &str) -> bool {
     path.ends_with(".png")
         || path.ends_with(".jpg")

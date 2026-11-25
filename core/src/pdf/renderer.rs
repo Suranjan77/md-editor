@@ -67,6 +67,33 @@ pub(super) enum PdfCommand {
         u16,
         std::sync::mpsc::SyncSender<PdfResult<PdfPageText>>,
     ),
+    /// `GetPageText` for a whole-document scan, in the background lane.
+    GetPageTextBackground(
+        String,
+        u16,
+        std::sync::mpsc::SyncSender<PdfResult<PdfPageText>>,
+    ),
+    /// Recover an outline from page text the caller already extracted.
+    RecoverToc(
+        String,
+        std::sync::Arc<Vec<PdfPageText>>,
+        std::sync::mpsc::SyncSender<PdfResult<Vec<TocEntry>>>,
+    ),
+}
+
+impl PdfCommand {
+    /// Whole-document work, served only once no interactive command waits.
+    pub(super) fn is_background(&self) -> bool {
+        matches!(
+            self,
+            PdfCommand::ExtractText(..)
+                | PdfCommand::GetToc(..)
+                | PdfCommand::GetReferences(..)
+                | PdfCommand::SearchText(..)
+                | PdfCommand::GetPageTextBackground(..)
+                | PdfCommand::RecoverToc(..)
+        )
+    }
 }
 
 impl PdfRenderer {
@@ -252,6 +279,36 @@ impl PdfRenderer {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetPageText(path.to_string(), page_index, tx))
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
+    }
+
+    /// `get_page_text` for a whole-document scan: queued behind every render,
+    /// link and visible-page request, so the scan never delays the screen.
+    pub fn get_page_text_background(&self, path: &str, page_index: u16) -> PdfResult<PdfPageText> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::GetPageTextBackground(
+                path.to_string(),
+                page_index,
+                tx,
+            ))
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
+    }
+
+    /// Recover a bookmark-less document's outline from page text already
+    /// extracted (with [`Self::get_page_text_background`]): the printed
+    /// contents page through its links, then its text, then typography.
+    /// Equivalent to [`Self::get_toc`]'s fallback without a second text pass.
+    pub fn recover_toc(
+        &self,
+        path: &str,
+        page_texts: std::sync::Arc<Vec<PdfPageText>>,
+    ) -> PdfResult<Vec<TocEntry>> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::RecoverToc(path.to_string(), page_texts, tx))
             .map_err(|_| PdfError::WorkerGone)?;
         receive(rx)
     }

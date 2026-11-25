@@ -389,7 +389,7 @@ impl MdEditor {
         let path_str = abs_path.to_string_lossy().to_string();
         let generation = self.pdf.render_generation;
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let Some(renderer) = _state.pdf_renderer.as_ref() else {
                     return Err(
                         "PDF search is unavailable because PDFium is not loaded".to_string()
@@ -398,7 +398,7 @@ impl MdEditor {
                 renderer
                     .search_text(&path_str, &query, regex, match_case)
                     .map_err(String::from)
-            },
+            }),
             move |result| Message::Pdf(PdfMessage::SearchResult(generation, result)),
         )
     }

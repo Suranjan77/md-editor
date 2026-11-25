@@ -597,18 +597,62 @@ fn leaving_range_clears_the_aim_indicator() {
 }
 
 #[test]
-fn writing_into_the_bottom_margin_pulls_the_page_up() {
+fn ending_a_stroke_in_the_bottom_margin_pulls_the_page_up() {
     // Surface is 600 tall, so the advance threshold is 600 - 120 = 480.
     let mut ink = surface();
     let before = ink.camera.pan.y;
 
     ink.begin(Vec2::new(100.0, 400.0), 0.8, false);
-    assert_eq!(ink.camera.pan.y, before, "above the margin, nothing moves");
-
     ink.extend(Vec2::new(100.0, 540.0), 0.8);
+    assert_eq!(
+        ink.camera.pan.y, before,
+        "the page never moves while the pen is down"
+    );
+
+    ink.finish();
     assert!(
-        ink.camera.pan.y < before,
-        "writing into the margin should advance the page"
+        (ink.camera.pan.y - (before - 60.0)).abs() < 0.01,
+        "pen-up in the margin lifts the line to the threshold, got {}",
+        ink.camera.pan.y
+    );
+}
+
+#[test]
+fn a_stroke_ending_above_the_margin_does_not_advance() {
+    let mut ink = surface();
+    let before = ink.camera.pan.y;
+    ink.begin(Vec2::new(100.0, 540.0), 0.8, false);
+    ink.extend(Vec2::new(100.0, 300.0), 0.8);
+    ink.finish();
+    assert_eq!(ink.camera.pan.y, before);
+}
+
+/// Regression for the "page split": writing along a line in the margin used
+/// to pan on every sample, so the page ran away and the stroke smeared.
+#[test]
+fn writing_along_the_margin_keeps_the_stroke_contiguous() {
+    let mut ink = surface();
+    ink.begin(Vec2::new(100.0, 540.0), 0.8, false);
+    for step in 1..=50 {
+        ink.extend(Vec2::new(100.0 + step as f32 * 2.0, 540.0), 0.8);
+    }
+
+    let points = ink.live_points();
+    for pair in points.windows(2) {
+        let gap = pair[1].pos.sub(pair[0].pos);
+        assert!(
+            gap.x.abs() <= 2.01 && gap.y.abs() < 0.01,
+            "samples 2px apart on screen must stay 2px apart on the page, got {gap:?}"
+        );
+    }
+
+    ink.finish();
+    ink.begin(Vec2::new(100.0, 400.0), 0.8, false);
+    ink.finish();
+    assert!(
+        (ink.camera.pan.y + 60.0).abs() < 0.01,
+        "one stroke in the margin advances once, got {}",
+        ink.camera.pan.y
     );
 }
 
@@ -616,14 +660,46 @@ fn writing_into_the_bottom_margin_pulls_the_page_up() {
 fn advancing_keeps_the_stroke_where_it_was_written() {
     let mut ink = surface();
     ink.begin(Vec2::new(100.0, 540.0), 0.8, false);
-    let first = ink.live_points()[0].pos;
-
     ink.extend(Vec2::new(110.0, 545.0), 0.8);
+    let written: Vec<_> = ink.live_points().iter().map(|p| p.pos).collect();
+    ink.finish();
+
+    let stored = ink.document.strokes().last().unwrap().ink_points();
+    assert_eq!(stored.first().map(|p| p.pos), written.first().copied());
     assert_eq!(
-        ink.live_points()[0].pos,
-        first,
+        stored.last().map(|p| p.pos),
+        written.last().copied(),
         "the page moves under the ink, not the other way round"
     );
+}
+
+#[test]
+fn cancelling_a_selection_drag_puts_the_strokes_back() {
+    let mut ink = surface();
+    ink.begin(Vec2::new(100.0, 100.0), 0.8, false);
+    ink.extend(Vec2::new(140.0, 100.0), 0.8);
+    ink.finish();
+    ink.dirty = false;
+    let original = ink.document.strokes()[0].path_bounds();
+
+    ink.tool = Tool::Lasso;
+    for point in [(80.0, 80.0), (160.0, 80.0), (160.0, 120.0), (80.0, 120.0)] {
+        if ink.lasso().is_empty() {
+            ink.begin(Vec2::new(point.0, point.1), 0.5, false);
+        } else {
+            ink.extend(Vec2::new(point.0, point.1), 0.5);
+        }
+    }
+    ink.finish();
+    assert!(ink.has_selection());
+
+    ink.begin(Vec2::new(120.0, 100.0), 0.5, false);
+    ink.extend(Vec2::new(220.0, 300.0), 0.5);
+    assert_ne!(ink.document.strokes()[0].path_bounds(), original);
+
+    ink.cancel_stroke();
+    assert_eq!(ink.document.strokes()[0].path_bounds(), original);
+    assert!(!ink.dirty);
 }
 
 #[test]

@@ -16,6 +16,10 @@ cargo run -- path/to/vault-or-note.md   # launch (opens a window)
 scripts/build-arch-package.sh -si       # build + install the Arch package from the working tree
 ```
 
+`vendor/winit` is a vendored copy of winit 0.30.13 plus Wayland tablet input (pen pressure),
+swapped in for crates.io winit via `[patch.crates-io]`. Keep it at the exact winit version
+iced resolves to; our changes are listed in `vendor/winit/md-editor-patches/`.
+
 The first build downloads PDFium into `target/pdfium/` (network needed). If PDF tests fail
 with an undefined `FPDF_*` symbol, a stale library is cached: delete
 `target/debug/libpdfium.so` and rebuild.
@@ -71,7 +75,7 @@ is the fastest map. Tests for `foo.rs` live in `foo/tests.rs`.
 
 `wiki/` is authoritative; start at `wiki/Home.md` ("I want to change…" table). Plans in
 progress: `docs/ui-overhaul-plan.md` (+ `docs/design-system/`),
-`docs/e2e-bug-discovery-plan.md`, `docs/code-health-plan.md`,
+`docs/e2e-bug-discovery-plan.md`, `docs/bug-review-2026-11.md`, `docs/code-health-plan.md`,
 `docs/feature-plan-tabs-and-images.md`. When code
 moves, update `wiki/Repository-Structure.md` in the same change. Cite files and symbols,
 not line numbers. `docs/` holds the printable handbook, a dated snapshot.

@@ -84,12 +84,12 @@ impl MdEditor {
         let target_px = self.preview_target_px();
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = state.pdf_renderer.as_ref()?;
                 renderer
                     .render_link_preview(&abs_path, dest_page, dest_y, target_px)
                     .ok()
-            },
+            }),
             |res| {
                 Message::Pdf(PdfMessage::LinkPreviewResult(
                     res.ok_or_else(|| "Failed to preview".into()),
@@ -222,7 +222,7 @@ impl MdEditor {
         }
 
         let scroll_task = self.resolve_pdf_open_target();
-        let refs_task = self.load_pdf_references(&path, hash);
+        let refs_task = self.load_pdf_document_scan(&path, hash);
         Task::batch(vec![scroll_task, refs_task])
     }
 
@@ -264,55 +264,85 @@ impl MdEditor {
         }
     }
 
-    /// Internal references: load the cached target map if this document has
-    /// already been scanned, otherwise resolve once in the background and cache
-    /// it. Gated on document_id (not render generation): references are a
-    /// document-level artifact, and the scan outlives the fit-to-width zoom
-    /// change that bumps the generation.
+    /// One background pass over the document's text, shared by the two
+    /// things that need all of it: the recovered outline of a bookmark-less
+    /// PDF and the resolved cross-references. Both are cached by document id,
+    /// so a reopened document skips the scan entirely.
     ///
-    /// The scan extracts text one page at a time so the single pdfium worker
-    /// drains queued page renders *between* commands — avoiding the ~0.5–1s
-    /// stall a monolithic full-document command would cause on first open of a
-    /// bookmarked PDF.
-    fn load_pdf_references(&mut self, path: &str, hash: String) -> Task<Message> {
-        if let Some(links) = self.state.get_pdf_references(&hash) {
-            self.pdf.set_references(links);
-            return Task::none();
-        }
+    /// Path-scoped rather than generation-scoped: the results are
+    /// document-level and outlive the fit-to-width zoom change that bumps the
+    /// generation. Text is extracted a page at a time in the worker's
+    /// background lane, so every render queued meanwhile goes first.
+    fn load_pdf_document_scan(&mut self, path: &str, hash: String) -> Task<Message> {
+        let cached_references = self.state.get_pdf_references(&hash);
+        let cached_outline = self.state.get_pdf_outline(&hash);
         let Some(abs) = self.resolve_active_path(path) else {
             return Task::none();
         };
         let abs = abs.to_string_lossy().to_string();
         let state = self.state.clone();
         let doc_id = hash.clone();
+        let path = path.to_string();
+
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = state.pdf_renderer.as_ref()?;
-                // Embedded outline first (cheap, no scan).
-                let mut toc = renderer.get_embedded_toc(&abs).unwrap_or_default();
-                let n = renderer.page_count(&abs).ok()?;
-                let mut pages = Vec::with_capacity(n as usize);
-                for i in 0..n {
-                    if let Ok(pt) = renderer.get_page_text(&abs, i) {
-                        pages.push(pt);
+                let embedded = renderer.get_embedded_toc(&abs).unwrap_or_default();
+                // `Some` only for a bookmark-less document.
+                let mut outline = embedded.is_empty().then_some(cached_outline).flatten();
+                let needs_outline = embedded.is_empty() && outline.is_none();
+                if !needs_outline && let Some(references) = cached_references {
+                    return Some((references, outline));
+                }
+
+                let pages = renderer.page_count(&abs).ok()?;
+                let mut texts = Vec::with_capacity(pages as usize);
+                for index in 0..pages {
+                    if let Ok(text) = renderer.get_page_text_background(&abs, index) {
+                        texts.push(text);
                     }
                 }
-                // No bookmarks → recover section structure from the text just
-                // collected (no second scan).
-                if toc.is_empty() {
-                    toc = md_editor_core::pdf::recover_toc_from_texts(&pages);
+                let texts = std::sync::Arc::new(texts);
+
+                if needs_outline {
+                    let recovered = renderer
+                        .recover_toc(&abs, texts.clone())
+                        .unwrap_or_default();
+                    state.put_pdf_outline(&doc_id, &recovered);
+                    outline = Some(recovered);
                 }
-                let links = md_editor_core::references::resolve_references(&pages, &toc);
-                state.put_pdf_references(&doc_id, &links);
-                Some(links)
-            },
-            move |res| {
-                Message::Pdf(PdfMessage::ReferencesLoaded(
-                    hash.clone(),
-                    res.unwrap_or_default(),
-                ))
-            },
+                let references = match cached_references {
+                    Some(references) => references,
+                    None => {
+                        let toc = if embedded.is_empty() {
+                            outline.as_deref().unwrap_or_default()
+                        } else {
+                            &embedded
+                        };
+                        let links = md_editor_core::references::resolve_references(&texts, toc);
+                        state.put_pdf_references(&doc_id, &links);
+                        links
+                    }
+                };
+                Some((references, outline))
+            }),
+            |res| res,
         )
+        .then(move |res| {
+            let (references, outline) = res.unwrap_or_default();
+            let mut tasks = vec![Task::done(Message::Pdf(PdfMessage::ReferencesLoaded(
+                hash.clone(),
+                references,
+            )))];
+            if let Some(outline) = outline {
+                tasks.push(Task::done(Message::Pdf(PdfMessage::TocLoaded(
+                    path.clone(),
+                    outline,
+                    true,
+                ))));
+            }
+            Task::batch(tasks)
+        })
     }
 
     /// `PdfMessage::ReferencesLoaded`.

@@ -21,7 +21,9 @@ use std::collections::HashMap;
 /// Version of the resolution algorithm. Bump whenever the resolver's output for
 /// the same input would change (new rules, coordinate/aim tweaks) so stale
 /// cached results (keyed by document id) are discarded and recomputed.
-pub const RESOLVER_VERSION: u32 = 2;
+///
+/// 3: bookmark-less documents resolve against the link-aware recovered outline.
+pub const RESOLVER_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum ReferenceKind {

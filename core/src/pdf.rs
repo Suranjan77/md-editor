@@ -235,7 +235,12 @@ pub fn merge_char_rects(chars: &[PdfTextChar]) -> Vec<PdfRect> {
     rects
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+/// Version of the outline-recovery heuristics (`pdf/toc.rs`, `pdf/toc_synth.rs`).
+/// Bump it when they change, so outlines cached in `pdf_outline` are recovered
+/// again rather than served stale.
+pub const OUTLINE_VERSION: u32 = 1;
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct TocEntry {
     pub title: String,
     pub page_index: Option<u32>,

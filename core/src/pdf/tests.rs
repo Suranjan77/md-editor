@@ -755,3 +755,56 @@ fn pdfium_candidates_prefer_the_installed_layout() {
     // Without an executable path only the source-tree fallback remains.
     assert_eq!(pdfium_candidates(None, lib).len(), 1);
 }
+
+/// PERF-2: a render queued behind whole-document work is served first. The
+/// worker used to be one FIFO, so a page render waited for every scan queued
+/// ahead of it, and opening a bookmark-less PDF showed a blank pane for
+/// seconds.
+#[test]
+fn renders_jump_ahead_of_queued_background_work() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let renderer = PdfRenderer::new().unwrap();
+    let dummy = "../tests-fixtures/pdf/dummy.pdf";
+    let large = "../tests-fixtures/pdf/large-500-pages.pdf";
+    let query = "no-such-text-anywhere";
+
+    // Warm the document cache, and learn how long one full-document search takes.
+    let started = std::time::Instant::now();
+    renderer.search_text(large, query, false, false).unwrap();
+    let one_search = started.elapsed();
+
+    let finished = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..3 {
+            scope.spawn(|| {
+                renderer.search_text(large, query, false, false).unwrap();
+                finished.lock().unwrap().push("search");
+            });
+        }
+        // Let all three reach the worker: one runs, two wait in the queue.
+        std::thread::sleep(one_search / 4 + std::time::Duration::from_millis(5));
+        renderer.render_page(dummy, 0, 0.5).unwrap();
+        finished.lock().unwrap().push("render");
+    });
+
+    let order = finished.into_inner().unwrap();
+    let render_at = order.iter().position(|e| *e == "render").unwrap();
+    assert!(
+        render_at < 3,
+        "the render waited for every queued search: {order:?} (one search took {one_search:?})"
+    );
+}
+
+#[test]
+fn background_lane_holds_whole_document_work_only() {
+    let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+    assert!(PdfCommand::SearchText("a".into(), "q".into(), false, false, tx).is_background());
+    let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+    assert!(PdfCommand::GetPageTextBackground("a".into(), 0, tx).is_background());
+    let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+    assert!(!PdfCommand::GetPageText("a".into(), 0, tx).is_background());
+    let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+    assert!(!PdfCommand::RenderPage("a".into(), 0, 1.0, tx).is_background());
+    let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+    assert!(!PdfCommand::PageSizes("a".into(), tx).is_background());
+}

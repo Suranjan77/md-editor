@@ -9,9 +9,10 @@ impl MdEditor {
         match message {
             // ── Ink (handwritten notes) ──────────────────────────
             InkMessage::PenHookReady(raw_window_id) => {
-                if let Err(e) = crate::ink::pen::install(raw_window_id) {
+                match crate::ink::pen::install(raw_window_id) {
+                    Ok(()) => log::info!("Pen input ready (pressure, eraser, barrel button)"),
                     // Not fatal: the surface still works with a mouse.
-                    log::warn!("Pen input unavailable: {e}");
+                    Err(e) => log::warn!("Pen input unavailable: {e}"),
                 }
                 Task::none()
             }
@@ -22,7 +23,9 @@ impl MdEditor {
                 None => self.open_ink_window(),
             },
             InkMessage::PenSamples(samples) => {
-                self.ink.apply_samples(&samples, self.ui.scale_factor);
+                // The ink window's own factor: the two windows can sit on
+                // monitors with different scaling.
+                self.ink.apply_samples(&samples, crate::ink::scale_factor());
                 Task::none()
             }
             InkMessage::PointerDown(x, y) => {
@@ -127,15 +130,23 @@ impl MdEditor {
                 self.ink.clear();
                 Task::none()
             }
-            InkMessage::Save => self.save_ink_page(),
-            InkMessage::Saved(result) => {
-                match result {
-                    Ok(path) => {
-                        self.ink.dirty = false;
-                        self.ui.toast = Some(format!("Saved {path}"));
-                    }
-                    Err(e) => self.ui.toast = Some(e),
+            InkMessage::Save => self.save_ink_page(false),
+            InkMessage::AutosaveElapsed => {
+                // Never mid-stroke: the live stroke is not in the document yet,
+                // and a write is a stall the pen would feel.
+                if self.ink.is_drawing() {
+                    Task::none()
+                } else {
+                    self.flush_ink_page()
                 }
+            }
+            // `dirty` is settled when the write happens, not here: strokes
+            // drawn before this message arrives must stay unsaved.
+            InkMessage::Saved(result) => {
+                self.ui.toast = Some(match result {
+                    Ok(path) => format!("Saved {path}"),
+                    Err(e) => e,
+                });
                 Task::none()
             }
         }
@@ -155,12 +166,15 @@ impl MdEditor {
         open.discard()
     }
 
-    /// Tear down the handwriting surface after its window goes away.
-    pub(super) fn ink_window_closed(&mut self) {
+    /// Tear down the handwriting surface after its window goes away, saving
+    /// the page first.
+    pub(super) fn ink_window_closed(&mut self) -> Task<Message> {
+        let saved = self.flush_ink_page();
         self.ink_window = None;
         // Stops pen capture and drops any half-drawn stroke.
         self.ink.set_visible(false);
         self.active_panel = ActivePanel::Markdown;
+        saved
     }
 
     /// Load a handwritten page from the vault and show it in its own window.
@@ -168,6 +182,20 @@ impl MdEditor {
         let Some(root) = self.vault.root.clone() else {
             return Task::none();
         };
+
+        if self.ink.path.as_deref() == Some(path) {
+            // Already on the canvas, possibly with unsaved strokes: reloading
+            // would throw them away.
+            return self.open_ink_window();
+        }
+        // The canvas holds one page; write the current one before replacing it.
+        let saved = self.flush_ink_page();
+        if self.ink.dirty {
+            self.ui.toast = Some(format!(
+                "Not opening {path}: the current handwritten page could not be saved"
+            ));
+            return saved;
+        }
 
         match crate::ink::load_from_vault(&root, path) {
             Ok(document) => {
@@ -181,10 +209,26 @@ impl MdEditor {
         }
     }
 
+    /// Save the page if it has unsaved strokes and there is a vault to save
+    /// it in. Used by autosave and before the page is closed or replaced.
+    pub(super) fn flush_ink_page(&mut self) -> Task<Message> {
+        if self.ink.dirty && self.vault.root.is_some() {
+            self.save_ink_page(true)
+        } else {
+            Task::none()
+        }
+    }
+
     /// Write the handwriting surface to the vault, choosing a path on first
     /// save from the note being annotated, or the date when none is open.
-    pub(super) fn save_ink_page(&mut self) -> Task<Message> {
+    ///
+    /// `quiet` (autosave) skips the success toast and reports a failure only
+    /// when it differs from the last one.
+    pub(super) fn save_ink_page(&mut self, quiet: bool) -> Task<Message> {
         let Some(root) = self.vault.root.clone() else {
+            if quiet {
+                return Task::none();
+            }
             return Task::done(Message::Ink(InkMessage::Saved(Err(
                 "Open a vault before saving handwritten notes".to_string(),
             ))));
@@ -195,13 +239,44 @@ impl MdEditor {
             None => {
                 let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
                 let derived = derive_ink_path(self.active_path.as_deref(), &stamp);
-                self.ink.path = Some(derived.clone());
-                derived
+                // A note can have several pages; never overwrite one that
+                // already exists.
+                let path = unique_ink_path(&derived, |candidate| {
+                    crate::ink::page_exists(&root, candidate)
+                });
+                self.ink.path = Some(path.clone());
+                path
             }
         };
 
-        let result = crate::ink::save_to_vault(&root, &path, &self.ink.document).map(|()| path);
-        Task::done(Message::Ink(InkMessage::Saved(result)))
+        let created = !crate::ink::page_exists(&root, &path);
+        match crate::ink::save_to_vault(&root, &path, &self.ink.document) {
+            Ok(()) => {
+                self.ink.dirty = false;
+                self.ink.last_save_error = None;
+                if created {
+                    // List the new page now rather than when the watcher's
+                    // debounce gets round to it.
+                    self.vault.entries =
+                        md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+                }
+                if quiet {
+                    Task::none()
+                } else {
+                    Task::done(Message::Ink(InkMessage::Saved(Ok(path))))
+                }
+            }
+            Err(e) => {
+                log::warn!("Saving handwritten page {path} failed: {e}");
+                let repeat = self.ink.last_save_error.as_deref() == Some(e.as_str());
+                self.ink.last_save_error = Some(e.clone());
+                if quiet && repeat {
+                    Task::none()
+                } else {
+                    Task::done(Message::Ink(InkMessage::Saved(Err(e))))
+                }
+            }
+        }
     }
 }
 
@@ -214,6 +289,19 @@ pub(super) fn strip_extension(path: &str) -> &str {
         Some(dot) => &path[..dot],
         None => path,
     }
+}
+
+/// `derived`, or the first of `stem-2.ink`, `stem-3.ink`, … not yet `taken`.
+pub(super) fn unique_ink_path(derived: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(derived) {
+        return derived.to_string();
+    }
+    let stem = strip_extension(derived);
+    let extension = crate::ink::INK_EXTENSION;
+    (2..10_000)
+        .map(|n| format!("{stem}-{n}.{extension}"))
+        .find(|candidate| !taken(candidate))
+        .unwrap_or_else(|| format!("{stem}-{}.{extension}", uuid::Uuid::new_v4()))
 }
 
 /// Vault-relative path for a handwritten page: beside the note it belongs to

@@ -1,4 +1,4 @@
-//! The PDFium background worker: 3-document LRU cache, priority render queue, and command handlers.
+//! The PDFium background worker: 3-document LRU cache, priority render queue, interactive and background command lanes, and command handlers.
 
 use super::*;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -39,7 +39,12 @@ where
 pub(super) struct Worker<'a> {
     pub(super) pdfium: &'a Pdfium,
     pub(super) documents: VecDeque<(String, PdfDocument<'a>)>,
-    pub(super) pending_commands: VecDeque<PdfCommand>,
+    /// Commands someone is waiting on to draw the screen: renders, sizes,
+    /// links, the visible pages' text. Always served before `background`.
+    pub(super) interactive: VecDeque<PdfCommand>,
+    /// Whole-document work (outline recovery, reference scans, search). Kept
+    /// behind interactive work so a render never waits for a scan.
+    pub(super) background: VecDeque<PdfCommand>,
     pub(super) receiver: Receiver<PdfCommand>,
     pub(super) priority_receiver: Receiver<PriorityRender>,
     pub(super) visible_range: std::sync::Arc<std::sync::Mutex<Option<(u16, u16, String)>>>,
@@ -55,7 +60,8 @@ impl<'a> Worker<'a> {
         Self {
             pdfium,
             documents: VecDeque::with_capacity(DOC_CACHE_CAPACITY),
-            pending_commands: VecDeque::new(),
+            interactive: VecDeque::new(),
+            background: VecDeque::new(),
             receiver,
             priority_receiver,
             visible_range,
@@ -64,23 +70,37 @@ impl<'a> Worker<'a> {
 
     pub(super) fn run(&mut self) {
         loop {
-            let cmd = if let Some(cmd) = self.pending_commands.pop_front() {
-                cmd
-            } else {
-                match self.receiver.recv() {
+            // Take everything already sent, so a render that arrived behind a
+            // background job still goes first.
+            while let Ok(queued) = self.receiver.try_recv() {
+                self.enqueue(queued);
+            }
+            let next = self
+                .interactive
+                .pop_front()
+                .or_else(|| self.background.pop_front());
+            let cmd = match next {
+                Some(cmd) => cmd,
+                None => match self.receiver.recv() {
                     Ok(cmd) => {
-                        self.pending_commands.push_back(cmd);
-                        while let Ok(queued) = self.receiver.try_recv() {
-                            self.pending_commands.push_back(queued);
-                        }
+                        self.enqueue(cmd);
                         continue;
                     }
                     Err(_) => break,
-                }
+                },
             };
 
             self.drain_priority();
             self.handle_command(cmd);
+        }
+    }
+
+    /// File a command into its lane.
+    pub(super) fn enqueue(&mut self, cmd: PdfCommand) {
+        if cmd.is_background() {
+            self.background.push_back(cmd);
+        } else {
+            self.interactive.push_back(cmd);
         }
     }
 
@@ -117,8 +137,15 @@ impl<'a> Worker<'a> {
             PdfCommand::RenderLinkPreview(path, index, dest_y, target_width_px, resp) => {
                 let _ = resp.send(self.render_link_preview(&path, index, dest_y, target_width_px));
             }
-            PdfCommand::GetPageText(path, index, resp) => {
+            PdfCommand::GetPageText(path, index, resp)
+            | PdfCommand::GetPageTextBackground(path, index, resp) => {
                 let _ = resp.send(self.get_page_text(&path, index));
+            }
+            PdfCommand::RecoverToc(path, page_texts, resp) => {
+                let _ = resp.send(
+                    self.open_document(&path)
+                        .map(|doc| recover_toc(doc, &page_texts)),
+                );
             }
         }
     }
@@ -126,6 +153,8 @@ impl<'a> Worker<'a> {
     pub(super) fn drain_priority(&mut self) {
         while let Ok(mut priority) = self.priority_receiver.try_recv() {
             while let Ok(newer) = self.priority_receiver.try_recv() {
+                // Superseded, not failed: the caller must not report an error.
+                let _ = priority.resp.send(Err(PdfError::Skipped));
                 priority = newer;
             }
             let res = self.render_cached(&priority.path, priority.page_index, priority.scale);
@@ -176,11 +205,14 @@ impl<'a> Worker<'a> {
 
     pub(super) fn page_sizes(&mut self, path: &str) -> PdfResult<Vec<(f32, f32)>> {
         let doc = self.open_document(path)?;
-        let mut sizes = Vec::with_capacity(doc.pages().len() as usize);
+        let pages = doc.pages();
+        // Sizes straight from the page tree: loading every page object just
+        // to read its box made opening a long PDF visibly slower.
+        let mut sizes = Vec::with_capacity(pages.len() as usize);
         let mut fallback = (612.0, 792.0);
-        for index in 0..doc.pages().len() {
-            if let Ok(page) = doc.pages().get(index) {
-                fallback = (page.width().value, page.height().value);
+        for index in 0..pages.len() {
+            if let Ok(rect) = pages.page_size(index) {
+                fallback = (rect.width().value, rect.height().value);
             }
             sizes.push(fallback);
         }
@@ -327,9 +359,11 @@ impl<'a> Worker<'a> {
     fn is_channel_disconnected(&mut self) -> bool {
         loop {
             match self.receiver.try_recv() {
-                Ok(cmd) => self.pending_commands.push_back(cmd),
+                Ok(cmd) => self.enqueue(cmd),
                 Err(TryRecvError::Empty) => return false,
-                Err(TryRecvError::Disconnected) => return self.pending_commands.is_empty(),
+                Err(TryRecvError::Disconnected) => {
+                    return self.interactive.is_empty() && self.background.is_empty();
+                }
             }
         }
     }
@@ -482,6 +516,7 @@ fn drain_priority_from_cache(
 ) {
     while let Ok(mut priority) = priority_receiver.try_recv() {
         while let Ok(newer) = priority_receiver.try_recv() {
+            let _ = priority.resp.send(Err(PdfError::Skipped));
             priority = newer;
         }
         let rendered =

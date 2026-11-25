@@ -140,9 +140,10 @@ impl MdEditor {
             ShellMessage::WindowOpened(id) => self.on_window_opened(id),
             ShellMessage::WindowCloseRequested => {
                 let _ = self.save_active_document();
+                let ink = self.flush_ink_page();
                 self.persist_session();
                 self.persist_layout();
-                Task::none()
+                ink
             }
             ShellMessage::WindowClosed(id) => self.on_window_closed(id),
             ShellMessage::WindowRescaled(id, factor) => self.on_window_rescaled(id, factor),
@@ -271,10 +272,12 @@ impl MdEditor {
 
     fn on_window_closed(&mut self, id: iced::window::Id) -> Task<Message> {
         if Some(id) == self.ink_window {
-            self.ink_window_closed();
-            return Task::none();
+            return self.ink_window_closed();
         }
         if Some(id) == self.main_window {
+            // The ink window may still hold unsaved strokes; the write is
+            // synchronous, so it lands before the exit.
+            let _ = self.flush_ink_page();
             return iced::exit();
         }
         Task::none()

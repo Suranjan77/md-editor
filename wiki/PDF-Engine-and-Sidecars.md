@@ -58,11 +58,22 @@ sequenceDiagram
 
 ### Scheduling rules
 
-1. Receive a standard command; drain any others already available into `pending_commands`.
+1. Drain every standard command already sent into one of two lanes
+   (`PdfCommand::is_background`):
+   - **interactive**: renders, page count and sizes, links, the visible pages' text, link
+     previews;
+   - **background**: whole-document work, i.e. `GetToc`, `GetReferences`, `SearchText`,
+     `ExtractText`, `GetPageTextBackground` and `RecoverToc`.
 2. **Before each standard command, drain the priority channel.** If several priority
    requests are queued, only the newest is rendered — the reader has already scrolled past
-   the others.
-3. Process exactly one standard command, then repeat.
+   the others. Each superseded request is answered `PdfError::Skipped`, which the app
+   treats as `RenderSkipped` rather than an error toast.
+3. Process one command: the oldest interactive one, or the oldest background one if no
+   interactive command is waiting. Then repeat.
+
+A render sent while background work is queued therefore waits for at most the command
+already running. With one FIFO it used to wait for every scan queued ahead of it. The
+test `renders_jump_ahead_of_queued_background_work` guards this.
 
 `PdfCommand::Wake` exists only to unblock `receiver.recv()` after a priority request is
 sent; it performs no work of its own. The design **cannot interrupt an operation already in
@@ -73,10 +84,16 @@ the target page never queues behind a backlog of prefetches, link extractions, o
 
 Standard channel: `PageCount`, `ExtractText`, `PageSizes`, `RenderPage`, `GetToc`,
 `GetReferences`, `GetEmbeddedToc`, `GetLinks`, `SearchText`, `RenderLinkPreview`,
-`GetPageText`, `Wake`. Priority channel: `PriorityRender { path, page_index, scale, resp }`.
+`GetPageText`, `GetPageTextBackground`, `RecoverToc`, `Wake`. Priority channel:
+`PriorityRender { path, page_index, scale, resp }`.
 
-Every command carries a `SyncSender` for its reply, so the async caller on the Tokio side
-blocks on a channel rather than on PDFium.
+Every command carries a `SyncSender` for its reply, and the `PdfRenderer` methods block on
+it. **Call them from `app::blocking` (tokio's blocking pool), never directly inside a
+`Task::perform` future.** Blocking there parked the executor's worker threads, which
+starved the subscriptions, so iced dropped input events (`TrySendError { kind: Full }`).
+
+`PageSizes` reads each page's box from the page tree (`pages().page_size`) without loading
+the page.
 
 ---
 
@@ -118,6 +135,13 @@ across zoom changes, window resizes, and HiDPI scale factors.
 ---
 
 ## 4. Table of Contents Recovery
+
+When a PDF opens, the app asks only for the embedded bookmarks (`get_embedded_toc`, cheap,
+interactive lane). A bookmark-less document gets its outline from the background document
+scan below: `recover_toc(path, page_texts)` runs on text that scan already extracted, and
+the result is cached in `pdf_outline` as `(OUTLINE_VERSION, entries)`, so a reopened
+document skips the scan. Bump `pdf::OUTLINE_VERSION` when the recovery heuristics change.
+`get_toc(path)`, which does the whole thing in one command, remains for tools and tests.
 
 `get_toc(path)` returns `(Vec<TocEntry>, synthetic)`. Embedded bookmarks are used when
 present and `synthetic` is `false`. Otherwise an outline is recovered from the document
@@ -194,19 +218,21 @@ because bare chapter integers are too coarse to aim at.
 
 References need the whole text layer, but PDFium is single-threaded, and priority renders
 only drain *between* worker commands — so one monolithic full-document command would block
-page rendering for half a second or more. The native side instead resolves references as a
-chunked background task:
+page rendering for half a second or more. The native side instead runs one chunked
+background scan per document (`app/pdf_nav.rs::load_pdf_document_scan`), which feeds both
+the outline and the references:
 
 1. `get_embedded_toc(path)` for section targets — cheap, no text scan;
-2. extract text one page at a time with `get_page_text(path, i)`, so queued priority page
-   renders interleave between pages;
-3. if there were no embedded bookmarks, recover the outline from the text just collected
-   with `recover_toc_from_texts(&pages)` — no second scan;
-4. run `resolve_references(&pages, &toc)` on the async thread.
+2. if the references and (for a bookmark-less document) the outline are both cached, stop;
+3. extract text one page at a time with `get_page_text_background(path, i)`, in the
+   background lane, so every render and link request queued meanwhile goes first;
+4. with no embedded bookmarks, `recover_toc(path, texts)` on the text just collected (no
+   second scan; the link-aware path included), cached in `pdf_outline` and sent to the TOC
+   panel;
+5. run `resolve_references(&pages, &toc)` on the blocking thread.
 
-For bookmark-less PDFs the full scan already happens for TOC recovery, so references are
-effectively free; for bookmarked PDFs the chunking is what keeps first-open rendering
-responsive.
+Each page's text is extracted once per document, not once for the outline and again for
+references.
 
 ### Caching and versioning
 

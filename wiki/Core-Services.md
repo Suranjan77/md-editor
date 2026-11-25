@@ -85,6 +85,11 @@ erDiagram
         TEXT links_json
         INTEGER updated_at
     }
+    pdf_outline {
+        TEXT document_id PK
+        TEXT outline_json
+        INTEGER updated_at
+    }
     tracker_sessions {
         INTEGER id PK
         TEXT date
@@ -106,6 +111,7 @@ erDiagram
 
     pdf_documents ||--o{ pdf_annotations : "document_id"
     pdf_documents ||--o| pdf_references : "document_id"
+    pdf_documents ||--o| pdf_outline : "document_id"
 ```
 
 1. **`settings`** — key/value application state. The keys actually written are:
@@ -134,6 +140,9 @@ erDiagram
    are cached too, so scanned PDFs are not retried on every open.
 6. **`pdf_references`** — the resolved cross-reference list per document, stored as
    `(RESOLVER_VERSION, links)` JSON so a resolver change transparently invalidates it.
+   **`pdf_outline`** (schema v2) — the recovered outline of a bookmark-less PDF, stored as
+   `(OUTLINE_VERSION, entries)` the same way; it follows a document-id change like
+   annotations and references do.
 7. **`tracker_sessions` / `tracker_activity` / `tracker_kv`** — logged study sessions, an
    activity log table, and the tracker's checkbox/status key-values.
 

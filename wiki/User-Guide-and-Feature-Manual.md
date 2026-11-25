@@ -361,7 +361,8 @@ with a mouse, strokes have a fixed weight.
 - `Ctrl+Z` / `Ctrl+Y` undo and redo; `Ctrl+S` saves.
 
 A page is saved beside the open note (`Week1.md` → `Week1.ink`), or at the vault root as
-`handwritten-<date>.ink` when no note is open. Pages are not autosaved: save before you quit.
+`handwritten-<date>.ink` when no note is open; a second page for the same note becomes
+`Week1-2.ink`. Pages save automatically a second after you stop writing.
 Saved pages appear in the sidebar and reopen in the canvas. Developer detail is in
 [Handwritten Notes](Handwritten-Notes.md).
 

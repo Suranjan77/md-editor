@@ -1,9 +1,9 @@
 //! Handwritten notes.
 //!
-//! Windows-only for now: pen pressure is captured straight from the pointer
-//! input stack because iced discards it (see [`pen_win`]). Everything above
-//! the capture layer is platform neutral, so the surface still works with a
-//! mouse anywhere the app builds.
+//! Pen pressure is captured below iced, which discards it: from the pointer
+//! input stack on Windows (`pen_win`) and the Wayland tablet protocol on Linux
+//! (`pen_wayland`). Everything above the capture layer is platform neutral, so
+//! the surface still works with a mouse anywhere the app builds.
 //!
 //! The pieces:
 //!
@@ -24,6 +24,9 @@ pub mod stroke;
 #[cfg(windows)]
 mod pen_win;
 
+#[cfg(target_os = "linux")]
+mod pen_wayland;
+
 use std::sync::Mutex;
 
 use iced::{Color, Rectangle};
@@ -34,6 +37,10 @@ use stroke::{InkPoint, StrokeOptions, Vec2};
 
 /// File extension for a handwritten page stored in the vault.
 pub const INK_EXTENSION: &str = "ink";
+
+/// How often a page with unsaved strokes is written back. Pages used to be
+/// saved only on Ctrl+S, so quitting lost whatever was drawn since.
+pub const INK_AUTOSAVE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// How close a stroke must pass to the eraser, in logical pixels, to be taken.
 const ERASER_RADIUS: f32 = 9.0;
@@ -147,8 +154,8 @@ pub fn set_scale_factor(factor: f32) {
     SCALE_FACTOR.store(factor.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
-fn scale_factor() -> f32 {
+/// The ink window's scale factor, which pen samples are converted with.
+pub(crate) fn scale_factor() -> f32 {
     f32::from_bits(SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)).max(0.001)
 }
 
@@ -164,14 +171,14 @@ fn viewport() -> Option<Rectangle> {
 /// so the pen can press buttons exactly like a mouse. Without this the pen can
 /// draw but cannot change tools, which makes the toolbar useless to the very
 /// device the feature exists for.
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))] // used by the pen hooks
 pub(crate) fn client_point_is_on_canvas(x: f32, y: f32) -> bool {
     viewport().is_some_and(|bounds| point_is_on_canvas(x, y, bounds, scale_factor()))
 }
 
 /// The hit test itself, taking its inputs explicitly so it can be exercised
 /// without touching the process-wide viewport and scale factor.
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))] // used by the pen hooks
 fn point_is_on_canvas(x: f32, y: f32, bounds: Rectangle, scale: f32) -> bool {
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let (x, y) = (x / scale, y / scale);
@@ -224,6 +231,9 @@ pub struct InkState {
     pub path: Option<String>,
     /// Unsaved changes.
     pub dirty: bool,
+    /// The last save failure, so a failing autosave reports once rather than
+    /// every second.
+    pub last_save_error: Option<String>,
 
     /// Pan and zoom onto the page. Strokes are stored in page coordinates, so
     /// this only affects how they are drawn and where input lands.
@@ -231,6 +241,9 @@ pub struct InkState {
 
     /// The stroke currently being drawn, in **page** coordinates.
     live: Vec<InkPoint>,
+    /// Screen position of the live stroke's latest sample, for the page
+    /// advance applied when it ends.
+    last_screen: Option<Vec2>,
     drawing: bool,
     erasing: bool,
 
@@ -273,8 +286,10 @@ impl InkState {
             cache: iced::widget::canvas::Cache::new(),
             path: None,
             dirty: false,
+            last_save_error: None,
             camera: camera::Camera::new(),
             live: Vec::new(),
+            last_screen: None,
             drawing: false,
             erasing: false,
             hover: None,
@@ -511,6 +526,11 @@ pub fn save_to_vault(
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
     md_editor_core::vault::write_file(&path, &document.to_json()?).map_err(String::from)
+}
+
+/// Whether a vault-relative page path is already taken on disk.
+pub fn page_exists(vault_root: &str, rel_path: &str) -> bool {
+    resolve(vault_root, rel_path).is_ok_and(|path| path.exists())
 }
 
 /// Read a page back from the vault.

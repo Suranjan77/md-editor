@@ -59,12 +59,12 @@ impl MdEditor {
         let path_for_hash = path.to_string();
         let abs_path_for_hash = abs_path.clone();
         let hash_task = Task::perform(
-            async move {
+            super::blocking(move || {
                 match md_editor_core::pdf::compute_provisional_id(&abs_path_for_hash) {
                     Ok((hash, len, mtime)) => Some((path_for_hash, hash, len, mtime)),
                     Err(_) => None,
                 }
-            },
+            }),
             move |result| Message::Pdf(PdfMessage::DocumentIdComputed(generation, result)),
         );
 
@@ -80,20 +80,20 @@ impl MdEditor {
         Task::batch(vec![
             hash_task,
             Task::perform(
-                async move {
+                super::blocking(move || {
                     let renderer = _state
                         .pdf_renderer
                         .as_ref()
                         .ok_or_else(|| "PDF renderer is unavailable".to_string())?;
                     renderer.page_count(&path_clone)
-                },
+                }),
                 move |res| Message::Pdf(PdfMessage::Loaded(generation, res.map_err(String::from))),
             ),
             Task::perform(
-                async move {
+                super::blocking(move || {
                     let renderer = _state_sizes.pdf_renderer.as_ref()?;
                     renderer.page_sizes(&path_str_sizes).ok()
-                },
+                }),
                 move |res| {
                     Message::Pdf(PdfMessage::PageSizesLoaded(
                         generation,
@@ -102,20 +102,23 @@ impl MdEditor {
                     ))
                 },
             ),
+            // Bookmarks only: cheap, and in the interactive lane. A
+            // bookmark-less PDF gets its outline from the background document
+            // scan (`load_pdf_document_scan`) instead of a full-text pass that
+            // used to sit in front of the first page render.
             Task::perform(
-                async move {
+                super::blocking(move || {
                     let renderer = _state_toc.pdf_renderer.as_ref()?;
-                    renderer.get_toc(&path_str_toc).ok()
-                },
-                move |res| {
-                    let (entries, synthetic) = res.unwrap_or_default();
-                    Message::Pdf(PdfMessage::TocLoaded(
-                        path_for_toc.clone(),
-                        entries,
-                        synthetic,
-                    ))
-                },
-            ),
+                    renderer.get_embedded_toc(&path_str_toc).ok()
+                }),
+                |res| res,
+            )
+            .then(move |res| match res {
+                Some(entries) if !entries.is_empty() => Task::done(Message::Pdf(
+                    PdfMessage::TocLoaded(path_for_toc.clone(), entries, false),
+                )),
+                _ => Task::none(),
+            }),
         ])
     }
 
@@ -132,11 +135,11 @@ impl MdEditor {
         let _state = self.state.clone();
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = _state.pdf_renderer.as_ref()?;
                 let res = renderer.render_page(&path_str, page, zoom);
                 Some((page, res))
-            },
+            }),
             move |res| {
                 if let Some((p, Ok(img))) = res {
                     Message::Pdf(PdfMessage::Rendered(
@@ -178,24 +181,26 @@ impl MdEditor {
         }
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = _state.pdf_renderer.as_ref()?;
-                renderer
-                    .render_page_priority(&path_str, page, zoom)
-                    .map_err(|e| log::warn!("Priority render of page {page} failed: {e}"))
-                    .ok()
-                    .map(|img| (page, img))
-            },
-            move |res| {
-                if let Some((p, img)) = res {
-                    Message::Pdf(PdfMessage::Rendered(
-                        generation,
-                        p,
-                        crate::messages::PageImage(img),
-                    ))
-                } else {
+                Some(renderer.render_page_priority(&path_str, page, zoom))
+            }),
+            move |res| match res {
+                Some(Ok(img)) => Message::Pdf(PdfMessage::Rendered(
+                    generation,
+                    page,
+                    crate::messages::PageImage(img),
+                )),
+                // A newer priority request replaced this one (fast navigation):
+                // nothing failed, so no error toast.
+                Some(Err(md_editor_core::pdf::PdfError::Skipped)) => {
+                    Message::Pdf(PdfMessage::RenderSkipped(generation, page))
+                }
+                Some(Err(e)) => {
+                    log::warn!("Priority render of page {page} failed: {e}");
                     Message::Pdf(PdfMessage::RenderFailed(generation, page))
                 }
+                None => Message::Pdf(PdfMessage::RenderFailed(generation, page)),
             },
         )
     }
@@ -216,10 +221,10 @@ impl MdEditor {
         let _state = self.state.clone();
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = _state.pdf_renderer.as_ref()?;
                 renderer.get_page_links(&path_str, page).ok()
-            },
+            }),
             move |res| {
                 Message::Pdf(PdfMessage::PageLinksLoaded(
                     generation,
@@ -246,13 +251,13 @@ impl MdEditor {
         let _state = self.state.clone();
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = _state
                     .pdf_renderer
                     .as_ref()
                     .ok_or_else(|| "No PDF renderer".to_string())?;
                 renderer.get_page_text(&path_str, page)
-            },
+            }),
             move |res| {
                 Message::Pdf(PdfMessage::PageTextLoaded(
                     generation,
