@@ -102,7 +102,7 @@ md-editor/
 | `tracker_state.rs` | Timer, sessions, tracker values, active tab. |
 | `pdf_pane.rs` | PDF viewport, page caches, annotations, selection, render generation. |
 | `pptx_pane.rs` | Open deck, load generation, zoom, scroll. |
-| `graph_state.rs`, `graph_state/` | `GraphState`, with the force simulation in `physics` and initial placement in `layout`. |
+| `graph_state.rs`, `graph_state/` | `GraphState`, with the force simulation in `physics`, initial placement in `layout`, and filtering plus read-only queries (stats, backlinks, related, hubs) in `queries`. |
 | `ink/` | `InkState` and the handwriting engine; see [Handwritten Notes](Handwritten-Notes.md). |
 
 ### The Markdown editor (`src/editor/`)

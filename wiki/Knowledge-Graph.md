@@ -9,9 +9,10 @@ with `Ctrl+G`, the toolbar, or *Open Knowledge Graph* in the palette; see the
 | :--- | :--- | :--- |
 | Snapshot | `core/src/vault/graph.rs` → `get_graph_snapshot` | Building `GraphSnapshot` (nodes + edges) from the index and the PDF sidecar DB |
 | Data types | `core/src/types.rs` | `GraphSnapshot`, `GraphNode`/`GraphNodeKind`, `GraphEdge`/`GraphEdgeKind` |
-| State | `native/src/graph_state.rs` | `GraphState`: snapshot, scope, filters, selection, pins, view transform, refresh generations, insights |
+| State | `native/src/graph_state.rs` | `GraphState`: snapshot, scope, filters, selection, pins, view transform, refresh generations |
 | Simulation | `native/src/graph_state/physics.rs` | Barnes–Hut quadtree, `PhysicsState` (prepare / tick / nudge, settle budgets) |
 | Initial layout | `native/src/graph_state/layout.rs` | Adjacency, connected components, island packing, seeded positions |
+| Filters and insights | `native/src/graph_state/queries.rs` | Scope/filter/query reduction, stats, incoming/outgoing, related notes, hubs, orphans, missing targets |
 | Messages | `native/src/app/graph.rs` → `update_graph` | Every `Graph*` message |
 | GPU layer | `native/src/views/gpu_graph.rs` (+`gpu_graph/pipeline.rs`), `native/shaders/graph.wgsl` | Instanced nodes and edges; all pointer interaction |
 | Overlay and chrome | `native/src/views/graph.rs`, `views/graph/` | Labels and hover card (canvas), toolbar, inspector, legend, empty states |
