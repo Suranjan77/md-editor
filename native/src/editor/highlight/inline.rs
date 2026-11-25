@@ -6,45 +6,8 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
     let mut sl = StyledLine::new();
     let trimmed = line.trim_start();
 
-    // Headings
     if let Some(level) = detect_heading(trimmed) {
-        let prefix_len = if trimmed.chars().nth(level as usize) == Some(' ') {
-            level as usize + 1
-        } else {
-            level as usize
-        };
-        let display = if trimmed.len() > prefix_len {
-            &trimmed[prefix_len..]
-        } else {
-            ""
-        };
-
-        let hash_part = &line[..(line.len() - trimmed.len() + prefix_len)];
-        // The hash prefix is a syntax marker — hidden in preview
-        sl.spans.push(StyledSpan {
-            text: hash_part.to_string(),
-            display_text: Some(String::new()),
-            color: crate::design::tokens().doc_syntax,
-            is_syntax: true,
-            font_size: heading_size(level),
-            is_heading: true,
-            heading_level: level,
-            ..StyledSpan::plain("")
-        });
-
-        // The heading text content
-        sl.spans.push(StyledSpan {
-            text: display.to_string(),
-            display_text: None,
-            color: crate::design::tokens().doc_text,
-            bold: true,
-            font_size: heading_size(level),
-            is_heading: true,
-            heading_level: level,
-            ..StyledSpan::plain("")
-        });
-
-        return sl;
+        return heading_line(line, trimmed, level);
     }
 
     // Horizontal rule
@@ -60,70 +23,13 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
         return sl;
     }
 
-    // Blockquote
     if trimmed.starts_with('>') {
-        sl.is_blockquote = true;
-        // The > marker
-        let marker_end = line.len() - trimmed.len() + 1;
-        let rest_start = if trimmed.len() > 1 && trimmed.as_bytes()[1] == b' ' {
-            line.len() - trimmed.len() + 2
-        } else {
-            marker_end
-        };
-        sl.spans.push(StyledSpan {
-            text: line[..rest_start].to_string(),
-            display_text: Some(String::new()),
-            color: crate::design::tokens().doc_syntax,
-            is_syntax: true,
-            ..StyledSpan::plain("")
-        });
-        // Blockquote content can contain the same inline Markdown as a
-        // paragraph. Keep the quote styling while retaining actionable links.
-        let content_start = sl.spans.len();
-        parse_inline_spans(&line[rest_start..], &mut sl.spans);
-        if sl.spans.len() == content_start {
-            sl.spans.push(StyledSpan::plain(""));
-        }
-        let t = crate::design::tokens();
-        for span in &mut sl.spans[content_start..] {
-            if span.color == t.doc_text {
-                span.color = t.fg_secondary;
-            }
-            span.italic = true;
-        }
-        return sl;
+        return blockquote_line(line, trimmed);
     }
 
     // Task list items (must check before regular list items)
     if is_task_prefix(trimmed) {
-        let prefix_len = if trimmed.len() == 5 { 5 } else { 6 };
-        let checkbox_end = line.len() - trimmed.len() + prefix_len;
-        let is_checked = trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]");
-        sl.spans.push(StyledSpan {
-            text: line[..checkbox_end].to_string(),
-            display_text: Some(if is_checked {
-                "☑ ".to_string()
-            } else {
-                "☐ ".to_string()
-            }),
-            color: if is_checked {
-                crate::design::tokens().doc_link
-            } else {
-                crate::design::tokens().doc_syntax
-            },
-            is_checkbox: true,
-            is_checked,
-            is_list_marker: true,
-            ..StyledSpan::plain("")
-        });
-        let start_idx = sl.spans.len();
-        parse_inline_spans(&line[checkbox_end..], &mut sl.spans);
-        if is_checked {
-            for span in &mut sl.spans[start_idx..] {
-                span.color = crate::design::tokens().doc_syntax;
-            }
-        }
-        return sl;
+        return task_line(line, trimmed);
     }
 
     // List items
@@ -164,6 +70,117 @@ pub(super) fn highlight_line(line: &str) -> StyledLine {
     sl
 }
 
+/// `# Heading`: a hidden hash prefix and bold heading text.
+fn heading_line(line: &str, trimmed: &str, level: u8) -> StyledLine {
+    let mut sl = StyledLine::new();
+    let prefix_len = if trimmed.chars().nth(level as usize) == Some(' ') {
+        level as usize + 1
+    } else {
+        level as usize
+    };
+    let display = if trimmed.len() > prefix_len {
+        &trimmed[prefix_len..]
+    } else {
+        ""
+    };
+
+    let hash_part = &line[..(line.len() - trimmed.len() + prefix_len)];
+    // The hash prefix is a syntax marker — hidden in preview
+    sl.spans.push(StyledSpan {
+        text: hash_part.to_string(),
+        display_text: Some(String::new()),
+        color: crate::design::tokens().doc_syntax,
+        is_syntax: true,
+        font_size: heading_size(level),
+        is_heading: true,
+        heading_level: level,
+        ..StyledSpan::plain("")
+    });
+
+    // The heading text content
+    sl.spans.push(StyledSpan {
+        text: display.to_string(),
+        display_text: None,
+        color: crate::design::tokens().doc_text,
+        bold: true,
+        font_size: heading_size(level),
+        is_heading: true,
+        heading_level: level,
+        ..StyledSpan::plain("")
+    });
+
+    sl
+}
+
+/// `> quote`: a hidden marker, then inline Markdown in quote styling.
+fn blockquote_line(line: &str, trimmed: &str) -> StyledLine {
+    let mut sl = StyledLine::new();
+    sl.is_blockquote = true;
+    // The > marker
+    let marker_end = line.len() - trimmed.len() + 1;
+    let rest_start = if trimmed.len() > 1 && trimmed.as_bytes()[1] == b' ' {
+        line.len() - trimmed.len() + 2
+    } else {
+        marker_end
+    };
+    sl.spans.push(StyledSpan {
+        text: line[..rest_start].to_string(),
+        display_text: Some(String::new()),
+        color: crate::design::tokens().doc_syntax,
+        is_syntax: true,
+        ..StyledSpan::plain("")
+    });
+    // Blockquote content can contain the same inline Markdown as a
+    // paragraph. Keep the quote styling while retaining actionable links.
+    let content_start = sl.spans.len();
+    parse_inline_spans(&line[rest_start..], &mut sl.spans);
+    if sl.spans.len() == content_start {
+        sl.spans.push(StyledSpan::plain(""));
+    }
+    let t = crate::design::tokens();
+    for span in &mut sl.spans[content_start..] {
+        if span.color == t.doc_text {
+            span.color = t.fg_secondary;
+        }
+        span.italic = true;
+    }
+    sl
+}
+
+/// `- [ ] task` / `- [x] task`: a checkbox marker, then the item text
+/// (muted once checked).
+fn task_line(line: &str, trimmed: &str) -> StyledLine {
+    let mut sl = StyledLine::new();
+    let prefix_len = if trimmed.len() == 5 { 5 } else { 6 };
+    let checkbox_end = line.len() - trimmed.len() + prefix_len;
+    let is_checked = trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]");
+    sl.spans.push(StyledSpan {
+        text: line[..checkbox_end].to_string(),
+        display_text: Some(if is_checked {
+            "☑ ".to_string()
+        } else {
+            "☐ ".to_string()
+        }),
+        color: if is_checked {
+            crate::design::tokens().doc_link
+        } else {
+            crate::design::tokens().doc_syntax
+        },
+        is_checkbox: true,
+        is_checked,
+        is_list_marker: true,
+        ..StyledSpan::plain("")
+    });
+    let start_idx = sl.spans.len();
+    parse_inline_spans(&line[checkbox_end..], &mut sl.spans);
+    if is_checked {
+        for span in &mut sl.spans[start_idx..] {
+            span.color = crate::design::tokens().doc_syntax;
+        }
+    }
+    sl
+}
+
 pub(super) fn is_horizontal_rule(trimmed: &str) -> bool {
     let mut chars = trimmed.chars();
     let Some(marker @ ('-' | '*' | '_')) = chars.next() else {
@@ -184,230 +201,186 @@ pub(super) fn parse_inline_spans(text: &str, spans: &mut Vec<StyledSpan>) {
     let mut i = 0;
     let mut current = String::new();
 
+    // Constructs are tried in order. Each flushes pending plain text as soon
+    // as its opener is seen, even if it then fails to close; span boundaries
+    // (and so the oracle tests) depend on that.
     while i < len {
-        // Inline code
-        if chars[i] == '`' {
-            if !current.is_empty() {
-                spans.push(StyledSpan::plain(&current));
-                current.clear();
-            }
-            if let Some(end) = find_char(&chars, i + 1, '`') {
-                let code_text: String = chars[i + 1..end].iter().collect();
-                // Opening backtick — syntax marker
-                spans.push(StyledSpan::syntax(
-                    "`",
-                    crate::design::tokens().doc_syntax,
-                    14.0,
-                ));
-                // Code content
-                spans.push(StyledSpan {
-                    text: code_text,
-                    display_text: None,
-                    color: crate::design::tokens().doc_code_fg,
-                    font_size: 14.0,
-                    is_code: true,
-                    ..StyledSpan::plain("")
-                });
-                // Closing backtick — syntax marker
-                spans.push(StyledSpan::syntax(
-                    "`",
-                    crate::design::tokens().doc_syntax,
-                    14.0,
-                ));
-                i = end + 1;
-                continue;
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        let candidates: [(bool, InlineParser); 7] = [
+            (c == '`', inline_code),
+            (c == '*' && next == Some('*'), bold),
+            (c == '*' && next != Some('*'), italic),
+            (c == '[' && next == Some('['), wikilink),
+            (c == '[' && (i == 0 || chars[i - 1] != '!'), markdown_link),
+            (c == '$' && next.is_some_and(|n| n != '$'), inline_math),
+            (c == '!' && next == Some('['), image),
+        ];
+        let mut parsed = None;
+        for (applies, parse) in candidates {
+            if applies {
+                flush_plain(&mut current, spans);
+                parsed = parse(&chars, i, spans);
+                if parsed.is_some() {
+                    break;
+                }
             }
         }
-
-        // Bold **text**
-        if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
-            if !current.is_empty() {
-                spans.push(StyledSpan::plain(&current));
-                current.clear();
-            }
-            if let Some(end) = find_double(&chars, i + 2, '*') {
-                let bold_text: String = chars[i + 2..end].iter().collect();
-                // Opening ** — syntax marker
-                spans.push(StyledSpan::syntax(
-                    "**",
-                    crate::design::tokens().doc_syntax,
-                    16.0,
-                ));
-                // Bold text
-                spans.push(StyledSpan {
-                    text: bold_text,
-                    color: crate::design::tokens().doc_text,
-                    bold: true,
-                    font_size: 16.0,
-                    ..StyledSpan::plain("")
-                });
-                // Closing ** — syntax marker
-                spans.push(StyledSpan::syntax(
-                    "**",
-                    crate::design::tokens().doc_syntax,
-                    16.0,
-                ));
-                i = end + 2;
-                continue;
+        match parsed {
+            Some(after) => i = after,
+            None => {
+                current.push(c);
+                i += 1;
             }
         }
-
-        // Italic *text*  (single *, not **)
-        if chars[i] == '*' && (i + 1 >= len || chars[i + 1] != '*') {
-            if !current.is_empty() {
-                spans.push(StyledSpan::plain(&current));
-                current.clear();
-            }
-            if let Some(end) = find_char(&chars, i + 1, '*') {
-                let italic_text: String = chars[i + 1..end].iter().collect();
-                spans.push(StyledSpan::syntax(
-                    "*",
-                    crate::design::tokens().doc_syntax,
-                    16.0,
-                ));
-                spans.push(StyledSpan {
-                    text: italic_text,
-                    color: crate::design::tokens().doc_text,
-                    italic: true,
-                    font_size: 16.0,
-                    ..StyledSpan::plain("")
-                });
-                spans.push(StyledSpan::syntax(
-                    "*",
-                    crate::design::tokens().doc_syntax,
-                    16.0,
-                ));
-                i = end + 1;
-                continue;
-            }
-        }
-
-        // Wikilink [[target|display]]
-        if i + 1 < len && chars[i] == '[' && chars[i + 1] == '[' {
-            if !current.is_empty() {
-                spans.push(StyledSpan::plain(&current));
-                current.clear();
-            }
-            if let Some(end) = find_double(&chars, i + 2, ']') {
-                let link_text: String = chars[i + 2..end].iter().collect();
-                let parts: Vec<&str> = link_text.split('|').collect();
-                let target = parts[0].trim();
-                let display = parts
-                    .get(1)
-                    .map(|d| d.trim())
-                    .filter(|d| !d.is_empty())
-                    .map(|d| d.to_string())
-                    .unwrap_or_else(|| extract_display_name(target));
-                // [[ — syntax marker
-                spans.push(StyledSpan::syntax(
-                    "[[",
-                    crate::design::tokens().doc_syntax,
-                    16.0,
-                ));
-                spans.push(StyledSpan {
-                    text: link_text.clone(),
-                    display_text: Some(display.to_string()),
-                    color: crate::design::tokens().doc_link,
-                    is_link: true,
-                    link_target: Some(target.to_string()),
-                    ..StyledSpan::plain("")
-                });
-                // ]] — syntax marker
-                spans.push(StyledSpan::syntax(
-                    "]]",
-                    crate::design::tokens().doc_syntax,
-                    16.0,
-                ));
-                i = end + 2;
-                continue;
-            }
-        }
-
-        // Markdown link [text](url)
-        if chars[i] == '[' && (i == 0 || chars[i - 1] != '!') {
-            if !current.is_empty() {
-                spans.push(StyledSpan::plain(&current));
-                current.clear();
-            }
-            if let Some(end_text) = find_char(&chars, i + 1, ']')
-                && end_text + 1 < len
-                && chars[end_text + 1] == '('
-                && let Some(end_url) = find_char(&chars, end_text + 2, ')')
-            {
-                let link_display: String = chars[i + 1..end_text].iter().collect();
-                let url: String = chars[end_text + 2..end_url].iter().collect();
-                // Full raw: [text](url), display just the text
-                let raw: String = chars[i..=end_url].iter().collect();
-                spans.push(StyledSpan {
-                    text: raw,
-                    display_text: Some(link_display.clone()),
-                    color: crate::design::tokens().doc_link,
-                    is_link: true,
-                    link_target: Some(url),
-                    ..StyledSpan::plain("")
-                });
-                i = end_url + 1;
-                continue;
-            }
-        }
-
-        // Inline math $...$
-        if chars[i] == '$' && (i + 1 < len && chars[i + 1] != '$') {
-            if !current.is_empty() {
-                spans.push(StyledSpan::plain(&current));
-                current.clear();
-            }
-            if let Some(end) = find_char(&chars, i + 1, '$') {
-                let math_raw: String = chars[i..=end].iter().collect();
-                spans.push(StyledSpan {
-                    text: math_raw,
-                    color: crate::design::tokens().doc_math,
-                    italic: true,
-                    font_size: 16.0,
-                    is_math: true,
-                    ..StyledSpan::plain("")
-                });
-                i = end + 1;
-                continue;
-            }
-        }
-
-        // Image: ![alt](url)
-        if i + 1 < len && chars[i] == '!' && chars[i + 1] == '[' {
-            if !current.is_empty() {
-                spans.push(StyledSpan::plain(&current));
-                current.clear();
-            }
-            if let Some(end_alt) = find_char(&chars, i + 2, ']')
-                && end_alt + 1 < len
-                && chars[end_alt + 1] == '('
-                && let Some(end_url) = find_char(&chars, end_alt + 2, ')')
-            {
-                let alt_text: String = chars[i + 2..end_alt].iter().collect();
-                let url: String = chars[end_alt + 2..end_url].iter().collect();
-                let raw: String = chars[i..=end_url].iter().collect();
-                spans.push(StyledSpan {
-                    text: raw,
-                    display_text: Some(String::new()), // hidden in preview, image is drawn separately
-                    color: crate::design::tokens().doc_math,
-                    italic: true,
-                    font_size: 14.0,
-                    is_image: true,
-                    image_path: Some(url),
-                    image_alt: Some(alt_text),
-                    ..StyledSpan::plain("")
-                });
-                i = end_url + 1;
-                continue;
-            }
-        }
-
-        current.push(chars[i]);
-        i += 1;
     }
+    flush_plain(&mut current, spans);
+}
+
+/// Parses one inline construct starting at `i`, returning the index after it.
+type InlineParser = fn(&[char], usize, &mut Vec<StyledSpan>) -> Option<usize>;
+
+fn flush_plain(current: &mut String, spans: &mut Vec<StyledSpan>) {
     if !current.is_empty() {
-        spans.push(StyledSpan::plain(&current));
+        spans.push(StyledSpan::plain(current));
+        current.clear();
     }
+}
+
+/// `open`, the styled body, then `close`, with both markers as syntax spans.
+fn push_wrapped(
+    spans: &mut Vec<StyledSpan>,
+    open: &str,
+    body: StyledSpan,
+    close: &str,
+    marker_size: f32,
+) {
+    let syntax = crate::design::tokens().doc_syntax;
+    spans.push(StyledSpan::syntax(open, syntax, marker_size));
+    spans.push(body);
+    spans.push(StyledSpan::syntax(close, syntax, marker_size));
+}
+
+/// `` `code` `` at `i`; returns the index after the closing backtick.
+fn inline_code(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
+    let end = find_char(chars, i + 1, '`')?;
+    let body = StyledSpan {
+        text: chars[i + 1..end].iter().collect(),
+        display_text: None,
+        color: crate::design::tokens().doc_code_fg,
+        font_size: 14.0,
+        is_code: true,
+        ..StyledSpan::plain("")
+    };
+    push_wrapped(spans, "`", body, "`", 14.0);
+    Some(end + 1)
+}
+
+/// `**bold**` at `i`.
+fn bold(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
+    let end = find_double(chars, i + 2, '*')?;
+    let body = StyledSpan {
+        text: chars[i + 2..end].iter().collect(),
+        color: crate::design::tokens().doc_text,
+        bold: true,
+        font_size: 16.0,
+        ..StyledSpan::plain("")
+    };
+    push_wrapped(spans, "**", body, "**", 16.0);
+    Some(end + 2)
+}
+
+/// `*italic*` at `i` (a single `*`, not `**`).
+fn italic(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
+    let end = find_char(chars, i + 1, '*')?;
+    let body = StyledSpan {
+        text: chars[i + 1..end].iter().collect(),
+        color: crate::design::tokens().doc_text,
+        italic: true,
+        font_size: 16.0,
+        ..StyledSpan::plain("")
+    };
+    push_wrapped(spans, "*", body, "*", 16.0);
+    Some(end + 1)
+}
+
+/// `[[target|display]]` at `i`.
+fn wikilink(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
+    let end = find_double(chars, i + 2, ']')?;
+    let link_text: String = chars[i + 2..end].iter().collect();
+    let parts: Vec<&str> = link_text.split('|').collect();
+    let target = parts[0].trim();
+    let display = parts
+        .get(1)
+        .map(|d| d.trim())
+        .filter(|d| !d.is_empty())
+        .map(|d| d.to_string())
+        .unwrap_or_else(|| extract_display_name(target));
+    let body = StyledSpan {
+        text: link_text.clone(),
+        display_text: Some(display),
+        color: crate::design::tokens().doc_link,
+        is_link: true,
+        link_target: Some(target.to_string()),
+        ..StyledSpan::plain("")
+    };
+    push_wrapped(spans, "[[", body, "]]", 16.0);
+    Some(end + 2)
+}
+
+/// `[text](url)` at `i`: one span holding the raw source, displaying the text.
+fn markdown_link(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
+    let (end_text, end_url) = bracket_then_paren(chars, i + 1)?;
+    spans.push(StyledSpan {
+        text: chars[i..=end_url].iter().collect(),
+        display_text: Some(chars[i + 1..end_text].iter().collect()),
+        color: crate::design::tokens().doc_link,
+        is_link: true,
+        link_target: Some(chars[end_text + 2..end_url].iter().collect()),
+        ..StyledSpan::plain("")
+    });
+    Some(end_url + 1)
+}
+
+/// `$math$` at `i`.
+fn inline_math(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
+    let end = find_char(chars, i + 1, '$')?;
+    spans.push(StyledSpan {
+        text: chars[i..=end].iter().collect(),
+        color: crate::design::tokens().doc_math,
+        italic: true,
+        font_size: 16.0,
+        is_math: true,
+        ..StyledSpan::plain("")
+    });
+    Some(end + 1)
+}
+
+/// `![alt](url)` at `i`; hidden in preview, since the image is drawn separately.
+fn image(chars: &[char], i: usize, spans: &mut Vec<StyledSpan>) -> Option<usize> {
+    let (end_alt, end_url) = bracket_then_paren(chars, i + 2)?;
+    spans.push(StyledSpan {
+        text: chars[i..=end_url].iter().collect(),
+        display_text: Some(String::new()),
+        color: crate::design::tokens().doc_math,
+        italic: true,
+        font_size: 14.0,
+        is_image: true,
+        image_path: Some(chars[end_alt + 2..end_url].iter().collect()),
+        image_alt: Some(chars[i + 2..end_alt].iter().collect()),
+        ..StyledSpan::plain("")
+    });
+    Some(end_url + 1)
+}
+
+/// For `…](…)` starting at `from`: the indices of `]` and of the closing `)`.
+fn bracket_then_paren(chars: &[char], from: usize) -> Option<(usize, usize)> {
+    let close = find_char(chars, from, ']')?;
+    if chars.get(close + 1) != Some(&'(') {
+        return None;
+    }
+    let end = find_char(chars, close + 2, ')')?;
+    Some((close, end))
 }
 
 pub(super) fn detect_heading(trimmed: &str) -> Option<u8> {

@@ -331,3 +331,20 @@ Along the way the subscription's keyboard listener passes its context flags thro
 `Subscription::with` (a capturing closure does not compile for `listen_with`), and the UI
 gallery test holds the e2e lock, since a headless renderer created alongside an emulator
 session crashed the test binary.
+
+**2026-11-25 — W6 done: size lint at zero.** The size lint (`native/src/size_lint.rs`) now
+passes with both ratchet lists empty: no non-test module over ~800 lines and no function
+over 150 lines in `core` or `native`. The 17 functions and 3 modules on the list at landing
+were split: the shell, search, graph and subscription handlers (`update_shell` stays an
+exhaustive router with no catch-alls); `UiState::update`, the status bar and tab strip;
+the PDF page list (`view_continuous` → `empty_viewer`, `rendered_page`,
+`placeholder_page`, `ContinuousProps::overlay_rects`); the GPU graph (wgpu side in
+`views/gpu_graph/pipeline.rs`, input handling in `commit_view` / `on_left_press` /
+`on_cursor_moved`); graph filtering and insights in `graph_state/queries.rs` and the
+initial layout in `layout_island` / `scatter_islands`; ink pen input in `ink/input.rs`
+and the canvas `draw` in three passes; slide paragraph layout; and the highlighter
+(`parse_inline_spans` walks a table of inline parsers, `highlight_line` and
+`highlight_with_state` delegate per block kind). The frozen test oracle
+`editor/highlight/reference.rs` is excluded from the lint, like the other test-only files.
+No behaviour changes; the oracle and incremental-highlight tests and a 3000-case renderer
+property run pass.

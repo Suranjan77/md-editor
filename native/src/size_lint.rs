@@ -12,18 +12,7 @@ const FUNCTION_LIMIT: usize = 150;
 const MODULE_RATCHET: &[(&str, usize)] = &[];
 
 /// Functions over the limit today, by `path::name`, with their ceiling.
-const FUNCTION_RATCHET: &[(&str, usize)] = &[
-    ("native/src/editor/highlight/inline.rs::highlight_line", 161),
-    (
-        "native/src/editor/highlight/inline.rs::parse_inline_spans",
-        231,
-    ),
-    (
-        "native/src/editor/highlight/reference.rs::highlight_markdown",
-        344,
-    ),
-    ("native/src/editor/highlight.rs::highlight_with_state", 187),
-];
+const FUNCTION_RATCHET: &[(&str, usize)] = &[];
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -47,7 +36,12 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
         } else if name.ends_with(".rs")
             && name != "tests.rs"
             && !name.ends_with("_tests.rs")
-            && !matches!(name, "properties.rs" | "testing.rs" | "gallery.rs")
+            // Test-only modules (`#[cfg(test)] mod …;`); `reference.rs` is the
+            // frozen highlighter oracle and must not be refactored.
+            && !matches!(
+                name,
+                "properties.rs" | "testing.rs" | "gallery.rs" | "reference.rs"
+            )
         {
             out.push(path);
         }

@@ -87,7 +87,7 @@ md-editor/
 | `shortcuts.rs` | The shortcut registry: one table feeding key handling, menus, tooltips, the palette and the Settings shortcut list. |
 | `tabs.rs`, `tabs/tests.rs` | `Tabs`: strip order, active tab, MRU, reopen stack, duplicate-name labels, per-tab view state, session JSON. |
 | `platform.rs` | Per-OS shims: opening external links, reading the clipboard for paste (arboard; test double in tests). |
-| `size_lint.rs` | Test-only code-health guardrail: modules over ~800 non-test lines and functions over 150 lines fail, with a ratchet list for today's offenders. |
+| `size_lint.rs` | Test-only code-health guardrail: modules over ~800 non-test lines and functions over 150 lines fail, with a ratchet list for offenders (empty since W6). |
 | `test_support.rs` | Test-only: pins the data dir to a temp folder for every test that builds the app; registers the bundled fonts for headless renders. |
 | `e2e/` | Headless end-to-end tests: `mod.rs` (harness, invariants), `scenarios.rs` (data safety), `flows.rs` (UI flows), `workspace.rs` (tabs, Settings applied live, excluded folders, context menus, focus return, image picker and drops), `monkey.rs` (seeded random sessions), `telemetry.rs`. |
 

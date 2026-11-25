@@ -329,38 +329,7 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
 
     // Code block fences.
     if trimmed.starts_with("```") {
-        let mut sl = StyledLine::new();
-        sl.is_code_block = true;
-        sl.is_block_fence = true;
-        step.continues = true;
-        step.presentation = Presentation::Concealed;
-        let font_size = if state.code.is_some() {
-            state.code = None;
-            step.after = 1;
-            13.0
-        } else {
-            let lang = trimmed
-                .strip_prefix("```")
-                .filter(|rest| !rest.is_empty())
-                .map(|rest| rest.trim().to_string());
-            step.before = 1;
-            step.opens = true;
-            sl.code_block_lang = lang.clone();
-            state.code = Some(CodeState {
-                syntax: start_code_syntax(lang.as_deref()),
-                lang,
-            });
-            14.0
-        };
-        sl.spans.push(StyledSpan {
-            text: raw_line.to_string(),
-            display_text: Some(String::new()),
-            color: crate::design::tokens().doc_syntax,
-            is_syntax: true,
-            font_size,
-            is_code: true,
-            ..StyledSpan::plain("")
-        });
+        let sl = code_fence_line(&mut state, &mut step, raw_line, trimmed);
         return (sl, state, step);
     }
 
@@ -383,6 +352,72 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
         step.before += 1;
     }
 
+    if let Some(sl) = math_line(&mut state, &mut step, raw_line, trimmed) {
+        return (sl, state, step);
+    }
+
+    // Table row.
+    if trimmed.starts_with('|') && trimmed.contains('|') {
+        let sl = table_row(&mut state, &mut step, raw_line, trimmed);
+        return (sl, state, step);
+    }
+
+    // A regular line: its own block, styled inline.
+    step.before += 1;
+    (highlight_line(raw_line), state, step)
+}
+
+/// A ```` ``` ```` fence: opens a code block (recording its language) or
+/// closes the open one.
+fn code_fence_line(
+    state: &mut LineState,
+    step: &mut BlockStep,
+    raw_line: &str,
+    trimmed: &str,
+) -> StyledLine {
+    let mut sl = StyledLine::new();
+    sl.is_code_block = true;
+    sl.is_block_fence = true;
+    step.continues = true;
+    step.presentation = Presentation::Concealed;
+    let font_size = if state.code.is_some() {
+        state.code = None;
+        step.after = 1;
+        13.0
+    } else {
+        let lang = trimmed
+            .strip_prefix("```")
+            .filter(|rest| !rest.is_empty())
+            .map(|rest| rest.trim().to_string());
+        step.before = 1;
+        step.opens = true;
+        sl.code_block_lang = lang.clone();
+        state.code = Some(CodeState {
+            syntax: start_code_syntax(lang.as_deref()),
+            lang,
+        });
+        14.0
+    };
+    sl.spans.push(StyledSpan {
+        text: raw_line.to_string(),
+        display_text: Some(String::new()),
+        color: crate::design::tokens().doc_syntax,
+        is_syntax: true,
+        font_size,
+        is_code: true,
+        ..StyledSpan::plain("")
+    });
+    sl
+}
+
+/// A line that belongs to display math: a closing fence, an opening fence
+/// (or a complete single-line block), or a line inside an open block.
+fn math_line(
+    state: &mut LineState,
+    step: &mut BlockStep,
+    raw_line: &str,
+    trimmed: &str,
+) -> Option<StyledLine> {
     let math_fence = |sl: &mut StyledLine| {
         sl.is_math_block = true;
         sl.is_block_fence = true;
@@ -408,7 +443,7 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
         step.presentation = Presentation::Concealed;
         step.continues = true;
         step.after = 1;
-        return (sl, state, step);
+        return Some(sl);
     }
 
     if state.math_end.is_none()
@@ -431,14 +466,14 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
                 is_math: true,
                 ..StyledSpan::plain("")
             });
-            return (sl, state, step);
+            return Some(sl);
         }
         math_fence(&mut sl);
         state.math_end = Some(end);
         step.presentation = Presentation::Concealed;
         step.opens = true;
         step.continues = true;
-        return (sl, state, step);
+        return Some(sl);
     }
 
     // Inside a math block.
@@ -456,52 +491,54 @@ fn highlight_with_state(state: &LineState, raw_line: &str) -> (StyledLine, LineS
         });
         step.presentation = Presentation::Shown;
         step.continues = true;
-        return (sl, state, step);
+        return Some(sl);
     }
+    None
+}
 
-    // Table row.
-    if trimmed.starts_with('|') && trimmed.contains('|') {
-        if !state.in_table {
-            state.in_table = true;
-            step.before += 1;
-            step.opens = true;
-        }
-        step.continues = true;
-        let mut sl = StyledLine::new();
-        sl.is_table_row = true;
-
-        let is_separator = trimmed
-            .chars()
-            .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
-        if is_separator {
-            step.presentation = Presentation::Concealed;
-            sl.spans.push(StyledSpan::syntax(
-                raw_line,
-                crate::design::tokens().doc_syntax,
-                16.0,
-            ));
-        } else {
-            step.presentation = Presentation::Shown;
-            let mut parts = trimmed.split('|').collect::<Vec<_>>();
-            if parts.first() == Some(&"") {
-                parts.remove(0);
-            }
-            if parts.last() == Some(&"") {
-                parts.pop();
-            }
-            for part in parts {
-                let mut cell_spans = Vec::new();
-                parse_inline_spans(part.trim(), &mut cell_spans);
-                sl.table_cells.push(cell_spans);
-            }
-            sl.spans.push(StyledSpan::plain(raw_line)); // Raw text for editing
-        }
-        return (sl, state, step);
+/// A `|`-delimited table row; the separator row is concealed.
+fn table_row(
+    state: &mut LineState,
+    step: &mut BlockStep,
+    raw_line: &str,
+    trimmed: &str,
+) -> StyledLine {
+    if !state.in_table {
+        state.in_table = true;
+        step.before += 1;
+        step.opens = true;
     }
+    step.continues = true;
+    let mut sl = StyledLine::new();
+    sl.is_table_row = true;
 
-    // A regular line: its own block, styled inline.
-    step.before += 1;
-    (highlight_line(raw_line), state, step)
+    let is_separator = trimmed
+        .chars()
+        .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
+    if is_separator {
+        step.presentation = Presentation::Concealed;
+        sl.spans.push(StyledSpan::syntax(
+            raw_line,
+            crate::design::tokens().doc_syntax,
+            16.0,
+        ));
+    } else {
+        step.presentation = Presentation::Shown;
+        let mut parts = trimmed.split('|').collect::<Vec<_>>();
+        if parts.first() == Some(&"") {
+            parts.remove(0);
+        }
+        if parts.last() == Some(&"") {
+            parts.pop();
+        }
+        for part in parts {
+            let mut cell_spans = Vec::new();
+            parse_inline_spans(part.trim(), &mut cell_spans);
+            sl.table_cells.push(cell_spans);
+        }
+        sl.spans.push(StyledSpan::plain(raw_line)); // Raw text for editing
+    }
+    sl
 }
 
 /// Document-wide decoration of the line-local results: block ids, merged
