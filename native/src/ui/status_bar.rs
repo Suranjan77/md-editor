@@ -1,7 +1,7 @@
 //! `StatusBar`: bottom workspace bar showing save state, cursor Ln/Col, word/selection counts, indexing and vault name (MASTER §6).
 
 use iced::widget::{Space, column, container, row, text};
-use iced::{Alignment, Background, Element, Length, Renderer, Theme};
+use iced::{Alignment, Background, Color, Element, Length, Renderer, Theme};
 
 use super::focus::ring_border;
 use super::icon::{Icon, icon};
@@ -32,128 +32,57 @@ pub fn status_bar<'a, Message: 'a>(
     props: StatusBarProps<'a>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let t = design::tokens();
-    let role = TextRole::Caption;
-    let mono = TextRole::MonoCaption;
 
     let mut left: Vec<Element<'a, Message, Theme, Renderer>> = Vec::new();
     if let Some(vault) = props.vault_name.filter(|s| !s.is_empty()) {
-        left.push(
-            row![
-                icon(Icon::Folder, IconSize::Sm.px(), t.fg_tertiary),
-                text(vault.to_string())
-                    .size(role.size())
-                    .line_height(role.line_height())
-                    .font(role.font())
-                    .color(t.fg_secondary),
-            ]
-            .spacing(SPACE_1)
-            .align_y(Alignment::Center)
-            .into(),
-        );
+        left.push(segment(
+            Icon::Folder,
+            t.fg_tertiary,
+            vault.to_string(),
+            t.fg_secondary,
+        ));
     }
-
-    match props.save_status {
-        SaveStatus::Saved => left.push(
-            row![
-                icon(Icon::Check, IconSize::Sm.px(), t.status_success),
-                text("Saved")
-                    .size(role.size())
-                    .line_height(role.line_height())
-                    .font(role.font())
-                    .color(t.fg_tertiary),
-            ]
-            .spacing(SPACE_1)
-            .align_y(Alignment::Center)
-            .into(),
-        ),
-        SaveStatus::Saving => left.push(
-            row![
-                icon(Icon::Spinner, IconSize::Sm.px(), t.status_info),
-                text("Saving…")
-                    .size(role.size())
-                    .line_height(role.line_height())
-                    .font(role.font())
-                    .color(t.fg_secondary),
-            ]
-            .spacing(SPACE_1)
-            .align_y(Alignment::Center)
-            .into(),
-        ),
-        SaveStatus::Unsaved => left.push(
-            row![
-                icon(Icon::Warning, IconSize::Sm.px(), t.status_warning),
-                text("Unsaved changes")
-                    .size(role.size())
-                    .line_height(role.line_height())
-                    .font(role.font())
-                    .color(t.status_warning),
-            ]
-            .spacing(SPACE_1)
-            .align_y(Alignment::Center)
-            .into(),
-        ),
-        SaveStatus::Failed => left.push(
-            row![
-                icon(Icon::WarningCircle, IconSize::Sm.px(), t.status_danger),
-                text("Save failed")
-                    .size(role.size())
-                    .line_height(role.line_height())
-                    .font(role.font())
-                    .color(t.status_danger),
-            ]
-            .spacing(SPACE_1)
-            .align_y(Alignment::Center)
-            .into(),
-        ),
-        SaveStatus::Idle => {}
+    let save = match props.save_status {
+        SaveStatus::Saved => Some((Icon::Check, t.status_success, "Saved", t.fg_tertiary)),
+        SaveStatus::Saving => Some((Icon::Spinner, t.status_info, "Saving…", t.fg_secondary)),
+        SaveStatus::Unsaved => Some((
+            Icon::Warning,
+            t.status_warning,
+            "Unsaved changes",
+            t.status_warning,
+        )),
+        SaveStatus::Failed => Some((
+            Icon::WarningCircle,
+            t.status_danger,
+            "Save failed",
+            t.status_danger,
+        )),
+        SaveStatus::Idle => None,
+    };
+    if let Some((glyph, glyph_color, label, label_color)) = save {
+        left.push(segment(glyph, glyph_color, label.to_string(), label_color));
     }
-
     if props.indexing {
-        left.push(
-            row![
-                icon(Icon::Spinner, IconSize::Sm.px(), t.accent),
-                text("Indexing vault…")
-                    .size(role.size())
-                    .line_height(role.line_height())
-                    .font(role.font())
-                    .color(t.fg_secondary),
-            ]
-            .spacing(SPACE_1)
-            .align_y(Alignment::Center)
-            .into(),
-        );
+        left.push(segment(
+            Icon::Spinner,
+            t.accent,
+            "Indexing vault…".to_string(),
+            t.fg_secondary,
+        ));
     }
 
     let mut right: Vec<Element<'a, Message, Theme, Renderer>> = Vec::new();
     if let Some(chars) = props.selection_chars.filter(|&c| c > 0) {
-        right.push(
-            text(format!("{chars} selected"))
-                .size(mono.size())
-                .line_height(mono.line_height())
-                .font(mono.font())
-                .color(t.accent)
-                .into(),
-        );
+        right.push(mono_label(format!("{chars} selected"), t.accent));
     }
     if let Some(words) = props.word_count {
-        right.push(
-            text(format!("{words} words"))
-                .size(mono.size())
-                .line_height(mono.line_height())
-                .font(mono.font())
-                .color(t.fg_tertiary)
-                .into(),
-        );
+        right.push(mono_label(format!("{words} words"), t.fg_tertiary));
     }
     if let Some((ln, col)) = props.cursor_line_col {
-        right.push(
-            text(format!("Ln {}, Col {}", ln + 1, col + 1))
-                .size(mono.size())
-                .line_height(mono.line_height())
-                .font(mono.font())
-                .color(t.fg_secondary)
-                .into(),
-        );
+        right.push(mono_label(
+            format!("Ln {}, Col {}", ln + 1, col + 1),
+            t.fg_secondary,
+        ));
     }
 
     let top_line = container(Space::new())
@@ -185,5 +114,40 @@ pub fn status_bar<'a, Message: 'a>(
     column![top_line, bar]
         .spacing(SPACE_0)
         .width(Length::Fill)
+        .into()
+}
+
+/// A left-side segment: small icon plus caption text.
+fn segment<'a, Message: 'a>(
+    glyph: Icon,
+    glyph_color: Color,
+    label: String,
+    label_color: Color,
+) -> Element<'a, Message, Theme, Renderer> {
+    let role = TextRole::Caption;
+    row![
+        icon(glyph, IconSize::Sm.px(), glyph_color),
+        text(label)
+            .size(role.size())
+            .line_height(role.line_height())
+            .font(role.font())
+            .color(label_color),
+    ]
+    .spacing(SPACE_1)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// A right-side counter in the monospace caption role.
+fn mono_label<'a, Message: 'a>(
+    label: String,
+    color: Color,
+) -> Element<'a, Message, Theme, Renderer> {
+    let mono = TextRole::MonoCaption;
+    text(label)
+        .size(mono.size())
+        .line_height(mono.line_height())
+        .font(mono.font())
+        .color(color)
         .into()
 }

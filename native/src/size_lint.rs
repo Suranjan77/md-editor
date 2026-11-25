@@ -12,7 +12,6 @@ const FUNCTION_LIMIT: usize = 150;
 const MODULE_RATCHET: &[(&str, usize)] = &[
     ("native/src/graph_state.rs", 930),
     ("native/src/ink/mod.rs", 879),
-    ("native/src/views/gpu_graph.rs", 823),
 ];
 
 /// Functions over the limit today, by `path::name`, with their ceiling.
@@ -30,11 +29,6 @@ const FUNCTION_RATCHET: &[(&str, usize)] = &[
     ("native/src/graph_state/layout.rs::build_layout", 158),
     ("native/src/ink/canvas.rs::draw", 183),
     ("native/src/slides/text.rs::layout_paragraph", 185),
-    ("native/src/ui/status_bar.rs::status_bar", 159),
-    ("native/src/ui/tabs.rs::tab_strip", 209),
-    ("native/src/ui_state.rs::update", 164),
-    ("native/src/views/gpu_graph.rs::update", 203),
-    ("native/src/views/pdf_viewer.rs::view_continuous", 257),
 ];
 
 fn workspace_root() -> PathBuf {

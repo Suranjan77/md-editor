@@ -374,47 +374,10 @@ pub struct ContinuousProps<'a> {
 }
 
 pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, Theme, Renderer> {
-    let ContinuousProps {
-        pages,
-        zoom,
-        dimensions,
-        page_sizes,
-        placeholder_page_size,
-        search_matches,
-        active_search_index,
-        page_texts,
-        annotations,
-        references,
-        active_selection,
-        focused_annotation_id,
-        load_error,
-    } = props;
-    if pages.is_empty() {
-        let body = match load_error {
-            Some(error) => empty_state(
-                Icon::WarningCircle,
-                "This PDF could not be opened",
-                empty_pdf_state_message(Some(error)),
-                None,
-            ),
-            None => empty_state(
-                Icon::FilePdf,
-                "Loading PDF…",
-                "Pages appear as they render.",
-                None,
-            ),
-        };
-        return container(body)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(tokens().viewer_ground)),
-                ..Default::default()
-            })
-            .into();
+    if props.pages.is_empty() {
+        return empty_viewer(props.load_error);
     }
+    let zoom = props.zoom;
 
     let mut page_list = column![]
         .spacing(PDF_PAGE_SPACING)
@@ -423,16 +386,19 @@ pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, T
         .width(Length::Fill)
         .height(Length::Shrink);
 
-    let placeholder_display_size = placeholder_page_size
+    let placeholder_display_size = props
+        .placeholder_page_size
         .map(|(w, h)| (w * zoom, h * zoom))
         .or_else(|| {
-            page_sizes
+            props
+                .page_sizes
                 .first()
                 .and_then(|s| *s)
                 .map(|(w, h)| (w * zoom, h * zoom))
         })
         .or_else(|| {
-            dimensions
+            props
+                .dimensions
                 .first()
                 .and_then(|d| d.map(|(w, h)| (w as f32, h as f32)))
         })
@@ -443,182 +409,28 @@ pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, T
         placeholder_display_size.1 / zoom.max(0.01),
     );
 
-    for (i, page_opt) in pages.iter().enumerate() {
-        let (page_width, page_height) =
-            page_sizes.get(i).and_then(|size| *size).unwrap_or((pw, ph));
+    for (i, page_opt) in props.pages.iter().enumerate() {
+        let (page_width, page_height) = props
+            .page_sizes
+            .get(i)
+            .and_then(|size| *size)
+            .unwrap_or((pw, ph));
         let display_size = (page_width * zoom, page_height * zoom);
-
-        if let Some(handle) = page_opt {
-            let (w, h) = display_size;
-
-            let page_index = i as u16;
-            let page_text = page_texts.get(&page_index);
-            let page_highlights = annotations
-                .get(&page_index)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
-            let mut overlay_rects = Vec::new();
-            for ann in page_highlights {
-                // Content-palette tints: the same on dark and light chrome,
-                // since they sit on the white page.
-                let color = annotation_hue(ann.color).pdf_highlight();
-                let border_color =
-                    (focused_annotation_id == Some(ann.id.as_str())).then(|| tokens().focus_ring);
-                for rect in &ann.rects {
-                    overlay_rects.push(OverlayRect {
-                        rect: search_rect_to_view_rect(rect, page_height, zoom),
-                        color,
-                        border_color,
-                        thin: false,
-                    });
-                }
-            }
-            let search_highlights = search_matches
-                .iter()
-                .enumerate()
-                .filter(|(idx, result)| {
-                    result.page_index == page_index && Some(*idx) != active_search_index
-                })
-                .flat_map(|(_, result)| result.rects.iter())
-                .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
-                .collect::<Vec<_>>();
-            overlay_rects.extend(search_highlights.iter().cloned().map(|rect| OverlayRect {
-                rect,
-                color: tokens().doc_find,
-                border_color: None,
-                thin: false,
-            }));
-            let active_search_highlights = active_search_index
-                .and_then(|idx| search_matches.get(idx))
-                .filter(|result| result.page_index == page_index)
-                .map(|result| {
-                    result
-                        .rects
-                        .iter()
-                        .map(|rect| search_rect_to_view_rect(rect, page_height, zoom))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            overlay_rects.extend(active_search_highlights.iter().cloned().map(|rect| {
-                OverlayRect {
-                    rect,
-                    color: tokens().doc_find_active,
-                    border_color: None,
-                    thin: false,
-                }
-            }));
-            if let (Some(sel), Some(page_text)) = (active_selection, page_text)
-                && sel.page_index == page_index
-            {
-                let start = sel.anchor_idx.min(sel.focus_idx);
-                let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-                let selected_chars = page_text
-                    .chars
-                    .iter()
-                    .filter(|c| c.text_index >= start && c.text_index < end)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                overlay_rects.extend(
-                    md_editor_core::pdf::merge_char_rects(&selected_chars)
-                        .into_iter()
-                        .map(|rect| OverlayRect {
-                            rect: search_rect_to_view_rect(&rect, page_text.page_height, zoom),
-                            color: fade(ContentHue::Blue.color(true), 0.45),
-                            border_color: None,
-                            thin: false,
-                        }),
-                );
-            }
-            // Underline recognised internal references so they read as
-            // clickable. `LinkInfo.bbox` is already top-left origin in PDF
-            // points, so it converts to view space with a plain zoom scale (no
-            // y-flip, unlike the bottom-left annotation/search rects above).
-            if let Some(refs) = references.get(&page_index) {
-                // Hairline underline: fixed ~1px, not scaled by zoom (a
-                // zoom-scaled rule reads as a heavy bar when zoomed in).
-                let thickness = 1.0;
-                for link in refs {
-                    let b = &link.bbox;
-                    overlay_rects.push(OverlayRect {
-                        rect: md_editor_core::pdf::PdfRect {
-                            x: b.x * zoom,
-                            y: (b.y + b.height) * zoom - thickness,
-                            width: b.width * zoom,
-                            height: thickness,
-                        },
-                        color: fade(tokens().accent, 0.5),
-                        border_color: None,
-                        thin: true,
-                    });
-                }
-            }
-            let interactive = InteractivePdf::new(
-                handle.clone(),
-                w,
-                h,
-                page_index,
-                page_text,
-                active_selection,
-                PageEvents {
-                    on_left_click: Box::new(move |x, y, modifiers| {
-                        Message::Pdf(PdfMessage::LeftClicked(i as u16, x, y, modifiers))
-                    }),
-                    on_right_click: Box::new(move |x, y| {
-                        Message::Pdf(PdfMessage::RightClicked(i as u16, x, y))
-                    }),
-                    on_selection_changed: Box::new(|page, start, end| {
-                        Message::Pdf(PdfMessage::SelectionChanged(page, start, end))
-                    }),
-                    on_selection_finished: Box::new(|page, start, end| {
-                        Message::Pdf(PdfMessage::SelectionFinished(page, start, end))
-                    }),
-                    on_selection_cleared: Box::new(|| Message::Pdf(PdfMessage::SelectionCleared)),
-                    on_copy_selection: Box::new(|| Message::Pdf(PdfMessage::CopySelection)),
-                },
-            );
-
-            page_list = page_list.push(
-                container(stack![
-                    interactive,
-                    canvas(PdfOverlay {
-                        rects: overlay_rects
-                    })
-                    .width(Length::Fixed(w))
-                    .height(Length::Fixed(h)),
-                ])
-                .width(Length::Fixed(w))
-                .height(Length::Fixed(h))
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(iced::Color::WHITE)),
-                    shadow: Elevation::Popover.shadow(),
-                    ..Default::default()
-                }),
-            );
-        } else {
-            // A page-sized placeholder, so nothing jumps when it renders.
-            let role = TextRole::Caption;
-            page_list = page_list.push(
-                container(
-                    text(format!("Page {}", i + 1))
-                        .size(role.size())
-                        .font(role.font())
-                        .color(tokens().fg_tertiary),
+        page_list = page_list.push(match page_opt {
+            Some(handle) => {
+                let page_index = i as u16;
+                let overlay = props.overlay_rects(page_index, page_height);
+                rendered_page(
+                    handle,
+                    page_index,
+                    display_size,
+                    props.page_texts.get(&page_index),
+                    props.active_selection,
+                    overlay,
                 )
-                .width(Length::Fixed(display_size.0))
-                .height(Length::Fixed(display_size.1))
-                .center_x(Length::Fixed(display_size.0))
-                .center_y(Length::Fixed(display_size.1))
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(tokens().bg_raised)),
-                    border: iced::Border {
-                        color: tokens().border_subtle,
-                        width: BORDER_WIDTH,
-                        radius: 0.0.into(),
-                    },
-                    ..Default::default()
-                }),
-            );
-        }
+            }
+            None => placeholder_page(i, display_size),
+        });
     }
 
     container(page_list)
@@ -629,6 +441,212 @@ pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, T
             ..Default::default()
         })
         .into()
+}
+
+/// The pane before any page exists: loading, or why the PDF failed to open.
+fn empty_viewer<'a>(load_error: Option<&str>) -> Element<'a, Message, Theme, Renderer> {
+    let body = match load_error {
+        Some(error) => empty_state(
+            Icon::WarningCircle,
+            "This PDF could not be opened",
+            empty_pdf_state_message(Some(error)),
+            None,
+        ),
+        None => empty_state(
+            Icon::FilePdf,
+            "Loading PDF…",
+            "Pages appear as they render.",
+            None,
+        ),
+    };
+    container(body)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(tokens().viewer_ground)),
+            ..Default::default()
+        })
+        .into()
+}
+
+impl ContinuousProps<'_> {
+    /// Everything drawn over one rendered page, bottom to top: highlights,
+    /// search hits, the active hit, the text selection and reference underlines.
+    fn overlay_rects(&self, page_index: u16, page_height: f32) -> Vec<OverlayRect> {
+        let zoom = self.zoom;
+        let to_view =
+            |rect: &md_editor_core::pdf::PdfRect| search_rect_to_view_rect(rect, page_height, zoom);
+        let fill = |rect, color| OverlayRect {
+            rect,
+            color,
+            border_color: None,
+            thin: false,
+        };
+        let mut overlay_rects = Vec::new();
+        for ann in self.annotations.get(&page_index).into_iter().flatten() {
+            // Content-palette tints: the same on dark and light chrome,
+            // since they sit on the white page.
+            let color = annotation_hue(ann.color).pdf_highlight();
+            let border_color =
+                (self.focused_annotation_id == Some(ann.id.as_str())).then(|| tokens().focus_ring);
+            for rect in &ann.rects {
+                overlay_rects.push(OverlayRect {
+                    rect: to_view(rect),
+                    color,
+                    border_color,
+                    thin: false,
+                });
+            }
+        }
+        for (idx, result) in self.search_matches.iter().enumerate() {
+            if result.page_index == page_index && Some(idx) != self.active_search_index {
+                overlay_rects.extend(
+                    result
+                        .rects
+                        .iter()
+                        .map(|rect| fill(to_view(rect), tokens().doc_find)),
+                );
+            }
+        }
+        if let Some(result) = self
+            .active_search_index
+            .and_then(|idx| self.search_matches.get(idx))
+            .filter(|result| result.page_index == page_index)
+        {
+            overlay_rects.extend(
+                result
+                    .rects
+                    .iter()
+                    .map(|rect| fill(to_view(rect), tokens().doc_find_active)),
+            );
+        }
+        if let (Some(sel), Some(page_text)) =
+            (self.active_selection, self.page_texts.get(&page_index))
+            && sel.page_index == page_index
+        {
+            let start = sel.anchor_idx.min(sel.focus_idx);
+            let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
+            let selected_chars = page_text
+                .chars
+                .iter()
+                .filter(|c| c.text_index >= start && c.text_index < end)
+                .cloned()
+                .collect::<Vec<_>>();
+            overlay_rects.extend(
+                md_editor_core::pdf::merge_char_rects(&selected_chars)
+                    .into_iter()
+                    .map(|rect| {
+                        fill(
+                            search_rect_to_view_rect(&rect, page_text.page_height, zoom),
+                            fade(ContentHue::Blue.color(true), 0.45),
+                        )
+                    }),
+            );
+        }
+        // Underline recognised internal references so they read as
+        // clickable. `LinkInfo.bbox` is already top-left origin in PDF
+        // points, so it converts to view space with a plain zoom scale (no
+        // y-flip, unlike the bottom-left annotation/search rects above).
+        if let Some(refs) = self.references.get(&page_index) {
+            // Hairline underline: fixed ~1px, not scaled by zoom (a
+            // zoom-scaled rule reads as a heavy bar when zoomed in).
+            let thickness = 1.0;
+            for link in refs {
+                let b = &link.bbox;
+                overlay_rects.push(OverlayRect {
+                    rect: md_editor_core::pdf::PdfRect {
+                        x: b.x * zoom,
+                        y: (b.y + b.height) * zoom - thickness,
+                        width: b.width * zoom,
+                        height: thickness,
+                    },
+                    color: fade(tokens().accent, 0.5),
+                    border_color: None,
+                    thin: true,
+                });
+            }
+        }
+        overlay_rects
+    }
+}
+
+/// A rendered page: the interactive image with its overlay canvas on top.
+fn rendered_page<'a>(
+    handle: &iced::widget::image::Handle,
+    page_index: u16,
+    (w, h): (f32, f32),
+    page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
+    active_selection: Option<PdfSelection>,
+    overlay_rects: Vec<OverlayRect>,
+) -> Element<'a, Message, Theme, Renderer> {
+    let interactive = InteractivePdf::new(
+        handle.clone(),
+        w,
+        h,
+        page_index,
+        page_text,
+        active_selection,
+        PageEvents {
+            on_left_click: Box::new(move |x, y, modifiers| {
+                Message::Pdf(PdfMessage::LeftClicked(page_index, x, y, modifiers))
+            }),
+            on_right_click: Box::new(move |x, y| {
+                Message::Pdf(PdfMessage::RightClicked(page_index, x, y))
+            }),
+            on_selection_changed: Box::new(|page, start, end| {
+                Message::Pdf(PdfMessage::SelectionChanged(page, start, end))
+            }),
+            on_selection_finished: Box::new(|page, start, end| {
+                Message::Pdf(PdfMessage::SelectionFinished(page, start, end))
+            }),
+            on_selection_cleared: Box::new(|| Message::Pdf(PdfMessage::SelectionCleared)),
+            on_copy_selection: Box::new(|| Message::Pdf(PdfMessage::CopySelection)),
+        },
+    );
+
+    container(stack![
+        interactive,
+        canvas(PdfOverlay {
+            rects: overlay_rects
+        })
+        .width(Length::Fixed(w))
+        .height(Length::Fixed(h)),
+    ])
+    .width(Length::Fixed(w))
+    .height(Length::Fixed(h))
+    .style(|_| container::Style {
+        background: Some(iced::Background::Color(iced::Color::WHITE)),
+        shadow: Elevation::Popover.shadow(),
+        ..Default::default()
+    })
+    .into()
+}
+
+/// A page-sized placeholder, so nothing jumps when the page renders.
+fn placeholder_page<'a>(index: usize, (w, h): (f32, f32)) -> Element<'a, Message, Theme, Renderer> {
+    let role = TextRole::Caption;
+    container(
+        text(format!("Page {}", index + 1))
+            .size(role.size())
+            .font(role.font())
+            .color(tokens().fg_tertiary),
+    )
+    .width(Length::Fixed(w))
+    .height(Length::Fixed(h))
+    .center_x(Length::Fixed(w))
+    .center_y(Length::Fixed(h))
+    .style(|_| container::Style {
+        background: Some(iced::Background::Color(tokens().bg_raised)),
+        border: iced::Border {
+            color: tokens().border_subtle,
+            width: BORDER_WIDTH,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 #[cfg(test)]

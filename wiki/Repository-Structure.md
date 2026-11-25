@@ -137,7 +137,7 @@ md-editor/
 | `views/search.rs`, `toc.rs`, `backlinks.rs` | Side panels. |
 | `views/pdf_viewer.rs`, `interactive_pdf.rs` | The PDF pane and the per-page widget. See [PDF Viewer Internals](PDF-Viewer-Internals.md). |
 | `views/pptx_viewer.rs`, `slides/` | The slide viewer; `slides/` prepares decks off the UI thread and draws slides on layered canvases. |
-| `views/graph.rs`, `graph/`, `gpu_graph.rs` | The knowledge graph: toolbar, inspector, label overlay, and the GPU layer. |
+| `views/graph.rs`, `graph/`, `gpu_graph.rs` (+`gpu_graph/pipeline.rs`) | The knowledge graph: toolbar, inspector, label overlay, and the GPU layer (`gpu_graph.rs` handles pointer interaction; `pipeline.rs` holds the wgpu instance layouts and render pipeline). |
 | `views/ink.rs` | The handwriting window's toolbar and palette. |
 | `views/tracker.rs`, `tracker/` | The study tracker: dashboard in `tracker.rs`, the other tabs in `tracker/sections.rs`, the JSON config model in `tracker/config.rs`. |
 | `design/` | The design system ([MASTER](../docs/design-system/md-editor/MASTER.md)): `palette` (Dark/Light token tables), `type_scale`, `metrics` (spacing, sizes, panel widths), `motion` (panel animations, springs, reduced motion), `fonts` (bundled Inter, JetBrains Mono, Source Serif); `mod.rs` holds the runtime theme, scale and typography settings. Guardrail tests in `design/tests.rs`; `design/setting.rs` makes those settings per-thread under `cargo test`. |

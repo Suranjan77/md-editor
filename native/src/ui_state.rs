@@ -221,46 +221,24 @@ impl UiState {
 
     /// Handle messages that mutate only UI chrome state.
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        use views::modals::ModalType;
         match message {
             Message::Vault(VaultMessage::CreateFileDialog) => {
-                self.active_modal = Some(views::modals::ModalType::CreateFile);
-                self.modal_input.clear();
-                self.modal_error = None;
-                self.modal_parent_override = None;
-                self.link_note_picker_search.clear();
-                self.context_menu = None;
-                Task::none()
+                self.open_name_modal(ModalType::CreateFile, None);
             }
             Message::Vault(VaultMessage::CreateFolderDialog) => {
-                self.active_modal = Some(views::modals::ModalType::CreateFolder);
-                self.modal_input.clear();
-                self.modal_error = None;
-                self.modal_parent_override = None;
-                self.link_note_picker_search.clear();
-                self.context_menu = None;
-                Task::none()
+                self.open_name_modal(ModalType::CreateFolder, None);
             }
             Message::Vault(VaultMessage::NewNoteInFolder(folder)) => {
-                self.active_modal = Some(views::modals::ModalType::CreateFile);
-                self.modal_input.clear();
-                self.modal_error = None;
-                self.modal_parent_override = Some(folder);
-                self.context_menu = None;
-                Task::none()
+                self.open_name_modal(ModalType::CreateFile, Some(folder));
             }
             Message::Vault(VaultMessage::NewFolderInFolder(folder)) => {
-                self.active_modal = Some(views::modals::ModalType::CreateFolder);
-                self.modal_input.clear();
-                self.modal_error = None;
-                self.modal_parent_override = Some(folder);
-                self.context_menu = None;
-                Task::none()
+                self.open_name_modal(ModalType::CreateFolder, Some(folder));
             }
             Message::Vault(VaultMessage::DeleteFileDialog(path)) => {
-                self.active_modal = Some(views::modals::ModalType::Delete(path));
+                self.active_modal = Some(ModalType::Delete(path));
                 self.modal_error = None;
                 self.context_menu = None;
-                Task::none()
             }
             Message::Vault(VaultMessage::RenameEntryDialog(path)) => {
                 self.modal_input = std::path::Path::new(&path)
@@ -269,20 +247,15 @@ impl UiState {
                     .unwrap_or(&path)
                     .to_string();
                 self.modal_error = None;
-                self.active_modal = Some(views::modals::ModalType::Rename(path));
+                self.active_modal = Some(ModalType::Rename(path));
                 self.context_menu = None;
-                Task::none()
             }
             Message::Vault(VaultMessage::NameModalInputChanged(input)) => {
                 self.modal_input = input;
                 self.modal_error = None;
-                Task::none()
             }
             Message::Vault(VaultMessage::PdfLinkNoteFolderSelected(folder)) => {
-                if matches!(
-                    self.active_modal,
-                    Some(views::modals::ModalType::LinkNote(_))
-                ) {
+                if self.link_note_modal_open() {
                     let filename = note_filename_from_path(&self.modal_input);
                     self.modal_input = if folder.is_empty() {
                         filename
@@ -291,26 +264,17 @@ impl UiState {
                     };
                     self.modal_error = None;
                 }
-                Task::none()
             }
             Message::Vault(VaultMessage::PdfLinkNoteFileSelected(path)) => {
-                if matches!(
-                    self.active_modal,
-                    Some(views::modals::ModalType::LinkNote(_))
-                ) {
+                if self.link_note_modal_open() {
                     self.modal_input = normalize_note_path(&path);
                     self.modal_error = None;
                 }
-                Task::none()
             }
             Message::Vault(VaultMessage::PdfLinkNotePickerSearchChanged(query)) => {
-                if matches!(
-                    self.active_modal,
-                    Some(views::modals::ModalType::LinkNote(_))
-                ) {
+                if self.link_note_modal_open() {
                     self.link_note_picker_search = query;
                 }
-                Task::none()
             }
             Message::Vault(VaultMessage::NameModalCancel) => {
                 self.active_modal = None;
@@ -318,22 +282,21 @@ impl UiState {
                 self.modal_error = None;
                 self.modal_parent_override = None;
                 self.link_note_picker_search.clear();
-                Task::none()
             }
             Message::Vault(VaultMessage::NameModalSubmitCurrent) => {
                 if matches!(
                     self.active_modal,
-                    Some(views::modals::ModalType::CreateFile)
-                        | Some(views::modals::ModalType::CreateFolder)
-                        | Some(views::modals::ModalType::QuickNote(_))
-                        | Some(views::modals::ModalType::LinkNote(_))
-                        | Some(views::modals::ModalType::Rename(_))
+                    Some(
+                        ModalType::CreateFile
+                            | ModalType::CreateFolder
+                            | ModalType::QuickNote(_)
+                            | ModalType::LinkNote(_)
+                            | ModalType::Rename(_)
+                    )
                 ) {
-                    Task::done(Message::Vault(VaultMessage::NameModalSubmit(
+                    return Task::done(Message::Vault(VaultMessage::NameModalSubmit(
                         self.modal_input.clone(),
-                    )))
-                } else {
-                    Task::none()
+                    )));
                 }
             }
             Message::Shell(ShellMessage::CommandPaletteOpen) => {
@@ -342,46 +305,50 @@ impl UiState {
                 self.palette_selected = 0;
                 self.context_menu = None;
                 self.tab_overflow_open = false;
-                Task::none()
             }
             Message::Shell(ShellMessage::CommandPaletteQueryChanged(query)) => {
                 self.command_palette_query = query;
                 self.palette_selected = 0;
-                Task::none()
             }
             Message::Shell(ShellMessage::ShowToast(text)) => {
                 self.toast = Some(text);
                 self.sync_legacy_toast();
-                Task::none()
             }
             Message::Shell(ShellMessage::ToastHide) => {
                 self.toast_queue.retain(|t| t.persistent);
                 self.toast = self.toast_queue.last().map(|t| t.text.clone());
-                Task::none()
             }
-            Message::Shell(ShellMessage::DismissToast(id)) => {
-                self.dismiss_toast(id);
-                Task::none()
-            }
-            Message::Shell(ShellMessage::SplitViewDragStart) => {
-                self.is_resizing_split = true;
-                Task::none()
-            }
-            Message::Shell(ShellMessage::SplitViewReset) => {
-                self.split_ratio = 0.5;
-                Task::none()
-            }
+            Message::Shell(ShellMessage::DismissToast(id)) => self.dismiss_toast(id),
+            Message::Shell(ShellMessage::SplitViewDragStart) => self.is_resizing_split = true,
+            Message::Shell(ShellMessage::SplitViewReset) => self.split_ratio = 0.5,
             Message::Shell(ShellMessage::OpenContextMenu(target, x, y)) => {
                 self.context_menu = Some(ActiveContextMenu { target, x, y });
                 self.tab_overflow_open = false;
-                Task::none()
             }
             Message::Shell(ShellMessage::CloseContextMenu) => {
                 self.context_menu = None;
                 self.tab_overflow_open = false;
-                Task::none()
             }
-            _ => Task::none(),
+            _ => {}
         }
+        Task::none()
+    }
+
+    /// Open the create-file or create-folder modal with an empty name field,
+    /// optionally inside `parent` instead of the selected folder.
+    fn open_name_modal(&mut self, modal: views::modals::ModalType, parent: Option<String>) {
+        self.active_modal = Some(modal);
+        self.modal_input.clear();
+        self.modal_error = None;
+        self.modal_parent_override = parent;
+        self.link_note_picker_search.clear();
+        self.context_menu = None;
+    }
+
+    fn link_note_modal_open(&self) -> bool {
+        matches!(
+            self.active_modal,
+            Some(views::modals::ModalType::LinkNote(_))
+        )
     }
 }

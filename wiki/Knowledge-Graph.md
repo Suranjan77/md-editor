@@ -13,7 +13,7 @@ with `Ctrl+G`, the toolbar, or *Open Knowledge Graph* in the palette; see the
 | Simulation | `native/src/graph_state/physics.rs` | Barnes–Hut quadtree, `PhysicsState` (prepare / tick / nudge, settle budgets) |
 | Initial layout | `native/src/graph_state/layout.rs` | Adjacency, connected components, island packing, seeded positions |
 | Messages | `native/src/app/graph.rs` → `update_graph` | Every `Graph*` message |
-| GPU layer | `native/src/views/gpu_graph.rs`, `native/shaders/graph.wgsl` | Instanced nodes and edges; all pointer interaction |
+| GPU layer | `native/src/views/gpu_graph.rs` (+`gpu_graph/pipeline.rs`), `native/shaders/graph.wgsl` | Instanced nodes and edges; all pointer interaction |
 | Overlay and chrome | `native/src/views/graph.rs`, `views/graph/` | Labels and hover card (canvas), toolbar, inspector, legend, empty states |
 
 ---
