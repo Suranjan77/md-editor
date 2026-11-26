@@ -58,3 +58,26 @@ fn a_triple_click_selects_the_line_under_it() {
         "the line break belongs to no line"
     );
 }
+
+#[test]
+fn an_alt_drag_region_is_a_clamped_fraction_of_the_page_either_way_round() {
+    use iced::{Point, Size};
+    let size = Size::new(600.0, 800.0);
+    let region = region_fraction(Point::new(450.0, 600.0), Point::new(150.0, 200.0), size).unwrap();
+    assert_eq!(
+        (region.x, region.y, region.width, region.height),
+        (0.25, 0.25, 0.5, 0.5),
+        "dragged up-left"
+    );
+    let past_edge =
+        region_fraction(Point::new(300.0, 400.0), Point::new(900.0, -50.0), size).unwrap();
+    assert_eq!(
+        (past_edge.x, past_edge.y, past_edge.width, past_edge.height),
+        (0.5, 0.0, 0.5, 0.5)
+    );
+    assert_eq!(
+        region_fraction(Point::new(10.0, 10.0), Point::new(14.0, 300.0), size),
+        None,
+        "too narrow to mean a region"
+    );
+}

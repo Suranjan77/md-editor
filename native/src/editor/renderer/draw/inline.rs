@@ -16,7 +16,7 @@ use super::{Counters, Frame, LineBox};
 use crate::editor::highlight::StyledSpan;
 use crate::editor::renderer::measure::mono_font;
 
-const IMAGE_TOP: f32 = 5.0;
+pub(in crate::editor::renderer) const IMAGE_TOP: f32 = 5.0;
 const FIGURE_CAPTION_SIZE: f32 = 13.0;
 /// A strikethrough sits this fraction of the font size above the baseline,
 /// about half the x-height.
@@ -132,6 +132,36 @@ impl<Message> Editor<'_, Message> {
         }
     }
 
+    /// Where a loaded image is drawn on its line, relative to the content
+    /// bounds' left edge and the line's body top: centered in the text
+    /// column, shrunk to fit it. Painting and hit testing both use this.
+    pub(in crate::editor::renderer) fn image_box(
+        &self,
+        span: &StyledSpan,
+        content_width: f32,
+    ) -> Option<(&iced::widget::image::Handle, Rectangle)> {
+        let (handle, w, h) = span
+            .image_path
+            .as_ref()
+            .and_then(|p| self.image_cache.get(p))?;
+        let available_w = text_column_width(content_width);
+        let scale = if *w > available_w && *w > 0.0 {
+            available_w / w
+        } else {
+            1.0
+        };
+        let (draw_w, draw_h) = (w * scale, h * scale);
+        Some((
+            handle,
+            Rectangle {
+                x: text_left(content_width) + (available_w - draw_w) / 2.0,
+                y: IMAGE_TOP,
+                width: draw_w,
+                height: draw_h,
+            },
+        ))
+    }
+
     /// A loaded image, centered in the text column, with its figure caption.
     fn paint_image<R: Paint>(
         &self,
@@ -141,24 +171,11 @@ impl<Message> Editor<'_, Message> {
         span: &StyledSpan,
         running_number: usize,
     ) {
-        let Some((handle, w, h)) = span
-            .image_path
-            .as_ref()
-            .and_then(|p| self.image_cache.get(p))
-        else {
+        let Some((handle, image_box)) = self.image_box(span, frame.bounds.width) else {
             return;
         };
-        let bounds = frame.bounds;
-
-        let available_w = text_column_width(bounds.width);
-        let scale = if *w > available_w && *w > 0.0 {
-            available_w / w
-        } else {
-            1.0
-        };
-        let draw_w = w * scale;
-        let draw_h = h * scale;
-        let draw_x = bounds.x + text_left(bounds.width) + (available_w - draw_w) / 2.0;
+        let (draw_w, draw_h) = (image_box.width, image_box.height);
+        let draw_x = frame.bounds.x + image_box.x;
 
         renderer.draw_image(
             iced::advanced::image::Image::new(handle.clone()),

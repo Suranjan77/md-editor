@@ -62,6 +62,13 @@ pub(super) enum PdfCommand {
         u32,
         std::sync::mpsc::SyncSender<PdfResult<LinkPreviewResult>>,
     ),
+    RenderRegion(
+        String,
+        u16,
+        PageRegion,
+        u32,
+        std::sync::mpsc::SyncSender<PdfResult<RegionImage>>,
+    ),
     GetPageText(
         String,
         u16,
@@ -268,6 +275,28 @@ impl PdfRenderer {
                 path.to_string(),
                 page_index,
                 dest_y,
+                target_width_px,
+                tx,
+            ))
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
+    }
+
+    /// Render `region` of a page about `target_width_px` wide (a crop a note
+    /// shows inline). The region is clamped to the page.
+    pub fn render_region(
+        &self,
+        path: &str,
+        page_index: u16,
+        region: PageRegion,
+        target_width_px: u32,
+    ) -> PdfResult<RegionImage> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::RenderRegion(
+                path.to_string(),
+                page_index,
+                region,
                 target_width_px,
                 tx,
             ))

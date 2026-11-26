@@ -105,6 +105,7 @@ impl MdEditor {
                     page: self.pdf.current_page,
                     zoom: self.pdf.zoom,
                     fit_to_width: self.pdf.fit_to_width,
+                    fit_fills_pane: self.pdf.fit_fills_pane,
                     scroll_y: self.pdf.scroll_y,
                 },
             );
@@ -403,6 +404,7 @@ impl MdEditor {
             page,
             zoom,
             fit_to_width,
+            fit_fills_pane,
             scroll_y,
         }) = saved
         {
@@ -412,6 +414,7 @@ impl MdEditor {
                 self.pdf.initial_target_page = (page > 0).then_some(page);
             }
             let task = self.open_pdf(path);
+            self.pdf.fit_fills_pane = fit_to_width && fit_fills_pane;
             if !fit_to_width {
                 self.pdf.fit_to_width = false;
                 self.pdf.zoom = zoom;

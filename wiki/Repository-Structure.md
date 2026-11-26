@@ -37,6 +37,7 @@ md-editor/
 | `build.rs`, `build_pdfium.rs` | Download (pinned release, SHA-256 verified), cache and copy the platform PDFium library. |
 | `src/lib.rs` | Module declarations; re-exports `AppState`. |
 | `src/state.rs` | `AppState`: the SQLite connection, schema DDL, WAL pragmas, `user_version` migrations, DB path resolution, vault generation and publication locks. |
+| `src/state/pdf_sidecar.rs` | Portable PDF highlights: `<vault>/.md-editor/annotations/<id>.jsonl`, written on every change and merged three-way with SQLite on vault and PDF open. |
 | `src/state/pdf_store.rs` | PDF sidecar persistence on `AppState`: document scoping (vault-scoped identity), annotations, references, text cache. |
 | `src/config.rs` | `get_sys_config` / `set_sys_config` over `settings`, and `read_startup_value` for use before `AppState` exists. |
 | `src/vault.rs` | The vault API: indexing for a generation, open/save/create/delete, `read_vault_image`. |
@@ -126,7 +127,7 @@ md-editor/
 | `renderer/glide.rs`, `reveal.rs` | Caret glide and blink; answering the app's reveal request. |
 | `renderer/selection.rs`, `scroll.rs` | Selection shape and text; per-block horizontal scroll and scrollbars. |
 | `renderer/events.rs` | Mouse and keyboard; every edit leaves as an `EditorCommand`. |
-| `renderer/draw/` | Painting: frame setup and culling, blocks, inline content, overlays, captions, primitives. |
+| `renderer/draw/` | Painting: frame setup and culling, blocks, inline content, overlays, captions, line numbers (`gutter.rs`), primitives. |
 | `renderer/testing.rs`, `tests.rs`, `properties.rs` | A recording renderer and `View` driver, behavioural tests, seeded property suites. |
 | `render_preview.rs`, `render_snapshot_tests.rs`, `test_docs.rs` | Opt-in PNG previews and draw-call transcripts; the seeded test-document generator. |
 

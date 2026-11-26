@@ -558,3 +558,83 @@ fn loose_pdf_search_matches_hyphenated_line_breaks() {
         "a plain space inside a word"
     );
 }
+
+#[test]
+fn automatic_pdf_fit_stops_at_200_percent_but_a_requested_fit_fills_the_pane() {
+    let mut app = MdEditor::new_with_startup_file(None).0;
+    app.showing_pdf = true;
+    app.pdf.active_path = Some("narrow.pdf".to_string());
+    app.pdf.total_pages = 1;
+    app.pdf.page_sizes = vec![Some((400.0, 600.0))];
+    app.pdf.viewport_width = Some(2048.0);
+    let send = |app: &mut MdEditor, message| {
+        let _ = app.update(Message::Pdf(message));
+        app.pdf.zoom
+    };
+
+    assert_eq!(send(&mut app, PdfMessage::FitToWidth), PDF_FIT_MAX_ZOOM);
+    assert_eq!(
+        send(&mut app, PdfMessage::FitToWidthClicked),
+        PDF_MAX_ZOOM,
+        "a requested fit uses the space, up to the zoom limit"
+    );
+    app.pdf.viewport_width = Some(1248.0);
+    assert_eq!(
+        send(&mut app, PdfMessage::FitToWidth),
+        3.0,
+        "a refit after a resize keeps filling the pane"
+    );
+    send(&mut app, PdfMessage::ZoomChanged(1.0));
+    assert!(!app.pdf.fit_fills_pane, "an explicit zoom ends the fill");
+    assert_eq!(send(&mut app, PdfMessage::FitToWidth), PDF_FIT_MAX_ZOOM);
+}
+
+#[test]
+fn an_alt_drag_on_the_pdf_puts_a_live_crop_in_the_open_note_or_on_the_clipboard() {
+    let mut app = MdEditor::new_with_startup_file(None).0;
+    app.pdf.active_path = Some("papers/paper.pdf".to_string());
+    app.pdf.total_pages = 3;
+    app.pdf.page_sizes = vec![None, Some((600.0, 800.0)), None];
+    let region = iced::Rectangle {
+        x: 0.25,
+        y: 0.5,
+        width: 0.5,
+        height: 0.25,
+    };
+
+    let _ = app.update(Message::Pdf(PdfMessage::RegionSelected(1, region)));
+    assert!(
+        app.ui
+            .toast
+            .as_deref()
+            .is_some_and(|t| t.contains("Copied")),
+        "no note open: {:?}",
+        app.ui.toast
+    );
+
+    app.active_path = Some("notes/reading.md".to_string());
+    app.editor.buffer = crate::editor::buffer::DocBuffer::from_text("Intro");
+    app.editor
+        .buffer
+        .execute(crate::editor::buffer::EditorCommand::MoveCursor {
+            movement: crate::editor::buffer::Movement::DocEnd,
+            extend: false,
+        });
+    let _ = app.update(Message::Pdf(PdfMessage::RegionSelected(1, region)));
+    let text = app.editor.buffer.text();
+    assert!(
+        text.contains("![paper, p. 2](pdf://papers/paper.pdf?page=2&crop=150,400,300,200)"),
+        "{text}"
+    );
+    assert!(
+        text.starts_with("Intro\n"),
+        "on its own line after the caret's: {text}"
+    );
+
+    let _ = app.update(Message::Pdf(PdfMessage::RegionSelected(0, region)));
+    assert_eq!(
+        app.editor.buffer.text(),
+        text,
+        "page size unknown: nothing inserted"
+    );
+}

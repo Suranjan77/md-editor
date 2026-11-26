@@ -103,6 +103,14 @@ pub fn index_vault_for_generation(
             log::warn!("Failed to scope PDF document {rel_path}: {error}");
         }
     }
+    // Reading and writing the vault's highlight files is disk work: not under
+    // the publish locks.
+    drop((_publish, _mutation));
+    match state.sync_pdf_sidecars() {
+        Ok(0) => {}
+        Ok(merged) => log::info!("Merged highlights from the vault for {merged} PDFs"),
+        Err(error) => log::warn!("Could not sync the vault's highlight files: {error}"),
+    }
 
     log::info!(
         "Indexed vault {path}: {notes} notes, {pdf_count} PDFs, {rewritten} (re)read, in {:?}",

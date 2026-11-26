@@ -38,6 +38,10 @@ pub struct PdfPane {
     pub total_pages: u16,
     pub zoom: f32,
     pub fit_to_width: bool,
+    /// Fit-to-width was asked for from the toolbar, so it fills the pane at any
+    /// zoom. The automatic fit on open stops at `PDF_FIT_MAX_ZOOM` so a narrow
+    /// page in a wide window is not blown up past readability.
+    pub fit_fills_pane: bool,
     pub scroll_y: f32,
     /// Visible height of the page list, as last scrolled (0 until known).
     pub viewport_height: f32,
@@ -106,6 +110,7 @@ impl PdfPane {
             total_pages: 0,
             zoom: 1.5,
             fit_to_width: true,
+            fit_fills_pane: false,
             scroll_y: 0.0,
             viewport_height: 0.0,
             pages: Vec::new(),

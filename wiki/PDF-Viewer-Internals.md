@@ -47,6 +47,7 @@ iced UI
 | `render_generation` | Invalidates stale **bitmaps** after a document change or a zoom that crosses a render bucket |
 | `document_generation` | Bumped only when a different document opens or the PDF closes; gates zoom-independent per-page data (text layer, links) |
 | `viewport_width` | The page list's measured width (a `sensor` around the scrollable), used by fit-to-width |
+| `fit_fills_pane` | Fit-to-width came from the toolbar (`FitToWidthClicked`): refits go up to `PDF_MAX_ZOOM` instead of stopping at `PDF_FIT_MAX_ZOOM` (200%); cleared on open and on an explicit zoom, kept in the tab view |
 | `programmatic_scroll` | Suppresses normal viewport scheduling for a jump's own scroll event |
 | `toc_target_page` | The page currently being navigated to |
 | `next_highlight_color` | Advances through the palette on each quick highlight |

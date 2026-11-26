@@ -26,6 +26,7 @@ impl MdEditor {
         self.active_panel = ActivePanel::Pdf;
         self.pdf.current_page = 0;
         self.pdf.fit_to_width = true;
+        self.pdf.fit_fills_pane = false;
         self.pdf.pages = Vec::new();
         self.pdf.dimensions = Vec::new();
         self.pdf.page_sizes = Vec::new();

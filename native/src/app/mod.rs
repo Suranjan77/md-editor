@@ -24,7 +24,10 @@ const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
 const ARROW_SCROLL: f32 = 64.0;
 const EDITOR_PADDING: f32 = crate::design::metrics::SPACE_5;
 const PDF_SUPERSAMPLE_MAX: f32 = 3.0;
+/// The automatic fit-to-width stops here; a requested fit may go to `PDF_MAX_ZOOM`.
 const PDF_FIT_MAX_ZOOM: f32 = 2.0;
+/// The largest zoom the PDF view offers (toolbar, zoom field, fit).
+const PDF_MAX_ZOOM: f32 = 4.0;
 const PDF_PAGE_BITMAP_EVICT_MARGIN: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -40,6 +40,10 @@ impl MdEditor {
                 Task::none()
             }
             PdfMessage::FitToWidth => self.on_pdf_fit_to_width(),
+            PdfMessage::FitToWidthClicked => {
+                self.pdf.fit_fills_pane = true;
+                self.on_pdf_fit_to_width()
+            }
             PdfMessage::ViewportMeasured(size) => self.on_pdf_viewport_measured(size),
             PdfMessage::FitToPage => self.on_pdf_fit_to_page(),
             PdfMessage::Rendered(generation, page, crate::messages::PageImage(img)) => {
@@ -67,6 +71,7 @@ impl MdEditor {
                 self.on_pdf_left_clicked(page, x, y, modifiers)
             }
             PdfMessage::RightClicked(page, x, y) => self.on_pdf_right_clicked(page, x, y),
+            PdfMessage::RegionSelected(page, region) => self.on_pdf_region_selected(page, region),
             PdfMessage::LinkPreviewResult(result) => self.on_pdf_link_preview(result),
             PdfMessage::SearchLooseToggled(value) => self.on_pdf_search_loose_toggled(value),
             PdfMessage::SearchResult(generation, result) => {

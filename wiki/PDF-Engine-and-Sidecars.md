@@ -84,7 +84,7 @@ the target page never queues behind a backlog of prefetches, link extractions, o
 
 Standard channel: `PageCount`, `ExtractText`, `PageSizes`, `RenderPage`, `GetToc`,
 `GetReferences`, `GetEmbeddedToc`, `GetLinks`, `SearchText`, `RenderLinkPreview`,
-`GetPageText`, `GetPageTextBackground`, `RecoverToc`, `Wake`. Priority channel:
+`RenderRegion`, `GetPageText`, `GetPageTextBackground`, `RecoverToc`, `Wake`. Priority channel:
 `PriorityRender { path, page_index, scale, resp }`.
 
 Every command carries a `SyncSender` for its reply, and the `PdfRenderer` methods block on
@@ -94,6 +94,16 @@ starved the subscriptions, so iced dropped input events (`TrySendError { kind: F
 
 `PageSizes` reads each page's box from the page tree (`pages().page_size`) without loading
 the page.
+
+`RenderRegion` (`render_region(path, page, PageRegion, target_width_px)`) renders one
+rectangle of a page as raw RGBA, with no PNG round trip. This is the crop a note shows for
+`![…](pdf://…&crop=x,y,w,h)`. The region is in points of the displayed page box from its
+**top-left**, clamped to the page. The page is rendered whole at up to 8 px/pt and the
+region cut out of it.
+
+**Document cache.** The worker keeps the last few opened documents (`DOC_CACHE_CAPACITY`),
+stamped with their file's size and modification time. A file replaced on disk is loaded
+again on its next command instead of serving the old pages.
 
 **Coordinates.** Every `PdfRect` that leaves core (char boxes, search hits, annotation
 rects, links) is in the *displayed* page box: `page.width()` × `page.height()` after
@@ -348,6 +358,32 @@ rather than being silently reattached to the wrong text.
 `selected_text` against the text currently under its saved rectangle and reports how many
 have drifted. Because page text is loaded lazily per visible page, the report also states
 how many of the total annotations were actually checkable.
+
+**Portable copies in the vault (`core/src/state/pdf_sidecar.rs`).** SQLite is the working
+store, but each PDF's highlights are also kept in the vault at
+`.md-editor/annotations/<document_id>.jsonl`: one `PdfAnnotation` per line as JSON,
+oldest first. Git or Syncthing then carry them to other machines, with one changed line
+per edited highlight. The document id is the content hash, so it matches on every machine.
+`.md-editor/.gitattributes` sets `merge=union` so two machines adding highlights never
+conflict.
+
+- Every `save_pdf_annotation` / `delete_pdf_annotation` rewrites the document's file
+  through `vault::write_file`. Deleting the last highlight leaves an empty file, so the
+  deletion still travels. A failed write is logged, not fatal: SQLite has the change and
+  the next sync writes it.
+- `sync_pdf_sidecars` (after every vault index) and `sync_pdf_sidecar` (when a PDF's id
+  is computed on open) reconcile file and SQLite. If they agree, nothing happens. If the
+  file is unchanged since this machine last synced, it is rewritten from SQLite. Otherwise
+  the two are merged three-way against the ids recorded at the last sync
+  (`pdf_sidecar_sync`, schema v4). An id gone on one side was deleted there, an id new on
+  one side was added there, and an id on both sides keeps the later `updated_at`. On a
+  tie the file wins, because a rename on another machine rewrites linked note paths
+  without a new `updated_at`.
+- A missing file is rewritten from SQLite, never read as "everything was deleted".
+  Unreadable lines are skipped. A duplicate id (a union-merged same-id edit) keeps its
+  later copy. Only SHA-256 hex file names are read.
+- A rename that rewrites `linked_note_path` re-exports the affected files, and a content
+  change that moves highlights to a new document id removes the old file.
 
 ---
 

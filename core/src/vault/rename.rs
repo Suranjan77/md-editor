@@ -240,7 +240,13 @@ fn rewrite_persisted_rename_paths(
     }
 
     tx.commit()
-        .map_err(|e| VaultError::from(format!("Failed to persist renamed paths: {e}")))
+        .map_err(|e| VaultError::from(format!("Failed to persist renamed paths: {e}")))?;
+    drop(db);
+    if update_linked_notes {
+        // Highlights linking the renamed notes now name the new paths.
+        state.export_all_pdf_sidecars();
+    }
+    Ok(())
 }
 
 fn rewrite_path_column(

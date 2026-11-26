@@ -984,3 +984,68 @@ fn text_range_slices_by_char_and_clamps() {
     assert_eq!(page.text_range(4, 99), "δ€");
     assert_eq!(page.text_range(5, 2), "");
 }
+
+#[test]
+fn a_page_region_renders_the_text_under_it_from_the_top_left() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let renderer = PdfRenderer::new().unwrap();
+    let path = "../tests-fixtures/pdf/dummy.pdf";
+    let (_, page_h) = renderer.page_sizes(path).unwrap()[0];
+    let hit = renderer.search_text(path, "dummy", false, false).unwrap()[0].rects[0].clone();
+    // Search rects are y-up from the bottom; regions are measured from the top.
+    let over_text = PageRegion {
+        x: hit.x - 2.0,
+        y: page_h - (hit.y + hit.height) - 2.0,
+        width: hit.width + 4.0,
+        height: hit.height + 4.0,
+    };
+    let image = renderer.render_region(path, 0, over_text, 400).unwrap();
+    assert_eq!(image.rgba.len(), (image.width * image.height * 4) as usize);
+    let expected_w = (over_text.width * (400.0 / over_text.width).clamp(1.0, 8.0)).round();
+    assert!(
+        (image.width as f32 - expected_w).abs() <= 2.0,
+        "{} vs {expected_w}",
+        image.width
+    );
+    let dark = |img: &RegionImage| img.rgba.chunks(4).filter(|p| p[0] < 128).count();
+    assert!(dark(&image) > 0, "the word's glyphs are in the crop");
+
+    let blank_corner = PageRegion {
+        x: 0.0,
+        y: page_h - 20.0,
+        width: 20.0,
+        height: 20.0,
+    };
+    let corner = renderer.render_region(path, 0, blank_corner, 100).unwrap();
+    assert_eq!(dark(&corner), 0, "the bottom-left margin is empty");
+
+    let off_page = PageRegion {
+        x: -500.0,
+        y: -500.0,
+        width: 100.0,
+        height: 100.0,
+    };
+    assert!(renderer.render_region(path, 0, off_page, 100).is_err());
+    assert!(renderer.render_region(path, 999, over_text, 100).is_err());
+}
+
+#[test]
+fn a_pdf_replaced_on_disk_is_read_again_not_served_from_the_cache() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let renderer = PdfRenderer::new().unwrap();
+    let dir = std::env::temp_dir().join(format!("md_pdf_replaced_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("paper.pdf");
+    std::fs::copy("../tests-fixtures/pdf/dummy.pdf", &path).unwrap();
+    let path_str = path.to_string_lossy().to_string();
+    let before = renderer.page_count(&path_str).unwrap();
+
+    std::fs::copy("../tests-fixtures/pdf/large-500-pages.pdf", &path).unwrap();
+    let after = renderer.page_count(&path_str).unwrap();
+    assert_ne!(
+        before, after,
+        "the new file's pages, not the cached document's"
+    );
+    assert_eq!(after, 500);
+    let _ = std::fs::remove_dir_all(&dir);
+}

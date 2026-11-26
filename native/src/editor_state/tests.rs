@@ -223,3 +223,40 @@ fn math_renders_once_per_tex_and_failures_are_not_retried() {
     pane.forget_math();
     assert!(pane.pending_math.is_empty() && pane.failed_math.is_empty());
 }
+
+#[test]
+fn a_pdf_crop_is_rendered_once_and_a_failed_one_is_not_retried_until_forgotten() {
+    let mut pane = EditorPane::new();
+    let crop = "pdf://papers/p.pdf?page=2&crop=10,20,100,50";
+    pane.buffer = crate::editor::buffer::DocBuffer::from_text(&format!(
+        "![fig]({crop})\n\n![again]({crop})\n\n![plain](pdf://papers/p.pdf?page=2)"
+    ));
+    pane.refresh_highlighting();
+    assert_eq!(pane.take_wanted_pdf_crops(), [crop], "once, and only crops");
+    assert!(pane.take_wanted_pdf_crops().is_empty(), "already rendering");
+
+    pane.pdf_crop_loaded(crop.to_string(), Err("gone".into()));
+    assert!(
+        pane.take_wanted_pdf_crops().is_empty(),
+        "failed: not retried per keystroke"
+    );
+
+    pane.forget_images();
+    assert_eq!(pane.take_wanted_pdf_crops(), [crop]);
+    let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0; 4]);
+    let before = pane.layout_revision();
+    pane.pdf_crop_loaded(crop.to_string(), Ok((handle, 133.0, 66.0)));
+    assert!(pane.image_cache.contains_key(crop));
+    assert_ne!(
+        pane.layout_revision(),
+        before,
+        "the line re-lays out at the crop's size"
+    );
+
+    pane.forget_images();
+    pane.pdf_crop_loaded(crop.to_string(), Err("late".into()));
+    assert!(
+        !pane.take_wanted_pdf_crops().is_empty(),
+        "a result arriving after the images were forgotten is dropped"
+    );
+}

@@ -87,8 +87,9 @@ undo history, a PDF its page and zoom, an image its zoom.
 
 - **Appearance** — theme (System, Dark, Light), interface scale (90–130%), reduced motion
   (System, Standard, Reduced).
-- **Editor** — reading font (Inter or Source Serif), font size (14–22px) and line width
-  (Narrow 640, Default 720, Wide 880). Changes apply to the open note at once.
+- **Editor** — reading font (Inter or Source Serif), font size (14–22px), line width
+  (Narrow 640, Default 720, Wide 880) and line numbers (off by default; they show in the
+  left margin, the caret's line brighter). Changes apply to the open note at once.
 - **Files** — where pasted and dropped images go (vault root, beside the note, or a
   folder you choose), and folders to leave out of the vault (comma-separated names, applied
   with Enter or Apply; `node_modules`, `target`, `build`, `dist` and dot-folders are always
@@ -135,6 +136,7 @@ MD Editor shows formatted text and lets you edit the exact source, without a mod
 | Task lists | `- [ ]` / `- [x]` | Click the box to toggle it |
 | Tables | `\| A \| B \|` | Render as grids and scroll horizontally on their own |
 | Images | `![alt](path.png)` | Rendered inline with the alt text as a caption |
+| PDF crops | `![alt](pdf://paper.pdf?page=4&crop=x,y,w,h)` | That part of the page, rendered live from the PDF; `Ctrl` + click opens the PDF there |
 | Links | `[text](target)` | `Ctrl` + click to follow |
 | Wikilinks | `[[Note]]`, `[[Note\|Label]]` | Resolve across subfolders by filename |
 | Horizontal rule | `---` | |
@@ -261,9 +263,10 @@ Open any `.pdf` from the sidebar to enter the integrated reader.
   text selected it shows the highlight colours; with a highlight focused, its note, linked
   note, copy and delete actions.
 - **Continuous scrolling** through the document.
-- **Fit-to-width** (on by default) and manual zoom. Fit-to-width — automatic or via the fit
-  button — stops at 200% so a wide pane doesn't blow pages up; the zoom buttons still go to
-  400%. Pages are rendered above their displayed
+- **Fit-to-width** (on by default) and manual zoom. The automatic fit on opening stops at
+  200% so a wide pane doesn't blow pages up; clicking the fit button fills the pane (up to
+  400%) and keeps filling it as the pane resizes, until you zoom by hand. The zoom buttons
+  go to 400%. Pages are rendered above their displayed
   size, scaled by your display's factor, so they stay sharp in a narrow split pane and on
   HiDPI screens.
 - **Keyboard scrolling** — arrows and page keys.
@@ -311,6 +314,19 @@ outside the app.
 2. A searchable picker lets you choose an existing note, or a folder plus a new note name.
 3. MD Editor writes a `## Page N` section with the quoted passage, an
    `[Open highlight in PDF](pdf://…)` link, and a `### Notes` area for your own writing.
+
+### Figures and equations from a PDF into a note
+
+Hold `Alt` and drag a rectangle over any part of a PDF page: a figure, a theorem, a table, an
+equation. With a note open (split view), a line like
+`![paper, p. 4](pdf://papers/paper.pdf?page=4&crop=112,240,380,210)` is inserted at the
+caret, and the note shows that part of the page right there. With no note open, the line is
+copied to the clipboard. `Ctrl+Z` removes it in one step.
+
+Nothing is written to disk but that line. The picture is rendered from the PDF each time the
+note opens, so it stays sharp at any zoom and follows the PDF if you replace it with a new
+version. `Ctrl` + click the picture to open the PDF at that page. The `crop` numbers are
+points from the page's top-left corner, so you can also write or adjust them by hand.
 
 Linking another highlight to the same note **appends** a section rather than overwriting the
 file, and re-linking the same highlight changes nothing. `Ctrl` + click the `pdf://` link from
@@ -420,5 +436,10 @@ Full detail: [Study Tracker](Study-Tracker.md).
   highlights and notes, cached PDF text, and study history — lives in a single SQLite file
   named `md_editor_settings.sqlite` in `~/.local/share/md-editor/`. The log is
   `~/.local/state/md-editor/md-editor.log`.
+- **PDF highlights and their notes** are also copied into the vault, in the hidden
+  `.md-editor/annotations/` folder (one small text file per PDF). Sync the vault with Git
+  or Syncthing and your highlights come along. Highlights made on two machines are merged
+  the next time the vault or the PDF is opened. Study history and settings stay on each
+  machine.
 - Uninstalling the app leaves both in place; delete those folders to remove all app data.
 - Nothing is sent anywhere. There are no accounts and no telemetry.

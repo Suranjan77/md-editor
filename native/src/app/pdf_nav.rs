@@ -214,6 +214,11 @@ impl MdEditor {
             log::warn!("could not record PDF document {path}: {e}");
         }
         self.pdf.document_id = Some(hash.clone());
+        // The vault's copy of this PDF's highlights may have changed since the
+        // vault opened (a pull, another machine through Syncthing).
+        if let Err(e) = self.state.sync_pdf_sidecar(&hash) {
+            log::warn!("could not sync highlights of {path}: {e}");
+        }
 
         let annotations = self
             .state

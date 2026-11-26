@@ -93,6 +93,7 @@ impl MdEditor {
         let current_page = self.pdf.page_at_scroll(self.pdf.scroll_y);
         let relative_ratio = self.pdf_scroll_ratio_in_page(current_page);
         self.pdf.fit_to_width = false;
+        self.pdf.fit_fills_pane = false;
         self.apply_pdf_zoom(zoom, current_page, relative_ratio, false)
     }
 
@@ -145,8 +146,12 @@ impl MdEditor {
                     .map(|(w, _)| (*w as f32 / self.pdf.zoom).max(1.0))
             })
             .unwrap_or(612.0);
-        let next_zoom =
-            ((available_width - 48.0).max(240.0) / page_width).clamp(0.5, PDF_FIT_MAX_ZOOM);
+        let max_zoom = if self.pdf.fit_fills_pane {
+            PDF_MAX_ZOOM
+        } else {
+            PDF_FIT_MAX_ZOOM
+        };
+        let next_zoom = ((available_width - 48.0).max(240.0) / page_width).clamp(0.5, max_zoom);
         let next_zoom = (next_zoom * 100.0).round() / 100.0;
         self.apply_pdf_zoom(next_zoom, current_page, relative_ratio, is_initial)
     }
@@ -155,6 +160,7 @@ impl MdEditor {
     pub(super) fn on_pdf_fit_to_page(&mut self) -> Task<Message> {
         let current_page = self.pdf.page_at_scroll(self.pdf.scroll_y);
         self.pdf.fit_to_width = false;
+        self.pdf.fit_fills_pane = false;
         let (_, page_h) = self
             .pdf
             .page_sizes

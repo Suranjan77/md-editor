@@ -4,7 +4,8 @@
 //! that intersects the viewport (cards, captions, badges); the selection under
 //! text; each visible line — search highlights first, then its content, then
 //! the caret; the selection over blocks drawn whole (tables, images,
-//! equations); and finally the scrollbars of blocks wider than the column.
+//! equations); line numbers in the margin when they are on; and finally the
+//! scrollbars of blocks wider than the column.
 //!
 //! Lines are painted by kind (see [`LineKind`]):
 //!
@@ -18,6 +19,7 @@
 
 mod blocks;
 mod captions;
+mod gutter;
 mod inline;
 mod overlays;
 mod primitives;
@@ -175,6 +177,9 @@ impl<Message> Editor<'_, Message> {
             self.paint_line(renderer, &frame, row, &mut counters);
         }
         paint_selection(renderer, &selection, true, viewport);
+        if crate::design::line_numbers() {
+            gutter::paint_line_numbers(renderer, &frame, &rows);
+        }
 
         for (&block_id, meta) in &frame.blocks {
             if let Some(extent) = meta.scroll.filter(|extent| extent.overflows()) {

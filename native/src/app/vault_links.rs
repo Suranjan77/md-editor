@@ -33,27 +33,12 @@ impl MdEditor {
     }
 
     fn open_pdf_protocol_link(&mut self, url_str: &str) -> Task<Message> {
-        let (encoded_pdf_path, query) = if let Some(idx) = url_str.find('?') {
-            (&url_str[..idx], Some(&url_str[idx + 1..]))
-        } else {
-            (url_str, None)
-        };
-        let pdf_path = crate::pdf_notes::decode_pdf_link_path(encoded_pdf_path);
-
-        let mut page: Option<u16> = None;
-        let mut annotation_id: Option<String> = None;
-        if let Some(query_str) = query {
-            for pair in query_str.split('&') {
-                let mut parts = pair.splitn(2, '=');
-                if let (Some(key), Some(val)) = (parts.next(), parts.next()) {
-                    if key == "page" {
-                        page = val.parse::<u16>().ok();
-                    } else if key == "annotation" {
-                        annotation_id = Some(val.to_string());
-                    }
-                }
-            }
-        }
+        let crate::pdf_notes::PdfLink {
+            path: pdf_path,
+            page,
+            annotation: annotation_id,
+            ..
+        } = crate::pdf_notes::parse_pdf_link(url_str);
 
         let resolved_pdf_path = resolve_relative_link_path(
             self.vault.root.as_deref(),

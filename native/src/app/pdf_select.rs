@@ -218,6 +218,40 @@ impl MdEditor {
         Ok(())
     }
 
+    /// `PdfMessage::RegionSelected`: Alt+drag picked part of a page. The open
+    /// note gets an image of it, rendered live from the PDF, as one undo step
+    /// at the caret; with no note open the Markdown goes to the clipboard.
+    pub(super) fn on_pdf_region_selected(
+        &mut self,
+        page: u16,
+        fraction: iced::Rectangle,
+    ) -> Task<Message> {
+        let Some(pdf_path) = self.pdf.active_path.clone() else {
+            return Task::none();
+        };
+        let Some((page_w, page_h)) = self.pdf.page_sizes.get(page as usize).copied().flatten()
+        else {
+            return Task::none();
+        };
+        let region = md_editor_core::pdf::PageRegion {
+            x: fraction.x * page_w,
+            y: fraction.y * page_h,
+            width: fraction.width * page_w,
+            height: fraction.height * page_h,
+        };
+        let markdown = crate::pdf_notes::pdf_crop_markdown(&pdf_path, page, region);
+        if self.active_path.is_some() {
+            self.ui.toast = Some(format!("Inserted page {} crop into the note", page + 1));
+            // Re-highlighting the new line starts rendering the crop.
+            return self.run_editor_command(EditorCommand::InsertBlock(markdown));
+        }
+        self.ui.toast = Some(format!(
+            "Copied a link to this part of page {}; paste it into a note",
+            page + 1
+        ));
+        iced::clipboard::write(markdown)
+    }
+
     pub(super) fn default_pdf_note_path(&self, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
         let pdf_filename = self
             .pdf

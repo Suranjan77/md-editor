@@ -349,7 +349,10 @@ pub fn toolbar<'a>(props: PdfToolbarProps<'a>) -> Element<'a, Message, Theme, Re
             on_submit: Some(Message::Pdf(PdfMessage::ZoomInputSubmit)),
             zoom_out: Message::Pdf(PdfMessage::ZoomChanged((props.zoom - 0.1).max(0.25))),
             zoom_in: Message::Pdf(PdfMessage::ZoomChanged((props.zoom + 0.1).min(4.0))),
-            fit_width: Some((props.fit_to_width, Message::Pdf(PdfMessage::FitToWidth))),
+            fit_width: Some((
+                props.fit_to_width,
+                Message::Pdf(PdfMessage::FitToWidthClicked),
+            )),
             fit_page: Some((false, Message::Pdf(PdfMessage::FitToPage))),
         }),
         find: Some(Message::KeyboardShortcut(Shortcut::Search)),
@@ -674,6 +677,9 @@ fn rendered_page<'a>(
                 Message::Pdf(PdfMessage::SelectionFinished(page, start, end))
             }),
             on_selection_cleared: Box::new(|| Message::Pdf(PdfMessage::SelectionCleared)),
+            on_region_selected: Box::new(|page, region| {
+                Message::Pdf(PdfMessage::RegionSelected(page, region))
+            }),
         },
     );
 

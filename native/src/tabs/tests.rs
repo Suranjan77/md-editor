@@ -119,6 +119,7 @@ fn rename_delete_and_session_round_trip() {
             page: 4,
             zoom: 1.75,
             fit_to_width: false,
+            fit_fills_pane: false,
             scroll_y: 320.0,
         };
     }
@@ -140,6 +141,7 @@ fn rename_delete_and_session_round_trip() {
             page: 4,
             zoom: 1.75,
             fit_to_width: false,
+            fit_fills_pane: false,
             scroll_y: 320.0,
         })
     );

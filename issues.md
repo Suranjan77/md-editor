@@ -26,7 +26,8 @@
   * **Problem**: PDF loose-whitespace mode matches across whitespace and newlines, but fails when words are hyphenated across line breaks (e.g. `algo-` on one line and `rithm` on the next).
   * **Solution**: Strip trailing hyphens followed immediately by line-break whitespace in the loose-search scanner.
 
-- [ ] **Default fit of PDF files should not be more than 200%, However, manual fit should use available space**
+- [x] **Default fit of PDF files should not be more than 200%, However, manual fit should use available space**
+  * **Done**: the automatic fit stops at `PDF_FIT_MAX_ZOOM` (200%); the toolbar's Fit width (`PdfMessage::FitToWidthClicked`) fills the pane up to `PDF_MAX_ZOOM` and keeps filling on resize (`PdfPane::fit_fills_pane`, saved in the tab view).
 ---
 
 ## 2. Feature Additions
@@ -49,6 +50,7 @@
   * **File**: [`native/src/editor/renderer.rs:2364-2435`](file:///home/sur/repo/md-editor/native/src/editor/renderer.rs#L2364-L2435)
   * **Task**: Track click timestamp and coordinates in widget state. Double-click selects the word under cursor; triple-click selects the whole line.
 
-- [ ] **Line Numbers in Editor Gutter**
+- [x] **Line Numbers in Editor Gutter**
+  * **Done**: Settings → Editor → Line numbers (off by default, `design::line_numbers`) paints each source line's number in the left margin, centred on its first row (`editor/renderer/draw/gutter.rs`; test `line_numbers_paint_in_the_margin_beside_each_line_only_when_on`).
   * **Files**: [`native/src/editor/renderer.rs:17-24`](file:///home/sur/repo/md-editor/native/src/editor/renderer.rs#L17-L24) and [`native/src/theme.rs:24`](file:///home/sur/repo/md-editor/native/src/theme.rs#L24)
   * **Task**: Use the reserved `MARGIN_LEFT = 64.0px` to render line numbers in the gutter for lines in the viewport range, matching `TEXT_XS` and muted styling.

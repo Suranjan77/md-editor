@@ -1,6 +1,7 @@
 //! `AppState`: the shared SQLite connection, schema and migrations, and vault generation state.
 
 mod error;
+pub mod pdf_sidecar;
 mod pdf_store;
 pub use error::{StateError, StateResult};
 use std::path::{Path, PathBuf};
@@ -174,7 +175,7 @@ impl AppState {
 
 /// Current on-disk schema version. Bump this and add a corresponding arm in
 /// [`apply_migrations`] whenever the schema changes.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 fn init_schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch(
@@ -288,6 +289,18 @@ fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
                 modified_ns INTEGER NOT NULL,
                 links_json TEXT NOT NULL,
                 PRIMARY KEY (scope, path)
+            );",
+        )?;
+    }
+
+    // v4: per document, what its portable highlight file in the vault last
+    // held (state/pdf_sidecar.rs), the base of the next merge.
+    if version < 4 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pdf_sidecar_sync (
+                document_id TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL,
+                ids_json TEXT NOT NULL
             );",
         )?;
     }

@@ -47,6 +47,9 @@ pub enum TabView {
         page: u16,
         zoom: f32,
         fit_to_width: bool,
+        /// See `PdfPane::fit_fills_pane`; absent in sessions saved before it.
+        #[serde(default)]
+        fit_fills_pane: bool,
         scroll_y: f32,
     },
     Image {
@@ -63,6 +66,7 @@ impl TabView {
                 page: 0,
                 zoom: 1.5,
                 fit_to_width: true,
+                fit_fills_pane: false,
                 scroll_y: 0.0,
             },
             TabKind::Image => Self::Image {

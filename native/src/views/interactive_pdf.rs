@@ -1,4 +1,4 @@
-//! One PDF page as a widget: the bitmap plus hit testing, text selection and clicks.
+//! One PDF page as a widget: the bitmap plus hit testing, text selection, clicks and Alt+drag region picks.
 
 use iced::advanced::graphics::core::event::Event;
 use iced::advanced::layout::{self, Layout};
@@ -24,6 +24,28 @@ pub struct State {
     /// succession: two select a word, three a line.
     pub last_click: Option<(std::time::Instant, iced::Point)>,
     pub click_count: u8,
+    /// The press held Alt: the drag picks a rectangle of the page (a crop to
+    /// show in a note) instead of selecting text. Its far corner, once moved.
+    pub region_drag: bool,
+    pub region_focus: Option<iced::Point>,
+}
+
+/// A region drag smaller than this, in pixels, either way, is a stray click.
+const MIN_REGION_PX: f32 = 8.0;
+
+/// The rectangle dragged from `a` to `b` on a page laid out `size` big, as
+/// fractions of the page (0..1, from the top-left), clamped to the page.
+/// `None` when it is too small to mean anything.
+pub(crate) fn region_fraction(a: iced::Point, b: iced::Point, size: Size) -> Option<Rectangle> {
+    let (w, h) = (size.width.max(1.0), size.height.max(1.0));
+    let (x0, x1) = (a.x.min(b.x).clamp(0.0, w), a.x.max(b.x).clamp(0.0, w));
+    let (y0, y1) = (a.y.min(b.y).clamp(0.0, h), a.y.max(b.y).clamp(0.0, h));
+    (x1 - x0 >= MIN_REGION_PX && y1 - y0 >= MIN_REGION_PX).then(|| Rectangle {
+        x: x0 / w,
+        y: y0 / h,
+        width: (x1 - x0) / w,
+        height: (y1 - y0) / h,
+    })
 }
 
 use crate::design::metrics::MULTI_CLICK_SLOP;
@@ -39,6 +61,7 @@ pub struct InteractivePdf<'a, Message> {
     on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     on_selection_finished: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     on_selection_cleared: Box<dyn Fn() -> Message + 'a>,
+    on_region_selected: Box<dyn Fn(u16, Rectangle) -> Message + 'a>,
 }
 
 /// What a page publishes for pointer and selection events.
@@ -48,6 +71,8 @@ pub struct PageEvents<'a, Message> {
     pub on_selection_changed: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     pub on_selection_finished: Box<dyn Fn(u16, usize, usize) -> Message + 'a>,
     pub on_selection_cleared: Box<dyn Fn() -> Message + 'a>,
+    /// Alt+drag finished: the page and the rectangle, as fractions of it.
+    pub on_region_selected: Box<dyn Fn(u16, Rectangle) -> Message + 'a>,
 }
 
 impl<'a, Message> InteractivePdf<'a, Message> {
@@ -65,6 +90,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             on_selection_changed,
             on_selection_finished,
             on_selection_cleared,
+            on_region_selected,
         } = events;
         Self {
             handle,
@@ -77,6 +103,7 @@ impl<'a, Message> InteractivePdf<'a, Message> {
             on_selection_changed,
             on_selection_finished,
             on_selection_cleared,
+            on_region_selected,
         }
     }
 }
@@ -230,6 +257,47 @@ pub(crate) fn line_around(
         .map(|line| (line.start_text_index, line.end_text_index.saturating_sub(1)))
 }
 
+impl<Message> InteractivePdf<'_, Message> {
+    /// Pointer events while an Alt+drag picks a region: track the far corner,
+    /// and on release publish the rectangle (if it is big enough).
+    fn update_region_drag(
+        &self,
+        state: &mut State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if state.drag_start.is_some()
+                    && let Some(current) = cursor.position()
+                {
+                    state.region_focus =
+                        Some(iced::Point::new(current.x - bounds.x, current.y - bounds.y));
+                    shell.request_redraw();
+                    shell.capture_event();
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let (Some(start), Some(focus)) = (state.drag_start, state.region_focus)
+                    && let Some(region) = region_fraction(start, focus, bounds.size())
+                {
+                    shell.publish((self.on_region_selected)(self.page_index, region));
+                }
+                if state.drag_start.is_some() {
+                    shell.capture_event();
+                }
+                state.drag_start = None;
+                state.region_drag = false;
+                state.region_focus = None;
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+}
+
 impl<'a, Message, Theme, R> Widget<Message, Theme, R> for InteractivePdf<'a, Message>
 where
     R: renderer::Renderer + iced::advanced::image::Renderer<Handle = iced::widget::image::Handle>,
@@ -278,6 +346,31 @@ where
 
         // The stacked `PdfOverlay` paints annotations, search matches, and
         // selection exactly once above this page bitmap.
+
+        let state = _state.state.downcast_ref::<State>();
+        if let (true, Some(start), Some(focus)) =
+            (state.region_drag, state.drag_start, state.region_focus)
+            && let Some(f) = region_fraction(start, focus, bounds.size())
+        {
+            let t = crate::design::tokens();
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: bounds.x + f.x * bounds.width,
+                        y: bounds.y + f.y * bounds.height,
+                        width: f.width * bounds.width,
+                        height: f.height * bounds.height,
+                    },
+                    border: iced::Border {
+                        color: t.accent,
+                        width: crate::design::metrics::BORDER_WIDTH,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                },
+                crate::design::fade(t.accent, 0.12),
+            );
+        }
     }
 
     fn state(&self) -> iced::advanced::widget::tree::State {
@@ -310,9 +403,15 @@ where
                 if let Some(position) = cursor.position_in(bounds) {
                     state.drag_start = Some(position);
                     state.is_dragging = false;
+                    state.region_drag = state.modifiers.alt();
+                    state.region_focus = None;
                     shell.capture_event();
                 }
             }
+            Event::Mouse(
+                mouse::Event::CursorMoved { .. }
+                | mouse::Event::ButtonReleased(mouse::Button::Left),
+            ) if state.region_drag => self.update_region_drag(state, event, bounds, cursor, shell),
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(start_pos) = state.drag_start
                     && let Some(current_pos) = cursor.position()
@@ -432,7 +531,10 @@ where
         _viewport: &Rectangle,
         _renderer: &R,
     ) -> mouse::Interaction {
-        if cursor.is_over(layout.bounds()) {
+        let state = _state.state.downcast_ref::<State>();
+        if cursor.is_over(layout.bounds()) && (state.region_drag || state.modifiers.alt()) {
+            mouse::Interaction::Crosshair
+        } else if cursor.is_over(layout.bounds()) {
             mouse::Interaction::Text
         } else {
             mouse::Interaction::Idle

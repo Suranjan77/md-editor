@@ -515,3 +515,30 @@ fn s14b_note_images_load_refresh_and_stay_per_folder() {
     );
     app.finish();
 }
+
+/// A `pdf://…&crop=` image renders the region live from the PDF, beside an
+/// ordinary link to the same PDF, and a crop of a missing PDF just fails
+/// quietly (no error toast, not retried).
+#[test]
+fn s18_pdf_crop_renders_inline_in_a_note() {
+    let crop = "pdf://papers/dummy.pdf?page=1&crop=60,60,300,120";
+    let missing = "pdf://papers/gone.pdf?page=1&crop=0,0,100,100";
+    let vault = research_vault().file(
+        "notes/Reading.md",
+        &format!(
+            "# Reading\n\n![dummy, p. 1]({crop})\n\nSee [the paper](pdf://papers/dummy.pdf?page=1).\n\n![gone]({missing})\n"
+        ),
+    );
+    let mut app = boot("s18-pdf-crop", &vault, Some("notes/Reading.md"));
+    app.screenshot("crop");
+    let probe = app.probe();
+    let width = probe
+        .images
+        .iter()
+        .find(|(key, _)| key == crop)
+        .map(|(_, width)| *width)
+        .expect("the crop rendered into the note's images");
+    assert_eq!(width, 400.0, "shown at the crop's size in CSS px");
+    assert!(probe.images.iter().all(|(key, _)| key != missing));
+    app.finish();
+}

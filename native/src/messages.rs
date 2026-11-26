@@ -66,6 +66,7 @@ pub enum SettingsMessage {
     ReadingFontSelected(crate::design::ReadingFont),
     EditorFontSizeChanged(f32),
     ContentMeasureSelected(crate::design::ContentMeasure),
+    LineNumbersToggled(bool),
     AttachmentsModeSelected(AttachmentsMode),
     AttachmentsCustomChanged(String),
     PickAttachmentsFolder,
@@ -293,6 +294,12 @@ pub enum EditorMessage {
         std::path::PathBuf,
         Result<(iced::widget::image::Handle, f32, f32), String>,
     ),
+    /// A `pdf://…&crop=` image in the note finished rendering: its link text
+    /// and the image (handle, width, height) or why it could not be drawn.
+    PdfCropLoaded(
+        String,
+        Result<(iced::widget::image::Handle, f32, f32), String>,
+    ),
     /// Move the completion popup's selection by this many rows.
     CompletionMove(isize),
     /// Insert the selected completion (`Enter` / `Tab`).
@@ -317,7 +324,11 @@ pub enum PdfMessage {
     PageInputChanged(String),
     #[allow(dead_code)]
     PageInputSubmit,
+    /// Refit to the pane width (open, resize, split): stops at 200% unless the
+    /// user asked for a fit with `FitToWidthClicked`.
     FitToWidth,
+    /// The toolbar's Fit width: fill the pane, past 200% if that is what fits.
+    FitToWidthClicked,
     #[allow(dead_code)]
     FitToPage,
     Loaded(u64, Result<u16, String>),
@@ -349,6 +360,9 @@ pub enum PdfMessage {
     PageTextLoaded(u64, u16, Result<md_editor_core::pdf::PdfPageText, String>),
     SelectionChanged(u16, usize, usize),
     SelectionCleared,
+    /// Alt+drag picked a rectangle of a page, as fractions of it: show that
+    /// crop in the open note (or copy its link).
+    RegionSelected(u16, iced::Rectangle),
     SelectionFinished(u16, usize, usize),
     CopySelection,
     CreateHighlight(md_editor_core::pdf::PdfAnnotationColor),

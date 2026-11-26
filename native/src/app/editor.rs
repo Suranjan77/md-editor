@@ -94,6 +94,10 @@ impl MdEditor {
                     .image_loaded(key, abs, result, root.as_deref(), active.as_deref());
                 Task::none()
             }
+            EditorMessage::PdfCropLoaded(key, result) => {
+                self.editor.pdf_crop_loaded(key, result);
+                Task::none()
+            }
             EditorMessage::CaretView(view) => {
                 self.editor.caret_view = Some(view);
                 self.reveal_caret(view)
@@ -147,7 +151,59 @@ impl MdEditor {
             (Some(root), Some(path)) => self.editor.load_images(&root, &path),
             _ => Task::none(),
         };
-        Task::batch(vec![images, self.editor.load_math(self.ui.scale_factor)])
+        Task::batch(vec![
+            images,
+            self.load_pdf_crops(),
+            self.editor.load_math(self.ui.scale_factor),
+        ])
+    }
+
+    /// Render, off the UI thread, each `pdf://…&crop=` image the note shows
+    /// that is not rendered yet. Paths resolve the way the link opens.
+    fn load_pdf_crops(&mut self) -> Task<Message> {
+        let Some(root) = self.vault.root.clone() else {
+            return Task::none();
+        };
+        let mut tasks = Vec::new();
+        for key in self.editor.take_wanted_pdf_crops() {
+            let link = crate::pdf_notes::parse_pdf_link(unwrap_angle_brackets(&key));
+            let rel =
+                resolve_relative_link_path(Some(&root), self.active_path.as_deref(), &link.path);
+            let source = md_editor_core::vault::resolve_vault_path_checked(
+                std::path::Path::new(&root),
+                &rel,
+            );
+            let (Some(region), Ok(abs)) = (link.crop, source) else {
+                self.editor
+                    .pdf_crop_loaded(key, Err("not a crop of a PDF in this vault".into()));
+                continue;
+            };
+            let page = link.page.unwrap_or(1).saturating_sub(1);
+            // Shown at the crop's size in CSS pixels (96 per 72 points), rendered
+            // at twice the display density so it stays sharp when enlarged.
+            let (width, height) = (region.width * 4.0 / 3.0, region.height * 4.0 / 3.0);
+            let target_px = (width * self.ui.scale_factor * 2.0).clamp(64.0, 3000.0) as u32;
+            let state = self.state.clone();
+            tasks.push(Task::perform(
+                super::blocking(move || {
+                    let renderer = state
+                        .pdf_renderer
+                        .as_ref()
+                        .ok_or_else(|| "PDF renderer is unavailable".to_string())?;
+                    let image = renderer
+                        .render_region(&abs.to_string_lossy(), page, region, target_px)
+                        .map_err(|e| e.to_string())?;
+                    let handle = iced::widget::image::Handle::from_rgba(
+                        image.width,
+                        image.height,
+                        image.rgba,
+                    );
+                    Ok((handle, width, height))
+                }),
+                move |result| Message::Editor(EditorMessage::PdfCropLoaded(key.clone(), result)),
+            ));
+        }
+        Task::batch(tasks)
     }
 
     /// Scroll the editor the way the answered reveal request asked, now that
@@ -276,4 +332,12 @@ pub(super) fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bo
             | EditorCommand::Undo
             | EditorCommand::Redo
     )
+}
+
+/// A link destination written `<…>` (CommonMark's form for spaces), unwrapped.
+fn unwrap_angle_brackets(link: &str) -> &str {
+    let link = link.trim();
+    link.strip_prefix('<')
+        .and_then(|l| l.strip_suffix('>'))
+        .unwrap_or(link)
 }

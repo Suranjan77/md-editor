@@ -1093,3 +1093,87 @@ fn callout_quotes_take_their_colour() {
     assert!(uses("> [!danger] Careful\n> text", danger));
     assert!(!uses("> just a quote\n> text", danger));
 }
+
+#[test]
+fn line_numbers_paint_in_the_margin_beside_each_line_only_when_on() {
+    let doc = "# Title\n\nbody text\nmore";
+    let numbers = |calls: &[Call]| -> Vec<(String, Point)> {
+        calls
+            .iter()
+            .filter_map(|call| match call {
+                Call::Text { content, at, .. }
+                    if !content.is_empty() && content.chars().all(|c| c.is_ascii_digit()) =>
+                {
+                    Some((content.clone(), *at))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+
+    let mut view = View::new(doc, 800.0);
+    assert!(numbers(&view.draw()).is_empty(), "off by default");
+
+    crate::design::set_line_numbers(true);
+    let calls = view.draw();
+    let painted = numbers(&calls);
+    let labels: Vec<&str> = painted.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(labels, ["1", "2", "3", "4"]);
+
+    let body = runs(&calls)
+        .into_iter()
+        .find(|run| run.content.contains("body"))
+        .expect("body text painted");
+    let (_, three) = &painted[2];
+    assert!(
+        three.x < body.x,
+        "the number's right edge {} sits left of the text at {}",
+        three.x,
+        body.x
+    );
+    assert!(
+        three.y > body.y && three.y < body.y + body.height,
+        "the number {} is centred on its line's row ({}..{})",
+        three.y,
+        body.y,
+        body.y + body.height
+    );
+}
+
+#[test]
+fn ctrl_click_on_a_pdf_crop_opens_its_link_but_not_on_a_plain_image() {
+    let crop = "pdf://papers/p.pdf?page=2&crop=0,0,150,75";
+    let doc = format!("Before\n\n![fig]({crop})\n\n![plain](pic.png)\n\nAfter");
+    let mut view = View::new(&doc, 800.0);
+    let handle = iced::widget::image::Handle::from_rgba(2, 2, vec![7; 16]);
+    view.images
+        .insert(crop.to_string(), (handle.clone(), 200.0, 100.0));
+    view.images
+        .insert("pic.png".to_string(), (handle, 200.0, 100.0));
+    let images: Vec<Rectangle> = view
+        .draw()
+        .iter()
+        .filter_map(|call| match call {
+            Call::Image { bounds, .. } => Some(*bounds),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images.len(), 2, "both images drawn");
+    let (crop_box, plain_box) = (images[0], images[1]);
+
+    view.modifiers(keyboard::Modifiers::CTRL);
+    assert_eq!(
+        view.interaction(crop_box.center()),
+        mouse::Interaction::Pointer
+    );
+    let messages = view.click(crop_box.center()).messages;
+    assert!(
+        messages.iter().any(|m| m == &format!("link {crop}")),
+        "ctrl+click on the crop published {messages:?}"
+    );
+    let messages = view.click(plain_box.center()).messages;
+    assert!(
+        !messages.iter().any(|m| m.starts_with("link")),
+        "a plain image is not a link: {messages:?}"
+    );
+}

@@ -78,7 +78,7 @@ impl AppState {
             .as_secs() as i64;
 
         let tx = db.unchecked_transaction()?;
-        reconcile_previous_pdf_document(
+        let moved_from = reconcile_previous_pdf_document(
             &tx,
             &storage_document_id,
             vault_relative_path,
@@ -105,6 +105,14 @@ impl AppState {
         .map_err(|e| format!("Failed to save pdf document: {e}"))?;
 
         tx.commit()?;
+        drop(db);
+        if let Some(previous) = moved_from {
+            let previous = scope_prefix
+                .as_deref()
+                .and_then(|prefix| previous.strip_prefix(prefix))
+                .unwrap_or(&previous);
+            self.move_pdf_sidecar(previous, document_id);
+        }
         Ok(())
     }
 
@@ -124,52 +132,25 @@ impl AppState {
 
     pub fn save_pdf_annotation(&self, ann: &PdfAnnotation) -> StateResult<()> {
         let storage_document_id = self.pdf_storage_document_id(&ann.document_id)?;
-        let db = self.db.lock()?;
-        let ranges_json = serde_json::to_string(&ann.ranges)
-            .map_err(|e| format!("Failed to serialize ranges: {e}"))?;
-        let rects_json = serde_json::to_string(&ann.rects)
-            .map_err(|e| format!("Failed to serialize rects: {e}"))?;
-
-        db.execute(
-            "INSERT INTO pdf_annotations (
-                id, document_id, page_index, kind, color, selected_text,
-                ranges_json, rects_json, note, linked_note_path, markdown_anchor,
-                created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-             ON CONFLICT(id) DO UPDATE SET
-                color = excluded.color,
-                selected_text = excluded.selected_text,
-                ranges_json = excluded.ranges_json,
-                rects_json = excluded.rects_json,
-                note = excluded.note,
-                linked_note_path = excluded.linked_note_path,
-                markdown_anchor = excluded.markdown_anchor,
-                updated_at = excluded.updated_at",
-            rusqlite::params![
-                ann.id,
-                storage_document_id,
-                ann.page_index as i32,
-                ann.kind.as_str(),
-                ann.color.as_str(),
-                ann.selected_text,
-                ranges_json,
-                rects_json,
-                ann.note,
-                ann.linked_note_path,
-                ann.markdown_anchor,
-                ann.created_at,
-                ann.updated_at,
-            ],
-        )
-        .map_err(|e| format!("Failed to save pdf annotation: {e}"))?;
-
+        {
+            let db = self.db.lock()?;
+            upsert_annotation(&db, &storage_document_id, ann)?;
+        }
+        self.export_pdf_sidecar(&ann.document_id);
         Ok(())
     }
 
     pub fn delete_pdf_annotation(&self, id: &str) -> StateResult<()> {
         let scope_prefix = self.pdf_scope_prefix()?;
         let db = self.db.lock()?;
-        let deleted = if let Some(prefix) = scope_prefix {
+        let document_id: Option<String> = db
+            .query_row(
+                "SELECT document_id FROM pdf_annotations WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let deleted = if let Some(ref prefix) = scope_prefix {
             db.execute(
                 "DELETE FROM pdf_annotations
                  WHERE id = ?1 AND substr(document_id, 1, length(?2)) = ?2",
@@ -179,6 +160,12 @@ impl AppState {
             db.execute("DELETE FROM pdf_annotations WHERE id = ?1", [id])
         };
         deleted.map_err(|e| format!("Failed to delete pdf annotation: {e}"))?;
+        drop(db);
+        if let (Some(document_id), Some(prefix)) = (document_id, scope_prefix)
+            && let Some(document_id) = document_id.strip_prefix(&prefix)
+        {
+            self.export_pdf_sidecar(document_id);
+        }
         Ok(())
     }
 
@@ -452,20 +439,22 @@ impl AppState {
     }
 }
 
+/// Move the highlights of the document last seen at this path to the new id
+/// (the PDF's content changed). Returns the id they moved from.
 fn reconcile_previous_pdf_document(
     tx: &Transaction<'_>,
     storage_document_id: &str,
     vault_relative_path: &str,
     file_size: u64,
     scope_prefix: Option<&str>,
-) -> StateResult<()> {
+) -> StateResult<Option<String>> {
     let existing_new: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM pdf_documents WHERE document_id = ?1)",
         [storage_document_id],
         |row| row.get(0),
     )?;
     if existing_new {
-        return Ok(());
+        return Ok(None);
     }
     let previous_id: Option<String> = if let Some(prefix) = scope_prefix {
         tx.query_row(
@@ -496,7 +485,7 @@ fn reconcile_previous_pdf_document(
         )
         .optional()?
     };
-    if let Some(previous_id) = previous_id {
+    if let Some(ref previous_id) = previous_id {
         tx.execute(
             "UPDATE pdf_annotations SET document_id = ?1 WHERE document_id = ?2",
             rusqlite::params![storage_document_id, previous_id],
@@ -518,5 +507,51 @@ fn reconcile_previous_pdf_document(
         )
         .map_err(|e| format!("Failed to reconcile pdf document: {e}"))?;
     }
+    Ok(previous_id)
+}
+
+/// Insert or update one highlight under its vault-scoped document id.
+pub(super) fn upsert_annotation(
+    db: &rusqlite::Connection,
+    storage_document_id: &str,
+    ann: &PdfAnnotation,
+) -> StateResult<()> {
+    let ranges_json = serde_json::to_string(&ann.ranges)
+        .map_err(|e| format!("Failed to serialize ranges: {e}"))?;
+    let rects_json =
+        serde_json::to_string(&ann.rects).map_err(|e| format!("Failed to serialize rects: {e}"))?;
+
+    db.execute(
+        "INSERT INTO pdf_annotations (
+            id, document_id, page_index, kind, color, selected_text,
+            ranges_json, rects_json, note, linked_note_path, markdown_anchor,
+            created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(id) DO UPDATE SET
+            color = excluded.color,
+            selected_text = excluded.selected_text,
+            ranges_json = excluded.ranges_json,
+            rects_json = excluded.rects_json,
+            note = excluded.note,
+            linked_note_path = excluded.linked_note_path,
+            markdown_anchor = excluded.markdown_anchor,
+            updated_at = excluded.updated_at",
+        rusqlite::params![
+            ann.id,
+            storage_document_id,
+            ann.page_index as i32,
+            ann.kind.as_str(),
+            ann.color.as_str(),
+            ann.selected_text,
+            ranges_json,
+            rects_json,
+            ann.note,
+            ann.linked_note_path,
+            ann.markdown_anchor,
+            ann.created_at,
+            ann.updated_at,
+        ],
+    )
+    .map_err(|e| format!("Failed to save pdf annotation: {e}"))?;
     Ok(())
 }

@@ -3,6 +3,29 @@
 use super::*;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
+/// Largest render scale for a page region (pixels per point, ~576 dpi).
+const REGION_MAX_SCALE: f32 = 8.0;
+
+/// `region` intersected with a `page_w × page_h` page, or `None` when nothing
+/// of it is on the page (or it is degenerate).
+pub(super) fn clamp_region(
+    region: PageRegion,
+    page_w: f32,
+    page_h: f32,
+) -> Option<(f32, f32, f32, f32)> {
+    let finite = [region.x, region.y, region.width, region.height]
+        .iter()
+        .all(|v| v.is_finite());
+    if !finite {
+        return None;
+    }
+    let left = region.x.max(0.0);
+    let top = region.y.max(0.0);
+    let right = (region.x + region.width).min(page_w);
+    let bottom = (region.y + region.height).min(page_h);
+    (right - left >= 1.0 && bottom - top >= 1.0).then_some((left, top, right - left, bottom - top))
+}
+
 /// Maximum number of parsed `PdfDocument` handles retained by the worker so
 /// switching between open PDF tabs does not re-parse documents.
 pub(super) const DOC_CACHE_CAPACITY: usize = 3;
@@ -36,9 +59,20 @@ where
         .ok_or_else(|| PdfError::Other("PDF document was not loaded".to_string()))
 }
 
+/// What identifies one version of a file on disk, cheaply.
+type FileStamp = (u64, Option<std::time::SystemTime>);
+
+fn file_stamp(path: &str) -> Option<FileStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
 pub(super) struct Worker<'a> {
     pub(super) pdfium: &'a Pdfium,
     pub(super) documents: VecDeque<(String, PdfDocument<'a>)>,
+    /// Size and modification time of each cached document's file when it was
+    /// loaded: a file replaced on disk is loaded again, not served stale.
+    stamps: std::collections::HashMap<String, FileStamp>,
     /// Commands someone is waiting on to draw the screen: renders, sizes,
     /// links, the visible pages' text. Always served before `background`.
     pub(super) interactive: VecDeque<PdfCommand>,
@@ -60,6 +94,7 @@ impl<'a> Worker<'a> {
         Self {
             pdfium,
             documents: VecDeque::with_capacity(DOC_CACHE_CAPACITY),
+            stamps: std::collections::HashMap::new(),
             interactive: VecDeque::new(),
             background: VecDeque::new(),
             receiver,
@@ -137,6 +172,9 @@ impl<'a> Worker<'a> {
             PdfCommand::RenderLinkPreview(path, index, dest_y, target_width_px, resp) => {
                 let _ = resp.send(self.render_link_preview(&path, index, dest_y, target_width_px));
             }
+            PdfCommand::RenderRegion(path, index, region, target_width_px, resp) => {
+                let _ = resp.send(self.render_region(&path, index, region, target_width_px));
+            }
             PdfCommand::GetPageText(path, index, resp)
             | PdfCommand::GetPageTextBackground(path, index, resp) => {
                 let _ = resp.send(self.get_page_text(&path, index));
@@ -163,6 +201,17 @@ impl<'a> Worker<'a> {
     }
 
     pub(super) fn open_document(&mut self, path: &str) -> PdfResult<&PdfDocument<'a>> {
+        let stamp = file_stamp(path);
+        if self.stamps.get(path) != stamp.as_ref() {
+            self.documents.retain(|(cached, _)| cached != path);
+        }
+        let documents = &self.documents;
+        self.stamps
+            .retain(|cached, _| cached == path || documents.iter().any(|(p, _)| p == cached));
+        match stamp {
+            Some(stamp) => self.stamps.insert(path.to_string(), stamp),
+            None => self.stamps.remove(path),
+        };
         let pdfium = self.pdfium;
         lru_get_or_insert_with(&mut self.documents, DOC_CACHE_CAPACITY, path, || {
             pdfium
@@ -424,6 +473,63 @@ impl<'a> Worker<'a> {
         Ok(LinkPreviewResult {
             image_data: buf.into_inner(),
             center_ratio,
+        })
+    }
+
+    pub(super) fn render_region(
+        &mut self,
+        path: &str,
+        index: u16,
+        region: PageRegion,
+        target_width_px: u32,
+    ) -> PdfResult<RegionImage> {
+        let doc = self.open_document(path)?;
+        let pages = doc.pages();
+        if i32::from(index) >= pages.len() {
+            return Err(PdfError::Other(format!(
+                "Page {} is past the end",
+                index + 1
+            )));
+        }
+        let page = pages
+            .get(i32::from(index))
+            .map_err(|e| PdfError::Other(e.to_string()))?;
+        let (page_w, page_h) = (page.width().value.max(1.0), page.height().value.max(1.0));
+        let Some((x, y, w, h)) = clamp_region(region, page_w, page_h) else {
+            return Err(PdfError::Other(
+                "The crop lies outside the page".to_string(),
+            ));
+        };
+        // The page is rendered whole and the region cut out of it; the scale is
+        // capped so a tiny crop cannot ask for a gigantic page bitmap.
+        let scale = (target_width_px as f32 / w).clamp(1.0, REGION_MAX_SCALE);
+        let full_w = (page_w * scale).round() as i32;
+        let full_h = (page_h * scale).round() as i32;
+        let bitmap = page
+            .render_with_config(
+                &PdfRenderConfig::new()
+                    .set_target_width(full_w)
+                    .set_target_height(full_h),
+            )
+            .map_err(|e| PdfError::Other(e.to_string()))?;
+        let page_rgba = bitmap
+            .as_image()
+            .map_err(|e| PdfError::Other(e.to_string()))?
+            .to_rgba8();
+        let px = |v: f32, max: u32| ((v * scale).round().max(0.0) as u32).min(max);
+        let (left, top) = (px(x, page_rgba.width()), px(y, page_rgba.height()));
+        let right = px(x + w, page_rgba.width())
+            .max(left + 1)
+            .min(page_rgba.width());
+        let bottom = px(y + h, page_rgba.height())
+            .max(top + 1)
+            .min(page_rgba.height());
+        let crop =
+            image::imageops::crop_imm(&page_rgba, left, top, right - left, bottom - top).to_image();
+        Ok(RegionImage {
+            width: crop.width(),
+            height: crop.height(),
+            rgba: crop.into_raw(),
         })
     }
 

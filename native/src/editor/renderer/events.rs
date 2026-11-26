@@ -15,6 +15,7 @@ use iced::{Point, Rectangle, mouse};
 use super::measure::{measure_width, span_font};
 use super::metrics::{TABLE_CELL_TEXT_INSET, text_left};
 use super::scroll::table_columns;
+use super::spans::span_is_editing;
 use super::{Editor, Measure, State};
 use crate::editor::buffer::{EditorCommand, Movement};
 use crate::editor::highlight::{StyledLine, StyledSpan};
@@ -139,7 +140,9 @@ impl<Message> Editor<'_, Message> {
         let span = self.span_at_point::<R>(pos, bounds.width, state);
         let ctrl = state.modifiers.control() || state.modifiers.command();
         match span {
-            Some(span) if span.is_checkbox || (span.is_link && ctrl) => mouse::Interaction::Pointer,
+            Some(span) if span.is_checkbox || (ctrl && clickable_link(span).is_some()) => {
+                mouse::Interaction::Pointer
+            }
             _ => mouse::Interaction::Text,
         }
     }
@@ -198,11 +201,10 @@ impl<Message> Editor<'_, Message> {
         };
         if span.is_checkbox {
             shell.publish((self.on_checkbox_toggle)(line_idx));
-        } else if span.is_link
-            && let Some(target) = &span.link_target
+        } else if let Some(target) = clickable_link(span)
             && (state.modifiers.control() || state.modifiers.command())
         {
-            shell.publish((self.on_link_click)(target.clone()));
+            shell.publish((self.on_link_click)(target.to_string()));
         }
     }
 
@@ -250,6 +252,20 @@ impl<Message> Editor<'_, Message> {
             // links and checkboxes only exist in the parsed cells.
             let col = self.hit_test::<R>(pos, available_width, focused, state).col;
             return raw_table_span_at_col(line, col);
+        }
+
+        // A rendered image is drawn over its line, not laid out in the flow.
+        let active_col = self.active_col(line_idx, focused);
+        let body_top = self.line_body_top(line_idx, state);
+        for (span_idx, span) in line.spans.iter().enumerate() {
+            if !span.is_image || span_is_editing(line, span_idx, is_editing, active_col) {
+                continue;
+            }
+            if let Some((_, image)) = self.image_box(span, available_width)
+                && image.contains(Point::new(pos.x, pos.y - body_top))
+            {
+                return Some(span);
+            }
         }
 
         let flow = self.flow::<R>(
@@ -611,4 +627,18 @@ fn relative_position(cursor: mouse::Cursor, bounds: Rectangle) -> Option<Point> 
     cursor
         .position()
         .map(|p| Point::new(p.x - bounds.x, p.y - bounds.y))
+}
+
+/// Where Ctrl+click on `span` goes: a link's target, or the source of an
+/// image rendered from a PDF (`pdf://…&crop=`), which opens the PDF there.
+fn clickable_link(span: &StyledSpan) -> Option<&str> {
+    if span.is_link {
+        return span.link_target.as_deref();
+    }
+    let path = span.image_path.as_deref().filter(|_| span.is_image)?.trim();
+    let path = path
+        .strip_prefix('<')
+        .and_then(|p| p.strip_suffix('>'))
+        .unwrap_or(path);
+    path.starts_with("pdf://").then_some(path)
 }

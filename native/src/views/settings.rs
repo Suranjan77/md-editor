@@ -10,13 +10,13 @@ use crate::design::metrics::{
 use crate::design::motion::{ReducedMotionPref, reduced_motion_pref};
 use crate::design::{
     ContentMeasure, ReadingFont, TextRole, ThemeMode, content_measure, editor_font_size,
-    interface_scale_percent, reading_font, theme_mode, tokens,
+    interface_scale_percent, line_numbers, reading_font, theme_mode, tokens,
 };
 use crate::messages::{AttachmentsMode, Message, SettingsMessage, SettingsSection};
 use crate::shortcuts;
 use crate::ui::{
     Button, ButtonVariant, Icon, IconButton, ListRowProps, TextField, card, kbd, list_row,
-    segmented_choice,
+    segmented_choice, toggle_switch,
 };
 use crate::ui_state::UiState;
 
@@ -273,6 +273,18 @@ fn editor_section<'a>() -> Element<'a, Message, Theme, Renderer> {
             "Line width",
             "Maximum reading column measure (~68 characters at 720 px).",
             measure_seg,
+        ),
+        setting_row(
+            "Line numbers",
+            "Number each source line in the margin beside the note.",
+            toggle_switch(
+                "Show line numbers",
+                line_numbers(),
+                Some(Message::Settings(SettingsMessage::LineNumbersToggled(
+                    !line_numbers()
+                ))),
+                false,
+            ),
         ),
     ]
     .spacing(SPACE_3)

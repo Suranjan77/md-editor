@@ -301,6 +301,25 @@ pub struct LinkPreviewResult {
     pub center_ratio: f32,
 }
 
+/// A region of a page, in points of the displayed page box measured from its
+/// top-left corner (the box the page is drawn in: rotation and crop box
+/// applied). This is what a `pdf://…&crop=x,y,w,h` link names.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageRegion {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// A rendered region: straight RGBA, `width × height × 4` bytes.
+#[derive(Clone, Debug)]
+pub struct RegionImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PdfSearchMatch {
     pub page_index: u16,

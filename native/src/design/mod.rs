@@ -115,6 +115,8 @@ static INTERFACE_SCALE_PCT: Setting = Setting::new(100);
 static READING_FONT: Setting = Setting::new(ReadingFont::Sans as u64);
 static CONTENT_MEASURE: Setting = Setting::new(ContentMeasure::Default as u64);
 static EDITOR_FONT_SIZE_X10: Setting = Setting::new(170);
+/// Line numbers in the editor's left margin (Settings → Editor); off by default.
+static LINE_NUMBERS: Setting = Setting::new(0);
 static THEME_REVISION: Setting = Setting::new(1);
 
 fn bump_revision() {
@@ -200,6 +202,16 @@ pub fn set_reading_font(font: ReadingFont) {
     if prev != font as u64 {
         bump_revision();
     }
+}
+
+pub fn line_numbers() -> bool {
+    LINE_NUMBERS.get() != 0
+}
+
+/// Line numbers paint in the margin and change no line's height, so this does
+/// not bump the theme revision.
+pub fn set_line_numbers(on: bool) {
+    LINE_NUMBERS.replace(u64::from(on));
 }
 
 pub fn content_measure() -> ContentMeasure {

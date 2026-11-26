@@ -73,6 +73,9 @@ pub struct EditorPane {
     /// unreadable) — neither is tried again on every keystroke. Absolute paths.
     pending_images: std::collections::HashSet<std::path::PathBuf>,
     failed_images: std::collections::HashSet<std::path::PathBuf>,
+    /// The same for `pdf://…&crop=` images, by link text.
+    pending_crops: std::collections::HashSet<String>,
+    failed_crops: std::collections::HashSet<String>,
     pub math_cache: HashMap<String, crate::editor::renderer::MathRender>,
     /// TeX being rendered, and TeX that failed to parse: rendered once, not
     /// once per keystroke or per repeat in the note.
@@ -120,6 +123,8 @@ impl EditorPane {
             images_revision: 0,
             pending_images: Default::default(),
             failed_images: Default::default(),
+            pending_crops: Default::default(),
+            failed_crops: Default::default(),
             math_cache: HashMap::new(),
             pending_math: Default::default(),
             failed_math: Default::default(),
@@ -308,7 +313,7 @@ impl EditorPane {
                 let Some(key) = span.image_path.as_ref().filter(|_| span.is_image) else {
                     continue;
                 };
-                if self.image_cache.contains_key(key) {
+                if self.image_cache.contains_key(key) || is_pdf_crop(key) {
                     continue;
                 }
                 let abs = base_path.join(image_link_path(key));
@@ -363,6 +368,44 @@ impl EditorPane {
         }
     }
 
+    /// `pdf://…&crop=` images the lines show that are neither rendered, nor
+    /// rendering, nor known to fail. They are marked as rendering: the caller
+    /// starts each one and reports back with [`Self::pdf_crop_loaded`].
+    pub fn take_wanted_pdf_crops(&mut self) -> Vec<String> {
+        let mut wanted = Vec::new();
+        for line in &self.highlight.lines {
+            for span in line.spans.iter().filter(|s| s.is_image) {
+                let Some(key) = span.image_path.as_ref().filter(|k| is_pdf_crop(k)) else {
+                    continue;
+                };
+                if self.image_cache.contains_key(key) || self.failed_crops.contains(key) {
+                    continue;
+                }
+                if self.pending_crops.insert(key.clone()) {
+                    wanted.push(key.clone());
+                }
+            }
+        }
+        wanted
+    }
+
+    /// A crop finished rendering. Dropped if the images were forgotten since.
+    pub fn pdf_crop_loaded(&mut self, key: String, result: Result<(Handle, f32, f32), String>) {
+        if !self.pending_crops.remove(&key) {
+            return;
+        }
+        match result {
+            Ok(image) => {
+                self.image_cache.insert(key, image);
+                self.images_revision = self.images_revision.wrapping_add(1);
+            }
+            Err(e) => {
+                log::warn!("Could not show {key}: {e}");
+                self.failed_crops.insert(key);
+            }
+        }
+    }
+
     /// Drop every decoded image and what is known about missing ones: on a
     /// document switch (links are relative to the note) or when image files
     /// change on disk.
@@ -370,6 +413,8 @@ impl EditorPane {
         self.image_cache.clear();
         self.pending_images.clear();
         self.failed_images.clear();
+        self.pending_crops.clear();
+        self.failed_crops.clear();
         self.images_revision = self.images_revision.wrapping_add(1);
     }
 
@@ -507,6 +552,11 @@ pub(crate) fn render_latex_task(
 /// spaces) unwrapped and `%XX` escapes decoded.
 /// Most failed TeX strings remembered before the record is reset.
 const MAX_FAILED_MATH: usize = 1000;
+
+/// An image link that shows a region of a PDF page, rendered live.
+pub(crate) fn is_pdf_crop(link: &str) -> bool {
+    link.trim().starts_with("pdf://") && link.contains("crop=")
+}
 
 /// The folder images in `active_path` resolve against.
 fn image_base(vault_root: &str, active_path: &str) -> Option<std::path::PathBuf> {

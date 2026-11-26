@@ -227,12 +227,13 @@ impl MdEditor {
         {
             return self.reload_open_note_from_disk();
         }
-        // An image appeared, changed or went away: decode the note's images
-        // afresh (a missing one may exist now).
+        // An image or a PDF appeared, changed or went away: decode the note's
+        // images and PDF crops afresh (a missing one may exist now).
         if self.active_path.is_some()
-            && paths
-                .iter()
-                .any(|path| crate::app::is_supported_image_path(path))
+            && paths.iter().any(|path| {
+                crate::app::is_supported_image_path(path)
+                    || md_editor_core::vault::is_pdf_path(std::path::Path::new(path))
+            })
         {
             self.editor.forget_images();
             return self.load_editor_resources();

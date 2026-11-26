@@ -12,6 +12,7 @@ const KEY_REDUCED_MOTION: &str = "ui_reduced_motion";
 const KEY_READING_FONT: &str = "editor_reading_font";
 const KEY_EDITOR_FONT_SIZE: &str = "editor_font_size";
 const KEY_CONTENT_MEASURE: &str = "editor_content_measure";
+const KEY_LINE_NUMBERS: &str = "editor_line_numbers";
 const KEY_EXCLUDED_FOLDERS: &str = "vault_excluded_folders";
 const KEY_RECENT_VAULTS: &str = "recent_vaults";
 
@@ -77,6 +78,11 @@ impl MdEditor {
             }
             SettingsMessage::ContentMeasureSelected(measure) => {
                 crate::design::set_content_measure(measure);
+                self.persist_design_settings();
+                Task::none()
+            }
+            SettingsMessage::LineNumbersToggled(on) => {
+                crate::design::set_line_numbers(on);
                 self.persist_design_settings();
                 Task::none()
             }
@@ -216,6 +222,7 @@ impl MdEditor {
 
         let measure = ContentMeasure::parse(get(KEY_CONTENT_MEASURE).as_deref().unwrap_or(""));
         crate::design::set_content_measure(measure);
+        crate::design::set_line_numbers(get(KEY_LINE_NUMBERS).as_deref() == Some("on"));
 
         if let Some(att) = get(crate::app::paste::ATTACHMENTS_FOLDER_KEY) {
             match att.trim() {
@@ -269,6 +276,15 @@ impl MdEditor {
             (
                 KEY_CONTENT_MEASURE,
                 crate::design::content_measure().as_str().to_string(),
+            ),
+            (
+                KEY_LINE_NUMBERS,
+                if crate::design::line_numbers() {
+                    "on"
+                } else {
+                    "off"
+                }
+                .to_string(),
             ),
             (KEY_EXCLUDED_FOLDERS, self.ui.excluded_folders.clone()),
         ];
