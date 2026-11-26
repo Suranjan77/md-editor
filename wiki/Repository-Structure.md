@@ -105,6 +105,7 @@ md-editor/
 | `ui_state.rs` | Modals, palette, toast queue, context menus, split view, panel widths, focus region, settings page, window size and scale. |
 | `search_state.rs` | Query, flags, results, memoized in-document matches. |
 | `tracker_state.rs` | Timer, sessions, tracker values, active tab. |
+| `study_context.rs` | What a running study session worked on (time per document, pages, words, highlights), summarized into its notes. |
 | `pdf_pane.rs` | PDF viewport, page caches, annotations, selection, render generation. |
 | `graph_state.rs`, `graph_state/` | `GraphState`, with the force simulation in `physics`, initial placement in `layout`, and filtering plus read-only queries (stats, backlinks, related, hubs) in `queries`. |
 | `ink/` | `InkState` and the handwriting engine (`raster.rs` draws a page as a picture for a note); see [Handwritten Notes](Handwritten-Notes.md). |

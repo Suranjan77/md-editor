@@ -24,6 +24,8 @@ pub struct TrackerState {
     pub visible: bool,
     running: bool,
     started_at: Option<Instant>,
+    /// What the running session works on; summarized into its notes on stop.
+    context: Option<crate::study_context::SessionContext>,
     sessions: Vec<StudySession>,
     kv: HashMap<String, String>,
     tab: TrackerTab,
@@ -52,6 +54,7 @@ impl TrackerState {
             visible: false,
             running: false,
             started_at: None,
+            context: None,
             sessions,
             kv,
             tab: TrackerTab::Dashboard,
@@ -69,6 +72,24 @@ impl TrackerState {
     #[cfg(test)]
     pub fn session_count(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// The notes of the session logged last (e2e probes).
+    #[cfg(test)]
+    pub fn last_session_notes(&self) -> Option<String> {
+        self.sessions.iter().max_by_key(|s| s.id)?.notes.clone()
+    }
+
+    /// While the timer runs: the app's state after an update, for the
+    /// session's summary.
+    pub fn observe(&mut self, seen: &crate::study_context::Observation) {
+        if let Some(context) = self.context.as_mut() {
+            context.observe(Instant::now(), seen);
+        }
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running
     }
 
     pub fn toggle_visible(&mut self) {
@@ -91,12 +112,22 @@ impl TrackerState {
                 Task::none()
             }
             Message::Shell(ShellMessage::TrackerStart) => {
+                let now = Instant::now();
                 self.running = true;
-                self.started_at = Some(Instant::now());
+                self.started_at = Some(now);
+                // The shell's first observation follows this update.
+                self.context = Some(crate::study_context::SessionContext::start(
+                    now,
+                    &Default::default(),
+                ));
                 toast("Study timer started")
             }
             Message::Shell(ShellMessage::TrackerStop) => {
                 let mut task = Task::none();
+                let summary = self
+                    .context
+                    .take()
+                    .and_then(|context| context.finish(Instant::now()));
                 if let Some(started_at) = self.started_at.take() {
                     let elapsed = started_at.elapsed();
                     let hours = (elapsed.as_secs_f32() / 3600.0).max(0.01);
@@ -106,7 +137,7 @@ impl TrackerState {
                         hours,
                         activity_type: "Study".to_string(),
                         phase: "Focus".to_string(),
-                        notes: None,
+                        notes: summary,
                     };
                     if md_editor_core::tracker::save_session(state, session).is_ok() {
                         self.refresh_sessions(state);

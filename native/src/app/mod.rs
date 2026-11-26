@@ -206,6 +206,8 @@ pub(crate) struct Probe {
     pub light_theme: bool,
     pub editor_font_size: f32,
     pub tracker_sessions: usize,
+    /// What the session logged last says it worked on.
+    pub tracker_last_notes: Option<String>,
 }
 
 #[cfg(test)]
@@ -287,6 +289,7 @@ impl MdEditor {
             light_theme: crate::design::active_theme() == crate::design::ActiveTheme::Light,
             editor_font_size: crate::design::editor_font_size(),
             tracker_sessions: self.tracker.session_count(),
+            tracker_last_notes: self.tracker.last_session_notes(),
         }
     }
 }
@@ -481,7 +484,37 @@ impl MdEditor {
             self.active_path.as_deref(),
             self.editor.buffer_revision,
         );
+        if self.tracker.is_running() {
+            let seen = self.study_observation();
+            self.tracker.observe(&seen);
+        }
         task
+    }
+
+    /// What a running study session records about this moment: the document
+    /// in front, the note's word count, the PDF's page and highlights.
+    fn study_observation(&self) -> crate::study_context::Observation {
+        let focused = match self.active_panel {
+            ActivePanel::Ink if self.ink_window.is_some() => self.ink.path.clone(),
+            ActivePanel::Pdf if self.showing_pdf => self.pdf.active_path.clone(),
+            _ => self.active_path.clone(),
+        };
+        crate::study_context::Observation {
+            focused,
+            note: self
+                .active_path
+                .clone()
+                .map(|path| (path, self.editor.buffer.word_count())),
+            pdf: self.pdf.active_path.clone().map(|path| {
+                // Saved highlights load with the document id.
+                let highlights = self
+                    .pdf
+                    .document_id
+                    .is_some()
+                    .then(|| self.pdf.annotations.values().map(Vec::len).sum());
+                (path, self.pdf.current_page, highlights)
+            }),
+        }
     }
 
     fn update_inner(&mut self, message: Message) -> Task<Message> {

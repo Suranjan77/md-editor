@@ -413,7 +413,9 @@ path. `↑`/`↓` to move, `Enter` to open or run, `Escape` to close.
 `Ctrl+P` → *Study Tracker*, or the toolbar button.
 
 - **Timer** — one button. *Start Timer* begins; *Stop Timer* saves the elapsed interval as a
-  session immediately. There is no pomodoro cycle and no post-stop dialog.
+  session immediately. There is no pomodoro cycle and no post-stop dialog. The session
+  notes what you worked on while it ran, e.g. *Vaswani2017.pdf p. 3–8, +3 highlights ·
+  attention.md, +410 words*, shown in the Log.
 - **Log** — the session history, newest first, with per-row delete and a manual-entry form
   (date, hours, notes) for sessions you did not time.
 - **Dashboard** — total hours, session count, average per session, and how many curriculum

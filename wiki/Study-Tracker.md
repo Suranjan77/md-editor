@@ -100,11 +100,22 @@ Deliberately minimal — one button, no dialog:
 - **Stop** computes `elapsed.as_secs_f32() / 3600.0`, floored at `0.01` hours so a very short
   session still records something, and saves a `StudySession` **immediately** with
   `date` = `chrono::Local::now()` as `"%Y-%m-%d %H:%M"`, `activity_type = "Study"`,
-  `phase = "Focus"`, and no notes. It toasts *"Study session saved"*.
+  `phase = "Focus"`, and as `notes` a summary of what the session worked on. It toasts
+  *"Study session saved"*.
+
+**What a session worked on** (`study_context.rs`). While the timer runs, the shell reports
+an `Observation` after every update (`MdEditor::study_observation`): the document in front
+(note, PDF or ink page), the note's word count, and the PDF's page and highlight count.
+Time goes to the document that was in front. At stop, `SessionContext::finish` names up to
+three documents, most time first, for example
+`Vaswani2017.pdf p. 3–8, +3 highlights · attention.md, +410 words`. A document in front
+for under 30 s that changed nothing is left out, and extra documents are counted
+(`+2 more`). Highlights count only after the PDF's saved ones have loaded, so opening a
+highlighted PDF does not look like highlighting it.
 
 There is no pause, no pomodoro cycle, and no post-stop dialog. To record an activity type or
-notes, use the Log tab's manual entry, which takes a date, an hours value, and free-text
-notes.
+notes for an untimed session, use the Log tab's manual entry, which takes a date, an hours
+value, and free-text notes.
 
 ### Log
 

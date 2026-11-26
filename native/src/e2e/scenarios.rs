@@ -542,3 +542,29 @@ fn s18_pdf_crop_renders_inline_in_a_note() {
     assert!(probe.images.iter().all(|(key, _)| key != missing));
     app.finish();
 }
+
+/// A timed study session records what it worked on: here, words written in
+/// a note, named in the session's notes.
+#[test]
+fn s19_a_study_session_says_what_it_worked_on() {
+    let vault = research_vault();
+    let mut app = boot("s19-study-context", &vault, Some("notes/Optimizers.md"));
+    let logged = app.probe().tracker_sessions;
+
+    app.send(Message::Shell(crate::messages::ShellMessage::TrackerStart));
+    app.send(edit(EditorCommand::MoveCursor {
+        movement: crate::editor::buffer::Movement::DocEnd,
+        extend: false,
+    }));
+    app.send(edit(EditorCommand::InsertText(
+        "\nMomentum smooths the noisy gradient steps.".to_string(),
+    )));
+    app.send(Message::Shell(crate::messages::ShellMessage::TrackerStop));
+
+    let probe = app.finish();
+    assert_eq!(probe.tracker_sessions, logged + 1);
+    assert_eq!(
+        probe.tracker_last_notes.as_deref(),
+        Some("Optimizers.md, +6 words")
+    );
+}

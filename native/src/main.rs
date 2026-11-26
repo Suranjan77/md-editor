@@ -25,6 +25,7 @@ mod search_state;
 mod shortcuts;
 #[cfg(test)]
 mod size_lint;
+mod study_context;
 mod tabs;
 #[cfg(test)]
 mod test_support;
