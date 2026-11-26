@@ -140,6 +140,8 @@ pub struct Editor<'a, Message> {
     layout_revision: Option<u64>,
     /// A completion popup is open: its navigation keys belong to the app.
     completion_open: bool,
+    /// The id focus operations find this editor by (one per pane).
+    id: widget::Id,
 }
 
 /// Everything a layout depends on: while it is unchanged, so is the layout.
@@ -246,7 +248,14 @@ impl<'a, Message> Editor<'a, Message> {
             on_caret_view: None,
             layout_revision: None,
             completion_open: false,
+            id: widget::Id::new(EDITOR_ID),
         }
+    }
+
+    /// The id focus operations find this editor by; [`EDITOR_ID`] if unset.
+    pub fn id(mut self, id: widget::Id) -> Self {
+        self.id = id;
+        self
     }
 
     /// While a completion popup is open, leave ↑ ↓ Enter Tab Escape to the
@@ -349,7 +358,7 @@ where
         operation: &mut dyn widget::Operation,
     ) {
         let state = tree.state.downcast_mut::<State>();
-        operation.focusable(Some(&widget::Id::new(EDITOR_ID)), layout.bounds(), state);
+        operation.focusable(Some(&self.id), layout.bounds(), state);
     }
 
     fn layout(&mut self, tree: &mut widget::Tree, _renderer: &R, limits: &Limits) -> Node {

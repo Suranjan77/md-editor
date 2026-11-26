@@ -1,14 +1,14 @@
 //! Window lifecycle, split view, panel resize, context menus, drag-and-drop, tracker and image zoom.
 
+use super::workspace::SplitAxis;
 use super::*;
 use crate::design::metrics::{
     SIDE_PANEL_DEFAULT_WIDTH, SIDE_PANEL_MAX_WIDTH, SIDE_PANEL_MIN_WIDTH, SIDEBAR_DEFAULT_WIDTH,
     SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 use crate::messages::{
-    EditorMessage, GraphMessage, InkMessage, PdfMessage, SearchMessage, ShellMessage, VaultMessage,
+    EditorMessage, GraphMessage, InkMessage, SearchMessage, ShellMessage, VaultMessage,
 };
-use crate::tabs::TabKind;
 use crate::ui_state::ResizingPanel;
 
 impl MdEditor {
@@ -66,14 +66,21 @@ impl MdEditor {
             | ShellMessage::TrackerSessionDelete(_)) => {
                 self.tracker.update(Message::Shell(m), &self.state)
             }
-            ShellMessage::SplitViewToggle => self.on_split_view_toggle(),
-            ShellMessage::SplitViewDragging(x_pos) => {
-                self.on_split_view_dragging(x_pos);
+            ShellMessage::SplitViewToggle => self.toggle_split(),
+            ShellMessage::ClosePane(pane) => self.close_pane(pane),
+            ShellMessage::WorkspaceMeasured(size) => {
+                self.ui.workspace_size = size;
+                Task::none()
+            }
+            ShellMessage::SplitViewDragging(position) => {
+                self.on_split_view_dragging(position);
                 Task::none()
             }
             ShellMessage::SplitViewDragEnd => {
                 self.ui.is_resizing_split = false;
-                self.settle_layout()
+                self.ui.split_drag_origin = None;
+                self.persist_layout();
+                Task::batch(vec![self.settle_layout(), self.refit_all_pdfs()])
             }
             ShellMessage::SidebarResizeStart => self.start_panel_resize(ResizingPanel::Sidebar),
             ShellMessage::SidePanelResizeStart => self.start_panel_resize(ResizingPanel::SidePanel),
@@ -133,7 +140,7 @@ impl MdEditor {
                 self.flush_ink_page()
             }
             ShellMessage::WindowCloseRequested(_) => {
-                let _ = self.save_active_document();
+                let _ = self.save_all_panes();
                 let ink = self.flush_ink_page();
                 self.persist_session();
                 self.persist_layout();
@@ -185,30 +192,26 @@ impl MdEditor {
         }
     }
 
-    fn on_split_view_dragging(&mut self, x_pos: f32) {
+    /// The divider follows the pointer: the ratio moves by the pointer's
+    /// travel along the split, as a share of the measured panes area.
+    fn on_split_view_dragging(&mut self, position: iced::Point) {
         if !self.ui.is_resizing_split {
             return;
         }
-        let left_chrome = if self.vault.sidebar_visible {
-            self.ui.sidebar_width
-        } else {
-            0.0
+        let along = |p: iced::Point| match self.workspace.axis {
+            SplitAxis::Vertical => p.x,
+            SplitAxis::Horizontal => p.y,
         };
-        let right_chrome = if self.editor.toc_visible {
-            self.ui.side_panel_width
-        } else {
-            0.0
-        } + if self.vault.backlinks_visible {
-            self.ui.side_panel_width
-        } else {
-            0.0
+        let length = match self.workspace.axis {
+            SplitAxis::Vertical => self.ui.workspace_size.width,
+            SplitAxis::Horizontal => self.ui.workspace_size.height,
         };
-        let content_width = (self.ui.window_width - left_chrome - right_chrome).max(480.0);
-        let x_min = left_chrome + 220.0;
-        let x_max = left_chrome + content_width - 220.0;
-        let total_width = x_max - x_min;
-        if total_width > 1.0 {
-            self.ui.split_ratio = ((x_pos - x_min) / total_width).clamp(0.25, 0.75);
+        let (start, ratio) = *self
+            .ui
+            .split_drag_origin
+            .get_or_insert((along(position), self.ui.split_ratio));
+        if length > 1.0 {
+            self.ui.split_ratio = (ratio + (along(position) - start) / length).clamp(0.2, 0.8);
         }
     }
 
@@ -263,36 +266,6 @@ impl MdEditor {
         }
         Task::none()
     }
-    fn on_split_view_toggle(&mut self) -> Task<Message> {
-        if self.ui.split_view_active {
-            self.ui.split_view_active = false;
-            return self.refit_pdf_if_needed();
-        }
-        // Pair MRU Note tab + MRU PDF tab when available.
-        let mru_note = self.tabs.mru_of_kind(TabKind::Note).cloned();
-        let mru_pdf = self.tabs.mru_of_kind(TabKind::Pdf).cloned();
-        let mut tasks = Vec::new();
-        if self.active_path.is_none()
-            && let Some(ref note) = mru_note
-        {
-            tasks.push(self.open_file(&note.path));
-        }
-        if self.pdf.active_path.is_none()
-            && let Some(ref pdf) = mru_pdf
-        {
-            tasks.push(self.open_pdf_restoring_view(&pdf.path, Some(pdf.view.clone())));
-        }
-        if self.active_path.is_some() && self.pdf.active_path.is_some() {
-            self.ui.split_view_active = true;
-            if self.pdf.fit_to_width {
-                tasks.push(Task::done(Message::Pdf(PdfMessage::FitToWidth)));
-            }
-        } else {
-            self.ui.toast = Some("Open a markdown file and a PDF to use split view".to_string());
-        }
-        Task::batch(tasks)
-    }
-
     fn on_window_rescaled(&mut self, id: iced::window::Id, factor: f32) -> Task<Message> {
         let factor = factor.clamp(1.0, 3.0);
         if Some(id) == self.ink_window {
@@ -303,18 +276,20 @@ impl MdEditor {
             return Task::none();
         }
         self.ui.scale_factor = factor;
-        self.editor.forget_math();
-        let math_task = self.editor.load_math(factor);
-        if self.pdf.active_path.is_some() && self.pdf.total_pages > 0 {
-            self.pdf.pages = vec![None; self.pdf.total_pages as usize];
-            self.pdf.dimensions = vec![None; self.pdf.total_pages as usize];
-            self.pdf.placeholder_page_size = self.pdf.first_page_size();
-            self.pdf.pending_pages.clear();
-            self.pdf.pending_links.clear();
-            self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
-            return Task::batch(vec![math_task, self.render_visible_pdf_pages()]);
-        }
-        math_task
+        self.for_each_pane(|app| {
+            app.editor.forget_math();
+            let math_task = app.editor.load_math(factor);
+            if app.pdf.active_path.is_some() && app.pdf.total_pages > 0 {
+                app.pdf.pages = vec![None; app.pdf.total_pages as usize];
+                app.pdf.dimensions = vec![None; app.pdf.total_pages as usize];
+                app.pdf.placeholder_page_size = app.pdf.first_page_size();
+                app.pdf.pending_pages.clear();
+                app.pdf.pending_links.clear();
+                app.pdf.render_generation = app.pdf.render_generation.wrapping_add(1);
+                return Task::batch(vec![math_task, app.render_visible_pdf_pages()]);
+            }
+            math_task
+        })
     }
 
     pub(super) fn cycle_focus_region(&mut self, forward: bool) {

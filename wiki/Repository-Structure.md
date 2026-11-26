@@ -78,7 +78,10 @@ md-editor/
 | `app/pdf_select.rs` | PDF text selection and copy, highlights, quick notes, linked notes, orphan report. |
 | `app/pdf_pages.rs` | Opening PDFs, page render scheduling and eviction, available width, `navigate_pdf_page`. |
 | `app/paste.rs` | Ctrl+V in a note, "Insert image…", and files dropped on the window: images become attachments, vault files become links, drops on the sidebar are imported (never over an existing file). |
-| `app/tabs_handler.rs` | `update_tabs`: activating, closing, reopening and reordering document tabs, split-view pairing, per-vault tab persistence. |
+| `app/tabs_handler.rs` | `update_tabs`: activating, closing, reopening and reordering document tabs, per-pane, per-vault tab persistence and restoring the panes. |
+| `app/workspace.rs` | The two-pane workspace: `PaneDocs`, swapping a pane's state in, routing `FromPane` / `ToPane` messages, focus, `for_each_pane`. |
+| `app/panes.rs` | Pane commands: split, unsplit, focus the other pane, move a tab across, open to the side, one file per pane. |
+| `app/pane_view.rs` | The panes area: each pane's tab strip and sheet from its own state, the divider, the empty pane. |
 | `app/settings_handler.rs` | `update_settings`, plus restoring and persisting theme, scale, motion, editor typography, attachments and recent vaults. |
 | `app/vault_entries.rs` | Creating, renaming and deleting vault entries; name-modal validation. |
 | `app/vault_links.rs` | Sidebar clicks, internal / external / `pdf://` link routing, sidebar keyboard navigation. |
@@ -102,7 +105,7 @@ md-editor/
 | :--- | :--- |
 | `editor_state.rs` | `EditorPane`: buffer, highlighted lines, image and math caches, autosave timing, caret reveal, retained buffers. |
 | `vault_state.rs` | Vault root, entries, sidebar selection and expansion, backlinks. |
-| `ui_state.rs` | Modals, palette, toast queue, context menus, split view, panel widths, focus region, settings page, window size and scale. |
+| `ui_state.rs` | Modals, palette, toast queue, context menus, the split divider, panel widths, focus region, settings page, window size and scale. |
 | `search_state.rs` | Query, flags, results, memoized in-document matches. |
 | `tracker_state.rs` | Timer, sessions, tracker values, active tab. |
 | `study_context.rs` | What a running study session worked on (time per document, pages, words, highlights), summarized into its notes. |

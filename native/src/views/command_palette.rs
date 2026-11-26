@@ -352,9 +352,9 @@ mod tests {
     #[test]
     fn commands_are_still_matched_by_initials() {
         let commands = get_commands();
-        let hits = rank("sv", &commands, &[]);
+        let hits = rank("su", &commands, &[]);
         assert!(
-            matches!(hits.first(), Some(Hit::Command(c)) if c.name == "Split View"),
+            matches!(hits.first(), Some(Hit::Command(c)) if c.name == "Split / Unsplit"),
             "initials should put the command first"
         );
     }

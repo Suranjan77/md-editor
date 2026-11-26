@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::scenarios::research_vault;
 use super::{Session, Vault, boot, boot_with_path};
+use crate::app::workspace::PaneId;
 use crate::editor::buffer::{Affinity, EditorCommand};
 use crate::messages::{
     EditorMessage, GraphMessage, InkMessage, Message, PdfMessage, SearchMessage, ShellMessage,
@@ -286,7 +287,7 @@ fn s8_pdf_open_zoom_and_switch_mid_render() {
 /// Pump the event loop until `done` holds for the probe, for up to 5 s.
 /// Background work (PDF text, debounced search) has no fixed duration, and a
 /// fixed wait flakes on a loaded machine.
-fn wait_for<P>(
+pub(super) fn wait_for<P>(
     app: &mut Session<P>,
     what: &str,
     done: impl Fn(&crate::app::Probe) -> bool,
@@ -310,8 +311,14 @@ fn pdf(message: PdfMessage) -> Message {
     Message::Pdf(message)
 }
 
-/// BUG-01: linking a highlight to the note already open beside the PDF keeps
-/// the typing not yet autosaved and the undo history.
+/// `message` as `pane`'s view sends it (an interaction there).
+fn in_pane(pane: PaneId, message: Message) -> Message {
+    Message::FromPane(pane, Box::new(message))
+}
+
+/// BUG-01, with panes: linking a highlight to the note open beside the PDF
+/// keeps the typing and the undo history. Leaving the note's pane saves it;
+/// the link is one more undo step in it.
 #[test]
 fn s8c_link_highlight_to_open_note_keeps_unsaved_edits() {
     let vault = research_vault().fixture("papers/large.pdf", "pdf/large-500-pages.pdf");
@@ -320,16 +327,18 @@ fn s8c_link_highlight_to_open_note_keeps_unsaved_edits() {
         p.pdf_texts_loaded > 0 && p.pdf_document_ready
     });
 
-    // First highlight, linked to Index.md: opens it beside the PDF.
+    // First highlight, linked to Index.md: opens it in a pane beside the PDF.
     app.send(pdf(PdfMessage::SelectionFinished(0, 0, 3)));
     app.send(pdf(PdfMessage::QuickHighlight));
     let first = app.probe().pdf_annotation_ids[0].clone();
     app.send(pdf(PdfMessage::LinkNote(first, "Index.md".to_string())));
     let probe = app.probe();
     assert!(probe.split_view, "{probe:?}");
+    assert_eq!(probe.focused_pane, PaneId::B, "the note's pane has focus");
     assert_eq!(probe.active_path.as_deref(), Some("Index.md"));
+    assert_eq!(probe.other_pane_path.as_deref(), Some("papers/large.pdf"));
 
-    // Type, then link a second highlight before autosave fires.
+    // Type in the note.
     app.send(edit(EditorCommand::SelectAll));
     app.send(edit(EditorCommand::MoveCursor {
         movement: crate::editor::buffer::Movement::Right,
@@ -339,20 +348,28 @@ fn s8c_link_highlight_to_open_note_keeps_unsaved_edits() {
         "\n\nUNSAVED THOUGHT".to_string(),
     )));
     assert!(app.probe().dirty);
-    app.send_quick(pdf(PdfMessage::SelectionFinished(0, 5, 5)));
-    app.send_quick(pdf(PdfMessage::QuickHighlight));
+
+    // Back to the PDF: the note is saved as its pane loses focus.
+    app.send_quick(in_pane(
+        PaneId::A,
+        pdf(PdfMessage::SelectionFinished(0, 5, 5)),
+    ));
+    assert_eq!(app.probe().focused_pane, PaneId::A);
+    assert!(
+        vault.read("Index.md").contains("UNSAVED THOUGHT"),
+        "leaving a pane must save its note"
+    );
+    app.send_quick(in_pane(PaneId::A, pdf(PdfMessage::QuickHighlight)));
     let ids = app.probe().pdf_annotation_ids;
     let second = ids.iter().find(|id| **id != ids[0]).unwrap().clone();
-    assert!(
-        app.probe().dirty,
-        "edits saved before the link: test proves nothing"
-    );
-    app.send(pdf(PdfMessage::LinkNote(
-        second.clone(),
-        "Index.md".to_string(),
-    )));
+    app.send(in_pane(
+        PaneId::A,
+        pdf(PdfMessage::LinkNote(second.clone(), "Index.md".to_string())),
+    ));
 
+    // The note's pane comes forward with both, saved.
     let probe = app.probe();
+    assert_eq!(probe.focused_pane, PaneId::B);
     assert_eq!(probe.active_path.as_deref(), Some("Index.md"));
     assert!(probe.buffer.contains("UNSAVED THOUGHT"), "{}", probe.buffer);
     assert!(probe.buffer.contains(&second), "second section missing");
@@ -447,7 +464,8 @@ fn s8_pdf_search() {
     app.finish();
 }
 
-/// S9: in split view, Ctrl+F searches whichever pane was touched last.
+/// S9: Ctrl+\\ splits a note and a PDF into two panes; touching a pane
+/// focuses it, and Ctrl+F searches the focused pane.
 #[test]
 fn s9_split_view_routes_search_to_the_active_pane() {
     let vault = research_vault();
@@ -457,32 +475,57 @@ fn s9_split_view_routes_search_to_the_active_pane() {
     app.send(Message::Shell(ShellMessage::SplitViewToggle));
     let probe = app.probe();
     assert!(probe.split_view, "split view did not open");
+    assert_eq!(probe.focused_pane, PaneId::A);
     assert_eq!(probe.active_path.as_deref(), Some("Index.md"));
-    assert!(probe.pdf_path.is_some(), "the PDF pane is empty");
+    assert_eq!(
+        probe.other_pane_path.as_deref(),
+        Some("papers/dummy.pdf"),
+        "the PDF moved to the new pane"
+    );
     app.screenshot("split");
 
-    app.send(Message::Pdf(PdfMessage::LeftClicked(
-        0,
-        20.0,
-        20.0,
-        iced::keyboard::Modifiers::empty(),
-    )));
-    assert!(
-        app.probe().pdf_panel_active,
-        "clicking the PDF did not focus it"
+    app.send(in_pane(
+        PaneId::B,
+        Message::Pdf(PdfMessage::LeftClicked(
+            0,
+            20.0,
+            20.0,
+            iced::keyboard::Modifiers::empty(),
+        )),
+    ));
+    let probe = app.probe();
+    assert_eq!(
+        probe.focused_pane,
+        PaneId::B,
+        "clicking the PDF focused its pane"
     );
+    assert!(probe.pdf_panel_active);
+    // Its pages render in the second pane: results find their way back there.
+    wait_for(&mut app, "pages in the second pane", |p| p.pdf_rendered > 0);
+    app.screenshot("split-rendered");
 
-    app.send(edit(EditorCommand::SetCursor {
-        line: 0,
-        col: 0,
-        affinity: Affinity::Downstream,
-    }));
-    assert!(
-        !app.probe().pdf_panel_active,
-        "the editor did not take focus back"
-    );
+    app.send(in_pane(
+        PaneId::A,
+        edit(EditorCommand::SetCursor {
+            line: 0,
+            col: 0,
+            affinity: Affinity::Downstream,
+        }),
+    ));
+    let probe = app.probe();
+    assert_eq!(probe.focused_pane, PaneId::A, "the note took focus back");
+    assert!(!probe.pdf_panel_active);
     app.send(shortcut(Shortcut::Search));
     assert!(app.probe().file_search_visible);
+
+    // Unsplitting brings the PDF's tab back beside the note's.
+    app.send(Message::Shell(ShellMessage::SplitViewToggle));
+    let probe = app.probe();
+    assert!(!probe.split_view);
+    assert!(
+        probe.open_tabs.contains(&"papers/dummy.pdf".to_string()),
+        "{probe:?}"
+    );
     app.finish();
 }
 

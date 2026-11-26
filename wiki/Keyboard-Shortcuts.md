@@ -33,7 +33,10 @@ it says.
 | `Ctrl+B` | Toggle the sidebar (bold instead while the editor has focus) |
 | `Ctrl+Shift+B` | Toggle backlinks |
 | `Ctrl+Shift+O` | Toggle the outline |
-| `Ctrl+\` | Split view: note beside the PDF |
+| `Ctrl+\` | Split into two panes / close the second pane |
+| `Ctrl+J` | Focus the other pane (splitting if there is one pane) |
+| `Ctrl+Shift+M` | Move the tab to the other pane |
+| `Ctrl+Shift+L` | Panes side by side ⇄ stacked |
 | `Ctrl+G` | Knowledge graph |
 | `Ctrl+T` | Study tracker |
 | `Ctrl+I` | Handwriting canvas (italic instead while the editor has focus) |
@@ -61,10 +64,9 @@ Right-clicking a file, a tab or the note opens a context menu at the pointer.
 
 It follows the active pane rather than opening one fixed panel:
 
-1. **Split view with a file open** — if the PDF pane was the last one you interacted with
-   (by scrolling, clicking, or selecting text), it opens PDF search; otherwise it opens
-   in-note search.
-2. **PDF only** — PDF search.
+1. **Two panes** — it searches the focused pane: the pane last clicked, typed or selected
+   in. Scrolling a pane does not focus it.
+2. **A PDF in front** — PDF search.
 3. **A note open** — in-note search.
 4. **Nothing open** — global vault search.
 
@@ -129,14 +131,15 @@ Four commands have **no key binding of their own** and are reachable only from t
 | :--- | :--- |
 | Toggle Backlinks | yes, at the end of the tab strip |
 | Study Tracker | yes, on the activity rail |
-| Split View | yes, at the end of the tab strip |
+| Split / Unsplit | yes, at the end of each tab strip |
+| Focus Other Pane, Move Tab to Other Pane, Toggle Split Direction | no (tab menu has *Move to other pane*) |
 | Focus Mode | no |
 
 **Focus Mode** is a one-shot action, not a toggle: it hides the sidebar, the backlinks panel,
 and the table of contents, and closes the tracker, leaving just the document.
 
-**Split View** requires both a note and a PDF to be open; otherwise it raises a toast
-explaining why.
+**Split / Unsplit** works with anything open. A new pane takes the companion document (a
+PDF beside a note, a note beside a PDF) when there is one, and otherwise starts empty.
 
 ---
 
@@ -151,4 +154,5 @@ explaining why.
 | Click and drag | PDF | Select PDF text |
 | Right-click a reference | PDF | Preview the target equation, figure, table, or section in place |
 | `Ctrl` + click a link | Editor | Follow a wikilink, a file link, or a `pdf://` deep link |
-| Drag the divider | Split view | Resize the panes |
+| Drag the divider | Two panes | Resize the panes (double-click: back to half and half) |
+| Click / type / select in a pane | Two panes | Focus that pane |

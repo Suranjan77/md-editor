@@ -227,7 +227,10 @@ fn context_menus_open_at_the_pointer() {
     // The editor's menu, far from the first click.
     app.right_click_at(700.0, 400.0);
     let at = app.probe().context_menu.expect("editor context menu");
-    assert!((at.0 - 700.0).abs() < 1.0 && (at.1 - 400.0).abs() < 1.0);
+    assert!(
+        (at.0 - 700.0).abs() < 1.0 && (at.1 - 400.0).abs() < 1.0,
+        "editor menu at {at:?}"
+    );
     app.wait(Duration::from_millis(10));
     app.finish();
 }

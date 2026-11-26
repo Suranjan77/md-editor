@@ -19,8 +19,6 @@ use crate::pdf_notes::{
 use crate::views;
 use crate::views::pdf_viewer::PDF_PAGE_LIST_PADDING;
 
-const PDF_SCROLLABLE_ID: &str = "pdf_scrollable";
-const EDITOR_SCROLLABLE_ID: &str = "editor_scrollable";
 const ARROW_SCROLL: f32 = 64.0;
 const EDITOR_PADDING: f32 = crate::design::metrics::SPACE_5;
 const PDF_SUPERSAMPLE_MAX: f32 = 3.0;
@@ -110,6 +108,7 @@ pub struct MdEditor {
     self_writes: std::collections::HashMap<String, std::time::Instant>,
     autosave_failure_reported: bool,
     motion: Motion,
+    workspace: workspace::Workspace,
 }
 
 const SELF_WRITE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
@@ -121,6 +120,8 @@ mod graph;
 mod ink;
 mod links;
 mod overlays;
+mod pane_view;
+mod panes;
 pub(crate) mod paste;
 mod pdf;
 mod pdf_nav;
@@ -137,6 +138,7 @@ mod vault;
 pub(crate) mod vault_entries;
 mod vault_links;
 mod view;
+pub(crate) mod workspace;
 
 #[cfg(test)]
 use editor::editor_command_keeps_cursor_visible;
@@ -191,6 +193,9 @@ pub(crate) struct Probe {
     /// The text under the current PDF selection.
     pub pdf_selected_text: Option<String>,
     pub split_view: bool,
+    pub focused_pane: workspace::PaneId,
+    /// What the pane without focus shows (note, else PDF).
+    pub other_pane_path: Option<String>,
     pub pdf_panel_active: bool,
     pub palette_query: String,
     pub graph_nodes: usize,
@@ -271,7 +276,14 @@ impl MdEditor {
                 let end = sel.anchor_idx.max(sel.focus_idx) + 1;
                 Some(text.text.chars().skip(start).take(end - start).collect())
             }),
-            split_view: self.ui.split_view_active,
+            split_view: self.workspace.is_split(),
+            focused_pane: self.workspace.focused,
+            other_pane_path: self.parked().and_then(|docs| {
+                docs.active_path
+                    .clone()
+                    .filter(|_| !docs.showing_pdf)
+                    .or_else(|| docs.pdf.active_path.clone())
+            }),
             pdf_panel_active: self.active_panel == ActivePanel::Pdf,
             palette_query: self.ui.command_palette_query.clone(),
             graph_nodes: self.graph.filtered().snapshot.nodes.len(),
@@ -303,10 +315,10 @@ impl MdEditor {
             || self.ui.active_modal.is_some()
     }
 
-    /// The note editor is on screen (alone or in split view).
+    /// The focused pane shows its note.
     fn note_is_showing(&self) -> bool {
         self.active_path.is_some()
-            && (!self.showing_pdf || self.ui.split_view_active)
+            && !self.showing_pdf
             && !self.graph.visible
             && !self.tracker.visible
             && !self.ui.settings_visible
@@ -360,6 +372,7 @@ impl MdEditor {
             self_writes: std::collections::HashMap::new(),
             autosave_failure_reported: false,
             motion: Motion::new(),
+            workspace: workspace::Workspace::new(),
         };
         app.ui.toast = startup_notice;
         app.restore_design_settings();
@@ -383,7 +396,7 @@ impl MdEditor {
             if std::path::Path::new(&path).is_dir() {
                 let index_task = app.open_vault(&path);
                 if app.vault.root.is_some() {
-                    task = app.restore_vault_tabs(&path, last_file.as_deref());
+                    task = app.restore_workspace(&path, last_file.as_deref());
                 }
                 task = Task::batch(vec![index_task, task]);
             } else {
@@ -454,6 +467,9 @@ impl MdEditor {
         let overlay_was_open = self.text_overlay_open();
         let region_before = self.ui.focused_region;
         let mut task = self.update_inner(message);
+        // Handlers may visit the other pane; between updates the focused
+        // pane is the one swapped in.
+        self.swap_in(self.workspace.focused);
         // Give the keyboard back to the note when the overlay that took it
         // closes, and when F6 lands on the main region.
         let entered_main = region_before != crate::ui::FocusRegion::Main
@@ -462,9 +478,7 @@ impl MdEditor {
         {
             task = Task::batch(vec![
                 task,
-                iced::widget::operation::focus(iced::advanced::widget::Id::new(
-                    crate::editor::renderer::EDITOR_ID,
-                )),
+                iced::widget::operation::focus(self.workspace.focused.editor_widget_id()),
             ]);
         }
 
@@ -529,6 +543,8 @@ impl MdEditor {
             Message::Search(m) => self.update_search(m),
             Message::Ink(m) => self.update_ink(m),
             Message::KeyboardShortcut(shortcut) => self.update_shortcuts(shortcut),
+            Message::FromPane(pane, message) => self.update_from_pane(pane, *message),
+            Message::ToPane(pane, message) => self.update_in_pane(pane, *message),
         }
     }
 }

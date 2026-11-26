@@ -41,6 +41,10 @@ impl MdEditor {
             | VaultMessage::SidebarSelectionCleared) => self.vault.update(Message::Vault(m)),
             VaultMessage::SidebarKeyNav(nav) => self.on_sidebar_key_nav(nav),
             VaultMessage::SidebarFileClicked(path) => self.on_sidebar_file_clicked(path),
+            VaultMessage::OpenToSide(path) => {
+                self.ui.context_menu = None;
+                self.open_to_side(&path)
+            }
             VaultMessage::RevealInFileManager(rel_path) => {
                 self.ui.context_menu = None;
                 if let Some(abs) = self.resolve_active_path(&rel_path) {
@@ -80,7 +84,7 @@ impl MdEditor {
     fn open_vault_and_restore(&mut self, path: &str) -> Task<Message> {
         let index_task = self.open_vault(path);
         if self.vault.root.as_deref() == Some(path) {
-            let restore_task = self.restore_vault_tabs(path, None);
+            let restore_task = self.restore_workspace(path, None);
             Task::batch(vec![index_task, restore_task])
         } else {
             index_task
@@ -207,10 +211,13 @@ impl MdEditor {
         if let Ok(entries) = md_editor_core::vault::list_vault(&self.state) {
             self.vault.entries = entries;
         }
-        if let Some(ref root) = self.vault.root {
+        if let Some(root) = self.vault.root.clone() {
             let root_path = std::path::PathBuf::from(root);
-            self.tabs.sync_missing(|rel| {
-                md_editor_core::vault::resolve_vault_path(&root_path, rel).is_file()
+            let _ = self.for_each_pane(|app| {
+                app.tabs.sync_missing(|rel| {
+                    md_editor_core::vault::resolve_vault_path(&root_path, rel).is_file()
+                });
+                Task::none()
             });
         }
         if let Some(active) = self
@@ -222,14 +229,19 @@ impl MdEditor {
                 .unwrap_or_default();
         }
         self.invalidate_graph();
-        if let Some(active) = self.active_path.clone()
-            && paths.contains(&active)
-        {
-            return self.reload_open_note_from_disk();
-        }
-        // An image, PDF or ink page appeared, changed or went away: decode
-        // what the note shows from it again (a missing one may exist now).
-        self.refresh_note_images(&paths)
+        // In each pane: its note changed on disk, or an image, PDF or ink
+        // page it shows did (a missing one may exist now).
+        self.for_each_pane(|app| {
+            if app
+                .active_path
+                .as_ref()
+                .is_some_and(|active| paths.contains(active))
+            {
+                app.reload_open_note_from_disk()
+            } else {
+                app.refresh_note_images(&paths)
+            }
+        })
     }
 
     /// Re-decode the open note's images, PDF crops and sketches drawn from
@@ -272,12 +284,17 @@ impl MdEditor {
             self.ui.toast = Some(format!("Not a directory: {path}"));
             return Task::none();
         }
-        if let SaveOutcome::Failed(err) = self.save_active_document() {
+        if let Some(err) = self.save_all_panes() {
             self.ui.toast = Some(format!("Could not save before switching vaults: {err}"));
             return Task::none();
         }
-        self.save_current_tab_view();
-        self.persist_tabs();
+        // One pane while the new vault loads; its tabs (and second pane, if
+        // the layout was split) come back with `restore_workspace`.
+        // (A cold start set this from the saved layout already.)
+        self.ui.restore_split |= self.workspace.is_split();
+        self.swap_in(super::workspace::PaneId::A);
+        self.workspace.other = None;
+        self.workspace.focused = super::workspace::PaneId::A;
 
         let generation = match self.state.begin_vault_change(root_path) {
             Ok(generation) => generation,

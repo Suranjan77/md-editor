@@ -92,7 +92,14 @@ impl MdEditor {
                         .ok_or_else(|| "PDF renderer is unavailable".to_string())?;
                     renderer.page_count(&path_clone)
                 }),
-                move |res| Message::Pdf(PdfMessage::Loaded(generation, res.map_err(String::from))),
+                // Gated on the document, not the render generation: a zoom
+                // or refit while the PDF loads must not drop its page count.
+                move |res| {
+                    Message::Pdf(PdfMessage::Loaded(
+                        document_generation,
+                        res.map_err(String::from),
+                    ))
+                },
             ),
             Task::perform(
                 super::blocking(move || {
@@ -410,7 +417,9 @@ impl MdEditor {
     }
 
     pub(super) fn refit_pdf_if_needed(&self) -> Task<Message> {
-        if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
+        // Before the page count is known the fit has nothing to measure; the
+        // load fits the pages itself.
+        if self.pdf.fit_to_width && self.pdf.active_path.is_some() && self.pdf.total_pages > 0 {
             Task::done(Message::Pdf(PdfMessage::FitToWidth))
         } else {
             Task::none()
@@ -447,12 +456,15 @@ impl MdEditor {
         let chrome_width = sidebar_width + toc_width + backlinks_width + folio_chrome;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
-        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some()
-        {
-            (content_width * (1.0 - self.ui.split_ratio)).max(280.0)
-        } else {
-            content_width
-        }
+        // This pane's share, side by side.
+        let share = match (self.workspace.is_split(), self.workspace.axis) {
+            (true, super::workspace::SplitAxis::Vertical) => match self.workspace.current {
+                super::workspace::PaneId::A => self.ui.split_ratio,
+                super::workspace::PaneId::B => 1.0 - self.ui.split_ratio,
+            },
+            _ => 1.0,
+        };
+        (content_width * share).max(280.0)
     }
 
     pub(super) fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {

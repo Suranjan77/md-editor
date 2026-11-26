@@ -1,20 +1,12 @@
 //! Building the UI: decomposed regional builders for the shell window and detached handwriting window.
 
+use super::pane_view::{NO_PAGE_INDEX, PaneView};
 use super::*;
-use crate::design::metrics::{
-    BORDER_WIDTH, ControlSize, Elevation, SHEET_GUTTER, SHEET_RADIUS, SPACE_0, SPACE_2, SPACE_5,
-};
+use crate::design::metrics::{SHEET_GUTTER, SPACE_0, SPACE_5};
 use crate::design::tokens;
-use crate::messages::Shortcut;
-use crate::messages::{
-    ContextMenuTarget, EditorMessage, GraphMessage, Message, PdfMessage, ShellMessage, TabsMessage,
-    VaultMessage,
-};
-use crate::shortcuts;
-use crate::tabs::TabKind;
+use crate::messages::{EditorMessage, Message, PdfMessage, ShellMessage, VaultMessage};
 use crate::ui::{
-    Button, ButtonVariant, DocTabItem, FocusRegion, Icon, IconButton, SaveStatus, StatusBarProps,
-    TabStripEvents, empty_state, split_handle, status_bar, tab_strip,
+    Button, ButtonVariant, FocusRegion, SaveStatus, StatusBarProps, split_handle, status_bar,
 };
 use iced::widget::column;
 
@@ -93,48 +85,22 @@ impl MdEditor {
 
         let t = tokens();
         let rail = self.build_rail();
-        let tab_bar = self.build_tab_strip();
         let sidebar = self.build_sidebar();
-        let main_content = self.build_main_pane();
         let right_panels = self.build_right_panels();
         let bottom_bar = self.build_status_bar();
-
-        // Folio shell: the document lives on a rounded "sheet" that floats on the chrome
-        // ground; tabs sit on the chrome above it, the active one sharing its colour.
-        let sheet = container(main_content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .clip(true)
-            .style(move |_| container::Style {
-                background: Some(iced::Background::Color(t.bg_canvas)),
-                border: iced::Border {
-                    color: t.border_subtle,
-                    width: BORDER_WIDTH,
-                    radius: SHEET_RADIUS.into(),
+        let center_column = container(self.build_workspace())
+            .padding(iced::Padding {
+                top: SPACE_0,
+                right: if self.right_panels_open() {
+                    SPACE_0
+                } else {
+                    SHEET_GUTTER
                 },
-                shadow: Elevation::Sheet.shadow(),
-                ..Default::default()
-            });
-
-        let has_tabs = !self.tabs.is_empty() && !self.graph.visible && !self.ui.settings_visible;
-        let center_column = container(
-            column![tab_bar, sheet]
-                .spacing(SPACE_0)
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .padding(iced::Padding {
-            top: if has_tabs { SPACE_0 } else { SHEET_GUTTER },
-            right: if self.right_panels_open() {
-                SPACE_0
-            } else {
-                SHEET_GUTTER
-            },
-            bottom: SPACE_0,
-            left: SPACE_0,
-        })
-        .width(Length::Fill)
-        .height(Length::Fill);
+                bottom: SPACE_0,
+                left: SPACE_0,
+            })
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         let body_row = row![rail, sidebar, center_column, right_panels]
             .spacing(SPACE_0)
@@ -175,104 +141,6 @@ impl MdEditor {
             && (self.motion.toc_width() >= 1.0 || self.motion.backlinks_width() >= 1.0)
     }
 
-    /// Document-scoped toggles at the trailing end of the tab strip.
-    fn document_actions(&self) -> Vec<Element<'_, Message, Theme, iced::Renderer>> {
-        let mut actions = Vec::new();
-        let split_available = self.tabs.mru_of_kind(TabKind::Note).is_some()
-            && self.tabs.mru_of_kind(TabKind::Pdf).is_some();
-        if split_available {
-            actions.push(
-                IconButton::new(Icon::Split, "Split view")
-                    .shortcut(shortcuts::chord(Shortcut::SplitView))
-                    .size(ControlSize::Sm)
-                    .selected(self.ui.split_view_active)
-                    .on_press(Message::Shell(ShellMessage::SplitViewToggle))
-                    .build(),
-            );
-        }
-        if self.active_path.is_some() || self.pdf.active_path.is_some() {
-            actions.push(
-                IconButton::new(Icon::ListTree, "Outline")
-                    .shortcut(shortcuts::chord(Shortcut::TableOfContents))
-                    .size(ControlSize::Sm)
-                    .selected(self.editor.toc_visible)
-                    .on_press(Message::Editor(EditorMessage::ToggleTOC))
-                    .build(),
-            );
-        }
-        actions.push(
-            IconButton::new(Icon::Link, "Backlinks")
-                .shortcut(shortcuts::chord(Shortcut::ToggleBacklinks))
-                .size(ControlSize::Sm)
-                .selected(self.vault.backlinks_visible)
-                .on_press(Message::KeyboardShortcut(Shortcut::ToggleBacklinks))
-                .build(),
-        );
-        actions
-    }
-
-    fn build_tab_strip(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        if self.tabs.is_empty() || self.graph.visible || self.ui.settings_visible {
-            return container(Space::new())
-                .height(Length::Fixed(SPACE_0))
-                .into();
-        }
-        let active_id = self.tabs.active_id();
-        let split_note = self
-            .ui
-            .split_view_active
-            .then(|| self.tabs.mru_of_kind(TabKind::Note).map(|t| t.id))
-            .flatten();
-        let split_pdf = self
-            .ui
-            .split_view_active
-            .then(|| self.tabs.mru_of_kind(TabKind::Pdf).map(|t| t.id))
-            .flatten();
-
-        let items: Vec<DocTabItem> = self
-            .tabs
-            .list()
-            .iter()
-            .map(|tab| {
-                let is_active = active_id == Some(tab.id);
-                DocTabItem {
-                    tab,
-                    label: self.tabs.label_for(tab),
-                    dirty: tab.kind == TabKind::Note
-                        && self.active_path.as_deref() == Some(tab.path.as_str())
-                        && self.editor.buffer.dirty,
-                    is_active,
-                    is_split_secondary: !is_active
-                        && (Some(tab.id) == split_note || Some(tab.id) == split_pdf),
-                }
-            })
-            .collect();
-
-        let cursor_pos = self.ui.cursor_pos;
-        tab_strip(
-            items,
-            self.ui.dragging_tab,
-            self.ui.tab_overflow_open,
-            TabStripEvents {
-                on_activate: Box::new(|id| Message::Tabs(TabsMessage::Activate(id))),
-                on_close: Box::new(|id| Message::Tabs(TabsMessage::Close(id))),
-                on_drag_start: Box::new(|id| Message::Tabs(TabsMessage::DragStart(id))),
-                on_drag_over: Box::new(|idx| Message::Tabs(TabsMessage::DragOver(idx))),
-                on_drag_end: Message::Tabs(TabsMessage::DragEnd),
-                on_context_menu: Box::new(move |id| {
-                    Message::Shell(ShellMessage::OpenContextMenu(
-                        ContextMenuTarget::Tab(id),
-                        cursor_pos.0,
-                        cursor_pos.1,
-                    ))
-                }),
-                on_new_tab: Message::Vault(VaultMessage::CreateFileDialog),
-                on_toggle_overflow: Message::Tabs(TabsMessage::ToggleOverflowMenu),
-            },
-            self.document_actions(),
-        )
-    }
-
     fn build_sidebar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
         let sidebar_width = self.motion.sidebar_width();
         if sidebar_width < 1.0 {
@@ -311,75 +179,11 @@ impl MdEditor {
         .into()
     }
 
-    fn build_main_pane(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        if self.ui.settings_visible {
-            return views::settings::view(&self.ui, self.vault.root.as_deref());
-        }
-        if self.graph.visible {
-            return views::graph::view(&self.graph);
-        }
-        if self.tracker.visible {
-            return self.tracker.view();
-        }
-        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some()
-        {
-            let left_portion = (self.ui.split_ratio * 1000.0) as u16;
-            let right_portion = ((1.0 - self.ui.split_ratio) * 1000.0) as u16;
-            return row![
-                container(self.build_editor_view()).width(Length::FillPortion(left_portion)),
-                split_handle(
-                    self.ui.is_resizing_split,
-                    Message::Shell(ShellMessage::SplitViewDragStart),
-                    Message::Shell(ShellMessage::SplitViewDragEnd),
-                    Message::Shell(ShellMessage::SplitViewReset),
-                ),
-                container(self.build_pdf_view()).width(Length::FillPortion(right_portion)),
-            ]
-            .spacing(SPACE_0)
-            .height(Length::Fill)
-            .into();
-        }
-        if self.showing_pdf && self.pdf.active_path.is_some() {
-            return self.build_pdf_view();
-        }
-        if self.active_image.is_some() {
-            return self.build_image_view();
-        }
-        if self.active_path.is_some() {
-            return self.build_editor_view();
-        }
-
-        // Empty tab state (all tabs closed or fresh vault before opening a file).
-        empty_state(
-            Icon::FileText,
-            "No document open",
-            "Select a file from the sidebar, open the Command Palette, or create a new note.",
-            Some(
-                row![
-                    Button::new("New Note")
-                        .variant(ButtonVariant::Primary)
-                        .icon(Icon::FilePlus)
-                        .on_press(Message::Vault(VaultMessage::CreateFileDialog))
-                        .build(),
-                    Button::new("Command Palette")
-                        .variant(ButtonVariant::Secondary)
-                        .icon(Icon::Command)
-                        .on_press(Message::Shell(ShellMessage::CommandPaletteOpen))
-                        .build(),
-                    Button::new("Knowledge Graph")
-                        .variant(ButtonVariant::Secondary)
-                        .icon(Icon::Network)
-                        .on_press(Message::Graph(GraphMessage::Toggle))
-                        .build(),
-                ]
-                .spacing(SPACE_2)
-                .into(),
-            ),
-        )
-    }
-
-    fn build_editor_view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        let editor_search_active = self.editor_search_is_active();
+    pub(super) fn build_editor_view<'a>(
+        &'a self,
+        pane: &PaneView<'a>,
+    ) -> Element<'a, Message, Theme, iced::Renderer> {
+        let editor_search_active = pane.focused && self.editor_search_is_active();
         let active_search_match = editor_search_active
             .then(|| self.search.active_match_position())
             .flatten();
@@ -393,10 +197,10 @@ impl MdEditor {
         let editor_widget = mouse_area(
             container(
                 crate::editor::renderer::Editor::new(
-                    &self.editor.buffer,
-                    &self.editor.highlight.lines,
-                    &self.editor.image_cache,
-                    &self.editor.math_cache,
+                    &pane.editor.buffer,
+                    &pane.editor.highlight.lines,
+                    &pane.editor.image_cache,
+                    &pane.editor.math_cache,
                     |value| Message::Editor(EditorMessage::Command(value)),
                     |value| Message::Editor(EditorMessage::CommandNoScroll(value)),
                     |value| Message::Vault(VaultMessage::SidebarFileClicked(value)),
@@ -410,11 +214,12 @@ impl MdEditor {
                 )
                 .scale_factor(self.ui.scale_factor)
                 .on_paste(|| Message::Editor(EditorMessage::Paste))
-                .reveal_caret(self.editor.reveal_request, |view| {
+                .reveal_caret(pane.editor.reveal_request, |view| {
                     Message::Editor(EditorMessage::CaretView(view))
                 })
-                .layout_revision(self.editor.layout_revision())
-                .completion_open(self.editor.completion.is_some()),
+                .layout_revision(pane.editor.layout_revision())
+                .completion_open(pane.editor.completion.is_some())
+                .id(pane.id.editor_widget_id()),
             )
             .padding(EDITOR_PADDING)
             .width(Length::Fill),
@@ -425,7 +230,7 @@ impl MdEditor {
         )));
 
         let editor_scroll = scrollable(editor_widget)
-            .id(iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID))
+            .id(pane.id.editor_scrollable_id())
             .on_scroll(|vp| {
                 Message::Editor(EditorMessage::Scrolled {
                     y: vp.absolute_offset().y,
@@ -435,14 +240,14 @@ impl MdEditor {
             })
             .height(Length::Fill);
         let editor_scroll: Element<'_, Message, Theme, iced::Renderer> =
-            match (&self.editor.completion, &self.editor.caret_view) {
+            match (&pane.editor.completion, &pane.editor.caret_view) {
                 (Some(completion), Some(caret)) => iced::widget::stack![
                     editor_scroll,
                     views::completion::view(
                         completion,
                         caret,
                         EDITOR_PADDING,
-                        self.editor.viewport_width,
+                        pane.editor.viewport_width,
                     )
                 ]
                 .height(Length::Fill)
@@ -473,59 +278,65 @@ impl MdEditor {
             .into()
     }
 
-    fn build_pdf_view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        if self.pdf.active_path.is_none() {
+    pub(super) fn build_pdf_view<'a>(
+        &'a self,
+        pane: &PaneView<'a>,
+    ) -> Element<'a, Message, Theme, iced::Renderer> {
+        if pane.pdf.active_path.is_none() {
             return container(Space::new()).width(Length::Fixed(SPACE_0)).into();
         }
-        let pdf_search_active = self.pdf_search_is_active();
-        let focused_ann = self.pdf.focused_annotation_id.as_ref().and_then(|ann_id| {
-            self.pdf
+        let pdf_search_active = pane.focused && self.pdf_search_is_active();
+        let focused_ann = pane.pdf.focused_annotation_id.as_ref().and_then(|ann_id| {
+            pane.pdf
                 .annotations
                 .values()
                 .flatten()
                 .find(|a| &a.id == ann_id)
         });
         let pdf_toolbar = views::pdf_viewer::toolbar(views::pdf_viewer::PdfToolbarProps {
-            current_page: self.pdf.current_page,
-            total_pages: self.pdf.total_pages,
-            zoom: self.pdf.zoom,
-            fit_to_width: self.pdf.fit_to_width,
-            page_input: self.ui.pdf_page_input.as_deref(),
-            zoom_input: self.ui.pdf_zoom_input.as_deref(),
-            toc_visible: self.editor.toc_visible,
-            has_selection: self.pdf.selection.is_some(),
-            has_annotations: self.pdf.annotations.values().any(|v| !v.is_empty()),
+            current_page: pane.pdf.current_page,
+            total_pages: pane.pdf.total_pages,
+            zoom: pane.pdf.zoom,
+            fit_to_width: pane.pdf.fit_to_width,
+            page_input: self.ui.pdf_page_input.as_deref().filter(|_| pane.focused),
+            zoom_input: self.ui.pdf_zoom_input.as_deref().filter(|_| pane.focused),
+            toc_visible: pane.focused && self.editor.toc_visible,
+            has_selection: pane.pdf.selection.is_some(),
+            has_annotations: pane.pdf.annotations.values().any(|v| !v.is_empty()),
             focused_annotation: focused_ann,
         });
 
         let pdf_pages = scrollable(views::pdf_viewer::view_continuous(
             views::pdf_viewer::ContinuousProps {
-                pages: &self.pdf.pages,
-                zoom: self.pdf.zoom,
-                dimensions: &self.pdf.dimensions,
-                page_sizes: &self.pdf.page_sizes,
-                placeholder_page_size: self.pdf.placeholder_page_size,
-                search_matches: if pdf_search_active
-                    || self.search.visible
-                    || self.search.file_visible
+                pages: &pane.pdf.pages,
+                zoom: pane.pdf.zoom,
+                dimensions: &pane.pdf.dimensions,
+                page_sizes: &pane.pdf.page_sizes,
+                placeholder_page_size: pane.pdf.placeholder_page_size,
+                search_matches: if pane.focused
+                    && (pdf_search_active || self.search.visible || self.search.file_visible)
                 {
                     &self.search.pdf_results
                 } else {
                     &[]
                 },
-                search_by_page: &self.search.pdf_indices_by_page,
-                active_search_index: self.search.match_index,
-                page_texts: &self.pdf.page_text,
-                annotations: &self.pdf.annotations,
-                references: &self.pdf.references,
-                active_selection: self.pdf.selection,
-                focused_annotation_id: self.pdf.focused_annotation_id.as_deref(),
-                load_error: self.pdf.load_error.as_deref(),
-                scroll_y: self.pdf.scroll_y,
-                viewport_height: self.pdf.viewport_height,
+                search_by_page: if pane.focused {
+                    &self.search.pdf_indices_by_page
+                } else {
+                    &NO_PAGE_INDEX
+                },
+                active_search_index: self.search.match_index.filter(|_| pane.focused),
+                page_texts: &pane.pdf.page_text,
+                annotations: &pane.pdf.annotations,
+                references: &pane.pdf.references,
+                active_selection: pane.pdf.selection,
+                focused_annotation_id: pane.pdf.focused_annotation_id.as_deref(),
+                load_error: pane.pdf.load_error.as_deref(),
+                scroll_y: pane.pdf.scroll_y,
+                viewport_height: pane.pdf.viewport_height,
             },
         ))
-        .id(iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID))
+        .id(pane.id.pdf_scrollable_id())
         .on_scroll(|vp| {
             Message::Pdf(PdfMessage::Scrolled {
                 y: vp.absolute_offset().y,
@@ -561,13 +372,16 @@ impl MdEditor {
             .into()
     }
 
-    fn build_image_view(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        let Some((handle, width, height)) = &self.active_image else {
+    pub(super) fn build_image_view<'a>(
+        &'a self,
+        pane: &PaneView<'a>,
+    ) -> Element<'a, Message, Theme, iced::Renderer> {
+        let Some((handle, width, height)) = pane.active_image else {
             return container(Space::new()).width(Length::Fixed(SPACE_0)).into();
         };
         let t = tokens();
-        let label = self.active_image_path.as_deref().unwrap_or("Image");
-        let zoom = self.ui.image_zoom;
+        let label = pane.active_image_path.unwrap_or("Image");
+        let zoom = pane.image_zoom;
         let actual = Button::new("100%")
             .size(crate::design::metrics::ControlSize::Sm)
             .variant(if zoom == Some(1.0) {
@@ -652,9 +466,7 @@ impl MdEditor {
             return container(Space::new()).width(Length::Fixed(SPACE_0)).into();
         }
 
-        let pdf_toc_active = self.pdf.active_path.is_some()
-            && (self.showing_pdf
-                || (self.ui.split_view_active && self.active_panel == ActivePanel::Pdf));
+        let pdf_toc_active = self.pdf.active_path.is_some() && self.showing_pdf;
 
         let toc_el: Element<'_, Message, Theme, iced::Renderer> = if toc_width >= 1.0 {
             let (entries, is_synth, current_pos) = if pdf_toc_active {
@@ -727,8 +539,7 @@ impl MdEditor {
                 .into();
         }
 
-        let note_active =
-            self.active_path.is_some() && (!self.showing_pdf || self.ui.split_view_active);
+        let note_active = self.active_path.is_some() && !self.showing_pdf;
         let save_status = if self.ui.last_save_failed {
             SaveStatus::Failed
         } else if self.editor.autosave_pending_since.is_some() {

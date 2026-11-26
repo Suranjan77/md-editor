@@ -319,7 +319,7 @@ outside the app.
 ### Figures and equations from a PDF into a note
 
 Hold `Alt` and drag a rectangle over any part of a PDF page: a figure, a theorem, a table, an
-equation. With a note open (split view), a line like
+equation. With a note open (in the other pane, or behind the PDF), a line like
 `![paper, p. 4](pdf://papers/paper.pdf?page=4&crop=112,240,380,210)` is inserted at the
 caret, and the note shows that part of the page right there. With no note open, the line is
 copied to the clipboard. `Ctrl+Z` removes it in one step.
@@ -331,14 +331,34 @@ points from the page's top-left corner, so you can also write or adjust them by 
 
 Linking another highlight to the same note **appends** a section rather than overwriting the
 file, and re-linking the same highlight changes nothing. `Ctrl` + click the `pdf://` link from
-any note to jump to that exact page and highlight — which opens split view without resetting
-the PDF's position.
+any note to jump to that exact page and highlight. The PDF opens in the pane beside the
+note, or the pane that already has it, without resetting its position.
 
-### Split view
+### Split view: two panes
 
-`Ctrl+P` → *Split View*, or the toolbar button, with both a note and a PDF open. Drag the
-divider to resize. If fit-to-width is on, the PDF re-fits to the narrower pane while keeping
-your page and scroll position.
+The main area splits into two **panes**, side by side or stacked. Each pane has its own tab
+strip and shows any document, so you can have a note beside a PDF, two notes, or two PDFs.
+
+- `Ctrl+\` (or the split button at the end of a tab strip) splits. The new pane takes the
+  most recent PDF tab when a note is in front, or the most recent note when a PDF is, so
+  one keystroke gives you writing beside reading. Otherwise the new pane starts empty, and
+  the next file you open lands in it. With two panes, the same key (or the split button,
+  now highlighted, on either strip) closes the second pane. **Its tabs move to the other
+  pane**, so nothing is lost.
+- **Open to the side** (right-click a file in the sidebar) opens a file in the other pane.
+  **Move to other pane** (right-click a tab, or `Ctrl+Shift+M`) moves a tab across.
+- Clicking, typing or selecting in a pane **focuses** it: it gets the keyboard shortcuts,
+  the outline, backlinks, find and the status bar, and its tabs are highlighted.
+  Scrolling a pane does not take focus. `Ctrl+J` switches focus to the other pane.
+- **A file is open in one pane at a time.** Opening a file the other pane already has
+  switches to it there.
+- Leaving a pane saves its note, so a note is never left with unsaved typing behind you.
+- Following a `pdf://` link or a highlight link from a note shows the PDF in the other
+  pane, splitting if needed. *Open linked note* from a PDF does the reverse. `Alt`-dragging
+  a region of the PDF inserts it into the note beside it.
+- `Ctrl+Shift+L` switches between side by side and stacked. Drag the divider to resize, and
+  double-click it to reset. PDFs on fit-to-width refit to their pane.
+- The split, its direction and both panes' tabs come back when you reopen the vault.
 
 ---
 
@@ -396,13 +416,13 @@ match between your words, so a phrase still matches when it wraps across a PDF l
 between columns, and it rejoins a word the typesetter hyphenated across a line break
 (`algo-` / `rithm` matches `algorithm`).
 
-In split view, `Ctrl+F` follows whichever pane you last touched, so markdown and PDF searches
-stay independent.
+With two panes, `Ctrl+F` searches the focused pane. Moving focus to the other pane closes
+the find bar, because a search belongs to one document.
 
 ### Command palette — `Ctrl+P`
 
 Searches commands *and* vault files at once, interleaved by relevance. Characters must appear
-in order but need not be adjacent, so initials work: `sv` finds *Split View*, `tocfg` finds
+in order but need not be adjacent, so initials work: `su` finds *Split / Unsplit*, `tocfg` finds
 *Tracker Configuration*. A match in a file's own name beats a match in a folder along its
 path. `↑`/`↓` to move, `Enter` to open or run, `Escape` to close.
 

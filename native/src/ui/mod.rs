@@ -62,7 +62,7 @@ pub use popover::popover;
 #[allow(unused_imports)]
 pub use segmented::{SegmentOption, segmented, segmented_choice};
 #[allow(unused_imports)]
-pub use split_handle::split_handle;
+pub use split_handle::{split_handle, split_handle_across};
 #[allow(unused_imports)]
 pub use status_bar::{SaveStatus, StatusBarProps, status_bar};
 #[allow(unused_imports)]

@@ -84,6 +84,19 @@ impl MdEditor {
                 Task::none()
             }
             Shortcut::SplitView => Task::done(Message::Shell(ShellMessage::SplitViewToggle)),
+            Shortcut::FocusOtherPane => self.focus_other_pane(),
+            Shortcut::MoveTabToOtherPane => self.move_active_tab_to_other_pane(),
+            Shortcut::ToggleSplitAxis => {
+                let axis = match self.workspace.axis {
+                    super::workspace::SplitAxis::Vertical => {
+                        super::workspace::SplitAxis::Horizontal
+                    }
+                    super::workspace::SplitAxis::Horizontal => {
+                        super::workspace::SplitAxis::Vertical
+                    }
+                };
+                self.split(axis)
+            }
             Shortcut::Settings => Task::done(Message::Settings(SettingsMessage::Toggle)),
             Shortcut::RenameEntry => {
                 if let Some(path) = self
@@ -120,30 +133,7 @@ impl MdEditor {
     }
 
     pub(super) fn open_contextual_search(&mut self) -> Task<Message> {
-        if self.ui.split_view_active && self.active_path.is_some() {
-            self.search.file_visible = true;
-            self.search.visible = false;
-            if self.active_panel == ActivePanel::Pdf && self.pdf.active_path.is_some() {
-                if !self.search.query.trim().is_empty() {
-                    return Task::batch(vec![
-                        self.search_pdf(),
-                        focus_pdf_search_input(),
-                        self.restore_scroll_positions(),
-                    ]);
-                }
-                Task::batch(vec![
-                    focus_pdf_search_input(),
-                    self.restore_scroll_positions(),
-                ])
-            } else {
-                self.search.pdf_results.clear();
-                self.search.pdf_indices_by_page.clear();
-                Task::batch(vec![
-                    focus_file_search_input(),
-                    self.restore_scroll_positions(),
-                ])
-            }
-        } else if self.pdf.active_path.is_some() && self.showing_pdf {
+        if self.pdf.active_path.is_some() && self.showing_pdf {
             self.search.file_visible = true;
             self.search.visible = false;
             if !self.search.query.trim().is_empty() {

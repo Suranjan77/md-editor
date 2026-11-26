@@ -146,7 +146,7 @@ impl MdEditor {
         let listener = if self.ui.is_resizing_split {
             iced::event::listen_with(|event, _status, window| match event {
                 iced::Event::Mouse(Mouse::CursorMoved { position }) => Some((
-                    Message::Shell(ShellMessage::SplitViewDragging(position.x)),
+                    Message::Shell(ShellMessage::SplitViewDragging(position)),
                     Some(window),
                 )),
                 iced::Event::Mouse(Mouse::ButtonReleased(Button::Left)) => {
@@ -429,6 +429,8 @@ fn ctrl_character_message(c: &str, shift: bool) -> Option<Message> {
             "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleBacklinks)),
             "o" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
             "i" => Some(Message::KeyboardShortcut(Shortcut::InsertSketch)),
+            "m" => Some(Message::KeyboardShortcut(Shortcut::MoveTabToOtherPane)),
+            "l" => Some(Message::KeyboardShortcut(Shortcut::ToggleSplitAxis)),
             // Redo as most apps spell it; Ctrl+Y works too.
             "z" => Some(Message::Ink(InkMessage::Redo)),
             _ => None,
@@ -455,6 +457,7 @@ fn ctrl_character_message(c: &str, shift: bool) -> Option<Message> {
         "w" => Some(Message::KeyboardShortcut(Shortcut::CloseTab)),
         "," => Some(Message::KeyboardShortcut(Shortcut::Settings)),
         "\\" => Some(Message::KeyboardShortcut(Shortcut::SplitView)),
+        "j" => Some(Message::KeyboardShortcut(Shortcut::FocusOtherPane)),
         "i" => Some(Message::Ink(InkMessage::Toggle)),
         "z" => Some(Message::Ink(InkMessage::Undo)),
         "y" => Some(Message::Ink(InkMessage::Redo)),

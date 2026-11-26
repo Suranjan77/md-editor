@@ -142,8 +142,8 @@ classDiagram
         +bool command_palette_visible
         +usize palette_selected
         +Option~String~ toast
-        +bool split_view_active
         +f32 split_ratio
+        +bool restore_split
         +f32 window_width
         +f32 window_height
         +f32 scale_factor
@@ -196,8 +196,17 @@ classDiagram
   expansion, and the backlinks panel. Note that `active_path` deliberately stays on the
   shell: it is a cross-cutting "current document" shared by the editor, search, and PDF.
 - **`UiState`** (`ui_state.rs`) — modals, the command palette and its highlighted row, the
-  toast, split-view state and divider ratio, window size, and the display scale factor that
-  drives PDF supersampling.
+  toast, the divider ratio and drag, window size, and the display scale factor that drives
+  PDF supersampling.
+- **`Workspace`** (`app/workspace.rs`) — the two panes. The focused pane's documents live
+  in `MdEditor`'s own fields (`tabs`, `active_path`, `editor`, `pdf`, …), so handlers work on
+  it unchanged. The other pane's wait in a `PaneDocs` bundle that `swap_in` exchanges in a
+  few moves. A pane's view sends `Message::FromPane(pane, msg)`: an interaction focuses
+  that pane (saving the note it leaves), while a scroll or measurement runs in it without
+  moving focus. Every task a handler starts comes back as `Message::ToPane(pane, msg)` for
+  the pane that started it. Work across both panes (rename, delete, watcher, rescale,
+  save, session) goes through `for_each_pane`. Pane commands are in `app/panes.rs`, the
+  panes' views in `app/pane_view.rs`. Design: `docs/split-layouts-plan.md`.
 - **`SearchState`** (`search_state.rs`) — query and replacement text, the `regex`,
   `match_case`, and PDF-only `loose` flags, vault and PDF results, and a memoized
   in-document match cache keyed by `DocMatchKey` so `view` never rescans the buffer.
@@ -263,8 +272,9 @@ pointer.
   `FocusRegion::Toolbar` region for F6.
 - **Tab strip** (`ui::tab_strip`, state in `tabs.rs`) — one tab per open document, with a
   dirty dot, a missing badge, drag to reorder, middle-click to close, a right-click menu and
-  an overflow list. The active tab shares the sheet's colour. Its trailing end holds the
-  document toggles: split view, outline, backlinks.
+  an overflow list. The active tab shares the sheet's colour. Each pane has its own strip;
+  its trailing end holds the split toggle and, on the focused pane, the outline and
+  backlinks toggles.
 - **Sidebar** (`sidebar.rs`) — a `Panel` with a filter field and the file tree of
   `TreeRow`s (indent guides, file-type icons, ellipsis with tooltip). Selecting a row shows
   rename and delete; right-click opens the file menu. New entries go into the selected

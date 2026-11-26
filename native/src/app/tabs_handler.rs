@@ -89,6 +89,13 @@ impl MdEditor {
                 self.ui.dragging_tab = None;
                 Task::none()
             }
+            TabsMessage::MoveToOtherPane(id) => {
+                self.ui.context_menu = None;
+                match self.tabs.get(id).map(|t| t.path.clone()) {
+                    Some(path) => self.move_tab_to_other_pane(&path),
+                    None => Task::none(),
+                }
+            }
             TabsMessage::ToggleOverflowMenu => {
                 self.ui.tab_overflow_open = !self.ui.tab_overflow_open;
                 Task::none()
@@ -147,10 +154,6 @@ impl MdEditor {
         self.ui.settings_visible = false;
         self.save_current_tab_view();
 
-        if self.ui.split_view_active {
-            return self.activate_tab_in_split(&target.path, target.kind, id);
-        }
-
         match target.kind {
             TabKind::Note => {
                 let task = self.open_file(&target.path);
@@ -188,36 +191,6 @@ impl MdEditor {
                     self.persist_tabs();
                 }
                 task
-            }
-        }
-    }
-
-    fn activate_tab_in_split(&mut self, path: &str, kind: TabKind, id: TabId) -> Task<Message> {
-        match kind {
-            TabKind::Note => {
-                let task = self.open_file(path);
-                // Keep split view active with the current PDF on the right.
-                self.ui.split_view_active = self.pdf.active_path.is_some();
-                self.tabs.activate(id);
-                self.persist_tabs();
-                task
-            }
-            TabKind::Pdf => {
-                let saved = self.tabs.get(id).map(|t| t.view.clone());
-                self.tabs.activate(id);
-                let task = if self.pdf.active_path.as_deref() != Some(path) {
-                    self.open_pdf_restoring_view(path, saved)
-                } else {
-                    self.active_panel = ActivePanel::Pdf;
-                    Task::none()
-                };
-                self.ui.split_view_active = self.active_path.is_some();
-                self.persist_tabs();
-                Task::batch(vec![task, self.refit_pdf_if_needed()])
-            }
-            TabKind::Image => {
-                self.ui.split_view_active = false;
-                self.activate_tab(id)
             }
         }
     }
@@ -307,34 +280,12 @@ impl MdEditor {
                 self.active_image = None;
             }
         }
-        self.ui.split_view_active = false;
         let task = self.activate_tab(keep_id);
         self.persist_tabs();
         task
     }
 
     fn reconcile_after_tab_close(&mut self, was_active: bool) -> Task<Message> {
-        if self.ui.split_view_active {
-            let mru_note = self.tabs.mru_of_kind(TabKind::Note).cloned();
-            let mru_pdf = self.tabs.mru_of_kind(TabKind::Pdf).cloned();
-            match (mru_note, mru_pdf) {
-                (Some(note), Some(pdf)) => {
-                    let mut tasks = Vec::new();
-                    if self.active_path.as_deref() != Some(&note.path) {
-                        tasks.push(self.open_file(&note.path));
-                    }
-                    if self.pdf.active_path.as_deref() != Some(&pdf.path) {
-                        tasks.push(self.open_pdf_restoring_view(&pdf.path, Some(pdf.view)));
-                    }
-                    self.ui.split_view_active = true;
-                    return Task::batch(tasks);
-                }
-                _ => {
-                    self.ui.split_view_active = false;
-                }
-            }
-        }
-
         if let Some(next_id) = self.tabs.active_id() {
             if was_active
                 || (self.active_path.is_none()
@@ -391,7 +342,6 @@ impl MdEditor {
         self.active_image_path = None;
         self.active_image = None;
         self.vault.backlinks.clear();
-        self.ui.split_view_active = false;
     }
 
     /// Open a PDF and apply saved `TabView::Pdf` zoom/page/scroll if present.
@@ -431,8 +381,25 @@ impl MdEditor {
         let Some(ref root) = self.vault.root else {
             return;
         };
-        let key = format!("tabs:{root}");
+        let key = tabs_key(root, self.workspace.current);
         let _ = md_editor_core::config::set_sys_config(&self.state, &key, &self.tabs.to_json());
+    }
+
+    /// Restore the vault's panes: pane A's tabs, and pane B's when the last
+    /// session was split.
+    pub(super) fn restore_workspace(
+        &mut self,
+        vault_root: &str,
+        fallback_file: Option<&str>,
+    ) -> Task<Message> {
+        let first = self.restore_vault_tabs(vault_root, fallback_file);
+        if !std::mem::take(&mut self.ui.restore_split) || self.workspace.is_split() {
+            return first;
+        }
+        let pane = super::workspace::PaneId::B;
+        self.workspace.other = Some(super::workspace::PaneDocs::new(pane));
+        let second = self.with_pane(pane, |app| app.restore_vault_tabs(vault_root, None));
+        Task::batch(vec![first, super::workspace::route_to(pane, second)])
     }
 
     /// Restore the tab strip for `vault_root` on vault open or cold launch.
@@ -441,7 +408,7 @@ impl MdEditor {
         vault_root: &str,
         fallback_file: Option<&str>,
     ) -> Task<Message> {
-        let key = format!("tabs:{vault_root}");
+        let key = tabs_key(vault_root, self.workspace.current);
         let root_path = std::path::PathBuf::from(vault_root);
         let mut restored = Tabs::new();
         if let Ok(Some(json)) = md_editor_core::config::get_sys_config(&self.state, &key) {
@@ -468,5 +435,14 @@ impl MdEditor {
         } else {
             Task::none()
         }
+    }
+}
+
+/// Where a pane's tab strip is saved: pane A under the key sessions have
+/// always used, so older sessions restore.
+fn tabs_key(vault_root: &str, pane: super::workspace::PaneId) -> String {
+    match pane {
+        super::workspace::PaneId::A => format!("tabs:{vault_root}"),
+        super::workspace::PaneId::B => format!("tabs_b:{vault_root}"),
     }
 }

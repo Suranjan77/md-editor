@@ -264,7 +264,18 @@ impl MdEditor {
                 .map(|i| path[..i].to_string())
                 .unwrap_or_default()
         };
-        vec![
+        let mut entries = Vec::new();
+        if !is_dir && crate::tabs::TabKind::from_path(&path).is_some() {
+            entries.push(MenuEntry::Item {
+                icon: Some(Icon::Split),
+                label: "Open to the side".into(),
+                shortcut: None,
+                danger: false,
+                on_select: Some(Message::Vault(VaultMessage::OpenToSide(path.clone()))),
+            });
+            entries.push(MenuEntry::Separator);
+        }
+        entries.extend(vec![
             MenuEntry::Item {
                 icon: Some(Icon::FilePlus),
                 label: "New note here".into(),
@@ -315,7 +326,8 @@ impl MdEditor {
                 danger: true,
                 on_select: Some(Message::Vault(VaultMessage::DeleteFileDialog(path.clone()))),
             },
-        ]
+        ]);
+        entries
     }
 
     fn sidebar_empty_menu() -> Vec<MenuEntry<Message>> {
@@ -358,6 +370,17 @@ impl MdEditor {
                 danger: false,
                 on_select: (self.tabs.len() > 1)
                     .then(|| Message::Tabs(TabsMessage::CloseOthers(id))),
+            },
+            MenuEntry::Item {
+                icon: Some(Icon::Split),
+                label: if self.workspace.is_split() {
+                    "Move to other pane".into()
+                } else {
+                    "Move to new pane".into()
+                },
+                shortcut: Some("Ctrl Shift M".into()),
+                danger: false,
+                on_select: Some(Message::Tabs(TabsMessage::MoveToOtherPane(id))),
             },
             MenuEntry::Separator,
             MenuEntry::Item {
@@ -473,6 +496,10 @@ pub(super) fn anchor_context_menu(message: Message, at: iced::Point) -> Message 
         }
         Message::Editor(EditorMessage::OpenContextMenu(_, _)) => {
             Message::Editor(EditorMessage::OpenContextMenu(at.x, at.y))
+        }
+        // From a pane's view: anchor what it carries.
+        Message::FromPane(pane, inner) => {
+            Message::FromPane(pane, Box::new(anchor_context_menu(*inner, at)))
         }
         other => other,
     }

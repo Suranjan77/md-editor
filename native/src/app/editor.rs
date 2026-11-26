@@ -111,10 +111,7 @@ impl MdEditor {
                 Task::none()
             }
             EditorMessage::TocClicked(index) => {
-                if self.pdf.active_path.is_some()
-                    && (self.showing_pdf
-                        || (self.ui.split_view_active && self.active_panel == ActivePanel::Pdf))
-                {
+                if self.pdf.active_path.is_some() && self.showing_pdf {
                     let target_page = (index as u16).min(self.pdf.total_pages.saturating_sub(1));
                     self.navigate_pdf_page(target_page)
                 } else {
@@ -304,7 +301,7 @@ impl MdEditor {
 
 pub(super) fn scroll_editor_to(y: f32) -> Task<Message> {
     operation::scroll_to(
-        iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+        workspace::current_pane().editor_scrollable_id(),
         AbsoluteOffset { x: 0.0, y },
     )
 }

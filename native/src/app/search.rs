@@ -290,7 +290,7 @@ impl MdEditor {
             (target_page + 2).min(self.pdf.total_pages.saturating_sub(1)),
         ));
         tasks.push(operation::scroll_to(
-            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+            workspace::current_pane().pdf_scrollable_id(),
             AbsoluteOffset {
                 x: 0.0,
                 y: scroll_y,
@@ -300,19 +300,11 @@ impl MdEditor {
     }
 
     pub(super) fn pdf_search_is_active(&self) -> bool {
-        self.search.file_visible
-            && self.pdf.active_path.is_some()
-            && (self.showing_pdf
-                || (self.ui.split_view_active
-                    && self.active_path.is_some()
-                    && self.active_panel == ActivePanel::Pdf))
+        self.search.file_visible && self.pdf.active_path.is_some() && self.showing_pdf
     }
 
     pub(super) fn editor_search_is_active(&self) -> bool {
-        self.search.file_visible
-            && self.active_path.is_some()
-            && !self.pdf_search_is_active()
-            && (!self.ui.split_view_active || self.active_panel == ActivePanel::Markdown)
+        self.search.file_visible && self.active_path.is_some() && !self.pdf_search_is_active()
     }
 
     pub(super) fn replace_all_in_current_document(

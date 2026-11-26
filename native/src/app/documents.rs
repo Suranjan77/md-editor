@@ -109,10 +109,27 @@ impl MdEditor {
     /// dragging a window edge or flicking through a long note does not turn
     /// into a stream of database writes.
     pub(super) fn persist_session(&mut self) {
-        self.save_current_tab_view();
-        self.persist_tabs();
+        let _ = self.for_each_pane(|app| {
+            app.save_current_tab_view();
+            app.persist_tabs();
+            app.persist_document_position();
+            Task::none()
+        });
         self.persist_window_size();
-        self.persist_document_position();
+    }
+
+    /// Save every pane's note and tab views; the first write error, if any.
+    pub(super) fn save_all_panes(&mut self) -> Option<String> {
+        let mut failure = None;
+        let _ = self.for_each_pane(|app| {
+            if let SaveOutcome::Failed(err) = app.save_active_document() {
+                failure.get_or_insert(err.to_string());
+            }
+            app.save_current_tab_view();
+            app.persist_tabs();
+            Task::none()
+        });
+        failure
     }
 
     /// Record the window geometry. Called as the window resizes rather than
@@ -288,7 +305,7 @@ impl MdEditor {
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
-        if !self.ui.split_view_active && !self.pdf.pending_pages.is_empty() {
+        if !self.pdf.pending_pages.is_empty() {
             self.pdf.pending_pages.clear();
             self.pdf.pending_links.clear();
             self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
@@ -310,7 +327,7 @@ impl MdEditor {
             self.editor.scroll_y = target_y;
             self.motion.editor_scroll = None;
             let scroll_task = operation::scroll_to(
-                iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                workspace::current_pane().editor_scrollable_id(),
                 AbsoluteOffset {
                     x: 0.0,
                     y: target_y,
@@ -375,7 +392,7 @@ impl MdEditor {
         // Restore editor scroll position after search bar toggle
         let editor_y = self.editor.scroll_y;
         tasks.push(operation::scroll_to(
-            iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+            workspace::current_pane().editor_scrollable_id(),
             AbsoluteOffset {
                 x: 0.0,
                 y: editor_y,
@@ -385,7 +402,7 @@ impl MdEditor {
         if self.pdf.active_path.is_some() {
             let pdf_y = self.pdf.scroll_y;
             tasks.push(operation::scroll_to(
-                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                workspace::current_pane().pdf_scrollable_id(),
                 AbsoluteOffset { x: 0.0, y: pdf_y },
             ));
         }
@@ -410,13 +427,18 @@ impl MdEditor {
         self.tracker.visible = get("layout_tracker_visible")
             .and_then(|value| value.parse().ok())
             .unwrap_or(self.tracker.visible);
-        self.ui.split_view_active = get("layout_split_active")
+        // The second pane itself comes back with the vault's tabs
+        // (`restore_vault_tabs`), once there is a vault to open files from.
+        self.ui.restore_split = get("layout_split_active")
             .and_then(|value| value.parse().ok())
-            .unwrap_or(self.ui.split_view_active);
+            .unwrap_or(false);
+        self.workspace.axis = get("layout_split_axis")
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default();
         self.ui.split_ratio = get("layout_split_ratio")
             .and_then(|value| value.parse::<f32>().ok())
             .unwrap_or(self.ui.split_ratio)
-            .clamp(0.25, 0.75);
+            .clamp(0.2, 0.8);
         self.ui.sidebar_width = get("layout_sidebar_width")
             .and_then(|value| value.parse::<f32>().ok())
             .unwrap_or(self.ui.sidebar_width)
@@ -445,7 +467,11 @@ impl MdEditor {
             ),
             ("layout_toc_visible", self.editor.toc_visible.to_string()),
             ("layout_tracker_visible", self.tracker.visible.to_string()),
-            ("layout_split_active", self.ui.split_view_active.to_string()),
+            ("layout_split_active", self.workspace.is_split().to_string()),
+            (
+                "layout_split_axis",
+                serde_json::to_string(&self.workspace.axis).unwrap_or_default(),
+            ),
             ("layout_split_ratio", self.ui.split_ratio.to_string()),
             ("layout_sidebar_width", self.ui.sidebar_width.to_string()),
             (

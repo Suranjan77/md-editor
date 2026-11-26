@@ -373,20 +373,14 @@ impl MdEditor {
 
     /// `PdfMessage::OpenLinkedNote`: open a highlight's note beside the PDF.
     pub(super) fn on_pdf_open_linked_note(&mut self, note_path: String) -> Task<Message> {
-        self.ui.split_view_active = true;
+        let (pane, focus) = self.focus_pane_for(&note_path, true);
+        self.showing_pdf = false;
         let open_task = self.open_file_extended(&note_path, false);
-        if self.pdf.fit_to_width {
-            Task::batch(vec![
-                open_task,
-                Task::done(Message::Pdf(PdfMessage::FitToWidth)),
-            ])
-        } else {
-            Task::batch(vec![open_task, self.restore_scroll_positions()])
-        }
+        workspace::route_to(pane, Task::batch(vec![focus, open_task]))
     }
 
     /// `PdfMessage::AnnotationFocused`: a highlight link clicked in a note; show the
-    /// PDF in split view at that highlight, opening the document if needed.
+    /// PDF beside it at that highlight, opening the document if needed.
     pub(super) fn on_pdf_annotation_focused(
         &mut self,
         document_path: String,
@@ -398,23 +392,9 @@ impl MdEditor {
             self.active_path.as_deref(),
             &document_path,
         );
-
-        let split_changed = !self.ui.split_view_active;
-        self.ui.split_view_active = true;
-        self.showing_pdf = true;
-
-        if self.pdf.active_path.as_deref() == Some(&resolved_pdf_path) {
-            self.pdf.focused_annotation_id = Some(annotation_id);
-            let nav_task = self.navigate_pdf_page(page.saturating_sub(1));
-            if split_changed {
-                Task::batch(vec![self.refit_pdf_if_needed(), nav_task])
-            } else {
-                nav_task
-            }
-        } else {
-            self.pdf.initial_target_page = Some(page.saturating_sub(1));
-            self.pdf.initial_target_annotation = Some(annotation_id);
-            self.open_pdf(&resolved_pdf_path)
-        }
+        let beside = self.active_path.is_some() && !self.showing_pdf;
+        let (pane, focus) = self.focus_pane_for(&resolved_pdf_path, beside);
+        let task = self.show_pdf_at(&resolved_pdf_path, Some(page), Some(annotation_id));
+        workspace::route_to(pane, Task::batch(vec![focus, task]))
     }
 }

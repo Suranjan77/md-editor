@@ -102,7 +102,7 @@ impl MdEditor {
         }
 
         if self.active_path.is_some()
-            && (!self.showing_pdf || self.ui.split_view_active)
+            && !self.showing_pdf
             && !self.graph.visible
             && !self.tracker.visible
             && !self.ui.settings_visible

@@ -54,9 +54,15 @@ pub struct UiState {
     pub last_save_failed: bool,
 
     // Split view & resizable panel widths
-    pub split_view_active: bool,
+    /// Pane A's share of the main area while split.
     pub split_ratio: f32,
     pub is_resizing_split: bool,
+    /// Where a divider drag started (pointer along the split, ratio then).
+    pub split_drag_origin: Option<(f32, f32)>,
+    /// The panes area, as last measured.
+    pub workspace_size: iced::Size,
+    /// The last session was split: split again once the vault's tabs load.
+    pub restore_split: bool,
     pub sidebar_width: f32,
     pub side_panel_width: f32,
     pub resizing_panel: Option<ResizingPanel>,
@@ -106,9 +112,11 @@ impl UiState {
             toast_queue: Vec::new(),
             next_toast_id: 1,
             last_save_failed: false,
-            split_view_active: false,
             split_ratio: 0.5,
             is_resizing_split: false,
+            split_drag_origin: None,
+            workspace_size: iced::Size::ZERO,
+            restore_split: false,
             sidebar_width: SIDEBAR_DEFAULT_WIDTH,
             side_panel_width: SIDE_PANEL_DEFAULT_WIDTH,
             resizing_panel: None,

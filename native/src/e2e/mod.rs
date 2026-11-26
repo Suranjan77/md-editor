@@ -20,6 +20,7 @@
 
 mod flows;
 mod monkey;
+mod panes;
 mod scenarios;
 mod telemetry;
 mod workspace;

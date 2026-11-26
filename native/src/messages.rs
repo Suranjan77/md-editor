@@ -12,6 +12,11 @@ pub enum Message {
     Search(SearchMessage),
     Ink(InkMessage),
     KeyboardShortcut(Shortcut),
+    /// From a pane's view: an interaction focuses that pane first; scrolls
+    /// and measurements run in it without moving focus.
+    FromPane(crate::app::workspace::PaneId, Box<Message>),
+    /// A result for a pane (a task it started): runs in that pane, focus stays.
+    ToPane(crate::app::workspace::PaneId, Box<Message>),
 }
 
 /// Document tab strip and tab lifecycle. Handled by `app/tabs_handler.rs`.
@@ -33,6 +38,8 @@ pub enum TabsMessage {
     DragOver(usize),
     DragEnd,
     ToggleOverflowMenu,
+    /// Move a tab to the other pane (splitting if needed).
+    MoveToOtherPane(crate::tabs::TabId),
 }
 
 /// Settings view sections.
@@ -113,6 +120,8 @@ pub enum VaultMessage {
     /// entries go to the vault root.
     SidebarSelectionCleared,
     RevealInFileManager(String),
+    /// Open a file in the pane beside the focused one (splitting if needed).
+    OpenToSide(String),
     CopyRelativePath(String),
     NameModalInputChanged(String),
     NameModalSubmit(String),
@@ -219,8 +228,13 @@ pub enum ShellMessage {
     DismissToast(u64),
     RetrySave,
     SplitViewToggle,
+    /// Close a pane of the split; its tabs move to the other pane.
+    ClosePane(crate::app::workspace::PaneId),
+    /// The panes area's size, for turning divider drags into a ratio.
+    WorkspaceMeasured(iced::Size),
     SplitViewDragStart,
-    SplitViewDragging(f32),
+    /// The pointer while the divider is dragged.
+    SplitViewDragging(iced::Point),
     SplitViewDragEnd,
     SplitViewReset,
     SidebarResizeStart,
@@ -535,6 +549,12 @@ pub enum Shortcut {
     TableOfContents,
     StudyTracker,
     SplitView,
+    /// Focus the other pane of the split (splitting first if there is none).
+    FocusOtherPane,
+    /// Move the focused pane's tab to the other pane.
+    MoveTabToOtherPane,
+    /// Side by side ⇄ stacked.
+    ToggleSplitAxis,
     Handwriting,
     /// A new handwritten sketch, shown in the open note at the caret.
     InsertSketch,

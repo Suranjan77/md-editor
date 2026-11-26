@@ -46,13 +46,28 @@ impl MdEditor {
             &pdf_path,
         );
 
-        let split_changed = !self.ui.split_view_active;
-        self.ui.split_view_active = true;
-        self.showing_pdf = true;
+        // Beside the note the link was followed from.
+        let beside = self.active_path.is_some() && !self.showing_pdf;
+        let (pane, focus) = self.focus_pane_for(&resolved_pdf_path, beside);
+        let task = self.show_pdf_at(&resolved_pdf_path, page, annotation_id);
+        workspace::route_to(pane, Task::batch(vec![focus, task]))
+    }
 
-        if self.pdf.active_path.as_deref() == Some(&resolved_pdf_path) {
+    /// Show `path` in the pane swapped in, at `page` (1-based) or the
+    /// highlight `annotation_id`: navigating if it is loaded, opening it if not.
+    pub(super) fn show_pdf_at(
+        &mut self,
+        path: &str,
+        page: Option<u16>,
+        annotation_id: Option<String>,
+    ) -> Task<Message> {
+        self.showing_pdf = true;
+        self.active_panel = ActivePanel::Pdf;
+        if self.pdf.active_path.as_deref() == Some(path) {
+            self.tabs.open(path, crate::tabs::TabKind::Pdf, false);
+            self.persist_tabs();
             self.pdf.focused_annotation_id = annotation_id;
-            let nav_task = if let Some(p) = page {
+            if let Some(p) = page {
                 self.navigate_pdf_page(p.saturating_sub(1))
             } else if let Some(ref ann_id) = self.pdf.focused_annotation_id {
                 let target_page =
@@ -64,16 +79,12 @@ impl MdEditor {
                     .unwrap_or_else(Task::none)
             } else {
                 Task::none()
-            };
-            if split_changed {
-                Task::batch(vec![self.refit_pdf_if_needed(), nav_task])
-            } else {
-                nav_task
             }
         } else {
             self.pdf.initial_target_page = page.map(|p| p.saturating_sub(1));
             self.pdf.initial_target_annotation = annotation_id;
-            self.open_pdf(&resolved_pdf_path)
+            let saved = self.tabs.find_by_path(path).map(|t| t.view.clone());
+            self.open_pdf_restoring_view(path, saved)
         }
     }
 
@@ -114,7 +125,7 @@ impl MdEditor {
         } else {
             self.editor.scroll_y = 0.0;
             let scroll_task = operation::scroll_to(
-                iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                workspace::current_pane().editor_scrollable_id(),
                 AbsoluteOffset { x: 0.0, y: 0.0 },
             );
             Task::batch(vec![open_task, scroll_task])
@@ -122,40 +133,26 @@ impl MdEditor {
     }
 
     fn open_vault_entry_by_kind(&mut self, resolved_path: &str) -> Task<Message> {
+        // Each file lives in one pane: open in the other pane, focus it there.
+        if let Some(pane) = self
+            .pane_holding(resolved_path)
+            .filter(|pane| *pane != self.workspace.current)
+        {
+            return self.move_to_pane(resolved_path, pane, true);
+        }
         let lower = resolved_path.to_lowercase();
         if lower.ends_with(".md") || lower.ends_with(".markdown") {
-            if self.ui.split_view_active && self.pdf.active_path.is_some() {
-                let task = self.open_file(resolved_path);
-                self.ui.split_view_active = true;
-                task
-            } else {
-                self.showing_pdf = false;
-                self.open_file(resolved_path)
-            }
+            self.showing_pdf = false;
+            self.open_file(resolved_path)
         } else if lower.ends_with(".pdf") {
-            if self.ui.split_view_active && self.active_path.is_some() {
-                let saved = self
-                    .tabs
-                    .list()
-                    .iter()
-                    .find(|t| t.path == resolved_path)
-                    .map(|t| t.view.clone());
-                let task = self.open_pdf_restoring_view(resolved_path, saved);
-                self.ui.split_view_active = true;
-                Task::batch(vec![task, self.refit_pdf_if_needed()])
-            } else {
-                self.pdf.active_path = Some(resolved_path.to_string());
-                self.showing_pdf = true;
-                let saved = self
-                    .tabs
-                    .list()
-                    .iter()
-                    .find(|t| t.path == resolved_path)
-                    .map(|t| t.view.clone());
-                self.open_pdf_restoring_view(resolved_path, saved)
-            }
+            self.pdf.active_path = Some(resolved_path.to_string());
+            self.showing_pdf = true;
+            let saved = self
+                .tabs
+                .find_by_path(resolved_path)
+                .map(|t| t.view.clone());
+            self.open_pdf_restoring_view(resolved_path, saved)
         } else if is_supported_image_path(&lower) {
-            self.ui.split_view_active = false;
             self.open_image(resolved_path)
         } else if lower.ends_with(".ink") {
             self.open_ink_page(resolved_path)

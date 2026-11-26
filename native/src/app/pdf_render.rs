@@ -10,7 +10,7 @@ impl MdEditor {
         generation: u64,
         result: Result<u16, String>,
     ) -> Task<Message> {
-        if generation != self.pdf.render_generation {
+        if generation != self.pdf.document_generation {
             return Task::none();
         }
         let pages = match result {
@@ -330,10 +330,7 @@ impl MdEditor {
             return Task::none();
         }
         if self.pdf.active_path.is_none()
-            || (!self.showing_pdf && !(self.ui.split_view_active && self.active_path.is_some()))
-            || (self.ui.split_view_active
-                && self.active_path.is_some()
-                && self.active_panel != ActivePanel::Pdf)
+            || !self.showing_pdf
             || self.search.visible
             || self.search.file_visible
             || self.ui.active_modal.is_some()
@@ -402,7 +399,7 @@ impl MdEditor {
 /// Scroll the PDF page list to an absolute vertical offset.
 pub(super) fn scroll_pdf_to(y: f32) -> Task<Message> {
     operation::scroll_to(
-        iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+        workspace::current_pane().pdf_scrollable_id(),
         AbsoluteOffset { x: 0.0, y },
     )
 }

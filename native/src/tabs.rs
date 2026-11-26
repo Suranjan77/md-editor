@@ -200,12 +200,10 @@ impl Tabs {
         self.tabs.iter().find(|t| t.id == id)
     }
 
-    #[cfg(test)]
     pub fn get_mut(&mut self, id: TabId) -> Option<&mut Tab> {
         self.tabs.iter_mut().find(|t| t.id == id)
     }
 
-    #[cfg(test)]
     pub fn find_by_path(&self, path: &str) -> Option<&Tab> {
         self.tabs.iter().find(|t| t.path == path)
     }

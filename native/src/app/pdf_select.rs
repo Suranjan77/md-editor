@@ -193,7 +193,35 @@ impl MdEditor {
         pdf_path: &str,
         ann: &md_editor_core::pdf::PdfAnnotation,
     ) -> Result<(), String> {
-        if self.active_path.as_deref() == Some(note_path) {
+        // The note may be on screen in either pane.
+        let showing = self.workspace.panes().into_iter().find(|pane| {
+            self.with_pane(*pane, |app| app.active_path.as_deref() == Some(note_path))
+        });
+        if let Some(pane) = showing {
+            return self.with_pane(pane, |app| app.append_to_open_note(pdf_path, ann));
+        }
+        let content = self.linked_pdf_note_file_content(note_path, pdf_path, ann);
+        md_editor_core::vault::save_file(&self.state, note_path, &content)
+            .map_err(|e| e.to_string())?;
+        self.note_self_write(note_path);
+        let _ = self.for_each_pane(|app| {
+            app.editor.update_retained(note_path, |buffer| {
+                buffer.replace_all_text(&content);
+                buffer.mark_saved();
+            });
+            Task::none()
+        });
+        Ok(())
+    }
+
+    /// Add the highlight's section to the note swapped in, as one undo step,
+    /// and save it.
+    fn append_to_open_note(
+        &mut self,
+        pdf_path: &str,
+        ann: &md_editor_core::pdf::PdfAnnotation,
+    ) -> Result<(), String> {
+        {
             let current = self.editor.buffer.text();
             let updated = append_linked_pdf_note_section(&current, pdf_path, ann);
             if updated != current {
@@ -202,25 +230,17 @@ impl MdEditor {
                 self.editor.mark_dirty_now();
                 self.editor.toc_entries = views::toc::get_toc(&updated);
             }
-            return match self.save_active_document() {
+            match self.save_active_document() {
                 SaveOutcome::Failed(err) => Err(err.to_string()),
                 SaveOutcome::Saved | SaveOutcome::NothingToDo => Ok(()),
-            };
+            }
         }
-        let content = self.linked_pdf_note_file_content(note_path, pdf_path, ann);
-        md_editor_core::vault::save_file(&self.state, note_path, &content)
-            .map_err(|e| e.to_string())?;
-        self.note_self_write(note_path);
-        self.editor.update_retained(note_path, |buffer| {
-            buffer.replace_all_text(&content);
-            buffer.mark_saved();
-        });
-        Ok(())
     }
 
-    /// `PdfMessage::RegionSelected`: Alt+drag picked part of a page. The open
-    /// note gets an image of it, rendered live from the PDF, as one undo step
-    /// at the caret; with no note open the Markdown goes to the clipboard.
+    /// `PdfMessage::RegionSelected`: Alt+drag picked part of a page. The note
+    /// on screen (the other pane's, beside the PDF, or this pane's) gets an
+    /// image of it, rendered live from the PDF, as one undo step at its caret;
+    /// with no note on screen the Markdown goes to the clipboard.
     pub(super) fn on_pdf_region_selected(
         &mut self,
         page: u16,
@@ -240,10 +260,29 @@ impl MdEditor {
             height: fraction.height * page_h,
         };
         let markdown = crate::pdf_notes::pdf_crop_markdown(&pdf_path, page, region);
-        if self.active_path.is_some() {
+        // The note beside the PDF wins; else this pane's own note (shown,
+        // or behind the PDF when there is only one pane).
+        let other_note = self
+            .parked()
+            .is_some_and(|docs| docs.active_path.is_some() && !docs.showing_pdf)
+            .then(|| self.workspace.current.other());
+        let own_note = (self.active_path.is_some()
+            && (!self.showing_pdf || !self.workspace.is_split()))
+        .then_some(self.workspace.current);
+        let note_pane = other_note.or(own_note);
+        if let Some(pane) = note_pane {
             self.ui.toast = Some(format!("Inserted page {} crop into the note", page + 1));
-            // Re-highlighting the new line starts rendering the crop.
-            return self.run_editor_command(EditorCommand::InsertBlock(markdown));
+            let here = pane == self.workspace.current;
+            let task = self.with_pane(pane, |app| {
+                // Re-highlighting the new line starts rendering the crop.
+                let task = app.run_editor_command(EditorCommand::InsertBlock(markdown));
+                // A pane without focus does not autosave: write it now.
+                if !here && let SaveOutcome::Failed(err) = app.save_active_document() {
+                    app.ui.toast = Some(format!("Inserted the crop, but saving failed: {err}"));
+                }
+                task
+            });
+            return super::workspace::route_to(pane, task);
         }
         self.ui.toast = Some(format!(
             "Copied a link to this part of page {}; paste it into a note",
@@ -285,12 +324,7 @@ impl MdEditor {
     }
 
     pub(super) fn pdf_copy_shortcut_is_active(&self) -> bool {
-        self.pdf.selection.is_some()
-            && self.pdf.active_path.is_some()
-            && (self.showing_pdf
-                || (self.ui.split_view_active
-                    && self.active_path.is_some()
-                    && self.active_panel == ActivePanel::Pdf))
+        self.pdf.selection.is_some() && self.pdf.active_path.is_some() && self.showing_pdf
     }
 
     /// Create a highlight annotation over the current PDF text selection.

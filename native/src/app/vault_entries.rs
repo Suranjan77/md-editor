@@ -88,7 +88,8 @@ impl MdEditor {
             self.ui.toast = Some(msg);
             return Task::none();
         }
-        if let SaveOutcome::Failed(err) = self.save_active_document() {
+        // Either pane may show something under the renamed path.
+        if let Some(err) = self.save_all_panes() {
             self.ui.toast = Some(format!("Not renaming: {err}"));
             return Task::none();
         }
@@ -96,15 +97,19 @@ impl MdEditor {
             Ok(()) => {
                 self.vault.entries =
                     md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                rename_open_path(&mut self.active_path, old_path, &new_path);
-                rename_open_path(&mut self.pdf.active_path, old_path, &new_path);
-                rename_open_path(&mut self.active_image_path, old_path, &new_path);
                 rename_open_path(&mut self.vault.selected_path, old_path, &new_path);
                 let mut graph_active = self.graph.active_path.clone();
                 rename_open_path(&mut graph_active, old_path, &new_path);
                 self.graph.set_active_path(graph_active);
-                self.tabs.rename_path(old_path, &new_path);
-                self.persist_tabs();
+                let reload = self.for_each_pane(|app| {
+                    rename_open_path(&mut app.active_path, old_path, &new_path);
+                    rename_open_path(&mut app.pdf.active_path, old_path, &new_path);
+                    rename_open_path(&mut app.active_image_path, old_path, &new_path);
+                    app.editor.forget_retained(old_path);
+                    app.tabs.rename_path(old_path, &new_path);
+                    app.persist_tabs();
+                    app.reload_open_note_from_disk()
+                });
                 if let Some(ref active) = self.active_path {
                     let _ =
                         md_editor_core::config::set_sys_config(&self.state, "last_file", active);
@@ -114,7 +119,7 @@ impl MdEditor {
                 self.ui.modal_error = None;
                 self.ui.toast = Some("Renamed".to_string());
                 self.invalidate_graph();
-                self.reload_open_note_from_disk()
+                reload
             }
             Err(error) => {
                 let msg = error.to_string();
@@ -154,7 +159,6 @@ impl MdEditor {
             Ok(()) => {
                 self.vault.entries =
                     md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
-                self.editor.forget_retained(&path);
                 let child_prefix = format!("{path}/");
                 let gone =
                     |p: Option<&str>| p.is_some_and(|p| p == path || p.starts_with(&child_prefix));
@@ -164,40 +168,51 @@ impl MdEditor {
                 self.vault
                     .expanded_folders
                     .retain(|folder| !gone(Some(folder.as_str())));
-                let was_active_deleted = gone(self.active_path.as_deref())
-                    || gone(self.pdf.active_path.as_deref())
-                    || gone(self.active_image_path.as_deref());
-                if gone(self.active_path.as_deref()) {
-                    self.active_path = None;
-                    self.editor.buffer = DocBuffer::new();
-                    self.editor.autosave_pending_since = None;
-                    self.editor.highlight = Default::default();
-                    self.editor.toc_entries.clear();
-                }
-                if gone(self.pdf.active_path.as_deref()) {
-                    self.clear_pdf_pane();
-                }
-                if gone(self.active_image_path.as_deref()) {
-                    self.active_image_path = None;
-                    self.active_image = None;
-                }
                 if gone(self.graph.active_path.as_deref()) {
                     self.graph.set_active_path(None);
                 }
-                self.tabs.remove_deleted_path(&path);
-                self.persist_tabs();
+                let next = self.for_each_pane(|app| app.forget_deleted_in_pane(&path));
                 self.ui.active_modal = None;
                 self.ui.modal_error = None;
                 self.ui.link_note_picker_search.clear();
                 self.ui.toast = Some("Deleted".to_string());
                 self.invalidate_graph();
-                if was_active_deleted && let Some(next_id) = self.tabs.active_id() {
-                    return self.activate_tab(next_id);
-                }
+                return next;
             }
             Err(err) => self.ui.toast = Some(err.to_string()),
         }
         Task::none()
+    }
+
+    /// `path` (a file, or a folder and everything in it) was deleted: drop it
+    /// from the pane swapped in, and show the next tab if it was on screen.
+    fn forget_deleted_in_pane(&mut self, path: &str) -> Task<Message> {
+        let child_prefix = format!("{path}/");
+        let gone = |p: Option<&str>| p.is_some_and(|p| p == path || p.starts_with(&child_prefix));
+        self.editor.forget_retained(path);
+        let was_active_deleted = gone(self.active_path.as_deref())
+            || gone(self.pdf.active_path.as_deref())
+            || gone(self.active_image_path.as_deref());
+        if gone(self.active_path.as_deref()) {
+            self.active_path = None;
+            self.editor.buffer = DocBuffer::new();
+            self.editor.autosave_pending_since = None;
+            self.editor.highlight = Default::default();
+            self.editor.toc_entries.clear();
+        }
+        if gone(self.pdf.active_path.as_deref()) {
+            self.clear_pdf_pane();
+        }
+        if gone(self.active_image_path.as_deref()) {
+            self.active_image_path = None;
+            self.active_image = None;
+        }
+        self.tabs.remove_deleted_path(path);
+        self.persist_tabs();
+        match self.tabs.active_id() {
+            Some(next_id) if was_active_deleted => self.activate_tab(next_id),
+            _ => Task::none(),
+        }
     }
 
     pub(super) fn reset_vault_ui(&mut self, result: Result<(), String>) -> bool {
