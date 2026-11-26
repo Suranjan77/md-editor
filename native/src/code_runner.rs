@@ -1,4 +1,4 @@
-//! Opt-in sandboxed/bounded fenced code block execution (`Run Code Block`).
+//! Fenced code block execution on request (`Run Code Block`): `sh` or `python3`, in the note's folder, with a 5 s timeout and capped output. Not sandboxed: code runs with the user's rights.
 
 use std::io::Read;
 use std::path::Path;
@@ -135,6 +135,9 @@ pub fn run_fence_command(lang: &str, code: &str, cwd: Option<&Path>) -> Result<R
     {
         cmd.current_dir(dir);
     }
+    // Its own process group, so a timeout also ends what the code started.
+    #[cfg(target_os = "linux")]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
 
     let mut child = cmd
         .spawn()
@@ -151,6 +154,7 @@ pub fn run_fence_command(lang: &str, code: &str, cwd: Option<&Path>) -> Result<R
             Ok(Some(status)) => break Ok(status),
             Ok(None) => {
                 if started.elapsed() >= EXEC_TIMEOUT {
+                    kill_process_group(&child);
                     let _ = child.kill();
                     let _ = child.wait();
                     break Err("Timed out after 5s".to_string());
@@ -176,6 +180,23 @@ pub fn run_fence_command(lang: &str, code: &str, cwd: Option<&Path>) -> Result<R
         truncated: out_trunc || err_trunc,
     })
 }
+
+/// Kill every process in `child`'s group (it leads one, see `process_group`).
+#[cfg(target_os = "linux")]
+fn kill_process_group(child: &std::process::Child) {
+    let Ok(pgid) = libc::pid_t::try_from(child.id()) else {
+        return;
+    };
+    // SAFETY: `kill` takes plain integers and touches no memory of ours; a
+    // negative pid names the group `child` leads, which holds only processes
+    // the code block started.
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kill_process_group(_child: &std::process::Child) {}
 
 fn read_bounded(pipe: Option<impl Read>) -> (String, bool) {
     let Some(mut reader) = pipe else {

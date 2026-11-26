@@ -1,4 +1,4 @@
-//! Code-health guardrail (code-health plan W6): no non-test module over ~800 lines and no function over 150 lines, in core and native, with a ratchet list for today's offenders that may only shrink.
+//! Code-health guardrail: no non-test module over ~800 lines and no function over 150 lines, in core and native, with a ratchet list for today's offenders that may only shrink.
 
 use std::path::{Path, PathBuf};
 

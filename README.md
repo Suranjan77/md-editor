@@ -1,197 +1,162 @@
 # MD Editor
 
-**A calm, local-first Markdown workspace for notes, PDFs, knowledge graphs, handwriting, search, backlinks, and study progress.**
+**A local-first desk for research: Markdown notes, PDFs, a knowledge graph, handwriting and
+study tracking, in one native app, on plain files.**
 
-![MD Editor intro](images/intro.gif)
+![MD Editor: writing a note, linking with completion, reading a paper beside it, the knowledge graph, the Daily Desk and the study tracker](images/intro.gif)
 
-MD Editor is a native desktop app for people who do serious work with ordinary files. Open a
-folder as your vault, write in Markdown, read PDFs beside your notes, keep track of study
-sessions, and search across everything without moving your thinking into a cloud-only system.
+Open a folder and it becomes your vault. Write in Markdown with a live preview, read papers
+beside your notes, pull a figure from a PDF into a note, sketch with a pen, and see how
+everything links together. Your work stays as ordinary `.md`, `.pdf`, image and `.ink.svg`
+files that other tools can open. There are no accounts and no telemetry.
 
-It is designed to feel personal and practical: a desk for your notes, papers, references, and
-progress, all stored locally in formats you can keep using outside the app.
+MD Editor is written in Rust ([Iced](https://github.com/iced-rs/iced) and Google's
+[PDFium](https://pdfium.googlesource.com/pdfium/)) and runs on Arch Linux.
 
 ---
 
-## At A Glance
+## Write
 
-| Work locally | Read deeply | Find quickly | Keep momentum |
-| --- | --- | --- | --- |
-| Use any folder as a vault. Your Markdown, PDFs, and images stay as normal files. | Open PDFs beside notes, copy text, create sidecar highlights, and link important passages back to Markdown. | Search the active file, the whole vault, and PDF text, or explore their connections in the knowledge graph. | Track sessions, reading, project stages, and study gates in the same workspace. |
+![A note with a callout, numbered math, a figure cropped live from a PDF, and a table](images/editor.png)
 
-## Why It Exists
+- **Live preview that stays editable.** Markdown markers hide everywhere except the line
+  you are on, so you always edit the real source.
+- **Research Markdown.** Headings, emphasis, ~~strikethrough~~, tasks, tables, code with
+  syntax highlighting, numbered `$$` math, YAML frontmatter, and callouts such as
+  `> [!claim]`, `> [!question]` and `> [!output]`.
+- **Live PDF crops.** Alt-drag over a figure or equation in a PDF, and a line like
+  `![Fig. 1](pdf://papers/paper.pdf?page=2&crop=235,62,150,140)` shows that part of the page
+  in your note. It is rendered from the PDF each time, with no image file to keep.
+- **Sketches in notes.** `Ctrl+Shift+I` starts a handwritten sketch at the caret; it shows
+  inline and opens in the pen canvas.
+- **Completion.** `[[` completes notes and their headings, `@` completes citations from
+  `.bib` files and the PDFs in your vault, and `/` at the start of a line inserts callouts,
+  tables, math and code blocks.
+- **Editing keys you already know.** Word jumps and word deletes, `PageUp`/`PageDown`,
+  `Tab`/`Shift+Tab` on selected lines, double-click to select a word, triple-click a line,
+  word-sized undo, find and replace with regex.
+- **Paste or drop images.** Screenshots and image files are stored in the vault and linked
+  for you.
+- **Calculate and run.** `Ctrl+=` evaluates the math under the caret. `Ctrl+Alt+R` runs a
+  `sh` or `python` code block and writes its output below it. Nothing runs unless you
+  ask, and it is **not sandboxed**: the code runs with your permissions.
+- **Safe saving.** Notes save 400 ms after you stop typing, with atomic writes that keep
+  permissions and symlinks. If another program changed the file meanwhile, its version is
+  kept as a conflict copy instead of being overwritten.
 
-Most writing tools are either too small for research or too eager to own your workflow.
-MD Editor takes a quieter route.
+![Typing [[ suggests notes from the vault](images/completion.png)
 
-You bring a folder. The app gives you a native workspace around it: an editor, file tree,
-backlinks, knowledge graph, table of contents, PDF viewer, search tools, image preview, and
-study tracker. When you close the app, your work is still there as plain Markdown and local files.
+## Read
 
-Use it for:
+![A note and a paper side by side, with a highlight on the paper](images/split-dark.png)
 
-- research notes and reading logs;
-- study vaults and course material;
-- project journals and technical documentation;
-- paper review, PDF annotation, and linked notes;
-- any long-running body of notes that should remain portable.
+- **Two panes, any mix.** Note + PDF, note + note or PDF + PDF, side by side or stacked
+  (`Ctrl+\`). Each pane has its own tabs, and *Save Desk* keeps a layout to come back to.
+- **A PDF reader for papers.** Continuous scrolling that stays fast on 500-page books, an
+  outline even for PDFs without bookmarks (rebuilt from the contents page or the
+  headings), and previews of "Eq. (3)", "Fig. 2", "Table 1" or "§3.2" when you right-click
+  them.
+- **Highlights that travel with the vault.** Highlights, quick notes and margin ink never
+  change the PDF. They live in SQLite and in `.jsonl` files under `<vault>/.md-editor/`, so
+  syncing the vault with Git or Syncthing brings them along.
+- **Linked notes.** Send a highlight to a note as a quoted section with a `pdf://` link
+  back to that exact spot.
+- **Search inside the PDF**, including a loose mode that matches across line breaks and
+  hyphenation.
 
-## The Workspace
+| Light theme | |
+| --- | --- |
+| ![The same desk in the light theme](images/split-light.png) | Dark and light themes, interface scale, reading font, text size and line width are in Settings (`Ctrl+,`). The whole app works from the keyboard; `F6` moves between regions. |
 
-### 1. Open A Vault
+## Connect
 
-Choose a folder and MD Editor turns it into a working vault. The sidebar indexes supported
-files and gives you a familiar tree for opening, creating, and deleting notes. Indexing skips
-`node_modules`, `target`, `build`, `dist`, `__pycache__`, `.trash`, and every dotfolder, so
-`.git` stays out of the way, along with any folders you add in Settings. A filesystem
-watcher picks up changes made outside the app.
+![The knowledge graph with typed links between notes and a PDF](images/graph.png)
 
-Every note, PDF and image opens in a tab that remembers its place — caret and undo
-history, page and zoom — and the tabs come back the next time you open the vault. Dark and
-light themes, the interface scale, the reading font, text size and line width are in
-Settings (`Ctrl+,`); the whole app is usable from the keyboard (`F6` moves between regions).
+- **Knowledge graph** (`Ctrl+G`) of notes, PDFs and sketches, drawn on the GPU, for the
+  whole vault or around the open note.
+- **Typed links.** Write `supports:: [[Claim]]`, `contradicts:: [[Paper]]` or
+  `derives:: [[Equation]]` in a note and the graph draws an arrow, a dashed line or a
+  dot-dash line. Node shapes show what each node is: disc for a note, page for a PDF,
+  diamond for a sketch, ring for a missing link.
+- **Pinboards.** Pin nodes where you want them and save the arrangement by name.
+- **Backlinks and outline** beside the note; bare `[[Name]]` links find notes in any
+  subfolder, and renaming a note or folder fixes the links to it.
 
-### 2. Write In Markdown
+## Find
 
-- Hybrid live preview: markers hide when the cursor is elsewhere and reappear on the line
-  you are editing, so you always edit real source.
-- Headings, emphasis, links, blockquotes, task checkboxes, tables, images, and math.
-- Paste a screenshot, paste or drop image files, or use Insert image…: they are stored as
-  attachments in the vault and linked from the note.
-- Fenced code blocks with syntax highlighting.
-- Wide tables and code blocks scroll horizontally on their own.
-- In-file find with regex and match case, replace one at a time or all at once.
-- Auto-pairing of brackets and quotes, with contraction apostrophes left alone.
-- List continuation, including numbered lists that increment.
-- Undo grouped into word-sized runs, preserved when you switch between notes.
-- Table of contents navigation, and backlinks for discovering connected material — bare
-  `[[Name]]` links resolve across subfolders by filename.
-- Autosave 400ms after typing stops, with atomic writes: a crash cannot truncate a note, and
-  existing permissions and symlinks are preserved.
+![The command palette searching commands](images/palette.png)
 
-### 3. Explore The Knowledge Graph
+- `Ctrl+P`: one palette for commands and files.
+- `Ctrl+Shift+F`: search the whole vault, PDF text and your PDF notes included, with
+  matches in file names ranked higher. Choosing a result opens it at the match.
+- `Ctrl+F`: find in the note or PDF you are looking at.
 
-Open the Knowledge Graph from the toolbar, the command palette, or with
-`Ctrl+G`. Global view maps the vault's notes and PDFs; Local view follows the
-active note or PDF by one or two hops. Markdown notes, PDFs, and unresolved
-targets are shown as distinct nodes, while both wikilinks and links created from
-PDF annotations become connections.
+## Keep going
 
-Pan and zoom the canvas, drag notes into place for the current session, select a
-node to inspect its incoming and outgoing links, or open it directly. Search and
-filters can narrow the graph to useful material, while related-note suggestions
-and vault-health summaries reveal unconnected notes, broken links, and highly
-connected hubs.
+| Daily Desk | Study tracker |
+| --- | --- |
+| ![Today's daily note with tasks rolled over and a synthesis brief](images/daily.png) | ![The study tracker with recent sessions and a 14-day chart](images/tracker.png) |
 
-Graph connections reflect the saved vault, so new wikilinks appear after save.
+- **Daily Desk** (`Ctrl+D`) opens `daily/YYYY-MM-DD.md`. A new day starts with yesterday's
+  unchecked tasks, a brief of open `[!question]` and `[!claim]` callouts from your notes,
+  and what you studied last.
+- **Study tracker** (`Ctrl+T`). A timed session records which notes, PDFs and sketches you
+  worked on, pages read, words written and highlights made. The tracker also keeps your
+  reading, projects and checkpoint gates. It ships with a sample curriculum, which you
+  replace with your own in its JSON config.
 
-### 4. Keep References Beside Your Notes
+## Write by hand
 
-PDFs open inside the app, so reading and writing happen in one place.
+`Ctrl+I` opens a pen canvas in its own window, for a tablet or a second screen. Pen
+pressure works on Wayland. You get pen, highlighter, eraser and lasso
+tools, ruled, grid or dotted paper, and a ring menu on the pen's side button. Pages save as
+`.ink.svg`: browsers and GitHub show them as ordinary SVG, and MD Editor reopens them with
+every stroke editable.
 
-- Continuous page rendering, fit-to-width, and zoom, supersampled so pages stay sharp in a
-  narrow split pane and on HiDPI displays.
-- A PDF table of contents, recovered from the document itself when there are no embedded
-  bookmarks — from a printed contents page, its dot leaders, or a typographic heuristic.
-- Internal PDF links, plus recognition of by-number cross-references (equations, figures,
-  tables, sections) that you can right-click to preview in place.
-- Text selection and copy.
-- PDF search with highlighted matches, including a loose mode that matches across line breaks.
-- Sidecar highlights with auto-cycling colours, quick notes, and an orphan/drift report.
-- Linked Markdown notes with a `pdf://` deep link back to the exact page and highlight.
+---
 
-PDF highlights and recognized references are stored separately, so the original PDF is never
-modified.
+## Your files, your machine
 
-Presentations are best exported to PDF, where they get search, highlights, quick notes and
-`pdf://` links like any other paper.
+- The vault is a normal folder; MD Editor never moves or converts your files.
+- Settings, window layout, PDF text caches and the search index live in one SQLite file,
+  `~/.local/share/md-editor/md_editor_settings.sqlite` (`$XDG_DATA_HOME` is respected); the
+  log is `~/.local/state/md-editor/md-editor.log`. `MD_EDITOR_DATA_DIR` points both at
+  another folder.
+- PDF highlights and study sessions are also written to `<vault>/.md-editor/` so that they
+  sync with the vault.
+- Nothing is sent anywhere.
 
-### 5. Write By Hand
-
-`Ctrl+I` opens a handwriting canvas in its own window, ready for a tablet or a second
-monitor. On Windows, pen pressure shapes every stroke; elsewhere it works with a mouse. Pen,
-highlighter, eraser and lasso tools, ruled, grid or dotted paper, and a ring menu summoned
-with the pen's barrel button. Pages save as `.ink` files beside the note you are working on.
-
-### 6. Search Without Breaking Flow
-
-- `Ctrl+F` in Markdown searches the active note.
-- Global search scans the vault and indexed PDF text through SQLite FTS5.
-- `Ctrl+F` in the PDF pane searches the active PDF.
-- In split view, `Ctrl+F` follows whichever pane you last touched.
-- `Ctrl+P` opens a command palette that searches commands and vault files together.
-
-### 7. Track Study Progress
-
-A built-in tracker records sessions, reading, project stages, and checkpoint gates. It ships
-seeded with a four-year efficient-ML research roadmap, which you replace with your own
-through a JSON config tab — the tracker itself only knows about phases, projects, gates, and
-reading sections.
-
-## Screenshots
-
-### Markdown Editing
-
-![Markdown editing](images/markdown_window.png)
-
-### Notes And PDFs Together
-
-![Markdown and PDF split view](images/split_view.png)
-
-### Study Tracker
-
-![Study tracker](images/study_tracker.png)
-
-## A Local-First Promise
-
-MD Editor does not hide your work inside a proprietary database.
-
-- Your vault is a normal folder.
-- Notes are normal Markdown files.
-- PDFs and images stay where you put them.
-- Settings and app state live in one SQLite file under `~/.local/share/md-editor/`.
-- Nothing is sent
-  anywhere — no accounts, no telemetry.
-
-The app creates a single SQLite file:
-
-```text
-md_editor_settings.sqlite
-```
-
-It lives in `~/.local/share/md-editor/` (`$XDG_DATA_HOME/md-editor/` when set). The log,
-`md-editor.log`, is in `~/.local/state/md-editor/`. A database left beside the executable by
-an older portable build is copied there on first run; the original is left in place.
-`MD_EDITOR_DATA_DIR` points both at another folder (a throwaway profile, for example).
-
-## Supported Files
+## Supported files
 
 | Type | Extensions |
 | --- | --- |
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
 | Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp` |
-| Handwritten pages | `.ink` |
+| Handwritten pages | `.ink.svg` (and older `.ink`) |
+| Citations | `.bib` (read for `@` completion) |
 
-## Supported Platforms
+Indexing skips `node_modules`, `target`, `build`, `dist`, `__pycache__`, `.trash`, every
+dot-folder, and any folders you exclude in Settings.
 
-MD Editor targets **Arch Linux** (x86_64), on Wayland or X11. Other platforms are not
-supported for now.
+## Documentation
+
+- [User Guide](wiki/User-Guide-and-Feature-Manual.md) and
+  [Keyboard Shortcuts](wiki/Keyboard-Shortcuts.md)
+- [Developer wiki](wiki/Home.md): architecture, data flows, testing, and where to change
+  what
+- [Open items](docs/open-items.md): what is not finished yet
 
 ## Install
 
-From the AUR, with any AUR helper:
-
-```bash
-yay -S md-editor-git     # latest main
-yay -S md-editor         # tagged releases
-```
-
-Or build the package from a checkout (`packaging/arch/`):
+Build and install the Arch package from a checkout (`packaging/arch/`):
 
 ```bash
 scripts/build-arch-package.sh -si   # builds target/arch-package/*.pkg.tar.zst and installs it
 ```
+
+The same PKGBUILDs (`md-editor-git` for the latest `main`, `md-editor` for tagged releases)
+are ready for the AUR but not published there yet.
 
 The package installs `/usr/bin/md-editor`, PDFium at `/usr/lib/md-editor/libpdfium.so`, a
 desktop entry (MD Editor opens Markdown and PDF files from the file manager) and

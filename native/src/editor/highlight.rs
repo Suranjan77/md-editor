@@ -245,6 +245,12 @@ impl Highlighted {
         self.revision
     }
 
+    /// The theme the lines were coloured for (`None` before the first update).
+    #[cfg(test)]
+    pub fn theme(&self) -> Option<crate::design::ActiveTheme> {
+        self.theme
+    }
+
     #[cfg(test)]
     pub fn new(text: &str) -> Self {
         let mut highlighted = Self::default();

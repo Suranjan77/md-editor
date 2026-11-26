@@ -159,10 +159,13 @@ impl MdEditor {
         crate::design::set_active_theme(active);
         self.persist_design_settings();
         if changed {
-            // Span colours come from the theme: re-highlight the open note.
-            self.editor.refresh_highlighting();
-            self.editor.forget_math();
-            return self.editor.load_math(self.ui.scale_factor);
+            // Span colours and math ink come from the theme: repaint the note
+            // in every pane, not just the focused one.
+            return self.for_each_pane(|app| {
+                app.editor.refresh_highlighting();
+                app.editor.forget_math();
+                app.editor.load_math(app.ui.scale_factor)
+            });
         }
         Task::none()
     }

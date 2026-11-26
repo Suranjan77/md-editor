@@ -145,3 +145,36 @@ fn p3_panes_are_restored_on_relaunch() {
     assert_eq!(shown, ["Index.md", "notes/Optimizers.md"]);
     app.finish();
 }
+
+/// Switching theme repaints the note in the pane without focus too: its
+/// text was left in the old theme's colours (light grey on a light page).
+#[test]
+fn p4_theme_switch_repaints_both_panes() {
+    use crate::design::{ActiveTheme, ThemeMode};
+    use crate::messages::SettingsMessage;
+
+    let vault = research_vault();
+    let mut app = boot("p4-theme-both-panes", &vault, Some("Index.md"));
+    app.send(Message::Vault(VaultMessage::OpenToSide(
+        "papers/dummy.pdf".to_string(),
+    )));
+    let probe = app.probe();
+    assert_eq!(probe.focused_pane, PaneId::B);
+    assert_eq!(probe.other_pane_path.as_deref(), Some("Index.md"));
+    assert_eq!(probe.other_pane_theme, Some(ActiveTheme::Dark));
+
+    app.send(Message::Settings(SettingsMessage::ThemeModeSelected(
+        ThemeMode::Light,
+    )));
+    assert_eq!(
+        app.probe().other_pane_theme,
+        Some(ActiveTheme::Light),
+        "the note beside the PDF kept the dark theme's colours"
+    );
+    app.screenshot("light");
+    app.send(Message::Settings(SettingsMessage::ThemeModeSelected(
+        ThemeMode::Dark,
+    )));
+    assert_eq!(app.probe().other_pane_theme, Some(ActiveTheme::Dark));
+    app.finish();
+}

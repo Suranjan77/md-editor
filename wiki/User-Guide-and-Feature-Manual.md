@@ -188,9 +188,11 @@ not deliver drops there); copy and paste, or use Insert image….
 - **Literate math & code blocks** — press `Ctrl+=` (*Evaluate Math*) inside `$...$` / `$$...$$`
   or on a selection to compute arithmetic and common LaTeX (`\frac`, `\sqrt`, `\pi`, trig,
   logs) and append `= result` in one undoable step. Press `Ctrl+Alt+R` (*Run Code Block*)
-  inside a `sh`, `bash`, or `python` fenced block to run it on demand (strictly opt-in,
-  5-second timeout, 64 KB output limit) and insert or update a `> [!output]` callout
-  immediately below the fence.
+  inside a `sh`, `bash`, or `python` fenced block to run it and insert or update a
+  `> [!output]` callout immediately below the fence. Nothing runs unless you ask. The code
+  runs in the note's folder **with your own permissions — it is not sandboxed**, so run only
+  code you trust. It stops after 5 seconds (with anything it started) and keeps at most
+  64 KB of output.
 - **Word-sized undo** — one `Ctrl+Z` takes back a burst of typing, not one character. A run
   breaks at a pause, a newline, or a cursor jump.
 
@@ -398,7 +400,8 @@ Press `Ctrl+D` (or click **Daily desk** on the activity rail, or run *Daily Desk
 - If it is new, MD Editor rolls over unchecked `- [ ]` tasks from your most recent prior
   daily note (ignoring completed `- [x]` tasks and code blocks), scans vault notes for up
   to five `> [!question]` and `> [!claim]` callouts into a **Synthesis Brief** with
-  clickable wikilinks, and adds a concise Study Log summary when sessions exist.
+  clickable wikilinks, and adds a Study Log line for the last day you logged study
+  sessions before today (sessions and hours that day).
 
 ---
 

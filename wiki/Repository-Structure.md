@@ -13,13 +13,13 @@ md-editor/
 ├── native/               md-editor-native: the Iced app (shell, editor widget, viewers, graph, ink)
 │   └── shaders/          WGSL for the knowledge-graph GPU layer
 ├── wiki/                 This documentation (authoritative)
-├── docs/                 The Field Handbook PDF and its HTML sources (a periodic snapshot)
-├── tests-fixtures/       Sample PDFs used by tests
-├── images/               README screenshots
+├── docs/                 Design-system spec (design-system/) and open-items.md
+├── tests-fixtures/       Sample PDFs used by tests; showcase/ holds the README demo paper
+├── images/               README screenshots and GIF (scripts/readme-media.sh)
 ├── .github/workflows/    CI: quality gate (ci.yml) and Windows/Linux release builds
 ├── packaging/arch/       PKGBUILDs (AUR md-editor, md-editor-git) and the desktop entry
 ├── vendor/winit/         Vendored winit 0.30.13 plus Wayland tablet input, patched in via [patch.crates-io]
-├── scripts/              clippy-ratchet.sh (clippy gate), build-arch-package.sh (package from the tree)
+├── scripts/              clippy-ratchet.sh (clippy gate), build-arch-package.sh (package from the tree), readme-media.sh (README images)
 ├── clippy-baseline.txt   Allowed clippy warning count; only goes down
 ├── clippy.toml, deny.toml  Lint config for tests; licence/ban policy for cargo-deny
 ├── CLAUDE.md             Orientation for AI coding agents (also useful to humans)
@@ -42,7 +42,7 @@ md-editor/
 | `src/state/pdf_store.rs` | PDF sidecar persistence on `AppState`: document scoping (vault-scoped identity), annotations, references, text cache. |
 | `src/config.rs` | `get_sys_config` / `set_sys_config` over `settings`, and `read_startup_value` for use before `AppState` exists. |
 | `src/citations.rs` | BibTeX `.bib` parser paired with vault `.pdf`s (plus standalone PDF heuristics) for `@` inline citations. |
-| `src/daily.rs` | Daily Desk note synthesis (`daily/YYYY-MM-DD.md`): unchecked task rollover from prior daily notes and Spaced Synthesis Brief from `[!question]` / `[!claim]` callouts. |
+| `src/daily.rs` | Daily Desk note synthesis (`daily/YYYY-MM-DD.md`): unchecked task rollover from prior daily notes and Spaced Synthesis Brief from `[!question]` / `[!claim]` callouts, plus the last study day's sessions. |
 | `src/math_eval.rs` | Pure-Rust recursive-descent mathematical expression evaluator (supporting LaTeX `\frac`, `\sqrt`, trig/log/constants). |
 | `src/vault.rs` | The vault API: indexing for a generation, open/save/create/delete, `read_vault_image`. |
 | `src/vault/backlinks.rs` | `search_vault`, incoming and mixed (note + PDF annotation) backlinks. |
@@ -106,7 +106,7 @@ md-editor/
 | `platform.rs` | Per-OS shims: opening external links, reading the clipboard for paste (arboard; test double in tests). |
 | `size_lint.rs` | Test-only code-health guardrail: modules over ~800 non-test lines and functions over 150 lines fail, with a ratchet list for offenders (empty since W6). |
 | `test_support.rs` | Test-only: pins the data dir to a temp folder for every test that builds the app; registers the bundled fonts for headless renders. |
-| `e2e/` | Headless end-to-end tests: `mod.rs` (harness, invariants), `scenarios.rs` (data safety), `flows.rs` (UI flows), `panes.rs` (two-pane workspace), `desks.rs` (saved desks, Daily Desk, study-tracker sidecar sync), `synthesis.rs` (Wave 4/5 E2E: `@` citations, `#heading` completion, `EvaluateMath`, `RunCodeBlock`, PDF margin ink), `workspace.rs` (tabs, Settings applied live, excluded folders, context menus, focus return, image picker and drops), `monkey.rs` (seeded random sessions), `telemetry.rs`. |
+| `e2e/` | Headless end-to-end tests: `mod.rs` (harness, invariants), `scenarios.rs` (data safety), `flows.rs` (UI flows), `panes.rs` (two-pane workspace), `desks.rs` (saved desks, Daily Desk, study-tracker sidecar sync), `synthesis.rs` (Wave 4/5 E2E: `@` citations, `#heading` completion, `EvaluateMath`, `RunCodeBlock`, PDF margin ink), `workspace.rs` (tabs, Settings applied live, excluded folders, context menus, focus return, image picker and drops), `monkey.rs` (seeded random sessions), `showcase.rs` (README media, `#[ignore]`d), `telemetry.rs`. |
 
 ### State (`src/*_state.rs`, `*_pane.rs`)
 
@@ -160,7 +160,7 @@ md-editor/
 | `ui/` | Component library built only from `design` tokens: buttons, fields, menus, dialogs, toasts, panels, tab strip, status bar, tree and list rows, icons (Phosphor SVGs in `assets/icons/`). `ui/gallery.rs` renders every component in both themes at several scales; `ui/context_anchor.rs` stamps the pointer position onto context-menu messages. |
 | `pdf_notes.rs`, `search.rs` | Linked-note helpers for PDF highlights; in-note line matching, regex replacement expansion. |
 | `autocomplete.rs`, `views/completion.rs` | Completion triggers and suggestions (vault files and `#heading` anchors for `[[`, `.bib`/PDF citations for `@`, block templates for `/`), and the popup drawn under the caret. |
-| `code_runner.rs` | Opt-in fenced code block runner (`sh`, `bash`, `python`) with 5s timeout, 64 KB output cap, and idempotent `> [!output]` callout insertion. |
+| `code_runner.rs` | Fenced code block runner (`sh`, `bash`, `python`), run only on request and not sandboxed: the block runs in its own process group, which a 5s timeout kills; 64 KB output cap; idempotent `> [!output]` callout insertion. |
 | `raster.rs` | Decoding image files for the image viewer and images in notes: raster formats by content, SVG through `resvg` at 2× density. |
 
 ---

@@ -4,7 +4,8 @@ The single source of truth for how MD Editor looks, moves and behaves. Page file
 `pages/` override this file for one surface; where they are silent, this file applies.
 
 **Status:** implemented (2026-11-24) in `native/src/design/` and `native/src/ui/`, by the plan
-in [`docs/ui-overhaul-plan.md`](../../ui-overhaul-plan.md); deviations are listed in its §7.
+of the UI overhaul (now finished; its plan is in git history up to `0cdab3a`). What is still
+open is in [`docs/open-items.md`](../../open-items.md).
 **Redesigned 2026-11-25 as "Folio"** (§0): new palette, serif display type and shell layout
 on the same token and component architecture.
 

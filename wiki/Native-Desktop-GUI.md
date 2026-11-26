@@ -75,8 +75,8 @@ its family:
 
 Construct a message as `Message::Pdf(PdfMessage::FitToWidth)`, or `PdfMessage::FitToWidth.into()`
 where the target type is known. Sub-states (`UiState`, `TrackerState`, `PdfPane`, …) still
-take the whole `Message` and keep catch-alls; moving them onto family enums is code-health
-W7.
+take the whole `Message` and keep catch-alls; moving them onto family enums is still open
+(`docs/open-items.md`).
 
 The rest of `app/` holds the shared machinery: `documents.rs` (opening, saving, parking
 documents and persisting the session), `subscription.rs`, `view.rs` (the shell layout),
@@ -207,7 +207,7 @@ classDiagram
   moving focus. Every task a handler starts comes back as `Message::ToPane(pane, msg)` for
   the pane that started it. Work across both panes (rename, delete, watcher, rescale,
   save, session) goes through `for_each_pane`. Pane commands are in `app/panes.rs`, the
-  panes' views in `app/pane_view.rs`. Design: `docs/split-layouts-plan.md`.
+  panes' views in `app/pane_view.rs`.
 - **`DeskStore`** (`desks.rs`, handlers in `app/desks.rs`) — per-vault saved workspace
   layouts (`Desk`) stored under `desks:<vault_root>` in SQLite, loaded into memory on vault
   open so views stay pure. Each desk records both panes' tab strips and viewer state,

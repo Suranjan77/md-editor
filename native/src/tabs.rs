@@ -41,7 +41,7 @@ impl TabKind {
     }
 }
 
-/// Per-tab view state restored when switching back to a tab (`feature-plan-tabs-and-images.md` §1.3).
+/// Per-tab view state restored when switching back to a tab.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TabView {
     /// Buffer, scroll and caret live in `EditorPane::retained`.

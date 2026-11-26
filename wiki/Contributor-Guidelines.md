@@ -132,8 +132,9 @@ The full set of PDF rules is in [PDF Viewer Internals](PDF-Viewer-Internals.md#1
 
 ## 3. Documentation
 
-**This wiki is the only documentation tree.** There is no `docs/` directory; anything that
-would have gone there goes here instead.
+**This wiki is the documentation.** `docs/` holds only the design-system specification
+(`docs/design-system/`) and the list of open items (`docs/open-items.md`); plans live there
+while in progress and are deleted once done, with what they built described here.
 
 - A change that alters behaviour described on a wiki page updates that page in the same pull
   request.

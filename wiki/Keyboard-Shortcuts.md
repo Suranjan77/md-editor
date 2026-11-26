@@ -28,7 +28,7 @@ it says.
 | `Ctrl+N` | New note |
 | `Ctrl+D` | Open or synthesize today's Daily Desk (`daily/YYYY-MM-DD.md`) |
 | `Ctrl+=` | Evaluate selected math expression or enclosing `$...$` / `$$...$$` inline (`= result`) |
-| `Ctrl+Alt+R` | Run the enclosing `sh` / `bash` / `python` fenced code block (opt-in, 5s timeout) and insert/update `> [!output]` |
+| `Ctrl+Alt+R` | Run the enclosing `sh` / `bash` / `python` fenced code block (on request only; not sandboxed; 5s timeout) and insert/update `> [!output]` |
 | `Ctrl+S` | Save now (the ink page instead while the handwriting canvas is in front) |
 | `Ctrl+F` | Find — routed to the active pane, see below |
 | `Ctrl+Shift+F` | Search the vault (and the open PDF) |

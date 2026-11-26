@@ -2412,6 +2412,7 @@ dependencies = [
  "iced_program",
  "iced_test",
  "image",
+ "libc",
  "log",
  "md-editor-core",
  "notify",

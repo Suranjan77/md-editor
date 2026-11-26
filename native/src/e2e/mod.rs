@@ -14,8 +14,7 @@
 //!
 //! Artifacts land in `target/e2e/`: screenshots per step and `telemetry.md`.
 
-// The harness API is ahead of the scenarios written so far; the planned
-// suite is in docs/e2e-bug-discovery-plan.md.
+// Not every harness helper is used by a scenario at any one time.
 #![allow(dead_code)]
 
 mod desks;
@@ -23,6 +22,7 @@ mod flows;
 mod monkey;
 mod panes;
 mod scenarios;
+mod showcase;
 mod synthesis;
 mod telemetry;
 mod workspace;
@@ -445,6 +445,15 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
 
     /// Render the current frame to `target/e2e/<session>-<n>-<label>.png`.
     pub fn screenshot(&mut self, label: &str) -> PathBuf {
+        let path = artifacts_dir().join(format!("{}-{:02}-{label}.png", self.name, self.shot + 1));
+        self.screenshot_to(&path, 1.0);
+        path
+    }
+
+    /// Render the current frame at `scale` (device pixels per logical pixel)
+    /// to `path`. The layout is the same as at 1×; only the pixel density
+    /// changes, as on a HiDPI display.
+    pub fn screenshot_to(&mut self, path: &Path, scale: f32) {
         use iced_test::core::renderer::Headless as _;
         use iced_test::core::{Event, clipboard, renderer, theme, window};
         use iced_test::runtime::user_interface::{Cache, UserInterface};
@@ -454,7 +463,10 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
             .theme(&self.program)
             .expect("the app always sets a theme");
         let style = theme::Base::base(&theme);
-        let size = iced::Size::new(VIEWPORT.width as u32, VIEWPORT.height as u32);
+        let size = iced::Size::new(
+            (VIEWPORT.width * scale).round() as u32,
+            (VIEWPORT.height * scale).round() as u32,
+        );
         let mut cache = Cache::default();
         let mut rgba = Vec::new();
         // Two frames: on the first, text widgets have only just shaped their
@@ -484,16 +496,16 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
                 mouse::Cursor::Unavailable,
             );
             cache = ui.into_cache();
-            rgba = self.renderer.screenshot(size, 1.0, style.background_color);
+            rgba = self
+                .renderer
+                .screenshot(size, scale, style.background_color);
         }
 
         self.shot += 1;
-        let path = artifacts_dir().join(format!("{}-{:02}-{label}.png", self.name, self.shot));
         image::RgbaImage::from_raw(size.width, size.height, rgba)
             .expect("screenshot buffer matches its size")
-            .save(&path)
+            .save(path)
             .expect("write screenshot");
-        path
     }
 
     /// Quit and launch again, keeping the settings this session left (last

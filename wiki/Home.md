@@ -61,7 +61,7 @@ graph TB
     PDFView -->|"typed commands over channels"| PDFWorker
     PDFWorker --> RefScanner
     GraphView -->|"snapshot task"| Vault
-    Ink -->|"atomic save of .ink"| Vault
+    Ink -->|"atomic save of .ink.svg"| Vault
     Index --> Vault
     AppState --> Vault
     AppState --> Index
@@ -95,10 +95,8 @@ New contributors: read [Contributor Guidelines](Contributor-Guidelines.md), then
 [Developer Guide & Testing](Developer-Guide-and-Testing.md), then
 [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md).
 
-**The Field Handbook** — a ~100-page printable tour of the codebase lives at
-[`docs/MD-Editor-Handbook.pdf`](../docs/MD-Editor-Handbook.pdf). It is a snapshot from
-2026-09-14 and predates the knowledge graph, handwriting and the module splits; this wiki is
-current.
+**What is not done yet** — [`docs/open-items.md`](../docs/open-items.md) lists the unfinished
+roadmap items, known gaps, and checks that need real hardware.
 
 ---
 

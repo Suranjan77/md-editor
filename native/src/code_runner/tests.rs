@@ -76,3 +76,25 @@ fn enforces_five_second_timeout_and_kills_child() {
     assert!(err.contains("Timed out"), "{err}");
     assert!(started.elapsed() < Duration::from_secs(7));
 }
+
+/// A timeout ends what the block started too, not just the shell.
+#[cfg(target_os = "linux")]
+#[test]
+fn timeout_kills_background_children() {
+    let dir = std::env::temp_dir().join(format!("md-runner-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // The background job would write its file 6 s in, 1 s after the timeout.
+    let err = run_fence_command(
+        "sh",
+        "(sleep 6; touch late) & sleep 20",
+        Some(dir.as_path()),
+    )
+    .unwrap_err();
+    assert!(err.contains("Timed out"), "{err}");
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        !dir.join("late").exists(),
+        "a background child outlived the timeout"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

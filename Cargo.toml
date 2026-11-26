@@ -16,7 +16,7 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
-# Shared lint policy (code-health plan W2). Crate- and module-specific
+# Shared lint policy. Crate- and module-specific
 # additions live in `core/src/lib.rs` and `native/src/app/mod.rs`.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

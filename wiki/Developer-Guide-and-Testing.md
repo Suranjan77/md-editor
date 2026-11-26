@@ -334,7 +334,14 @@ cargo test -p md-editor-native e2e -- --nocapture       # ~90 s; screenshots + t
 cargo test -p md-editor-native s13 -- --ignored          # the slow scale scenarios
 ```
 
-The plan and findings are in `docs/e2e-bug-discovery-plan.md`.
+### README screenshots and GIF
+
+`scripts/readme-media.sh` regenerates everything in `images/`. It runs the `#[ignore]`d
+scenario `e2e/showcase.rs::readme_media`, which builds a demo research vault (with the
+paper `tests-fixtures/showcase/sparse-attention.pdf`, built from the `.tex` beside it),
+drives the real app through writing, reading, the graph, the palette, the Daily Desk and
+the tracker, and saves stills at 1.6× (1920×1280) plus GIF frames. ffmpeg then assembles
+`images/intro.gif`. Rerun it after a visible UI change.
 
 ---
 

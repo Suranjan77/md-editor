@@ -3,7 +3,7 @@
 //! The pane whose state is *swapped in* keeps it in `MdEditor`'s own fields
 //! (`tabs`, `active_path`, `editor`, `pdf`, …), so every handler works on it
 //! unchanged. The other pane's state waits in [`Workspace::other`]. See
-//! `docs/split-layouts-plan.md`.
+//! `wiki/Native-Desktop-GUI.md` (the two-pane workspace).
 
 use std::cell::Cell;
 

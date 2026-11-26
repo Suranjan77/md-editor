@@ -1,7 +1,7 @@
 ### MD Editor Wiki
 
 - [Home](Home.md)
-- [Field Handbook (PDF, 2026-09 snapshot)](../docs/MD-Editor-Handbook.pdf)
+- [Open items](../docs/open-items.md)
 
 ---
 

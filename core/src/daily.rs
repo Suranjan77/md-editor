@@ -98,13 +98,9 @@ fn build_daily_note_content(
 
     let mut synthesis = collect_synthesis_callouts(vault_root, &entries);
     if let Ok(sessions) = crate::tracker::get_sessions(state)
-        && !sessions.is_empty()
+        && let Some(line) = last_study_day_line(&sessions, date)
     {
-        let total_hours: f32 = sessions.iter().map(|s| s.hours).sum();
-        synthesis.push(format!(
-            "- **Study Log**: {} logged session(s) ({total_hours:.1}h total)",
-            sessions.len()
-        ));
+        synthesis.push(line);
     }
 
     let mut out = format!("# {date}\n\n## Tasks\n");
@@ -127,6 +123,28 @@ fn build_daily_note_content(
 
     out.push_str("\n## Notes\n\n");
     Ok(out)
+}
+
+/// The brief's study line: the most recent day before `date` with logged
+/// sessions, and how much was logged that day. Session dates are
+/// `YYYY-MM-DD`, optionally followed by a time.
+fn last_study_day_line(sessions: &[crate::tracker::StudySession], date: &str) -> Option<String> {
+    let day_of = |s: &crate::tracker::StudySession| s.date.get(..10).map(str::to_string);
+    let last_day = sessions
+        .iter()
+        .filter_map(day_of)
+        .filter(|day| is_valid_iso_date(day) && day.as_str() < date)
+        .max()?;
+    let on_day: Vec<_> = sessions
+        .iter()
+        .filter(|s| day_of(s).as_deref() == Some(last_day.as_str()))
+        .collect();
+    let hours: f32 = on_day.iter().map(|s| s.hours).sum();
+    let count = on_day.len();
+    let plural = if count == 1 { "" } else { "s" };
+    Some(format!(
+        "- **Study Log**: {last_day}: {count} session{plural}, {hours:.1}h"
+    ))
 }
 
 fn latest_prior_daily_path<'a>(

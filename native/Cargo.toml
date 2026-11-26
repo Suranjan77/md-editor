@@ -41,6 +41,8 @@ tokio = { version = "1", features = ["rt", "sync", "time"] }
 bytemuck = { version = "1.25.1", features = ["derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# kill(2) on a process group, to end everything a timed-out code block started.
+libc = "0.2"
 # Wayland tablet input for pen pressure. Resolves to the vendored copy
 # (`vendor/winit`, see `[patch.crates-io]` in the workspace manifest), the same
 # winit iced uses, so the hook sees iced's own windows.

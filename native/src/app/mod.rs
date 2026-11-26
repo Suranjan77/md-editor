@@ -204,6 +204,10 @@ pub(crate) struct Probe {
     pub focused_pane: workspace::PaneId,
     /// What the pane without focus shows (note, else PDF).
     pub other_pane_path: Option<String>,
+    /// The shell window, for messages scoped to it.
+    pub main_window: Option<iced::window::Id>,
+    /// The theme the other pane's note was last highlighted for.
+    pub other_pane_theme: Option<crate::design::ActiveTheme>,
     pub saved_desks: Vec<String>,
     pub pdf_panel_active: bool,
     pub palette_query: String,
@@ -299,6 +303,8 @@ impl MdEditor {
                     .or_else(|| docs.pdf.active_path.clone())
                     .or_else(|| docs.active_image_path.clone())
             }),
+            main_window: self.main_window,
+            other_pane_theme: self.parked().and_then(|docs| docs.editor.highlight.theme()),
             saved_desks: self.desks.list().iter().map(|d| d.name.clone()).collect(),
             pdf_panel_active: self.active_panel == ActivePanel::Pdf,
             palette_query: self.ui.command_palette_query.clone(),

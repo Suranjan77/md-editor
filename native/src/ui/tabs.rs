@@ -105,7 +105,7 @@ pub fn underline_tabs<'a, Message: Clone + 'a>(
         .into()
 }
 
-// ── Document TabStrip (`feature-plan-tabs-and-images.md` §1.2) ───────
+// ── Document TabStrip ───────────────────────────────────────────────
 
 pub struct DocTabItem<'a> {
     pub tab: &'a Tab,

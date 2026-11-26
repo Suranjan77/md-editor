@@ -175,29 +175,18 @@ character (case-insensitively). `None` means the query does not appear in order 
 bonus — and takes the better of the two. Typing `note` surfaces `note.md` before
 `notes/archive/something-else.md`.
 
-Concretely: `tocfg` finds *Tracker Configuration*, and `sv` ranks *Split View* first on
-initials alone.
+Concretely: `split` lists every pane command at once (*Split Right*, *Split Down*,
+*Split / Unsplit*, *Toggle Split Direction*, *Unsplit*).
 
-### The command registry (`views/command_palette.rs`)
+### The command registry (`shortcuts.rs`)
 
-Every action the palette can run is declared in **one** registry, so a command exists in
-exactly one place and the palette and the shortcut list cannot drift apart:
-
-| Command | `Shortcut` |
-| :--- | :--- |
-| New File | `NewFile` |
-| Open Vault | `OpenVault` |
-| Save File | `Save` |
-| Search Vault | `Search` |
-| Toggle Sidebar | `ToggleSidebar` |
-| Toggle Backlinks | `ToggleBacklinks` |
-| Table of Contents | `TableOfContents` |
-| Study Tracker | `StudyTracker` |
-| Split View | `SplitView` |
-| Focus Mode | `FocusMode` |
-
-*Toggle Backlinks*, *Study Tracker*, *Split View*, and *Focus Mode* have **no direct key
-binding** — the palette is how you reach them.
+Every action the palette can run is declared once, as a `ShortcutSpec` in the registry in
+`native/src/shortcuts.rs`: the `Shortcut`, its label, its chord, a category and an icon. The
+palette, the tooltips and the shortcut list in Settings all read it, so they cannot drift
+apart, and a test checks every listed chord against the key handler. Entries with
+`in_palette: false` (*Command Palette*, *Focus Next/Previous Region*, *Close Overlay*) are
+keys only. Commands without a chord, such as *Split Right* or *Split Down*, are reached
+from the palette.
 
 ### Ranking and interleaving
 

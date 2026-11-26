@@ -126,6 +126,41 @@ fn extracts_question_and_claim_callouts_across_subfolders_capped_at_five() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+fn session(date: &str, hours: f32) -> crate::tracker::StudySession {
+    crate::tracker::StudySession {
+        id: 0,
+        uid: String::new(),
+        date: date.to_string(),
+        hours,
+        activity_type: "Reading".to_string(),
+        phase: String::new(),
+        notes: None,
+        updated_at: 0,
+    }
+}
+
+#[test]
+fn study_log_reports_the_last_day_studied_not_the_all_time_total() {
+    let root = temp_vault("study-log");
+    let state = state_for(&root);
+    for (date, hours) in [
+        ("2026-11-20", 3.0),
+        ("2026-11-24 09:30", 1.0),
+        ("2026-11-24 14:00", 0.5),
+        ("2026-11-26", 2.0), // the note's own day: not yet "last"
+    ] {
+        crate::tracker::save_session(&state, session(date, hours)).unwrap();
+    }
+
+    open_or_create_daily_note(&state, "2026-11-26").unwrap();
+    let text = std::fs::read_to_string(root.join("daily/2026-11-26.md")).unwrap();
+    assert!(
+        text.contains("- **Study Log**: 2026-11-24: 2 sessions, 1.5h"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn second_call_for_same_date_is_idempotent_and_preserves_existing_edits() {
     let root = temp_vault("idempotent");

@@ -8,7 +8,7 @@ Arch Linux package (`packaging/arch/`); data and log live in XDG dirs, never bes
 
 ```bash
 cargo check --workspace --all-targets   # fast typecheck
-cargo test --workspace                  # all tests (~435); core PDF tests need PDFium, fetched by build.rs
+cargo test --workspace                  # all tests (~700); core PDF tests need PDFium, fetched by build.rs
 cargo fmt --all                         # the tree is rustfmt-clean; keep it that way
 scripts/clippy-ratchet.sh               # clippy warnings must not exceed clippy-baseline.txt (CI gate)
 cargo test -p md-editor-native e2e -- --nocapture   # headless end-to-end runs; screenshots + telemetry in target/e2e/
@@ -73,9 +73,8 @@ is the fastest map. Tests for `foo.rs` live in `foo/tests.rs`.
 
 ## Docs
 
-`wiki/` is authoritative; start at `wiki/Home.md` ("I want to change…" table). Plans in
-progress: `docs/ui-overhaul-plan.md` (+ `docs/design-system/`),
-`docs/e2e-bug-discovery-plan.md`, `docs/bug-review-2026-11.md`, `docs/code-health-plan.md`,
-`docs/feature-plan-tabs-and-images.md`. When code
-moves, update `wiki/Repository-Structure.md` in the same change. Cite files and symbols,
-not line numbers. `docs/` holds the printable handbook, a dated snapshot.
+`wiki/` is authoritative; start at `wiki/Home.md` ("I want to change…" table). What is
+still unfinished is in `docs/open-items.md`; remove an item when it lands. The UI spec is
+`docs/design-system/`. When code moves, update `wiki/Repository-Structure.md` in the same
+change. Cite files and symbols, not line numbers. After a visible UI change, regenerate the
+README images with `scripts/readme-media.sh`.
