@@ -6,7 +6,9 @@
 
 mod app;
 mod autocomplete;
+mod code_runner;
 mod design;
+mod desks;
 #[cfg(test)]
 mod e2e;
 mod editor;

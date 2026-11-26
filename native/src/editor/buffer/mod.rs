@@ -155,6 +155,13 @@ pub enum EditorCommand {
     SelectLine {
         line: usize,
     },
+    /// Atomically replace a character range with `text` in one undoable step.
+    ReplaceRange {
+        start_char: usize,
+        end_char: usize,
+        text: String,
+        cursor_char: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -404,6 +411,12 @@ impl DocBuffer {
                 self.select_line(line);
                 CommandResult::default()
             }
+            EditorCommand::ReplaceRange {
+                start_char,
+                end_char,
+                text,
+                cursor_char,
+            } => self.replace_range(start_char, end_char, &text, cursor_char),
         }
     }
 

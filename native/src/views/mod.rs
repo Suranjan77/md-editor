@@ -10,6 +10,7 @@ pub mod ink;
 pub mod interactive_pdf;
 pub mod link_note_picker;
 pub mod modals;
+pub mod pdf_ink;
 pub mod pdf_viewer;
 pub mod rail;
 pub mod search;

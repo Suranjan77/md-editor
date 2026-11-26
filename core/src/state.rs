@@ -3,6 +3,7 @@
 mod error;
 pub mod pdf_sidecar;
 mod pdf_store;
+pub mod tracker_sidecar;
 pub use error::{StateError, StateResult};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -157,6 +158,16 @@ impl AppState {
         self.vault_generation.load(Ordering::SeqCst)
     }
 
+    /// Vault scope key used to isolate study-tracker sessions per vault.
+    pub fn current_tracker_scope(&self) -> StateResult<String> {
+        Ok(self
+            .vault_root
+            .lock()?
+            .as_ref()
+            .map(|root| Self::pdf_scope_prefix_for_root(root))
+            .unwrap_or_default())
+    }
+
     pub(crate) fn current_vault_content_revision(&self) -> u64 {
         self.vault_content_revision.load(Ordering::SeqCst)
     }
@@ -175,7 +186,7 @@ impl AppState {
 
 /// Current on-disk schema version. Bump this and add a corresponding arm in
 /// [`apply_migrations`] whenever the schema changes.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 fn init_schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch(
@@ -305,11 +316,112 @@ fn apply_migrations(db: &Connection) -> rusqlite::Result<()> {
         )?;
     }
 
+    // v5: stable uid + updated_at on tracker_sessions and portable sidecar sync state.
+    if version < 5 {
+        migrate_tracker_v5(db)?;
+    }
+
     if version < SCHEMA_VERSION {
         version = SCHEMA_VERSION;
     }
 
     db.execute_batch(&format!("PRAGMA user_version = {version};"))?;
+    Ok(())
+}
+
+fn migrate_tracker_v5(db: &Connection) -> rusqlite::Result<()> {
+    let mut cols = std::collections::HashSet::new();
+    {
+        let mut stmt = db.prepare("PRAGMA table_info(tracker_sessions)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for name in rows.flatten() {
+            cols.insert(name);
+        }
+    }
+    if !cols.contains("uid") {
+        db.execute_batch("ALTER TABLE tracker_sessions ADD COLUMN uid TEXT;")?;
+    }
+    if !cols.contains("updated_at") {
+        db.execute_batch(
+            "ALTER TABLE tracker_sessions ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    if !cols.contains("vault_scope") {
+        db.execute_batch(
+            "ALTER TABLE tracker_sessions ADD COLUMN vault_scope TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+
+    // Backfill legacy rows with empty vault_scope to the last opened vault so
+    // existing single-vault users retain their historical sessions.
+    let last_vault: Option<String> = db
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'last_vault'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(last_vault) = last_vault.filter(|v| !v.trim().is_empty()) {
+        let scope = AppState::pdf_scope_prefix_for_root(Path::new(&last_vault));
+        db.execute(
+            "UPDATE tracker_sessions SET vault_scope = ?1 WHERE vault_scope = ''",
+            rusqlite::params![scope],
+        )?;
+    }
+
+    // Deterministic backfill for legacy rows missing a uid.
+    let missing: Vec<(i64, String, f64, String, String, Option<String>)> = {
+        let mut stmt = db.prepare(
+            "SELECT id, date, hours, activity_type, phase, notes
+             FROM tracker_sessions
+             WHERE uid IS NULL OR uid = ''
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?;
+        rows.flatten().collect()
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    for (id, date, hours, activity_type, phase, notes) in missing {
+        use sha2::{Digest, Sha256};
+        let payload = format!(
+            "{date}|{hours}|{activity_type}|{phase}|{}",
+            notes.as_deref().unwrap_or("")
+        );
+        let base_uid: String = format!("{:x}", Sha256::digest(payload.as_bytes()))
+            .chars()
+            .take(32)
+            .collect();
+        let mut candidate = base_uid.clone();
+        let mut suffix = 1_u32;
+        while !seen.insert(candidate.clone()) {
+            candidate = format!("{base_uid}-{suffix}");
+            suffix += 1;
+        }
+        db.execute(
+            "UPDATE tracker_sessions SET uid = ?1 WHERE id = ?2",
+            rusqlite::params![candidate, id],
+        )?;
+    }
+
+    db.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS tracker_sessions_uid ON tracker_sessions(uid);
+         CREATE INDEX IF NOT EXISTS tracker_sessions_scope ON tracker_sessions(vault_scope);
+         CREATE TABLE IF NOT EXISTS tracker_sidecar_sync (
+             vault_scope TEXT PRIMARY KEY,
+             content_hash TEXT NOT NULL,
+             ids_json TEXT NOT NULL
+         );",
+    )?;
     Ok(())
 }
 

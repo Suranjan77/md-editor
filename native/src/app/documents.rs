@@ -281,7 +281,14 @@ impl MdEditor {
         let resumed = if keep_current {
             None
         } else {
-            self.editor.take_retained_matching(path, &content)
+            self.editor
+                .take_retained_matching(path, &content)
+                .or_else(|| {
+                    self.workspace
+                        .other
+                        .as_mut()
+                        .and_then(|other| other.editor.take_retained_matching(path, &content))
+                })
         };
         let resumed_scroll = resumed.as_ref().map(|(_, y)| *y);
         let is_resumed = keep_current || resumed.is_some();

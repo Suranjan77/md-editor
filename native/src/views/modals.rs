@@ -1,12 +1,17 @@
-//! Modals: create, rename, delete, quick note and linked note built on `ui::dialog` with inline validation.
+//! Modals: create, rename, delete, quick note, linked note, and saved desks built on `ui::dialog` with inline validation.
 
-use iced::widget::{column, text};
-use iced::{Element, Renderer, Theme};
+use iced::widget::{column, container, row, scrollable, text};
+use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::design::metrics::{DIALOG_WIDTH_MD, DIALOG_WIDTH_SM, SPACE_3};
+use crate::design::metrics::{
+    DIALOG_WIDTH_MD, DIALOG_WIDTH_SM, PICKER_LIST_HEIGHT, SPACE_1, SPACE_2, SPACE_3,
+};
 use crate::design::{TextRole, tokens};
-use crate::messages::{Message, VaultMessage};
-use crate::ui::{Button, ButtonVariant, Icon, TextField, dialog};
+use crate::graph_state::pinboards::Pinboard;
+use crate::messages::{DesksMessage, GraphMessage, Message, VaultMessage};
+use crate::ui::{
+    Button, ButtonVariant, Icon, IconButton, ListRowProps, TextField, dialog, empty_state, list_row,
+};
 use crate::views::link_note_picker;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,6 +22,10 @@ pub enum ModalType {
     Rename(String),
     QuickNote(String),
     LinkNote(String),
+    SaveDesk,
+    Desks,
+    SavePinboard,
+    Pinboards,
 }
 
 fn delete_confirmation(path: &str, entries: &[md_editor_core::types::FileEntry]) -> String {
@@ -41,10 +50,28 @@ pub fn view<'a>(
     modal_error: Option<&'a str>,
     picker_search: &'a str,
     vault_entries: &'a [md_editor_core::types::FileEntry],
+    desks: &'a [crate::desks::Desk],
+    pinboards: &'a [Pinboard],
 ) -> Element<'a, Message, Theme, Renderer> {
     let t = tokens();
 
     match modal_type {
+        ModalType::Desks => desks_modal(desks),
+        ModalType::SaveDesk => save_named_modal(
+            "Save Desk",
+            "Desk name (e.g. Paper Review)",
+            input_value,
+            modal_error,
+            Message::Desks(DesksMessage::Save(input_value.to_string())),
+        ),
+        ModalType::Pinboards => pinboards_modal(pinboards),
+        ModalType::SavePinboard => save_named_modal(
+            "Save Pinboard",
+            "Pinboard name (e.g. Core Arguments)",
+            input_value,
+            modal_error,
+            Message::Graph(GraphMessage::SavePinboard(input_value.to_string())),
+        ),
         ModalType::Delete(path) => {
             let question = delete_confirmation(path, vault_entries);
             let body = column![
@@ -143,6 +170,153 @@ pub fn view<'a>(
             )
         }
     }
+}
+
+fn save_named_modal<'a>(
+    title: &'a str,
+    placeholder: &'a str,
+    input_value: &'a str,
+    modal_error: Option<&'a str>,
+    submit_message: Message,
+) -> Element<'a, Message, Theme, Renderer> {
+    let mut field = TextField::new(placeholder, input_value)
+        .id("modal_name_input")
+        .on_input(|v| Message::Vault(VaultMessage::NameModalInputChanged(v)))
+        .on_submit(submit_message.clone());
+    if let Some(err) = modal_error {
+        field = field.error(Some(err.to_string()));
+    }
+    let actions = vec![
+        Button::new("Cancel")
+            .variant(ButtonVariant::Ghost)
+            .on_press(Message::Vault(VaultMessage::NameModalCancel))
+            .build(),
+        Button::new("Save")
+            .variant(ButtonVariant::Primary)
+            .on_press(submit_message)
+            .build(),
+    ];
+    dialog(
+        title,
+        field.build(),
+        actions,
+        Message::Vault(VaultMessage::NameModalCancel),
+        Some(DIALOG_WIDTH_SM),
+        1.0,
+    )
+}
+
+fn preset_picker_modal<'a, I>(
+    title: &'a str,
+    icon: Icon,
+    empty_title: &'a str,
+    empty_detail: &'a str,
+    save_label: &'a str,
+    save_message: Message,
+    items: I,
+) -> Element<'a, Message, Theme, Renderer>
+where
+    I: Iterator<Item = (String, String, Message, &'a str, Message)>,
+{
+    let mut rows = column![].spacing(SPACE_1);
+    let mut count = 0usize;
+    for (name, subtitle, on_open, delete_tooltip, on_delete) in items {
+        count += 1;
+        let item = list_row(ListRowProps {
+            title: name.into(),
+            subtitle: Some(subtitle.into()),
+            leading_icon: Some(icon),
+            shortcut: None,
+            selected: false,
+            active_doc: false,
+            focused: false,
+            drag_over: false,
+            max_title_chars: 36,
+            on_press: Some(on_open),
+        });
+        let delete_btn = IconButton::new(Icon::Trash, delete_tooltip)
+            .danger(true)
+            .on_press(on_delete)
+            .build();
+        rows = rows.push(
+            row![item, delete_btn]
+                .spacing(SPACE_2)
+                .align_y(Alignment::Center),
+        );
+    }
+
+    let body: Element<'a, Message, Theme, Renderer> = if count == 0 {
+        container(empty_state(icon, empty_title, empty_detail, None))
+            .height(Length::Fixed(PICKER_LIST_HEIGHT))
+            .width(Length::Fill)
+            .into()
+    } else {
+        container(scrollable(rows).height(Length::Shrink))
+            .max_height(PICKER_LIST_HEIGHT)
+            .width(Length::Fill)
+            .into()
+    };
+
+    let actions = vec![
+        Button::new("Close")
+            .variant(ButtonVariant::Ghost)
+            .on_press(Message::Vault(VaultMessage::NameModalCancel))
+            .build(),
+        Button::new(save_label)
+            .variant(ButtonVariant::Primary)
+            .icon(icon)
+            .on_press(save_message)
+            .build(),
+    ];
+
+    dialog(
+        title,
+        body,
+        actions,
+        Message::Vault(VaultMessage::NameModalCancel),
+        Some(DIALOG_WIDTH_MD),
+        1.0,
+    )
+}
+
+fn desks_modal<'a>(desks: &'a [crate::desks::Desk]) -> Element<'a, Message, Theme, Renderer> {
+    preset_picker_modal(
+        "Saved Desks",
+        Icon::Desktop,
+        "No saved desks",
+        "Save the current panes, tabs and layout to switch back in one click.",
+        "Save Current Desk…",
+        Message::Desks(DesksMessage::OpenSaveDialog),
+        desks.iter().map(|desk| {
+            (
+                desk.name.clone(),
+                desk.summary(),
+                Message::Desks(DesksMessage::Switch(desk.name.clone())),
+                "Delete desk",
+                Message::Desks(DesksMessage::Delete(desk.name.clone())),
+            )
+        }),
+    )
+}
+
+fn pinboards_modal<'a>(pinboards: &'a [Pinboard]) -> Element<'a, Message, Theme, Renderer> {
+    preset_picker_modal(
+        "Graph Pinboards",
+        Icon::Pin,
+        "No saved pinboards",
+        "Arrange and pin nodes on the canvas, then save a pinboard to revisit the map.",
+        "Save Current Pinboard…",
+        Message::Graph(GraphMessage::OpenSavePinboardModal),
+        pinboards.iter().map(|board| {
+            (
+                board.name.clone(),
+                board.summary(),
+                Message::Graph(GraphMessage::LoadPinboard(board.name.clone())),
+                "Delete pinboard",
+                Message::Graph(GraphMessage::DeletePinboard(board.name.clone())),
+            )
+        }),
+    )
 }
 
 #[cfg(test)]

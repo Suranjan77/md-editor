@@ -36,7 +36,17 @@ const EXTENSION: &str = "jsonl";
 /// Git's union merge keeps both instead of reporting a conflict. A same-id
 /// edit on both sides leaves two lines, and the later one wins on import.
 const GITATTRIBUTES: &str =
-    "# Written by MD Editor. Highlight files merge line by line.\n*.jsonl merge=union\n";
+    "# Written by MD Editor. Sidecar files merge line by line.\n*.jsonl merge=union\n";
+
+/// Ensure `<vault>/.md-editor/.gitattributes` configures union merge for `.jsonl` sidecars.
+pub(super) fn ensure_gitattributes(root: &Path) {
+    let attributes = root.join(SIDECAR_DIR).join(".gitattributes");
+    if !attributes.exists()
+        && let Err(e) = crate::vault::write_file(&attributes, GITATTRIBUTES)
+    {
+        log::warn!("Could not write {}: {e}", attributes.display());
+    }
+}
 
 /// What the last reconcile of one document found: the file's hash and the ids
 /// it held, which is the base the next three-way merge compares against.
@@ -202,12 +212,7 @@ impl AppState {
             crate::vault::write_file(&path, &text)
                 .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
         }
-        let attributes = root.join(SIDECAR_DIR).join(".gitattributes");
-        if !attributes.exists()
-            && let Err(e) = crate::vault::write_file(&attributes, GITATTRIBUTES)
-        {
-            log::warn!("Could not write {}: {e}", attributes.display());
-        }
+        ensure_gitattributes(root);
         self.put_sync_record(document_id, &text, annotations)
     }
 

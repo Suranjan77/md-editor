@@ -39,6 +39,11 @@ impl MdEditor {
                     Task::none()
                 }
             }
+            GraphMessage::OpenPinboardsModal => self.open_pinboards_modal(),
+            GraphMessage::OpenSavePinboardModal => self.open_save_pinboard_modal(),
+            GraphMessage::SavePinboard(name) => self.submit_save_pinboard_modal(&name),
+            GraphMessage::LoadPinboard(name) => self.load_pinboard(&name),
+            GraphMessage::DeletePinboard(name) => self.delete_pinboard(&name),
             m => {
                 apply_graph_view(&mut self.graph, m);
                 Task::none()
@@ -100,9 +105,12 @@ fn apply_graph_view(graph: &mut GraphState, message: GraphMessage) {
         GraphMessage::LocalDepthChanged(depth) => graph.set_scope(GraphScope::Local { depth }),
         GraphMessage::QueryChanged(query) => graph.set_query(query),
         GraphMessage::ShowPdfsToggled(show) => graph.set_show_pdfs(show),
+        GraphMessage::ShowSketchesToggled(show) => graph.set_show_sketches(show),
         GraphMessage::ShowMissingToggled(show) => graph.set_show_missing(show),
         GraphMessage::ShowOrphansToggled(show) => graph.set_show_orphans(show),
         GraphMessage::NodeSelected(path) => graph.select(path),
+        GraphMessage::CycleNode(delta) => graph.cycle_node(delta),
+        GraphMessage::ToggleSelectedPin => graph.toggle_selected_pin(),
         GraphMessage::NodeMoved { path, x, y } => graph.move_node(&path, x, y),
         GraphMessage::NodeFocused(path) => graph.focus_on(&path),
         GraphMessage::PinToggled(path) => graph.toggle_pin(&path),
@@ -132,6 +140,11 @@ fn apply_graph_view(graph: &mut GraphState, message: GraphMessage) {
         GraphMessage::Toggle
         | GraphMessage::Refresh
         | GraphMessage::SnapshotLoaded(..)
-        | GraphMessage::NodeOpen(_) => {}
+        | GraphMessage::NodeOpen(_)
+        | GraphMessage::OpenPinboardsModal
+        | GraphMessage::OpenSavePinboardModal
+        | GraphMessage::SavePinboard(_)
+        | GraphMessage::LoadPinboard(_)
+        | GraphMessage::DeletePinboard(_) => {}
     }
 }

@@ -1,4 +1,4 @@
-//! The knowledge-graph snapshot: nodes for notes, PDFs and missing targets, edges from wikilinks and PDF annotations.
+//! The knowledge-graph snapshot: nodes for notes, PDFs, sketches and missing targets, edges from wikilinks, epistemic roles and PDF annotations.
 
 use super::*;
 use super::{VaultError, VaultResult};
@@ -8,7 +8,7 @@ struct CapturedGraphInputs {
     pdf_scope_prefix: String,
     generation: u64,
     content_revision: u64,
-    indexed_outgoing: Vec<(PathBuf, Vec<PathBuf>)>,
+    indexed_outgoing: Vec<(PathBuf, Vec<(PathBuf, GraphEdgeKind)>)>,
 }
 
 /// Return a deterministic snapshot of the vault's research graph.
@@ -26,6 +26,11 @@ pub fn get_graph_snapshot(state: &AppState) -> VaultResult<GraphSnapshot> {
         .filter_map(|path| graph_relative_path(&path, &inputs.root))
         .collect();
 
+    let sketch_paths: BTreeSet<String> = list_all_ink_files(&inputs.root)?
+        .into_iter()
+        .filter_map(|path| graph_relative_path(&path, &inputs.root))
+        .collect();
+
     let mut edge_weights: BTreeMap<(String, String, GraphEdgeKind), usize> = BTreeMap::new();
     collect_wikilink_edges(&inputs.root, inputs.indexed_outgoing, &mut edge_weights);
 
@@ -37,7 +42,8 @@ pub fn get_graph_snapshot(state: &AppState) -> VaultResult<GraphSnapshot> {
         &mut edge_weights,
     );
 
-    let (nodes, edges) = assemble_graph_snapshot(&markdown_paths, &pdf_paths, edge_weights);
+    let (nodes, edges) =
+        assemble_graph_snapshot(&markdown_paths, &pdf_paths, &sketch_paths, edge_weights);
 
     let _publish = state.vault_publish_lock.lock().map_err(|e| e.to_string())?;
     let _mutation = state.vault_publish_mutation_lock()?;
@@ -65,11 +71,7 @@ fn capture_graph_inputs(state: &AppState) -> VaultResult<CapturedGraphInputs> {
         .clone();
     let pdf_scope_prefix = AppState::pdf_scope_prefix_for_root(&root);
     let index = state.file_index.lock().map_err(|e| e.to_string())?;
-    let indexed_outgoing: Vec<(PathBuf, Vec<PathBuf>)> = index
-        .outgoing
-        .iter()
-        .map(|(source, targets)| (source.clone(), targets.iter().cloned().collect::<Vec<_>>()))
-        .collect();
+    let indexed_outgoing = index.typed_outgoing_snapshot();
     Ok(CapturedGraphInputs {
         root,
         pdf_scope_prefix,
@@ -81,22 +83,23 @@ fn capture_graph_inputs(state: &AppState) -> VaultResult<CapturedGraphInputs> {
 
 fn collect_wikilink_edges(
     root: &Path,
-    indexed_outgoing: Vec<(PathBuf, Vec<PathBuf>)>,
+    indexed_outgoing: Vec<(PathBuf, Vec<(PathBuf, GraphEdgeKind)>)>,
     edge_weights: &mut BTreeMap<(String, String, GraphEdgeKind), usize>,
 ) {
     for (source, targets) in indexed_outgoing {
         let Some(source) = graph_relative_path(&source, root) else {
             continue;
         };
-        for target in targets {
+        for (target, kind) in targets {
             let Some(target) = graph_relative_path(&target, root) else {
                 continue;
             };
-            if is_image_path(Path::new(&target)) {
+            let target_path = Path::new(&target);
+            if is_image_path(target_path) && !is_sketch_path(target_path) {
                 continue;
             }
             let weight = edge_weights
-                .entry((source.clone(), target, GraphEdgeKind::WikiLink))
+                .entry((source.clone(), target, kind))
                 .or_default();
             *weight = weight.saturating_add(1);
         }
@@ -162,6 +165,7 @@ fn collect_annotation_edges(
 fn assemble_graph_snapshot(
     markdown_paths: &BTreeSet<String>,
     pdf_paths: &BTreeSet<String>,
+    sketch_paths: &BTreeSet<String>,
     edge_weights: BTreeMap<(String, String, GraphEdgeKind), usize>,
 ) -> (Vec<GraphNode>, Vec<GraphEdge>) {
     let mut node_kinds: BTreeMap<String, GraphNodeKind> = BTreeMap::new();
@@ -171,11 +175,14 @@ fn assemble_graph_snapshot(
     for path in pdf_paths {
         node_kinds.insert(path.clone(), GraphNodeKind::Pdf);
     }
+    for path in sketch_paths {
+        node_kinds.insert(path.clone(), GraphNodeKind::Sketch);
+    }
     for (source, target, _) in edge_weights.keys() {
         for path in [source, target] {
             node_kinds
                 .entry(path.clone())
-                .or_insert_with(|| graph_node_kind(path, markdown_paths, pdf_paths));
+                .or_insert_with(|| graph_node_kind(path, markdown_paths, pdf_paths, sketch_paths));
         }
     }
 

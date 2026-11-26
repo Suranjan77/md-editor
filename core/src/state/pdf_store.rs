@@ -6,7 +6,9 @@ use rusqlite::{OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
 
 use super::{AppState, StateResult};
-use crate::pdf::{PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfRect, PdfTextRange};
+use crate::pdf::{
+    PdfAnnotation, PdfAnnotationColor, PdfAnnotationKind, PdfInkStroke, PdfRect, PdfTextRange,
+};
 
 impl AppState {
     /// Stable namespace for PDF persistence belonging to the active vault.
@@ -413,8 +415,15 @@ impl AppState {
 
             let kind = PdfAnnotationKind::parse(&kind_str)?;
             let color = PdfAnnotationColor::parse(&color_str)?;
-            let ranges: Vec<PdfTextRange> = serde_json::from_str(&ranges_json)
-                .map_err(|e| format!("Failed to parse ranges JSON: {e}"))?;
+            let (ranges, ink_stroke) = if kind == PdfAnnotationKind::Ink {
+                let stroke: Option<PdfInkStroke> = serde_json::from_str(&ranges_json)
+                    .map_err(|e| format!("Failed to parse ink stroke JSON: {e}"))?;
+                (Vec::new(), stroke)
+            } else {
+                let ranges: Vec<PdfTextRange> = serde_json::from_str(&ranges_json)
+                    .map_err(|e| format!("Failed to parse ranges JSON: {e}"))?;
+                (ranges, None)
+            };
             let rects: Vec<PdfRect> = serde_json::from_str(&rects_json)
                 .map_err(|e| format!("Failed to parse rects JSON: {e}"))?;
 
@@ -430,6 +439,7 @@ impl AppState {
                 note,
                 linked_note_path,
                 markdown_anchor,
+                ink_stroke,
                 created_at,
                 updated_at,
             });
@@ -516,8 +526,13 @@ pub(super) fn upsert_annotation(
     storage_document_id: &str,
     ann: &PdfAnnotation,
 ) -> StateResult<()> {
-    let ranges_json = serde_json::to_string(&ann.ranges)
-        .map_err(|e| format!("Failed to serialize ranges: {e}"))?;
+    let ranges_json = if ann.kind == PdfAnnotationKind::Ink {
+        serde_json::to_string(&ann.ink_stroke)
+            .map_err(|e| format!("Failed to serialize ink stroke: {e}"))?
+    } else {
+        serde_json::to_string(&ann.ranges)
+            .map_err(|e| format!("Failed to serialize ranges: {e}"))?
+    };
     let rects_json =
         serde_json::to_string(&ann.rects).map_err(|e| format!("Failed to serialize rects: {e}"))?;
 

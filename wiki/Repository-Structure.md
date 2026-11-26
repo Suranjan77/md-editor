@@ -38,8 +38,12 @@ md-editor/
 | `src/lib.rs` | Module declarations; re-exports `AppState`. |
 | `src/state.rs` | `AppState`: the SQLite connection, schema DDL, WAL pragmas, `user_version` migrations, DB path resolution, vault generation and publication locks. |
 | `src/state/pdf_sidecar.rs` | Portable PDF highlights: `<vault>/.md-editor/annotations/<id>.jsonl`, written on every change and merged three-way with SQLite on vault and PDF open. |
+| `src/state/tracker_sidecar.rs` | Portable Study Tracker sessions: `<vault>/.md-editor/study-sessions.jsonl`, written on save/delete and three-way merged with SQLite on vault open/index. |
 | `src/state/pdf_store.rs` | PDF sidecar persistence on `AppState`: document scoping (vault-scoped identity), annotations, references, text cache. |
 | `src/config.rs` | `get_sys_config` / `set_sys_config` over `settings`, and `read_startup_value` for use before `AppState` exists. |
+| `src/citations.rs` | BibTeX `.bib` parser paired with vault `.pdf`s (plus standalone PDF heuristics) for `@` inline citations. |
+| `src/daily.rs` | Daily Desk note synthesis (`daily/YYYY-MM-DD.md`): unchecked task rollover from prior daily notes and Spaced Synthesis Brief from `[!question]` / `[!claim]` callouts. |
+| `src/math_eval.rs` | Pure-Rust recursive-descent mathematical expression evaluator (supporting LaTeX `\frac`, `\sqrt`, trig/log/constants). |
 | `src/vault.rs` | The vault API: indexing for a generation, open/save/create/delete, `read_vault_image`. |
 | `src/vault/backlinks.rs` | `search_vault`, incoming and mixed (note + PDF annotation) backlinks. |
 | `src/vault/indexing.rs` | `index_vault_for_generation`: one walk, then only changed notes and PDFs re-read and re-indexed (`vault_file_meta`). |
@@ -72,17 +76,21 @@ md-editor/
 | `logging.rs` | File logger behind `log` (`md-editor.log`, rotated 1 MB × 3, per-target levels from `MD_EDITOR_LOG`, long lines truncated, repeats collapsed) and the panic hook. |
 | `app/mod.rs` | `MdEditor` state, `boot`, `title`, `update`, and `update_inner`, which routes each message family to a handler below. |
 | `app/{pdf,graph,ink,search,editor,vault,shortcuts,shell}.rs` | One `update_<family>` handler each; see [Native Desktop GUI](Native-Desktop-GUI.md#2-messages-and-where-they-are-handled-messagesrs-app). |
+| `app/graph_pinboards.rs` | Named per-vault graph Pinboards: modal state, saving, restoring, and deleting layouts. |
 | `app/pdf.rs` | `update_pdf`: a router only; each `PdfMessage` goes to a handler in the three files below or to `PdfPane::update`. |
 | `app/pdf_render.rs` | PDF load results, zoom and fit-to-width, rendered/failed pages, scrolling, page links, TOC. |
 | `app/pdf_nav.rs` | PDF link clicks and previews, PDF search results, document id → highlights and references, jumping to an annotation. |
 | `app/pdf_select.rs` | PDF text selection and copy, highlights, quick notes, linked notes, orphan report. |
+| `app/pdf_ink.rs` | Non-destructive PDF margin ink handlers: pen/eraser toggle, color selection, commit, erase, and undo. |
 | `app/pdf_pages.rs` | Opening PDFs, page render scheduling and eviction, available width, `navigate_pdf_page`. |
 | `app/paste.rs` | Ctrl+V in a note, "Insert image…", and files dropped on the window: images become attachments, vault files become links, drops on the sidebar are imported (never over an existing file). |
 | `app/tabs_handler.rs` | `update_tabs`: activating, closing, reopening and reordering document tabs, per-pane, per-vault tab persistence and restoring the panes. |
 | `app/workspace.rs` | The two-pane workspace: `PaneDocs`, swapping a pane's state in, routing `FromPane` / `ToPane` messages, focus, `for_each_pane`. |
 | `app/panes.rs` | Pane commands: split, unsplit, focus the other pane, move a tab across, open to the side, one file per pane. |
 | `app/pane_view.rs` | The panes area: each pane's tab strip and sheet from its own state, the divider, the empty pane. |
+| `app/desks.rs` | `update_desks`: saving, switching (flushing dirty buffers in all panes first), and deleting per-vault saved desks. |
 | `app/settings_handler.rs` | `update_settings`, plus restoring and persisting theme, scale, motion, editor typography, attachments and recent vaults. |
+| `app/synthesis.rs` | Opt-in inline math evaluation (`EvaluateMath`) and fenced code block execution (`RunCodeBlock` / `CodeBlockFinished`). |
 | `app/vault_entries.rs` | Creating, renaming and deleting vault entries; name-modal validation. |
 | `app/vault_links.rs` | Sidebar clicks, internal / external / `pdf://` link routing, sidebar keyboard navigation. |
 | `app/documents.rs` | Opening, saving, parking documents (notes, PDFs, images); session and layout persistence. |
@@ -94,10 +102,11 @@ md-editor/
 | `messages.rs` | `Message` and its families (`VaultMessage`, `TabsMessage`, `SettingsMessage`, …), `Shortcut`, `TrackerTab`. |
 | `shortcuts.rs` | The shortcut registry: one table feeding key handling, menus, tooltips, the palette and the Settings shortcut list. |
 | `tabs.rs`, `tabs/tests.rs` | `Tabs`: strip order, active tab, MRU, reopen stack, duplicate-name labels, per-tab view state, session JSON. |
+| `desks.rs`, `desks/tests.rs` | `Desk` and `DeskStore`: per-vault saved workspace layouts (`desks:<vault_root>`), JSON persistence, rename and delete path propagation. |
 | `platform.rs` | Per-OS shims: opening external links, reading the clipboard for paste (arboard; test double in tests). |
 | `size_lint.rs` | Test-only code-health guardrail: modules over ~800 non-test lines and functions over 150 lines fail, with a ratchet list for offenders (empty since W6). |
 | `test_support.rs` | Test-only: pins the data dir to a temp folder for every test that builds the app; registers the bundled fonts for headless renders. |
-| `e2e/` | Headless end-to-end tests: `mod.rs` (harness, invariants), `scenarios.rs` (data safety), `flows.rs` (UI flows), `workspace.rs` (tabs, Settings applied live, excluded folders, context menus, focus return, image picker and drops), `monkey.rs` (seeded random sessions), `telemetry.rs`. |
+| `e2e/` | Headless end-to-end tests: `mod.rs` (harness, invariants), `scenarios.rs` (data safety), `flows.rs` (UI flows), `panes.rs` (two-pane workspace), `desks.rs` (saved desks, Daily Desk, study-tracker sidecar sync), `synthesis.rs` (Wave 4/5 E2E: `@` citations, `#heading` completion, `EvaluateMath`, `RunCodeBlock`, PDF margin ink), `workspace.rs` (tabs, Settings applied live, excluded folders, context menus, focus return, image picker and drops), `monkey.rs` (seeded random sessions), `telemetry.rs`. |
 
 ### State (`src/*_state.rs`, `*_pane.rs`)
 
@@ -110,8 +119,8 @@ md-editor/
 | `tracker_state.rs` | Timer, sessions, tracker values, active tab. |
 | `study_context.rs` | What a running study session worked on (time per document, pages, words, highlights), summarized into its notes. |
 | `pdf_pane.rs` | PDF viewport, page caches, annotations, selection, render generation. |
-| `graph_state.rs`, `graph_state/` | `GraphState`, with the force simulation in `physics`, initial placement in `layout`, and filtering plus read-only queries (stats, backlinks, related, hubs) in `queries`. |
-| `ink/` | `InkState` and the handwriting engine (`raster.rs` draws a page as a picture for a note); see [Handwritten Notes](Handwritten-Notes.md). |
+| `graph_state.rs`, `graph_state/` | `GraphState`, with the force simulation in `physics`, initial placement in `layout`, filtering plus read-only queries (stats, backlinks, related, hubs, epistemic edge lookup, node cycling) in `queries`, and named per-vault layouts in `pinboards`. |
+| `ink/` | `InkState` and the handwriting engine (`raster.rs` draws a page as a picture for a note, `svg.rs` writes/reads dual-mode `.ink.svg`); see [Handwritten Notes](Handwritten-Notes.md). |
 
 ### The Markdown editor (`src/editor/`)
 
@@ -143,14 +152,15 @@ md-editor/
 | `views/viewer_toolbar.rs` | The shared viewer toolbar for PDFs and images: outline, page field, zoom field, fit, find. |
 | `views/modals.rs`, `link_note_picker.rs`, `command_palette.rs` | Dialogs and the `Ctrl+P` palette (registry and fuzzy ranking via `fuzzy.rs`). |
 | `views/search.rs`, `toc.rs`, `backlinks.rs` | Side panels. |
-| `views/pdf_viewer.rs`, `interactive_pdf.rs` | The PDF pane and the per-page widget. See [PDF Viewer Internals](PDF-Viewer-Internals.md). |
+| `views/pdf_viewer.rs`, `views/pdf_ink.rs`, `interactive_pdf.rs` | The PDF pane, per-page margin ink toolbar/canvas overlay, and the per-page widget. See [PDF Viewer Internals](PDF-Viewer-Internals.md). |
 | `views/graph.rs`, `graph/`, `gpu_graph.rs` (+`gpu_graph/pipeline.rs`) | The knowledge graph: toolbar, inspector, label overlay, and the GPU layer (`gpu_graph.rs` handles pointer interaction; `pipeline.rs` holds the wgpu instance layouts and render pipeline). |
 | `views/ink.rs` | The handwriting window's toolbar and palette. |
 | `views/tracker.rs`, `tracker/` | The study tracker: dashboard in `tracker.rs`, the other tabs in `tracker/sections.rs`, the JSON config model in `tracker/config.rs`. |
 | `design/` | The design system ([MASTER](../docs/design-system/md-editor/MASTER.md)): `palette` (Dark/Light token tables), `type_scale`, `metrics` (spacing, sizes, panel widths), `motion` (panel animations, springs, reduced motion), `fonts` (bundled Inter, JetBrains Mono, Source Serif); `mod.rs` holds the runtime theme, scale and typography settings. Guardrail tests in `design/tests.rs`; `design/setting.rs` makes those settings per-thread under `cargo test`. |
 | `ui/` | Component library built only from `design` tokens: buttons, fields, menus, dialogs, toasts, panels, tab strip, status bar, tree and list rows, icons (Phosphor SVGs in `assets/icons/`). `ui/gallery.rs` renders every component in both themes at several scales; `ui/context_anchor.rs` stamps the pointer position onto context-menu messages. |
 | `pdf_notes.rs`, `search.rs` | Linked-note helpers for PDF highlights; in-note line matching, regex replacement expansion. |
-| `autocomplete.rs`, `views/completion.rs` | Completion triggers and suggestions (vault files for `[[`, block templates for `/`), and the popup drawn under the caret. |
+| `autocomplete.rs`, `views/completion.rs` | Completion triggers and suggestions (vault files and `#heading` anchors for `[[`, `.bib`/PDF citations for `@`, block templates for `/`), and the popup drawn under the caret. |
+| `code_runner.rs` | Opt-in fenced code block runner (`sh`, `bash`, `python`) with 5s timeout, 64 KB output cap, and idempotent `> [!output]` callout insertion. |
 | `raster.rs` | Decoding image files for the image viewer and images in notes: raster formats by content, SVG through `resvg` at 2× density. |
 
 ---

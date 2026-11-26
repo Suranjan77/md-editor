@@ -1,4 +1,6 @@
-//! Inline completion in notes: `[[` suggests vault files to link, `/` at the start of a line suggests blocks to insert.
+//! Inline completion in notes: `[[` suggests vault files and headings, `@` cites `.bib`/PDFs, `/` suggests blocks.
+
+use md_editor_core::citations::CitationEntry;
 
 #[cfg(test)]
 mod tests;
@@ -8,8 +10,10 @@ pub const MAX_ITEMS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionKind {
-    /// `[[query` — a vault file to link.
+    /// `[[query` or `[[note#heading` — a vault file or heading anchor to link.
     Wikilink,
+    /// `@query` — a `.bib` or vault-PDF citation.
+    Citation,
     /// `/query` at the start of a line — a block to insert.
     Slash,
 }
@@ -52,10 +56,26 @@ impl Completion {
 pub fn detect(before_caret: &str) -> Option<(CompletionKind, usize, String)> {
     if let Some(at) = before_caret.rfind("[[") {
         let query = &before_caret[at + 2..];
-        // Closed, aliased (`|`) or anchored (`#`) links are past completing.
-        if !query.contains([']', '|', '#']) && query.chars().count() <= 80 {
+        // Closed (`]`) or aliased (`|`) links are past completing; `#` completes headings.
+        if !query.contains([']', '|']) && query.chars().count() <= 80 {
             let col = before_caret[..at].chars().count();
             return Some((CompletionKind::Wikilink, col, query.to_string()));
+        }
+    }
+    if let Some(at) = before_caret.rfind('@') {
+        let prev_ok = before_caret[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '[' | ';'));
+        let query = &before_caret[at + 1..];
+        if prev_ok
+            && query.chars().count() <= 40
+            && query
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
+        {
+            let col = before_caret[..at].chars().count();
+            return Some((CompletionKind::Citation, col, query.to_string()));
         }
     }
     let indent = before_caret.len() - before_caret.trim_start().len();
@@ -65,6 +85,112 @@ pub fn detect(before_caret: &str) -> Option<(CompletionKind, usize, String)> {
         return Some((CompletionKind::Slash, col, rest.to_string()));
     }
     None
+}
+
+/// Canonical wikilink target text (`Name` when unique in `paths`, else `sub/Name` or full path).
+pub fn wikilink_target_for(paths: &[&str], target_path: &str) -> String {
+    let stem = |path: &str| {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        if is_note(path) {
+            name.rsplit_once('.').map_or(name, |(s, _)| s).to_string()
+        } else {
+            name.to_string()
+        }
+    };
+    let name = stem(target_path);
+    let unique = paths
+        .iter()
+        .filter(|other| stem(other).eq_ignore_ascii_case(&name))
+        .count()
+        == 1;
+    if !is_note(target_path) || unique {
+        if is_note(target_path) {
+            name
+        } else {
+            target_path.to_string()
+        }
+    } else {
+        target_path
+            .rsplit_once('.')
+            .map_or(target_path, |(s, _)| s)
+            .to_string()
+    }
+}
+
+/// Heading anchor suggestions for `[[#heading` or `[[note#heading`.
+pub fn heading_items(
+    target_link: Option<&str>,
+    headings: &[String],
+    query: &str,
+) -> Vec<CompletionItem> {
+    let mut scored: Vec<(i32, usize, &str)> = headings
+        .iter()
+        .enumerate()
+        .filter_map(|(i, h)| crate::fuzzy::score(h, query).map(|s| (s, i, h.as_str())))
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored
+        .into_iter()
+        .take(MAX_ITEMS)
+        .map(|(_, _, heading)| {
+            let insert = match target_link {
+                Some(note) => format!("[[{note}#{heading}]]"),
+                None => format!("[[#{heading}]]"),
+            };
+            CompletionItem {
+                label: heading.to_string(),
+                detail: target_link
+                    .map(|n| format!("{n}#"))
+                    .or_else(|| Some("Current note".to_string())),
+                insert,
+                caret_back: 0,
+            }
+        })
+        .collect()
+}
+
+/// Citations matching `query`, best first.
+pub fn citation_items(citations: &[CitationEntry], query: &str) -> Vec<CompletionItem> {
+    let mut scored: Vec<(i32, usize)> = citations
+        .iter()
+        .enumerate()
+        .filter_map(|(i, entry)| {
+            let haystack = format!(
+                "{} {} {} {}",
+                entry.key,
+                entry.display,
+                entry.title,
+                entry.pdf_path.as_deref().unwrap_or("")
+            );
+            crate::fuzzy::score(&haystack, query).map(|s| (s, i))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored
+        .into_iter()
+        .take(MAX_ITEMS)
+        .map(|(_, i)| {
+            let entry = &citations[i];
+            let insert = match &entry.pdf_path {
+                Some(pdf) => format!("[[{pdf}|{}]]", entry.display),
+                None => format!("[@{}]", entry.key),
+            };
+            let detail = if entry.title.is_empty() {
+                entry
+                    .pdf_path
+                    .clone()
+                    .or_else(|| Some(format!("@{}", entry.key)))
+            } else {
+                Some(format!("{} — {}", entry.display, entry.title))
+            };
+            CompletionItem {
+                label: entry.display.clone(),
+                detail,
+                insert,
+                caret_back: 0,
+            }
+        })
+        .collect()
 }
 
 /// Vault files to link, best match first. A note is linked by its name
@@ -129,6 +255,9 @@ const SLASH_BLOCKS: &[(&str, &str, &str, usize)] = &[
     ("Quote", "blockquote", "> ", 0),
     ("Note callout", "callout info", "> [!note] ", 0),
     ("Warning callout", "callout caution", "> [!warning] ", 0),
+    ("Question callout", "callout synthesis", "> [!question] ", 0),
+    ("Claim callout", "callout synthesis", "> [!claim] ", 0),
+    ("Output callout", "callout result", "> [!output]\n> ", 0),
     ("Code block", "fence code", "```\n\n```", 4),
     ("Math block", "equation latex", "$$\n\n$$", 3),
     (

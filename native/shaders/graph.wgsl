@@ -61,6 +61,7 @@ struct EdgeIn {
     @location(1) p1: vec2<f32>,
     @location(2) color: vec4<f32>,
     @location(3) thickness: f32,
+    @location(4) style: f32,
 };
 
 struct EdgeOut {
@@ -70,6 +71,10 @@ struct EdgeOut {
     @location(1) across_px: f32,
     // Half the requested line width, in pixels.
     @location(2) half_width: f32,
+    // Pixel position along the edge from p0 toward p1, plus edge style.
+    @location(3) along_px: f32,
+    @location(4) total_px: f32,
+    @location(5) style: f32,
 };
 
 // Extra pixels of quad on each side of the line, so coverage can fade to zero
@@ -100,6 +105,9 @@ fn vs_edge(in: EdgeIn, @builtin(vertex_index) vi: u32) -> EdgeOut {
     out.color = in.color;
     out.across_px = corner.y * extent;
     out.half_width = half_width;
+    out.along_px = select(0.0, len, corner.x > 0.0);
+    out.total_px = len;
+    out.style = in.style;
     return out;
 }
 
@@ -110,7 +118,29 @@ fn fs_edge(in: EdgeOut) -> @location(0) vec4<f32> {
     // line got a fade band wider than itself and washed out to near-zero alpha
     // — which is why thin links were invisible no matter how opaque the color.
     let coverage = clamp(in.half_width - abs(in.across_px) + 0.5, 0.0, 1.0);
-    return vec4<f32>(encode(in.color.rgb), in.color.a * coverage);
+    var pattern = 1.0;
+    if (in.style > 2.5) {
+        // Derives: dotted-dash with subtle forward taper.
+        let m = in.along_px % 18.0;
+        let dash = smoothstep(0.0, 0.8, m) * (1.0 - smoothstep(7.5, 8.5, m));
+        let dot = smoothstep(11.5, 12.3, m) * (1.0 - smoothstep(13.8, 14.6, m));
+        pattern = max(dash, dot);
+    } else if (in.style > 1.5) {
+        // Contradicts: dashed line.
+        let m = in.along_px % 12.0;
+        pattern = smoothstep(0.0, 0.8, m) * (1.0 - smoothstep(6.5, 7.5, m));
+    } else if (in.style > 0.5) {
+        // Supports: directional chevron pulse + subtle forward taper toward p1.
+        let frac = clamp(in.along_px / max(in.total_px, 1.0), 0.0, 1.0);
+        let taper = mix(0.75, 1.0, frac);
+        let wave = 0.78 + 0.22 * smoothstep(
+            -0.2,
+            0.5,
+            cos((in.along_px - abs(in.across_px) * 1.4) * 0.35),
+        );
+        pattern = taper * wave;
+    }
+    return vec4<f32>(encode(in.color.rgb), in.color.a * coverage * pattern);
 }
 
 // ─────────────────────────────── nodes ───────────────────────────────
@@ -122,6 +152,7 @@ struct NodeIn {
     @location(3) color: vec4<f32>,
     @location(4) ring: f32,     // 0 none, 1 hover, 2 selected, 3 open document
     @location(5) dim: f32,      // alpha multiplier for focus dimming
+    @location(6) shape: f32,    // 0 circle, 1 rounded rect, 2 diamond, 3 hollow ring
 };
 
 struct NodeOut {
@@ -129,6 +160,7 @@ struct NodeOut {
     @location(0) color: vec4<f32>,
     @location(1) uv: vec2<f32>,          // -1..1 across the padded quad
     @location(2) params: vec4<f32>,      // core_frac, glow, ring, dim
+    @location(3) shape: f32,
 };
 
 // Quad is padded well past the core so the halo has room to fade out.
@@ -145,6 +177,7 @@ fn vs_node(in: NodeIn, @builtin(vertex_index) vi: u32) -> NodeOut {
     out.uv = corner;
     out.color = in.color;
     out.params = vec4<f32>(in.radius / extent, in.glow, in.ring, in.dim);
+    out.shape = in.shape;
     return out;
 }
 
@@ -155,14 +188,30 @@ fn fs_node(in: NodeOut) -> @location(0) vec4<f32> {
     let ring = in.params.z;
     let dim = in.params.w;
 
-    let d = length(in.uv);           // 0 at center, 1 at quad edge
-    let aa = fwidth(d) * 1.5;
+    // Shape-specific signed distance normalized so `d == core_frac` is the boundary.
+    var d = length(in.uv);
+    if (in.shape > 0.5 && in.shape < 1.5) {
+        // PDF: rounded page rectangle (taller than wide).
+        let corner_r = core_frac * 0.24;
+        let b = vec2<f32>(core_frac * 0.86, core_frac * 1.06) - vec2<f32>(corner_r);
+        let q = abs(in.uv) - b;
+        let box_sdf = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - corner_r;
+        d = max(box_sdf + core_frac, 0.0);
+    } else if (in.shape >= 1.5 && in.shape < 2.5) {
+        // Sketch: diamond.
+        d = (abs(in.uv.x) + abs(in.uv.y)) * 0.76;
+    }
 
-    // Solid, anti-aliased core disc.
-    let core = 1.0 - smoothstep(core_frac - aa, core_frac + aa, d);
+    let aa = max(fwidth(d) * 1.5, 0.001);
 
-    // Soft luminous halo falling off toward the quad edge.
-    let halo = glow * pow(clamp(1.0 - d, 0.0, 1.0), 2.5);
+    // Core silhouette: filled for Markdown/PDF/Sketch, hollow ring for Missing.
+    var core = 1.0 - smoothstep(core_frac - aa, core_frac + aa, d);
+    var halo = glow * pow(clamp(1.0 - d, 0.0, 1.0), 2.5);
+    if (in.shape >= 2.5) {
+        let inner = smoothstep(core_frac * 0.48 - aa, core_frac * 0.48 + aa, d);
+        core = core * inner;
+        halo = halo * 0.35;
+    }
 
     var rgb = in.color.rgb;
     var alpha = max(core, halo);

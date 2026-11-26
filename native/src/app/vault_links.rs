@@ -152,10 +152,10 @@ impl MdEditor {
                 .find_by_path(resolved_path)
                 .map(|t| t.view.clone());
             self.open_pdf_restoring_view(resolved_path, saved)
+        } else if crate::ink::is_sketch_path(resolved_path) {
+            self.open_ink_page(resolved_path)
         } else if is_supported_image_path(&lower) {
             self.open_image(resolved_path)
-        } else if lower.ends_with(".ink") {
-            self.open_ink_page(resolved_path)
         } else {
             Task::none()
         }

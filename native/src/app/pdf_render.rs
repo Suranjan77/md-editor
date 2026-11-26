@@ -318,6 +318,7 @@ impl MdEditor {
                 &self.ui.command_palette_query,
                 &self.ui.commands,
                 &self.vault.entries,
+                self.desks.list(),
             );
             if count > 0 {
                 let last = count - 1;

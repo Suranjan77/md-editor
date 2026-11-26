@@ -180,6 +180,9 @@ pub struct PdfToolbarProps<'a> {
     pub toc_visible: bool,
     pub has_selection: bool,
     pub has_annotations: bool,
+    pub has_ink: bool,
+    pub ink_tool: Option<crate::pdf_pane::PdfInkTool>,
+    pub ink_color: md_editor_core::pdf::PdfAnnotationColor,
     pub focused_annotation: Option<&'a md_editor_core::pdf::PdfAnnotation>,
 }
 
@@ -331,6 +334,13 @@ pub fn toolbar<'a>(props: PdfToolbarProps<'a>) -> Element<'a, Message, Theme, Re
                 .build(),
         );
     }
+    if !props.has_selection && props.focused_annotation.is_none() {
+        context.push(crate::views::pdf_ink::toolbar_controls(
+            props.ink_tool,
+            props.ink_color,
+            props.has_ink,
+        ));
+    }
 
     viewer_toolbar::view(ViewerToolbar {
         outline: Some((props.toc_visible, Message::Editor(EditorMessage::ToggleTOC))),
@@ -378,6 +388,9 @@ pub struct ContinuousProps<'a> {
     pub references: &'a std::collections::HashMap<u16, Vec<md_editor_core::pdf::LinkInfo>>,
     pub active_selection: Option<PdfSelection>,
     pub focused_annotation_id: Option<&'a str>,
+    pub ink_tool: Option<crate::pdf_pane::PdfInkTool>,
+    pub ink_color: md_editor_core::pdf::PdfAnnotationColor,
+    pub live_ink: Option<&'a (u16, Vec<[f32; 3]>)>,
     pub load_error: Option<&'a str>,
     /// The list's scroll offset and visible height: pages more than a screen
     /// away are laid out as spacers, not widgets.
@@ -464,6 +477,14 @@ pub fn view_continuous<'a>(props: ContinuousProps<'a>) -> Element<'a, Message, T
                     display_size,
                     props.page_texts.get(&page_index),
                     overlay,
+                    crate::views::pdf_ink::canvas_layer(
+                        page_index,
+                        display_size,
+                        props.ink_tool,
+                        props.ink_color,
+                        props.annotations.get(&page_index),
+                        props.live_ink,
+                    ),
                 )
             }
             None => placeholder_page(i, display_size),
@@ -560,6 +581,9 @@ impl ContinuousProps<'_> {
         };
         let mut overlay_rects = Vec::new();
         for ann in self.annotations.get(&page_index).into_iter().flatten() {
+            if ann.kind == md_editor_core::pdf::PdfAnnotationKind::Ink {
+                continue;
+            }
             // Content-palette tints: the same on dark and light chrome,
             // since they sit on the white page.
             let color = annotation_hue(ann.color).pdf_highlight();
@@ -656,6 +680,7 @@ fn rendered_page<'a>(
     (w, h): (f32, f32),
     page_text: Option<&'a md_editor_core::pdf::PdfPageText>,
     overlay_rects: Vec<OverlayRect>,
+    ink_layer: Element<'a, Message, Theme, Renderer>,
 ) -> Element<'a, Message, Theme, Renderer> {
     let interactive = InteractivePdf::new(
         handle.clone(),
@@ -691,6 +716,7 @@ fn rendered_page<'a>(
         })
         .width(Length::Fixed(w))
         .height(Length::Fixed(h)),
+        ink_layer,
     ])
     .width(Length::Fixed(w))
     .height(Length::Fixed(h))

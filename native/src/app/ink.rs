@@ -328,6 +328,11 @@ impl MdEditor {
 /// Only a dot in the final component counts: a directory like `course-v1.2/`
 /// must not be truncated.
 pub(super) fn strip_extension(path: &str) -> &str {
+    let file_start = path.rfind('/').map_or(0, |slash| slash + 1);
+    let file = &path[file_start..];
+    if file.len() > 8 && file.as_bytes()[file.len() - 8..].eq_ignore_ascii_case(b".ink.svg") {
+        return &path[..path.len() - 8];
+    }
     match path.rfind('.').filter(|dot| !path[*dot..].contains('/')) {
         Some(dot) => &path[..dot],
         None => path,

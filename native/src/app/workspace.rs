@@ -232,6 +232,11 @@ impl MdEditor {
         self.motion.editor_scroll = None;
         self.swap_in(pane);
         self.workspace.focused = pane;
+        self.sync_focused_pane_metadata()
+    }
+
+    /// Refresh panel/sidebar/backlinks/graph state and editor focus for `self.workspace.focused`.
+    pub(super) fn sync_focused_pane_metadata(&mut self) -> Task<Message> {
         self.active_panel = if self.showing_pdf && self.pdf.active_path.is_some() {
             ActivePanel::Pdf
         } else {
@@ -248,9 +253,12 @@ impl MdEditor {
             self.vault.backlinks =
                 md_editor_core::vault::get_mixed_backlinks(&self.state, &path).unwrap_or_default();
             self.graph.set_active_path(Some(path));
+        } else {
+            self.vault.backlinks.clear();
+            self.graph.set_active_path(None);
         }
         if self.active_panel == ActivePanel::Markdown && self.active_path.is_some() {
-            iced::widget::operation::focus(pane.editor_widget_id())
+            iced::widget::operation::focus(self.workspace.focused.editor_widget_id())
         } else {
             Task::none()
         }

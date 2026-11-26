@@ -65,7 +65,7 @@ fn test_resolve_vault_note_by_name() {
 fn ink_path_is_derived_from_the_open_note() {
     assert_eq!(
         derive_ink_path(Some("notes/algebra.md"), "20260805-101500"),
-        "notes/algebra.ink"
+        "notes/algebra.ink.svg"
     );
 }
 
@@ -73,7 +73,7 @@ fn ink_path_is_derived_from_the_open_note() {
 fn ink_path_falls_back_to_a_timestamp_with_no_note_open() {
     assert_eq!(
         derive_ink_path(None, "20260805-101500"),
-        "handwritten-20260805-101500.ink"
+        "handwritten-20260805-101500.ink.svg"
     );
 }
 
@@ -82,23 +82,25 @@ fn ink_path_only_strips_an_extension_from_the_final_component() {
     // A dot in a directory name must not be mistaken for the extension.
     assert_eq!(
         derive_ink_path(Some("course-v1.2/lecture"), "20260805-101500"),
-        "course-v1.2/lecture.ink"
+        "course-v1.2/lecture.ink.svg"
     );
 }
 
 #[test]
 fn a_new_ink_page_never_takes_an_existing_pages_path() {
-    use super::ink::unique_ink_path;
-    let taken = ["notes/algebra.ink", "notes/algebra-2.ink"];
+    use super::ink::{strip_extension, unique_ink_path};
+    let taken = ["notes/algebra.ink.svg", "notes/algebra-2.ink.svg"];
     let is_taken = |p: &str| taken.contains(&p);
     assert_eq!(
-        unique_ink_path("notes/fresh.ink", is_taken),
-        "notes/fresh.ink"
+        unique_ink_path("notes/fresh.ink.svg", is_taken),
+        "notes/fresh.ink.svg"
     );
     assert_eq!(
-        unique_ink_path("notes/algebra.ink", is_taken),
-        "notes/algebra-3.ink"
+        unique_ink_path("notes/algebra.ink.svg", is_taken),
+        "notes/algebra-3.ink.svg"
     );
+    assert_eq!(strip_extension("notes/algebra.ink.svg"), "notes/algebra");
+    assert_eq!(strip_extension("notes/algebra.ink"), "notes/algebra");
 }
 
 #[test]
@@ -278,6 +280,7 @@ fn default_pdf_note_path_uses_pdf_name_page_and_annotation_prefix() {
         note: None,
         linked_note_path: None,
         markdown_anchor: None,
+        ink_stroke: None,
         created_at: 0,
         updated_at: 0,
     };
@@ -432,12 +435,28 @@ fn ctrl_shortcuts_a_focused_widget_captured_do_not_fire_app_actions() {
 
     // Ctrl+B in the editor is bold (captured): the sidebar must not toggle.
     assert!(
-        super::subscription::keyboard_message(&b, Modifiers::CTRL, Status::Captured, false, false)
-            .is_none()
+        super::subscription::keyboard_message(
+            &b,
+            Modifiers::CTRL,
+            Status::Captured,
+            false,
+            false,
+            false,
+            false,
+        )
+        .is_none()
     );
     // Nothing focused claimed it: the app shortcut runs.
     assert!(matches!(
-        super::subscription::keyboard_message(&b, Modifiers::CTRL, Status::Ignored, false, false),
+        super::subscription::keyboard_message(
+            &b,
+            Modifiers::CTRL,
+            Status::Ignored,
+            false,
+            false,
+            false,
+            false,
+        ),
         Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar))
     ));
     // Unmodified keys and Escape keep working regardless.
@@ -448,9 +467,77 @@ fn ctrl_shortcuts_a_focused_widget_captured_do_not_fire_app_actions() {
             Status::Captured,
             false,
             false,
+            false,
+            false,
         ),
         Some(Message::KeyboardShortcut(Shortcut::Escape))
     ));
+    // Ctrl+Enter while command palette is open opens the selected file to the side.
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Named(iced::keyboard::key::Named::Enter),
+            Modifiers::CTRL,
+            Status::Ignored,
+            false,
+            false,
+            true,
+            false,
+        ),
+        Some(Message::Shell(
+            crate::messages::ShellMessage::CommandPaletteOpenToSide
+        ))
+    ));
+    // Graph keyboard node navigation & pin when uncaptured; typing in search does not trigger it.
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Named(iced::keyboard::key::Named::Tab),
+            Modifiers::empty(),
+            Status::Ignored,
+            false,
+            false,
+            false,
+            true,
+        ),
+        Some(Message::Graph(crate::messages::GraphMessage::CycleNode(1)))
+    ));
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Named(iced::keyboard::key::Named::Tab),
+            Modifiers::SHIFT,
+            Status::Ignored,
+            false,
+            false,
+            false,
+            true,
+        ),
+        Some(Message::Graph(crate::messages::GraphMessage::CycleNode(-1)))
+    ));
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Character("p".into()),
+            Modifiers::empty(),
+            Status::Ignored,
+            false,
+            false,
+            false,
+            true,
+        ),
+        Some(Message::Graph(
+            crate::messages::GraphMessage::ToggleSelectedPin
+        ))
+    ));
+    assert!(
+        super::subscription::keyboard_message(
+            &Key::Character("p".into()),
+            Modifiers::empty(),
+            Status::Captured,
+            false,
+            false,
+            false,
+            true,
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -495,6 +582,7 @@ fn parse_chord(chord: &str) -> (iced::keyboard::Key, iced::keyboard::Modifiers) 
         match part {
             "Ctrl" => modifiers |= Modifiers::CTRL,
             "Shift" => modifiers |= Modifiers::SHIFT,
+            "Alt" => modifiers |= Modifiers::ALT,
             "Tab" => key = Some(Key::Named(Named::Tab)),
             "Esc" => key = Some(Key::Named(Named::Escape)),
             "F2" => key = Some(Key::Named(Named::F2)),
@@ -520,6 +608,8 @@ fn every_registry_chord_triggers_its_shortcut() {
             &key,
             modifiers,
             iced::event::Status::Ignored,
+            false,
+            false,
             false,
             false,
         );

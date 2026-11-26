@@ -290,6 +290,16 @@ impl UiState {
                 self.link_note_picker_search.clear();
             }
             Message::Vault(VaultMessage::NameModalSubmitCurrent) => {
+                if matches!(self.active_modal, Some(ModalType::SaveDesk)) {
+                    return Task::done(Message::Desks(crate::messages::DesksMessage::Save(
+                        self.modal_input.clone(),
+                    )));
+                }
+                if matches!(self.active_modal, Some(ModalType::SavePinboard)) {
+                    return Task::done(Message::Graph(
+                        crate::messages::GraphMessage::SavePinboard(self.modal_input.clone()),
+                    ));
+                }
                 if matches!(
                     self.active_modal,
                     Some(

@@ -50,6 +50,7 @@ impl MdEditor {
                 self.ui.command_palette_query.clear();
                 Task::done(Message::KeyboardShortcut(shortcut))
             }
+            ShellMessage::CommandPaletteOpenToSide => self.on_palette_open_to_side(),
             ShellMessage::OverlaySubmitCurrent => self.on_overlay_submit_current(),
             m @ (ShellMessage::TrackerStart
             | ShellMessage::TrackerStop
@@ -149,6 +150,26 @@ impl MdEditor {
             ShellMessage::WindowClosed(id) => self.on_window_closed(id),
             ShellMessage::WindowRescaled(id, factor) => self.on_window_rescaled(id, factor),
         }
+    }
+
+    /// `Ctrl+Enter` in the command palette: open the highlighted file to the side.
+    fn on_palette_open_to_side(&mut self) -> Task<Message> {
+        if !self.ui.command_palette_visible {
+            return Task::none();
+        }
+        let action = views::command_palette::action_at(
+            &self.ui.command_palette_query,
+            &self.ui.commands,
+            &self.vault.entries,
+            self.desks.list(),
+            self.ui.palette_selected,
+        );
+        if let Some(views::command_palette::PaletteAction::OpenFile(path)) = action {
+            self.ui.command_palette_visible = false;
+            self.ui.command_palette_query.clear();
+            return Task::done(Message::Vault(VaultMessage::OpenToSide(path)));
+        }
+        Task::none()
     }
 
     /// Enter in an overlay: submit whichever overlay is on top.

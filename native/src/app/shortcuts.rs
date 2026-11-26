@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::messages::{
-    EditorMessage, GraphMessage, InkMessage, SearchMessage, SettingsMessage, ShellMessage,
-    TabsMessage, VaultMessage,
+    DesksMessage, EditorMessage, GraphMessage, InkMessage, SearchMessage, SettingsMessage,
+    ShellMessage, TabsMessage, VaultMessage,
 };
 
 impl MdEditor {
@@ -55,10 +55,13 @@ impl MdEditor {
             }
             Shortcut::Handwriting => Task::done(Message::Ink(InkMessage::Toggle)),
             Shortcut::InsertSketch => self.insert_sketch(),
+            Shortcut::EvaluateMath => self.evaluate_math_at_cursor(),
+            Shortcut::RunCodeBlock => self.run_code_block_at_cursor(),
             Shortcut::Save if self.ink.is_visible() => Task::done(Message::Ink(InkMessage::Save)),
             Shortcut::Save => Task::done(Message::Editor(EditorMessage::Save)),
             Shortcut::OpenVault => Task::done(Message::Vault(VaultMessage::OpenVaultDialog)),
             Shortcut::NewFile => Task::done(Message::Vault(VaultMessage::CreateFileDialog)),
+            Shortcut::DailyNote => self.open_daily_desk(),
             Shortcut::InsertImage => Task::done(Message::Editor(EditorMessage::InsertImageDialog)),
             Shortcut::GlobalSearch => Task::done(Message::Search(SearchMessage::GlobalSearchOpen)),
             Shortcut::Search => self.open_contextual_search(),
@@ -84,6 +87,9 @@ impl MdEditor {
                 Task::none()
             }
             Shortcut::SplitView => Task::done(Message::Shell(ShellMessage::SplitViewToggle)),
+            Shortcut::SplitRight => self.split(super::workspace::SplitAxis::Vertical),
+            Shortcut::SplitDown => self.split(super::workspace::SplitAxis::Horizontal),
+            Shortcut::Unsplit => self.close_pane(super::workspace::PaneId::B),
             Shortcut::FocusOtherPane => self.focus_other_pane(),
             Shortcut::MoveTabToOtherPane => self.move_active_tab_to_other_pane(),
             Shortcut::ToggleSplitAxis => {
@@ -97,6 +103,8 @@ impl MdEditor {
                 };
                 self.split(axis)
             }
+            Shortcut::SaveDesk => Task::done(Message::Desks(DesksMessage::OpenSaveDialog)),
+            Shortcut::SwitchDesk => Task::done(Message::Desks(DesksMessage::OpenDialog)),
             Shortcut::Settings => Task::done(Message::Settings(SettingsMessage::Toggle)),
             Shortcut::RenameEntry => {
                 if let Some(path) = self

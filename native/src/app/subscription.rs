@@ -15,6 +15,13 @@ impl MdEditor {
             && !self.search.visible;
         let global_search_open = self.search.visible;
         let completion_open = self.editor.completion.is_some();
+        let palette_open = self.ui.command_palette_visible;
+        let graph_nav_active = self.graph.visible
+            && self.ui.active_modal.is_none()
+            && !self.ui.command_palette_visible
+            && !self.search.visible
+            && !self.ui.settings_visible
+            && self.ui.context_menu.is_none();
 
         // App-level keyboard handling. Returns `None` for keys we don't act on
         // so ordinary text entry (handled by the focused editor widget) doesn't
@@ -26,13 +33,36 @@ impl MdEditor {
             }
             _ => None,
         })
-        .with((sidebar_focused, global_search_open, completion_open))
+        .with((
+            sidebar_focused,
+            global_search_open,
+            completion_open,
+            palette_open,
+            graph_nav_active,
+        ))
         .filter_map(
-            |((sidebar_focused, global_search_open, completion_open), (key, modifiers, status))| {
+            |(
+                (
+                    sidebar_focused,
+                    global_search_open,
+                    completion_open,
+                    palette_open,
+                    graph_nav_active,
+                ),
+                (key, modifiers, status),
+            )| {
                 if completion_open && let Some(message) = completion_key(&key, modifiers) {
                     return Some(message);
                 }
-                keyboard_message(&key, modifiers, status, sidebar_focused, global_search_open)
+                keyboard_message(
+                    &key,
+                    modifiers,
+                    status,
+                    sidebar_focused,
+                    global_search_open,
+                    palette_open,
+                    graph_nav_active,
+                )
             },
         );
 
@@ -344,6 +374,8 @@ pub(super) fn keyboard_message(
     status: iced::event::Status,
     sidebar_focused: bool,
     global_search_open: bool,
+    palette_open: bool,
+    graph_nav_active: bool,
 ) -> Option<Message> {
     use iced::keyboard::Key;
     use iced::keyboard::key::Named;
@@ -394,6 +426,9 @@ pub(super) fn keyboard_message(
     }
 
     if *key == Key::Named(Named::Enter) {
+        if ctrl && palette_open {
+            return Some(Message::Shell(ShellMessage::CommandPaletteOpenToSide));
+        }
         if sidebar_focused && status != iced::event::Status::Captured {
             return Some(Message::Vault(VaultMessage::SidebarKeyNav(
                 SidebarNavKey::Enter,
@@ -406,7 +441,7 @@ pub(super) fn keyboard_message(
         if status == iced::event::Status::Captured {
             return None;
         }
-        return ctrl_character_message(c, modifiers.shift());
+        return ctrl_character_message(c, modifiers.shift(), modifiers.alt());
     }
 
     if *key == Key::Named(Named::Delete) {
@@ -416,14 +451,41 @@ pub(super) fn keyboard_message(
         return Some(Message::Ink(InkMessage::DeleteSelection));
     }
 
+    if graph_nav_active && status != iced::event::Status::Captured && !ctrl && !modifiers.alt() {
+        match key {
+            Key::Named(Named::Tab) => {
+                let delta = if modifiers.shift() { -1 } else { 1 };
+                return Some(Message::Graph(GraphMessage::CycleNode(delta)));
+            }
+            Key::Named(Named::ArrowRight) => {
+                return Some(Message::Graph(GraphMessage::CycleNode(1)));
+            }
+            Key::Named(Named::ArrowLeft) => {
+                return Some(Message::Graph(GraphMessage::CycleNode(-1)));
+            }
+            Key::Character(c) if c.eq_ignore_ascii_case("p") => {
+                return Some(Message::Graph(GraphMessage::ToggleSelectedPin));
+            }
+            _ => {}
+        }
+    }
+
     arrow_message(key, status, sidebar_focused, global_search_open)
 }
 
-/// Ctrl (or Cmd) plus a character key, with or without Shift.
-fn ctrl_character_message(c: &str, shift: bool) -> Option<Message> {
+/// Ctrl (or Cmd) plus a character key, with optional Shift or Alt.
+fn ctrl_character_message(c: &str, shift: bool, alt: bool) -> Option<Message> {
     let lower = c.to_ascii_lowercase();
+    if alt {
+        return match lower.as_str() {
+            "d" if !shift => Some(Message::KeyboardShortcut(Shortcut::SwitchDesk)),
+            "r" if !shift => Some(Message::KeyboardShortcut(Shortcut::RunCodeBlock)),
+            _ => None,
+        };
+    }
     if shift {
         return match lower.as_str() {
+            "d" => Some(Message::KeyboardShortcut(Shortcut::SaveDesk)),
             "t" => Some(Message::KeyboardShortcut(Shortcut::ReopenTab)),
             "f" => Some(Message::KeyboardShortcut(Shortcut::GlobalSearch)),
             "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleBacklinks)),
@@ -448,6 +510,7 @@ fn ctrl_character_message(c: &str, shift: bool) -> Option<Message> {
         "s" => Some(Message::KeyboardShortcut(Shortcut::Save)),
         "o" => Some(Message::KeyboardShortcut(Shortcut::OpenVault)),
         "n" => Some(Message::KeyboardShortcut(Shortcut::NewFile)),
+        "d" => Some(Message::KeyboardShortcut(Shortcut::DailyNote)),
         "f" => Some(Message::KeyboardShortcut(Shortcut::Search)),
         "c" => Some(Message::Pdf(PdfMessage::CopySelection)),
         "p" => Some(Message::KeyboardShortcut(Shortcut::CommandPalette)),
@@ -461,6 +524,7 @@ fn ctrl_character_message(c: &str, shift: bool) -> Option<Message> {
         "i" => Some(Message::Ink(InkMessage::Toggle)),
         "z" => Some(Message::Ink(InkMessage::Undo)),
         "y" => Some(Message::Ink(InkMessage::Redo)),
+        "=" => Some(Message::KeyboardShortcut(Shortcut::EvaluateMath)),
         _ => None,
     }
 }

@@ -44,30 +44,7 @@ impl MdEditor {
         }
 
         if self.ui.tab_overflow_open {
-            let entries: Vec<MenuEntry<Message>> = self
-                .tabs
-                .list()
-                .iter()
-                .map(|tab| MenuEntry::Item {
-                    icon: Some(match tab.kind {
-                        TabKind::Note => Icon::FileText,
-                        TabKind::Pdf => Icon::FilePdf,
-                        TabKind::Image => Icon::Image,
-                    }),
-                    label: tab.path.clone(),
-                    shortcut: None,
-                    danger: false,
-                    on_select: Some(Message::Tabs(TabsMessage::Activate(tab.id))),
-                })
-                .collect();
-            layers.push(positioned_context_menu(
-                entries,
-                (self.ui.window_width - 260.0).max(SPACE_4),
-                84.0,
-                self.ui.window_width,
-                self.ui.window_height,
-                Message::Shell(ShellMessage::CloseContextMenu),
-            ));
+            layers.push(self.build_tab_overflow_menu());
         }
 
         if let Some(ref ctx) = self.ui.context_menu {
@@ -108,6 +85,7 @@ impl MdEditor {
                             &self.ui.command_palette_query,
                             &self.ui.commands,
                             &self.vault.entries,
+                            self.desks.list(),
                             self.ui.palette_selected,
                             palette_opacity,
                         ))
@@ -137,6 +115,8 @@ impl MdEditor {
                 self.ui.modal_error.as_deref(),
                 &self.ui.link_note_picker_search,
                 &self.vault.entries,
+                self.desks.list(),
+                self.pinboards.list(),
             ));
         }
 
@@ -180,6 +160,33 @@ impl MdEditor {
             entries,
             ctx.x,
             ctx.y,
+            self.ui.window_width,
+            self.ui.window_height,
+            Message::Shell(ShellMessage::CloseContextMenu),
+        )
+    }
+
+    fn build_tab_overflow_menu(&self) -> Element<'_, Message, Theme, iced::Renderer> {
+        let entries: Vec<MenuEntry<Message>> = self
+            .tabs
+            .list()
+            .iter()
+            .map(|tab| MenuEntry::Item {
+                icon: Some(match tab.kind {
+                    TabKind::Note => Icon::FileText,
+                    TabKind::Pdf => Icon::FilePdf,
+                    TabKind::Image => Icon::Image,
+                }),
+                label: tab.path.clone(),
+                shortcut: None,
+                danger: false,
+                on_select: Some(Message::Tabs(TabsMessage::Activate(tab.id))),
+            })
+            .collect();
+        positioned_context_menu(
+            entries,
+            (self.ui.window_width - 260.0).max(SPACE_4),
+            84.0,
             self.ui.window_width,
             self.ui.window_height,
             Message::Shell(ShellMessage::CloseContextMenu),

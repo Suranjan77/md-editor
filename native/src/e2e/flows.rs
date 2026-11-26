@@ -564,6 +564,101 @@ fn s10_knowledge_graph() {
     app.finish();
 }
 
+/// S10b: Epistemic graph links, Sketch nodes, keyboard navigation, and persistent Pinboards.
+#[test]
+fn s10b_epistemic_graph_navigation_and_pinboards() {
+    let vault = research_vault()
+        .file(
+            "Index.md",
+            concat!(
+                "# Research Index\n\n",
+                "supports:: [[notes/Attention]]\n",
+                "contradicts:: [[notes/Optimizers]]\n",
+                "derives:: [[notes/Axiom]]\n",
+                "![diagram](notes/Sketch.ink)\n",
+                "[[MissingTarget]]\n",
+            ),
+        )
+        .file("notes/Axiom.md", "# Axiom\n")
+        .file("notes/Sketch.ink", r#"{"version":1,"strokes":[]}"#);
+    let mut app = boot("s10b-epistemic-graph", &vault, Some("Index.md"));
+
+    app.send(Message::Graph(GraphMessage::Toggle));
+    let probe = wait_for(&mut app, "epistemic graph snapshot", |p| p.graph_nodes >= 6);
+    assert!(probe.graph_visible);
+
+    // Cycle nodes with Tab/Shift+Tab equivalents and pin via P (`ToggleSelectedPin`).
+    app.send(Message::Graph(GraphMessage::CycleNode(1)));
+    let first = app
+        .probe()
+        .graph_selected_path
+        .clone()
+        .expect("selected node");
+    app.send(Message::Graph(GraphMessage::CycleNode(1)));
+    let second = app
+        .probe()
+        .graph_selected_path
+        .clone()
+        .expect("second node");
+    assert_ne!(first, second);
+    app.send(Message::Graph(GraphMessage::ToggleSelectedPin));
+    assert_eq!(app.probe().graph_pinned_count, 1);
+
+    // Select Index.md so all epistemic edges are highlighted in the inspector + canvas.
+    app.send(Message::Graph(GraphMessage::NodeSelected(Some(
+        "Index.md".to_string(),
+    ))));
+    app.send(Message::Graph(GraphMessage::NodeMoved {
+        path: "Index.md".to_string(),
+        x: 42.0,
+        y: -24.0,
+    }));
+    assert_eq!(app.probe().graph_pinned_count, 2);
+    app.screenshot("epistemic-graph");
+
+    // Sketch filter chip toggles Sketch node visibility cleanly.
+    let count_with_sketch = app.probe().graph_nodes;
+    app.send(Message::Graph(GraphMessage::ShowSketchesToggled(false)));
+    assert_eq!(app.probe().graph_nodes + 1, count_with_sketch);
+    app.send(Message::Graph(GraphMessage::ShowSketchesToggled(true)));
+    assert_eq!(app.probe().graph_nodes, count_with_sketch);
+
+    // Save a Pinboard, clear pins, reload Pinboard, and verify across restart.
+    app.send(Message::Graph(GraphMessage::OpenPinboardsModal));
+    app.send(Message::Graph(GraphMessage::OpenSavePinboardModal));
+    app.send(Message::Graph(GraphMessage::SavePinboard(
+        "Thesis Map".to_string(),
+    )));
+    assert_eq!(app.probe().saved_pinboards, vec!["Thesis Map".to_string()]);
+    assert!(!app.probe().modal_open);
+
+    app.send(Message::Graph(GraphMessage::UnpinAll));
+    assert_eq!(app.probe().graph_pinned_count, 0);
+    app.send(Message::Graph(GraphMessage::LoadPinboard(
+        "Thesis Map".to_string(),
+    )));
+    assert_eq!(app.probe().graph_pinned_count, 2);
+
+    let mut app = app.restart("s10b-epistemic-graph-restart", None);
+    app.send(Message::Graph(GraphMessage::Toggle));
+    wait_for(&mut app, "reloaded graph snapshot", |p| p.graph_nodes >= 6);
+    assert_eq!(app.probe().saved_pinboards, vec!["Thesis Map".to_string()]);
+    app.send(Message::Graph(GraphMessage::LoadPinboard(
+        "Thesis Map".to_string(),
+    )));
+    assert_eq!(app.probe().graph_pinned_count, 2);
+
+    // Enter (`OverlaySubmitCurrent`) opens the selected node.
+    app.send(Message::Graph(GraphMessage::NodeSelected(Some(
+        "notes/Axiom.md".to_string(),
+    ))));
+    app.send(Message::Shell(ShellMessage::OverlaySubmitCurrent));
+    let probe = app.probe();
+    assert!(!probe.graph_visible);
+    assert_eq!(probe.active_path.as_deref(), Some("notes/Axiom.md"));
+    app.finish();
+}
+
 /// S14: formatting commands wrap the selection and the checkbox toggles.
 #[test]
 fn s14_formatting_commands() {
@@ -727,8 +822,16 @@ fn s12b_handwriting_is_never_lost() {
     app.wait(Duration::from_millis(1500));
     let probe = app.probe();
     assert!(!probe.ink_dirty, "the page was not autosaved");
-    assert_eq!(probe.ink_path.as_deref(), Some("notes/Attention.ink"));
-    let first_page = vault.read("notes/Attention.ink");
+    assert_eq!(probe.ink_path.as_deref(), Some("notes/Attention.ink.svg"));
+    let first_page = vault.read("notes/Attention.ink.svg");
+    assert!(
+        first_page.contains("<svg"),
+        "expected dual-mode SVG on disk"
+    );
+    assert!(
+        first_page.contains("<metadata id=\"md-editor-ink\">"),
+        "expected lossless ink metadata in .ink.svg"
+    );
 
     // A fresh session starts a new page for the same note.
     let mut app = app.restart("s12b-ink-durability-restart", None);
@@ -736,9 +839,9 @@ fn s12b_handwriting_is_never_lost() {
     draw_stroke(&mut app, (60.0, 200.0), (260.0, 220.0));
     app.wait(Duration::from_millis(1500));
     let second = app.probe().ink_path.expect("second page saved");
-    assert_eq!(second, "notes/Attention-2.ink");
+    assert_eq!(second, "notes/Attention-2.ink.svg");
     assert_eq!(
-        vault.read("notes/Attention.ink"),
+        vault.read("notes/Attention.ink.svg"),
         first_page,
         "the note's first page was overwritten"
     );
@@ -746,9 +849,9 @@ fn s12b_handwriting_is_never_lost() {
     // Unsaved strokes survive switching to another page.
     draw_stroke(&mut app, (60.0, 300.0), (260.0, 320.0));
     assert!(app.probe().ink_dirty);
-    app.send_quick(open("notes/Attention.ink"));
+    app.send_quick(open("notes/Attention.ink.svg"));
     let probe = app.probe();
-    assert_eq!(probe.ink_path.as_deref(), Some("notes/Attention.ink"));
+    assert_eq!(probe.ink_path.as_deref(), Some("notes/Attention.ink.svg"));
     assert_eq!(probe.ink_strokes, 1);
     app.send(open(&second));
     assert_eq!(
@@ -979,14 +1082,14 @@ fn s12c_sketch_in_a_note_follows_the_drawing() {
     assert!(probe.ink_window_open);
     assert_eq!(
         probe.ink_path.as_deref(),
-        Some("notes/Attention-sketch.ink")
+        Some("notes/Attention-sketch.ink.svg")
     );
     assert!(
-        vault.exists("notes/Attention-sketch.ink"),
+        vault.exists("notes/Attention-sketch.ink.svg"),
         "the page exists at once"
     );
     assert!(
-        probe.buffer.contains("![sketch](Attention-sketch.ink)"),
+        probe.buffer.contains("![sketch](Attention-sketch.ink.svg)"),
         "{}",
         probe.buffer
     );
@@ -994,7 +1097,7 @@ fn s12c_sketch_in_a_note_follows_the_drawing() {
         probe
             .images
             .iter()
-            .all(|(key, _)| key != "Attention-sketch.ink"),
+            .all(|(key, _)| key != "Attention-sketch.ink.svg"),
         "an empty page shows nothing yet"
     );
 
@@ -1007,7 +1110,7 @@ fn s12c_sketch_in_a_note_follows_the_drawing() {
         .probe()
         .images
         .iter()
-        .find(|(key, _)| key == "Attention-sketch.ink")
+        .find(|(key, _)| key == "Attention-sketch.ink.svg")
         .map(|(_, width)| *width)
         .expect("the note shows the sketch once it has ink");
     assert!(
@@ -1015,11 +1118,14 @@ fn s12c_sketch_in_a_note_follows_the_drawing() {
         "cropped to the strokes plus margins: {width}"
     );
 
+    let saved_svg = vault.read("notes/Attention-sketch.ink.svg");
+    assert!(saved_svg.contains("<svg") && saved_svg.contains("<path"));
+
     // A second sketch in the same note gets its own page.
     app.send(shortcut(Shortcut::InsertSketch));
     assert_eq!(
         app.probe().ink_path.as_deref(),
-        Some("notes/Attention-sketch-2.ink")
+        Some("notes/Attention-sketch-2.ink.svg")
     );
     app.finish();
 }

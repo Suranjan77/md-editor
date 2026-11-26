@@ -313,6 +313,7 @@ fn test_study_tracker_massive_sessions() {
 
         let session = StudySession {
             id: 0, // database auto-increments
+            uid: String::new(),
             date: date_str,
             hours,
             activity_type: format!("Activity_{}", i % 5),
@@ -322,6 +323,7 @@ fn test_study_tracker_massive_sessions() {
             } else {
                 None
             },
+            updated_at: 0,
         };
 
         save_session(&state, session.clone()).expect("Failed to save session");

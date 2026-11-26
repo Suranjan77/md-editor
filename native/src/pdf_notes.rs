@@ -282,6 +282,7 @@ mod tests {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            ink_stroke: None,
             created_at: 0,
             updated_at: 0,
         };

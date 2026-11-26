@@ -283,6 +283,134 @@ impl GpuGraphProgram {
             }
         }
     }
+
+    fn build_node_instances(
+        &self,
+        transform: ViewTransform,
+        focus: Option<usize>,
+        in_focus: impl Fn(usize) -> bool,
+    ) -> Vec<NodeInstance> {
+        let mut nodes = Vec::with_capacity(self.frame.nodes().len());
+        for (index, node) in self.frame.nodes().iter().enumerate() {
+            let is_focus = focus == Some(index);
+            let is_neighbor = !is_focus && in_focus(index);
+            // Dimming exists to make a neighbourhood pop, not to erase the map
+            // around it — the rest of the graph has to stay readable enough to
+            // aim the next click at.
+            let dim = if focus.is_some() && !in_focus(index) {
+                0.42
+            } else {
+                1.0
+            };
+            let selected = self.frame.selected == Some(index);
+            let hovered = self.frame.hovered == Some(index);
+            let active = self.frame.active == Some(index);
+            // The open document keeps a quiet ring of its own so "where am I?"
+            // is answerable at a glance without hovering anything.
+            let ring = if selected {
+                2.0
+            } else if hovered {
+                1.0
+            } else if active {
+                3.0
+            } else {
+                0.0
+            };
+            // Quiet nodes glow by connectedness, so a zoomed-out vault reads
+            // as a sky of varying magnitudes rather than uniform fill.
+            let glow = if selected || hovered {
+                0.95
+            } else if is_neighbor || active {
+                0.7
+            } else {
+                0.22 + node_magnitude(node) * 0.5
+            };
+            let shape = match node.kind {
+                md_editor_core::types::GraphNodeKind::Markdown => 0.0,
+                md_editor_core::types::GraphNodeKind::Pdf => 1.0,
+                md_editor_core::types::GraphNodeKind::Sketch => 2.0,
+                md_editor_core::types::GraphNodeKind::Missing => 3.0,
+            };
+            let color = kind_color(node.kind);
+            let world = self.frame.world(index);
+            nodes.push(NodeInstance {
+                center: [world.x, world.y],
+                radius: node_screen_radius(node, transform.zoom),
+                glow,
+                color: [color.r, color.g, color.b, 1.0],
+                ring,
+                dim,
+                shape,
+                _pad: 0.0,
+            });
+        }
+        nodes
+    }
+
+    fn build_edge_instances(&self, focus: Option<usize>) -> Vec<EdgeInstance> {
+        let tokens = crate::design::tokens();
+        let mut edges = Vec::with_capacity(self.frame.graph.snapshot.edges.len());
+        for (edge, &(source, target)) in self
+            .frame
+            .graph
+            .snapshot
+            .edges
+            .iter()
+            .zip(&self.frame.graph.edge_pairs)
+        {
+            if source == usize::MAX || target == usize::MAX {
+                continue;
+            }
+            let from = self.frame.world(source);
+            let to = self.frame.world(target);
+            let focused = focus.is_some_and(|focus| source == focus || target == focus);
+            let weight = edge.weight.max(1) as f32;
+            let (epistemic_color, style) = match edge.kind {
+                md_editor_core::types::GraphEdgeKind::Supports => {
+                    (Some(tokens.status_success), 1.0)
+                }
+                md_editor_core::types::GraphEdgeKind::Contradicts => {
+                    (Some(tokens.status_danger), 2.0)
+                }
+                md_editor_core::types::GraphEdgeKind::Derives => (Some(tokens.status_info), 3.0),
+                md_editor_core::types::GraphEdgeKind::WikiLink
+                | md_editor_core::types::GraphEdgeKind::PdfAnnotation => (None, 0.0),
+            };
+            // Links are the whole point of the view, so even the quietest state
+            // stays visible against the canvas (`pages/graph.md`: `border.control`).
+            let link = tokens.border_control;
+            let (color, alpha, thickness) = if let Some(role_color) = epistemic_color {
+                if focused {
+                    (role_color, 0.96, 1.9 + weight.ln() * 0.5)
+                } else if focus.is_some() {
+                    (role_color, 0.30, 1.2 + weight.ln() * 0.4)
+                } else {
+                    (role_color, 0.78, 1.35 + weight.ln() * 0.4)
+                }
+            } else if focused {
+                (
+                    crate::design::fade(tokens.accent, 0.5),
+                    0.95,
+                    1.8 + weight.ln() * 0.5,
+                )
+            } else if focus.is_some() {
+                (link, 0.24, 1.0 + weight.ln() * 0.4)
+            } else {
+                (link, 0.48, 1.0 + weight.ln() * 0.4)
+            };
+            edges.push(EdgeInstance {
+                p0: [from.x, from.y],
+                p1: [to.x, to.y],
+                color: [color.r, color.g, color.b, alpha],
+                thickness,
+                style,
+                _pad: [0.0, 0.0],
+            });
+        }
+        // Draw plain structural links first so epistemic edges (`style > 0.0`) always sit on top.
+        edges.sort_by_key(|edge| edge.style > 0.0);
+        edges
+    }
 }
 
 fn set_view(pan: Vector, zoom: f32) -> GraphMessage {
@@ -396,93 +524,8 @@ impl shader::Program<Message> for GpuGraphProgram {
                 .is_some_and(|(_, mask)| mask.get(index).copied().unwrap_or(false))
         };
 
-        let mut nodes = Vec::with_capacity(self.frame.nodes().len());
-        for (index, node) in self.frame.nodes().iter().enumerate() {
-            let is_focus = focus == Some(index);
-            let is_neighbor = !is_focus && in_focus(index);
-            // Dimming exists to make a neighbourhood pop, not to erase the map
-            // around it — the rest of the graph has to stay readable enough to
-            // aim the next click at.
-            let dim = if focus.is_some() && !in_focus(index) {
-                0.42
-            } else {
-                1.0
-            };
-            let selected = self.frame.selected == Some(index);
-            let hovered = self.frame.hovered == Some(index);
-            let active = self.frame.active == Some(index);
-            // The open document keeps a quiet ring of its own so "where am I?"
-            // is answerable at a glance without hovering anything.
-            let ring = if selected {
-                2.0
-            } else if hovered {
-                1.0
-            } else if active {
-                3.0
-            } else {
-                0.0
-            };
-            // Quiet nodes glow by connectedness, so a zoomed-out vault reads
-            // as a sky of varying magnitudes rather than uniform fill.
-            let glow = if selected || hovered {
-                0.95
-            } else if is_neighbor || active {
-                0.7
-            } else {
-                0.22 + node_magnitude(node) * 0.5
-            };
-            let color = kind_color(node.kind);
-            let world = self.frame.world(index);
-            nodes.push(NodeInstance {
-                center: [world.x, world.y],
-                radius: node_screen_radius(node, transform.zoom),
-                glow,
-                color: [color.r, color.g, color.b, 1.0],
-                ring,
-                dim,
-                _pad: [0.0, 0.0],
-            });
-        }
-
-        let tokens = crate::design::tokens();
-        let mut edges = Vec::with_capacity(self.frame.graph.snapshot.edges.len());
-        for (edge, &(source, target)) in self
-            .frame
-            .graph
-            .snapshot
-            .edges
-            .iter()
-            .zip(&self.frame.graph.edge_pairs)
-        {
-            if source == usize::MAX || target == usize::MAX {
-                continue;
-            }
-            let from = self.frame.world(source);
-            let to = self.frame.world(target);
-            let focused = focus.is_some_and(|focus| source == focus || target == focus);
-            let weight = edge.weight.max(1) as f32;
-            // Links are the whole point of the view, so even the quietest state
-            // stays visible against the canvas (`pages/graph.md`: `border.control`).
-            let link = tokens.border_control;
-            let (color, alpha, thickness) = if focused {
-                (
-                    crate::design::fade(tokens.accent, 0.5),
-                    0.95,
-                    1.8 + weight.ln() * 0.5,
-                )
-            } else if focus.is_some() {
-                (link, 0.24, 1.0 + weight.ln() * 0.4)
-            } else {
-                (link, 0.48, 1.0 + weight.ln() * 0.4)
-            };
-            edges.push(EdgeInstance {
-                p0: [from.x, from.y],
-                p1: [to.x, to.y],
-                color: [color.r, color.g, color.b, alpha],
-                thickness,
-                _pad: [0.0, 0.0, 0.0],
-            });
-        }
+        let nodes = self.build_node_instances(transform, focus, in_focus);
+        let edges = self.build_edge_instances(focus);
 
         GpuGraphPrimitive {
             nodes,

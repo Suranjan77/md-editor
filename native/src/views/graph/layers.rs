@@ -93,7 +93,7 @@ pub(super) fn hairball_notice<'a>(state: &'a GraphState) -> Element<'a, Message>
     )
 }
 
-/// Kind legend: an icon and a name per kind, so colour is never the only cue.
+/// Kind & epistemic edge legend: icons/cues per kind and keybindings, so colour is never the only cue.
 pub(super) fn legend<'a>() -> Element<'a, Message> {
     let t = tokens();
     let entry = |which: Icon, kind: GraphNodeKind, label: &'a str| {
@@ -104,17 +104,29 @@ pub(super) fn legend<'a>() -> Element<'a, Message> {
         .spacing(SPACE_1)
         .align_y(Alignment::Center)
     };
+    let edge_cue = |label: &'a str, color: Color| role_text(label, TextRole::Caption, color);
 
     floating(
         column![
             row![
-                entry(Icon::FileText, GraphNodeKind::Markdown, "Note"),
-                entry(Icon::FilePdf, GraphNodeKind::Pdf, "PDF"),
-                entry(Icon::WarningCircle, GraphNodeKind::Missing, "Unresolved"),
+                entry(Icon::FileText, GraphNodeKind::Markdown, "Note (disc)"),
+                entry(Icon::FilePdf, GraphNodeKind::Pdf, "PDF (page)"),
+                entry(Icon::Pen, GraphNodeKind::Sketch, "Sketch (diamond)"),
+                entry(
+                    Icon::WarningCircle,
+                    GraphNodeKind::Missing,
+                    "Unresolved (ring)"
+                ),
+            ]
+            .spacing(SPACE_3),
+            row![
+                edge_cue("Supports (arrow)", t.status_success),
+                edge_cue("Contradicts (dashed)", t.status_danger),
+                edge_cue("Derives (dot-dash)", t.status_info),
             ]
             .spacing(SPACE_3),
             role_text(
-                "Double-click opens · drag to move · right-click pins",
+                "Tab/←→ cycles · P pins · Enter opens · drag moves",
                 TextRole::Caption,
                 t.fg_tertiary,
             ),

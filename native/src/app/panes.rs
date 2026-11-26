@@ -55,7 +55,11 @@ impl MdEditor {
         }
         let saved = self.with_pane(pane, |app| {
             app.save_current_tab_view();
-            app.save_active_document()
+            let outcome = app.save_active_document();
+            if !matches!(outcome, SaveOutcome::Failed(_)) {
+                app.park_active_buffer();
+            }
+            outcome
         });
         if let SaveOutcome::Failed(err) = saved {
             self.ui.notify(
@@ -75,7 +79,9 @@ impl MdEditor {
         });
         // The pane that stays is swapped in and becomes pane A.
         self.swap_in(keep);
-        self.workspace.other = None;
+        if let Some(mut closed_pane) = self.workspace.other.take() {
+            self.editor.absorb_retained(&mut closed_pane.editor);
+        }
         self.workspace.current = PaneId::A;
         self.workspace.focused = PaneId::A;
         super::workspace::set_current(PaneId::A);
@@ -151,6 +157,9 @@ impl MdEditor {
     /// Open `path` in the pane beside the focused one, splitting if needed,
     /// and focus it there. A file already open in a pane is focused instead.
     pub(super) fn open_to_side(&mut self, path: &str) -> Task<Message> {
+        if crate::ink::is_sketch_path(path) {
+            return self.open_ink_page(path);
+        }
         if !self.workspace.is_split() {
             self.workspace.other = Some(PaneDocs::new(self.workspace.current.other()));
             self.persist_layout();

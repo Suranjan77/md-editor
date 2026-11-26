@@ -87,6 +87,14 @@ pub(super) fn toolbar<'a>(
         .into(),
     );
     primary.push(
+        Button::ghost("Pinboards…")
+            .size(ControlSize::Sm)
+            .icon(Icon::Pin)
+            .on_press(Message::Graph(GraphMessage::OpenPinboardsModal))
+            .tooltip("Save or switch graph pinboards", None)
+            .build(),
+    );
+    primary.push(
         IconButton::new(
             Icon::PanelRight,
             if state.inspector_visible {
@@ -135,6 +143,12 @@ fn filter_row<'a>(
             state.show_pdfs,
             Some(Icon::FilePdf),
             Message::Graph(GraphMessage::ShowPdfsToggled(!state.show_pdfs)),
+        ),
+        filter_chip(
+            &format!("Sketches {}", stats.sketches),
+            state.show_sketches,
+            Some(Icon::Pen),
+            Message::Graph(GraphMessage::ShowSketchesToggled(!state.show_sketches)),
         ),
         filter_chip(
             &format!("Unresolved {}", stats.missing),

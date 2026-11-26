@@ -374,6 +374,7 @@ impl MdEditor {
                 note: None,
                 linked_note_path: None,
                 markdown_anchor: None,
+                ink_stroke: None,
                 created_at: now,
                 updated_at: now,
             };
@@ -404,6 +405,9 @@ impl MdEditor {
         for (page_index, anns) in &self.pdf.annotations {
             let page_text = self.pdf.page_text.get(page_index);
             for ann in anns {
+                if ann.kind == md_editor_core::pdf::PdfAnnotationKind::Ink {
+                    continue;
+                }
                 total += 1;
                 let needle = ann.selected_text.trim();
                 if needle.is_empty() {

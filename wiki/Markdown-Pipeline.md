@@ -69,12 +69,14 @@ pub enum EditorCommand {
                    focus_line: usize, focus_col: usize, affinity: Affinity },
     SelectAll, ToggleCheckbox { line: usize },
     FormatBold, FormatItalic, FormatInlineCode, InsertLink,
-    TypePaired(char), Undo, Redo,
+    TypePaired(char), ReplaceRange { start_char, end_char, text, cursor_char }, Undo, Redo,
 }
 ```
 
 `execute()` returns a `CommandResult { text_changed, projection_changed, media_changed }`,
 so the shell knows whether to re-parse, refresh media caches, or merely move the caret.
+`ReplaceRange` powers single-undo-step completion, inline math evaluation (`Ctrl+=`), and
+idempotent `> [!output]` block replacement for opt-in code execution (`Ctrl+Alt+R`).
 
 ### Grapheme clusters
 

@@ -48,11 +48,13 @@ pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Eleme
     let kind_label = match node.kind {
         GraphNodeKind::Markdown => "Markdown note",
         GraphNodeKind::Pdf => "PDF reference",
+        GraphNodeKind::Sketch => "Handwritten sketch",
         GraphNodeKind::Missing => "Unresolved link target",
     };
     let kind_icon = match node.kind {
         GraphNodeKind::Markdown => Icon::FileText,
         GraphNodeKind::Pdf => Icon::FilePdf,
+        GraphNodeKind::Sketch => Icon::Pen,
         GraphNodeKind::Missing => Icon::WarningCircle,
     };
     let pinned = state.is_pinned(&node.path);
@@ -121,8 +123,8 @@ pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Eleme
         ));
     }
 
-    let incoming = state.incoming(&node.path);
-    let outgoing = state.outgoing(&node.path);
+    let incoming = state.incoming_edges(&node.path);
+    let outgoing = state.outgoing_edges(&node.path);
     let related: Vec<(String, String, String)> = state
         .related(&node.path, 6)
         .into_iter()
@@ -136,8 +138,8 @@ pub(super) fn node_card<'a>(state: &'a GraphState, node: &'a GraphNode) -> Eleme
         })
         .collect();
 
-    card.push(node_list("Links to", outgoing, "Nothing yet"))
-        .push(node_list("Linked from", incoming, "No backlinks"))
+    card.push(edge_node_list("Links to", outgoing, "Nothing yet"))
+        .push(edge_node_list("Linked from", incoming, "No backlinks"))
         .push(link_list("Similar notes", related, "No shared neighbours"))
         .into()
 }
@@ -151,7 +153,8 @@ pub(super) fn insights<'a>(state: &'a GraphState) -> Element<'a, Message> {
         .filter(|node| node.incoming + node.outgoing > 0)
         .map(|node| {
             let degree = node.incoming + node.outgoing;
-            (node.path, node.label, format!("{degree} links"))
+            let noun = if degree == 1 { "link" } else { "links" };
+            (node.path, node.label, format!("{degree} {noun}"))
         })
         .collect();
     let orphans = state
@@ -185,19 +188,54 @@ pub(super) fn insights<'a>(state: &'a GraphState) -> Element<'a, Message> {
     .into()
 }
 
-pub(super) fn node_list<'a>(
+pub(super) fn edge_node_list<'a>(
     title: &'static str,
-    nodes: Vec<GraphNode>,
+    edges: Vec<(GraphNode, md_editor_core::types::GraphEdgeKind)>,
     empty: &'static str,
 ) -> Element<'a, Message> {
-    let items = nodes
-        .into_iter()
-        .map(|node| {
-            let degree = node.incoming + node.outgoing;
-            (node.path, node.label, format!("{degree} links"))
-        })
-        .collect();
-    link_list(title, items, empty)
+    use md_editor_core::types::GraphEdgeKind;
+    let t = tokens();
+    let mut list = column![role_text(title, TextRole::Label, t.fg_tertiary)].spacing(SPACE_1);
+    if edges.is_empty() {
+        list = list.push(role_text(empty, TextRole::Caption, t.fg_tertiary));
+        return list.into();
+    }
+    for (node, kind) in edges {
+        let degree = node.incoming + node.outgoing;
+        let link_noun = if degree == 1 { "link" } else { "links" };
+        let badge_spec = match kind {
+            GraphEdgeKind::Supports => Some(("Supports", crate::ui::BadgeTone::Success)),
+            GraphEdgeKind::Contradicts => Some(("Contradicts", crate::ui::BadgeTone::Danger)),
+            GraphEdgeKind::Derives => Some(("Derives", crate::ui::BadgeTone::Info)),
+            GraphEdgeKind::PdfAnnotation => Some(("Highlight", crate::ui::BadgeTone::Info)),
+            GraphEdgeKind::WikiLink => None,
+        };
+        let row_widget = list_row(ListRowProps {
+            title: node.label.into(),
+            subtitle: Some(format!("{degree} {link_noun}").into()),
+            leading_icon: None,
+            shortcut: None,
+            selected: false,
+            active_doc: false,
+            focused: false,
+            drag_over: false,
+            max_title_chars: 24,
+            on_press: Some(Message::Graph(GraphMessage::NodeFocused(node.path))),
+        });
+        if let Some((badge_label, tone)) = badge_spec {
+            list = list.push(
+                row![
+                    container(row_widget).width(Length::Fill),
+                    crate::ui::badge(badge_label, tone, None),
+                ]
+                .spacing(SPACE_1)
+                .align_y(Alignment::Center),
+            );
+        } else {
+            list = list.push(row_widget);
+        }
+    }
+    list.into()
 }
 
 /// A titled list where every row reveals its node on the canvas: clicking a

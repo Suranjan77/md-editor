@@ -830,6 +830,10 @@ fn vault_round_trip_preserves_the_page() {
     let loaded = load_from_vault(root, "notes/page.ink").unwrap();
     assert_eq!(loaded.strokes(), ink.document.strokes());
 
+    save_to_vault(root, "notes/page.ink.svg", &ink.document).unwrap();
+    let loaded_svg = load_from_vault(root, "notes/page.ink.svg").unwrap();
+    assert_eq!(loaded_svg.strokes(), ink.document.strokes());
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 

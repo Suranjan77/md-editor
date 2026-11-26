@@ -34,6 +34,14 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
         path.extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case(want))
     };
+    if crate::ink::is_ink_svg_path(&path.to_string_lossy()) {
+        let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        if let Ok(doc) = crate::ink::svg::from_svg(&raw) {
+            return crate::ink::raster::render(&doc)
+                .ok_or_else(|| "The page has no ink yet".into());
+        }
+        return decode_svg(raw.as_bytes());
+    }
     if has_ext("svg") {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         return decode_svg(&bytes);

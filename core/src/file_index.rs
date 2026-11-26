@@ -14,8 +14,76 @@ pub(crate) use code_spans::{code_ranges, in_code};
 static WIKILINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").expect("valid regex"));
 
+/// `[text](target)` / `![alt](target)` matcher for inline sketch references.
+static MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+"[^"\n]*")?\s*\)"#).expect("valid regex")
+});
+
+const TAG_SUPPORTS: &str = "\u{001e}supports:";
+const TAG_CONTRADICTS: &str = "\u{001e}contradicts:";
+const TAG_DERIVES: &str = "\u{001e}derives:";
+const TAG_SKETCH: &str = "\u{001e}sketch:";
+
+fn decode_encoded_link(encoded: &str) -> (crate::types::GraphEdgeKind, bool, &str) {
+    if let Some(target) = encoded.strip_prefix(TAG_SUPPORTS) {
+        (crate::types::GraphEdgeKind::Supports, false, target)
+    } else if let Some(target) = encoded.strip_prefix(TAG_CONTRADICTS) {
+        (crate::types::GraphEdgeKind::Contradicts, false, target)
+    } else if let Some(target) = encoded.strip_prefix(TAG_DERIVES) {
+        (crate::types::GraphEdgeKind::Derives, false, target)
+    } else if let Some(target) = encoded.strip_prefix(TAG_SKETCH) {
+        (crate::types::GraphEdgeKind::WikiLink, true, target)
+    } else {
+        (crate::types::GraphEdgeKind::WikiLink, false, encoded)
+    }
+}
+
+fn encode_wikilink_target(kind: crate::types::GraphEdgeKind, target: &str) -> String {
+    match kind {
+        crate::types::GraphEdgeKind::Supports => format!("{TAG_SUPPORTS}{target}"),
+        crate::types::GraphEdgeKind::Contradicts => format!("{TAG_CONTRADICTS}{target}"),
+        crate::types::GraphEdgeKind::Derives => format!("{TAG_DERIVES}{target}"),
+        crate::types::GraphEdgeKind::WikiLink | crate::types::GraphEdgeKind::PdfAnnotation => {
+            target.to_string()
+        }
+    }
+}
+
+fn epistemic_prefix_kind(
+    content: &str,
+    code: &[std::ops::Range<usize>],
+    link_start: usize,
+) -> crate::types::GraphEdgeKind {
+    let trimmed = content[..link_start].trim_end_matches([' ', '\t']);
+    let Some(before_colons) = trimmed.strip_suffix("::") else {
+        return crate::types::GraphEdgeKind::WikiLink;
+    };
+    for (kw, kind) in [
+        ("supports", crate::types::GraphEdgeKind::Supports),
+        ("contradicts", crate::types::GraphEdgeKind::Contradicts),
+        ("derives", crate::types::GraphEdgeKind::Derives),
+    ] {
+        if before_colons.len() >= kw.len() {
+            let kw_start = before_colons.len() - kw.len();
+            if before_colons.is_char_boundary(kw_start)
+                && before_colons[kw_start..].eq_ignore_ascii_case(kw)
+            {
+                let boundary_ok = before_colons[..kw_start]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_');
+                if boundary_ok && !code_spans::in_code(code, kw_start) {
+                    return kind;
+                }
+            }
+        }
+    }
+    crate::types::GraphEdgeKind::WikiLink
+}
+
 /// Wikilinks in `content` outside code (fenced blocks and inline code spans),
 /// so `[[nodiscard]]` in C++ or `[[ -f x ]]` in a shell snippet is not a link.
+#[cfg(test)]
 fn wikilinks(content: &str) -> impl Iterator<Item = regex::Captures<'_>> {
     let code = code_spans::code_ranges(content);
     WIKILINK_RE
@@ -163,10 +231,15 @@ impl FileIndex {
             .links
             .iter()
             .filter(|(source, targets)| {
-                targets.iter().any(|target| {
-                    resolve_wikilink_target(target, &self.vault_root, source)
-                        .and_then(|candidate| stem_lower(&candidate))
-                        .is_some_and(|s| s == stem)
+                targets.iter().any(|encoded| {
+                    let (_, is_sketch, target) = decode_encoded_link(encoded);
+                    if is_sketch {
+                        resolve_md_sketch_target(target, &self.vault_root, source)
+                    } else {
+                        resolve_wikilink_target(target, &self.vault_root, source)
+                    }
+                    .and_then(|candidate| stem_lower(&candidate))
+                    .is_some_and(|s| s == stem)
                 })
             })
             .map(|(source, _)| source.clone())
@@ -176,16 +249,13 @@ impl FileIndex {
         }
     }
 
-    /// Resolve a single wikilink target to the file it points at.
-    ///
-    /// Resolution order: an exact path match (handles `[[sub/Name]]` and
-    /// root-level `[[Name]]`); failing that, the shortest known file sharing
-    /// the link's basename, so a bare `[[Name]]` resolves into a subfolder the
-    /// same way the navigator does. When no file with that basename is known —
-    /// a forward reference during incremental indexing, or a dangling link —
-    /// the path-based candidate is kept so the link still records a backlink
-    /// that a later-created file at that location inherits.
-    pub(crate) fn resolve_link(&self, target: &str, file_path: &Path) -> Option<PathBuf> {
+    /// Resolve a single link target (including optional epistemic/sketch encoding)
+    /// to the vault file it points at.
+    pub(crate) fn resolve_link(&self, encoded: &str, file_path: &Path) -> Option<PathBuf> {
+        let (_, is_sketch, target) = decode_encoded_link(encoded);
+        if is_sketch {
+            return resolve_md_sketch_target(target, &self.vault_root, file_path);
+        }
         let candidate = resolve_wikilink_target(target, &self.vault_root, file_path)?;
         let Some(stem) = candidate
             .file_stem()
@@ -214,6 +284,24 @@ impl FileIndex {
             // Unknown basename: keep the optimistic path-based candidate.
             None => Some(candidate),
         }
+    }
+
+    /// Snapshot every indexed source file and its deduplicated typed outgoing edges.
+    pub fn typed_outgoing_snapshot(
+        &self,
+    ) -> Vec<(PathBuf, Vec<(PathBuf, crate::types::GraphEdgeKind)>)> {
+        let mut out = Vec::with_capacity(self.links.len());
+        for (source, encoded_targets) in &self.links {
+            let mut edges: BTreeSet<(PathBuf, crate::types::GraphEdgeKind)> = BTreeSet::new();
+            for encoded in encoded_targets {
+                let (kind, _, _) = decode_encoded_link(encoded);
+                if let Some(target) = self.resolve_link(encoded, source) {
+                    edges.insert((target, kind));
+                }
+            }
+            out.push((source.clone(), edges.into_iter().collect()));
+        }
+        out
     }
 
     /// Register `path` by name; whether it was not known before.
@@ -258,11 +346,110 @@ impl FileIndex {
     }
 }
 
-/// The wikilink targets in `content` (outside code), as written.
+/// The link targets in `content` (outside code), as written/tagged for caching.
 pub(crate) fn raw_targets(content: &str) -> Vec<String> {
-    wikilinks(content)
-        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
-        .collect()
+    let code = code_spans::code_ranges(content);
+    let mut out: Vec<String> = WIKILINK_RE
+        .captures_iter(content)
+        .filter_map(|cap| {
+            let whole = cap.get(0)?;
+            if code_spans::in_code(&code, whole.start()) {
+                return None;
+            }
+            let target = cap.get(1)?.as_str();
+            let kind = epistemic_prefix_kind(content, &code, whole.start());
+            Some(encode_wikilink_target(kind, target))
+        })
+        .collect();
+
+    for cap in MD_LINK_RE.captures_iter(content) {
+        let Some(target) = cap.get(1) else { continue };
+        if code_spans::in_code(&code, target.start()) {
+            continue;
+        }
+        let raw = target.as_str();
+        if let Some(path) = clean_md_link_path(raw)
+            && crate::vault::is_sketch_path(Path::new(&path))
+        {
+            out.push(format!("{TAG_SKETCH}{raw}"));
+        }
+    }
+    out
+}
+
+fn clean_md_link_path(raw: &str) -> Option<String> {
+    let inner = raw
+        .strip_prefix('<')
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(raw)
+        .trim();
+    if inner.is_empty() || inner.starts_with('#') || inner.contains("://") {
+        return None;
+    }
+    let split = inner.find(['#', '?']).unwrap_or(inner.len());
+    let decoded = percent_decode(&inner[..split]);
+    if decoded.is_empty() {
+        None
+    } else {
+        Some(decoded)
+    }
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(hex) = text.get(i + 1..i + 3)
+            && let Ok(byte) = u8::from_str_radix(hex, 16)
+        {
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| text.to_string())
+}
+
+fn normalize_within_vault(vault_root: &Path, base: &Path, rel: &str) -> Option<PathBuf> {
+    let joined = base.join(rel.replace('\\', "/"));
+    let mut components = Vec::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                components.pop();
+            }
+            std::path::Component::Normal(c) => {
+                components.push(c);
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                components.push(component.as_os_str());
+            }
+        }
+    }
+    let normalized: PathBuf = components.into_iter().collect();
+    normalized.starts_with(vault_root).then_some(normalized)
+}
+
+fn resolve_md_sketch_target(raw: &str, vault_root: &Path, file_path: &Path) -> Option<PathBuf> {
+    let decoded = clean_md_link_path(raw)?;
+    if let Some(rooted) = decoded.strip_prefix('/') {
+        return normalize_within_vault(vault_root, vault_root, rooted);
+    }
+    let note_dir = file_path.parent().unwrap_or(vault_root);
+    let note_candidate = normalize_within_vault(vault_root, note_dir, &decoded);
+    if note_candidate.as_ref().is_some_and(|p| p.is_file()) {
+        return note_candidate;
+    }
+    let root_candidate = normalize_within_vault(vault_root, vault_root, &decoded);
+    if root_candidate.as_ref().is_some_and(|p| p.is_file()) {
+        return root_candidate;
+    }
+    note_candidate.or(root_candidate)
 }
 
 /// Lowercased file stem (filename without extension), used as the basename key
@@ -608,5 +795,65 @@ mod tests {
         index.remove_file(&topic);
         assert_eq!(index.get_outgoing_links(&a), vec![root.join("Topic.md")]);
         assert!(index.get_backlinks(&topic).is_empty());
+    }
+
+    #[test]
+    fn epistemic_prefixes_and_sketch_embeds_ignore_code_and_keep_legacy_strings() {
+        let root = PathBuf::from("/vault");
+        let a = root.join("notes/A.md");
+        let content = concat!(
+            "supports:: [[Evidence]]\n",
+            "  CONTRADICTS::  [[notes/Counter|counter claim]]\n",
+            "Derives::[[Base#Theorem]]\n",
+            "Plain [[Neutral]] and notsupports:: [[Other]]\n",
+            "![diagram](A-sketch.ink)\n",
+            "![vector](<../sketches/fig 1.ink.svg>)\n",
+            "![photo](photo.png)\n",
+            "`supports:: [[InlineCode]]` and `![c](code.ink)`\n",
+            "```\ncontradicts:: [[Fenced]]\n![f](fenced.ink)\n```\n",
+        );
+
+        let mut index = FileIndex::new(root.clone());
+        index.rebuild(&[
+            (a.clone(), content.to_string()),
+            (root.join("Evidence.md"), String::new()),
+            (root.join("notes/Counter.md"), String::new()),
+            (root.join("Base.md"), String::new()),
+            (root.join("Neutral.md"), String::new()),
+            (root.join("Other.md"), String::new()),
+        ]);
+
+        let snapshot = index.typed_outgoing_snapshot();
+        let (_, edges) = snapshot.iter().find(|(p, _)| p == &a).unwrap();
+
+        use crate::types::GraphEdgeKind;
+        assert!(edges.contains(&(root.join("Evidence.md"), GraphEdgeKind::Supports)));
+        assert!(edges.contains(&(root.join("notes/Counter.md"), GraphEdgeKind::Contradicts)));
+        assert!(edges.contains(&(root.join("Base.md"), GraphEdgeKind::Derives)));
+        assert!(edges.contains(&(root.join("Neutral.md"), GraphEdgeKind::WikiLink)));
+        assert!(edges.contains(&(root.join("Other.md"), GraphEdgeKind::WikiLink)));
+        assert!(edges.contains(&(root.join("notes/A-sketch.ink"), GraphEdgeKind::WikiLink)));
+        assert!(edges.contains(&(root.join("sketches/fig 1.ink.svg"), GraphEdgeKind::WikiLink)));
+        assert!(!edges.iter().any(|(p, _)| {
+            let s = p.to_string_lossy();
+            s.contains("InlineCode")
+                || s.contains("Fenced")
+                || s.contains("code.ink")
+                || s.contains("fenced.ink")
+                || s.contains("photo.png")
+        }));
+
+        // Legacy plain links from older `vault_file_meta.links_json` rows still decode as WikiLink.
+        let mut legacy = FileIndex::new(root.clone());
+        legacy.rebuild_from_links(vec![
+            (a.clone(), vec!["Evidence".to_string()]),
+            (root.join("Evidence.md"), Vec::new()),
+        ]);
+        let snap_legacy = legacy.typed_outgoing_snapshot();
+        let (_, legacy_edges) = snap_legacy.iter().find(|(p, _)| p == &a).unwrap();
+        assert_eq!(
+            legacy_edges,
+            &vec![(root.join("Evidence.md"), GraphEdgeKind::WikiLink)]
+        );
     }
 }

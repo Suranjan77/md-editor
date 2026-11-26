@@ -106,6 +106,17 @@ impl MdEditor {
             | EditorMessage::CompletionAccept
             | EditorMessage::CompletionPick(_)
             | EditorMessage::CompletionClose) => self.update_completion_message(m),
+            EditorMessage::CodeBlockFinished {
+                expected_path,
+                expected_close_line,
+                expected_body,
+                result,
+            } => self.on_code_block_finished(
+                expected_path,
+                expected_close_line,
+                expected_body,
+                result,
+            ),
             EditorMessage::ScrollInterrupted => {
                 self.motion.editor_scroll = None;
                 Task::none()

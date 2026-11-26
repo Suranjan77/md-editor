@@ -21,6 +21,7 @@ pub mod pen;
 pub mod radial;
 pub mod raster;
 pub mod stroke;
+pub mod svg;
 
 #[cfg(windows)]
 mod pen_win;
@@ -36,8 +37,30 @@ use document::{InkDocument, InkStroke};
 use pen::{PenPhase, PenSample};
 use stroke::{InkPoint, StrokeOptions, Vec2};
 
-/// File extension for a handwritten page stored in the vault.
-pub const INK_EXTENSION: &str = "ink";
+/// File extension for new handwritten pages and sketches stored in the vault.
+pub const INK_EXTENSION: &str = "ink.svg";
+
+fn ends_with_ascii_ci(s: &str, suffix: &[u8]) -> bool {
+    s.len() >= suffix.len() && s.as_bytes()[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+}
+
+/// Whether `path` uses the dual-mode `.ink.svg` format (any case).
+pub fn is_ink_svg_path(path: &str) -> bool {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path);
+    ends_with_ascii_ci(name, b".ink.svg")
+}
+
+/// Whether `path` is any handwritten sketch page (`.ink.svg` or legacy `.ink`).
+pub fn is_sketch_path(path: &str) -> bool {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path);
+    is_ink_svg_path(name) || ends_with_ascii_ci(name, b".ink")
+}
 
 /// How often a page with unsaved strokes is written back. Pages used to be
 /// saved only on Ctrl+S, so quitting lost whatever was drawn since.
@@ -529,7 +552,12 @@ pub fn save_to_vault(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
-    md_editor_core::vault::write_file(&path, &document.to_json()?).map_err(String::from)
+    let content = if is_ink_svg_path(rel_path) {
+        svg::to_svg(document)?
+    } else {
+        document.to_json()?
+    };
+    md_editor_core::vault::write_file(&path, &content).map_err(String::from)
 }
 
 /// Whether a vault-relative page path is already taken on disk.
@@ -542,7 +570,11 @@ pub fn load_from_vault(vault_root: &str, rel_path: &str) -> Result<InkDocument, 
     let path = resolve(vault_root, rel_path)?;
     let raw = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    InkDocument::from_json(&raw)
+    if is_ink_svg_path(rel_path) || raw.trim_start().starts_with('<') {
+        svg::from_svg(&raw)
+    } else {
+        InkDocument::from_json(&raw)
+    }
 }
 
 #[cfg(test)]

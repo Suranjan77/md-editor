@@ -52,6 +52,7 @@ impl MdEditor {
         self.pdf.document_id = None;
         self.pdf.page_text.clear();
         self.pdf.selection = None;
+        self.pdf.live_ink = None;
         self.pdf.annotations.clear();
         self.pdf.focused_annotation_id = None;
         self.pdf.pending_text.clear();

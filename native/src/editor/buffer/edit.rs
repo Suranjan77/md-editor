@@ -196,6 +196,49 @@ impl DocBuffer {
         self.delete_range(self.cursor_offset, end)
     }
 
+    /// Replace `[start_char, end_char)` with `text` in a single non-coalescing undo step.
+    pub(super) fn replace_range(
+        &mut self,
+        start_char: usize,
+        end_char: usize,
+        text: &str,
+        cursor_char: Option<usize>,
+    ) -> CommandResult {
+        let len = self.rope.len_chars();
+        let start = start_char.min(len);
+        let end = end_char.clamp(start, len);
+        let removed = self.rope.slice(start..end).to_string();
+        if removed == text {
+            return CommandResult::default();
+        }
+        let before_cursor = self.cursor_offset;
+        let before_selection = self.selection_offsets;
+        let mut ops = Vec::new();
+        if start < end {
+            self.rope.remove(start..end);
+            ops.push(EditOp::Delete {
+                char_offset: start,
+                text: removed,
+            });
+        }
+        if !text.is_empty() {
+            self.rope.insert(start, text);
+            ops.push(EditOp::Insert {
+                char_offset: start,
+                text: text.to_string(),
+            });
+        }
+        let new_len = self.rope.len_chars();
+        self.cursor_offset = cursor_char
+            .unwrap_or_else(|| start + text.chars().count())
+            .min(new_len);
+        self.selection_offsets = None;
+        self.last_commit_at = None;
+        self.commit_transaction(ops, before_cursor, before_selection);
+        self.last_commit_at = None;
+        CommandResult::changed()
+    }
+
     pub(super) fn delete_range(&mut self, start: usize, end: usize) -> CommandResult {
         let removed = self.rope.slice(start..end).to_string();
         let before_cursor = self.cursor_offset;

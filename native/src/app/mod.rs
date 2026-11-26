@@ -109,14 +109,18 @@ pub struct MdEditor {
     autosave_failure_reported: bool,
     motion: Motion,
     workspace: workspace::Workspace,
+    desks: crate::desks::DeskStore,
+    pinboards: crate::graph_state::pinboards::PinboardStore,
 }
 
 const SELF_WRITE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
 mod completion;
+mod desks;
 mod documents;
 mod editor;
 mod graph;
+mod graph_pinboards;
 mod ink;
 mod links;
 mod overlays;
@@ -124,6 +128,7 @@ mod pane_view;
 mod panes;
 pub(crate) mod paste;
 mod pdf;
+mod pdf_ink;
 mod pdf_nav;
 mod pdf_pages;
 mod pdf_render;
@@ -133,6 +138,7 @@ mod settings_handler;
 mod shell;
 mod shortcuts;
 mod subscription;
+mod synthesis;
 mod tabs_handler;
 mod vault;
 pub(crate) mod vault_entries;
@@ -193,13 +199,19 @@ pub(crate) struct Probe {
     /// The text under the current PDF selection.
     pub pdf_selected_text: Option<String>,
     pub split_view: bool,
+    pub split_axis: workspace::SplitAxis,
+    pub split_ratio: f32,
     pub focused_pane: workspace::PaneId,
     /// What the pane without focus shows (note, else PDF).
     pub other_pane_path: Option<String>,
+    pub saved_desks: Vec<String>,
     pub pdf_panel_active: bool,
     pub palette_query: String,
     pub graph_nodes: usize,
     pub graph_local: bool,
+    pub graph_selected_path: Option<String>,
+    pub graph_pinned_count: usize,
+    pub saved_pinboards: Vec<String>,
     pub pdf_error: Option<String>,
     pub ink_window_open: bool,
     pub ink_path: Option<String>,
@@ -277,13 +289,17 @@ impl MdEditor {
                 Some(text.text.chars().skip(start).take(end - start).collect())
             }),
             split_view: self.workspace.is_split(),
+            split_axis: self.workspace.axis,
+            split_ratio: self.ui.split_ratio,
             focused_pane: self.workspace.focused,
             other_pane_path: self.parked().and_then(|docs| {
                 docs.active_path
                     .clone()
                     .filter(|_| !docs.showing_pdf)
                     .or_else(|| docs.pdf.active_path.clone())
+                    .or_else(|| docs.active_image_path.clone())
             }),
+            saved_desks: self.desks.list().iter().map(|d| d.name.clone()).collect(),
             pdf_panel_active: self.active_panel == ActivePanel::Pdf,
             palette_query: self.ui.command_palette_query.clone(),
             graph_nodes: self.graph.filtered().snapshot.nodes.len(),
@@ -291,6 +307,14 @@ impl MdEditor {
                 self.graph.scope,
                 crate::graph_state::GraphScope::Local { .. }
             ),
+            graph_selected_path: self.graph.selected_path.clone(),
+            graph_pinned_count: self.graph.pinned_count(),
+            saved_pinboards: self
+                .pinboards
+                .list()
+                .iter()
+                .map(|b| b.name.clone())
+                .collect(),
             pdf_error: self.pdf.load_error.clone(),
             ink_window_open: self.ink_window.is_some(),
             ink_path: self.ink.path.clone(),
@@ -373,6 +397,8 @@ impl MdEditor {
             autosave_failure_reported: false,
             motion: Motion::new(),
             workspace: workspace::Workspace::new(),
+            desks: crate::desks::DeskStore::default(),
+            pinboards: crate::graph_state::pinboards::PinboardStore::default(),
         };
         app.ui.toast = startup_notice;
         app.restore_design_settings();
@@ -420,10 +446,10 @@ impl MdEditor {
             self.pdf.active_path = Some(file_path.to_string());
             self.showing_pdf = true;
             self.open_pdf(file_path)
+        } else if crate::ink::is_sketch_path(file_path) {
+            self.open_ink_page(file_path)
         } else if is_supported_image_path(&lower) {
             self.open_image(file_path)
-        } else if lower.ends_with(".ink") {
-            self.open_ink_page(file_path)
         } else {
             Task::none()
         }
@@ -535,6 +561,7 @@ impl MdEditor {
         match message {
             Message::Vault(m) => self.update_vault(m),
             Message::Tabs(m) => self.update_tabs(m),
+            Message::Desks(m) => self.update_desks(m),
             Message::Settings(m) => self.update_settings(m),
             Message::Graph(m) => self.update_graph(m),
             Message::Shell(m) => self.update_shell(m),

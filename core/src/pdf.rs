@@ -74,6 +74,7 @@ impl PdfPageText {
 pub enum PdfAnnotationKind {
     Highlight,
     Note,
+    Ink,
 }
 
 impl PdfAnnotationKind {
@@ -81,6 +82,7 @@ impl PdfAnnotationKind {
         match self {
             Self::Highlight => "Highlight",
             Self::Note => "Note",
+            Self::Ink => "Ink",
         }
     }
 
@@ -88,6 +90,7 @@ impl PdfAnnotationKind {
         match s {
             "Highlight" => Ok(Self::Highlight),
             "Note" => Ok(Self::Note),
+            "Ink" => Ok(Self::Ink),
             _ => Err(PdfError::Other(format!("Unknown annotation kind: {s}"))),
         }
     }
@@ -143,6 +146,15 @@ pub struct PdfTextRange {
     pub end_text_index: usize,
 }
 
+/// Non-destructive stylus/pointer stroke on a PDF page, stored in normalized
+/// page fraction space (`[x_frac, y_frac, pressure]`, `0.0..=1.0`, top-left origin)
+/// so strokes zoom and resize cleanly without altering the PDF file.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct PdfInkStroke {
+    pub size: f32,
+    pub points: Vec<[f32; 3]>,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PdfAnnotation {
     pub id: String,
@@ -156,8 +168,65 @@ pub struct PdfAnnotation {
     pub note: Option<String>,
     pub linked_note_path: Option<String>,
     pub markdown_anchor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ink_stroke: Option<PdfInkStroke>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+impl PdfAnnotation {
+    /// Construct a non-destructive margin ink annotation with a PDF-point bounding box.
+    pub fn new_ink(
+        id: String,
+        document_id: String,
+        page_index: u16,
+        color: PdfAnnotationColor,
+        stroke: PdfInkStroke,
+        page_size: (f32, f32),
+        now: i64,
+    ) -> Self {
+        let mut min_x = 1.0f32;
+        let mut min_y = 1.0f32;
+        let mut max_x = 0.0f32;
+        let mut max_y = 0.0f32;
+        for pt in &stroke.points {
+            min_x = min_x.min(pt[0]);
+            min_y = min_y.min(pt[1]);
+            max_x = max_x.max(pt[0]);
+            max_y = max_y.max(pt[1]);
+        }
+        let (pw, ph) = (page_size.0.max(1.0), page_size.1.max(1.0));
+        let rects = if stroke.points.is_empty() {
+            Vec::new()
+        } else {
+            let x = min_x * pw;
+            let width = ((max_x - min_x) * pw).max(1.0);
+            let height = ((max_y - min_y) * ph).max(1.0);
+            let y = (1.0 - max_y) * ph;
+            vec![PdfRect {
+                x,
+                y,
+                width,
+                height,
+            }]
+        };
+        Self {
+            id,
+            document_id,
+            page_index,
+            kind: PdfAnnotationKind::Ink,
+            color,
+            selected_text: String::new(),
+            ranges: Vec::new(),
+            rects,
+            note: None,
+            linked_note_path: None,
+            markdown_anchor: None,
+            ink_stroke: Some(stroke),
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }
 
 pub fn compute_provisional_id(

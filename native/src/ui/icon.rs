@@ -179,7 +179,7 @@ impl Icon {
         let lower = path.to_ascii_lowercase();
         if lower.ends_with(".pdf") {
             Self::FilePdf
-        } else if lower.ends_with(".ink") {
+        } else if crate::ink::is_sketch_path(&lower) {
             Self::Pen
         } else if lower.ends_with(".png")
             || lower.ends_with(".jpg")

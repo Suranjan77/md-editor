@@ -1,8 +1,8 @@
 # Split layouts: a two-pane workspace
 
-Status: phases 1–4 done (2026-11-26); saved desks next. Replaces the Note+PDF "split view" with a workspace of up
-to two panes, side by side or stacked. Each pane has its own tabs and shows any document:
-Note+Note, PDF+PDF or Note+PDF. Saved layouts ("desks") come later, on top of this.
+Status: phases 1–5 done (2026-11-26). Replaces the Note+PDF "split view" with a workspace of up
+to two panes, side by side or stacked, with named saved desks on top. Each pane has its own tabs and shows any document:
+Note+Note, PDF+PDF or Note+PDF.
 
 ## Decisions
 
@@ -93,3 +93,12 @@ layout (`axis`, `ratio`, focused pane) are saved beside it.
 4. **Tests and docs.** e2e for Note+Note, PDF+PDF, focus, persistence and data safety
    (a dirty note in a pane that loses focus is saved). Wiki: User Guide,
    Native-Desktop-GUI, Keyboard Shortcuts.
+5. **Saved desks.** Per-vault named workspace snapshots (`desks.rs`, `app/desks.rs`)
+   capturing Pane A/B tabs (with active tab, MRU, and viewer state), split axis, ratio,
+   focused pane, and panel visibility under `desks:<vault_root>` in SQLite. Switching desks
+   flushes dirty buffers in all panes first (refusing on write failure). Rename/delete
+   propagation rewrites or prunes saved desks; externally deleted files are dropped on
+   restore (keeping split panes cleanly even if empty). Accessible from the activity rail
+   (*Desks*), `Ctrl+Alt+D` (*Desks…*), `Ctrl+Shift+D` (*Save Desk…*), and `Ctrl+P`
+   (including `Ctrl+Enter` on a file hit to *Open to the Side*, plus *Split Right*,
+   *Split Down*, and *Unsplit*).

@@ -1,7 +1,8 @@
 # Handwritten Notes
 
 A pressure-sensitive ink canvas in its own window, so it can sit on a tablet or second
-monitor beside the notes. Pages are saved into the vault as `.ink` files.
+monitor beside the notes. New pages and sketches are saved into the vault in the dual-mode
+`.ink.svg` vector format, while legacy `.ink` JSON pages continue to open and save.
 
 **Platform support.** iced drops pressure when it converts pointer events, so the app
 captures the pen below it:
@@ -20,7 +21,8 @@ and why when it isn't.
 | :--- | :--- | :--- |
 | State | `native/src/ink/mod.rs` → `InkState` | Document, tool and colour settings, camera, live stroke, lasso selection, radial menu; pen input and the stroke lifecycle in `ink/input.rs` |
 | Geometry | `ink/stroke.rs` | Input smoothing and pressure → filled outline. No iced or platform types |
-| Document | `ink/document.rs` | Strokes, undo/redo, paper style, the JSON file format |
+| Document | `ink/document.rs` | Strokes, undo/redo, paper style, the JSON stroke model |
+| Dual-mode SVG | `ink/svg.rs` | `.ink.svg` light/dark-adaptive SVG export (`to_svg`) and lossless metadata round-trip import (`from_svg`) |
 | Camera | `ink/camera.rs` | Page ⇄ screen mapping for pan and zoom |
 | Canvas | `ink/canvas.rs` | The iced canvas: a retained cache for finished strokes, the live stroke redrawn per frame |
 | Pen input | `ink/pen.rs`, `ink/pen_win.rs`, `ink/pen_wayland.rs` | Sample type and the stream into iced; the Windows and Wayland capture hooks |
@@ -50,9 +52,9 @@ and why when it isn't.
   stays put and smear the stroke (`ink/input.rs::advance_if_near_bottom`).
 
 **Sketches in notes.** `Ctrl+Shift+I` (*Insert Sketch* in the palette) in a note creates
-an empty page beside it, `notes/lecture-sketch.ink` (then `-sketch-2`, …), inserts
-`![sketch](lecture-sketch.ink)` at the caret, and opens the page in the ink window
-(`app/ink.rs::insert_sketch`). Any `.ink` page linked as an image shows in the note,
+an empty page beside it, `notes/lecture-sketch.ink.svg` (then `-sketch-2`, …), inserts
+`![sketch](lecture-sketch.ink.svg)` at the caret, and opens the page in the ink window
+(`app/ink.rs::insert_sketch`). Any `.ink.svg` or `.ink` page linked as an image shows in the note,
 cropped to its ink. The note's picture follows the drawing each time the page autosaves,
 and `Ctrl` + click on it opens the page to edit.
 
@@ -67,16 +69,21 @@ A save writes the page to its existing path, or on first save derives one
 (`unique_ink_path`) so a note's existing page is never overwritten:
 
 - beside the open note, with its extension replaced — `notes/lecture.md` →
-  `notes/lecture.ink`;
-- otherwise at the vault root as `handwritten-<YYYYMMDD-HHMMSS>.ink`.
+  `notes/lecture.ink.svg`;
+- otherwise at the vault root as `handwritten-<YYYYMMDD-HHMMSS>.ink.svg`.
 
 `ink::save_to_vault` writes through the vault's atomic writer but deliberately skips
 `vault::save_file`, which would add stroke coordinates to the full-text index.
 
-The file is JSON with a `version` field (`FORMAT_VERSION = 1`). Strokes are stored as the
-**sampled pen path** (position and pressure per sample), not the rendered outline: the
-outline is recomputed from the path and the current `StrokeOptions`, so a page re-renders
-crisply at any zoom and survives retuned smoothing.
+For `.ink.svg`, `ink/svg.rs::to_svg` writes a standard SVG with adaptive light/dark CSS
+(`.ink-neutral` switching via `@media (prefers-color-scheme: dark)`), filled variable-width
+stroke `<path>` geometry (highlighters underneath pen strokes), and the lossless `InkDocument`
+JSON (with `FORMAT_VERSION = 1`) embedded inside `<metadata id="md-editor-ink">`. That makes
+every sketch viewable in browsers, GitHub, and Pandoc while remaining 100% editable in MD
+Editor (`from_svg`). Legacy `.ink` files still load and save raw JSON directly. Strokes are
+stored as the **sampled pen path** (position and pressure per sample), not just the rendered
+outline: the outline is recomputed from the path and the current `StrokeOptions`, so a page
+re-renders crisply at any zoom and survives retuned smoothing.
 
 ## 3. Input Pipeline
 

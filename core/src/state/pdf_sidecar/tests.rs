@@ -75,6 +75,7 @@ fn highlight(id: &str, created_at: i64, updated_at: i64, note: &str) -> PdfAnnot
         note: Some(note.to_string()),
         linked_note_path: None,
         markdown_anchor: None,
+        ink_stroke: None,
         created_at,
         updated_at,
     }
@@ -255,4 +256,40 @@ fn only_sha256_hex_names_a_document_file() {
     ] {
         assert!(!is_document_id(bad), "{bad}");
     }
+}
+
+#[test]
+fn pdf_margin_ink_strokes_round_trip_through_sqlite_and_three_way_sidecar_merge() {
+    let base = base("pdf_ink");
+    let (a, b) = (Machine::new(&base, "a"), Machine::new(&base, "b"));
+
+    let ink_ann = PdfAnnotation::new_ink(
+        "ink-1".to_string(),
+        DOC.to_string(),
+        0,
+        PdfAnnotationColor::Blue,
+        crate::pdf::PdfInkStroke {
+            size: 0.0038,
+            points: vec![[0.75, 0.18, 0.55], [0.88, 0.22, 0.55], [0.86, 0.27, 0.55]],
+        },
+        (612.0, 792.0),
+        42,
+    );
+    a.state.save_pdf_annotation(&ink_ann).unwrap();
+
+    let loaded_a = a.get("ink-1");
+    assert_eq!(loaded_a.kind, PdfAnnotationKind::Ink);
+    assert_eq!(loaded_a.ink_stroke, ink_ann.ink_stroke);
+    assert_eq!(loaded_a.rects.len(), 1);
+
+    // Sidecar JSONL carries the ink stroke to Machine B.
+    let sidecar_text = std::fs::read_to_string(a.file()).unwrap();
+    assert!(sidecar_text.contains("\"ink_stroke\""));
+    b.receive(&a);
+    assert_eq!(b.state.sync_pdf_sidecars().unwrap(), 1);
+    let loaded_b = b.get("ink-1");
+    assert_eq!(loaded_b.kind, PdfAnnotationKind::Ink);
+    assert_eq!(loaded_b.ink_stroke, ink_ann.ink_stroke);
+
+    let _ = std::fs::remove_dir_all(&base);
 }

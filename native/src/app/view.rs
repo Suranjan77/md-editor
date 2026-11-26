@@ -131,6 +131,7 @@ impl MdEditor {
             tracker_visible: self.tracker.visible,
             settings_visible: self.ui.settings_visible,
             ink_visible: self.ink.is_visible(),
+            desks_open: matches!(self.ui.active_modal, Some(views::modals::ModalType::Desks)),
             region_focused: self.ui.focused_region == FocusRegion::Toolbar,
         })
     }
@@ -302,7 +303,20 @@ impl MdEditor {
             zoom_input: self.ui.pdf_zoom_input.as_deref().filter(|_| pane.focused),
             toc_visible: pane.focused && self.editor.toc_visible,
             has_selection: pane.pdf.selection.is_some(),
-            has_annotations: pane.pdf.annotations.values().any(|v| !v.is_empty()),
+            has_annotations: pane
+                .pdf
+                .annotations
+                .values()
+                .flatten()
+                .any(|a| a.kind != md_editor_core::pdf::PdfAnnotationKind::Ink),
+            has_ink: pane
+                .pdf
+                .annotations
+                .values()
+                .flatten()
+                .any(|a| a.kind == md_editor_core::pdf::PdfAnnotationKind::Ink),
+            ink_tool: pane.pdf.ink_tool,
+            ink_color: pane.pdf.ink_color,
             focused_annotation: focused_ann,
         });
 
@@ -331,6 +345,9 @@ impl MdEditor {
                 references: &pane.pdf.references,
                 active_selection: pane.pdf.selection,
                 focused_annotation_id: pane.pdf.focused_annotation_id.as_deref(),
+                ink_tool: pane.pdf.ink_tool,
+                ink_color: pane.pdf.ink_color,
+                live_ink: pane.pdf.live_ink.as_ref(),
                 load_error: pane.pdf.load_error.as_deref(),
                 scroll_y: pane.pdf.scroll_y,
                 viewport_height: pane.pdf.viewport_height,

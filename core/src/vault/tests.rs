@@ -461,6 +461,104 @@ fn graph_snapshot_requires_an_open_vault() {
 }
 
 #[test]
+fn graph_snapshot_includes_sketches_and_epistemic_edges_and_rename_preserves_prefix() {
+    let base = std::env::temp_dir().join(format!("md_graph_epistemic_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(base.join("notes")).unwrap();
+    fs::write(
+        base.join("notes/Claim.md"),
+        "supports:: [[Evidence]]\ncontradicts:: [[notes/Counter]]\nderives:: [[Axiom]]\n![fig](Claim-sketch.ink)\n![vec](vector.ink.svg)\n![img](photo.png)\n",
+    )
+    .unwrap();
+    fs::write(base.join("Evidence.md"), "proof").unwrap();
+    fs::write(base.join("notes/Counter.md"), "objection").unwrap();
+    fs::write(base.join("Axiom.md"), "axiom").unwrap();
+    fs::write(base.join("notes/Claim-sketch.ink"), "{}").unwrap();
+    fs::write(base.join("notes/vector.ink.svg"), "<svg/>").unwrap();
+    fs::write(base.join("notes/OrphanSketch.ink"), "{}").unwrap();
+    fs::write(base.join("notes/photo.png"), b"png").unwrap();
+
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+    let snapshot = get_graph_snapshot(&state).unwrap();
+    let find_node = |path: &str| snapshot.nodes.iter().find(|n| n.path == path).unwrap();
+
+    assert_eq!(
+        find_node("notes/Claim-sketch.ink").kind,
+        GraphNodeKind::Sketch
+    );
+    assert_eq!(find_node("notes/Claim-sketch.ink").incoming, 1);
+    assert_eq!(
+        find_node("notes/vector.ink.svg").kind,
+        GraphNodeKind::Sketch
+    );
+    assert_eq!(find_node("notes/vector.ink.svg").label, "vector");
+    assert_eq!(
+        find_node("notes/OrphanSketch.ink").kind,
+        GraphNodeKind::Sketch
+    );
+    assert!(snapshot.nodes.iter().all(|n| n.path != "notes/photo.png"));
+
+    let has_edge = |source: &str, target: &str, kind: GraphEdgeKind| {
+        snapshot
+            .edges
+            .iter()
+            .any(|e| e.source == source && e.target == target && e.kind == kind)
+    };
+    assert!(has_edge(
+        "notes/Claim.md",
+        "Evidence.md",
+        GraphEdgeKind::Supports
+    ));
+    assert!(has_edge(
+        "notes/Claim.md",
+        "notes/Counter.md",
+        GraphEdgeKind::Contradicts
+    ));
+    assert!(has_edge(
+        "notes/Claim.md",
+        "Axiom.md",
+        GraphEdgeKind::Derives
+    ));
+    assert!(has_edge(
+        "notes/Claim.md",
+        "notes/Claim-sketch.ink",
+        GraphEdgeKind::WikiLink
+    ));
+    assert!(has_edge(
+        "notes/Claim.md",
+        "notes/vector.ink.svg",
+        GraphEdgeKind::WikiLink
+    ));
+
+    // Renaming a target note preserves `supports:: [[NewName]]` and its Supports edge.
+    rename_entry(&state, "Evidence.md", "Proof.md").unwrap();
+    let updated = fs::read_to_string(base.join("notes/Claim.md")).unwrap();
+    assert!(updated.contains("supports:: [[Proof]]"), "{updated}");
+    let after_rename = get_graph_snapshot(&state).unwrap();
+    assert!(after_rename.edges.iter().any(|e| {
+        e.source == "notes/Claim.md" && e.target == "Proof.md" && e.kind == GraphEdgeKind::Supports
+    }));
+
+    // Renaming a sketch updates markdown image embeds and keeps the Sketch node linked.
+    rename_entry(&state, "notes/Claim-sketch.ink", "notes/Renamed-sketch.ink").unwrap();
+    let updated_sketch = fs::read_to_string(base.join("notes/Claim.md")).unwrap();
+    assert!(
+        updated_sketch.contains("![fig](Renamed-sketch.ink)"),
+        "{updated_sketch}"
+    );
+    let after_sketch_rename = get_graph_snapshot(&state).unwrap();
+    assert!(after_sketch_rename.edges.iter().any(|e| {
+        e.source == "notes/Claim.md"
+            && e.target == "notes/Renamed-sketch.ink"
+            && e.kind == GraphEdgeKind::WikiLink
+    }));
+
+    drop(state);
+    let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
 fn graph_pdf_annotation_edges_are_isolated_by_vault() {
     let base = std::env::temp_dir().join(format!("md_graph_scopes_{}", uuid::Uuid::new_v4()));
     let first = base.join("first");

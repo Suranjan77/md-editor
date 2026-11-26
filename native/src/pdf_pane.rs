@@ -23,6 +23,13 @@ use crate::messages::{Message, PdfMessage};
 use crate::views::interactive_pdf::PdfSelection;
 use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
+/// Active non-destructive margin ink tool on PDF pages (`None` = normal reading/selecting).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfInkTool {
+    Pen,
+    Eraser,
+}
+
 pub struct PdfPane {
     pub active_path: Option<String>,
     /// Measured width of the page list's viewport, from a `sensor` around it.
@@ -98,6 +105,12 @@ pub struct PdfPane {
     /// Color used by the next quick highlight; advances through the palette on
     /// each quick highlight so successive highlights are visually distinct.
     pub next_highlight_color: PdfAnnotationColor,
+    /// Non-destructive margin ink tool; when `None`, pointer input stays on text selection/links.
+    pub ink_tool: Option<PdfInkTool>,
+    /// Selected color for new margin ink strokes.
+    pub ink_color: PdfAnnotationColor,
+    /// Live preview stroke currently under the pointer on `(page_index, normalized_points)`.
+    pub live_ink: Option<(u16, Vec<[f32; 3]>)>,
 }
 
 impl PdfPane {
@@ -139,6 +152,9 @@ impl PdfPane {
             programmatic_scroll: false,
             toc_target_page: None,
             next_highlight_color: PdfAnnotationColor::Yellow,
+            ink_tool: None,
+            ink_color: PdfAnnotationColor::Blue,
+            live_ink: None,
         }
     }
 
@@ -310,6 +326,9 @@ impl PdfPane {
 
         let page_anns = self.annotations.get(&page_idx)?;
         for ann in page_anns {
+            if ann.kind == md_editor_core::pdf::PdfAnnotationKind::Ink {
+                continue;
+            }
             for rect in &ann.rects {
                 let view_y = page_text.page_height - rect.y - rect.height;
                 if px >= rect.x

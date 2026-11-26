@@ -18,6 +18,9 @@ pub enum TabKind {
 
 impl TabKind {
     pub fn from_path(path: &str) -> Option<Self> {
+        if crate::ink::is_sketch_path(path) {
+            return None;
+        }
         let lower = path.to_ascii_lowercase();
         if lower.ends_with(".md") || lower.ends_with(".markdown") {
             Some(Self::Note)
@@ -460,42 +463,92 @@ impl Tabs {
 
     /// Update tab paths on file or folder rename (`old_path` -> `new_path`).
     pub fn rename_path(&mut self, old_path: &str, new_path: &str) {
-        let rewrite = |p: &mut String| {
-            if p == old_path {
-                *p = new_path.to_string();
-            } else if let Some(suffix) = p.strip_prefix(old_path).filter(|s| s.starts_with('/')) {
-                *p = format!("{new_path}{suffix}");
-            }
-        };
         for tab in &mut self.tabs {
-            rewrite(&mut tab.path);
-            if let Some(kind) = TabKind::from_path(&tab.path) {
+            if rewrite_rel_path(&mut tab.path, old_path, new_path)
+                && let Some(kind) = TabKind::from_path(&tab.path)
+            {
                 tab.kind = kind;
             }
         }
         for tab in &mut self.closed {
-            rewrite(&mut tab.path);
+            let _ = rewrite_rel_path(&mut tab.path, old_path, new_path);
         }
     }
 
     /// Close tabs matching a user-deleted file or folder.
     pub fn remove_deleted_path(&mut self, deleted_path: &str) {
-        let matches = |p: &str| {
-            p == deleted_path
-                || p.strip_prefix(deleted_path)
-                    .is_some_and(|s| s.starts_with('/'))
-        };
         let ids: Vec<TabId> = self
             .tabs
             .iter()
-            .filter(|t| matches(&t.path))
+            .filter(|t| path_matches_or_descendant(&t.path, deleted_path))
             .map(|t| t.id)
             .collect();
-        self.closed.retain(|t| !matches(&t.path));
+        self.closed
+            .retain(|t| !path_matches_or_descendant(&t.path, deleted_path));
         for id in ids {
             let _ = self.close(id);
         }
-        self.closed.retain(|t| !matches(&t.path));
+        self.closed
+            .retain(|t| !path_matches_or_descendant(&t.path, deleted_path));
+    }
+
+    /// Count valid tabs serialized inside a `Tabs::to_json()` snapshot.
+    pub fn json_tab_count(raw: &str) -> usize {
+        serde_json::from_str::<PersistedTabs>(raw)
+            .map(|persisted| {
+                persisted
+                    .tabs
+                    .iter()
+                    .filter(|t| TabKind::from_path(&t.path).is_some() && t.view.is_some())
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Rewrite `old_path` (or descendants under it) inside a serialized tab snapshot.
+    /// Returns `Some(updated_json)` only if any path changed.
+    pub fn rewrite_json_paths(raw: &str, old_path: &str, new_path: &str) -> Option<String> {
+        let mut persisted = serde_json::from_str::<PersistedTabs>(raw).ok()?;
+        let mut changed = false;
+        for tab in &mut persisted.tabs {
+            changed |= rewrite_rel_path(&mut tab.path, old_path, new_path);
+        }
+        if let Some(ref mut active) = persisted.active_path {
+            changed |= rewrite_rel_path(active, old_path, new_path);
+        }
+        for path in &mut persisted.recent_paths {
+            changed |= rewrite_rel_path(path, old_path, new_path);
+        }
+        changed.then(|| serde_json::to_string(&persisted).ok())?
+    }
+
+    /// Remove `deleted_path` (or descendants under it) from a serialized tab snapshot.
+    /// Returns `Some(updated_json)` only if anything was removed.
+    pub fn remove_path_from_json(raw: &str, deleted_path: &str) -> Option<String> {
+        let mut persisted = serde_json::from_str::<PersistedTabs>(raw).ok()?;
+        let prev_tabs = persisted.tabs.len();
+        let prev_recent = persisted.recent_paths.len();
+        persisted
+            .tabs
+            .retain(|t| !path_matches_or_descendant(&t.path, deleted_path));
+        persisted
+            .recent_paths
+            .retain(|p| !path_matches_or_descendant(p, deleted_path));
+        let mut changed =
+            persisted.tabs.len() != prev_tabs || persisted.recent_paths.len() != prev_recent;
+        if persisted
+            .active_path
+            .as_deref()
+            .is_some_and(|p| path_matches_or_descendant(p, deleted_path))
+        {
+            persisted.active_path = persisted
+                .recent_paths
+                .last()
+                .cloned()
+                .or_else(|| persisted.tabs.first().map(|t| t.path.clone()));
+            changed = true;
+        }
+        changed.then(|| serde_json::to_string(&persisted).ok())?
     }
 
     /// Sync missing flags with on-disk files (external delete marks `missing = true`).
@@ -579,4 +632,20 @@ impl Tabs {
         self.next_id = self.next_id.wrapping_add(1);
         id
     }
+}
+
+fn rewrite_rel_path(p: &mut String, old_path: &str, new_path: &str) -> bool {
+    if p == old_path {
+        *p = new_path.to_string();
+        true
+    } else if let Some(suffix) = p.strip_prefix(old_path).filter(|s| s.starts_with('/')) {
+        *p = format!("{new_path}{suffix}");
+        true
+    } else {
+        false
+    }
+}
+
+fn path_matches_or_descendant(p: &str, target: &str) -> bool {
+    p == target || p.strip_prefix(target).is_some_and(|s| s.starts_with('/'))
 }

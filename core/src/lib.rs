@@ -4,8 +4,11 @@
 #![warn(missing_debug_implementations, clippy::unwrap_used)]
 
 pub mod attachments;
+pub mod citations;
 pub mod config;
+pub mod daily;
 pub mod file_index;
+pub mod math_eval;
 pub mod pdf;
 pub mod references;
 pub mod state;

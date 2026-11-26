@@ -4,16 +4,18 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use md_editor_core::types::{GraphNode, GraphNodeKind, GraphSnapshot};
+use md_editor_core::types::{GraphEdgeKind, GraphNode, GraphNodeKind, GraphSnapshot};
+use serde::{Deserialize, Serialize};
 
 mod layout;
 mod physics;
+pub mod pinboards;
 mod queries;
 
 use layout::*;
 pub use physics::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GraphScope {
     Global,
     Local { depth: u8 },
@@ -51,6 +53,7 @@ impl GraphLayout {
 pub struct GraphStats {
     pub markdown: usize,
     pub pdfs: usize,
+    pub sketches: usize,
     pub missing: usize,
     pub connections: usize,
     pub unconnected: usize,
@@ -59,7 +62,7 @@ pub struct GraphStats {
 
 impl GraphStats {
     pub fn documents(&self) -> usize {
-        self.markdown + self.pdfs
+        self.markdown + self.pdfs + self.sketches
     }
 }
 
@@ -150,6 +153,7 @@ pub struct GraphState {
     pub scope: GraphScope,
     pub query: String,
     pub show_pdfs: bool,
+    pub show_sketches: bool,
     pub show_missing: bool,
     pub show_orphans: bool,
     pub selected_path: Option<String>,
@@ -208,6 +212,7 @@ impl GraphState {
             scope: GraphScope::Global,
             query: String::new(),
             show_pdfs: true,
+            show_sketches: true,
             show_missing: true,
             show_orphans: true,
             selected_path: None,
@@ -335,6 +340,14 @@ impl GraphState {
         }
     }
 
+    pub fn set_show_sketches(&mut self, show: bool) {
+        if self.show_sketches != show {
+            self.show_sketches = show;
+            self.rebuild_filtered();
+            self.request_fit();
+        }
+    }
+
     pub fn set_show_missing(&mut self, show: bool) {
         if self.show_missing != show {
             self.show_missing = show;
@@ -443,6 +456,12 @@ impl GraphState {
         self.physics.nudge();
     }
 
+    pub fn toggle_selected_pin(&mut self) {
+        if let Some(path) = self.selected_path.clone() {
+            self.toggle_pin(&path);
+        }
+    }
+
     pub fn unpin_all(&mut self) {
         if self.pinned.is_empty() {
             return;
@@ -482,11 +501,12 @@ impl GraphState {
 
     /// Whether any node/type filter is currently hiding something.
     pub fn filters_active(&self) -> bool {
-        !self.show_pdfs || !self.show_missing || !self.show_orphans
+        !self.show_pdfs || !self.show_sketches || !self.show_missing || !self.show_orphans
     }
 
     pub fn reset_filters(&mut self) {
         self.show_pdfs = true;
+        self.show_sketches = true;
         self.show_missing = true;
         self.show_orphans = true;
         self.query.clear();

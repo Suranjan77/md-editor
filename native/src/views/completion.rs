@@ -34,6 +34,7 @@ pub fn view<'a>(
 
     let icon = match completion.kind {
         CompletionKind::Wikilink => Icon::Link,
+        CompletionKind::Citation => Icon::FileText,
         CompletionKind::Slash => Icon::Plus,
     };
     let rows = completion.items.iter().enumerate().map(|(index, item)| {

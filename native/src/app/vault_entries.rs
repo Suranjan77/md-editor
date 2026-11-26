@@ -20,6 +20,12 @@ impl MdEditor {
             self.ui.link_note_picker_search.clear();
             return Task::done(Message::Pdf(PdfMessage::LinkNote(id, input)));
         }
+        if matches!(
+            self.ui.active_modal,
+            Some(views::modals::ModalType::SaveDesk)
+        ) {
+            return self.submit_save_desk_modal(&input);
+        }
 
         let name = input.trim();
         if let Err(validation_err) = validate_entry_name(name) {
@@ -98,6 +104,7 @@ impl MdEditor {
                 self.vault.entries =
                     md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                 rename_open_path(&mut self.vault.selected_path, old_path, &new_path);
+                rename_open_path(&mut self.ink.path, old_path, &new_path);
                 let mut graph_active = self.graph.active_path.clone();
                 rename_open_path(&mut graph_active, old_path, &new_path);
                 self.graph.set_active_path(graph_active);
@@ -110,6 +117,16 @@ impl MdEditor {
                     app.persist_tabs();
                     app.reload_open_note_from_disk()
                 });
+                if let Some(ref root) = self.vault.root
+                    && self.desks.rename_path(old_path, &new_path)
+                {
+                    self.desks.persist(&self.state, root);
+                }
+                if let Some(ref root) = self.vault.root
+                    && self.pinboards.rename_path(old_path, &new_path)
+                {
+                    self.pinboards.persist(&self.state, root);
+                }
                 if let Some(ref active) = self.active_path {
                     let _ =
                         md_editor_core::config::set_sys_config(&self.state, "last_file", active);
@@ -171,7 +188,21 @@ impl MdEditor {
                 if gone(self.graph.active_path.as_deref()) {
                     self.graph.set_active_path(None);
                 }
+                if gone(self.ink.path.as_deref()) {
+                    self.ink.path = None;
+                    self.ink.dirty = false;
+                }
                 let next = self.for_each_pane(|app| app.forget_deleted_in_pane(&path));
+                if let Some(ref root) = self.vault.root
+                    && self.desks.remove_deleted_path(&path)
+                {
+                    self.desks.persist(&self.state, root);
+                }
+                if let Some(ref root) = self.vault.root
+                    && self.pinboards.remove_deleted_path(&path)
+                {
+                    self.pinboards.persist(&self.state, root);
+                }
                 self.ui.active_modal = None;
                 self.ui.modal_error = None;
                 self.ui.link_note_picker_search.clear();

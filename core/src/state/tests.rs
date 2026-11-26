@@ -82,6 +82,7 @@ fn annotations_follow_document_id_change_for_same_path_and_size() {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            ink_stroke: None,
             created_at: 1,
             updated_at: 1,
         })
@@ -249,6 +250,7 @@ fn pdf_document_reconciliation_rekeys_existing_annotations() {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            ink_stroke: None,
             created_at: 1,
             updated_at: 1,
         })
@@ -293,6 +295,7 @@ fn pdf_document_reconciliation_prefers_preservation_on_same_path_size_change() {
             note: Some("keep me".to_string()),
             linked_note_path: None,
             markdown_anchor: None,
+            ink_stroke: None,
             created_at: 1,
             updated_at: 1,
         })
@@ -326,6 +329,7 @@ fn pdf_annotations_are_isolated_between_vaults_with_identical_document_ids() {
         note: None,
         linked_note_path: Some(format!("{text}.md")),
         markdown_anchor: None,
+        ink_stroke: None,
         created_at: 1,
         updated_at: 1,
     };
@@ -466,11 +470,13 @@ fn clearing_settings_keeps_study_history() {
         &state,
         crate::tracker::StudySession {
             id: 0,
+            uid: String::new(),
             date: "2026-11-24".to_string(),
             hours: 1.0,
             activity_type: "Manual".to_string(),
             phase: "Manual".to_string(),
             notes: None,
+            updated_at: 0,
         },
     )
     .unwrap();
@@ -535,4 +541,60 @@ fn an_outline_cached_by_an_older_recovery_version_is_ignored() {
         .unwrap();
     }
     assert_eq!(state.get_pdf_outline("doc"), None);
+}
+
+#[test]
+fn v5_migration_backfills_unique_uids_and_is_idempotent() {
+    let db = Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         CREATE TABLE tracker_sessions (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             date TEXT NOT NULL,
+             hours REAL NOT NULL,
+             activity_type TEXT NOT NULL,
+             phase TEXT NOT NULL,
+             notes TEXT
+         );
+         CREATE TABLE tracker_activity (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, text TEXT NOT NULL, time TEXT NOT NULL);
+         CREATE TABLE tracker_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         CREATE VIRTUAL TABLE file_search USING fts5(path, content);
+         CREATE TABLE pdf_documents (document_id TEXT PRIMARY KEY, vault_relative_path TEXT NOT NULL, file_size INTEGER NOT NULL, modified_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+         CREATE TABLE pdf_annotations (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, page_index INTEGER NOT NULL, kind TEXT NOT NULL, color TEXT NOT NULL, selected_text TEXT NOT NULL, ranges_json TEXT NOT NULL, rects_json TEXT NOT NULL, note TEXT, linked_note_path TEXT, markdown_anchor TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+         CREATE TABLE pdf_text_cache (path TEXT PRIMARY KEY, file_size INTEGER NOT NULL, modified_at INTEGER NOT NULL, content TEXT NOT NULL);
+         CREATE TABLE pdf_references (document_id TEXT PRIMARY KEY, links_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+         CREATE TABLE pdf_outline (document_id TEXT PRIMARY KEY, outline_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+         CREATE TABLE vault_file_meta (scope TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, modified_ns INTEGER NOT NULL, links_json TEXT NOT NULL, PRIMARY KEY (scope, path));
+         CREATE TABLE pdf_sidecar_sync (document_id TEXT PRIMARY KEY, content_hash TEXT NOT NULL, ids_json TEXT NOT NULL);
+         INSERT INTO settings (key, value) VALUES ('last_vault', '/tmp/legacy-vault');
+         INSERT INTO tracker_sessions (date, hours, activity_type, phase, notes) VALUES
+             ('2026-11-20', 1.5, 'Study', '1A', 'duplicate'),
+             ('2026-11-20', 1.5, 'Study', '1A', 'duplicate');
+         PRAGMA user_version = 4;",
+    )
+    .unwrap();
+
+    apply_migrations(&db).unwrap();
+    apply_migrations(&db).unwrap();
+
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, SCHEMA_VERSION);
+
+    let expected_scope = AppState::pdf_scope_prefix_for_root(Path::new("/tmp/legacy-vault"));
+    let rows: Vec<(String, String)> = {
+        let mut stmt = db
+            .prepare("SELECT uid, vault_scope FROM tracker_sessions ORDER BY id ASC")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .flatten()
+            .collect()
+    };
+    assert_eq!(rows.len(), 2);
+    assert!(!rows[0].0.is_empty() && !rows[1].0.is_empty());
+    assert_ne!(rows[0].0, rows[1].0);
+    assert_eq!(rows[0].1, expected_scope);
+    assert_eq!(rows[1].1, expected_scope);
 }

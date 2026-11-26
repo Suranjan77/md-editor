@@ -18,6 +18,7 @@ pub struct VaultState {
     pub sidebar_visible: bool,
     pub backlinks_visible: bool,
     pub backlinks: Vec<BacklinkItem>,
+    pub citations: Vec<md_editor_core::citations::CitationEntry>,
 }
 
 impl VaultState {
@@ -32,6 +33,7 @@ impl VaultState {
             sidebar_visible: true,
             backlinks_visible: false,
             backlinks: Vec::new(),
+            citations: Vec::new(),
         }
     }
 

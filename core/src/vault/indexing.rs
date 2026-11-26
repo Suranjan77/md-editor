@@ -111,6 +111,11 @@ pub fn index_vault_for_generation(
         Ok(merged) => log::info!("Merged highlights from the vault for {merged} PDFs"),
         Err(error) => log::warn!("Could not sync the vault's highlight files: {error}"),
     }
+    match state.sync_tracker_sidecar() {
+        Ok(false) => {}
+        Ok(true) => log::info!("Merged study tracker sessions from the vault"),
+        Err(error) => log::warn!("Could not sync the vault's study sessions file: {error}"),
+    }
 
     log::info!(
         "Indexed vault {path}: {notes} notes, {pdf_count} PDFs, {rewritten} (re)read, in {:?}",

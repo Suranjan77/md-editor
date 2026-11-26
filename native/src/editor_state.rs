@@ -247,6 +247,19 @@ impl EditorPane {
         self.retained_order.clear();
     }
 
+    /// Absorb another pane's parked buffers into `self` (preserving recency order).
+    /// Existing entries in `self` win if the same path is present in both.
+    pub fn absorb_retained(&mut self, other: &mut EditorPane) {
+        let order = std::mem::take(&mut other.retained_order);
+        for path in order {
+            if let Some((buffer, scroll_y)) = other.retained.remove(&path)
+                && !self.retained.contains_key(&path)
+            {
+                self.retain_buffer(path, buffer, scroll_y);
+            }
+        }
+    }
+
     /// Arm the autosave debounce. Called whenever buffer text changes.
     pub fn mark_dirty_now(&mut self) {
         self.autosave_pending_since = Some(Instant::now());

@@ -42,7 +42,7 @@ The last vault and last open file are restored the next time you launch.
 | Markdown | `.md`, `.markdown` |
 | PDF | `.pdf` |
 | Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp` |
-| Handwritten pages | `.ink` (made with the handwriting canvas) |
+| Handwritten pages | `.ink.svg` (dual-mode vector, editable in the canvas) and legacy `.ink` |
 
 Images open in a dedicated preview pane. For slides, export the deck to PDF: it then gets
 search, highlights, quick notes and `pdf://` links like any other paper.
@@ -137,7 +137,7 @@ MD Editor shows formatted text and lets you edit the exact source, without a mod
 | Tables | `\| A \| B \|` | Render as grids and scroll horizontally on their own |
 | Images | `![alt](path.png)` | Rendered inline with the alt text as a caption |
 | PDF crops | `![alt](pdf://paper.pdf?page=4&crop=x,y,w,h)` | That part of the page, rendered live from the PDF; `Ctrl` + click opens the PDF there |
-| Sketches | `![sketch](lecture-sketch.ink)` | A handwritten page, drawn in the note; `Ctrl+Shift+I` starts one, `Ctrl` + click edits it |
+| Sketches | `![sketch](lecture-sketch.ink.svg)` | A handwritten dual-mode vector page, drawn in the note; `Ctrl+Shift+I` starts one, `Ctrl` + click edits it |
 | Links | `[text](target)` | `Ctrl` + click to follow |
 | Wikilinks | `[[Note]]`, `[[Note\|Label]]` | Resolve across subfolders by filename |
 | Horizontal rule | `---` | |
@@ -178,10 +178,19 @@ not deliver drops there); copy and paste, or use Insert image….
   single, so `don't`, `it's`, and `users'` come out right.
 - **List continuation** — `Enter` on a list item continues the list; ordered lists increment
   (`1.` → `2.`); `Enter` on an *empty* list item clears the marker and leaves list mode.
-- **Completion** — typing `[[` lists vault notes and files that match what follows;
-  `/` at the start of a line lists blocks to insert (headings, tasks, callouts, code, math,
-  a table, a divider). `↑`/`↓` choose, `Enter` or `Tab` inserts, `Escape` closes, and
-  clicking a row inserts it. A link to a note whose name is unique uses just the name.
+- **Completion** — typing `[[` lists vault notes and files (and `[[#heading` or
+  `[[note#heading` lists headings inside the active or target note); typing `@` after
+  whitespace, `(`, `[`, or `;` searches `.bib` entries and vault PDFs (inserting a PDF-linked
+  `[[pdf|Author (Year)]]` wikilink when a matching PDF exists, or `[@key]` otherwise);
+  `/` at the start of a line lists blocks to insert (headings, tasks, callouts including
+  `[!question]`, `[!claim]`, and `[!output]`, code, math, a table, a divider). `↑`/`↓`
+  choose, `Enter` or `Tab` inserts, `Escape` closes, and clicking a row inserts it.
+- **Literate math & code blocks** — press `Ctrl+=` (*Evaluate Math*) inside `$...$` / `$$...$$`
+  or on a selection to compute arithmetic and common LaTeX (`\frac`, `\sqrt`, `\pi`, trig,
+  logs) and append `= result` in one undoable step. Press `Ctrl+Alt+R` (*Run Code Block*)
+  inside a `sh`, `bash`, or `python` fenced block to run it on demand (strictly opt-in,
+  5-second timeout, 64 KB output limit) and insert or update a `> [!output]` callout
+  immediately below the fence.
 - **Word-sized undo** — one `Ctrl+Z` takes back a burst of typing, not one character. A run
   breaks at a pause, a newline, or a cursor jump.
 
@@ -221,17 +230,14 @@ You do not have to think about it:
 The Knowledge Graph is a research workspace for seeing how notes and source material connect.
 Open it from the toolbar, from the command palette (*Open Knowledge Graph*), or with `Ctrl+G`.
 
-- **Global** scope shows indexed Markdown notes, PDFs, and unresolved wikilink targets.
+- **Global** scope shows indexed Markdown notes, PDFs, sketches (`.ink` / `.ink.svg`), and unresolved wikilink targets.
   **Local** scope needs an active note or PDF and follows connections one or two hops out.
-  Images and ordinary Markdown links are not graph edges.
-- Notes, PDFs, and missing link targets are visually distinct nodes. Edges are resolved
-  wikilinks plus links from PDF annotations to their linked notes; repeated annotation links
-  are aggregated.
-- The canvas supports panning, zoom, dragging and pinning nodes, selection, opening a file
-  directly, and fit-to-view. Dragged positions last for the session only.
+  Inline sketch embeds (`![alt](sketch.ink)`) appear as edges to sketch nodes, while ordinary images are excluded.
+- Nodes are shape- and colour-coded by kind (circles for notes, rounded pages for PDFs, diamonds for sketches, hollow rings for missing targets). Prefixing a wikilink with `supports:: [[Target]]`, `contradicts:: [[Target]]`, or `derives:: [[Target]]` styles the edge by epistemic role and surfaces role badges in the inspector; PDF annotation links are aggregated per document/note pair.
+- The canvas supports panning, zoom, dragging and pinning nodes, keyboard navigation (`Tab` / `Shift+Tab` or `←` / `→` to step through nodes, `P` to pin, `Enter` to open), opening files directly, and fit-to-view. Named **Pinboards…** persist pinned coordinates, scope, filter chips, and camera framing per vault across restarts.
 - Search narrows the visible graph while keeping immediate neighbours for context. Filters
-  toggle PDFs, unresolved targets, and unconnected nodes without touching any vault file.
-- Selecting a node shows its incoming and outgoing connections and graph-derived related
+  toggle PDFs, sketches, unresolved targets, and unconnected nodes without touching any vault file.
+- Selecting a node shows its incoming and outgoing connections (with epistemic badges) and graph-derived related
   notes. Vault-health summaries point out unconnected notes, unresolved links, hubs, and the
   number of disconnected groups.
 
@@ -303,8 +309,12 @@ outside the app.
 - Colours cycle automatically — yellow → green → blue → pink → orange — so consecutive
   highlights stay distinct. You can also pick one explicitly.
 - Add a **quick note** to a highlight.
-- **The original PDF is never modified.** Highlights, notes, and links live in the
-  settings database.
+- **Margin Ink (freehand stylus/mouse)** — toggle the **Pen** or **Eraser** button on the
+  PDF toolbar, pick an ink colour, and draw directly over equations or margins; press
+  **Undo** to remove the last stroke. Strokes persist non-destructively alongside highlights
+  in SQLite and `.md-editor/annotations/<document_id>.jsonl` without modifying the PDF.
+- **The original PDF is never modified.** Highlights, notes, margin ink, and links live in the
+  settings database and portable vault sidecar.
 - **Orphan report** — if a PDF is replaced or recompiled, stored positions can drift. The
   report compares each highlight's saved text against what is now under its rectangle and
   tells you how many drifted, and how many were checkable (page text is loaded lazily).
@@ -345,8 +355,9 @@ strip and shows any document, so you can have a note beside a PDF, two notes, or
   the next file you open lands in it. With two panes, the same key (or the split button,
   now highlighted, on either strip) closes the second pane. **Its tabs move to the other
   pane**, so nothing is lost.
-- **Open to the side** (right-click a file in the sidebar) opens a file in the other pane.
-  **Move to other pane** (right-click a tab, or `Ctrl+Shift+M`) moves a tab across.
+- **Open to the side** (right-click a file in the sidebar, or press `Ctrl+Enter` on a file
+  in the Command Palette) opens a file in the other pane. **Move to other pane** (right-click
+  a tab, or `Ctrl+Shift+M`) moves a tab across.
 - Clicking, typing or selecting in a pane **focuses** it: it gets the keyboard shortcuts,
   the outline, backlinks, find and the status bar, and its tabs are highlighted.
   Scrolling a pane does not take focus. `Ctrl+J` switches focus to the other pane.
@@ -359,6 +370,35 @@ strip and shows any document, so you can have a note beside a PDF, two notes, or
 - `Ctrl+Shift+L` switches between side by side and stacked. Drag the divider to resize, and
   double-click it to reset. PDFs on fit-to-width refit to their pane.
 - The split, its direction and both panes' tabs come back when you reopen the vault.
+
+### Saved desks
+
+You can save named workspace layouts (**desks**) per vault and switch between them at any
+time:
+
+- **Save Desk…** (`Ctrl+Shift+D`, or from the Command Palette / Desks dialog) snapshots both
+  panes' tabs (including each PDF's page/zoom/scroll and each image's zoom), split
+  direction, divider ratio, focused pane, and sidebar/backlinks/outline visibility. Saving
+  with an existing name (case-insensitively) updates that desk.
+- **Desks…** (`Ctrl+Alt+D`, or the **Desks** button on the activity rail) lists your saved
+  desks with their layout summary, lets you switch in one click or delete a desk, and offers
+  **Save Current Desk…**.
+- Saved desks also appear in the `Ctrl+P` Command Palette (`Desk: <name>`).
+- Switching desks flushes unsaved edits in all open panes first; if a file cannot be saved
+  (for example, read-only permissions), the switch is refused so no work is lost. Vault
+  renames and deletes update saved desks automatically, and externally deleted files are
+  pruned cleanly on restore.
+
+### Daily Desk & Spaced Synthesis Brief (`Ctrl+D`)
+
+Press `Ctrl+D` (or click **Daily desk** on the activity rail, or run *Daily Desk* from
+`Ctrl+P`) to open today's `daily/YYYY-MM-DD.md`:
+
+- If today's daily note already exists, it opens untouched.
+- If it is new, MD Editor rolls over unchecked `- [ ]` tasks from your most recent prior
+  daily note (ignoring completed `- [x]` tasks and code blocks), scans vault notes for up
+  to five `> [!question]` and `> [!claim]` callouts into a **Synthesis Brief** with
+  clickable wikilinks, and adds a concise Study Log summary when sessions exist.
 
 ---
 
@@ -375,10 +415,12 @@ Wayland); with a mouse, strokes have a fixed weight.
   the upper side button for a ring of tools and colours at the nib.
 - `Ctrl+Z` / `Ctrl+Y` undo and redo; `Ctrl+S` saves.
 
-A page is saved beside the open note (`Week1.md` → `Week1.ink`), or at the vault root as
-`handwritten-<date>.ink` when no note is open; a second page for the same note becomes
-`Week1-2.ink`. Pages save automatically a second after you stop writing.
-Saved pages appear in the sidebar and reopen in the canvas. Developer detail is in
+A page is saved beside the open note (`Week1.md` → `Week1.ink.svg`), or at the vault root as
+`handwritten-<date>.ink.svg` when no note is open; a second page for the same note becomes
+`Week1-2.ink.svg`. Dual-mode `.ink.svg` files render cleanly in browsers, GitHub, and
+Pandoc with adaptive light/dark ink while preserving full editable stroke metadata; legacy
+`.ink` JSON files continue to open and save. Pages save automatically a second after you stop
+writing. Saved pages appear in the sidebar and reopen in the canvas. Developer detail is in
 [Handwritten Notes](Handwritten-Notes.md).
 
 ---
@@ -459,10 +501,11 @@ Full detail: [Study Tracker](Study-Tracker.md).
   highlights and notes, cached PDF text, and study history — lives in a single SQLite file
   named `md_editor_settings.sqlite` in `~/.local/share/md-editor/`. The log is
   `~/.local/state/md-editor/md-editor.log`.
-- **PDF highlights and their notes** are also copied into the vault, in the hidden
-  `.md-editor/annotations/` folder (one small text file per PDF). Sync the vault with Git
-  or Syncthing and your highlights come along. Highlights made on two machines are merged
-  the next time the vault or the PDF is opened. Study history and settings stay on each
-  machine.
+- **PDF highlights, their notes, and Study Tracker sessions** are also copied into the
+  vault, in the hidden `.md-editor/` folder (`annotations/<id>.jsonl` and
+  `study-sessions.jsonl` with `*.jsonl merge=union`). Sync the vault with Git or Syncthing
+  and your highlights and study sessions come along; changes made on two machines are
+  three-way merged the next time the vault or PDF is opened. Study tracker curriculum config
+  and app settings stay on each machine.
 - Uninstalling the app leaves both in place; delete those folders to remove all app data.
 - Nothing is sent anywhere. There are no accounts and no telemetry.

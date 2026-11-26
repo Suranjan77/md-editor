@@ -103,6 +103,20 @@ pub(super) fn read_file(path: &Path) -> VaultResult<String> {
         .map_err(|e| VaultError::io(format!("Failed to read file {}", path.display()), e))
 }
 
+/// Read a UTF-8 file if its size is at most `max_bytes`.
+pub fn read_file_capped(path: &Path, max_bytes: u64) -> VaultResult<String> {
+    let meta = fs::metadata(path)
+        .map_err(|e| VaultError::io(format!("Failed to stat file {}", path.display()), e))?;
+    if meta.len() > max_bytes {
+        return Err(VaultError::from(format!(
+            "File {} exceeds size limit ({} bytes)",
+            path.display(),
+            max_bytes
+        )));
+    }
+    read_file(path)
+}
+
 pub(super) fn read_image(path: &Path) -> VaultResult<Vec<u8>> {
     if !is_image_path(path) {
         return Err(VaultError::NotAnImage(path.to_path_buf()));
@@ -239,6 +253,20 @@ pub fn is_ink_path(path: &Path) -> bool {
     ext_matches(path, &INK_EXTENSIONS)
 }
 
+/// Whether `path` is a sketch substrate file (`.ink` or `.ink.svg`).
+pub fn is_sketch_path(path: &Path) -> bool {
+    is_ink_path(path)
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().ends_with(".ink.svg"))
+}
+
+/// Whether `path` is a BibTeX bibliography file (`.bib`).
+pub fn is_bib_path(path: &Path) -> bool {
+    ext_matches(path, &["bib"])
+}
+
 pub fn is_supported_vault_path(path: &Path) -> bool {
     is_markdown_path(path) || is_pdf_path(path) || is_image_path(path) || is_ink_path(path)
 }
@@ -342,20 +370,29 @@ pub(super) fn graph_node_kind(
     path: &str,
     markdown_paths: &BTreeSet<String>,
     pdf_paths: &BTreeSet<String>,
+    sketch_paths: &BTreeSet<String>,
 ) -> GraphNodeKind {
     if markdown_paths.contains(path) {
         GraphNodeKind::Markdown
     } else if pdf_paths.contains(path) {
         GraphNodeKind::Pdf
+    } else if sketch_paths.contains(path) {
+        GraphNodeKind::Sketch
     } else {
         GraphNodeKind::Missing
     }
 }
 
 pub(super) fn graph_node_label(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .or_else(|| Path::new(path).file_name())
+    let p = Path::new(path);
+    if let Some(file_name) = p.file_name().and_then(|name| name.to_str())
+        && file_name.len() > 8
+        && file_name[file_name.len() - 8..].eq_ignore_ascii_case(".ink.svg")
+    {
+        return file_name[..file_name.len() - 8].to_string();
+    }
+    p.file_stem()
+        .or_else(|| p.file_name())
         .map(|name| name.to_string_lossy().to_string())
         .filter(|label| !label.is_empty())
         .unwrap_or_else(|| path.to_string())
@@ -380,6 +417,20 @@ pub(super) fn list_all_md_files_recursive(
 pub fn list_all_pdf_files(root: &Path) -> VaultResult<Vec<PathBuf>> {
     let mut files = Vec::new();
     list_files_matching(root, &mut files, 0, &is_pdf_path)?;
+    Ok(files)
+}
+
+/// List every sketch file (`.ink` or `.ink.svg`) in the vault.
+pub fn list_all_ink_files(root: &Path) -> VaultResult<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    list_files_matching(root, &mut files, 0, &is_sketch_path)?;
+    Ok(files)
+}
+
+/// List every `.bib` bibliography file in the vault.
+pub fn list_all_bib_files(root: &Path) -> VaultResult<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    list_files_matching(root, &mut files, 0, &is_bib_path)?;
     Ok(files)
 }
 

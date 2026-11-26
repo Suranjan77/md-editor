@@ -329,7 +329,7 @@ pub struct PdfAnnotation {
     pub id: String,
     pub document_id: String,
     pub page_index: u16,
-    pub kind: PdfAnnotationKind,        // Highlight | Note
+    pub kind: PdfAnnotationKind,        // Highlight | Note | Ink
     pub color: PdfAnnotationColor,      // Yellow | Green | Blue | Pink | Orange
     pub selected_text: String,
     pub ranges: Vec<PdfTextRange>,      // character intervals on the page text layer
@@ -337,6 +337,7 @@ pub struct PdfAnnotation {
     pub note: Option<String>,
     pub linked_note_path: Option<String>,
     pub markdown_anchor: Option<String>,
+    pub ink_stroke: Option<PdfInkStroke>, // normalized [0..1] margin ink stroke for Ink
     pub created_at: i64,
     pub updated_at: i64,
 }

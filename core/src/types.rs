@@ -75,6 +75,7 @@ pub struct GraphNode {
 pub enum GraphNodeKind {
     Markdown,
     Pdf,
+    Sketch,
     /// A wikilink or annotation endpoint that no longer resolves to a file.
     Missing,
 }
@@ -94,4 +95,7 @@ pub struct GraphEdge {
 pub enum GraphEdgeKind {
     WikiLink,
     PdfAnnotation,
+    Supports,
+    Contradicts,
+    Derives,
 }

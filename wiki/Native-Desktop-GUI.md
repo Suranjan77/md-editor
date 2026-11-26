@@ -68,6 +68,7 @@ its family:
 | `Message::Editor(EditorMessage)` — editing, autosave, animation ticks, math, outline | `update_editor` | `app/editor.rs` |
 | `Message::Vault(VaultMessage)` — vault lifecycle, file tree, create/rename/delete and name modals, the link-note picker | `update_vault` | `app/vault.rs` |
 | `Message::Tabs(TabsMessage)` — the document tab strip | `update_tabs` | `app/tabs_handler.rs` |
+| `Message::Desks(DesksMessage)` — saved workspace layouts | `update_desks` | `app/desks.rs` |
 | `Message::Settings(SettingsMessage)` — the Settings page | `update_settings` | `app/settings_handler.rs` |
 | `Message::KeyboardShortcut(Shortcut)` | `update_shortcuts` | `app/shortcuts.rs` |
 | `Message::Shell(ShellMessage)` — windows, split view, command palette, toasts, study tracker, image zoom | `update_shell` | `app/shell.rs` |
@@ -207,6 +208,12 @@ classDiagram
   the pane that started it. Work across both panes (rename, delete, watcher, rescale,
   save, session) goes through `for_each_pane`. Pane commands are in `app/panes.rs`, the
   panes' views in `app/pane_view.rs`. Design: `docs/split-layouts-plan.md`.
+- **`DeskStore`** (`desks.rs`, handlers in `app/desks.rs`) — per-vault saved workspace
+  layouts (`Desk`) stored under `desks:<vault_root>` in SQLite, loaded into memory on vault
+  open so views stay pure. Each desk records both panes' tab strips and viewer state,
+  split axis and ratio, focused pane, and panel visibility. Switching desks flushes dirty
+  buffers in all open panes first (refusing on write failure); renames and deletes update
+  all saved desks for the active vault.
 - **`SearchState`** (`search_state.rs`) — query and replacement text, the `regex`,
   `match_case`, and PDF-only `loose` flags, vault and PDF results, and a memoized
   in-document match cache keyed by `DocMatchKey` so `view` never rescans the buffer.

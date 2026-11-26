@@ -312,8 +312,7 @@ Still open:
   renderer property suites at 3,000 cases around a behaviour change.
 - **3.6** loading shimmer and **3.7** the PDF selection popover (selection tools live in the
   toolbar instead); **3.8** checkerboard behind transparent images.
-- **4.4** shape-coded node kinds in the GPU shader (kinds are told apart by colour on the
-  canvas and by icon in the legend and inspector), keyboard navigation between nodes.
+- **4.4** shape-coded node kinds in `shaders/graph.wgsl` (circle for notes, rounded page rectangle for PDFs, diamond for sketches, hollow ring for missing targets), styled epistemic edges (`Supports`, `Contradicts`, `Derives`), keyboard navigation (`Tab`/`Shift+Tab`/`←`/`→` + `P` pin + `Enter` open), and named per-vault **Pinboards** — **completed** (2026-11-26).
 - **Light paper for handwriting** (`pages/ink.md`): the paper is part of the ink document
   format, so it needs a format change.
 - README screenshots in both themes.

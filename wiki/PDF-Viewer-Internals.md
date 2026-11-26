@@ -51,6 +51,7 @@ iced UI
 | `programmatic_scroll` | Suppresses normal viewport scheduling for a jump's own scroll event |
 | `toc_target_page` | The page currently being navigated to |
 | `next_highlight_color` | Advances through the palette on each quick highlight |
+| `ink_tool`, `ink_color`, `live_ink` | Non-destructive margin ink tool (`Pen` / `Eraser` / `None`), active ink colour, and live in-progress stroke |
 
 The pane owns its outline separately from the editor's markdown TOC, because in split view
 both documents are open at once and each needs its own.

@@ -14,7 +14,27 @@ fn detects_an_open_wikilink_and_a_slash_at_line_start() {
     );
     assert_eq!(detect("[[Note]] and"), None, "closed link");
     assert_eq!(detect("[[Note|ali"), None, "alias");
-    assert_eq!(detect("[[Note#sec"), None, "anchor");
+    assert_eq!(
+        detect("[[Note#sec"),
+        Some((CompletionKind::Wikilink, 0, "Note#sec".to_string()))
+    );
+    assert_eq!(
+        detect("[[#head"),
+        Some((CompletionKind::Wikilink, 0, "#head".to_string()))
+    );
+    assert_eq!(
+        detect("see @vas2017"),
+        Some((CompletionKind::Citation, 4, "vas2017".to_string()))
+    );
+    assert_eq!(
+        detect("(@vas"),
+        Some((CompletionKind::Citation, 1, "vas".to_string()))
+    );
+    assert_eq!(
+        detect("user@example.com"),
+        None,
+        "email must not trigger citation"
+    );
     assert_eq!(
         detect("  /tab"),
         Some((CompletionKind::Slash, 2, "tab".to_string()))
@@ -22,6 +42,56 @@ fn detects_an_open_wikilink_and_a_slash_at_line_start() {
     assert_eq!(detect("a /tab"), None, "slash mid-line");
     assert_eq!(detect("/tab le"), None, "space ends the command");
     assert_eq!(detect("https://x"), None);
+}
+
+#[test]
+fn citations_and_headings_format_insertions() {
+    let entries = vec![
+        CitationEntry {
+            key: "vaswani2017".into(),
+            display: "Vaswani et al. (2017)".into(),
+            title: "Attention Is All You Need".into(),
+            author: "Vaswani et al.".into(),
+            year: Some("2017".into()),
+            pdf_path: Some("papers/vaswani2017.pdf".into()),
+        },
+        CitationEntry {
+            key: "shannon1948".into(),
+            display: "Shannon (1948)".into(),
+            title: "A Mathematical Theory of Communication".into(),
+            author: "Shannon".into(),
+            year: Some("1948".into()),
+            pdf_path: None,
+        },
+    ];
+
+    let vas = citation_items(&entries, "vas");
+    assert_eq!(
+        vas[0].insert,
+        "[[papers/vaswani2017.pdf|Vaswani et al. (2017)]]"
+    );
+
+    let sha = citation_items(&entries, "1948");
+    assert_eq!(sha[0].insert, "[@shannon1948]");
+    assert_eq!(
+        sha[0].detail.as_deref(),
+        Some("Shannon (1948) — A Mathematical Theory of Communication")
+    );
+
+    let local = heading_items(
+        None,
+        &["Introduction".into(), "Research Index".into()],
+        "res",
+    );
+    assert_eq!(local.len(), 1);
+    assert_eq!(local[0].insert, "[[#Research Index]]");
+
+    let remote = heading_items(
+        Some("Index"),
+        &["Introduction".into(), "Research Index".into()],
+        "res",
+    );
+    assert_eq!(remote[0].insert, "[[Index#Research Index]]");
 }
 
 #[test]

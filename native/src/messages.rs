@@ -4,6 +4,7 @@
 pub enum Message {
     Vault(VaultMessage),
     Tabs(TabsMessage),
+    Desks(DesksMessage),
     Settings(SettingsMessage),
     Graph(GraphMessage),
     Shell(ShellMessage),
@@ -17,6 +18,17 @@ pub enum Message {
     FromPane(crate::app::workspace::PaneId, Box<Message>),
     /// A result for a pane (a task it started): runs in that pane, focus stays.
     ToPane(crate::app::workspace::PaneId, Box<Message>),
+}
+
+/// Saved workspace layouts ("desks"). Handled by `app/desks.rs`.
+#[derive(Debug, Clone)]
+pub enum DesksMessage {
+    OpenDialog,
+    OpenSaveDialog,
+    Save(String),
+    Switch(String),
+    Delete(String),
+    OpenFromPalette(String),
 }
 
 /// Document tab strip and tab lifecycle. Handled by `app/tabs_handler.rs`.
@@ -148,9 +160,14 @@ pub enum GraphMessage {
     LocalDepthChanged(u8),
     QueryChanged(String),
     ShowPdfsToggled(bool),
+    ShowSketchesToggled(bool),
     ShowMissingToggled(bool),
     ShowOrphansToggled(bool),
     NodeSelected(Option<String>),
+    /// Step selection forward or backward across currently visible nodes (`Tab` / `Shift+Tab`).
+    CycleNode(isize),
+    /// Pin or unpin the currently selected node (`P` key).
+    ToggleSelectedPin,
     NodeMoved {
         path: String,
         x: f32,
@@ -163,6 +180,11 @@ pub enum GraphMessage {
     PinToggled(String),
     /// Release every pinned node back to the simulation.
     UnpinAll,
+    OpenPinboardsModal,
+    OpenSavePinboardModal,
+    SavePinboard(String),
+    LoadPinboard(String),
+    DeletePinboard(String),
     FitView,
     ResetLayout,
     /// Multiply the zoom about the canvas center (toolbar zoom buttons).
@@ -204,6 +226,8 @@ pub enum ShellMessage {
     CommandPaletteCommandClicked(Shortcut),
     /// A vault file picked from the palette's search results.
     CommandPaletteFileClicked(String),
+    /// `Ctrl+Enter` in the command palette: open the selected file to the side.
+    CommandPaletteOpenToSide,
     OverlaySubmitCurrent,
     ImageZoomIn,
     ImageZoomOut,
@@ -322,6 +346,13 @@ pub enum EditorMessage {
     CompletionPick(usize),
     /// Close the completion popup (`Escape`).
     CompletionClose,
+    /// Opt-in fenced code block execution completed.
+    CodeBlockFinished {
+        expected_path: String,
+        expected_close_line: usize,
+        expected_body: String,
+        result: Result<String, String>,
+    },
 }
 
 /// The PDF viewer and its study tools. Handled by `app/pdf.rs`.
@@ -393,6 +424,25 @@ pub enum PdfMessage {
         annotation_id: String,
         page: u16,
     },
+    /// Toggle or switch non-destructive PDF margin ink tool (`Pen` / `Eraser` / `None`).
+    InkToolToggled(Option<crate::pdf_pane::PdfInkTool>),
+    /// Pick color for future PDF margin ink strokes (activates `Pen` if needed).
+    InkColorSelected(md_editor_core::pdf::PdfAnnotationColor),
+    /// Live preview update during PDF margin ink pointer/stylus drag.
+    InkLiveUpdated(Option<(u16, Vec<[f32; 3]>)>),
+    /// Commit a finished margin ink stroke in normalized page coordinates `[x_frac, y_frac, pressure]`.
+    InkStrokeCommitted {
+        page: u16,
+        points: Vec<[f32; 3]>,
+    },
+    /// Erase any PDF margin ink stroke on `page` intersecting `(x_frac, y_frac)`.
+    InkEraseAt {
+        page: u16,
+        x_frac: f32,
+        y_frac: f32,
+    },
+    /// Remove the most recently created margin ink stroke on the active PDF.
+    UndoInkStroke,
 }
 
 /// Global search and in-document find/replace. Handled by `app/search.rs`.
@@ -467,6 +517,12 @@ impl From<TabsMessage> for Message {
     }
 }
 
+impl From<DesksMessage> for Message {
+    fn from(message: DesksMessage) -> Self {
+        Message::Desks(message)
+    }
+}
+
 impl From<SettingsMessage> for Message {
     fn from(message: SettingsMessage) -> Self {
         Message::Settings(message)
@@ -534,6 +590,7 @@ pub enum Shortcut {
     Save,
     OpenVault,
     NewFile,
+    DailyNote,
     InsertImage,
     Search,
     GlobalSearch,
@@ -549,15 +606,29 @@ pub enum Shortcut {
     TableOfContents,
     StudyTracker,
     SplitView,
+    /// Split side by side (Vertical axis).
+    SplitRight,
+    /// Split stacked (Horizontal axis).
+    SplitDown,
+    /// Close the second pane, keeping its tabs in the first.
+    Unsplit,
     /// Focus the other pane of the split (splitting first if there is none).
     FocusOtherPane,
     /// Move the focused pane's tab to the other pane.
     MoveTabToOtherPane,
     /// Side by side ⇄ stacked.
     ToggleSplitAxis,
+    /// Open the Save Desk dialog.
+    SaveDesk,
+    /// Open the Saved Desks dialog.
+    SwitchDesk,
     Handwriting,
     /// A new handwritten sketch, shown in the open note at the caret.
     InsertSketch,
+    /// Evaluate selected or enclosing inline/display math.
+    EvaluateMath,
+    /// Run the enclosing fenced code block and insert/update `> [!output]`.
+    RunCodeBlock,
     Settings,
     RenameEntry,
     CycleFocusNext,

@@ -23,6 +23,7 @@ pub(crate) fn kind_color(kind: GraphNodeKind) -> Color {
     match kind {
         GraphNodeKind::Markdown => crate::design::tokens().accent,
         GraphNodeKind::Pdf => crate::design::tokens().status_info,
+        GraphNodeKind::Sketch => crate::design::tokens().status_warning,
         GraphNodeKind::Missing => crate::design::tokens().fg_tertiary,
     }
 }
@@ -74,6 +75,7 @@ pub(super) fn draw_hover_card(
     let kind_label = match node.kind {
         GraphNodeKind::Markdown => "Note",
         GraphNodeKind::Pdf => "PDF",
+        GraphNodeKind::Sketch => "Sketch",
         GraphNodeKind::Missing => "Unresolved",
     };
     let detail = format!(

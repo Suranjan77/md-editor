@@ -2,8 +2,8 @@
 
 MD Editor ships an integrated study tracker: a timer, a session log, and a **configurable
 curriculum** of phases, projects, checkpoint gates, and reading lists. It lives inside the
-workspace, beside the notes and papers it is tracking, and its data is in the same
-SQLite database as everything else.
+workspace, beside the notes and papers it is tracking, and its data is stored in SQLite
+and mirrored into `<vault>/.md-editor/study-sessions.jsonl` for portable Git/Syncthing sync.
 
 It is opened from the toolbar or from the command palette (`Ctrl+P` → *Study Tracker*), and
 closed with `Escape`.
@@ -18,11 +18,18 @@ Three tables in `md_editor_settings.sqlite`, plus one `settings` key:
 erDiagram
     tracker_sessions {
         INTEGER id PK "autoincrement"
+        TEXT uid UK "stable cross-machine id"
         TEXT date "YYYY-MM-DD or YYYY-MM-DD HH:MM"
         REAL hours "duration in hours"
         TEXT activity_type "e.g. Study"
         TEXT phase "e.g. Focus"
         TEXT notes "optional, nullable"
+        INTEGER updated_at "unix seconds"
+    }
+    tracker_sidecar_sync {
+        TEXT vault_scope PK "hashed vault root"
+        TEXT content_hash "last synced jsonl sha256"
+        TEXT ids_json "last synced uid set"
     }
     tracker_kv {
         TEXT key PK "proj_<id>, gate_<id>_<n>, read_<section>_<n>"
@@ -36,7 +43,13 @@ erDiagram
     }
 ```
 
-- **`tracker_sessions`** — one row per logged interval, whether timed or entered by hand.
+- **`tracker_sessions`** — one row per logged interval, whether timed or entered by hand,
+  carrying a stable `uid` and `updated_at` timestamp for cross-machine merging.
+- **`tracker_sidecar_sync`** — per-vault base state for three-way merging
+  `<vault>/.md-editor/study-sessions.jsonl` (`core/src/state/tracker_sidecar.rs`).
+  Whenever `save_session` or `delete_session` mutates SQLite while a vault is open, the
+  JSONL file is rewritten deterministically (sorted by `(date, uid)`), and vault indexing
+  reconciles remote additions, deletions, and edits on open.
 - **`tracker_kv`** — the checkbox and status state of the curriculum: project statuses, gate
   item ticks, reading item ticks. Written through
   `tracker::set_kv(state, key, value)`, an upsert.
@@ -51,11 +64,13 @@ erDiagram
 ```rust
 pub struct StudySession {
     pub id: i64,
+    pub uid: String,
     pub date: String,
     pub hours: f32,
     pub activity_type: String,
     pub phase: String,
     pub notes: Option<String>,
+    pub updated_at: i64,
 }
 
 pub struct TrackerKv { pub key: String, pub value: String }

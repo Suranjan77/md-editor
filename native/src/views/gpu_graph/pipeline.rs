@@ -29,7 +29,9 @@ pub(super) struct NodeInstance {
     pub(super) color: [f32; 4],
     pub(super) ring: f32,
     pub(super) dim: f32,
-    pub(super) _pad: [f32; 2],
+    /// 0.0 Circle (Markdown), 1.0 Rounded Rect (PDF), 2.0 Diamond (Sketch), 3.0 Hollow Ring (Missing).
+    pub(super) shape: f32,
+    pub(super) _pad: f32,
 }
 
 #[repr(C)]
@@ -39,7 +41,9 @@ pub(super) struct EdgeInstance {
     pub(super) p1: [f32; 2],
     pub(super) color: [f32; 4],
     pub(super) thickness: f32,
-    pub(super) _pad: [f32; 3],
+    /// 0.0 Solid (WikiLink/PdfAnnotation), 1.0 Supports, 2.0 Contradicts, 3.0 Derives.
+    pub(super) style: f32,
+    pub(super) _pad: [f32; 2],
 }
 
 // ───────────────────────────── primitive ────────────────────────────
@@ -187,12 +191,14 @@ impl shader::Pipeline for GpuGraphPipeline {
             3 => Float32x4, // color
             4 => Float32,   // ring
             5 => Float32,   // dim
+            6 => Float32,   // shape
         ];
         let edge_attrs = wgpu::vertex_attr_array![
             0 => Float32x2, // p0
             1 => Float32x2, // p1
             2 => Float32x4, // color
             3 => Float32,   // thickness
+            4 => Float32,   // style
         ];
 
         let nodes_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

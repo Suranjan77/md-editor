@@ -641,6 +641,6 @@ fn clickable_link(span: &StyledSpan) -> Option<&str> {
         .strip_prefix('<')
         .and_then(|p| p.strip_suffix('>'))
         .unwrap_or(path);
-    let opens = path.starts_with("pdf://") || path.to_ascii_lowercase().ends_with(".ink");
+    let opens = path.starts_with("pdf://") || crate::ink::is_sketch_path(path);
     opens.then_some(path)
 }

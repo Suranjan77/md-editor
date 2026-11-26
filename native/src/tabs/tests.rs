@@ -167,3 +167,14 @@ fn restore_skips_tabs_whose_saved_view_no_longer_parses() {
     assert_eq!(paths, ["a.md", "b.md"]);
     assert_eq!(tabs.active_tab().map(|t| t.path.as_str()), Some("b.md"));
 }
+
+#[test]
+fn from_path_excludes_sketches_and_keeps_regular_svgs_as_images() {
+    assert_eq!(TabKind::from_path("notes/diagram.ink.svg"), None);
+    assert_eq!(TabKind::from_path("notes/diagram.INK.SVG"), None);
+    assert_eq!(TabKind::from_path("notes/diagram.ink"), None);
+    assert_eq!(
+        TabKind::from_path("assets/diagram.svg"),
+        Some(TabKind::Image)
+    );
+}

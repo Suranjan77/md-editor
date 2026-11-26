@@ -30,6 +30,7 @@ impl GraphState {
                 continue;
             }
             allowed[index] = (self.show_pdfs || node.kind != GraphNodeKind::Pdf)
+                && (self.show_sketches || node.kind != GraphNodeKind::Sketch)
                 && (self.show_missing || node.kind != GraphNodeKind::Missing)
                 && (self.show_orphans || node.incoming + node.outgoing > 0);
         }
@@ -115,6 +116,7 @@ impl GraphState {
             match node.kind {
                 GraphNodeKind::Markdown => stats.markdown += 1,
                 GraphNodeKind::Pdf => stats.pdfs += 1,
+                GraphNodeKind::Sketch => stats.sketches += 1,
                 GraphNodeKind::Missing => stats.missing += 1,
             }
             if node.kind == GraphNodeKind::Markdown && node.incoming + node.outgoing == 0 {
@@ -124,38 +126,6 @@ impl GraphState {
         stats.connections = self.snapshot.edges.iter().map(|edge| edge.weight).sum();
         stats.components = components_from(&self.adjacency).len();
         stats
-    }
-
-    pub fn incoming(&self, path: &str) -> Vec<GraphNode> {
-        let sources: BTreeSet<&str> = self
-            .snapshot
-            .edges
-            .iter()
-            .filter(|edge| edge.target == path)
-            .map(|edge| edge.source.as_str())
-            .collect();
-        self.snapshot
-            .nodes
-            .iter()
-            .filter(|node| sources.contains(node.path.as_str()))
-            .cloned()
-            .collect()
-    }
-
-    pub fn outgoing(&self, path: &str) -> Vec<GraphNode> {
-        let targets: BTreeSet<&str> = self
-            .snapshot
-            .edges
-            .iter()
-            .filter(|edge| edge.source == path)
-            .map(|edge| edge.target.as_str())
-            .collect();
-        self.snapshot
-            .nodes
-            .iter()
-            .filter(|node| targets.contains(node.path.as_str()))
-            .cloned()
-            .collect()
     }
 
     pub fn related(&self, path: &str, limit: usize) -> Vec<RelatedNode> {
@@ -236,5 +206,104 @@ impl GraphState {
             .take(limit)
             .cloned()
             .collect()
+    }
+
+    /// Incoming connections to `path` with their edge role.
+    pub fn incoming_edges(&self, path: &str) -> Vec<(GraphNode, GraphEdgeKind)> {
+        self.snapshot
+            .edges
+            .iter()
+            .filter(|edge| edge.target == path)
+            .filter_map(|edge| {
+                self.node(&edge.source)
+                    .map(|node| (node.clone(), edge.kind))
+            })
+            .collect()
+    }
+
+    /// Outgoing connections from `path` with their edge role.
+    pub fn outgoing_edges(&self, path: &str) -> Vec<(GraphNode, GraphEdgeKind)> {
+        self.snapshot
+            .edges
+            .iter()
+            .filter(|edge| edge.source == path)
+            .filter_map(|edge| {
+                self.node(&edge.target)
+                    .map(|node| (node.clone(), edge.kind))
+            })
+            .collect()
+    }
+
+    /// Step keyboard selection forward or backward across the currently visible nodes.
+    pub fn cycle_node(&mut self, delta: isize) {
+        let nodes = &self.filtered.snapshot.nodes;
+        if nodes.is_empty() {
+            self.selected_path = None;
+            return;
+        }
+        let next_idx = match self
+            .selected_path
+            .as_deref()
+            .and_then(|sel| nodes.iter().position(|n| n.path == sel))
+        {
+            None => {
+                if delta >= 0 {
+                    0
+                } else {
+                    nodes.len() - 1
+                }
+            }
+            Some(idx) => (idx as isize + delta).rem_euclid(nodes.len() as isize) as usize,
+        };
+        let path = nodes[next_idx].path.clone();
+        self.focus_on(&path);
+    }
+
+    /// Capture the current pins, filter chips, scope, and camera as a named pinboard.
+    pub fn capture_pinboard(&self, name: &str) -> super::pinboards::Pinboard {
+        let mut pinned_positions = BTreeMap::new();
+        for path in &self.pinned {
+            if let Some(pt) = self.layout.get(path)
+                && pt.x.is_finite()
+                && pt.y.is_finite()
+            {
+                pinned_positions.insert(
+                    path.clone(),
+                    super::pinboards::PinPosition { x: pt.x, y: pt.y },
+                );
+            }
+        }
+        super::pinboards::Pinboard {
+            name: name.trim().to_string(),
+            pinned_positions,
+            scope: self.scope,
+            show_pdfs: self.show_pdfs,
+            show_sketches: self.show_sketches,
+            show_missing: self.show_missing,
+            show_orphans: self.show_orphans,
+            pan: self.pan,
+            zoom: self.zoom,
+        }
+    }
+
+    /// Restore a saved pinboard: pins existing nodes at saved coords, restores filters/scope/camera.
+    pub fn apply_pinboard(&mut self, board: &super::pinboards::Pinboard) {
+        self.scope = board.scope.normalized();
+        self.show_pdfs = board.show_pdfs;
+        self.show_sketches = board.show_sketches;
+        self.show_missing = board.show_missing;
+        self.show_orphans = board.show_orphans;
+        self.pinned.clear();
+        for (path, pos) in &board.pinned_positions {
+            if pos.x.is_finite() && pos.y.is_finite() && self.layout.positions.contains_key(path) {
+                self.layout
+                    .positions
+                    .insert(path.clone(), GraphPoint { x: pos.x, y: pos.y });
+                self.pinned.insert(path.clone());
+            }
+        }
+        self.rebuild_filtered();
+        self.publish_view(board.pan, board.zoom);
+        self.physics.nudge();
     }
 }

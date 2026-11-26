@@ -8,8 +8,8 @@ use crate::design::metrics::{
 };
 use crate::design::{ActiveTheme, ThemeMode, active_theme, tokens};
 use crate::messages::{
-    GraphMessage, InkMessage, Message, SearchMessage, SettingsMessage, ShellMessage, Shortcut,
-    VaultMessage,
+    DesksMessage, GraphMessage, InkMessage, Message, SearchMessage, SettingsMessage, ShellMessage,
+    Shortcut, VaultMessage,
 };
 use crate::shortcuts;
 use crate::ui::{Icon, IconButton, TooltipPosition, ring_border};
@@ -21,6 +21,7 @@ pub struct RailProps {
     pub tracker_visible: bool,
     pub settings_visible: bool,
     pub ink_visible: bool,
+    pub desks_open: bool,
     /// The rail is the focused region (F6): draw the focus ring.
     pub region_focused: bool,
 }
@@ -113,6 +114,20 @@ pub fn view<'a>(props: RailProps) -> Element<'a, Message, Theme, Renderer> {
             Some(Shortcut::StudyTracker),
             props.tracker_visible,
             Message::Shell(ShellMessage::TrackerToggle),
+        ),
+        rail_button(
+            Icon::Desktop,
+            "Desks",
+            Some(Shortcut::SwitchDesk),
+            props.desks_open,
+            Message::Desks(DesksMessage::OpenDialog),
+        ),
+        rail_button(
+            Icon::Target,
+            "Daily desk",
+            Some(Shortcut::DailyNote),
+            false,
+            Message::KeyboardShortcut(Shortcut::DailyNote),
         ),
     ]
     .spacing(SPACE_1)

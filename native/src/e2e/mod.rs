@@ -18,10 +18,12 @@
 // suite is in docs/e2e-bug-discovery-plan.md.
 #![allow(dead_code)]
 
+mod desks;
 mod flows;
 mod monkey;
 mod panes;
 mod scenarios;
+mod synthesis;
 mod telemetry;
 mod workspace;
 
@@ -197,11 +199,16 @@ fn boot_inner(
     isolate_data_dir();
     if fresh_settings {
         // Sessions share the isolated data dir; start each from blank
-        // settings so one scenario's last vault cannot leak into the next.
+        // settings and tracker state so one scenario cannot leak into the next.
         // (Clearing rows, not deleting the file: unit tests running in
         // parallel hold the same database open.)
         let state = md_editor_core::state::AppState::new();
         md_editor_core::config::clear_sys_config(&state).expect("clear settings");
+        let db = state.db.lock().expect("lock db");
+        db.execute_batch(
+            "DELETE FROM tracker_sessions; DELETE FROM tracker_kv; DELETE FROM tracker_sidecar_sync;",
+        )
+        .expect("clear tracker tables");
     }
     *LATEST.lock().unwrap_or_else(|p| p.into_inner()) = None;
     let mark = telemetry::recorder().mark();

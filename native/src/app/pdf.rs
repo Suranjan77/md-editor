@@ -109,6 +109,19 @@ impl MdEditor {
             PdfMessage::LinkNote(annotation_id, note_path) => {
                 self.on_pdf_link_note(annotation_id, note_path)
             }
+            // Non-destructive margin ink (pdf_ink.rs).
+            PdfMessage::InkToolToggled(tool) => self.on_pdf_ink_tool_toggled(tool),
+            PdfMessage::InkColorSelected(color) => self.on_pdf_ink_color_selected(color),
+            PdfMessage::InkLiveUpdated(live) => self.on_pdf_ink_live_updated(live),
+            PdfMessage::InkStrokeCommitted { page, points } => {
+                self.on_pdf_ink_stroke_committed(page, points)
+            }
+            PdfMessage::InkEraseAt {
+                page,
+                x_frac,
+                y_frac,
+            } => self.on_pdf_ink_erase_at(page, x_frac, y_frac),
+            PdfMessage::UndoInkStroke => self.on_pdf_undo_ink_stroke(),
         }
     }
 }

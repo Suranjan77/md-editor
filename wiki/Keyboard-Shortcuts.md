@@ -26,6 +26,9 @@ it says.
 | `Ctrl+P` | Command palette |
 | `Ctrl+O` | Open a folder as a vault |
 | `Ctrl+N` | New note |
+| `Ctrl+D` | Open or synthesize today's Daily Desk (`daily/YYYY-MM-DD.md`) |
+| `Ctrl+=` | Evaluate selected math expression or enclosing `$...$` / `$$...$$` inline (`= result`) |
+| `Ctrl+Alt+R` | Run the enclosing `sh` / `bash` / `python` fenced code block (opt-in, 5s timeout) and insert/update `> [!output]` |
 | `Ctrl+S` | Save now (the ink page instead while the handwriting canvas is in front) |
 | `Ctrl+F` | Find — routed to the active pane, see below |
 | `Ctrl+Shift+F` | Search the vault (and the open PDF) |
@@ -37,6 +40,8 @@ it says.
 | `Ctrl+J` | Focus the other pane (splitting if there is one pane) |
 | `Ctrl+Shift+M` | Move the tab to the other pane |
 | `Ctrl+Shift+L` | Panes side by side ⇄ stacked |
+| `Ctrl+Shift+D` | Save current workspace as a desk |
+| `Ctrl+Alt+D` | Open Saved Desks dialog |
 | `Ctrl+G` | Knowledge graph |
 | `Ctrl+T` | Study tracker |
 | `Ctrl+I` | Handwriting canvas (italic instead while the editor has focus) |
@@ -53,6 +58,7 @@ it says.
 | `Ctrl+C` | Copy the PDF text selection, when the PDF pane holds one |
 | `Escape` | Close the topmost overlay, in priority order; closing find, the palette or a dialog returns the keyboard to the note |
 | `Enter` | Run the palette's highlighted row; open the selected search result; open the node selected in the knowledge graph; otherwise submit the open dialog |
+| `Tab` / `Shift+Tab`, `←` / `→`, `P` | When the knowledge graph is open (and no search field/modal holds focus): step through visible nodes (`Tab` / `Shift+Tab` / `←` / `→`) and pin or unpin the selected node (`P`) |
 | `↑` / `↓` | In vault search, move the selection; with the sidebar focused, move in the tree (`←`/`→` fold); otherwise scroll the PDF pane |
 | `Delete` | Remove the lasso selection on the handwriting canvas |
 | `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` | Also undo / redo on the handwriting canvas |
@@ -104,7 +110,7 @@ Active only while the markdown editor has focus.
 | `Ctrl+Home` / `Ctrl+End` | Start / end of the note; hold `Shift` to extend |
 | `PageUp` / `PageDown` | Move the caret one screen up / down, keeping its column; hold `Shift` to extend |
 | `Ctrl` + click | Follow a link, including a `pdf://` deep link |
-| `[[` … / `/` at a line start | Open completion: vault files to link / blocks to insert |
+| `[[` … / `@` … / `/` at a line start | Open completion: vault files and `#heading` anchors / `.bib` and PDF citations / blocks to insert |
 | `↑` / `↓`, `Enter` or `Tab`, `Escape` | With completion open: choose, insert, close |
 
 > **The focused editor wins.** Chords the editor acts on (`Ctrl+Z/Y/A/B/I/E/K/C/X/V`) are
@@ -121,19 +127,17 @@ Active only while the markdown editor has focus.
 | Shortcut | Action |
 | :--- | :--- |
 | `↑` / `↓` | Move the highlighted row |
-| `Enter` | Run the highlighted command, or open the highlighted file |
+| `Enter` | Run the highlighted command, open the highlighted file, or switch to the highlighted desk |
+| `Ctrl+Enter` | Open the highlighted file to the side in the other pane |
 | `Escape` | Close the palette |
 
-Four commands have **no key binding of their own** and are reachable only from the palette
-(or a button, where noted):
+Commands with **no key binding of their own** are reachable from the palette (or a button,
+where noted):
 
 | Command | Also a button? |
 | :--- | :--- |
-| Toggle Backlinks | yes, at the end of the tab strip |
-| Study Tracker | yes, on the activity rail |
-| Split / Unsplit | yes, at the end of each tab strip |
-| Focus Other Pane, Move Tab to Other Pane, Toggle Split Direction | no (tab menu has *Move to other pane*) |
-| Focus Mode | no |
+| Insert Image… | yes, in the editor right-click menu |
+| Split Right, Split Down, Unsplit | yes, the split / unsplit button on the tab strip |
 
 **Focus Mode** is a one-shot action, not a toggle: it hides the sidebar, the backlinks panel,
 and the table of contents, and closes the tracker, leaving just the document.

@@ -1,7 +1,7 @@
 //! Vault lifecycle, indexing, filesystem watcher reconciliation and sidebar actions.
 
 use super::*;
-use crate::messages::{ShellMessage, VaultMessage};
+use crate::messages::{DesksMessage, ShellMessage, VaultMessage};
 
 impl MdEditor {
     /// Handle a `VaultMessage` routed here by [`MdEditor::update_inner`].
@@ -162,6 +162,9 @@ impl MdEditor {
         };
         self.vault.indexing = false;
         self.vault.entries = entries;
+        self.vault.citations =
+            md_editor_core::citations::collect_vault_citations(&self.state).unwrap_or_default();
+        self.tracker.refresh_sessions(&self.state);
         self.graph.mark_dirty();
         if let Some(path) = self
             .active_path
@@ -180,6 +183,7 @@ impl MdEditor {
                 &self.ui.command_palette_query,
                 &self.ui.commands,
                 &self.vault.entries,
+                self.desks.list(),
                 self.ui.palette_selected,
             );
             return match action {
@@ -189,6 +193,9 @@ impl MdEditor {
                 Some(views::command_palette::PaletteAction::OpenFile(path)) => Task::done(
                     Message::Shell(ShellMessage::CommandPaletteFileClicked(path)),
                 ),
+                Some(views::command_palette::PaletteAction::OpenDesk(name)) => {
+                    Task::done(Message::Desks(DesksMessage::OpenFromPalette(name)))
+                }
                 None => Task::none(),
             };
         }
@@ -210,6 +217,13 @@ impl MdEditor {
         }
         if let Ok(entries) = md_editor_core::vault::list_vault(&self.state) {
             self.vault.entries = entries;
+        }
+        if paths.iter().any(|p| {
+            let path = std::path::Path::new(p);
+            md_editor_core::vault::is_bib_path(path) || md_editor_core::vault::is_pdf_path(path)
+        }) {
+            self.vault.citations =
+                md_editor_core::citations::collect_vault_citations(&self.state).unwrap_or_default();
         }
         if let Some(root) = self.vault.root.clone() {
             let root_path = std::path::PathBuf::from(root);
@@ -314,6 +328,7 @@ impl MdEditor {
         self.vault.expanded_folders.clear();
         self.vault.filter_query.clear();
         self.vault.backlinks.clear();
+        self.vault.citations.clear();
         self.vault.indexing = true;
         self.search.visible = false;
         self.search.file_visible = false;
@@ -326,6 +341,8 @@ impl MdEditor {
         self.search.pdf_indices_by_page.clear();
         self.search.pdf_error = None;
         self.vault.root = Some(path.to_string());
+        self.desks = crate::desks::DeskStore::load(&self.state, path);
+        self.pinboards = crate::graph_state::pinboards::PinboardStore::load(&self.state, path);
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_vault", path);
         self.record_recent_vault(path);
         self.vault.entries = md_editor_core::vault::list_vault(&self.state).unwrap_or_default();

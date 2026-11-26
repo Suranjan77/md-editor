@@ -133,11 +133,13 @@ impl TrackerState {
                     let hours = (elapsed.as_secs_f32() / 3600.0).max(0.01);
                     let session = StudySession {
                         id: 0,
+                        uid: String::new(),
                         date: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
                         hours,
                         activity_type: "Study".to_string(),
                         phase: "Focus".to_string(),
                         notes: summary,
+                        updated_at: 0,
                     };
                     if md_editor_core::tracker::save_session(state, session).is_ok() {
                         self.refresh_sessions(state);
@@ -234,21 +236,25 @@ impl TrackerState {
     // ── internals ───────────────────────────────────────────────────
 
     fn reload_from_disk(&mut self, state: &AppState) {
+        self.refresh_sessions(state);
         self.kv = md_editor_core::tracker::get_kv(state)
             .unwrap_or_default()
             .into_iter()
             .map(|item| (item.key, item.value))
             .collect();
-        self.config_json = md_editor_core::config::get_sys_config(state, "tracker_config")
+        let next_config = md_editor_core::config::get_sys_config(state, "tracker_config")
             .ok()
             .flatten()
             .filter(|json| views::tracker::parse_config(json).is_ok())
             .unwrap_or_else(views::tracker::default_config_json);
-        self.config_content = text_editor::Content::with_text(&self.config_json);
-        self.migrate_completion_keys(state);
+        if next_config != self.config_json {
+            self.config_json = next_config;
+            self.config_content = text_editor::Content::with_text(&self.config_json);
+            self.migrate_completion_keys(state);
+        }
     }
 
-    fn refresh_sessions(&mut self, state: &AppState) {
+    pub fn refresh_sessions(&mut self, state: &AppState) {
         self.sessions = md_editor_core::tracker::get_sessions(state).unwrap_or_default();
     }
 
@@ -312,12 +318,14 @@ impl TrackerState {
             Ok(hours) if hours.is_finite() && hours > 0.0 => {
                 let session = StudySession {
                     id: 0,
+                    uid: String::new(),
                     date,
                     hours,
                     activity_type: "Manual".to_string(),
                     phase: "Manual".to_string(),
                     notes: (!self.manual_notes.trim().is_empty())
                         .then(|| self.manual_notes.trim().to_string()),
+                    updated_at: 0,
                 };
                 match md_editor_core::tracker::save_session(state, session) {
                     Ok(()) => {
