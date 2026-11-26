@@ -227,18 +227,33 @@ impl MdEditor {
         {
             return self.reload_open_note_from_disk();
         }
-        // An image or a PDF appeared, changed or went away: decode the note's
-        // images and PDF crops afresh (a missing one may exist now).
-        if self.active_path.is_some()
-            && paths.iter().any(|path| {
-                crate::app::is_supported_image_path(path)
-                    || md_editor_core::vault::is_pdf_path(std::path::Path::new(path))
-            })
+        // An image, PDF or ink page appeared, changed or went away: decode
+        // what the note shows from it again (a missing one may exist now).
+        self.refresh_note_images(&paths)
+    }
+
+    /// Re-decode the open note's images, PDF crops and sketches drawn from
+    /// `paths` (vault-relative, changed on disk), keeping the old pictures up
+    /// until the new ones arrive.
+    pub(super) fn refresh_note_images(&mut self, paths: &[String]) -> Task<Message> {
+        let (Some(root), Some(active)) = (self.vault.root.clone(), self.active_path.clone()) else {
+            return Task::none();
+        };
+        let changed: Vec<std::path::PathBuf> = paths
+            .iter()
+            .map(|path| std::path::Path::new(&root).join(path))
+            .collect();
+        let pdf_changed = paths
+            .iter()
+            .any(|path| md_editor_core::vault::is_pdf_path(std::path::Path::new(path)));
+        if self
+            .editor
+            .refresh_changed_files(&root, &active, &changed, pdf_changed)
         {
-            self.editor.forget_images();
-            return self.load_editor_resources();
+            self.load_editor_resources()
+        } else {
+            Task::none()
         }
-        Task::none()
     }
 
     /// Select `path` in the sidebar and expand every folder above it.

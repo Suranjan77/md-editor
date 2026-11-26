@@ -49,6 +49,13 @@ and why when it isn't.
   The page never moves while the pen is down: that would slide the page under a nib that
   stays put and smear the stroke (`ink/input.rs::advance_if_near_bottom`).
 
+**Sketches in notes.** `Ctrl+Shift+I` (*Insert Sketch* in the palette) in a note creates
+an empty page beside it, `notes/lecture-sketch.ink` (then `-sketch-2`, …), inserts
+`![sketch](lecture-sketch.ink)` at the caret, and opens the page in the ink window
+(`app/ink.rs::insert_sketch`). Any `.ink` page linked as an image shows in the note,
+cropped to its ink. The note's picture follows the drawing each time the page autosaves,
+and `Ctrl` + click on it opens the page to edit.
+
 Pages **autosave** one second after a change (`INK_AUTOSAVE_DELAY`, never mid-stroke), and
 are also written when the ink window closes, when the app quits, and before another page
 replaces the one on the canvas. A page is only replaced once it is safely on disk.
@@ -107,6 +114,12 @@ Each stroke becomes a filled polygon that widens and narrows with pressure
 into a retained `canvas::Cache` rebuilt only when the document or camera changes; only the
 stroke under the pen is re-tessellated each frame, which keeps writing smooth on long
 pages.
+
+A page shown in a note is rasterized by `ink/raster.rs::render` (through `raster::decode`,
+like any image). It traces the same outlines with tiny-skia on a transparent ground,
+highlighter under pen, cropped to the ink plus a 16 px margin at 2× density. A changed page
+is decoded again (`EditorPane::refresh_changed_files`) while the old picture stays up, so a
+note does not flicker as its sketch autosaves.
 
 ## 5. Tests
 

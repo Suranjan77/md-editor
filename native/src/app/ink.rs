@@ -209,6 +209,43 @@ impl MdEditor {
         }
     }
 
+    /// Start a sketch for the open note: an empty page beside it
+    /// (`<note>-sketch.ink`, numbered if taken), its image inserted at the
+    /// caret, and the page open in the ink window. The note's picture follows
+    /// the drawing as the page autosaves.
+    pub(super) fn insert_sketch(&mut self) -> Task<Message> {
+        let (Some(root), Some(note)) = (self.vault.root.clone(), self.active_path.clone()) else {
+            self.ui.toast = Some("Open a note to sketch in".to_string());
+            return Task::none();
+        };
+        let saved = self.flush_ink_page();
+        if self.ink.dirty {
+            self.ui.toast = Some(
+                "Not starting a sketch: the current handwritten page could not be saved".into(),
+            );
+            return saved;
+        }
+        let derived = format!(
+            "{}-sketch.{}",
+            strip_extension(&note),
+            crate::ink::INK_EXTENSION
+        );
+        let path = unique_ink_path(&derived, |candidate| {
+            crate::ink::page_exists(&root, candidate)
+        });
+        let document = crate::ink::document::InkDocument::new();
+        if let Err(e) = crate::ink::save_to_vault(&root, &path, &document) {
+            self.ui.toast = Some(format!("Could not create {path}: {e}"));
+            return saved;
+        }
+        self.vault.entries = md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+        self.ink.load(document, Some(path.clone()));
+        let line = md_editor_core::attachments::image_markdown(Some(&note), &path)
+            .replacen("![", "![sketch", 1);
+        let insert = self.run_editor_command(EditorCommand::InsertBlock(line));
+        Task::batch(vec![saved, insert, self.open_ink_window()])
+    }
+
     /// Save the page if it has unsaved strokes and there is a vault to save
     /// it in. Used by autosave and before the page is closed or replaced.
     pub(super) fn flush_ink_page(&mut self) -> Task<Message> {
@@ -260,10 +297,16 @@ impl MdEditor {
                     self.vault.entries =
                         md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
                 }
+                // A note showing this page follows it now, not after the
+                // watcher's debounce.
+                let refresh = self.refresh_note_images(std::slice::from_ref(&path));
                 if quiet {
-                    Task::none()
+                    refresh
                 } else {
-                    Task::done(Message::Ink(InkMessage::Saved(Ok(path))))
+                    Task::batch(vec![
+                        refresh,
+                        Task::done(Message::Ink(InkMessage::Saved(Ok(path)))),
+                    ])
                 }
             }
             Err(e) => {

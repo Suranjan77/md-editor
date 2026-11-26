@@ -137,6 +137,7 @@ MD Editor shows formatted text and lets you edit the exact source, without a mod
 | Tables | `\| A \| B \|` | Render as grids and scroll horizontally on their own |
 | Images | `![alt](path.png)` | Rendered inline with the alt text as a caption |
 | PDF crops | `![alt](pdf://paper.pdf?page=4&crop=x,y,w,h)` | That part of the page, rendered live from the PDF; `Ctrl` + click opens the PDF there |
+| Sketches | `![sketch](lecture-sketch.ink)` | A handwritten page, drawn in the note; `Ctrl+Shift+I` starts one, `Ctrl` + click edits it |
 | Links | `[text](target)` | `Ctrl` + click to follow |
 | Wikilinks | `[[Note]]`, `[[Note\|Label]]` | Resolve across subfolders by filename |
 | Horizontal rule | `---` | |

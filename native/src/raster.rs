@@ -27,15 +27,21 @@ impl Decoded {
     }
 }
 
-/// Decode `path`: SVG by extension (any case), everything else by the
-/// `image` crate.
+/// Decode `path`: SVG and handwritten `.ink` pages by extension (any case),
+/// everything else by the `image` crate.
 pub fn decode(path: &Path) -> Result<Decoded, String> {
-    let is_svg = path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
-    if is_svg {
+    let has_ext = |want: &str| {
+        path.extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case(want))
+    };
+    if has_ext("svg") {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         return decode_svg(&bytes);
+    }
+    if has_ext("ink") {
+        let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let doc = crate::ink::document::InkDocument::from_json(&raw)?;
+        return crate::ink::raster::render(&doc).ok_or_else(|| "The page has no ink yet".into());
     }
     let img = image::ImageReader::open(path)
         .map_err(|e| e.to_string())?

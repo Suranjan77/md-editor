@@ -428,6 +428,7 @@ fn ctrl_character_message(c: &str, shift: bool) -> Option<Message> {
             "f" => Some(Message::KeyboardShortcut(Shortcut::GlobalSearch)),
             "b" => Some(Message::KeyboardShortcut(Shortcut::ToggleBacklinks)),
             "o" => Some(Message::KeyboardShortcut(Shortcut::TableOfContents)),
+            "i" => Some(Message::KeyboardShortcut(Shortcut::InsertSketch)),
             // Redo as most apps spell it; Ctrl+Y works too.
             "z" => Some(Message::Ink(InkMessage::Redo)),
             _ => None,

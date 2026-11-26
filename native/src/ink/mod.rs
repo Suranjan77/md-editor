@@ -19,6 +19,7 @@ pub mod document;
 mod input;
 pub mod pen;
 pub mod radial;
+pub mod raster;
 pub mod stroke;
 
 #[cfg(windows)]

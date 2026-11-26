@@ -922,3 +922,61 @@ fn paste_copied_files() {
     assert_eq!(probe.toast.as_deref(), Some("Only images can be inserted"));
     app.finish();
 }
+
+/// S12c: Ctrl+Shift+I in a note starts a sketch beside it, shows it in the
+/// note at the caret, and the note's picture follows the drawing as the page
+/// autosaves.
+#[test]
+fn s12c_sketch_in_a_note_follows_the_drawing() {
+    let vault = research_vault();
+    let mut app = boot("s12c-sketch", &vault, Some("notes/Attention.md"));
+
+    app.send(shortcut(Shortcut::InsertSketch));
+    let probe = app.probe();
+    assert!(probe.ink_window_open);
+    assert_eq!(
+        probe.ink_path.as_deref(),
+        Some("notes/Attention-sketch.ink")
+    );
+    assert!(
+        vault.exists("notes/Attention-sketch.ink"),
+        "the page exists at once"
+    );
+    assert!(
+        probe.buffer.contains("![sketch](Attention-sketch.ink)"),
+        "{}",
+        probe.buffer
+    );
+    assert!(
+        probe
+            .images
+            .iter()
+            .all(|(key, _)| key != "Attention-sketch.ink"),
+        "an empty page shows nothing yet"
+    );
+
+    draw_stroke(&mut app, (40.0, 40.0), (240.0, 60.0));
+    draw_stroke(&mut app, (40.0, 120.0), (240.0, 100.0));
+    // Past the ink autosave (1 s), then let the redraw land.
+    app.wait(Duration::from_millis(1500));
+    app.settle();
+    let width = app
+        .probe()
+        .images
+        .iter()
+        .find(|(key, _)| key == "Attention-sketch.ink")
+        .map(|(_, width)| *width)
+        .expect("the note shows the sketch once it has ink");
+    assert!(
+        width > 200.0,
+        "cropped to the strokes plus margins: {width}"
+    );
+
+    // A second sketch in the same note gets its own page.
+    app.send(shortcut(Shortcut::InsertSketch));
+    assert_eq!(
+        app.probe().ink_path.as_deref(),
+        Some("notes/Attention-sketch-2.ink")
+    );
+    app.finish();
+}

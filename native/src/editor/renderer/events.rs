@@ -630,7 +630,8 @@ fn relative_position(cursor: mouse::Cursor, bounds: Rectangle) -> Option<Point> 
 }
 
 /// Where Ctrl+click on `span` goes: a link's target, or the source of an
-/// image rendered from a PDF (`pdf://…&crop=`), which opens the PDF there.
+/// image drawn from a document the app opens: a PDF crop (`pdf://…&crop=`)
+/// opens the PDF there, a handwritten `.ink` page opens in the ink window.
 fn clickable_link(span: &StyledSpan) -> Option<&str> {
     if span.is_link {
         return span.link_target.as_deref();
@@ -640,5 +641,6 @@ fn clickable_link(span: &StyledSpan) -> Option<&str> {
         .strip_prefix('<')
         .and_then(|p| p.strip_suffix('>'))
         .unwrap_or(path);
-    path.starts_with("pdf://").then_some(path)
+    let opens = path.starts_with("pdf://") || path.to_ascii_lowercase().ends_with(".ink");
+    opens.then_some(path)
 }

@@ -260,3 +260,61 @@ fn a_pdf_crop_is_rendered_once_and_a_failed_one_is_not_retried_until_forgotten()
         "a result arriving after the images were forgotten is dropped"
     );
 }
+
+#[test]
+fn a_changed_image_file_is_decoded_again_while_the_old_picture_stays_up() {
+    let mut pane = EditorPane::new();
+    pane.buffer = crate::editor::buffer::DocBuffer::from_text(
+        "![a](../img/a.png)\n\n![b](b.png)\n\n![c](pdf://p.pdf?page=1&crop=0,0,10,10)",
+    );
+    pane.refresh_highlighting();
+    let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0; 4]);
+    for key in ["../img/a.png", "b.png", "pdf://p.pdf?page=1&crop=0,0,10,10"] {
+        pane.image_cache
+            .insert(key.into(), (handle.clone(), 10.0, 10.0));
+    }
+    let changed = [std::path::PathBuf::from("/vault/img/a.png")];
+
+    assert!(pane.refresh_changed_files("/vault", "notes/n.md", &changed, false));
+    assert!(
+        pane.image_cache.contains_key("../img/a.png"),
+        "still shown meanwhile"
+    );
+    assert!(pane.stale_images.contains("../img/a.png"));
+    assert!(
+        !pane.stale_images.contains("b.png"),
+        "unrelated images untouched"
+    );
+    assert!(pane.take_wanted_pdf_crops().is_empty(), "no PDF changed");
+
+    let replaced = iced::widget::image::Handle::from_rgba(2, 2, vec![0; 16]);
+    pane.pending_images
+        .insert("/vault/notes/../img/a.png".into());
+    pane.image_loaded(
+        "../img/a.png".into(),
+        "/vault/notes/../img/a.png".into(),
+        Ok((replaced, 20.0, 20.0)),
+        Some("/vault"),
+        Some("notes/n.md"),
+    );
+    assert_eq!(pane.image_cache["../img/a.png"].1, 20.0, "the new picture");
+    assert!(pane.stale_images.is_empty());
+
+    assert!(pane.refresh_changed_files("/vault", "notes/n.md", &[], true));
+    assert_eq!(
+        pane.take_wanted_pdf_crops(),
+        ["pdf://p.pdf?page=1&crop=0,0,10,10"],
+        "a changed PDF re-renders the crops"
+    );
+    pane.pdf_crop_loaded(
+        "pdf://p.pdf?page=1&crop=0,0,10,10".into(),
+        Err("gone".into()),
+    );
+    assert!(
+        !pane
+            .image_cache
+            .contains_key("pdf://p.pdf?page=1&crop=0,0,10,10"),
+        "a crop that no longer renders stops showing"
+    );
+    assert!(!pane.refresh_changed_files("/vault", "notes/n.md", &[], false));
+}

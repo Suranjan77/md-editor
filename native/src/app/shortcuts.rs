@@ -54,6 +54,7 @@ impl MdEditor {
                 self.refit_pdf_if_needed()
             }
             Shortcut::Handwriting => Task::done(Message::Ink(InkMessage::Toggle)),
+            Shortcut::InsertSketch => self.insert_sketch(),
             Shortcut::Save if self.ink.is_visible() => Task::done(Message::Ink(InkMessage::Save)),
             Shortcut::Save => Task::done(Message::Editor(EditorMessage::Save)),
             Shortcut::OpenVault => Task::done(Message::Vault(VaultMessage::OpenVaultDialog)),

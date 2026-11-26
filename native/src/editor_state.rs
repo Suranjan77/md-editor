@@ -76,6 +76,10 @@ pub struct EditorPane {
     /// The same for `pdf://…&crop=` images, by link text.
     pending_crops: std::collections::HashSet<String>,
     failed_crops: std::collections::HashSet<String>,
+    /// Images (by link text) whose file changed: decoded again, shown as they
+    /// were until the new picture arrives, so a note does not flicker while a
+    /// sketch it shows autosaves.
+    stale_images: std::collections::HashSet<String>,
     pub math_cache: HashMap<String, crate::editor::renderer::MathRender>,
     /// TeX being rendered, and TeX that failed to parse: rendered once, not
     /// once per keystroke or per repeat in the note.
@@ -125,6 +129,7 @@ impl EditorPane {
             failed_images: Default::default(),
             pending_crops: Default::default(),
             failed_crops: Default::default(),
+            stale_images: Default::default(),
             math_cache: HashMap::new(),
             pending_math: Default::default(),
             failed_math: Default::default(),
@@ -313,7 +318,8 @@ impl EditorPane {
                 let Some(key) = span.image_path.as_ref().filter(|_| span.is_image) else {
                     continue;
                 };
-                if self.image_cache.contains_key(key) || is_pdf_crop(key) {
+                let fresh = self.image_cache.contains_key(key) && !self.stale_images.contains(key);
+                if fresh || is_pdf_crop(key) {
                     continue;
                 }
                 let abs = base_path.join(image_link_path(key));
@@ -358,11 +364,16 @@ impl EditorPane {
             .map(|base| base.join(image_link_path(&key)));
         match result {
             Ok(image) if current.as_ref() == Some(&abs) => {
+                self.stale_images.remove(&key);
                 self.image_cache.insert(key, image);
                 self.images_revision = self.images_revision.wrapping_add(1);
             }
             Ok(_) => {}
             Err(_) => {
+                // Gone or unreadable now: stop showing the old picture.
+                if self.stale_images.remove(&key) && self.image_cache.remove(&key).is_some() {
+                    self.images_revision = self.images_revision.wrapping_add(1);
+                }
                 self.failed_images.insert(abs);
             }
         }
@@ -378,7 +389,8 @@ impl EditorPane {
                 let Some(key) = span.image_path.as_ref().filter(|k| is_pdf_crop(k)) else {
                     continue;
                 };
-                if self.image_cache.contains_key(key) || self.failed_crops.contains(key) {
+                let fresh = self.image_cache.contains_key(key) && !self.stale_images.contains(key);
+                if fresh || self.failed_crops.contains(key) {
                     continue;
                 }
                 if self.pending_crops.insert(key.clone()) {
@@ -396,14 +408,69 @@ impl EditorPane {
         }
         match result {
             Ok(image) => {
+                self.stale_images.remove(&key);
                 self.image_cache.insert(key, image);
                 self.images_revision = self.images_revision.wrapping_add(1);
             }
             Err(e) => {
                 log::warn!("Could not show {key}: {e}");
+                if self.stale_images.remove(&key) && self.image_cache.remove(&key).is_some() {
+                    self.images_revision = self.images_revision.wrapping_add(1);
+                }
                 self.failed_crops.insert(key);
             }
         }
+    }
+
+    /// Files changed on disk (absolute paths): mark the images the note shows
+    /// from them for decoding again, keeping the old pictures up meanwhile.
+    /// Any changed PDF re-renders every crop. Returns whether anything shown
+    /// is affected (the caller then loads resources).
+    pub fn refresh_changed_files(
+        &mut self,
+        vault_root: &str,
+        active_path: &str,
+        changed: &[std::path::PathBuf],
+        pdf_changed: bool,
+    ) -> bool {
+        let Some(base) = image_base(vault_root, active_path) else {
+            return false;
+        };
+        let changed: Vec<std::path::PathBuf> = changed.iter().map(|p| lexical(p)).collect();
+        let mut affected = false;
+        let keys: Vec<String> = self
+            .highlight
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .filter(|span| span.is_image)
+            .filter_map(|span| span.image_path.clone())
+            .collect();
+        for key in keys {
+            if is_pdf_crop(&key) {
+                if pdf_changed {
+                    self.failed_crops.remove(&key);
+                    self.pending_crops.remove(&key);
+                    if self.image_cache.contains_key(&key) {
+                        self.stale_images.insert(key);
+                    }
+                    affected = true;
+                }
+                continue;
+            }
+            let abs = base.join(image_link_path(&key));
+            if !changed.contains(&lexical(&abs)) {
+                continue;
+            }
+            self.failed_images.remove(&abs);
+            // A decode in flight may have read the old file: let a new one start.
+            self.pending_images.remove(&abs);
+            if self.image_cache.contains_key(&key) {
+                self.stale_images.insert(key);
+            }
+            affected = true;
+        }
+        affected
     }
 
     /// Drop every decoded image and what is known about missing ones: on a
@@ -415,6 +482,7 @@ impl EditorPane {
         self.failed_images.clear();
         self.pending_crops.clear();
         self.failed_crops.clear();
+        self.stale_images.clear();
         self.images_revision = self.images_revision.wrapping_add(1);
     }
 
@@ -552,6 +620,22 @@ pub(crate) fn render_latex_task(
 /// spaces) unwrapped and `%XX` escapes decoded.
 /// Most failed TeX strings remembered before the record is reset.
 const MAX_FAILED_MATH: usize = 1000;
+
+/// `path` with `.` and `..` resolved without touching the disk, so an image
+/// link like `../img/a.png` compares equal to the file it names.
+fn lexical(path: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
 
 /// An image link that shows a region of a PDF page, rendered live.
 pub(crate) fn is_pdf_crop(link: &str) -> bool {

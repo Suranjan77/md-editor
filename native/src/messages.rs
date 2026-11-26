@@ -536,6 +536,8 @@ pub enum Shortcut {
     StudyTracker,
     SplitView,
     Handwriting,
+    /// A new handwritten sketch, shown in the open note at the caret.
+    InsertSketch,
     Settings,
     RenameEntry,
     CycleFocusNext,

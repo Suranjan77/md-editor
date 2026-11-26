@@ -149,6 +149,14 @@ pub const REGISTRY: &[ShortcutSpec] = &[
         in_palette: true,
     },
     ShortcutSpec {
+        shortcut: Shortcut::InsertSketch,
+        label: "Insert Sketch",
+        chord: "Ctrl Shift I",
+        category: "Panels & Views",
+        icon: Icon::Pen,
+        in_palette: true,
+    },
+    ShortcutSpec {
         shortcut: Shortcut::StudyTracker,
         label: "Study Tracker",
         chord: "Ctrl T",

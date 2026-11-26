@@ -37,6 +37,7 @@ it says.
 | `Ctrl+G` | Knowledge graph |
 | `Ctrl+T` | Study tracker |
 | `Ctrl+I` | Handwriting canvas (italic instead while the editor has focus) |
+| `Ctrl+Shift+I` | Insert a sketch into the open note and draw it in the ink window |
 | `Ctrl+W` | Close the tab |
 | `Ctrl+Shift+T` | Reopen the last closed tab (skips files deleted since) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Most recently used tab, forward / back |
