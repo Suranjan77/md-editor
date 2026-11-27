@@ -58,11 +58,22 @@ sequenceDiagram
 
 ### Scheduling rules
 
-1. Receive a standard command; drain any others already available into `pending_commands`.
+1. Drain every standard command already sent into one of two lanes
+   (`PdfCommand::is_background`):
+   - **interactive**: renders, page count and sizes, links, the visible pages' text, link
+     previews;
+   - **background**: whole-document work, i.e. `GetToc`, `GetReferences`, `SearchText`,
+     `ExtractText`, `GetPageTextBackground` and `RecoverToc`.
 2. **Before each standard command, drain the priority channel.** If several priority
    requests are queued, only the newest is rendered — the reader has already scrolled past
-   the others.
-3. Process exactly one standard command, then repeat.
+   the others. Each superseded request is answered `PdfError::Skipped`, which the app
+   treats as `RenderSkipped` rather than an error toast.
+3. Process one command: the oldest interactive one, or the oldest background one if no
+   interactive command is waiting. Then repeat.
+
+A render sent while background work is queued therefore waits for at most the command
+already running. With one FIFO it used to wait for every scan queued ahead of it. The
+test `renders_jump_ahead_of_queued_background_work` guards this.
 
 `PdfCommand::Wake` exists only to unblock `receiver.recv()` after a priority request is
 sent; it performs no work of its own. The design **cannot interrupt an operation already in
@@ -73,10 +84,38 @@ the target page never queues behind a backlog of prefetches, link extractions, o
 
 Standard channel: `PageCount`, `ExtractText`, `PageSizes`, `RenderPage`, `GetToc`,
 `GetReferences`, `GetEmbeddedToc`, `GetLinks`, `SearchText`, `RenderLinkPreview`,
-`GetPageText`, `Wake`. Priority channel: `PriorityRender { path, page_index, scale, resp }`.
+`RenderRegion`, `GetPageText`, `GetPageTextBackground`, `RecoverToc`, `Wake`. Priority channel:
+`PriorityRender { path, page_index, scale, resp }`.
 
-Every command carries a `SyncSender` for its reply, so the async caller on the Tokio side
-blocks on a channel rather than on PDFium.
+Every command carries a `SyncSender` for its reply, and the `PdfRenderer` methods block on
+it. **Call them from `app::blocking` (tokio's blocking pool), never directly inside a
+`Task::perform` future.** Blocking there parked the executor's worker threads, which
+starved the subscriptions, so iced dropped input events (`TrySendError { kind: Full }`).
+
+`PageSizes` reads each page's box from the page tree (`pages().page_size`) without loading
+the page.
+
+`RenderRegion` (`render_region(path, page, PageRegion, target_width_px)`) renders one
+rectangle of a page as raw RGBA, with no PNG round trip. This is the crop a note shows for
+`![…](pdf://…&crop=x,y,w,h)`. The region is in points of the displayed page box from its
+**top-left**, clamped to the page. The page is rendered whole at up to 8 px/pt and the
+region cut out of it.
+
+**Document cache.** The worker keeps the last few opened documents (`DOC_CACHE_CAPACITY`),
+stamped with their file's size and modification time. A file replaced on disk is loaded
+again on its next command instead of serving the old pages.
+
+**Coordinates.** Every `PdfRect` that leaves core (char boxes, search hits, annotation
+rects, links) is in the *displayed* page box: `page.width()` × `page.height()` after
+`/Rotate` and the crop box, in points. `pdf/geometry.rs::PageToView` samples PDFium's
+page-to-device transform per page; on an unrotated page cropped at the origin it is the
+plain y-flip, so stored annotations from before keep their place. The test
+`text_and_search_rects_sit_on_the_rendered_glyphs_whatever_the_page_geometry` renders
+rotated and cropped pages and checks that the rects cover ink.
+
+**Search limit.** `search_text` stops at `PDF_SEARCH_MATCH_LIMIT` (10,000) matches, and the
+find bar shows "N+ matches" when it is reached. The limit used to be a silent 250, so
+matches past roughly the 250th were unreachable.
 
 ---
 
@@ -118,6 +157,13 @@ across zoom changes, window resizes, and HiDPI scale factors.
 ---
 
 ## 4. Table of Contents Recovery
+
+When a PDF opens, the app asks only for the embedded bookmarks (`get_embedded_toc`, cheap,
+interactive lane). A bookmark-less document gets its outline from the background document
+scan below: `recover_toc(path, page_texts)` runs on text that scan already extracted, and
+the result is cached in `pdf_outline` as `(OUTLINE_VERSION, entries)`, so a reopened
+document skips the scan. Bump `pdf::OUTLINE_VERSION` when the recovery heuristics change.
+`get_toc(path)`, which does the whole thing in one command, remains for tools and tests.
 
 `get_toc(path)` returns `(Vec<TocEntry>, synthetic)`. Embedded bookmarks are used when
 present and `synthetic` is `false`. Otherwise an outline is recovered from the document
@@ -194,19 +240,21 @@ because bare chapter integers are too coarse to aim at.
 
 References need the whole text layer, but PDFium is single-threaded, and priority renders
 only drain *between* worker commands — so one monolithic full-document command would block
-page rendering for half a second or more. The native side instead resolves references as a
-chunked background task:
+page rendering for half a second or more. The native side instead runs one chunked
+background scan per document (`app/pdf_nav.rs::load_pdf_document_scan`), which feeds both
+the outline and the references:
 
 1. `get_embedded_toc(path)` for section targets — cheap, no text scan;
-2. extract text one page at a time with `get_page_text(path, i)`, so queued priority page
-   renders interleave between pages;
-3. if there were no embedded bookmarks, recover the outline from the text just collected
-   with `recover_toc_from_texts(&pages)` — no second scan;
-4. run `resolve_references(&pages, &toc)` on the async thread.
+2. if the references and (for a bookmark-less document) the outline are both cached, stop;
+3. extract text one page at a time with `get_page_text_background(path, i)`, in the
+   background lane, so every render and link request queued meanwhile goes first;
+4. with no embedded bookmarks, `recover_toc(path, texts)` on the text just collected (no
+   second scan; the link-aware path included), cached in `pdf_outline` and sent to the TOC
+   panel;
+5. run `resolve_references(&pages, &toc)` on the blocking thread.
 
-For bookmark-less PDFs the full scan already happens for TOC recovery, so references are
-effectively free; for bookmarked PDFs the chunking is what keeps first-open rendering
-responsive.
+Each page's text is extracted once per document, not once for the outline and again for
+references.
 
 ### Caching and versioning
 
@@ -281,7 +329,7 @@ pub struct PdfAnnotation {
     pub id: String,
     pub document_id: String,
     pub page_index: u16,
-    pub kind: PdfAnnotationKind,        // Highlight | Note
+    pub kind: PdfAnnotationKind,        // Highlight | Note | Ink
     pub color: PdfAnnotationColor,      // Yellow | Green | Blue | Pink | Orange
     pub selected_text: String,
     pub ranges: Vec<PdfTextRange>,      // character intervals on the page text layer
@@ -289,6 +337,7 @@ pub struct PdfAnnotation {
     pub note: Option<String>,
     pub linked_note_path: Option<String>,
     pub markdown_anchor: Option<String>,
+    pub ink_stroke: Option<PdfInkStroke>, // normalized [0..1] margin ink stroke for Ink
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -298,7 +347,7 @@ pub struct PdfAnnotation {
 Yellow → Green → Blue → Pink → Orange → Yellow. `PdfPane::next_highlight_color` steps
 through it after each quick highlight, so successive highlights stay visually distinct
 without the reader choosing a colour every time. The explicit
-`Message::PdfCreateHighlight(color)` path lets you pick one deliberately.
+`PdfMessage::CreateHighlight(color)` path lets you pick one deliberately.
 
 **Annotation survival.** Because `document_id` is content-derived, copying or re-downloading
 a PDF keeps its annotations. If the id *does* change, `save_pdf_document` adopts rows
@@ -306,10 +355,36 @@ previously recorded for the same vault path — but only when the file size also
 annotations belonging to a genuinely different file that replaced the old one stay orphaned
 rather than being silently reattached to the wrong text.
 
-**Orphan and drift report.** `Message::PdfOrphanReport` compares each highlight's stored
+**Orphan and drift report.** `PdfMessage::OrphanReport` compares each highlight's stored
 `selected_text` against the text currently under its saved rectangle and reports how many
 have drifted. Because page text is loaded lazily per visible page, the report also states
 how many of the total annotations were actually checkable.
+
+**Portable copies in the vault (`core/src/state/pdf_sidecar.rs`).** SQLite is the working
+store, but each PDF's highlights are also kept in the vault at
+`.md-editor/annotations/<document_id>.jsonl`: one `PdfAnnotation` per line as JSON,
+oldest first. Git or Syncthing then carry them to other machines, with one changed line
+per edited highlight. The document id is the content hash, so it matches on every machine.
+`.md-editor/.gitattributes` sets `merge=union` so two machines adding highlights never
+conflict.
+
+- Every `save_pdf_annotation` / `delete_pdf_annotation` rewrites the document's file
+  through `vault::write_file`. Deleting the last highlight leaves an empty file, so the
+  deletion still travels. A failed write is logged, not fatal: SQLite has the change and
+  the next sync writes it.
+- `sync_pdf_sidecars` (after every vault index) and `sync_pdf_sidecar` (when a PDF's id
+  is computed on open) reconcile file and SQLite. If they agree, nothing happens. If the
+  file is unchanged since this machine last synced, it is rewritten from SQLite. Otherwise
+  the two are merged three-way against the ids recorded at the last sync
+  (`pdf_sidecar_sync`, schema v4). An id gone on one side was deleted there, an id new on
+  one side was added there, and an id on both sides keeps the later `updated_at`. On a
+  tie the file wins, because a rename on another machine rewrites linked note paths
+  without a new `updated_at`.
+- A missing file is rewritten from SQLite, never read as "everything was deleted".
+  Unreadable lines are skipped. A duplicate id (a union-merged same-id edit) keeps its
+  later copy. Only SHA-256 hex file names are read.
+- A rename that rewrites `linked_note_path` re-exports the affected files, and a content
+  change that moves highlights to a new document id removes the old file.
 
 ---
 

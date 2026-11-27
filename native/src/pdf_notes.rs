@@ -1,5 +1,82 @@
 //! Linked notes for PDF highlights: paths, `pdf://` links and note content.
 
+use md_editor_core::pdf::PageRegion;
+
+/// A parsed `pdf://<path>?page=N&annotation=ID&crop=x,y,w,h` link (the
+/// `pdf://` prefix already removed). `page` is 1-based as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PdfLink {
+    pub path: String,
+    pub page: Option<u16>,
+    pub annotation: Option<String>,
+    /// A region of `page`, in points from the page's top-left corner.
+    pub crop: Option<PageRegion>,
+}
+
+pub fn parse_pdf_link(url: &str) -> PdfLink {
+    let url = url.strip_prefix("pdf://").unwrap_or(url);
+    let (encoded_path, query) = url.split_once('?').unwrap_or((url, ""));
+    let mut link = PdfLink {
+        path: decode_pdf_link_path(encoded_path),
+        page: None,
+        annotation: None,
+        crop: None,
+    };
+    for pair in query.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        match key {
+            "page" => link.page = value.parse().ok(),
+            "annotation" => link.annotation = Some(value.to_string()),
+            "crop" => link.crop = parse_crop(value),
+            _ => {}
+        }
+    }
+    link
+}
+
+fn parse_crop(value: &str) -> Option<PageRegion> {
+    let parts: Vec<f32> = value
+        .split(',')
+        .map(|v| v.trim().parse::<f32>())
+        .collect::<Result<_, _>>()
+        .ok()?;
+    let [x, y, width, height] = parts[..] else {
+        return None;
+    };
+    (width > 0.0 && height > 0.0 && [x, y, width, height].iter().all(|v| v.is_finite())).then_some(
+        PageRegion {
+            x,
+            y,
+            width,
+            height,
+        },
+    )
+}
+
+/// The Markdown that shows `region` of page `page_index` (0-based) of
+/// `pdf_path` inline in a note, rendered live from the PDF.
+pub fn pdf_crop_markdown(pdf_path: &str, page_index: u16, region: PageRegion) -> String {
+    let name = std::path::Path::new(pdf_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("PDF");
+    let alt: String = format!("{name}, p. {}", page_index + 1)
+        .chars()
+        .filter(|c| !matches!(c, '[' | ']'))
+        .collect();
+    format!(
+        "![{alt}](pdf://{}?page={}&crop={:.0},{:.0},{:.0},{:.0})",
+        encode_pdf_link_target(pdf_path),
+        page_index + 1,
+        region.x,
+        region.y,
+        region.width,
+        region.height
+    )
+}
+
 pub fn slug_fragment(s: &str) -> String {
     let slug = slugify(s);
     if slug.is_empty() {
@@ -50,6 +127,18 @@ pub fn encode_pdf_link_path(path: &str) -> String {
         .replace('#', "%23")
 }
 
+/// [`encode_pdf_link_path`], plus what would end or split a Markdown link
+/// destination: spaces, parentheses and angle brackets. `decode_pdf_link_path`
+/// reverses both.
+pub fn encode_pdf_link_target(path: &str) -> String {
+    encode_pdf_link_path(path)
+        .replace(' ', "%20")
+        .replace('(', "%28")
+        .replace(')', "%29")
+        .replace('<', "%3C")
+        .replace('>', "%3E")
+}
+
 pub fn decode_pdf_link_path(path: &str) -> String {
     let bytes = path.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -75,7 +164,13 @@ pub fn append_linked_pdf_note_section(
     ann: &md_editor_core::pdf::PdfAnnotation,
 ) -> String {
     let link = pdf_annotation_link(pdf_path, ann);
-    if existing.contains(&link) {
+    // Notes written before link targets were encoded carry the raw path.
+    let legacy = format!(
+        "pdf://{pdf_path}?page={}&annotation={}",
+        ann.page_index + 1,
+        ann.id
+    );
+    if existing.contains(&link) || existing.contains(&legacy) {
         return existing.to_string();
     }
 
@@ -123,7 +218,7 @@ fn note_title_from_path(path: &str) -> String {
 fn pdf_annotation_link(pdf_path: &str, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
     format!(
         "pdf://{}?page={}&annotation={}",
-        pdf_path,
+        encode_pdf_link_target(pdf_path),
         ann.page_index + 1,
         ann.id
     )
@@ -187,6 +282,7 @@ mod tests {
             note: None,
             linked_note_path: None,
             markdown_anchor: None,
+            ink_stroke: None,
             created_at: 0,
             updated_at: 0,
         };
@@ -198,7 +294,7 @@ mod tests {
         assert!(content.contains("## Page 5"));
         assert!(content.contains("> Important field result"));
         assert!(content.contains(
-            "[Open highlight in PDF](pdf://papers/My PDF File.pdf?page=5&annotation=abcdef123456)"
+            "[Open highlight in PDF](pdf://papers/My%20PDF%20File.pdf?page=5&annotation=abcdef123456)"
         ));
         assert!(content.contains("### Notes"));
         assert!(!content.contains("pdf_annotation:"));
@@ -216,5 +312,56 @@ mod tests {
 
         let deduped = append_linked_pdf_note_section(&appended, "papers/My PDF File.pdf", &ann);
         assert_eq!(deduped, appended);
+    }
+
+    #[test]
+    fn a_crop_link_round_trips_through_markdown_with_awkward_names() {
+        let region = PageRegion {
+            x: 112.4,
+            y: 240.0,
+            width: 380.0,
+            height: 210.6,
+        };
+        let md = pdf_crop_markdown("papers/Vaswani (2017) [v2].pdf", 3, region);
+        assert!(md.starts_with("![Vaswani (2017) v2, p. 4](pdf://"), "{md}");
+        let dest = md
+            .split_once("](")
+            .and_then(|(_, rest)| rest.strip_suffix(')'))
+            .unwrap();
+        assert!(!dest.contains(' ') && !dest.contains('('), "{dest}");
+        let link = parse_pdf_link(dest);
+        assert_eq!(link.path, "papers/Vaswani (2017) [v2].pdf");
+        assert_eq!(link.page, Some(4));
+        assert_eq!(
+            link.crop,
+            Some(PageRegion {
+                x: 112.0,
+                y: 240.0,
+                width: 380.0,
+                height: 211.0
+            })
+        );
+        assert_eq!(link.annotation, None);
+    }
+
+    #[test]
+    fn a_malformed_crop_is_no_crop() {
+        for query in [
+            "crop=1,2,3",
+            "crop=1,2,0,4",
+            "crop=a,b,c,d",
+            "crop=1,2,3,-4",
+        ] {
+            assert_eq!(
+                parse_pdf_link(&format!("p.pdf?page=1&{query}")).crop,
+                None,
+                "{query}"
+            );
+        }
+        let highlight = parse_pdf_link("pdf://papers/p.pdf?page=2&annotation=abc");
+        assert_eq!(
+            (highlight.page, highlight.annotation.as_deref()),
+            (Some(2), Some("abc"))
+        );
     }
 }

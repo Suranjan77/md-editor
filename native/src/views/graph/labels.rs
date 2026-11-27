@@ -47,10 +47,7 @@ impl canvas::Program<Message> for GraphLabels {
             return vec![frame.into_geometry()];
         }
 
-        let transform = ViewTransform {
-            pan: self.frame.pan,
-            zoom: self.frame.zoom,
-        };
+        let transform = self.frame.label_transform(bounds);
         let focus_mask = self.frame.focus_mask();
         let focus = focus_mask.as_ref().map(|(focus, _)| *focus);
         let in_focus = |index: usize| {
@@ -87,7 +84,7 @@ impl canvas::Program<Message> for GraphLabels {
                         ..canvas::Stroke::default()
                             .with_color(Color {
                                 a: 0.75,
-                                ..theme::ACCENT
+                                ..crate::design::tokens().accent
                             })
                             .with_width(1.0)
                     },
@@ -107,12 +104,12 @@ impl canvas::Program<Message> for GraphLabels {
                 color: if faded {
                     Color {
                         a: 0.45,
-                        ..theme::TEXT_MUTED
+                        ..crate::design::tokens().fg_tertiary
                     }
                 } else if emphasized {
-                    theme::TEXT_PRIMARY
+                    crate::design::tokens().fg_primary
                 } else {
-                    theme::TEXT_SECONDARY
+                    crate::design::tokens().fg_secondary
                 },
                 size: iced::Pixels(if emphasized { 12.0 } else { 10.0 }),
                 align_x: iced::advanced::text::Alignment::Center,

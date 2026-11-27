@@ -20,12 +20,7 @@ fn layout_revision_names_the_lines_and_resources_laid_out() {
     let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0; 4]);
     pane.math_cache.insert(
         "x".into(),
-        crate::editor::renderer::MathRender {
-            inline_handle: handle.clone(),
-            block_handle: handle.clone(),
-            width: 10.0,
-            height: 10.0,
-        },
+        crate::editor::renderer::MathRender::uniform(handle.clone(), handle.clone(), 10.0, 10.0),
     );
     let with_math = pane.layout_revision();
     assert_ne!(with_math, initial, "an equation arrived");
@@ -125,7 +120,8 @@ mod math_blocks {
 
         assert_eq!(tex, "\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}");
         let crate::editor::renderer::MathRender { width, height, .. } =
-            render_latex_task(tex, 1.0).expect("align block should render");
+            render_latex_task(tex, 1.0, crate::design::tokens().doc_math)
+                .expect("align block should render");
         assert!(width > 0.0);
         assert!(height > 24.0, "both align rows should have visible height");
         assert!(!lines[6].is_math_block);
@@ -139,7 +135,8 @@ mod math_blocks {
 
         assert_eq!(tex, "\\begin {align}\na &= b \\nonumber\n\\end {align}");
         let crate::editor::renderer::MathRender { width, height, .. } =
-            render_latex_task(tex, 1.0).expect("align with nonumber should render");
+            render_latex_task(tex, 1.0, crate::design::tokens().doc_math)
+                .expect("align with nonumber should render");
         assert!(width > 0.0);
         assert!(height > 0.0);
         assert!(!lines[3].is_math_block);
@@ -161,9 +158,163 @@ After";
 
         assert_eq!(tex.lines().count(), 6);
         let crate::editor::renderer::MathRender { width, height, .. } =
-            render_latex_task(tex, 1.0).expect("the linalg align block should render");
+            render_latex_task(tex, 1.0, crate::design::tokens().doc_math)
+                .expect("the linalg align block should render");
         assert!(width > 0.0);
         assert!(height > 80.0, "all four align rows should be visible");
         assert!(!lines[8].is_math_block);
     }
+}
+
+#[test]
+fn image_link_paths_unwrap_angle_brackets_and_decode() {
+    use super::image_link_path;
+    assert_eq!(image_link_path("a.png"), "a.png");
+    assert_eq!(
+        image_link_path("<attachments/Pasted image 1.png>"),
+        "attachments/Pasted image 1.png"
+    );
+    assert_eq!(image_link_path("my%20pic.png"), "my pic.png");
+}
+
+/// BUG-13: `$…$` renders in text style (limits beside the sum, small
+/// fractions), `$$…$$` in display style.
+#[test]
+fn inline_math_uses_text_style_and_block_math_display_style() {
+    let render = render_latex_task(
+        r"\sum_{i=1}^n \frac{a}{b}",
+        1.0,
+        crate::design::tokens().doc_math,
+    )
+    .expect("renders");
+    let block_unscaled = render.block_height / crate::editor::renderer::MATH_BLOCK_SCALE;
+    assert!(
+        render.height < block_unscaled * 0.8,
+        "inline {} vs display {block_unscaled}",
+        render.height
+    );
+}
+
+/// Each equation renders once however often it repeats, is not respawned
+/// on every keystroke while rendering, and a failure is not retried.
+#[test]
+fn math_renders_once_per_tex_and_failures_are_not_retried() {
+    let mut pane = EditorPane::new();
+    pane.buffer
+        .insert_at_cursor("$x_i$ $x_i$ $x_i$ and $\\bad{$");
+    pane.refresh_highlighting();
+    let _ = pane.load_math(1.0);
+    assert_eq!(pane.pending_math.len(), 2, "{:?}", pane.pending_math);
+    let _ = pane.load_math(1.0);
+    assert_eq!(pane.pending_math.len(), 2, "nothing respawned");
+
+    let ink = crate::design::tokens().doc_math;
+    let _ = pane.update(Message::Editor(EditorMessage::MathRendered(
+        "\\bad{".into(),
+        1.0,
+        ink,
+        Err("parse".into()),
+    )));
+    assert!(pane.failed_math.contains("\\bad{"));
+    assert_eq!(pane.pending_math.len(), 1);
+    let _ = pane.load_math(1.0);
+    assert!(!pane.pending_math.contains("\\bad{"), "failure retried");
+
+    pane.forget_math();
+    assert!(pane.pending_math.is_empty() && pane.failed_math.is_empty());
+}
+
+#[test]
+fn a_pdf_crop_is_rendered_once_and_a_failed_one_is_not_retried_until_forgotten() {
+    let mut pane = EditorPane::new();
+    let crop = "pdf://papers/p.pdf?page=2&crop=10,20,100,50";
+    pane.buffer = crate::editor::buffer::DocBuffer::from_text(&format!(
+        "![fig]({crop})\n\n![again]({crop})\n\n![plain](pdf://papers/p.pdf?page=2)"
+    ));
+    pane.refresh_highlighting();
+    assert_eq!(pane.take_wanted_pdf_crops(), [crop], "once, and only crops");
+    assert!(pane.take_wanted_pdf_crops().is_empty(), "already rendering");
+
+    pane.pdf_crop_loaded(crop.to_string(), Err("gone".into()));
+    assert!(
+        pane.take_wanted_pdf_crops().is_empty(),
+        "failed: not retried per keystroke"
+    );
+
+    pane.forget_images();
+    assert_eq!(pane.take_wanted_pdf_crops(), [crop]);
+    let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0; 4]);
+    let before = pane.layout_revision();
+    pane.pdf_crop_loaded(crop.to_string(), Ok((handle, 133.0, 66.0)));
+    assert!(pane.image_cache.contains_key(crop));
+    assert_ne!(
+        pane.layout_revision(),
+        before,
+        "the line re-lays out at the crop's size"
+    );
+
+    pane.forget_images();
+    pane.pdf_crop_loaded(crop.to_string(), Err("late".into()));
+    assert!(
+        !pane.take_wanted_pdf_crops().is_empty(),
+        "a result arriving after the images were forgotten is dropped"
+    );
+}
+
+#[test]
+fn a_changed_image_file_is_decoded_again_while_the_old_picture_stays_up() {
+    let mut pane = EditorPane::new();
+    pane.buffer = crate::editor::buffer::DocBuffer::from_text(
+        "![a](../img/a.png)\n\n![b](b.png)\n\n![c](pdf://p.pdf?page=1&crop=0,0,10,10)",
+    );
+    pane.refresh_highlighting();
+    let handle = iced::widget::image::Handle::from_rgba(1, 1, vec![0; 4]);
+    for key in ["../img/a.png", "b.png", "pdf://p.pdf?page=1&crop=0,0,10,10"] {
+        pane.image_cache
+            .insert(key.into(), (handle.clone(), 10.0, 10.0));
+    }
+    let changed = [std::path::PathBuf::from("/vault/img/a.png")];
+
+    assert!(pane.refresh_changed_files("/vault", "notes/n.md", &changed, false));
+    assert!(
+        pane.image_cache.contains_key("../img/a.png"),
+        "still shown meanwhile"
+    );
+    assert!(pane.stale_images.contains("../img/a.png"));
+    assert!(
+        !pane.stale_images.contains("b.png"),
+        "unrelated images untouched"
+    );
+    assert!(pane.take_wanted_pdf_crops().is_empty(), "no PDF changed");
+
+    let replaced = iced::widget::image::Handle::from_rgba(2, 2, vec![0; 16]);
+    pane.pending_images
+        .insert("/vault/notes/../img/a.png".into());
+    pane.image_loaded(
+        "../img/a.png".into(),
+        "/vault/notes/../img/a.png".into(),
+        Ok((replaced, 20.0, 20.0)),
+        Some("/vault"),
+        Some("notes/n.md"),
+    );
+    assert_eq!(pane.image_cache["../img/a.png"].1, 20.0, "the new picture");
+    assert!(pane.stale_images.is_empty());
+
+    assert!(pane.refresh_changed_files("/vault", "notes/n.md", &[], true));
+    assert_eq!(
+        pane.take_wanted_pdf_crops(),
+        ["pdf://p.pdf?page=1&crop=0,0,10,10"],
+        "a changed PDF re-renders the crops"
+    );
+    pane.pdf_crop_loaded(
+        "pdf://p.pdf?page=1&crop=0,0,10,10".into(),
+        Err("gone".into()),
+    );
+    assert!(
+        !pane
+            .image_cache
+            .contains_key("pdf://p.pdf?page=1&crop=0,0,10,10"),
+        "a crop that no longer renders stops showing"
+    );
+    assert!(!pane.refresh_changed_files("/vault", "notes/n.md", &[], false));
 }

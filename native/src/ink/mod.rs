@@ -1,9 +1,9 @@
 //! Handwritten notes.
 //!
-//! Windows-only for now: pen pressure is captured straight from the pointer
-//! input stack because iced discards it (see [`pen_win`]). Everything above
-//! the capture layer is platform neutral, so the surface still works with a
-//! mouse anywhere the app builds.
+//! Pen pressure is captured below iced, which discards it: from the pointer
+//! input stack on Windows (`pen_win`) and the Wayland tablet protocol on Linux
+//! (`pen_wayland`). Everything above the capture layer is platform neutral, so
+//! the surface still works with a mouse anywhere the app builds.
 //!
 //! The pieces:
 //!
@@ -16,12 +16,18 @@
 pub mod camera;
 pub mod canvas;
 pub mod document;
+mod input;
 pub mod pen;
 pub mod radial;
+pub mod raster;
 pub mod stroke;
+pub mod svg;
 
 #[cfg(windows)]
 mod pen_win;
+
+#[cfg(target_os = "linux")]
+mod pen_wayland;
 
 use std::sync::Mutex;
 
@@ -31,8 +37,34 @@ use document::{InkDocument, InkStroke};
 use pen::{PenPhase, PenSample};
 use stroke::{InkPoint, StrokeOptions, Vec2};
 
-/// File extension for a handwritten page stored in the vault.
-pub const INK_EXTENSION: &str = "ink";
+/// File extension for new handwritten pages and sketches stored in the vault.
+pub const INK_EXTENSION: &str = "ink.svg";
+
+fn ends_with_ascii_ci(s: &str, suffix: &[u8]) -> bool {
+    s.len() >= suffix.len() && s.as_bytes()[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+}
+
+/// Whether `path` uses the dual-mode `.ink.svg` format (any case).
+pub fn is_ink_svg_path(path: &str) -> bool {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path);
+    ends_with_ascii_ci(name, b".ink.svg")
+}
+
+/// Whether `path` is any handwritten sketch page (`.ink.svg` or legacy `.ink`).
+pub fn is_sketch_path(path: &str) -> bool {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path);
+    is_ink_svg_path(name) || ends_with_ascii_ci(name, b".ink")
+}
+
+/// How often a page with unsaved strokes is written back. Pages used to be
+/// saved only on Ctrl+S, so quitting lost whatever was drawn since.
+pub const INK_AUTOSAVE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// How close a stroke must pass to the eraser, in logical pixels, to be taken.
 const ERASER_RADIUS: f32 = 9.0;
@@ -146,8 +178,8 @@ pub fn set_scale_factor(factor: f32) {
     SCALE_FACTOR.store(factor.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
-fn scale_factor() -> f32 {
+/// The ink window's scale factor, which pen samples are converted with.
+pub(crate) fn scale_factor() -> f32 {
     f32::from_bits(SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)).max(0.001)
 }
 
@@ -163,14 +195,14 @@ fn viewport() -> Option<Rectangle> {
 /// so the pen can press buttons exactly like a mouse. Without this the pen can
 /// draw but cannot change tools, which makes the toolbar useless to the very
 /// device the feature exists for.
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))] // used by the pen hooks
 pub(crate) fn client_point_is_on_canvas(x: f32, y: f32) -> bool {
     viewport().is_some_and(|bounds| point_is_on_canvas(x, y, bounds, scale_factor()))
 }
 
 /// The hit test itself, taking its inputs explicitly so it can be exercised
 /// without touching the process-wide viewport and scale factor.
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))] // used by the pen hooks
 fn point_is_on_canvas(x: f32, y: f32, bounds: Rectangle, scale: f32) -> bool {
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let (x, y) = (x / scale, y / scale);
@@ -223,6 +255,9 @@ pub struct InkState {
     pub path: Option<String>,
     /// Unsaved changes.
     pub dirty: bool,
+    /// The last save failure, so a failing autosave reports once rather than
+    /// every second.
+    pub last_save_error: Option<String>,
 
     /// Pan and zoom onto the page. Strokes are stored in page coordinates, so
     /// this only affects how they are drawn and where input lands.
@@ -230,12 +265,17 @@ pub struct InkState {
 
     /// The stroke currently being drawn, in **page** coordinates.
     live: Vec<InkPoint>,
+    /// Screen position of the live stroke's latest sample, for the page
+    /// advance applied when it ends.
+    last_screen: Option<Vec2>,
     drawing: bool,
     erasing: bool,
 
     /// Where the pen is hovering, in surface-local screen pixels, when it is
     /// in range but not touching.
     hover: Option<Vec2>,
+    /// The pen in range would erase: its eraser end, or the erase button held.
+    pen_eraser: bool,
     /// The radial menu, while it is open.
     radial: Option<radial::RadialMenu>,
 
@@ -272,11 +312,14 @@ impl InkState {
             cache: iced::widget::canvas::Cache::new(),
             path: None,
             dirty: false,
+            last_save_error: None,
             camera: camera::Camera::new(),
             live: Vec::new(),
+            last_screen: None,
             drawing: false,
             erasing: false,
             hover: None,
+            pen_eraser: false,
             radial: None,
             lasso: Vec::new(),
             selection: Vec::new(),
@@ -438,363 +481,6 @@ impl InkState {
         true
     }
 
-    /// Feed a batch of captured pen samples. Returns whether anything changed
-    /// and the view needs redrawing.
-    pub fn apply_samples(&mut self, samples: &[PenSample], scale_factor: f32) -> bool {
-        let mut changed = false;
-
-        for sample in samples {
-            if sample.phase == PenPhase::Leave {
-                changed |= self.hover.take().is_some();
-                continue;
-            }
-
-            let starting = sample.phase == PenPhase::Down;
-            let Some(position) = map_to_canvas(sample, scale_factor, starting) else {
-                continue;
-            };
-
-            match sample.phase {
-                PenPhase::Hover => {
-                    // Cheap and constant, so it is worth a redraw every time:
-                    // this indicator is how the surface is aimed.
-                    self.hover = Some(position);
-                    changed = true;
-                }
-                PenPhase::Down => {
-                    if sample.barrel {
-                        // The side button summons the menu instead of drawing.
-                        self.radial = Some(radial::RadialMenu::new(position));
-                    } else {
-                        self.begin(position, sample.pressure, sample.eraser);
-                    }
-                    changed = true;
-                }
-                PenPhase::Move => {
-                    self.hover = Some(position);
-                    if let Some(menu) = &mut self.radial {
-                        menu.cursor = position;
-                        changed = true;
-                    } else {
-                        changed |= self.extend(position, sample.pressure);
-                    }
-                }
-                PenPhase::Up => {
-                    if self.radial.is_some() {
-                        changed |= self.commit_radial();
-                    } else {
-                        changed |= self.extend(position, sample.pressure);
-                        changed |= self.finish();
-                    }
-                }
-                PenPhase::Leave => unreachable!("handled above"),
-            }
-        }
-
-        changed
-    }
-
-    /// Where the pointing device is, in surface-local screen pixels.
-    ///
-    /// Fed by both the pen (hover samples) and the mouse, so the aiming
-    /// indicators track whichever moved last.
-    pub fn hover(&self) -> Option<Vec2> {
-        self.hover
-    }
-
-    pub fn set_hover(&mut self, position: Vec2) {
-        self.hover = Some(position);
-    }
-
-    pub fn radial_menu(&self) -> Option<radial::RadialMenu> {
-        self.radial
-    }
-
-    /// Apply whatever the open radial menu is pointing at and close it.
-    fn commit_radial(&mut self) -> bool {
-        let Some(menu) = self.radial.take() else {
-            return false;
-        };
-
-        match menu.highlighted() {
-            Some(radial::RadialAction::Tool(tool)) => {
-                if tool != Tool::Lasso {
-                    self.clear_selection();
-                }
-                self.tool = tool;
-            }
-            Some(radial::RadialAction::Color(color)) => {
-                if self.tool == Tool::Highlighter {
-                    self.highlighter_color = color;
-                } else {
-                    self.color = color;
-                }
-            }
-            // Lifted in the dead zone or flicked away: cancelled.
-            None => {}
-        }
-        true
-    }
-
-    /// Pull the page up when the pen writes into the bottom margin, so a line
-    /// can be continued without stopping to pan.
-    ///
-    /// Takes a **screen** position because the margin is a property of the
-    /// window, not of the page.
-    fn advance_if_near_bottom(&mut self, screen_y: f32) -> bool {
-        let Some(bounds) = viewport() else {
-            return false;
-        };
-        let threshold = bounds.height - ADVANCE_MARGIN;
-        if threshold <= 0.0 || screen_y <= threshold {
-            return false;
-        }
-
-        // Pin the nib at the threshold rather than jumping: a discrete scroll
-        // mid-letter is disorienting.
-        self.camera.pan_by(Vec2::new(0.0, threshold - screen_y));
-        self.cache.clear();
-        true
-    }
-
-    /// Begin an interaction at a **screen**-space position.
-    ///
-    /// What that means depends on the tool: drawing a stroke, erasing, drawing
-    /// a lasso, or — when the press lands on an existing selection — starting
-    /// to drag it.
-    pub fn begin(&mut self, screen: Vec2, pressure: f32, inverted: bool) {
-        let position = self.camera.to_page(screen);
-
-        // Keep the aiming indicators pinned to the nib from the first sample,
-        // not from wherever the last hover left them.
-        self.hover = Some(screen);
-        self.live.clear();
-        self.drag_from = None;
-        self.drag_total = Vec2::new(0.0, 0.0);
-
-        // An inverted pen erases regardless of the selected tool.
-        if inverted || self.tool == Tool::Eraser {
-            self.erasing = true;
-            self.drawing = false;
-            // The whole drag is one undoable gesture; without this, undo would
-            // rewind an eraser sweep one input sample at a time.
-            self.document.begin_batch();
-            self.erase_at(position);
-            return;
-        }
-
-        self.erasing = false;
-
-        if self.tool == Tool::Lasso {
-            self.drawing = false;
-            if self.selection_contains(position) {
-                // Grabbing the existing selection moves it instead of starting
-                // a new lasso.
-                self.drag_from = Some(position);
-            } else {
-                self.selection.clear();
-                self.lasso.clear();
-                self.lasso.push(position);
-            }
-            return;
-        }
-
-        self.drawing = true;
-        self.live.push(InkPoint {
-            pos: position,
-            pressure,
-        });
-    }
-
-    /// Continue the current interaction. Returns whether anything changed.
-    pub fn extend(&mut self, screen: Vec2, pressure: f32) -> bool {
-        let position = self.camera.to_page(screen);
-        // Covers a mouse drag too, which never produces hover samples.
-        self.hover = Some(screen);
-
-        if self.erasing {
-            return self.erase_at(position);
-        }
-
-        if self.tool == Tool::Lasso {
-            if let Some(from) = self.drag_from {
-                // Apply the move incrementally so the strokes follow the pen;
-                // the whole gesture is recorded once on release.
-                let delta = position.sub(from);
-                if delta.x == 0.0 && delta.y == 0.0 {
-                    return false;
-                }
-                let selection = self.selection.clone();
-                self.document.translate_without_history(&selection, delta);
-                self.drag_total = self.drag_total.add(delta);
-                self.drag_from = Some(position);
-                self.cache.clear();
-                return true;
-            }
-            if !self.lasso.is_empty() {
-                self.lasso.push(position);
-                return true;
-            }
-            return false;
-        }
-
-        if !self.drawing {
-            return false;
-        }
-        self.live.push(InkPoint {
-            pos: position,
-            pressure,
-        });
-        // Advancing moves the camera, so it must happen after the sample is
-        // recorded in page space — the stroke itself does not move.
-        self.advance_if_near_bottom(screen.y);
-        true
-    }
-
-    /// End the current interaction, committing whatever it produced. Returns
-    /// whether anything changed.
-    pub fn finish(&mut self) -> bool {
-        if self.erasing {
-            self.erasing = false;
-            self.drawing = false;
-            self.document.end_batch();
-            return false;
-        }
-
-        if self.tool == Tool::Lasso {
-            if self.drag_from.take().is_some() {
-                let moved = self.drag_total;
-                self.drag_total = Vec2::new(0.0, 0.0);
-                if moved.x == 0.0 && moved.y == 0.0 {
-                    return false;
-                }
-                // The strokes already sit where the drag left them, so the
-                // history only needs the total to undo by.
-                let selection = self.selection.clone();
-                self.document.record_move(&selection, moved);
-                self.dirty = true;
-                return true;
-            }
-
-            // Only a gesture that actually drew a lasso resolves to a
-            // selection. Without this, a stray pen-up — one whose press landed
-            // outside the surface and was rejected — would silently clear a
-            // selection the user is still working with.
-            if self.lasso.is_empty() {
-                return false;
-            }
-
-            self.selection = if self.lasso.len() >= 3 {
-                self.document.select_in_polygon(&self.lasso)
-            } else {
-                // A tap rather than a loop: treat it as "deselect".
-                Vec::new()
-            };
-            self.lasso.clear();
-            return true;
-        }
-
-        if !self.drawing {
-            return false;
-        }
-
-        self.drawing = false;
-
-        // A single sample is a legitimate dot — the tittle on an `i`.
-        if self.live.is_empty() {
-            return false;
-        }
-
-        let (size, color, kind) = self.active_stroke_style();
-        let stroke = InkStroke::from_points(&self.live, size, color, kind);
-        self.document.push(stroke);
-        self.live.clear();
-        self.invalidate();
-        true
-    }
-
-    /// Size, colour and kind the next committed stroke will carry.
-    ///
-    /// The highlighter's alpha is baked into the stored colour rather than
-    /// applied at render time, so a page keeps its appearance even if the
-    /// default opacity is retuned later.
-    pub fn active_stroke_style(&self) -> (f32, [f32; 4], document::StrokeKind) {
-        if self.tool == Tool::Highlighter {
-            let mut color = rgba(self.highlighter_color);
-            color[3] = HIGHLIGHTER_ALPHA;
-            (
-                self.highlighter_size,
-                color,
-                document::StrokeKind::Highlighter,
-            )
-        } else {
-            (
-                self.options.size,
-                rgba(self.color),
-                document::StrokeKind::Pen,
-            )
-        }
-    }
-
-    /// Render options and colour for the stroke currently under the pen.
-    pub fn live_style(&self) -> (StrokeOptions, Color) {
-        let (size, color, kind) = self.active_stroke_style();
-        let options = options_for(
-            kind,
-            StrokeOptions {
-                size,
-                ..self.options
-            },
-        );
-        (
-            options,
-            Color::from_rgba(color[0], color[1], color[2], color[3]),
-        )
-    }
-
-    /// Set the page's background ruling.
-    pub fn set_paper(&mut self, paper: document::PaperStyle) {
-        if self.document.paper != paper {
-            self.document.paper = paper;
-            self.dirty = true;
-            self.cache.clear();
-        }
-    }
-
-    /// Drop an in-progress stroke or lasso without committing it.
-    pub fn cancel_stroke(&mut self) {
-        self.live.clear();
-        self.lasso.clear();
-        self.radial = None;
-        self.hover = None;
-        if self.erasing {
-            // Close the gesture rather than leaving the document collecting
-            // edits into a batch nothing will ever commit.
-            self.document.end_batch();
-        }
-        self.drawing = false;
-        self.erasing = false;
-        self.drag_from = None;
-        self.drag_total = Vec2::new(0.0, 0.0);
-    }
-
-    fn erase_at(&mut self, position: Vec2) -> bool {
-        let radius = self.eraser_radius();
-        let erased = match self.eraser_mode {
-            EraserMode::Partial => self.document.erase_partial_at(position, radius),
-            EraserMode::Stroke => self.document.erase_at(position, radius),
-        };
-        if erased {
-            // Removing strokes shifts every later index, so any selection
-            // pointing at them is now meaningless.
-            self.selection.clear();
-            self.invalidate();
-            true
-        } else {
-            false
-        }
-    }
-
     pub fn undo(&mut self) -> bool {
         let changed = self.document.undo();
         if changed {
@@ -847,6 +533,7 @@ fn rgba(color: Color) -> [f32; 4] {
 /// Absolute path of a vault-relative ink page, with the usual traversal check.
 fn resolve(vault_root: &str, rel_path: &str) -> Result<std::path::PathBuf, String> {
     md_editor_core::vault::resolve_vault_path_checked(std::path::Path::new(vault_root), rel_path)
+        .map_err(String::from)
 }
 
 /// Write a page to the vault.
@@ -865,7 +552,17 @@ pub fn save_to_vault(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
-    md_editor_core::vault::write_file(&path, &document.to_json()?)
+    let content = if is_ink_svg_path(rel_path) {
+        svg::to_svg(document)?
+    } else {
+        document.to_json()?
+    };
+    md_editor_core::vault::write_file(&path, &content).map_err(String::from)
+}
+
+/// Whether a vault-relative page path is already taken on disk.
+pub fn page_exists(vault_root: &str, rel_path: &str) -> bool {
+    resolve(vault_root, rel_path).is_ok_and(|path| path.exists())
 }
 
 /// Read a page back from the vault.
@@ -873,7 +570,11 @@ pub fn load_from_vault(vault_root: &str, rel_path: &str) -> Result<InkDocument, 
     let path = resolve(vault_root, rel_path)?;
     let raw = std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    InkDocument::from_json(&raw)
+    if is_ink_svg_path(rel_path) || raw.trim_start().starts_with('<') {
+        svg::from_svg(&raw)
+    } else {
+        InkDocument::from_json(&raw)
+    }
 }
 
 #[cfg(test)]

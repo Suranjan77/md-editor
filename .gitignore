@@ -13,5 +13,3 @@ dist-portable
 .idea
 .vscode
 
-# Handbook build intermediates (the PDF itself is committed)
-docs/handbook/build

@@ -11,11 +11,10 @@ use super::super::spans::span_is_editing;
 use super::super::{Editor, Measure};
 use super::primitives::{fill, rounded};
 use super::{Frame, LineBox, LineKind};
-use crate::{search, theme};
+use crate::search;
 
 const CARET_WIDTH: f32 = 2.0;
 const MIN_HIGHLIGHT_HEIGHT: f32 = 16.0;
-const SELECTION_COLOR: Color = Color::from_rgba(0.69, 0.80, 0.78, 0.24);
 const SELECTION_RADIUS: f32 = 4.0;
 /// Width of the band that marks a selected line break.
 const NEWLINE_TAIL: f32 = 8.0;
@@ -48,7 +47,12 @@ pub(super) fn paint_selection<R: Measure>(
     }
     let paint = |renderer: &mut R| {
         for piece in pieces {
-            fill(renderer, piece.bounds, piece.border, SELECTION_COLOR);
+            fill(
+                renderer,
+                piece.bounds,
+                piece.border,
+                crate::design::tokens().doc_selection,
+            );
         }
     };
     if over_content {
@@ -222,16 +226,25 @@ impl<Message> Editor<'_, Message> {
             self.search_match_case,
         ) {
             let from_col = line_match.start_col;
-            let alpha = if self.active_search_match == Some((row.idx, from_col)) {
-                0.45
+            // The active match also gets a 1px outline, so it differs from the
+            // others (and from a selection) by shape, not only by tint.
+            let t = crate::design::tokens();
+            let (color, border) = if self.active_search_match == Some((row.idx, from_col)) {
+                (
+                    t.doc_find_active,
+                    iced::Border {
+                        color: t.highlight,
+                        width: 1.0,
+                        radius: 3.0.into(),
+                    },
+                )
             } else {
-                0.24
+                (t.doc_find, rounded(3.0))
             };
-            let color = Color::from_rgba(0.92, 0.70, 0.30, alpha);
             for rect in
                 self.highlight_rects::<R>(frame, row, from_col, line_match.end_col, 4.0, 5.0)
             {
-                fill(renderer, rect, rounded(3.0), color);
+                fill(renderer, rect, border, color);
             }
         }
     }
@@ -307,8 +320,8 @@ impl<Message> Editor<'_, Message> {
             },
             rounded(1.0),
             Color {
-                a: theme::ACCENT.a * alpha,
-                ..theme::ACCENT
+                a: crate::design::tokens().doc_caret.a * alpha,
+                ..crate::design::tokens().doc_caret
             },
         );
     }

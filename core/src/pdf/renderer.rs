@@ -1,7 +1,9 @@
-//! The PDFium worker: one background thread owns the library and documents; `PdfRenderer` sends it commands (render, text, search, links, TOC) and receives results.
+//! `PdfRenderer`: public handle and typed command channels to the PDFium worker thread.
 
+use super::worker::Worker;
 use super::*;
 
+#[derive(Debug)]
 pub struct PdfRenderer {
     pub(super) sender: std::sync::mpsc::Sender<PdfCommand>,
     pub(super) priority_sender: std::sync::mpsc::Sender<PriorityRender>,
@@ -12,691 +14,117 @@ pub(super) struct PriorityRender {
     pub(super) path: String,
     pub(super) page_index: u16,
     pub(super) scale: f32,
-    pub(super) resp: std::sync::mpsc::SyncSender<Result<DynamicImage, String>>,
+    pub(super) resp: std::sync::mpsc::SyncSender<PdfResult<DynamicImage>>,
 }
 
 pub(super) enum PdfCommand {
     Wake,
-    PageCount(String, std::sync::mpsc::SyncSender<Result<u16, String>>),
-    ExtractText(String, std::sync::mpsc::SyncSender<Result<String, String>>),
+    PageCount(String, std::sync::mpsc::SyncSender<PdfResult<u16>>),
+    ExtractText(String, std::sync::mpsc::SyncSender<PdfResult<String>>),
     PageSizes(
         String,
-        std::sync::mpsc::SyncSender<Result<Vec<(f32, f32)>, String>>,
+        std::sync::mpsc::SyncSender<PdfResult<Vec<(f32, f32)>>>,
     ),
     RenderPage(
         String,
         u16,
         f32,
-        std::sync::mpsc::SyncSender<Result<DynamicImage, String>>,
+        std::sync::mpsc::SyncSender<PdfResult<DynamicImage>>,
     ),
     GetToc(
         String,
-        std::sync::mpsc::SyncSender<Result<(Vec<TocEntry>, bool), String>>,
+        std::sync::mpsc::SyncSender<PdfResult<(Vec<TocEntry>, bool)>>,
     ),
     GetReferences(
         String,
-        std::sync::mpsc::SyncSender<Result<Vec<crate::references::ReferenceLink>, String>>,
+        std::sync::mpsc::SyncSender<PdfResult<Vec<crate::references::ReferenceLink>>>,
     ),
     GetEmbeddedToc(
         String,
-        std::sync::mpsc::SyncSender<Result<Vec<TocEntry>, String>>,
+        std::sync::mpsc::SyncSender<PdfResult<Vec<TocEntry>>>,
     ),
     GetLinks(
         String,
         u16,
-        std::sync::mpsc::SyncSender<Result<Vec<LinkInfo>, String>>,
+        std::sync::mpsc::SyncSender<PdfResult<Vec<LinkInfo>>>,
     ),
     SearchText(
         String,
         String,
         bool,
         bool,
-        std::sync::mpsc::SyncSender<Result<Vec<PdfSearchMatch>, String>>,
+        std::sync::mpsc::SyncSender<PdfResult<Vec<PdfSearchMatch>>>,
     ),
     RenderLinkPreview(
         String,
         u32,
         Option<f32>,
         u32,
-        std::sync::mpsc::SyncSender<Result<LinkPreviewResult, String>>,
+        std::sync::mpsc::SyncSender<PdfResult<LinkPreviewResult>>,
+    ),
+    RenderRegion(
+        String,
+        u16,
+        PageRegion,
+        u32,
+        std::sync::mpsc::SyncSender<PdfResult<RegionImage>>,
     ),
     GetPageText(
         String,
         u16,
-        std::sync::mpsc::SyncSender<Result<PdfPageText, String>>,
+        std::sync::mpsc::SyncSender<PdfResult<PdfPageText>>,
+    ),
+    /// `GetPageText` for a whole-document scan, in the background lane.
+    GetPageTextBackground(
+        String,
+        u16,
+        std::sync::mpsc::SyncSender<PdfResult<PdfPageText>>,
+    ),
+    /// Recover an outline from page text the caller already extracted.
+    RecoverToc(
+        String,
+        std::sync::Arc<Vec<PdfPageText>>,
+        std::sync::mpsc::SyncSender<PdfResult<Vec<TocEntry>>>,
     ),
 }
 
+impl PdfCommand {
+    /// Whole-document work, served only once no interactive command waits.
+    pub(super) fn is_background(&self) -> bool {
+        matches!(
+            self,
+            PdfCommand::ExtractText(..)
+                | PdfCommand::GetToc(..)
+                | PdfCommand::GetReferences(..)
+                | PdfCommand::SearchText(..)
+                | PdfCommand::GetPageTextBackground(..)
+                | PdfCommand::RecoverToc(..)
+        )
+    }
+}
+
 impl PdfRenderer {
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> PdfResult<Self> {
         let (sender, receiver) = std::sync::mpsc::channel();
         let (priority_sender, priority_receiver) = std::sync::mpsc::channel::<PriorityRender>();
         let visible_range: std::sync::Arc<std::sync::Mutex<Option<(u16, u16, String)>>> =
             std::sync::Arc::new(std::sync::Mutex::new(None));
-        let visible_range_clone = visible_range.clone();
+        let worker_range = visible_range.clone();
 
         std::thread::spawn(move || {
             let pdfium = match bind_pdfium() {
-                Ok(pdfium) => pdfium,
+                Ok(pdfium) => {
+                    log::info!("PDFium bound");
+                    pdfium
+                }
                 Err(err) => {
-                    eprintln!("Failed to bind PDFium: {err}");
+                    log::error!("Failed to bind PDFium: {err}");
                     return;
                 }
             };
 
-            let mut current_document: Option<(String, PdfDocument)> = None;
-            let mut pending_commands = VecDeque::new();
-
-            loop {
-                let cmd = if let Some(cmd) = pending_commands.pop_front() {
-                    cmd
-                } else {
-                    match receiver.recv() {
-                        Ok(cmd) => {
-                            pending_commands.push_back(cmd);
-                            while let Ok(cmd) = receiver.try_recv() {
-                                pending_commands.push_back(cmd);
-                            }
-                            continue;
-                        }
-                        Err(_) => break,
-                    }
-                };
-
-                while let Ok(mut priority) = priority_receiver.try_recv() {
-                    while let Ok(newer_priority) = priority_receiver.try_recv() {
-                        priority = newer_priority;
-                    }
-
-                    let res = render_page_from_cache(
-                        &pdfium,
-                        &mut current_document,
-                        &priority.path,
-                        priority.page_index,
-                        priority.scale,
-                    );
-                    let _ = priority.resp.send(res);
-                }
-
-                match cmd {
-                    PdfCommand::Wake => {}
-                    PdfCommand::PageCount(path, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            Ok(doc.pages().len() as u16)
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::ExtractText(path, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            let mut text = String::new();
-                            for page in doc.pages().iter() {
-                                if let Ok(tp) = page.text() {
-                                    text.push_str(&tp.all());
-                                    text.push('\n');
-                                }
-                            }
-                            Ok(text)
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::PageSizes(path, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            let mut sizes = Vec::with_capacity(doc.pages().len() as usize);
-                            let mut fallback = (612.0, 792.0);
-                            for index in 0..doc.pages().len() {
-                                if let Ok(page) = doc.pages().get(index) {
-                                    fallback = (page.width().value, page.height().value);
-                                }
-                                sizes.push(fallback);
-                            }
-                            Ok(sizes)
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::RenderPage(path, index, scale, resp) => {
-                        let skipped = {
-                            if let Ok(range_lock) = visible_range_clone.lock() {
-                                if let Some((start, end, ref range_path)) = *range_lock {
-                                    if range_path == &path {
-                                        let buffered_start = start.saturating_sub(2);
-                                        let buffered_end = end.saturating_add(2);
-                                        index < buffered_start || index > buffered_end
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        };
-
-                        if skipped {
-                            let _ = resp.send(Err("Skipped".to_string()));
-                        } else {
-                            let res = render_page_from_cache(
-                                &pdfium,
-                                &mut current_document,
-                                &path,
-                                index,
-                                scale,
-                            );
-                            let _ = resp.send(res);
-                        }
-                    }
-                    PdfCommand::GetToc(path, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            let embedded = embedded_toc(doc);
-                            if !embedded.is_empty() {
-                                return Ok((embedded, false));
-                            }
-                            // No embedded bookmarks. Recover an outline locally
-                            // from the page text (best source first).
-                            let page_texts = build_all_page_texts(doc);
-                            Ok((recover_toc(doc, &page_texts), true))
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::GetReferences(path, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            // References need the full text layer (for equation
-                            // labels and captions) and the outline (for section
-                            // targets). The text scan is the one-time cost the
-                            // caller caches; see the `PDF-Engine-and-Sidecars` wiki page.
-                            let page_texts = build_all_page_texts(doc);
-                            let embedded = embedded_toc(doc);
-                            let toc = if embedded.is_empty() {
-                                recover_toc(doc, &page_texts)
-                            } else {
-                                embedded
-                            };
-                            Ok(crate::references::resolve_references(&page_texts, &toc))
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::GetEmbeddedToc(path, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            // Embedded bookmarks only — no text scan. Cheap; used
-                            // by the chunked reference resolver so it never issues
-                            // a monolithic full-document command.
-                            Ok(embedded_toc(doc))
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::GetLinks(path, index, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            let pages = doc.pages();
-                            if i32::from(index) >= pages.len() {
-                                return Err("Page out of bounds".to_string());
-                            }
-                            let page = pages.get(index as i32).map_err(|e| e.to_string())?;
-                            let page_height = page.height().value;
-                            let mut links = Vec::new();
-                            for link in page.links().iter() {
-                                let rect = match link.rect() {
-                                    Ok(r) => r,
-                                    Err(_) => continue,
-                                };
-                                let bbox = PdfRect {
-                                    x: rect.left().value,
-                                    y: page_height - rect.top().value,
-                                    width: rect.width().value,
-                                    height: rect.height().value,
-                                };
-                                let mut dest_page = None;
-                                let mut dest_y = None;
-                                let mut uri = None;
-                                let extract_dest = |dest: &PdfDestination, page_h: f32| -> (Option<u32>, Option<f32>) {
-                                    let p = dest.page_index().ok().map(|i| i as u32);
-                                    let y = match dest.view_settings() {
-                                        Ok(PdfDestinationViewSettings::SpecificCoordinatesAndZoom(_, Some(y_pts), _)) => Some(page_h - y_pts.value),
-                                        Ok(PdfDestinationViewSettings::FitPageHorizontallyToWindow(Some(y_pts))) => Some(page_h - y_pts.value),
-                                        Ok(PdfDestinationViewSettings::FitBoundsHorizontallyToWindow(Some(y_pts))) => Some(page_h - y_pts.value),
-                                        _ => None,
-                                    };
-                                    (p, y)
-                                };
-                                if let Some(action) = link.action() {
-                                    match action {
-                                        PdfAction::Uri(ref uri_action) => {
-                                            uri = uri_action.uri().ok()
-                                        }
-                                        PdfAction::LocalDestination(ref local) => {
-                                            if let Ok(dest) = local.destination() {
-                                                let (p, y) = extract_dest(&dest, page_height);
-                                                dest_page = p;
-                                                dest_y = y;
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                if dest_page.is_none()
-                                    && uri.is_none()
-                                    && let Some(dest) = link.destination()
-                                {
-                                    let (p, y) = extract_dest(&dest, page_height);
-                                    dest_page = p;
-                                    if dest_y.is_none() {
-                                        dest_y = y;
-                                    }
-                                }
-                                links.push(LinkInfo {
-                                    bbox,
-                                    dest_page,
-                                    dest_y,
-                                    uri,
-                                });
-                            }
-                            Ok(links)
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::SearchText(path, query, regex, match_case, resp) => {
-                        let res = (|| {
-                            if query.trim().is_empty() {
-                                return Ok(Vec::new());
-                            }
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-
-                            let re = if regex {
-                                Some(
-                                    regex::RegexBuilder::new(&query)
-                                        .case_insensitive(!match_case)
-                                        .build()
-                                        .map_err(|err| {
-                                            format!("Invalid PDF search regex: {err}")
-                                        })?,
-                                )
-                            } else {
-                                None
-                            };
-                            let mut matches = Vec::new();
-                            for index in 0..doc.pages().len() {
-                                let page = doc.pages().get(index).map_err(|e| e.to_string())?;
-                                let text_page = page.text().map_err(|e| e.to_string())?;
-                                let mut page_text = String::new();
-                                let mut char_indices = Vec::new();
-                                for c in text_page.chars().iter() {
-                                    if let Some(ch) = c.unicode_char() {
-                                        page_text.push(ch);
-                                        char_indices.push(c.index());
-                                    }
-                                }
-                                let page_matches: Vec<(usize, usize, Vec<PdfRect>)> =
-                                    if let Some(re) = &re {
-                                        re.find_iter(&page_text)
-                                            .filter_map(|found| {
-                                                let match_char_idx_in_text =
-                                                    page_text[..found.start()].chars().count();
-                                                let match_char_count =
-                                                    found.as_str().chars().count();
-                                                if match_char_idx_in_text < char_indices.len()
-                                                    && match_char_count > 0
-                                                {
-                                                    let char_start =
-                                                        char_indices[match_char_idx_in_text];
-                                                    let char_end_idx = (match_char_idx_in_text
-                                                        + match_char_count
-                                                        - 1)
-                                                    .min(char_indices.len() - 1);
-                                                    let char_count =
-                                                        char_indices[char_end_idx] - char_start + 1;
-                                                    let rects = text_page
-                                                        .segments_subset(char_start, char_count)
-                                                        .iter()
-                                                        .map(|segment| {
-                                                            let bounds = segment.bounds();
-                                                            PdfRect {
-                                                                x: bounds.left().value,
-                                                                y: bounds.bottom().value,
-                                                                width: bounds.width().value,
-                                                                height: bounds.height().value,
-                                                            }
-                                                        })
-                                                        .collect::<Vec<_>>();
-                                                    Some((
-                                                        match_char_idx_in_text,
-                                                        match_char_count,
-                                                        rects,
-                                                    ))
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .collect()
-                                    } else {
-                                        let options =
-                                            PdfSearchOptions::new().match_case(match_case);
-                                        match text_page.search(&query, &options) {
-                                            Ok(search) => search
-                                                .iter(PdfSearchDirection::SearchForward)
-                                                .map(|segments| {
-                                                    let rects = segments
-                                                        .iter()
-                                                        .map(|segment| {
-                                                            let bounds = segment.bounds();
-                                                            PdfRect {
-                                                                x: bounds.left().value,
-                                                                y: bounds.bottom().value,
-                                                                width: bounds.width().value,
-                                                                height: bounds.height().value,
-                                                            }
-                                                        })
-                                                        .collect::<Vec<_>>();
-                                                    let mut min_char_index = None;
-                                                    let mut max_char_index = None;
-                                                    for segment in segments.iter() {
-                                                        if let Ok(chars) = segment.chars() {
-                                                            for char in chars.iter() {
-                                                                let idx = char.index();
-                                                                if min_char_index
-                                                                    .is_none_or(|min| idx < min)
-                                                                {
-                                                                    min_char_index = Some(idx);
-                                                                }
-                                                                if max_char_index
-                                                                    .is_none_or(|max| idx > max)
-                                                                {
-                                                                    max_char_index = Some(idx);
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    let char_start = min_char_index.unwrap_or(0);
-                                                    let char_count = max_char_index
-                                                        .map(|max| max - char_start + 1)
-                                                        .unwrap_or(0);
-                                                    let page_text_idx = char_indices
-                                                        .binary_search(&char_start)
-                                                        .unwrap_or_else(|x| x);
-                                                    let match_char_count = if char_count > 0 {
-                                                        let page_text_end_idx = char_indices
-                                                            .binary_search(
-                                                                &(char_start + char_count - 1),
-                                                            )
-                                                            .unwrap_or_else(|x| x);
-                                                        if page_text_end_idx >= page_text_idx {
-                                                            page_text_end_idx - page_text_idx + 1
-                                                        } else {
-                                                            0
-                                                        }
-                                                    } else {
-                                                        0
-                                                    };
-                                                    (page_text_idx, match_char_count, rects)
-                                                })
-                                                .collect(),
-                                            Err(_) => Vec::new(),
-                                        }
-                                    };
-
-                                for (pos, match_len, rects) in page_matches {
-                                    if rects.is_empty() {
-                                        continue;
-                                    }
-                                    let start = pos.saturating_sub(48);
-                                    let take = match_len + 96;
-                                    let context = page_text
-                                        .chars()
-                                        .skip(start)
-                                        .take(take)
-                                        .collect::<String>()
-                                        .split_whitespace()
-                                        .collect::<Vec<_>>()
-                                        .join(" ");
-                                    matches.push(PdfSearchMatch {
-                                        page_index: index as u16,
-                                        context,
-                                        rects,
-                                    });
-                                    if matches.len() >= 250 {
-                                        break;
-                                    }
-                                }
-                                if matches.len() >= 250 {
-                                    break;
-                                }
-
-                                // PDFium is single-threaded, but search need
-                                // not monopolize it: yield to the newest
-                                // visible-page render after each small chunk.
-                                if index % 8 == 7 || index + 1 == doc.pages().len() {
-                                    while let Ok(mut priority) = priority_receiver.try_recv() {
-                                        while let Ok(newer) = priority_receiver.try_recv() {
-                                            priority = newer;
-                                        }
-                                        let rendered = if priority.path == path {
-                                            render_page_from_document(
-                                                doc,
-                                                priority.page_index,
-                                                priority.scale,
-                                            )
-                                        } else {
-                                            pdfium
-                                                .load_pdf_from_file(&priority.path, None)
-                                                .map_err(format_pdf_load_error)
-                                                .and_then(|other| {
-                                                    render_page_from_document(
-                                                        &other,
-                                                        priority.page_index,
-                                                        priority.scale,
-                                                    )
-                                                })
-                                        };
-                                        let _ = priority.resp.send(rendered);
-                                    }
-                                }
-                            }
-                            Ok(matches)
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::RenderLinkPreview(path, index, dest_y, target_width_px, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            let page = doc.pages().get(index as i32).map_err(|e| e.to_string())?;
-                            // Render so the page width hits the caller's target
-                            // *physical* pixel width (the size the preview is
-                            // actually displayed at, accounting for the modal box
-                            // and the display's scale factor). This keeps the
-                            // enlarged preview pixel-sharp instead of upscaling a
-                            // page-points-sized bitmap. Clamped to a sane range.
-                            let page_w = page.width().value.max(1.0);
-                            let scale = (target_width_px as f32 / page_w).clamp(1.5, 6.0);
-                            let full_width = (page.width().value * scale) as i32;
-                            let full_height = (page.height().value * scale) as i32;
-                            let render_config = PdfRenderConfig::new()
-                                .set_target_width(full_width)
-                                .set_target_height(full_height);
-                            let bitmap = page
-                                .render_with_config(&render_config)
-                                .map_err(|e| e.to_string())?;
-                            let dynamic_image = bitmap.as_image().map_err(|e| e.to_string())?;
-
-                            // When the link names a destination Y, crop a fixed
-                            // vertical window of `PREVIEW_WINDOW_PT` points with
-                            // the target line exactly at the centre — padding with
-                            // white when the target is near a page edge so it is
-                            // always centred. Without a Y, the whole page is shown.
-                            let (result_image, center_ratio) = match dest_y {
-                                Some(y) => {
-                                    let window_h_px =
-                                        ((PREVIEW_WINDOW_PT * scale).round() as u32).max(1);
-                                    let center_px = y * scale;
-                                    let win_top = center_px - window_h_px as f32 / 2.0;
-                                    let page_rgba = dynamic_image.to_rgba8();
-                                    let mut canvas = image::RgbaImage::from_pixel(
-                                        full_width as u32,
-                                        window_h_px,
-                                        image::Rgba([255, 255, 255, 255]),
-                                    );
-                                    // Negative offset clips the top of the page;
-                                    // positive shifts it down, leaving white above.
-                                    image::imageops::overlay(
-                                        &mut canvas,
-                                        &page_rgba,
-                                        0,
-                                        (-win_top).round() as i64,
-                                    );
-                                    (image::DynamicImage::ImageRgba8(canvas), 0.5)
-                                }
-                                None => (dynamic_image, 0.0),
-                            };
-
-                            let mut buf = std::io::Cursor::new(Vec::new());
-                            result_image
-                                .write_to(&mut buf, image::ImageFormat::Png)
-                                .map_err(|e| e.to_string())?;
-                            Ok(LinkPreviewResult {
-                                image_data: buf.into_inner(),
-                                center_ratio,
-                            })
-                        })();
-                        let _ = resp.send(res);
-                    }
-                    PdfCommand::GetPageText(path, index, resp) => {
-                        let res = (|| {
-                            if current_document
-                                .as_ref()
-                                .map(|(p, _)| p != &path)
-                                .unwrap_or(true)
-                            {
-                                let doc = pdfium
-                                    .load_pdf_from_file(&path, None)
-                                    .map_err(format_pdf_load_error)?;
-                                current_document = Some((path.clone(), doc));
-                            }
-                            let Some((_, doc)) = current_document.as_ref() else {
-                                return Err("PDF document was not loaded".to_string());
-                            };
-                            let pages = doc.pages();
-                            if i32::from(index) >= pages.len() {
-                                return Err("Page index out of bounds".to_string());
-                            }
-                            let page = pages.get(index as i32).map_err(|e| e.to_string())?;
-                            build_page_text(&page, index)
-                        })();
-                        let _ = resp.send(res);
-                    }
-                }
-            }
+            let mut worker = Worker::new(&pdfium, receiver, priority_receiver, worker_range);
+            worker.run();
         });
 
         Ok(Self {
@@ -712,12 +140,7 @@ impl PdfRenderer {
         }
     }
 
-    pub fn render_page(
-        &self,
-        path: &str,
-        page_index: u16,
-        scale: f32,
-    ) -> Result<DynamicImage, String> {
+    pub fn render_page(&self, path: &str, page_index: u16, scale: f32) -> PdfResult<DynamicImage> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::RenderPage(
@@ -726,8 +149,8 @@ impl PdfRenderer {
                 scale,
                 tx,
             ))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     pub fn render_page_priority(
@@ -735,7 +158,7 @@ impl PdfRenderer {
         path: &str,
         page_index: u16,
         scale: f32,
-    ) -> Result<DynamicImage, String> {
+    ) -> PdfResult<DynamicImage> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.priority_sender
             .send(PriorityRender {
@@ -744,82 +167,79 @@ impl PdfRenderer {
                 scale,
                 resp: tx,
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(|_| PdfError::WorkerGone)?;
         self.sender
             .send(PdfCommand::Wake)
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
-    pub fn page_count(&self, path: &str) -> Result<u16, String> {
+    pub fn page_count(&self, path: &str) -> PdfResult<u16> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::PageCount(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     /// Extract the full plain text of a PDF (all pages, newline-separated).
     /// Used to feed PDF content into the vault's full-text search index.
-    pub fn extract_document_text(&self, path: &str) -> Result<String, String> {
+    pub fn extract_document_text(&self, path: &str) -> PdfResult<String> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::ExtractText(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
-    pub fn page_sizes(&self, path: &str) -> Result<Vec<(f32, f32)>, String> {
+    pub fn page_sizes(&self, path: &str) -> PdfResult<Vec<(f32, f32)>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::PageSizes(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     /// Returns the document's table of contents along with a flag that is
     /// `true` when the outline was synthesized from page text because the PDF
     /// has no embedded bookmarks.
-    pub fn get_toc(&self, path: &str) -> Result<(Vec<TocEntry>, bool), String> {
+    pub fn get_toc(&self, path: &str) -> PdfResult<(Vec<TocEntry>, bool)> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetToc(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     /// Resolve internal cross-references (numbered equations, figures, tables,
     /// sections) for the whole document. This performs a one-time full text
     /// scan; callers should cache the result by document id (the result is
     /// stable for a given file). See [`crate::references`].
-    pub fn get_references(
-        &self,
-        path: &str,
-    ) -> Result<Vec<crate::references::ReferenceLink>, String> {
+    pub fn get_references(&self, path: &str) -> PdfResult<Vec<crate::references::ReferenceLink>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetReferences(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     /// The embedded outline (bookmarks) only — no text scan, so cheap on every
     /// document. The chunked reference resolver uses this plus per-page text
     /// extraction to avoid a monolithic full-document command.
-    pub fn get_embedded_toc(&self, path: &str) -> Result<Vec<TocEntry>, String> {
+    pub fn get_embedded_toc(&self, path: &str) -> PdfResult<Vec<TocEntry>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetEmbeddedToc(path.to_string(), tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
-    pub fn get_page_links(&self, path: &str, page_index: u16) -> Result<Vec<LinkInfo>, String> {
+    pub fn get_page_links(&self, path: &str, page_index: u16) -> PdfResult<Vec<LinkInfo>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetLinks(path.to_string(), page_index, tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     pub fn search_text(
@@ -828,7 +248,7 @@ impl PdfRenderer {
         query: &str,
         regex: bool,
         match_case: bool,
-    ) -> Result<Vec<PdfSearchMatch>, String> {
+    ) -> PdfResult<Vec<PdfSearchMatch>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::SearchText(
@@ -838,8 +258,8 @@ impl PdfRenderer {
                 match_case,
                 tx,
             ))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     pub fn render_link_preview(
@@ -848,7 +268,7 @@ impl PdfRenderer {
         page_index: u32,
         dest_y: Option<f32>,
         target_width_px: u32,
-    ) -> Result<LinkPreviewResult, String> {
+    ) -> PdfResult<LinkPreviewResult> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::RenderLinkPreview(
@@ -858,16 +278,68 @@ impl PdfRenderer {
                 target_width_px,
                 tx,
             ))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
-    pub fn get_page_text(&self, path: &str, page_index: u16) -> Result<PdfPageText, String> {
+    /// Render `region` of a page about `target_width_px` wide (a crop a note
+    /// shows inline). The region is clamped to the page.
+    pub fn render_region(
+        &self,
+        path: &str,
+        page_index: u16,
+        region: PageRegion,
+        target_width_px: u32,
+    ) -> PdfResult<RegionImage> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::RenderRegion(
+                path.to_string(),
+                page_index,
+                region,
+                target_width_px,
+                tx,
+            ))
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
+    }
+
+    pub fn get_page_text(&self, path: &str, page_index: u16) -> PdfResult<PdfPageText> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetPageText(path.to_string(), page_index, tx))
-            .map_err(|e| e.to_string())?;
-        rx.recv().map_err(|e| e.to_string())?
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
+    }
+
+    /// `get_page_text` for a whole-document scan: queued behind every render,
+    /// link and visible-page request, so the scan never delays the screen.
+    pub fn get_page_text_background(&self, path: &str, page_index: u16) -> PdfResult<PdfPageText> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::GetPageTextBackground(
+                path.to_string(),
+                page_index,
+                tx,
+            ))
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
+    }
+
+    /// Recover a bookmark-less document's outline from page text already
+    /// extracted (with [`Self::get_page_text_background`]): the printed
+    /// contents page through its links, then its text, then typography.
+    /// Equivalent to [`Self::get_toc`]'s fallback without a second text pass.
+    pub fn recover_toc(
+        &self,
+        path: &str,
+        page_texts: std::sync::Arc<Vec<PdfPageText>>,
+    ) -> PdfResult<Vec<TocEntry>> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::RecoverToc(path.to_string(), page_texts, tx))
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
     }
 
     pub(super) fn parse_bookmarks(bookmarks: &[PdfBookmark]) -> Vec<TocEntry> {
@@ -890,51 +362,7 @@ impl PdfRenderer {
     }
 }
 
-pub(super) fn render_page_from_cache<'a>(
-    pdfium: &'a Pdfium,
-    current_document: &mut Option<(String, PdfDocument<'a>)>,
-    path: &str,
-    index: u16,
-    scale: f32,
-) -> Result<DynamicImage, String> {
-    if current_document
-        .as_ref()
-        .map(|(p, _)| p != path)
-        .unwrap_or(true)
-    {
-        let doc = pdfium
-            .load_pdf_from_file(path, None)
-            .map_err(format_pdf_load_error)?;
-        *current_document = Some((path.to_string(), doc));
-    }
-    let Some((_, doc)) = current_document.as_ref() else {
-        return Err("PDF document was not loaded".to_string());
-    };
-    render_page_from_document(doc, index, scale)
-}
-
-pub(super) fn render_page_from_document(
-    doc: &PdfDocument<'_>,
-    index: u16,
-    scale: f32,
-) -> Result<DynamicImage, String> {
-    let pages = doc.pages();
-    if i32::from(index) >= pages.len() {
-        return Err("Page index out of bounds".to_string());
-    }
-    let page = pages
-        .get(index as i32)
-        .map_err(|e| format!("Failed to get page: {:?}", e))?;
-
-    let render_config = PdfRenderConfig::new()
-        .set_target_width((page.width().value * scale) as i32)
-        .set_target_height((page.height().value * scale) as i32);
-
-    let bitmap = page
-        .render_with_config(&render_config)
-        .map_err(|e| format!("Failed to render page: {:?}", e))?;
-
-    bitmap
-        .as_image()
-        .map_err(|e| format!("Failed to convert to image: {:?}", e))
+/// Wait for the worker's typed answer.
+fn receive<T>(rx: std::sync::mpsc::Receiver<PdfResult<T>>) -> PdfResult<T> {
+    rx.recv().map_err(|_| PdfError::WorkerGone)?
 }

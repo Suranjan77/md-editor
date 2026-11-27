@@ -20,7 +20,7 @@ use iced::Task;
 pub const SEARCH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 use crate::editor::buffer::DocBuffer;
-use crate::messages::Message;
+use crate::messages::{Message, SearchMessage};
 use crate::search::DocumentMatch;
 
 use md_editor_core::pdf::PdfSearchMatch;
@@ -41,6 +41,7 @@ struct DocMatchKey {
 pub struct SearchState {
     pub visible: bool,
     pub file_visible: bool,
+    pub replace_visible: bool,
     pub query: String,
     pub replace: String,
     pub regex: bool,
@@ -49,11 +50,17 @@ pub struct SearchState {
     /// survive PDF line breaks / dropped newlines.
     pub loose: bool,
     pub match_index: Option<usize>,
+    pub global_selected: usize,
     pub results: Vec<SearchResult>,
     pub results_truncated: bool,
     pub pdf_results: Vec<PdfSearchMatch>,
     pub pdf_indices_by_page: HashMap<u16, Vec<usize>>,
     pub pdf_error: Option<String>,
+    /// Id of the latest PDF search sent. A result carrying any other id is
+    /// stale: typed over, or for a document no longer open. (Results used to
+    /// be gated on the render generation, which a zoom change bumps, so a
+    /// search racing the fit-to-width right after opening was dropped.)
+    pub pdf_search_seq: u64,
     /// Set on every query keystroke; the debounce subscription fires
     /// `SearchDebounceElapsed`, which runs the search once this is old enough.
     pub pending_query_at: Option<std::time::Instant>,
@@ -74,8 +81,12 @@ impl SearchState {
     /// coordination.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::SearchReplaceChanged(replace) => {
+            Message::Search(SearchMessage::ReplaceChanged(replace)) => {
                 self.replace = replace;
+                Task::none()
+            }
+            Message::Search(SearchMessage::ToggleReplaceRow) => {
+                self.replace_visible = !self.replace_visible;
                 Task::none()
             }
             _ => Task::none(),

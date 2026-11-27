@@ -19,7 +19,7 @@ use super::Tool;
 use super::camera::Camera;
 use super::document::{InkDocument, PaperStyle, StrokeKind};
 use super::stroke::{self, InkPoint, StrokeOptions, Vec2};
-use crate::messages::Message;
+use crate::messages::{InkMessage, Message};
 
 /// Pressure used for mouse input, which reports none. Mid-range so mouse
 /// strokes sit visually between a light and a heavy pen stroke.
@@ -54,6 +54,9 @@ pub struct InkSurface<'a> {
     pub live_options: StrokeOptions,
     pub color: Color,
     pub tool: Tool,
+    /// The pen would erase whatever tool is selected (eraser end, or the
+    /// erase side button held), so it aims with the eraser ring.
+    pub pen_erases: bool,
     pub eraser_radius: f32,
     /// A stroke is currently being laid down, by pen or mouse.
     pub drawing: bool,
@@ -99,7 +102,9 @@ impl canvas::Program<Message> for InkSurface<'_> {
         match event {
             Event::Mouse(ButtonReleased(Left)) if state.drawing => {
                 state.drawing = false;
-                return Some(canvas::Action::publish(Message::InkPointerUp).and_capture());
+                return Some(
+                    canvas::Action::publish(Message::Ink(InkMessage::PointerUp)).and_capture(),
+                );
             }
             Event::Mouse(ButtonReleased(Middle)) if state.panning => {
                 state.panning = false;
@@ -118,11 +123,11 @@ impl canvas::Program<Message> for InkSurface<'_> {
                     mouse::ScrollDelta::Pixels { y, .. } => y / 40.0,
                 };
                 Some(
-                    canvas::Action::publish(Message::InkZoom {
+                    canvas::Action::publish(Message::Ink(InkMessage::Zoom {
                         x: position.x,
                         y: position.y,
                         notches,
-                    })
+                    }))
                     .and_capture(),
                 )
             }
@@ -137,34 +142,45 @@ impl canvas::Program<Message> for InkSurface<'_> {
                 state.drawing = true;
                 state.last_cursor = Some(position);
                 Some(
-                    canvas::Action::publish(Message::InkPointerDown(position.x, position.y))
-                        .and_capture(),
+                    canvas::Action::publish(Message::Ink(InkMessage::PointerDown(
+                        position.x, position.y,
+                    )))
+                    .and_capture(),
                 )
             }
             Event::Mouse(CursorMoved { .. }) => {
-                let position = cursor.position_in(bounds)?;
+                // A drag that runs off the edge keeps going, unclamped, so the
+                // stroke keeps its shape; only hover is limited to the surface.
+                let position = if state.drawing || state.panning {
+                    let absolute = cursor.position()?;
+                    Point::new(absolute.x - bounds.x, absolute.y - bounds.y)
+                } else {
+                    cursor.position_in(bounds)?
+                };
                 let previous = state.last_cursor.replace(position);
 
                 if state.panning {
                     let last = previous.unwrap_or(position);
                     return Some(
-                        canvas::Action::publish(Message::InkPan {
+                        canvas::Action::publish(Message::Ink(InkMessage::Pan {
                             dx: position.x - last.x,
                             dy: position.y - last.y,
-                        })
+                        }))
                         .and_capture(),
                     );
                 }
                 if state.drawing {
                     return Some(
-                        canvas::Action::publish(Message::InkPointerMove(position.x, position.y))
-                            .and_capture(),
+                        canvas::Action::publish(Message::Ink(InkMessage::PointerMove(
+                            position.x, position.y,
+                        )))
+                        .and_capture(),
                     );
                 }
                 // Feed the mouse into the same hover state the pen uses, so
                 // the aiming indicators track whichever device moved last.
-                Some(canvas::Action::publish(Message::InkHoverMoved(
-                    position.x, position.y,
+                Some(canvas::Action::publish(Message::Ink(
+                    InkMessage::HoverMoved(position.x, position.y),
                 )))
             }
             _ => None,
@@ -198,155 +214,13 @@ impl canvas::Program<Message> for InkSurface<'_> {
         let committed = self.cache.draw(renderer, bounds.size(), |frame| {
             self.with_camera(frame, |frame| {
                 draw_paper(frame, self.document.paper, visible, self.camera.zoom);
-
-                // Two passes so highlighter always lands under writing,
-                // whatever order the strokes were drawn in. Within each pass
-                // the document's own order is preserved.
-                for pass in [StrokeKind::Highlighter, StrokeKind::Pen] {
-                    for (index, stroke) in self.document.strokes().iter().enumerate() {
-                        if stroke.kind != pass {
-                            continue;
-                        }
-                        // Skip anything the viewport cannot show; on a long
-                        // page this is most of the document.
-                        if let Some(stroke_box) = stroke.path_bounds()
-                            && !stroke::boxes_overlap(stroke_box, visible)
-                        {
-                            continue;
-                        }
-
-                        let selected = self.selection.contains(&index);
-                        let color = if selected {
-                            // Tint the selection rather than outlining it: an
-                            // outline around handwriting is unreadable.
-                            SELECTION_HUE
-                        } else {
-                            Color::from_rgba(
-                                stroke.color[0],
-                                stroke.color[1],
-                                stroke.color[2],
-                                stroke.color[3],
-                            )
-                        };
-
-                        let options = super::options_for(stroke.kind, self.options);
-                        fill_stroke(frame, &stroke.ink_points(), stroke.size, color, &options);
-                    }
-                }
+                self.draw_strokes(frame, visible);
             });
         });
 
         let mut overlay = canvas::Frame::new(renderer, bounds.size());
-
-        self.with_camera(&mut overlay, |frame| {
-            if !self.live.is_empty() {
-                fill_stroke(
-                    frame,
-                    self.live,
-                    self.live_options.size,
-                    self.color,
-                    &self.live_options,
-                );
-            }
-
-            if self.lasso.len() >= 2 {
-                let path = canvas::Path::new(|builder| {
-                    builder.move_to(Point::new(self.lasso[0].x, self.lasso[0].y));
-                    for vertex in &self.lasso[1..] {
-                        builder.line_to(Point::new(vertex.x, vertex.y));
-                    }
-                    builder.close();
-                });
-                frame.fill(
-                    &path,
-                    Color {
-                        a: 0.10,
-                        ..SELECTION_HUE
-                    },
-                );
-                frame.stroke(
-                    &path,
-                    canvas::Stroke::default()
-                        .with_color(Color {
-                            a: 0.85,
-                            ..SELECTION_HUE
-                        })
-                        // Keep the outline one screen pixel wide whatever the
-                        // zoom, since the frame is scaled.
-                        .with_width(1.0 / self.camera.zoom.max(0.001)),
-                );
-            }
-        });
-
-        // The selection box is drawn in screen space so its outline stays one
-        // pixel wide at any zoom, which is what makes it read as a UI
-        // affordance rather than as more ink.
-        if let Some((min, max)) = self.selection_bounds {
-            let top_left = self.camera.to_screen(min);
-            let bottom_right = self.camera.to_screen(max);
-            let pad = 4.0;
-            let rect = Rectangle {
-                x: top_left.x - pad,
-                y: top_left.y - pad,
-                width: (bottom_right.x - top_left.x) + pad * 2.0,
-                height: (bottom_right.y - top_left.y) + pad * 2.0,
-            };
-            overlay.stroke(
-                &canvas::Path::rectangle(
-                    Point::new(rect.x, rect.y),
-                    iced::Size::new(rect.width, rect.height),
-                ),
-                canvas::Stroke::default()
-                    .with_color(Color {
-                        a: 0.9,
-                        ..SELECTION_HUE
-                    })
-                    .with_width(1.0),
-            );
-        }
-
-        // Drawn outside the camera transform so the ring stays the same size
-        // on screen regardless of zoom — it indicates a screen-space radius.
-        // Positioned from `hover` rather than iced's cursor: pen input never
-        // reaches iced, so its cursor keeps returning the last place the
-        // *mouse* was and the ring would sit frozen there.
-        if self.tool == Tool::Eraser
-            && let Some(position) = self.hover
-        {
-            overlay.stroke(
-                &canvas::Path::circle(Point::new(position.x, position.y), self.eraser_radius),
-                canvas::Stroke::default()
-                    .with_color(Color::from_rgba(0.85, 0.85, 0.9, 0.55))
-                    .with_width(1.0),
-            );
-        }
-
-        // Where the nib will land. On an opaque tablet this is the whole
-        // aiming mechanism, and it shows the *mark* rather than a pointer:
-        // sized to the current brush at the current zoom.
-        if let (Some(position), false) = (self.hover, self.drawing)
-            && self.tool != Tool::Eraser
-            && self.radial.is_none()
-        {
-            let radius = (self.live_options.size * 0.5 * self.camera.zoom).max(2.0);
-            let centre = Point::new(position.x, position.y);
-            overlay.fill(
-                &canvas::Path::circle(centre, radius),
-                Color {
-                    a: 0.35,
-                    ..self.color
-                },
-            );
-            overlay.stroke(
-                &canvas::Path::circle(centre, radius + 1.0),
-                canvas::Stroke::default()
-                    .with_color(Color {
-                        a: 0.7,
-                        ..self.color
-                    })
-                    .with_width(1.0),
-            );
-        }
+        self.with_camera(&mut overlay, |frame| self.draw_live_and_lasso(frame));
+        self.draw_indicators(&mut overlay);
 
         if let Some(menu) = self.radial {
             draw_radial(&mut overlay, &menu);
@@ -386,6 +260,157 @@ impl canvas::Program<Message> for InkSurface<'_> {
 }
 
 impl InkSurface<'_> {
+    /// Committed strokes inside `visible`, highlighter under pen.
+    fn draw_strokes(&self, frame: &mut canvas::Frame, visible: (Vec2, Vec2)) {
+        // Two passes so highlighter always lands under writing,
+        // whatever order the strokes were drawn in. Within each pass
+        // the document's own order is preserved.
+        for pass in [StrokeKind::Highlighter, StrokeKind::Pen] {
+            for (index, stroke) in self.document.strokes().iter().enumerate() {
+                if stroke.kind != pass {
+                    continue;
+                }
+                // Skip anything the viewport cannot show; on a long
+                // page this is most of the document.
+                if let Some(stroke_box) = stroke.path_bounds()
+                    && !stroke::boxes_overlap(stroke_box, visible)
+                {
+                    continue;
+                }
+
+                let selected = self.selection.contains(&index);
+                let color = if selected {
+                    // Tint the selection rather than outlining it: an
+                    // outline around handwriting is unreadable.
+                    SELECTION_HUE
+                } else {
+                    Color::from_rgba(
+                        stroke.color[0],
+                        stroke.color[1],
+                        stroke.color[2],
+                        stroke.color[3],
+                    )
+                };
+
+                let options = super::options_for(stroke.kind, self.options);
+                fill_stroke(frame, &stroke.ink_points(), stroke.size, color, &options);
+            }
+        }
+    }
+
+    /// The stroke being drawn and the lasso, in page space.
+    fn draw_live_and_lasso(&self, frame: &mut canvas::Frame) {
+        if !self.live.is_empty() {
+            fill_stroke(
+                frame,
+                self.live,
+                self.live_options.size,
+                self.color,
+                &self.live_options,
+            );
+        }
+
+        if self.lasso.len() >= 2 {
+            let path = canvas::Path::new(|builder| {
+                builder.move_to(Point::new(self.lasso[0].x, self.lasso[0].y));
+                for vertex in &self.lasso[1..] {
+                    builder.line_to(Point::new(vertex.x, vertex.y));
+                }
+                builder.close();
+            });
+            frame.fill(
+                &path,
+                Color {
+                    a: 0.10,
+                    ..SELECTION_HUE
+                },
+            );
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_color(Color {
+                        a: 0.85,
+                        ..SELECTION_HUE
+                    })
+                    // Keep the outline one screen pixel wide whatever the
+                    // zoom, since the frame is scaled.
+                    .with_width(1.0 / self.camera.zoom.max(0.001)),
+            );
+        }
+    }
+
+    /// Screen-space affordances: selection box, eraser ring, nib preview.
+    fn draw_indicators(&self, overlay: &mut canvas::Frame) {
+        // The selection box is drawn in screen space so its outline stays one
+        // pixel wide at any zoom, which is what makes it read as a UI
+        // affordance rather than as more ink.
+        if let Some((min, max)) = self.selection_bounds {
+            let top_left = self.camera.to_screen(min);
+            let bottom_right = self.camera.to_screen(max);
+            let pad = 4.0;
+            let rect = Rectangle {
+                x: top_left.x - pad,
+                y: top_left.y - pad,
+                width: (bottom_right.x - top_left.x) + pad * 2.0,
+                height: (bottom_right.y - top_left.y) + pad * 2.0,
+            };
+            overlay.stroke(
+                &canvas::Path::rectangle(
+                    Point::new(rect.x, rect.y),
+                    iced::Size::new(rect.width, rect.height),
+                ),
+                canvas::Stroke::default()
+                    .with_color(Color {
+                        a: 0.9,
+                        ..SELECTION_HUE
+                    })
+                    .with_width(1.0),
+            );
+        }
+
+        // Drawn outside the camera transform so the ring stays the same size
+        // on screen regardless of zoom — it indicates a screen-space radius.
+        // Positioned from `hover` rather than iced's cursor: pen input never
+        // reaches iced, so its cursor keeps returning the last place the
+        // *mouse* was and the ring would sit frozen there.
+        let erasing = self.tool == Tool::Eraser || self.pen_erases;
+        if erasing && let Some(position) = self.hover {
+            overlay.stroke(
+                &canvas::Path::circle(Point::new(position.x, position.y), self.eraser_radius),
+                canvas::Stroke::default()
+                    .with_color(Color::from_rgba(0.85, 0.85, 0.9, 0.55))
+                    .with_width(1.0),
+            );
+        }
+
+        // Where the nib will land. On an opaque tablet this is the whole
+        // aiming mechanism, and it shows the *mark* rather than a pointer:
+        // sized to the current brush at the current zoom.
+        if let (Some(position), false) = (self.hover, self.drawing)
+            && !erasing
+            && self.radial.is_none()
+        {
+            let radius = (self.live_options.size * 0.5 * self.camera.zoom).max(2.0);
+            let centre = Point::new(position.x, position.y);
+            overlay.fill(
+                &canvas::Path::circle(centre, radius),
+                Color {
+                    a: 0.35,
+                    ..self.color
+                },
+            );
+            overlay.stroke(
+                &canvas::Path::circle(centre, radius + 1.0),
+                canvas::Stroke::default()
+                    .with_color(Color {
+                        a: 0.7,
+                        ..self.color
+                    })
+                    .with_width(1.0),
+            );
+        }
+    }
+
     /// Run `f` with the frame transformed from page space into screen space.
     fn with_camera(&self, frame: &mut canvas::Frame, f: impl FnOnce(&mut canvas::Frame)) {
         frame.with_save(|frame| {

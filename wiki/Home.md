@@ -1,7 +1,7 @@
 # MD Editor Wiki
 
 **MD Editor** is a calm, native, local-first desktop workspace for Markdown notes, PDFs,
-presentations, images, a knowledge graph, handwritten notes, search, backlinks, and study
+images, a knowledge graph, handwritten notes, search, backlinks, and study
 progress. It is written in Rust on [Iced](https://github.com/iced-rs/iced) 0.14 and Google's
 [PDFium](https://pdfium.googlesource.com/pdfium/).
 
@@ -19,12 +19,11 @@ right and the page is a bug.
 | Saving, opening, file operations | `native/src/app/documents.rs`, `core/src/vault.rs` | [Data Flows & Invariants](Data-Flows-and-Durability-Invariants.md), [Core Services](Core-Services.md) |
 | PDF rendering, TOC, references | `core/src/pdf/`, `core/src/references.rs` | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) |
 | The PDF pane, highlights, linked notes | `native/src/app/pdf*.rs`, `native/src/views/pdf_viewer.rs` | [PDF Viewer Internals](PDF-Viewer-Internals.md) |
-| Presentations | `core/src/pptx/`, `native/src/slides/` | [Core Services §8](Core-Services.md#8-powerpoint-presentations-pptxrs-pptx) |
 | The knowledge graph | `native/src/graph_state.rs`, `native/src/views/graph*` | [Knowledge Graph](Knowledge-Graph.md) |
 | Handwriting | `native/src/ink/` | [Handwritten Notes](Handwritten-Notes.md) |
 | Search, wikilinks, backlinks | `core/src/file_index.rs`, `native/src/app/search.rs` | [Core Services](Core-Services.md) |
 | The study tracker | `native/src/views/tracker.rs`, `core/src/tracker.rs` | [Study Tracker](Study-Tracker.md) |
-| Colours, spacing, animation | `native/src/theme.rs`, `native/src/motion.rs` | [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md) |
+| Colours, spacing, animation | `native/src/design/`, components in `native/src/ui/` | [Design System & Motion](Design-Tokens-Motion-and-Palette.md) |
 | The database schema | `core/src/state.rs` | [Core Services](Core-Services.md) |
 
 Every source file opens with a one-line `//!` summary: `grep -rm1 '^//!' core/src native/src`
@@ -45,7 +44,6 @@ graph TB
         DocBuf["DocBuffer, undo runs<br/>editor/buffer.rs"]
         Highlighter["Incremental Markdown highlighter<br/>editor/highlight.rs"]
         PDFView["PDF pane and page widget<br/>views/pdf_viewer.rs, views/interactive_pdf.rs"]
-        SlideView["Slide viewer<br/>slides/, views/pptx_viewer.rs"]
         GraphView["Knowledge graph<br/>graph_state.rs, views/graph*, shaders/"]
         Ink["Handwriting canvas (own window)<br/>ink/, views/ink.rs"]
     end
@@ -56,16 +54,14 @@ graph TB
         Index["Wikilink and backlink index<br/>file_index.rs"]
         PDFWorker["PDFium worker, TOC recovery<br/>pdf/"]
         RefScanner["Reference resolver<br/>references.rs"]
-        PptxParser["PowerPoint reader<br/>pptx/"]
     end
 
     App --> AppState
     DocBuf --> Highlighter --> Widget
     PDFView -->|"typed commands over channels"| PDFWorker
     PDFWorker --> RefScanner
-    SlideView -->|"parsed off the UI thread"| PptxParser
     GraphView -->|"snapshot task"| Vault
-    Ink -->|"atomic save of .ink"| Vault
+    Ink -->|"atomic save of .ink.svg"| Vault
     Index --> Vault
     AppState --> Vault
     AppState --> Index
@@ -82,14 +78,14 @@ graph TB
 | [Architecture & Philosophy](Architecture-and-Philosophy.md) | Local-first, durability, non-destructive sidecars, threading |
 | [Repository Structure](Repository-Structure.md) | Crates and per-file responsibilities |
 | [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md) | Keystroke to atomic save, navigation, highlight creation |
-| [Core Services](Core-Services.md) | SQLite schema, paths, vault operations, wikilinks, search, presentations |
+| [Core Services](Core-Services.md) | SQLite schema, paths, vault operations, wikilinks, search |
 | [Native Desktop GUI](Native-Desktop-GUI.md) | Lifecycle, windows, message routing, sub-states, subscriptions, views |
 | [Markdown Pipeline](Markdown-Pipeline.md) | Buffer, incremental highlighting, rhythm, caret, drawing |
 | [PDF Engine & Sidecars](PDF-Engine-and-Sidecars.md) | PDFium worker, TOC recovery, references, annotations |
 | [PDF Viewer Internals](PDF-Viewer-Internals.md) | PDF pane state, generations, navigation, zoom |
 | [Knowledge Graph](Knowledge-Graph.md) | Snapshot, refresh, layout, simulation, GPU rendering, insights |
 | [Handwritten Notes](Handwritten-Notes.md) | Ink window, pen capture, strokes, the `.ink` format |
-| [Design Tokens & Motion](Design-Tokens-Motion-and-Palette.md) | Type scale, spacing, colours, easing, springs |
+| [Design System & Motion](Design-Tokens-Motion-and-Palette.md) | Type scale, spacing, colours, easing, springs |
 | [Study Tracker](Study-Tracker.md) | Timer, sessions, curriculum config, storage |
 | [Developer Guide & Testing](Developer-Guide-and-Testing.md) | Toolchain, builds, PDFium, test suites |
 | [Release Checklist](Release-Checklist.md) | Pre-release verification and packaging |
@@ -99,10 +95,8 @@ New contributors: read [Contributor Guidelines](Contributor-Guidelines.md), then
 [Developer Guide & Testing](Developer-Guide-and-Testing.md), then
 [Data Flows & Durability Invariants](Data-Flows-and-Durability-Invariants.md).
 
-**The Field Handbook** — a ~100-page printable tour of the codebase lives at
-[`docs/MD-Editor-Handbook.pdf`](../docs/MD-Editor-Handbook.pdf). It is a snapshot from
-2026-09-14 and predates the knowledge graph, handwriting and the module splits; this wiki is
-current.
+**What is not done yet** — [`docs/open-items.md`](../docs/open-items.md) lists the unfinished
+roadmap items, known gaps, and checks that need real hardware.
 
 ---
 

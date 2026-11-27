@@ -23,7 +23,6 @@ use super::{MathCache, line_visual_y};
 use crate::editor::buffer::EditorCommand;
 use crate::editor::highlight::StyledLine;
 use crate::editor::test_docs::{Rng, block, document, words};
-use crate::theme;
 
 type R = iced::Renderer;
 
@@ -161,7 +160,7 @@ fn ensure(condition: bool, message: impl FnOnce() -> String) -> Result<(), Strin
 
 /// Content width the widget lays out at for a window width.
 fn content_width(width: f32) -> f32 {
-    width.min(MAX_CONTENT_WIDTH)
+    width.min(max_content_width())
 }
 
 struct TextBox {
@@ -208,7 +207,8 @@ fn caret_rect(calls: &[Call]) -> Option<Rectangle> {
     calls.iter().find_map(|call| match call {
         Call::Quad { bounds, color, .. }
             if bounds.width == 2.0
-                && (*color == theme::ACCENT || *color == theme::ACCENT_SECONDARY) =>
+                && (*color == crate::design::tokens().doc_caret
+                    || *color == crate::design::tokens().doc_caret) =>
         {
             Some(*bounds)
         }
@@ -836,7 +836,7 @@ fn scrollbars_stay_in_bounds_and_follow_drags() {
     check("scrollbars_stay_in_bounds_and_follow_drags", 40, |case| {
         let mut view = case.view();
         let mut rng = case.rng(11);
-        let track_color = iced::Color::from_rgba(1.0, 1.0, 1.0, 0.06);
+        let track_color = crate::design::fade(crate::design::tokens().fg_primary, 0.06);
         for _ in 0..6 {
             let calls = view.draw();
             let quads = |color| -> Vec<Rectangle> {
@@ -850,7 +850,13 @@ fn scrollbars_stay_in_bounds_and_follow_drags() {
                     })
                     .collect()
             };
-            let (tracks, thumbs) = (quads(track_color), quads(theme::ACCENT_DIM));
+            let (tracks, thumbs) = (
+                quads(track_color),
+                quads(crate::design::fade(
+                    crate::design::tokens().fg_tertiary,
+                    0.6,
+                )),
+            );
             ensure(tracks.len() == thumbs.len(), || {
                 format!("{} tracks but {} thumbs", tracks.len(), thumbs.len())
             })?;
@@ -881,7 +887,12 @@ fn scrollbars_stay_in_bounds_and_follow_drags() {
                     .iter()
                     .filter_map(|c| match c {
                         Call::Quad { bounds, color, .. }
-                            if *color == theme::ACCENT_DIM && (bounds.y - thumb.y).abs() < 0.01 =>
+                            if *color
+                                == crate::design::fade(
+                                    crate::design::tokens().fg_tertiary,
+                                    0.6,
+                                )
+                                && (bounds.y - thumb.y).abs() < 0.01 =>
                         {
                             Some(*bounds)
                         }

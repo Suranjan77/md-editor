@@ -20,7 +20,7 @@ use image::GenericImageView;
 
 use crate::editor::buffer::DocBuffer;
 use crate::editor::highlight::Highlighted;
-use crate::messages::Message;
+use crate::messages::{EditorMessage, Message};
 use crate::views;
 
 /// Idle time after the last edit before the document is written to disk.
@@ -60,9 +60,31 @@ pub struct EditorPane {
     pub reveal_request: u64,
     /// The request not yet answered, and how it wants the caret shown.
     reveal_pending: Option<(u64, crate::editor::renderer::Reveal)>,
+    /// Where the caret was last reported, for anchoring the completion popup.
+    pub caret_view: Option<crate::editor::renderer::CaretView>,
+    /// The open `[[` / `/` completion, if any.
+    pub completion: Option<crate::autocomplete::Completion>,
 
     pub image_cache: HashMap<String, (Handle, f32, f32)>,
+    /// Bumped whenever `image_cache` changes, so a refreshed image of a new
+    /// size re-lays out its line even when the cache's length is unchanged.
+    images_revision: u64,
+    /// Images being decoded off the UI thread, and those that failed (missing,
+    /// unreadable) — neither is tried again on every keystroke. Absolute paths.
+    pending_images: std::collections::HashSet<std::path::PathBuf>,
+    failed_images: std::collections::HashSet<std::path::PathBuf>,
+    /// The same for `pdf://…&crop=` images, by link text.
+    pending_crops: std::collections::HashSet<String>,
+    failed_crops: std::collections::HashSet<String>,
+    /// Images (by link text) whose file changed: decoded again, shown as they
+    /// were until the new picture arrives, so a note does not flicker while a
+    /// sketch it shows autosaves.
+    stale_images: std::collections::HashSet<String>,
     pub math_cache: HashMap<String, crate::editor::renderer::MathRender>,
+    /// TeX being rendered, and TeX that failed to parse: rendered once, not
+    /// once per keystroke or per repeat in the note.
+    pending_math: std::collections::HashSet<String>,
+    failed_math: std::collections::HashSet<String>,
     /// Display scale the current math_cache contents were rasterized for.
     math_scale_factor: f32,
 
@@ -78,6 +100,11 @@ pub struct EditorPane {
     /// When the buffer last changed with edits still unwritten. The autosave
     /// subscription is armed while this is set.
     pub autosave_pending_since: Option<Instant>,
+
+    /// [`md_editor_core::vault::content_hash`] of the open note as last read
+    /// from or written to disk. A save that finds different text on disk
+    /// keeps that version as a conflict copy instead of overwriting it.
+    pub disk_hash: Option<u64>,
 }
 
 impl EditorPane {
@@ -94,12 +121,23 @@ impl EditorPane {
             viewport_height: 720.0,
             reveal_request: 0,
             reveal_pending: None,
+            caret_view: None,
+            completion: None,
             image_cache: HashMap::new(),
+            images_revision: 0,
+            pending_images: Default::default(),
+            failed_images: Default::default(),
+            pending_crops: Default::default(),
+            failed_crops: Default::default(),
+            stale_images: Default::default(),
             math_cache: HashMap::new(),
+            pending_math: Default::default(),
+            failed_math: Default::default(),
             math_scale_factor: 1.0,
             retained: HashMap::new(),
             retained_order: Vec::new(),
             autosave_pending_since: None,
+            disk_hash: None,
         }
     }
 
@@ -116,8 +154,10 @@ impl EditorPane {
         (
             self.highlight.revision(),
             self.image_cache.len(),
+            self.images_revision,
             self.math_cache.len(),
             self.math_scale_factor.to_bits(),
+            crate::design::theme_revision(),
         )
             .hash(&mut hasher);
         hasher.finish()
@@ -183,6 +223,13 @@ impl EditorPane {
         self.retained.remove(path)
     }
 
+    /// Apply `edit` to the parked buffer for `path`, if there is one.
+    pub fn update_retained(&mut self, path: &str, edit: impl FnOnce(&mut DocBuffer)) {
+        if let Some((buffer, _)) = self.retained.get_mut(path) {
+            edit(buffer);
+        }
+    }
+
     /// Drop the parked buffer for `path`, and for anything under it when
     /// `path` is a folder. Used when an entry is deleted or renamed so stale
     /// history cannot be resurrected under a new file.
@@ -198,6 +245,19 @@ impl EditorPane {
     pub fn forget_all_retained(&mut self) {
         self.retained.clear();
         self.retained_order.clear();
+    }
+
+    /// Absorb another pane's parked buffers into `self` (preserving recency order).
+    /// Existing entries in `self` win if the same path is present in both.
+    pub fn absorb_retained(&mut self, other: &mut EditorPane) {
+        let order = std::mem::take(&mut other.retained_order);
+        for path in order {
+            if let Some((buffer, scroll_y)) = other.retained.remove(&path)
+                && !self.retained.contains_key(&path)
+            {
+                self.retain_buffer(path, buffer, scroll_y);
+            }
+        }
     }
 
     /// Arm the autosave debounce. Called whenever buffer text changes.
@@ -227,15 +287,29 @@ impl EditorPane {
     /// shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::MathRendered(tex, scale, res) => {
+            Message::Editor(EditorMessage::MathRendered(tex, scale, ink, res)) => {
                 // Drop results rasterized for a display scale we've since
                 // moved away from (the cache was flushed on rescale; a stale
                 // insert would stay blurry until the next flush).
+                // Also drop renders in a colour from before a theme switch.
                 if (scale - self.math_scale_factor).abs() < 0.01
-                    && let Ok(render) = res
+                    && ink == crate::design::tokens().doc_math
                 {
-                    self.math_cache.insert(tex, render);
+                    match res {
+                        Ok(render) => {
+                            self.math_cache.insert(tex.clone(), render);
+                        }
+                        Err(_) => {
+                            // Half-typed TeX fails a new way per keystroke;
+                            // keep the memory of failures bounded.
+                            if self.failed_math.len() > MAX_FAILED_MATH {
+                                self.failed_math.clear();
+                            }
+                            self.failed_math.insert(tex.clone());
+                        }
+                    }
                 }
+                self.pending_math.remove(&tex);
                 Task::none()
             }
             _ => Task::none(),
@@ -244,33 +318,193 @@ impl EditorPane {
 
     // ── Resource loading for rendered content ────────────────────────
 
-    /// Synchronously load any not-yet-cached images referenced by the
-    /// highlighted lines, resolving paths relative to the active document.
-    pub fn load_images(&mut self, vault_root: &str, active_path: &str) {
-        let Some(base_path) = std::path::Path::new(vault_root)
-            .join(active_path)
-            .parent()
-            .map(|path| path.to_path_buf())
-        else {
-            return;
+    /// Decode, off the UI thread, every image the highlighted lines show that
+    /// is neither cached, nor being decoded, nor known to fail. Paths resolve
+    /// relative to the active document.
+    pub fn load_images(&mut self, vault_root: &str, active_path: &str) -> Task<Message> {
+        let Some(base_path) = image_base(vault_root, active_path) else {
+            return Task::none();
         };
-
+        let mut tasks = Vec::new();
         for line in &self.highlight.lines {
             for span in &line.spans {
-                if span.is_image
-                    && let Some(path) = &span.image_path
-                    && !self.image_cache.contains_key(path)
-                {
-                    let img_path = base_path.join(path);
-                    if let Ok(img) = image::open(&img_path) {
-                        let (width, height) = img.dimensions();
-                        let handle = Handle::from_rgba(width, height, img.into_rgba8().into_raw());
-                        self.image_cache
-                            .insert(path.clone(), (handle, width as f32, height as f32));
-                    }
+                let Some(key) = span.image_path.as_ref().filter(|_| span.is_image) else {
+                    continue;
+                };
+                let fresh = self.image_cache.contains_key(key) && !self.stale_images.contains(key);
+                if fresh || is_pdf_crop(key) {
+                    continue;
+                }
+                let abs = base_path.join(image_link_path(key));
+                if self.failed_images.contains(&abs) || !self.pending_images.insert(abs.clone()) {
+                    continue;
+                }
+                let key = key.clone();
+                tasks.push(Task::perform(
+                    crate::app::blocking({
+                        let abs = abs.clone();
+                        move || crate::raster::decode(&abs).map(crate::raster::Decoded::handle)
+                    }),
+                    move |result| {
+                        Message::Editor(EditorMessage::ImageLoaded(
+                            key.clone(),
+                            abs.clone(),
+                            result,
+                        ))
+                    },
+                ));
+            }
+        }
+        Task::batch(tasks)
+    }
+
+    /// A decode finished. It is kept only if `key` still resolves to `abs`
+    /// from the document open now.
+    pub fn image_loaded(
+        &mut self,
+        key: String,
+        abs: std::path::PathBuf,
+        result: Result<(Handle, f32, f32), String>,
+        vault_root: Option<&str>,
+        active_path: Option<&str>,
+    ) {
+        if !self.pending_images.remove(&abs) {
+            return; // forgotten (document switched, file changed) meanwhile
+        }
+        let current = vault_root
+            .zip(active_path)
+            .and_then(|(root, active)| image_base(root, active))
+            .map(|base| base.join(image_link_path(&key)));
+        match result {
+            Ok(image) if current.as_ref() == Some(&abs) => {
+                self.stale_images.remove(&key);
+                self.image_cache.insert(key, image);
+                self.images_revision = self.images_revision.wrapping_add(1);
+            }
+            Ok(_) => {}
+            Err(_) => {
+                // Gone or unreadable now: stop showing the old picture.
+                if self.stale_images.remove(&key) && self.image_cache.remove(&key).is_some() {
+                    self.images_revision = self.images_revision.wrapping_add(1);
+                }
+                self.failed_images.insert(abs);
+            }
+        }
+    }
+
+    /// `pdf://…&crop=` images the lines show that are neither rendered, nor
+    /// rendering, nor known to fail. They are marked as rendering: the caller
+    /// starts each one and reports back with [`Self::pdf_crop_loaded`].
+    pub fn take_wanted_pdf_crops(&mut self) -> Vec<String> {
+        let mut wanted = Vec::new();
+        for line in &self.highlight.lines {
+            for span in line.spans.iter().filter(|s| s.is_image) {
+                let Some(key) = span.image_path.as_ref().filter(|k| is_pdf_crop(k)) else {
+                    continue;
+                };
+                let fresh = self.image_cache.contains_key(key) && !self.stale_images.contains(key);
+                if fresh || self.failed_crops.contains(key) {
+                    continue;
+                }
+                if self.pending_crops.insert(key.clone()) {
+                    wanted.push(key.clone());
                 }
             }
         }
+        wanted
+    }
+
+    /// A crop finished rendering. Dropped if the images were forgotten since.
+    pub fn pdf_crop_loaded(&mut self, key: String, result: Result<(Handle, f32, f32), String>) {
+        if !self.pending_crops.remove(&key) {
+            return;
+        }
+        match result {
+            Ok(image) => {
+                self.stale_images.remove(&key);
+                self.image_cache.insert(key, image);
+                self.images_revision = self.images_revision.wrapping_add(1);
+            }
+            Err(e) => {
+                log::warn!("Could not show {key}: {e}");
+                if self.stale_images.remove(&key) && self.image_cache.remove(&key).is_some() {
+                    self.images_revision = self.images_revision.wrapping_add(1);
+                }
+                self.failed_crops.insert(key);
+            }
+        }
+    }
+
+    /// Files changed on disk (absolute paths): mark the images the note shows
+    /// from them for decoding again, keeping the old pictures up meanwhile.
+    /// Any changed PDF re-renders every crop. Returns whether anything shown
+    /// is affected (the caller then loads resources).
+    pub fn refresh_changed_files(
+        &mut self,
+        vault_root: &str,
+        active_path: &str,
+        changed: &[std::path::PathBuf],
+        pdf_changed: bool,
+    ) -> bool {
+        let Some(base) = image_base(vault_root, active_path) else {
+            return false;
+        };
+        let changed: Vec<std::path::PathBuf> = changed.iter().map(|p| lexical(p)).collect();
+        let mut affected = false;
+        let keys: Vec<String> = self
+            .highlight
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .filter(|span| span.is_image)
+            .filter_map(|span| span.image_path.clone())
+            .collect();
+        for key in keys {
+            if is_pdf_crop(&key) {
+                if pdf_changed {
+                    self.failed_crops.remove(&key);
+                    self.pending_crops.remove(&key);
+                    if self.image_cache.contains_key(&key) {
+                        self.stale_images.insert(key);
+                    }
+                    affected = true;
+                }
+                continue;
+            }
+            let abs = base.join(image_link_path(&key));
+            if !changed.contains(&lexical(&abs)) {
+                continue;
+            }
+            self.failed_images.remove(&abs);
+            // A decode in flight may have read the old file: let a new one start.
+            self.pending_images.remove(&abs);
+            if self.image_cache.contains_key(&key) {
+                self.stale_images.insert(key);
+            }
+            affected = true;
+        }
+        affected
+    }
+
+    /// Drop every decoded image and what is known about missing ones: on a
+    /// document switch (links are relative to the note) or when image files
+    /// change on disk.
+    pub fn forget_images(&mut self) {
+        self.image_cache.clear();
+        self.pending_images.clear();
+        self.failed_images.clear();
+        self.pending_crops.clear();
+        self.failed_crops.clear();
+        self.stale_images.clear();
+        self.images_revision = self.images_revision.wrapping_add(1);
+    }
+
+    /// Drop rendered math (a new display scale or ink colour) and the record
+    /// of renders in flight or failed.
+    pub fn forget_math(&mut self) {
+        self.math_cache.clear();
+        self.pending_math.clear();
+        self.failed_math.clear();
     }
 
     /// Spawn render tasks for any not-yet-cached math spans. `scale_factor` is
@@ -290,16 +524,27 @@ impl EditorPane {
                         .trim_matches('$')
                         .trim()
                         .to_string();
-                    if !tex.is_empty() && !self.math_cache.contains_key(&tex) {
+                    if !tex.is_empty()
+                        && !self.math_cache.contains_key(&tex)
+                        && !self.failed_math.contains(&tex)
+                        && self.pending_math.insert(tex.clone())
+                    {
                         let tex_clone = tex.clone();
+                        // Chosen here, on the UI thread, not when the task runs.
+                        let ink = crate::design::tokens().doc_math;
                         tasks.push(Task::perform(
-                            async move {
-                                (
-                                    tex_clone.clone(),
-                                    render_latex_task(&tex_clone, scale_factor),
-                                )
+                            crate::app::blocking(move || {
+                                let render = render_latex_task(&tex_clone, scale_factor, ink);
+                                (tex_clone, render)
+                            }),
+                            move |(t, r)| {
+                                Message::Editor(EditorMessage::MathRendered(
+                                    t,
+                                    scale_factor,
+                                    ink,
+                                    r,
+                                ))
                             },
-                            move |(t, r)| Message::MathRendered(t, scale_factor, r),
                         ));
                     }
                 }
@@ -312,6 +557,7 @@ impl EditorPane {
 pub(crate) fn render_latex_task(
     tex: &str,
     scale_factor: f32,
+    ink: iced::Color,
 ) -> Result<crate::editor::renderer::MathRender, String> {
     use ratex_layout::{LayoutOptions, layout, to_display_list};
     use ratex_parser::parser::parse;
@@ -325,56 +571,105 @@ pub(crate) fn render_latex_task(
     // pixels) means both draw 1:1 on the device grid — resampling at a
     // fractional ratio renders thin glyph strokes alternately crisp and
     // blurry.
-    let render_at = |device_pixel_ratio: f32| -> Result<(Handle, f32, f32), String> {
-        let options = RenderOptions {
-            font_size: 24.0,
-            padding: 4.0,
-            background_color: RatexColor {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 0.0,
-            },
-            font_dir: String::new(),
-            device_pixel_ratio,
+    let render_at =
+        |device_pixel_ratio: f32, style: MathStyle| -> Result<(Handle, f32, f32), String> {
+            let options = RenderOptions {
+                font_size: 24.0,
+                padding: 4.0,
+                background_color: RatexColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 0.0,
+                },
+                font_dir: String::new(),
+                device_pixel_ratio,
+            };
+
+            let layout_opts = LayoutOptions::default()
+                .with_style(style)
+                .with_color(RatexColor {
+                    r: ink.r,
+                    g: ink.g,
+                    b: ink.b,
+                    a: 1.0,
+                });
+
+            let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
+            let lbox = layout(&ast, &layout_opts);
+            let display_list = to_display_list(&lbox);
+            let bytes = render_to_png(&display_list, &options)
+                .map_err(|e| format!("Render error: {:?}", e))?;
+
+            let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+            let (w, h) = img.dimensions();
+            // Logical size = bitmap pixels / raster DPR; layout works in logical
+            // units, so this is DPR-invariant.
+            Ok((
+                Handle::from_bytes(bytes),
+                w as f32 / device_pixel_ratio,
+                h as f32 / device_pixel_ratio,
+            ))
         };
 
-        let layout_opts = LayoutOptions::default()
-            .with_style(MathStyle::Display)
-            .with_color(RatexColor {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            });
-
-        let ast = parse(tex).map_err(|e| format!("Parse error: {}", e))?;
-        let lbox = layout(&ast, &layout_opts);
-        let display_list = to_display_list(&lbox);
-        let bytes =
-            render_to_png(&display_list, &options).map_err(|e| format!("Render error: {:?}", e))?;
-
-        let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-        let (w, h) = img.dimensions();
-        // Logical size = bitmap pixels / raster DPR; layout works in logical
-        // units, so this is DPR-invariant.
-        Ok((
-            Handle::from_bytes(bytes),
-            w as f32 / device_pixel_ratio,
-            h as f32 / device_pixel_ratio,
-        ))
-    };
-
     let scale = scale_factor.clamp(1.0, 6.0);
-    let (inline_handle, width, height) = render_at(scale)?;
-    let (block_handle, _, _) =
-        render_at((crate::editor::renderer::MATH_BLOCK_SCALE * scale).min(6.0))?;
+    let block_scale = crate::editor::renderer::MATH_BLOCK_SCALE;
+    // `$…$` in a line takes text style (smaller limits and fractions), as in
+    // LaTeX; `$$…$$` display style.
+    let (inline_handle, width, height) = render_at(scale, MathStyle::Text)?;
+    let (block_handle, block_w, block_h) =
+        render_at((block_scale * scale).min(6.0), MathStyle::Display)?;
     Ok(crate::editor::renderer::MathRender {
         inline_handle,
         block_handle,
         width,
         height,
+        block_width: block_w * block_scale,
+        block_height: block_h * block_scale,
     })
+}
+
+/// The file an image link points at: `<…>` (CommonMark's form for paths with
+/// spaces) unwrapped and `%XX` escapes decoded.
+/// Most failed TeX strings remembered before the record is reset.
+const MAX_FAILED_MATH: usize = 1000;
+
+/// `path` with `.` and `..` resolved without touching the disk, so an image
+/// link like `../img/a.png` compares equal to the file it names.
+fn lexical(path: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// An image link that shows a region of a PDF page, rendered live.
+pub(crate) fn is_pdf_crop(link: &str) -> bool {
+    link.trim().starts_with("pdf://") && link.contains("crop=")
+}
+
+/// The folder images in `active_path` resolve against.
+fn image_base(vault_root: &str, active_path: &str) -> Option<std::path::PathBuf> {
+    std::path::Path::new(vault_root)
+        .join(active_path)
+        .parent()
+        .map(std::path::Path::to_path_buf)
+}
+
+pub(crate) fn image_link_path(link: &str) -> String {
+    let link = link.trim();
+    let link = link
+        .strip_prefix('<')
+        .and_then(|l| l.strip_suffix('>'))
+        .unwrap_or(link);
+    crate::platform::percent_decode(link)
 }
 
 #[cfg(test)]

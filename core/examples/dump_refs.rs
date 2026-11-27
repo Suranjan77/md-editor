@@ -4,6 +4,9 @@
 //!
 //! Run: cargo run --release --example dump_refs -- <file.pdf> [more.pdf ...]
 
+// A command-line tool: printing is its output.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 use md_editor_core::pdf::PdfRenderer;
 use md_editor_core::references::{ReferenceKind, resolve_references};
 use std::time::Instant;
@@ -67,11 +70,7 @@ fn main() {
             ReferenceKind::Table,
             ReferenceKind::Section,
         ] {
-            let mut shown = 0;
-            for l in links.iter().filter(|l| l.kind == kind) {
-                if shown >= 4 {
-                    break;
-                }
+            for l in links.iter().filter(|l| l.kind == kind).take(4) {
                 let needle = match l.kind {
                     ReferenceKind::Equation => format!("({})", l.label),
                     _ => l.label.clone(),
@@ -86,7 +85,6 @@ fn main() {
                     l.label,
                     ctx
                 );
-                shown += 1;
             }
         }
     }

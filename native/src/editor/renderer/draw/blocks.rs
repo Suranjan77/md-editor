@@ -18,12 +18,15 @@ use super::super::{Editor, Measure, Paint, State};
 use super::captions::{block_ordinal, paint_block_caption, paint_language_badge};
 use super::primitives::{TextRun, clip_viewport, draw_nowrap_text, fill, rounded};
 use super::{Frame, LineBox};
-use crate::theme;
+use crate::editor::renderer::measure::mono_font;
+use crate::editor::renderer::metrics::scaled;
 
 const CARD_RADIUS: f32 = 8.0;
 /// Cards start this far left of the text column.
 const CARD_OUTSET: f32 = 16.0;
 const QUOTE_BAR_WIDTH: f32 = 4.0;
+/// Opacity of a callout's colour behind its text.
+const CALLOUT_TINT: f32 = 0.08;
 
 #[derive(PartialEq)]
 pub(super) enum BlockKind {
@@ -47,6 +50,8 @@ pub(super) struct BlockMeta {
     /// Horizontal extent, for blocks that scroll.
     pub scroll: Option<ScrollExtent>,
     pub code_lang: Option<String>,
+    /// For a quote run that opens with `> [!type]`: its callout.
+    pub callout: Option<crate::editor::highlight::Callout>,
 }
 
 impl<Message> Editor<'_, Message> {
@@ -116,6 +121,7 @@ impl<Message> Editor<'_, Message> {
                 kind,
                 scroll: self.scroll_extent::<R>(state, block_id, bounds.width, focused),
                 code_lang: lines.iter().find_map(|line| line.code_block_lang.clone()),
+                callout: first_line.callout,
             };
             blocks.insert(block_id, meta);
         }
@@ -147,12 +153,17 @@ impl<Message> Editor<'_, Message> {
 
         match meta.kind {
             BlockKind::Quote => {
-                fill(
-                    renderer,
-                    card,
-                    rounded(CARD_RADIUS),
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.012),
-                );
+                let (tint, bar) = match meta.callout {
+                    Some(callout) => (
+                        crate::design::fade(callout.color(), CALLOUT_TINT),
+                        callout.color(),
+                    ),
+                    None => (
+                        crate::design::fade(crate::design::tokens().fg_primary, 0.012),
+                        crate::design::tokens().doc_quote_bar,
+                    ),
+                };
+                fill(renderer, card, rounded(CARD_RADIUS), tint);
                 fill(
                     renderer,
                     Rectangle {
@@ -168,7 +179,7 @@ impl<Message> Editor<'_, Message> {
                         },
                         ..Default::default()
                     },
-                    theme::ACCENT,
+                    bar,
                 );
             }
             BlockKind::Table => {
@@ -185,11 +196,11 @@ impl<Message> Editor<'_, Message> {
                         height: meta.height,
                     },
                     Border {
-                        color: theme::BORDER,
+                        color: crate::design::tokens().border_default,
                         width: 1.0,
                         radius: CARD_RADIUS.into(),
                     },
-                    theme::BG_SECONDARY,
+                    crate::design::tokens().doc_block_bg,
                 );
                 let number = block_ordinal(self.lines, block_id, "table-").unwrap_or(1);
                 paint_block_caption(
@@ -206,11 +217,11 @@ impl<Message> Editor<'_, Message> {
                     renderer,
                     card,
                     Border {
-                        color: theme::BORDER_SUBTLE,
+                        color: crate::design::tokens().border_subtle,
                         width: 1.0,
                         radius: CARD_RADIUS.into(),
                     },
-                    theme::BG_SECONDARY,
+                    crate::design::tokens().doc_block_bg,
                 );
 
                 if meta.kind == BlockKind::Code {
@@ -305,15 +316,15 @@ impl<Message> Editor<'_, Message> {
         let code_left = bounds.x + text_left(bounds.width);
         let code_right = code_left + extent.viewport_w;
         let clip = self.block_clip(frame, row, extent.viewport_w);
-        let text_top = self
-            .snap_px(row.y + centered_text_top(row.height, CODE_FONT_SIZE, iced::Font::MONOSPACE));
+        let text_top =
+            self.snap_px(row.y + centered_text_top(row.height, code_font_size(), mono_font()));
         let spans = || {
             line.spans
                 .iter()
                 .map(|span| (span, span.visible_text(row.is_editing)))
                 .filter(|(_, text)| !text.is_empty())
                 .map(|(span, text)| {
-                    let width = measure_width::<R>(text, CODE_FONT_SIZE, iced::Font::MONOSPACE);
+                    let width = measure_width::<R>(text, code_font_size(), mono_font());
                     (span, text, width)
                 })
         };
@@ -327,8 +338,8 @@ impl<Message> Editor<'_, Message> {
                         code_x,
                         text_top,
                         width,
-                        CODE_FONT_SIZE,
-                        iced::Font::MONOSPACE,
+                        code_font_size(),
+                        mono_font(),
                         span.color,
                         // The layer clips. A clip rectangle inside it would
                         // switch tiny-skia's clipping off.
@@ -368,8 +379,8 @@ impl<Message> Editor<'_, Message> {
                 },
                 rounded(1.0),
                 Color {
-                    a: theme::ACCENT_SECONDARY.a * motion.alpha(),
-                    ..theme::ACCENT_SECONDARY
+                    a: crate::design::tokens().doc_caret.a * motion.alpha(),
+                    ..crate::design::tokens().doc_caret
                 },
             );
         }
@@ -407,7 +418,7 @@ impl<Message> Editor<'_, Message> {
                     ..full_row
                 },
                 Border::default(),
-                theme::BORDER,
+                crate::design::tokens().border_default,
             );
             return;
         }
@@ -419,10 +430,13 @@ impl<Message> Editor<'_, Message> {
             .count();
         let is_header = ordinal == 0;
         let row_bg = if is_header {
-            Some(theme::BG_TERTIARY)
+            Some(crate::design::tokens().bg_raised)
         } else if ordinal % 2 == 0 {
             // Every second body row.
-            Some(Color::from_rgba(1.0, 1.0, 1.0, 0.025))
+            Some(crate::design::fade(
+                crate::design::tokens().fg_primary,
+                0.025,
+            ))
         } else {
             None
         };
@@ -451,7 +465,7 @@ impl<Message> Editor<'_, Message> {
                             height: row_h,
                         },
                         Border::default(),
-                        theme::BORDER_SUBTLE,
+                        crate::design::tokens().border_subtle,
                     );
                 }
 
@@ -463,7 +477,7 @@ impl<Message> Editor<'_, Message> {
                     }
 
                     let font = span_font(span, line);
-                    let fs = span.font_size;
+                    let fs = scaled(span.font_size);
                     let width = measure_width::<R>(text, fs, font);
                     if px + width < table_x || px > table_right {
                         px += width;
@@ -480,7 +494,7 @@ impl<Message> Editor<'_, Message> {
                         renderer,
                         Point::new(px, self.snap_px(row_y + centered_text_top(row_h, fs, font))),
                         if is_header {
-                            theme::TEXT_PRIMARY
+                            crate::design::tokens().doc_text
                         } else {
                             span.color
                         },

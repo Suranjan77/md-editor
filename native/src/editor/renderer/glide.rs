@@ -18,7 +18,7 @@ use iced::{Point, Rectangle, Vector};
 use super::flow::Affinity;
 use super::metrics::{content_bounds, text_left};
 use super::{Editor, Measure, State};
-use crate::motion::Spring;
+use crate::design::motion::Spring;
 
 /// How quickly the caret catches up with its place: about 60ms to cover 95%
 /// of a move.

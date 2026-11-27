@@ -298,12 +298,17 @@ pub(crate) struct View {
     pub reveal_request: u64,
     /// The layout revision the widget is given, if any.
     pub layout_revision: Option<u64>,
+    /// Whether the app has a completion popup open.
+    pub completion_open: bool,
 }
 
 type Wd<'a> = Editor<'a, String>;
 
 impl View {
     pub fn new(doc: &str, width: f32) -> Self {
+        // Measurement uses the real font system: register the bundled faces
+        // the editor asks for, or every family falls back to a system font.
+        crate::test_support::load_bundled_fonts();
         let buffer = DocBuffer::from_text(doc);
         let lines = highlight_markdown(doc);
         let mut view = Self {
@@ -316,6 +321,7 @@ impl View {
             search: ("", false, false, None),
             reveal_request: 0,
             layout_revision: None,
+            completion_open: false,
         };
         view.reset_tree();
         view
@@ -334,7 +340,8 @@ impl View {
         )
         .search(self.search.0, self.search.1, self.search.2, self.search.3)
         .scale_factor(1.5)
-        .reveal_caret(self.reveal_request, |view| format!("caret {view:?}"));
+        .reveal_caret(self.reveal_request, |view| format!("caret {view:?}"))
+        .completion_open(self.completion_open);
         match self.layout_revision {
             Some(revision) => editor.layout_revision(revision),
             None => editor,
@@ -369,12 +376,7 @@ impl View {
         let handle = image::Handle::from_rgba(2, 2, vec![7; 16]);
         self.math.insert(
             tex.to_string(),
-            MathRender {
-                inline_handle: handle.clone(),
-                block_handle: handle,
-                width,
-                height,
-            },
+            MathRender::uniform(handle.clone(), handle, width, height),
         );
     }
 
@@ -420,6 +422,12 @@ impl View {
     pub fn event(&mut self, event: Event, cursor: Option<Point>) -> EventOutcome {
         let node = self.layout();
         self.event_on(event, cursor, node)
+    }
+
+    /// Deliver an event with only `viewport` (widget coordinates) in view.
+    pub fn event_in(&mut self, event: Event, viewport: Rectangle) -> EventOutcome {
+        let node = self.layout();
+        self.deliver(event, None, node, viewport)
     }
 
     /// Deliver an event against `node` without running widget layout first.
@@ -561,7 +569,10 @@ impl View {
     /// Focus the editor without moving the buffer's caret.
     pub fn focus(&mut self) {
         let (line, col) = (self.buffer.cursor_line, self.buffer.cursor_col);
-        self.click(Point::new(self.width.min(880.0) - 1.0, 1.0));
+        self.click(Point::new(
+            self.width.min(super::metrics::max_content_width()) - 1.0,
+            1.0,
+        ));
         self.set_cursor(line, col);
     }
 }

@@ -85,6 +85,11 @@ erDiagram
         TEXT links_json
         INTEGER updated_at
     }
+    pdf_outline {
+        TEXT document_id PK
+        TEXT outline_json
+        INTEGER updated_at
+    }
     tracker_sessions {
         INTEGER id PK
         TEXT date
@@ -106,6 +111,7 @@ erDiagram
 
     pdf_documents ||--o{ pdf_annotations : "document_id"
     pdf_documents ||--o| pdf_references : "document_id"
+    pdf_documents ||--o| pdf_outline : "document_id"
 ```
 
 1. **`settings`** — key/value application state. The keys actually written are:
@@ -120,8 +126,12 @@ erDiagram
    | `tracker_config` | tracker Config tab | The tracker's JSON curriculum |
 
 2. **`file_search`** — an FTS5 virtual table over `(path, content)`, holding both Markdown
-   note text and extracted PDF text. Rebuilt wholesale inside one transaction whenever a
-   vault is opened.
+   note text and extracted PDF text, for one vault at a time.
+   **`vault_file_meta`** (schema v3) — for each file whose `file_search` row is current:
+   `(scope, path, size, modified_ns, links_json)`, the vault scope being the same hash
+   `pdf_documents` ids are prefixed with, and `links_json` a note's wikilink targets as
+   written. Reopening a vault reads only files whose size or mtime differ (see Vault
+   Indexing). Rows and records are cleared together whenever another vault is opened.
 3. **`pdf_documents`** — known PDFs by content id, with their vault-relative path, size, and
    timestamps. When a PDF is copied or restored and its id changes, rows recorded for the
    same path *and the same size* are adopted under the new id so annotations are not orphaned.
@@ -134,6 +144,9 @@ erDiagram
    are cached too, so scanned PDFs are not retried on every open.
 6. **`pdf_references`** — the resolved cross-reference list per document, stored as
    `(RESOLVER_VERSION, links)` JSON so a resolver change transparently invalidates it.
+   **`pdf_outline`** (schema v2) — the recovered outline of a bookmark-less PDF, stored as
+   `(OUTLINE_VERSION, entries)` the same way; it follows a document-id change like
+   annotations and references do.
 7. **`tracker_sessions` / `tracker_activity` / `tracker_kv`** — logged study sessions, an
    activity log table, and the tracker's checkbox/status key-values.
 
@@ -146,38 +159,37 @@ since that only runs for fresh databases.
 
 ---
 
-## 3. Zero-Configuration Portability (`state.rs`)
+## 3. Data Location (`state.rs`)
 
 ```mermaid
 flowchart TD
-    Start(["settings_db_path"]) --> ExeDir{"Is the executable's directory writable?"}
-    ExeDir -->|"yes — the default"| BesideExe["Use the directory beside the executable"]
-    ExeDir -->|"no — read-only install"| PlatformData["Use the per-user platform data directory"]
-    PlatformData --> HasPlatform{"Platform directory available?"}
-    HasPlatform -->|"no"| CurrentDir["Fall back to the current working directory"]
-    HasPlatform -->|"yes"| Chosen["Chosen directory"]
-    BesideExe --> Chosen
+    Start(["settings_db_path"]) --> Override{"MD_EDITOR_DATA_DIR or override_data_dir set?"}
+    Override -->|"yes"| Pinned["Use that directory; no migration"]
+    Override -->|"no"| Xdg{"XDG_DATA_HOME absolute?"}
+    Xdg -->|"yes"| XdgDir["$XDG_DATA_HOME/md-editor"]
+    Xdg -->|"no"| Home{"HOME set?"}
+    Home -->|"yes"| HomeDir["~/.local/share/md-editor"]
+    Home -->|"no"| CurrentDir["Current working directory"]
+    XdgDir --> Chosen["Chosen directory"]
+    HomeDir --> Chosen
     CurrentDir --> Chosen
 
     Chosen --> Exists{"Does a database already exist there?"}
     Exists -->|"yes"| OpenDB["Open the connection, apply WAL pragmas, init schema"]
-    Exists -->|"no"| Legacy{"Legacy database in the per-user directory?"}
-    Legacy -->|"yes"| Migrate["Copy the database plus -wal and -shm; leave the original in place"]
-    Legacy -->|"no"| InitFresh["Create a fresh schema"]
+    Exists -->|"no"| Portable{"Database beside the executable (old portable build)?"}
+    Portable -->|"yes"| Migrate["Copy the database plus -wal and -shm; leave the original in place"]
+    Portable -->|"no"| InitFresh["Create a fresh schema"]
     Migrate --> OpenDB
     InitFresh --> OpenDB
 ```
 
-- **Default portable location** — `current_exe().parent()`, tested for writability by
-  `is_writable_dir`.
-- **Read-only fallback** —
-  Linux `$XDG_DATA_HOME/md-editor/` or `~/.local/share/md-editor/`;
-  Windows `%APPDATA%\md-editor\`;
-  macOS `~/Library/Application Support/md-editor/`;
-  then the current working directory.
-- **One-time upstream migration** — the legacy file is *copied*, not moved, so an
-  interrupted migration cannot lose data. Its `-wal` and `-shm` sidecars come along so
-  not-yet-checkpointed writes survive.
+- **Data** — `data_dir()`: `$XDG_DATA_HOME/md-editor/`, default `~/.local/share/md-editor/`.
+  Relative `XDG_*` values are ignored, per the spec (`xdg_dir`).
+- **Log** — `log_dir()`: `$XDG_STATE_HOME/md-editor/`, default `~/.local/state/md-editor/`;
+  the override directory when one is set.
+- **One-time migration from portable** — `portable_db_path()` (beside the executable) is
+  *copied*, not moved, so an interrupted migration cannot lose data. Its `-wal` and `-shm`
+  sidecars come along so not-yet-checkpointed writes survive.
 
 ---
 
@@ -202,13 +214,21 @@ touching the file.
 
 Deliberately two-phase, so the UI thread is never blocked behind disk or PDFium work:
 
-1. **Phase 1 (no locks held)** — walk every Markdown file, read it, build a fresh
-   `FileIndex` with its two-pass rebuild, and collect `(relative path, content)` rows.
-2. **Phase 1b (no locks held)** — for each PDF, reuse `pdf_text_cache` when size and mtime
-   match, otherwise run PDFium extraction and cache the result. Skipped entirely when no
-   renderer is available.
-3. **Phase 2 (short-lived locks)** — publish the vault root, replace the whole `file_search`
-   table inside one transaction, and swap in the new `FileIndex`.
+(`vault/indexing.rs`.)
+
+1. **Phase 1 (no locks held)** — one walk (`list_vault_entries`) gives the tree, the notes
+   and the PDFs. A note whose size and mtime (ns) match its `vault_file_meta` record is
+   not read: its recorded link targets feed `FileIndex::rebuild_from_links`. Changed and
+   new notes are read, and their links extracted (`raw_targets`).
+2. **Phase 1b (no locks held)** — every PDF's identity is resolved for annotation scoping;
+   only new or changed PDFs have their text taken from `pdf_text_cache` or extracted. A
+   PDF whose text could not be read gets no record, so it is retried next time (for
+   example once PDFium is available).
+3. **Phase 2 (short-lived locks)** — publish the vault root; in one transaction delete the
+   rows and records of files that are gone and rewrite those of changed files (the
+   whole table when this is a different vault, or the first index); swap in the new
+   `FileIndex`. `begin_vault_change` keeps the rows when the same vault is reopened and
+   clears rows and records together otherwise.
 
 ### Atomic Write Protocol
 
@@ -241,6 +261,9 @@ Details worth preserving:
    directory, so the rename can never cross a mount point, and the UUID means concurrent
    saves cannot collide.
 3. **Permission inheritance.** A note kept at `0600` does not come back world-readable.
+   A **read-only** note is refused outright ("… is read-only"): the rename would succeed in
+   a writable folder and silently replace a file the user protected. Autosave keeps the
+   edits in the buffer and reports the failure once.
 4. **Kernel flush before rename.** `sync_all()` on the file, then the rename, then a
    best-effort `sync_all()` on the parent directory so the *directory entry* survives power
    loss too.
@@ -266,11 +289,20 @@ Compiled once and reused for every file during indexing. It matches both bare
 (`[[Note Name]]`) and aliased (`[[Note Name|Display Text]]`) links; only the target is
 captured, since the alias affects display, not resolution.
 
+Matches inside code are not links: `file_index/code_spans.rs` finds fenced blocks
+(```` ``` ```` / `~~~`, an unclosed fence runs to the end) and inline code spans (a backtick
+run closed by an equal run in the same paragraph), and both indexing and rename rewriting
+skip any `[[...]]` that starts inside them. So `[[nodiscard]]` in C++ or `[[ -f x ]]` in a
+shell snippet never becomes a graph node, and a rename never edits code.
+
 ### Resolution Algorithm
 
 `resolve_link(target, from_file)` proceeds in order:
 
-1. **Exact path match** — handles `[[subfolder/Note]]` and root-level `[[Note]]`.
+1. **Exact path match** — handles `[[subfolder/Note]]` and root-level `[[Note]]`. A
+   path-qualified link (`[[archive/topic]]`, `[[./x]]`) stops here: only its `.markdown`
+   twin may stand in, never a same-named note elsewhere (the navigator agrees). A `..` that
+   climbs out of the vault resolves to nothing.
 2. **Shortest basename match** — for a bare name, look up all known files whose lowercased
    stem matches. `names: HashMap<String, BTreeSet<PathBuf>>` keeps candidates ordered, so
    the shortest path wins deterministically and the link, the click-through, and the
@@ -295,24 +327,54 @@ a map lookup. `rebuild()` runs in two passes — register every filename first, 
 links — because a bare `[[Name]]` must be able to reach a file that appears later in the
 listing or in another subfolder. `update_file()` does the same incrementally for a single
 edit, first removing the file's previous outgoing edges from every target's `incoming` set.
+The index keeps each file's link targets as written (`links`), so when a note appears or
+disappears, `rebind` re-resolves exactly the links that name it: a dangling `[[Topic]]`
+picks up a new `sub/Topic.md`, and links to a deleted note fall back to another note of
+that name or dangle again.
+
+### Keeping Links Intact on Rename (`vault/rename.rs`, `vault/relink.rs`)
+
+`rename_entry` plans every link fix *before* moving anything, while links still resolve the
+way the user wrote them, then moves the entry and writes the fixed notes. The plan
+(`relink::relink_note`, run on each note that is moving or names the entry) covers:
+
+- **Wikilinks** to the renamed file — any type (`.md`, `.pdf`, images, `.ink`) — or to
+  anything under a renamed folder, resolved as the index resolves them. A link is rewritten
+  to the new vault-relative path (notes without their extension, keeping `#anchor` and
+  `|alias`) only when its text would no longer reach the target: a bare `[[note]]` survives a
+  folder move, since notes resolve by basename.
+- **Markdown links and images** (`[text](path)`, `![alt](path)`, `<...>` and `%20` forms,
+  `#`/`?` suffixes kept), resolved relative to the note first (as images load), then to
+  the vault.
+- **Relative links out of a moved note** (`[[../index]]`, `![](../img/a.png)`), recomputed
+  from its new folder.
+
+Links in code, URLs and anchors are left alone. A note that cannot be written (read-only)
+keeps its old links and the rename still stands. A folder rename then rebuilds the index and
+markdown search rows; a file rename re-indexes just the rewritten notes.
 
 ---
 
-## 6. Full-Text Search (`vault.rs::search_vault`)
+## 6. Full-Text Search (`vault/backlinks.rs::search_vault`)
 
-The query is wrapped in double quotes (with embedded quotes doubled) so it is treated as an
-FTS5 phrase rather than as query syntax:
+Each whitespace-separated term is quoted (embedded quotes doubled) so it is a literal FTS5
+string, not query syntax; every term must match, and the **last one matches as a prefix**
+(`"trans"*`), so results arrive while a word is still being typed:
 
 ```sql
-SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15)
+SELECT path, snippet(file_search, 1, '<b>', '</b>', '...', 15), content
 FROM file_search
-WHERE content MATCH ?1
-ORDER BY rank
-LIMIT 100;
+WHERE file_search MATCH ?1               -- path and content
+ORDER BY bm25(file_search, 10.0, 1.0)    -- a hit in the path outranks one in the body
+LIMIT 101;
 ```
 
-Results carry the path and a highlighted snippet. Because both Markdown notes and extracted
-PDF text are indexed into the same table, one global search covers both.
+Both Markdown notes and extracted PDF text are indexed into the same table. Each result
+carries its path, a highlighted snippet and a `line`: the 1-based line of the first match in
+a note (so opening the hit can select it), 0 for PDF text. **PDF quick notes**
+(`pdf_annotations.note`, this vault's documents only) are matched too — every term, case
+insensitively — and reported with their 1-based page and the note as context. Results are
+capped at 100, with `truncated` set when there were more.
 
 ---
 
@@ -338,58 +400,3 @@ branches on the active document's type and returns `BacklinkItem`s whose `source
 
 The `BacklinkTarget::PdfDocument { path }` variant is defined in `core/src/types.rs` and
 rendered by `views/backlinks.rs`, but no query currently emits it.
-
----
-
-## 8. PowerPoint Presentations (`pptx.rs`, `pptx/`)
-
-`pptx::load_presentation(path)` reads a `.pptx` into a `Presentation`: the slide size and a
-list of `Slide`s whose elements — `Shape`, `Picture`, `Table`, or `Unsupported` — carry
-resolved geometry, fills, lines, and text, with every length in points. Nothing in the model
-refers back to the XML, so the viewer draws it without knowing the format. The module never
-writes: presentations are reference material, like PDFs.
-
-### Reading the package
-
-A `.pptx` is a zip of XML parts linked by relationship files. The reader follows
-`_rels/.rels` to the presentation, the presentation to its slides, each slide to its layout,
-each layout to its master, and the master to its theme, reading every part once. Parts are
-parsed with `roxmltree`, which refuses DTDs and so entity expansion. The zip is read with
-limits that do not trust the archive's own directory: `MAX_PART_BYTES` (64 MB) per part,
-checked against both the declared and the actually inflated size, and `MAX_PACKAGE_BYTES`
-(512 MB) for the whole package. A password-protected file and a legacy `.ppt` are both OLE
-compound files; `COMPOUND_FILE_MAGIC` recognises them, and they are refused with a message
-that says so.
-
-### Resolving inheritance
-
-Most of what a shape looks like is inherited. For text, lowest priority first:
-
-1. the presentation's `defaultTextStyle`;
-2. the master's `titleStyle`, `bodyStyle`, or `otherStyle`, chosen by placeholder type;
-3. the master placeholder's, then the layout placeholder's, `lstStyle` and `bodyPr`;
-4. the shape's theme font reference (`fontRef`);
-5. the shape's own `lstStyle`, then paragraph and run properties.
-
-A slide placeholder finds its layout placeholder by `idx`, then by type, and its master
-placeholder by type (`master_kind`). Position, fill, and outline fall back along the same
-chain. Colours go through the master's `clrMap`, with layout and slide overrides, to the
-theme, and DrawingML's `lumMod`, `lumOff`, `satMod`, `tint`, `shade`, and `alpha` modifiers
-are applied. Theme style references (`fillRef`, `lnRef`, `bgRef`) instantiate the theme's
-numbered styles with the reference's colour. Groups compose their child transforms,
-rotation included, so every element ends up in slide coordinates.
-
-### What degrades
-
-- Charts, SmartArt graphics, and embedded objects become `ElementKind::Unsupported` with a
-  label; so do EMF, WMF, and SVG-only pictures.
-- Preset geometries outside `preset_geometry`'s list draw as rectangles, and custom
-  geometry whose points are guide formulas rather than numbers is skipped.
-- Built-in table styles are not stored in the file, only their ids. `table_look`
-  approximates the Medium Style 2 family — PowerPoint's default — and treats unknown ids as
-  its accent-1 variant. Explicit cell formatting always wins.
-- A slide whose XML cannot be parsed becomes a slide saying so; the rest of the deck opens.
-
-The tests in `pptx/tests.rs` run mostly against `tests-fixtures/pptx/fixture.pptx`.
-That deck is generated by `make_fixture.py` from python-pptx's default template, so it
-exercises genuine master and layout inheritance rather than absolute positioning.

@@ -667,3 +667,33 @@ fn list_continuation_handles_multibyte_content_after_markers() {
         assert_eq!(buffer.text(), expected, "input: {input}");
     }
 }
+
+#[test]
+fn insert_block_lands_on_its_own_line_as_one_undo_step() {
+    // Mid-paragraph: split around the block.
+    let mut buffer = DocBuffer::from_text("before after");
+    buffer.set_cursor(0, 7);
+    buffer.execute(EditorCommand::InsertBlock("![](a.png)".to_string()));
+    assert_eq!(buffer.text(), "before \n![](a.png)\nafter");
+    buffer.execute(EditorCommand::Undo);
+    assert_eq!(buffer.text(), "before after");
+
+    // On an empty line: the block takes that line.
+    let mut buffer = DocBuffer::from_text("a\n\nb");
+    buffer.set_cursor(1, 0);
+    buffer.execute(EditorCommand::InsertBlock("![](a.png)".to_string()));
+    assert_eq!(buffer.text(), "a\n![](a.png)\nb");
+
+    // Typing right after it is a separate undo step.
+    let mut buffer = DocBuffer::from_text("");
+    buffer.execute(EditorCommand::InsertBlock("![](a.png)".to_string()));
+    buffer.execute(EditorCommand::InsertText("x".to_string()));
+    buffer.execute(EditorCommand::Undo);
+    assert_eq!(buffer.text(), "![](a.png)\n");
+
+    // CRLF documents keep their line endings.
+    let mut buffer = DocBuffer::from_text("one\r\ntwo");
+    buffer.set_cursor(0, 3);
+    buffer.execute(EditorCommand::InsertBlock("![](a.png)".to_string()));
+    assert_eq!(buffer.text(), "one\r\n![](a.png)\r\ntwo");
+}

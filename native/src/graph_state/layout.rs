@@ -74,76 +74,97 @@ pub(super) fn build_layout(snapshot: &GraphSnapshot) -> GraphLayout {
     // Lay each connected component out around its own origin first. Packing
     // the measured rectangles afterwards prevents large components from
     // overlapping smaller islands, which a fixed grid cannot guarantee.
-    let mut islands = Vec::with_capacity(components.len());
-    for component in &components {
-        let mut local = BTreeMap::new();
-        let root = component
-            .iter()
-            .max_by(|a, b| {
-                adjacency
-                    .get(*a)
-                    .map_or(0, BTreeSet::len)
-                    .cmp(&adjacency.get(*b).map_or(0, BTreeSet::len))
-                    .then_with(|| b.cmp(a))
-            })
-            .expect("components are never empty")
-            .clone();
-        local.insert(root.clone(), GraphPoint::default());
+    let islands = components
+        .iter()
+        .map(|component| layout_island(component, &adjacency))
+        .collect();
+    let mut positions = scatter_islands(islands);
 
-        let mut levels: BTreeMap<usize, Vec<String>> = BTreeMap::new();
-        let mut seen = BTreeSet::from([root.clone()]);
-        let mut queue = VecDeque::from([(root, 0_usize)]);
-        while let Some((path, level)) = queue.pop_front() {
-            if level > 0 {
-                levels.entry(level).or_default().push(path.clone());
-            }
-            if let Some(neighbors) = adjacency.get(&path) {
-                for neighbor in neighbors {
-                    if component.binary_search(neighbor).is_ok() && seen.insert(neighbor.clone()) {
-                        queue.push_back((neighbor.clone(), level + 1));
-                    }
+    // Center the packed map around the canvas origin so Fit and reset produce
+    // stable, intuitive pan values regardless of component count.
+    let (min_x, max_x, min_y, max_y) = point_bounds(positions.values().copied());
+    let center_x = (min_x + max_x) / 2.0;
+    let center_y = (min_y + max_y) / 2.0;
+    for point in positions.values_mut() {
+        point.x -= center_x;
+        point.y -= center_y;
+    }
+    GraphLayout { positions }
+}
+
+/// One connected component laid out in rings around its best-connected note,
+/// one ring per BFS level.
+fn layout_island(component: &[String], adjacency: &BTreeMap<String, BTreeSet<String>>) -> Island {
+    let mut local = BTreeMap::new();
+    let root = component
+        .iter()
+        .max_by(|a, b| {
+            adjacency
+                .get(*a)
+                .map_or(0, BTreeSet::len)
+                .cmp(&adjacency.get(*b).map_or(0, BTreeSet::len))
+                .then_with(|| b.cmp(a))
+        })
+        .expect("components are never empty")
+        .clone();
+    local.insert(root.clone(), GraphPoint::default());
+
+    let mut levels: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    let mut seen = BTreeSet::from([root.clone()]);
+    let mut queue = VecDeque::from([(root, 0_usize)]);
+    while let Some((path, level)) = queue.pop_front() {
+        if level > 0 {
+            levels.entry(level).or_default().push(path.clone());
+        }
+        if let Some(neighbors) = adjacency.get(&path) {
+            for neighbor in neighbors {
+                if component.binary_search(neighbor).is_ok() && seen.insert(neighbor.clone()) {
+                    queue.push_back((neighbor.clone(), level + 1));
                 }
             }
         }
-
-        for (level, mut paths) in levels {
-            paths.sort();
-            let count = paths.len();
-            let radius = (level as f32 * 105.0).max(count as f32 * 13.0);
-            let offset = if level % 2 == 0 { 0.35 } else { 0.0 };
-            for (index, path) in paths.into_iter().enumerate() {
-                let angle = std::f32::consts::TAU * index as f32 / count.max(1) as f32 + offset;
-                local.insert(
-                    path,
-                    GraphPoint {
-                        x: radius * angle.cos(),
-                        y: radius * angle.sin(),
-                    },
-                );
-            }
-        }
-
-        let (min_x, max_x, min_y, max_y) = point_bounds(local.values().copied());
-        const ISLAND_PADDING: f32 = 150.0;
-        // Seed the island's scatter from its own contents so the layout stays
-        // deterministic across rebuilds.
-        let seed = hash_path(local.keys().next().map_or("", String::as_str));
-        islands.push(Island {
-            nodes: local,
-            min_x,
-            min_y,
-            // Padded footprint drives how much room the scatter reserves.
-            width: (max_x - min_x).max(80.0) + ISLAND_PADDING,
-            height: (max_y - min_y).max(80.0) + ISLAND_PADDING,
-            // Bare span drives clearance. Using the padded box here made a
-            // lone note "reach" 163 units, which flung the orphans of a small
-            // vault so far out that Fit had to shrink the interesting cluster
-            // to a third of its readable size.
-            extent: 0.5 * ((max_x - min_x).powi(2) + (max_y - min_y).powi(2)).sqrt(),
-            seed,
-        });
     }
 
+    for (level, mut paths) in levels {
+        paths.sort();
+        let count = paths.len();
+        let radius = (level as f32 * 105.0).max(count as f32 * 13.0);
+        let offset = if level % 2 == 0 { 0.35 } else { 0.0 };
+        for (index, path) in paths.into_iter().enumerate() {
+            let angle = std::f32::consts::TAU * index as f32 / count.max(1) as f32 + offset;
+            local.insert(
+                path,
+                GraphPoint {
+                    x: radius * angle.cos(),
+                    y: radius * angle.sin(),
+                },
+            );
+        }
+    }
+
+    let (min_x, max_x, min_y, max_y) = point_bounds(local.values().copied());
+    const ISLAND_PADDING: f32 = 150.0;
+    // Seed the island's scatter from its own contents so the layout stays
+    // deterministic across rebuilds.
+    let seed = hash_path(local.keys().next().map_or("", String::as_str));
+    Island {
+        nodes: local,
+        min_x,
+        min_y,
+        // Padded footprint drives how much room the scatter reserves.
+        width: (max_x - min_x).max(80.0) + ISLAND_PADDING,
+        height: (max_y - min_y).max(80.0) + ISLAND_PADDING,
+        // Bare span drives clearance. Using the padded box here made a
+        // lone note "reach" 163 units, which flung the orphans of a small
+        // vault so far out that Fit had to shrink the interesting cluster
+        // to a third of its readable size.
+        extent: 0.5 * ((max_x - min_x).powi(2) + (max_y - min_y).powi(2)).sqrt(),
+        seed,
+    }
+}
+
+/// Place laid-out islands on the canvas; returns every note's position.
+fn scatter_islands(islands: Vec<Island>) -> BTreeMap<String, GraphPoint> {
     // Islands are scattered along a phyllotaxis (sunflower) spiral rather than
     // packed into rows. Row packing filled a hard-edged rectangle, and once the
     // simulation rounded it off a link-poor vault looked like one solid disc.
@@ -211,16 +232,7 @@ pub(super) fn build_layout(snapshot: &GraphSnapshot) -> GraphLayout {
         }
     }
 
-    // Center the packed map around the canvas origin so Fit and reset produce
-    // stable, intuitive pan values regardless of component count.
-    let (min_x, max_x, min_y, max_y) = point_bounds(positions.values().copied());
-    let center_x = (min_x + max_x) / 2.0;
-    let center_y = (min_y + max_y) / 2.0;
-    for point in positions.values_mut() {
-        point.x -= center_x;
-        point.y -= center_y;
-    }
-    GraphLayout { positions }
+    positions
 }
 
 /// FNV-1a. Stable across runs and platforms, unlike `DefaultHasher`, which

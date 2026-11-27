@@ -27,7 +27,7 @@ iced::daemon(
 
 ```mermaid
 flowchart TD
-    Init(["Process start"]) --> Cli["Parse CLI args: --install, --uninstall, or a path"]
+    Init(["Process start"]) --> Cli["Parse CLI args: a path to open, then init logging"]
     Cli --> Geometry["restore_window_size(): read 'window_size', clamp, fall back to 1200x800"]
     Geometry --> Boot["MdEditor::boot: new_with_startup_file + open the shell window"]
     Boot --> EventLoop{"Iced event loop"}
@@ -52,29 +52,46 @@ computing backlinks — stays on the shell, which alone owns the shared `Arc<App
 
 ## 2. Messages and Where They Are Handled (`messages.rs`, `app/`)
 
-`Message` (in `messages.rs`) is the complete event vocabulary. `MdEditor::update_inner`
-does nothing but route each variant to the handler for its family; each handler lives in
-the file of the same name. To find the code for a message, find its family:
+`Message` (in `messages.rs`) has one variant per feature family, each wrapping that
+family's own enum. `MdEditor::update_inner` is an exhaustive match that hands the
+inner enum to the family's handler, and every handler matches its enum **exhaustively** —
+there is no `_ => Task::none()` catch-all, so a message that is added but not handled is a
+compile error rather than a silently dropped event. To find the code for a message, find
+its family:
 
-| Family (variant prefix) | Handler | File |
+| Message | Handler | File |
 | :--- | :--- | :--- |
-| `Pdf*` (except the link-note picker's `PdfLinkNote*Selected`/`…SearchChanged`) | `update_pdf` | `app/pdf.rs` (page management in `app/pdf_pages.rs`) |
-| `Graph*` | `update_graph` | `app/graph.rs` |
-| `Ink*` | `update_ink` | `app/ink.rs` |
-| `Search*`, `GlobalSearch*` | `update_search` | `app/search.rs` |
-| `Editor*`, `Autosave*`, `AnimationTick`, `MathRendered`, `TocClicked`, `ToggleTOC` | `update_editor` | `app/editor.rs` |
-| `OpenVault*`, `Vault*`, `Sidebar*`, create/rename/delete dialogs, name modals, the link-note picker | `update_vault` | `app/vault.rs` |
-| `KeyboardShortcut(Shortcut)` | `update_shortcuts` | `app/shortcuts.rs` |
-| everything else: `Window*`, `SplitView*`, `CommandPalette*`, `Tracker*`, `Pptx*`, toasts | `update_shell` | `app/shell.rs` |
+| `Message::Pdf(PdfMessage)` | `update_pdf` | `app/pdf.rs` routes to `pdf_render.rs`, `pdf_nav.rs`, `pdf_select.rs` (page management in `app/pdf_pages.rs`) |
+| `Message::Graph(GraphMessage)` | `update_graph` | `app/graph.rs` |
+| `Message::Ink(InkMessage)` | `update_ink` | `app/ink.rs` |
+| `Message::Search(SearchMessage)` — global search and find/replace | `update_search` | `app/search.rs` |
+| `Message::Editor(EditorMessage)` — editing, autosave, animation ticks, math, outline | `update_editor` | `app/editor.rs` |
+| `Message::Vault(VaultMessage)` — vault lifecycle, file tree, create/rename/delete and name modals, the link-note picker | `update_vault` | `app/vault.rs` |
+| `Message::Tabs(TabsMessage)` — the document tab strip | `update_tabs` | `app/tabs_handler.rs` |
+| `Message::Desks(DesksMessage)` — saved workspace layouts | `update_desks` | `app/desks.rs` |
+| `Message::Settings(SettingsMessage)` — the Settings page | `update_settings` | `app/settings_handler.rs` |
+| `Message::KeyboardShortcut(Shortcut)` | `update_shortcuts` | `app/shortcuts.rs` |
+| `Message::Shell(ShellMessage)` — windows, split view, command palette, toasts, study tracker, image zoom | `update_shell` | `app/shell.rs` |
+
+Construct a message as `Message::Pdf(PdfMessage::FitToWidth)`, or `PdfMessage::FitToWidth.into()`
+where the target type is known. Sub-states (`UiState`, `TrackerState`, `PdfPane`, …) still
+take the whole `Message` and keep catch-alls; moving them onto family enums is still open
+(`docs/open-items.md`).
 
 The rest of `app/` holds the shared machinery: `documents.rs` (opening, saving, parking
-documents and persisting the session), `subscription.rs`, `view.rs`, `links.rs` (wikilink
-and heading resolution) and `tests.rs`.
+documents and persisting the session), `subscription.rs`, `view.rs` (the shell layout),
+`overlays.rs` (palette, search, dialogs, context menus, toasts), `links.rs` (wikilink and
+heading resolution) and `tests.rs`.
+
+After every message, `MdEditor::update` hands the keyboard back to the note when an
+overlay with a text field closes (palette, find, vault search, a dialog) or `F6` lands on
+the main region, through the editor widget's `operate` (it is `Focusable` under
+`editor::renderer::EDITOR_ID`).
 
 `Shortcut` is the indirection that lets the keyboard subscription and the command palette
-trigger exactly the same handler. Adding a message means: a variant in `messages.rs`, an
-arm in the matching `app/<family>.rs` handler, and — if its name does not start with a
-routed prefix — a pattern in `update_inner`.
+trigger exactly the same handler. Adding a message means: a variant in the family enum in
+`messages.rs` and an arm in that family's handler — the compiler points at the handler if
+you forget.
 
 ---
 
@@ -94,7 +111,6 @@ classDiagram
         +SearchState search
         +TrackerState tracker
         +PdfPane pdf
-        +PptxPane pptx
         +GraphState graph
         +InkState ink
         +Option~Id~ main_window
@@ -127,8 +143,8 @@ classDiagram
         +bool command_palette_visible
         +usize palette_selected
         +Option~String~ toast
-        +bool split_view_active
         +f32 split_ratio
+        +bool restore_split
         +f32 window_width
         +f32 window_height
         +f32 scale_factor
@@ -161,14 +177,6 @@ classDiagram
         +Option~PdfSelection~ selection
         +u64 render_generation
     }
-    class PptxPane {
-        +Option~String~ active_path
-        +Option~Arc~LoadedDeck~~ deck
-        +Option~String~ error
-        +u64 generation
-        +f32 zoom
-        +f32 scroll_y
-    }
 
     MdEditor *-- EditorPane
     MdEditor *-- VaultState
@@ -176,7 +184,6 @@ classDiagram
     MdEditor *-- SearchState
     MdEditor *-- TrackerState
     MdEditor *-- PdfPane
-    MdEditor *-- PptxPane
 ```
 
 - **`EditorPane`** (`editor_state.rs`) — the active `DocBuffer`, its `Highlighted` lines
@@ -190,8 +197,23 @@ classDiagram
   expansion, and the backlinks panel. Note that `active_path` deliberately stays on the
   shell: it is a cross-cutting "current document" shared by the editor, search, and PDF.
 - **`UiState`** (`ui_state.rs`) — modals, the command palette and its highlighted row, the
-  toast, split-view state and divider ratio, window size, and the display scale factor that
-  drives PDF supersampling.
+  toast, the divider ratio and drag, window size, and the display scale factor that drives
+  PDF supersampling.
+- **`Workspace`** (`app/workspace.rs`) — the two panes. The focused pane's documents live
+  in `MdEditor`'s own fields (`tabs`, `active_path`, `editor`, `pdf`, …), so handlers work on
+  it unchanged. The other pane's wait in a `PaneDocs` bundle that `swap_in` exchanges in a
+  few moves. A pane's view sends `Message::FromPane(pane, msg)`: an interaction focuses
+  that pane (saving the note it leaves), while a scroll or measurement runs in it without
+  moving focus. Every task a handler starts comes back as `Message::ToPane(pane, msg)` for
+  the pane that started it. Work across both panes (rename, delete, watcher, rescale,
+  save, session) goes through `for_each_pane`. Pane commands are in `app/panes.rs`, the
+  panes' views in `app/pane_view.rs`.
+- **`DeskStore`** (`desks.rs`, handlers in `app/desks.rs`) — per-vault saved workspace
+  layouts (`Desk`) stored under `desks:<vault_root>` in SQLite, loaded into memory on vault
+  open so views stay pure. Each desk records both panes' tab strips and viewer state,
+  split axis and ratio, focused pane, and panel visibility. Switching desks flushes dirty
+  buffers in all open panes first (refusing on write failure); renames and deletes update
+  all saved desks for the active vault.
 - **`SearchState`** (`search_state.rs`) — query and replacement text, the `regex`,
   `match_case`, and PDF-only `loose` flags, vault and PDF results, and a memoized
   in-document match cache keyed by `DocMatchKey` so `view` never rescans the buffer.
@@ -207,12 +229,6 @@ classDiagram
 - **`InkState`** (`ink/mod.rs`) — the handwriting surface: the open `.ink` document and its
   path, tool and colour settings, the camera, the in-progress stroke, and selection. See
   [Handwritten Notes](Handwritten-Notes.md).
-- **`PptxPane`** (`pptx_pane.rs`) — the open presentation: the prepared `LoadedDeck`, the
-  load `generation` (bumped by every load and by closing, so the result of a slow parse the
-  reader has since left is dropped when it lands), the error to show, zoom as a multiple of
-  fit-to-width, and the scroll position the slide counter and slide stepping are derived
-  from. A reload triggered by the vault watcher keeps the old deck on screen until the new
-  one is ready, and a reload that fails keeps it rather than flashing an error.
 
 ---
 
@@ -245,53 +261,64 @@ Every stream except the keyboard, window events, the vault watcher and pen input
    unless the ink window has claimed pen capture.
 
 Animation frames are armed the same way, from `motion.is_animating()`; see
-[Design Tokens, Motion & Palette](Design-Tokens-Motion-and-Palette.md).
+[Design System & Motion](Design-Tokens-Motion-and-Palette.md).
 
 ---
 
 ## 5. View Layer Components (`views/`)
 
-- **Sidebar** (`sidebar.rs`) — the folder/file tree with type-appropriate icons and a header
-  offering *open vault*, *new file*, and *new folder*. Clicking a file or folder selects it:
-  the selected row gets a faint highlight and rename and delete buttons, and deleting a folder
-  removes everything in it (closing any open document inside). New entries go into the
-  selected folder, or beside the selected file, only while that row is visible in the tree
-  (not deleted, not inside a collapsed folder); otherwise they go to the vault root.
-  Clicking empty space in the tree clears the selection, so new entries go to the root.
-- **Toolbar** (`toolbar.rs`) — sidebar toggle, the active file's name with a saved/unsaved
-  indicator, split-view toggle, table of contents, global search, command palette, and the
-  study tracker.
-- **Command palette** (`command_palette.rs`) — the `Ctrl+P` overlay. Owns the single command
-  registry and the ranking that interleaves commands with vault files, capped at
+Every view is built from the shared components in `ui/` and the tokens in `design/`; see
+[Design System & Motion](Design-Tokens-Motion-and-Palette.md). The shell (`app/view.rs`) is
+the "Folio" layout: activity rail, sidebar, tab strip, the document *sheet* (a rounded
+surface on the chrome ground holding the main pane), side panels and status bar, with
+`SplitHandle`s between panes; `ui::context_anchor` wraps the window so a right click opens its menu at the
+pointer.
+
+- **Activity rail** (`rail.rs`) — the 48px icon column at the left edge: Files (sidebar),
+  search, command palette; graph, handwriting, tracker; theme switch and Settings. It is the
+  `FocusRegion::Toolbar` region for F6.
+- **Tab strip** (`ui::tab_strip`, state in `tabs.rs`) — one tab per open document, with a
+  dirty dot, a missing badge, drag to reorder, middle-click to close, a right-click menu and
+  an overflow list. The active tab shares the sheet's colour. Each pane has its own strip;
+  its trailing end holds the split toggle and, on the focused pane, the outline and
+  backlinks toggles.
+- **Sidebar** (`sidebar.rs`) — a `Panel` with a filter field and the file tree of
+  `TreeRow`s (indent guides, file-type icons, ellipsis with tooltip). Selecting a row shows
+  rename and delete; right-click opens the file menu. New entries go into the selected
+  folder, or beside the selected file, only while that row is visible in the tree;
+  otherwise into the vault root.
+- **Status bar** (`ui::status_bar`) — breadcrumbs (`breadcrumbs.rs`: vault › folders ›
+  document, folders clickable), save state, line and column, words, selection and indexing;
+  hidden in focus mode.
+- **Settings** (`settings.rs`) — Appearance, Editor, Files, Keyboard and About.
+- **Command palette** (`command_palette.rs`) — the `Ctrl+P` overlay; commands come from the
+  shortcut registry (`shortcuts.rs`) and interleave with vault files, capped at
   `MAX_RESULTS = 40`.
+- **Viewer toolbar** (`viewer_toolbar.rs`) — shared by PDFs and images:
+  outline, an editable page field, zoom steps and an editable zoom field, fit
+  width / fit page, find, plus the view's own tools in the middle.
 - **PDF viewer** (`pdf_viewer.rs`) and **interactive PDF** (`interactive_pdf.rs`) — the
-  continuous page list, toolbar, and search bar; page bitmaps wrapped in a custom `Widget`
-  for hit testing and drag selection; and five canvas overlay layers for annotations,
-  focus outlines, search matches, the live selection, and reference underlines.
-- **Presentation viewer** (`pptx_viewer.rs`, with `slides/`) — every slide in one scrolling
-  column under its number and title, and a toolbar to step between slides and zoom. A deck
-  is parsed and all its text laid out once, off the UI thread (`slides::load_deck`), in
-  points, so zooming and resizing never lay text out again. Each slide is a `stack` of
-  canvases, one per layer from `slides::layer_ranges`: a canvas layer paints all its shapes,
-  then its images, then its text, whatever order they were drawn in, so an element that
-  must cover something drawn earlier starts a new layer.
-- **Knowledge graph** (`graph.rs`, `graph/`, `gpu_graph.rs`) — the graph screen: a GPU
-  canvas for nodes and edges with a label overlay, a toolbar, and an inspector. See
+  toolbar (highlight swatches from the content palette when text is selected, the focused
+  highlight's actions), the find bar, and the continuous page list on the viewer ground,
+  with page-sized placeholders while pages render; page bitmaps wrapped in a custom `Widget`
+  for hit testing and drag selection, and canvas overlays for annotations, focus outlines,
+  search matches, the live selection, and reference underlines.
+- **Knowledge graph** (`graph.rs`, `graph/`, `gpu_graph.rs`) — a GPU canvas for nodes and
+  edges with a label overlay, a toolbar of `Segmented` scope and depth, search and filter
+  chips, a legend card and viewport controls over the canvas, and an inspector `Panel`. See
   [Knowledge Graph](Knowledge-Graph.md).
-- **Handwriting chrome** (`ink.rs`) — the ink window's toolbar and colour palette; the
-  canvas itself is `ink/canvas.rs`. See [Handwritten Notes](Handwritten-Notes.md).
-- **Backlinks panel** (`backlinks.rs`) — notes and PDF highlights pointing at the open
-  document.
-- **Table of contents** (`toc.rs`) — Markdown headings H1–H6, or the PDF outline (embedded
-  bookmarks, or a recovered one marked as synthetic).
-- **Toast** (`toast.rs`) — a single animated feedback message that fades in and out.
-- **Modals** (`modals.rs`) — create file, create folder, rename, delete confirmation, quick
-  note, and link-note dialogs.
-- **Link note picker** (`link_note_picker.rs`) — a searchable in-app vault picker for
-  attaching a PDF highlight to an existing note or a new note path.
-- **Tracker** (`tracker.rs`, `tracker/config.rs`) — the six-tab study dashboard and the JSON
-  configuration schema.
-- **Icons** (`icons.rs`) — the vector icon set, drawn directly on an iced canvas rather than
-  loaded as font glyphs or bitmaps.
-- **Welcome** (`welcome.rs`) — the zero-state: the app icon, wordmark, an
-  *Open Existing Vault* button, and the `Ctrl+O` hint.
+- **Handwriting chrome** (`ink.rs`) — the ink window's toolbar (tools, widths, paper,
+  zoom, unsaved chip, Save) and colour rail; the canvas itself is `ink/canvas.rs`. See
+  [Handwritten Notes](Handwritten-Notes.md).
+- **Backlinks** (`backlinks.rs`) and **Outline** (`toc.rs`) — right-hand `Panel`s; the outline
+  marks the current heading.
+- **Search** (`search.rs`) — the in-note find bar with its replace row, and the vault search
+  overlay.
+- **Toasts** (`toast.rs`) — a queue of up to three; errors persist and can carry Retry.
+- **Modals** (`modals.rs`) and **link note picker** (`link_note_picker.rs`) — every dialog on
+  `ui::dialog`, with inline validation.
+- **Tracker** (`tracker.rs`, `tracker/`) — a main-area view: header with the single
+  Start/Stop timer action, underline tabs, stat cards, a 14-day bar chart, and the tab
+  bodies in `tracker/sections.rs`; the JSON schema is `tracker/config.rs`.
+- **Welcome** (`welcome.rs`) — the zero-state: app mark, *Open folder…*, *Create vault…*,
+  recent vaults and shortcut hints.

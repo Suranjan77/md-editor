@@ -1,0 +1,133 @@
+name: CI
+
+# Quality gate for every push and pull request: formatting, a clippy warning
+# ratchet, the full test suite (including the headless e2e scenarios), and
+# dependency vulnerability and licence checks.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+
+  test:
+    name: clippy + tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libfontconfig1-dev libfreetype6-dev libwayland-dev
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add clippy
+
+      # The build script downloads PDFium into target/pdfium/ (pinned and
+      # checksum-verified); cache it with the rest of the build.
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'core/build_pdfium.rs') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Clippy (warning count must not exceed clippy-baseline.txt)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: scripts/clippy-ratchet.sh
+
+      # The Win32 modules (pen capture, ShellExecute) only compile here; their
+      # `deny(clippy::undocumented_unsafe_blocks)` fails this step.
+      - name: Clippy (Windows-only code)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cargo clippy --workspace --all-targets
+
+      - name: Tests
+        shell: bash
+        run: cargo test --workspace
+
+      - name: Upload e2e screenshots and telemetry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.os }}
+          path: target/e2e/
+          if-no-files-found: ignore
+
+  audit:
+    name: audit + licences
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+      - run: cargo audit
+      - run: cargo deny check licenses bans
+
+  arch-package:
+    name: Arch package
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git cargo imagemagick namcap \
+            hicolor-icon-theme libxkbcommon wayland
+          useradd -m builder
+      - uses: actions/checkout@v4
+      - name: Build package (makepkg runs check(), i.e. the test suite)
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          chown -R builder "$GITHUB_WORKSPACE"
+          su builder -c "git config --global --add safe.directory '$GITHUB_WORKSPACE' && scripts/build-arch-package.sh --noconfirm"
+      - name: namcap
+        run: |
+          namcap packaging/arch/md-editor-git/PKGBUILD packaging/arch/md-editor/PKGBUILD
+          namcap target/arch-package/*.pkg.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: md-editor-arch-package
+          path: target/arch-package/*.pkg.tar.zst

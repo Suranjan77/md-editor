@@ -95,27 +95,56 @@ fn read_font_metrics(font: iced::Font) -> Option<FontMetrics> {
     })
 }
 
-/// The default font at bold weight.
+/// Prose font: the user's reading font (Settings → Editor), Inter or Source Serif.
+pub(super) fn body_font() -> iced::Font {
+    match crate::design::reading_font() {
+        crate::design::ReadingFont::Sans => crate::design::fonts::UI_FONT,
+        crate::design::ReadingFont::Serif => crate::design::fonts::SERIF_FONT,
+    }
+}
+
+/// Code, TeX source and anything that must keep its columns: JetBrains Mono.
+pub(super) fn mono_font() -> iced::Font {
+    crate::design::fonts::MONO_FONT
+}
+
+/// Headings: Source Serif at semibold (italic when the span is emphasised).
+pub(super) fn heading_font(italic: bool) -> iced::Font {
+    iced::Font {
+        style: if italic {
+            iced::font::Style::Italic
+        } else {
+            iced::font::Style::Normal
+        },
+        ..crate::design::fonts::SERIF_FONT_SEMIBOLD
+    }
+}
+
+/// The body font at bold weight.
 pub(super) fn bold_font() -> iced::Font {
     iced::Font {
         weight: iced::font::Weight::Bold,
-        ..iced::Font::DEFAULT
+        ..body_font()
     }
 }
 
 /// Pick the iced font for a span.
 pub(super) fn span_font(span: &StyledSpan, line: &StyledLine) -> iced::Font {
     if span.is_code || line.is_code_block || line.is_math_block {
-        iced::Font::MONOSPACE
+        mono_font()
+    } else if span.is_heading {
+        // Folio: headings are always set in the serif display face, whatever the
+        // body reading font, so a note's structure reads at a glance.
+        heading_font(span.italic)
     } else if span.bold {
         bold_font()
     } else if span.italic {
         iced::Font {
             style: iced::font::Style::Italic,
-            ..iced::Font::DEFAULT
+            ..body_font()
         }
     } else {
-        iced::Font::DEFAULT
+        body_font()
     }
 }
 
@@ -123,7 +152,7 @@ pub(super) fn span_font(span: &StyledSpan, line: &StyledLine) -> iced::Font {
 /// ligatures. Code stays on basic shaping so every character keeps its own
 /// advance and columns line up exactly as typed.
 pub(super) fn shaping_for(font: iced::Font) -> text::Shaping {
-    if font.family == iced::font::Family::Monospace {
+    if font.family == mono_font().family {
         text::Shaping::Basic
     } else {
         text::Shaping::Advanced

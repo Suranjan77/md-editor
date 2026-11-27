@@ -419,7 +419,7 @@ fn code_highlighting_preserves_full_source_text() {
         lines[1]
             .spans
             .iter()
-            .any(|span| span.color != crate::theme::TEXT_PRIMARY)
+            .any(|span| span.color != crate::design::tokens().doc_text)
     );
 }
 
@@ -644,4 +644,98 @@ fn test_highlighter_permutations() {
         })
         .unwrap();
     assert_eq!(link4.display_text.as_deref(), Some("complex!@#%^&*()"));
+}
+
+/// BUG-07: link destinations with spaces (`<...>` or `%20`), balanced
+/// parentheses and titles are read whole.
+#[test]
+fn link_destinations_allow_brackets_parentheses_and_titles() {
+    let target = |src: &str| {
+        highlight_markdown(src)
+            .into_iter()
+            .flat_map(|line| line.spans)
+            .find_map(|span| span.link_target.or(span.image_path))
+    };
+    assert_eq!(
+        target("[p](<papers/Paper (2024).pdf>)").as_deref(),
+        Some("papers/Paper (2024).pdf")
+    );
+    assert_eq!(
+        target("[p](papers/Paper_(2024).pdf \"Title\")").as_deref(),
+        Some("papers/Paper_(2024).pdf")
+    );
+    assert_eq!(target("[n](My%20Note.md)").as_deref(), Some("My Note.md"));
+    assert_eq!(
+        target("[h](pdf://a%20b.pdf?page=2&annotation=x)").as_deref(),
+        Some("pdf://a%20b.pdf?page=2&annotation=x"),
+        "pdf:// links are decoded by their own handler"
+    );
+    assert_eq!(
+        target("![fig](<img/a b.png> 'alt')").as_deref(),
+        Some("img/a b.png")
+    );
+    assert_eq!(target("[x](unbalanced (paren.md)"), None);
+}
+
+/// BUG-07: YAML frontmatter is a `yaml` code block with hidden `---` fences,
+/// not two horizontal rules around raw text; only a closed block on line 0
+/// counts, and adding or removing the closing line re-highlights line 0.
+#[test]
+fn yaml_frontmatter_is_a_code_block_only_when_closed_at_the_top() {
+    let lines = highlight_markdown("---\ntype: pdf-note\n---\n\n# Title");
+    assert!(lines[0].is_block_fence && lines[0].is_code_block);
+    assert_eq!(lines[0].code_block_lang.as_deref(), Some("yaml"));
+    assert!(lines[1].is_code_block && !lines[1].is_block_fence);
+    assert!(lines[2].is_block_fence);
+    assert!(!lines[4].is_code_block, "the note after it is ordinary");
+
+    let unclosed = highlight_markdown("---\ntype: x\n\ntext");
+    assert!(unclosed.iter().all(|line| !line.is_code_block));
+    let not_top = highlight_markdown("text\n---\nkey: v\n---");
+    assert!(not_top.iter().all(|line| !line.is_code_block));
+
+    // Incremental: closing / reopening the block far below line 0.
+    let mut h = Highlighted::new("---\ntitle: a\nbody");
+    assert!(!h.lines[0].is_code_block);
+    h.update("---\ntitle: a\n---\nbody");
+    assert_eq!(h.lines, highlight_markdown("---\ntitle: a\n---\nbody"));
+    assert!(h.lines[0].is_code_block);
+    h.update("---\ntitle: a\n--\nbody");
+    assert_eq!(h.lines, highlight_markdown("---\ntitle: a\n--\nbody"));
+    assert!(!h.lines[0].is_code_block);
+}
+
+#[test]
+fn strikethrough_wraps_its_body_in_hidden_markers() {
+    let lines = highlight_markdown("keep ~~gone~~ and ~~~~ and ~~open");
+    let spans = &lines[0].spans;
+    let struck: Vec<_> = spans.iter().filter(|s| s.strikethrough).collect();
+    assert_eq!(struck.len(), 1);
+    assert_eq!(struck[0].text, "gone");
+    let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(
+        text, "keep ~~gone~~ and ~~~~ and ~~open",
+        "source preserved"
+    );
+    assert!(spans.iter().any(|s| s.is_syntax && s.text == "~~"));
+}
+
+#[test]
+fn callout_header_shows_its_type_and_title_and_marks_the_quote() {
+    use super::Callout;
+    let lines = highlight_markdown("> [!warning]- Mind the gap\n> body\n> [!x y]");
+    assert_eq!(lines[0].callout, Some(Callout::Warning));
+    let label = &lines[0].spans[1];
+    assert_eq!(label.text, "[!warning]-");
+    assert_eq!(label.visible_text(false), "Warning · ");
+    assert!(lines[0].spans[2..].iter().all(|s| s.bold));
+    assert_eq!(lines[1].callout, None);
+    assert!(lines[1].is_blockquote);
+    assert_eq!(lines[2].callout, None, "not a callout type");
+    let text: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(text, "> [!warning]- Mind the gap");
+
+    let plain = highlight_markdown("> [!TIP]");
+    assert_eq!(plain[0].callout, Some(Callout::Tip));
+    assert_eq!(plain[0].spans[1].visible_text(false), "TIP");
 }

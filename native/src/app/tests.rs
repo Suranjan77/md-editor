@@ -1,6 +1,7 @@
 //! Tests for the app shell: link resolution, routing and document state.
 
 use super::*;
+use crate::messages::{EditorMessage, GraphMessage, PdfMessage};
 
 #[test]
 fn test_slugify_and_find_heading_line() {
@@ -64,7 +65,7 @@ fn test_resolve_vault_note_by_name() {
 fn ink_path_is_derived_from_the_open_note() {
     assert_eq!(
         derive_ink_path(Some("notes/algebra.md"), "20260805-101500"),
-        "notes/algebra.ink"
+        "notes/algebra.ink.svg"
     );
 }
 
@@ -72,7 +73,7 @@ fn ink_path_is_derived_from_the_open_note() {
 fn ink_path_falls_back_to_a_timestamp_with_no_note_open() {
     assert_eq!(
         derive_ink_path(None, "20260805-101500"),
-        "handwritten-20260805-101500.ink"
+        "handwritten-20260805-101500.ink.svg"
     );
 }
 
@@ -81,8 +82,25 @@ fn ink_path_only_strips_an_extension_from_the_final_component() {
     // A dot in a directory name must not be mistaken for the extension.
     assert_eq!(
         derive_ink_path(Some("course-v1.2/lecture"), "20260805-101500"),
-        "course-v1.2/lecture.ink"
+        "course-v1.2/lecture.ink.svg"
     );
+}
+
+#[test]
+fn a_new_ink_page_never_takes_an_existing_pages_path() {
+    use super::ink::{strip_extension, unique_ink_path};
+    let taken = ["notes/algebra.ink.svg", "notes/algebra-2.ink.svg"];
+    let is_taken = |p: &str| taken.contains(&p);
+    assert_eq!(
+        unique_ink_path("notes/fresh.ink.svg", is_taken),
+        "notes/fresh.ink.svg"
+    );
+    assert_eq!(
+        unique_ink_path("notes/algebra.ink.svg", is_taken),
+        "notes/algebra-3.ink.svg"
+    );
+    assert_eq!(strip_extension("notes/algebra.ink.svg"), "notes/algebra");
+    assert_eq!(strip_extension("notes/algebra.ink"), "notes/algebra");
 }
 
 #[test]
@@ -262,6 +280,7 @@ fn default_pdf_note_path_uses_pdf_name_page_and_annotation_prefix() {
         note: None,
         linked_note_path: None,
         markdown_anchor: None,
+        ink_stroke: None,
         created_at: 0,
         updated_at: 0,
     };
@@ -287,9 +306,28 @@ fn same_file_search_result_does_not_reload_open_buffer() {
 }
 
 #[test]
-fn stale_pdf_search_generation_is_rejected() {
-    assert!(!pdf_search_generation_is_current(8, 7));
-    assert!(pdf_search_generation_is_current(8, 8));
+fn pdf_search_starts_from_the_page_being_read() {
+    use super::search::first_pdf_match_from;
+    let hit = |page| md_editor_core::pdf::PdfSearchMatch {
+        page_index: page,
+        context: String::new(),
+        rects: Vec::new(),
+    };
+    let results = [hit(1), hit(4), hit(4), hit(9)];
+    assert_eq!(first_pdf_match_from(&results, 4, true), 1);
+    assert_eq!(first_pdf_match_from(&results, 5, true), 3);
+    assert_eq!(
+        first_pdf_match_from(&results, 10, true),
+        0,
+        "wraps to the top"
+    );
+    assert_eq!(first_pdf_match_from(&results, 5, false), 2);
+    assert_eq!(
+        first_pdf_match_from(&results, 0, false),
+        3,
+        "wraps to the end"
+    );
+    assert_eq!(first_pdf_match_from(&[], 3, true), 0);
 }
 
 #[test]
@@ -297,15 +335,20 @@ fn editor_cursor_move_reclaims_active_panel_from_pdf() {
     let mut app = MdEditor::new_with_startup_file(None).0;
     app.pdf.render_generation = 8;
     app.search.pdf_error = Some("keep".to_string());
-    let _ = app.update_inner(Message::PdfSearchResult(7, Err("stale result".to_string())));
+    let _ = app.update_inner(Message::Pdf(PdfMessage::SearchResult(
+        7,
+        Err("stale result".to_string()),
+    )));
     assert_eq!(app.search.pdf_error.as_deref(), Some("keep"));
 
     app.active_panel = ActivePanel::Pdf;
-    let _ = app.update_inner(Message::EditorCommand(EditorCommand::SetCursor {
-        line: 0,
-        col: 0,
-        affinity: crate::editor::buffer::Affinity::Downstream,
-    }));
+    let _ = app.update_inner(Message::Editor(EditorMessage::Command(
+        EditorCommand::SetCursor {
+            line: 0,
+            col: 0,
+            affinity: crate::editor::buffer::Affinity::Downstream,
+        },
+    )));
     assert_eq!(app.active_panel, ActivePanel::Markdown);
 }
 
@@ -318,7 +361,7 @@ fn graph_toggle_and_escape_preserve_the_open_document_mode() {
         .set_snapshot(md_editor_core::types::GraphSnapshot::default());
     app.active_path = Some("notes/current.md".to_string());
 
-    let _ = app.update_inner(Message::GraphToggle);
+    let _ = app.update_inner(Message::Graph(GraphMessage::Toggle));
     assert!(app.graph.visible);
 
     let _ = app.update_inner(Message::KeyboardShortcut(Shortcut::Escape));
@@ -332,7 +375,7 @@ fn graph_shortcut_is_a_noop_without_a_vault() {
     app.vault.root = None;
     app.graph.visible = false;
 
-    let _ = app.update_inner(Message::GraphToggle);
+    let _ = app.update_inner(Message::Graph(GraphMessage::Toggle));
 
     assert!(!app.graph.visible);
     assert!(
@@ -344,11 +387,11 @@ fn graph_shortcut_is_a_noop_without_a_vault() {
 #[test]
 fn stale_pdf_identity_result_cannot_attach_to_another_document() {
     let mut app = MdEditor::new_with_startup_file(None).0;
-    app.pdf.render_generation = 8;
+    app.pdf.document_generation = 8;
     app.pdf.active_path = Some("current.pdf".to_string());
     app.pdf.document_id = None;
 
-    let _ = app.update_inner(Message::PdfDocumentIdComputed(
+    let _ = app.update_inner(Message::Pdf(PdfMessage::DocumentIdComputed(
         7,
         Some((
             "current.pdf".to_string(),
@@ -356,10 +399,10 @@ fn stale_pdf_identity_result_cannot_attach_to_another_document() {
             10,
             Some(1),
         )),
-    ));
+    )));
     assert!(app.pdf.document_id.is_none());
 
-    let _ = app.update_inner(Message::PdfDocumentIdComputed(
+    let _ = app.update_inner(Message::Pdf(PdfMessage::DocumentIdComputed(
         8,
         Some((
             "other.pdf".to_string(),
@@ -367,6 +410,321 @@ fn stale_pdf_identity_result_cannot_attach_to_another_document() {
             10,
             Some(1),
         )),
-    ));
+    )));
     assert!(app.pdf.document_id.is_none());
+
+    // A zoom change bumps only the render generation; the id still lands.
+    app.pdf.render_generation = 42;
+    let _ = app.update_inner(Message::Pdf(PdfMessage::DocumentIdComputed(
+        8,
+        Some((
+            "current.pdf".to_string(),
+            "current-id".to_string(),
+            10,
+            Some(1),
+        )),
+    )));
+    assert_eq!(app.pdf.document_id.as_deref(), Some("current-id"));
+}
+
+#[test]
+fn ctrl_shortcuts_a_focused_widget_captured_do_not_fire_app_actions() {
+    use iced::event::Status;
+    use iced::keyboard::{Key, Modifiers};
+    let b = Key::Character("b".into());
+
+    // Ctrl+B in the editor is bold (captured): the sidebar must not toggle.
+    assert!(
+        super::subscription::keyboard_message(
+            &b,
+            Modifiers::CTRL,
+            Status::Captured,
+            false,
+            false,
+            false,
+            false,
+        )
+        .is_none()
+    );
+    // Nothing focused claimed it: the app shortcut runs.
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &b,
+            Modifiers::CTRL,
+            Status::Ignored,
+            false,
+            false,
+            false,
+            false,
+        ),
+        Some(Message::KeyboardShortcut(Shortcut::ToggleSidebar))
+    ));
+    // Unmodified keys and Escape keep working regardless.
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Named(iced::keyboard::key::Named::Escape),
+            Modifiers::empty(),
+            Status::Captured,
+            false,
+            false,
+            false,
+            false,
+        ),
+        Some(Message::KeyboardShortcut(Shortcut::Escape))
+    ));
+    // Ctrl+Enter while command palette is open opens the selected file to the side.
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Named(iced::keyboard::key::Named::Enter),
+            Modifiers::CTRL,
+            Status::Ignored,
+            false,
+            false,
+            true,
+            false,
+        ),
+        Some(Message::Shell(
+            crate::messages::ShellMessage::CommandPaletteOpenToSide
+        ))
+    ));
+    // Graph keyboard node navigation & pin when uncaptured; typing in search does not trigger it.
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Named(iced::keyboard::key::Named::Tab),
+            Modifiers::empty(),
+            Status::Ignored,
+            false,
+            false,
+            false,
+            true,
+        ),
+        Some(Message::Graph(crate::messages::GraphMessage::CycleNode(1)))
+    ));
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Named(iced::keyboard::key::Named::Tab),
+            Modifiers::SHIFT,
+            Status::Ignored,
+            false,
+            false,
+            false,
+            true,
+        ),
+        Some(Message::Graph(crate::messages::GraphMessage::CycleNode(-1)))
+    ));
+    assert!(matches!(
+        super::subscription::keyboard_message(
+            &Key::Character("p".into()),
+            Modifiers::empty(),
+            Status::Ignored,
+            false,
+            false,
+            false,
+            true,
+        ),
+        Some(Message::Graph(
+            crate::messages::GraphMessage::ToggleSelectedPin
+        ))
+    ));
+    assert!(
+        super::subscription::keyboard_message(
+            &Key::Character("p".into()),
+            Modifiers::empty(),
+            Status::Captured,
+            false,
+            false,
+            false,
+            true,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn literal_replace_all_inserts_dollar_signs_verbatim() {
+    let mut app = MdEditor::new_with_startup_file(None).0;
+    app.active_path = Some("prices.md".to_string());
+    app.editor.buffer = DocBuffer::from_text("price: PRICE");
+    app.search.query = "price".to_string();
+    app.search.replace = "$5".to_string();
+
+    // Plain text, either case mode: the replacement is text, not a template.
+    for match_case in [false, true] {
+        app.editor.buffer = DocBuffer::from_text("price: price");
+        app.search.match_case = match_case;
+        app.search.regex = false;
+        let (count, _) = app.replace_all_in_current_document().unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(
+            app.editor.buffer.text(),
+            "$5: $5",
+            "match_case={match_case}"
+        );
+    }
+
+    // Regex mode keeps capture-group expansion.
+    app.editor.buffer = DocBuffer::from_text("a1 b2");
+    app.search.regex = true;
+    app.search.query = r"([a-z])(\d)".to_string();
+    app.search.replace = "$2$1".to_string();
+    let _ = app.replace_all_in_current_document().unwrap();
+    assert_eq!(app.editor.buffer.text(), "1a 2b");
+}
+
+/// Parse a registry chord ("Ctrl Shift T", "F6", "Esc") into what the
+/// keyboard subscription receives.
+fn parse_chord(chord: &str) -> (iced::keyboard::Key, iced::keyboard::Modifiers) {
+    use iced::keyboard::key::Named;
+    use iced::keyboard::{Key, Modifiers};
+    let mut modifiers = Modifiers::empty();
+    let mut key = None;
+    for part in chord.split_whitespace() {
+        match part {
+            "Ctrl" => modifiers |= Modifiers::CTRL,
+            "Shift" => modifiers |= Modifiers::SHIFT,
+            "Alt" => modifiers |= Modifiers::ALT,
+            "Tab" => key = Some(Key::Named(Named::Tab)),
+            "Esc" => key = Some(Key::Named(Named::Escape)),
+            "F2" => key = Some(Key::Named(Named::F2)),
+            "F6" => key = Some(Key::Named(Named::F6)),
+            "F11" => key = Some(Key::Named(Named::F11)),
+            other => key = Some(Key::Character(other.to_lowercase().into())),
+        }
+    }
+    (key.expect("chord names a key"), modifiers)
+}
+
+/// The shortcut registry is what menus, tooltips, the palette and Settings
+/// show; the keyboard subscription must do what it says, or a tooltip lies.
+#[test]
+fn every_registry_chord_triggers_its_shortcut() {
+    use crate::messages::{InkMessage, TabsMessage};
+    for spec in crate::shortcuts::REGISTRY
+        .iter()
+        .filter(|s| !s.chord.is_empty())
+    {
+        let (key, modifiers) = parse_chord(spec.chord);
+        let message = super::subscription::keyboard_message(
+            &key,
+            modifiers,
+            iced::event::Status::Ignored,
+            false,
+            false,
+            false,
+            false,
+        );
+        let matches = match (&message, spec.shortcut) {
+            (Some(Message::KeyboardShortcut(got)), want) => *got == want,
+            // Equivalents the registry names by their user-facing shortcut.
+            (Some(Message::Tabs(TabsMessage::MruNext)), Shortcut::NextTab)
+            | (Some(Message::Tabs(TabsMessage::MruPrevious)), Shortcut::PreviousTab)
+            | (Some(Message::Ink(InkMessage::Toggle)), Shortcut::Handwriting) => true,
+            _ => false,
+        };
+        assert!(
+            matches,
+            "{} ({}) produced {message:?}",
+            spec.label, spec.chord
+        );
+    }
+}
+
+#[test]
+fn loose_pdf_search_matches_hyphenated_line_breaks() {
+    let re = regex::RegexBuilder::new(&super::search::loose_pdf_pattern("the algorithm runs"))
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+    for text in [
+        "the algorithm runs",
+        "the algo-\r\nrithm\nruns",
+        "the algo\u{AD}rithm  runs",
+        "the al-\n  gorithm runs",
+    ] {
+        assert!(re.is_match(text), "{text:?}");
+    }
+    assert!(
+        !re.is_match("the algo rithm runs"),
+        "a plain space inside a word"
+    );
+}
+
+#[test]
+fn automatic_pdf_fit_stops_at_200_percent_but_a_requested_fit_fills_the_pane() {
+    let mut app = MdEditor::new_with_startup_file(None).0;
+    app.showing_pdf = true;
+    app.pdf.active_path = Some("narrow.pdf".to_string());
+    app.pdf.total_pages = 1;
+    app.pdf.page_sizes = vec![Some((400.0, 600.0))];
+    app.pdf.viewport_width = Some(2048.0);
+    let send = |app: &mut MdEditor, message| {
+        let _ = app.update(Message::Pdf(message));
+        app.pdf.zoom
+    };
+
+    assert_eq!(send(&mut app, PdfMessage::FitToWidth), PDF_FIT_MAX_ZOOM);
+    assert_eq!(
+        send(&mut app, PdfMessage::FitToWidthClicked),
+        PDF_MAX_ZOOM,
+        "a requested fit uses the space, up to the zoom limit"
+    );
+    app.pdf.viewport_width = Some(1248.0);
+    assert_eq!(
+        send(&mut app, PdfMessage::FitToWidth),
+        3.0,
+        "a refit after a resize keeps filling the pane"
+    );
+    send(&mut app, PdfMessage::ZoomChanged(1.0));
+    assert!(!app.pdf.fit_fills_pane, "an explicit zoom ends the fill");
+    assert_eq!(send(&mut app, PdfMessage::FitToWidth), PDF_FIT_MAX_ZOOM);
+}
+
+#[test]
+fn an_alt_drag_on_the_pdf_puts_a_live_crop_in_the_open_note_or_on_the_clipboard() {
+    let mut app = MdEditor::new_with_startup_file(None).0;
+    app.pdf.active_path = Some("papers/paper.pdf".to_string());
+    app.pdf.total_pages = 3;
+    app.pdf.page_sizes = vec![None, Some((600.0, 800.0)), None];
+    let region = iced::Rectangle {
+        x: 0.25,
+        y: 0.5,
+        width: 0.5,
+        height: 0.25,
+    };
+
+    let _ = app.update(Message::Pdf(PdfMessage::RegionSelected(1, region)));
+    assert!(
+        app.ui
+            .toast
+            .as_deref()
+            .is_some_and(|t| t.contains("Copied")),
+        "no note open: {:?}",
+        app.ui.toast
+    );
+
+    app.active_path = Some("notes/reading.md".to_string());
+    app.editor.buffer = crate::editor::buffer::DocBuffer::from_text("Intro");
+    app.editor
+        .buffer
+        .execute(crate::editor::buffer::EditorCommand::MoveCursor {
+            movement: crate::editor::buffer::Movement::DocEnd,
+            extend: false,
+        });
+    let _ = app.update(Message::Pdf(PdfMessage::RegionSelected(1, region)));
+    let text = app.editor.buffer.text();
+    assert!(
+        text.contains("![paper, p. 2](pdf://papers/paper.pdf?page=2&crop=150,400,300,200)"),
+        "{text}"
+    );
+    assert!(
+        text.starts_with("Intro\n"),
+        "on its own line after the caret's: {text}"
+    );
+
+    let _ = app.update(Message::Pdf(PdfMessage::RegionSelected(0, region)));
+    assert_eq!(
+        app.editor.buffer.text(),
+        text,
+        "page size unknown: nothing inserted"
+    );
 }

@@ -14,333 +14,23 @@
 //!
 //! [`canvas`]: iced::widget::canvas
 
-use iced::wgpu;
-use iced::widget::shader::{self, Primitive};
+use iced::widget::shader;
 use iced::{Point, Rectangle, Vector, mouse};
 
-use bytemuck::{Pod, Zeroable};
-
 use crate::graph_state::{MAX_ZOOM, MIN_ZOOM};
-use crate::messages::Message;
-use crate::theme;
+use crate::messages::{GraphMessage, Message};
 use crate::views::graph::{
-    GraphFrame, ViewTransform, distance, fit_transform, kind_color, node_magnitude,
-    node_screen_radius, screen_to_world, world_to_screen,
+    GraphFrame, ViewTransform, distance, kind_color, node_magnitude, node_screen_radius,
+    screen_to_world, world_to_screen,
 };
+
+mod pipeline;
+
+use pipeline::GpuGraphPrimitive;
+use pipeline::{EdgeInstance, Globals, NodeInstance};
 
 /// Extra pixels added to a node's radius when resolving a pointer hit.
 const HIT_SLOP: f32 = 4.0;
-
-// ───────────────────────────── GPU data ─────────────────────────────
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct Globals {
-    /// `[sx, sy, tx, ty]` — `clip = (sx*wx + tx, sy*wy + ty)`.
-    transform: [f32; 4],
-    /// Logical widget size in points.
-    viewport: [f32; 2],
-    /// `1.0` when the render target is an sRGB format.
-    srgb: f32,
-    _pad: f32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct NodeInstance {
-    center: [f32; 2],
-    radius: f32,
-    glow: f32,
-    color: [f32; 4],
-    ring: f32,
-    dim: f32,
-    _pad: [f32; 2],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct EdgeInstance {
-    p0: [f32; 2],
-    p1: [f32; 2],
-    color: [f32; 4],
-    thickness: f32,
-    _pad: [f32; 3],
-}
-
-// ───────────────────────────── primitive ────────────────────────────
-
-/// One frame's worth of graph geometry, handed to the `wgpu` backend.
-#[derive(Debug)]
-pub struct GpuGraphPrimitive {
-    nodes: Vec<NodeInstance>,
-    edges: Vec<EdgeInstance>,
-    globals: Globals,
-}
-
-impl Primitive for GpuGraphPrimitive {
-    type Pipeline = GpuGraphPipeline;
-
-    fn prepare(
-        &self,
-        pipeline: &mut Self::Pipeline,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        bounds: &Rectangle,
-        viewport: &shader::Viewport,
-    ) {
-        // Record the physical widget rectangle so `render` can map clip space
-        // onto exactly this widget rather than the whole surface.
-        let scale = viewport.scale_factor();
-        pipeline.viewport_rect = [
-            bounds.x * scale,
-            bounds.y * scale,
-            (bounds.width * scale).max(1.0),
-            (bounds.height * scale).max(1.0),
-        ];
-
-        pipeline.ensure_capacity(device, self.nodes.len(), self.edges.len());
-
-        let mut globals = self.globals;
-        globals.srgb = if pipeline.is_srgb { 1.0 } else { 0.0 };
-        queue.write_buffer(&pipeline.globals_buffer, 0, bytemuck::bytes_of(&globals));
-
-        if !self.nodes.is_empty() {
-            queue.write_buffer(&pipeline.nodes_buffer, 0, bytemuck::cast_slice(&self.nodes));
-        }
-        if !self.edges.is_empty() {
-            queue.write_buffer(&pipeline.edges_buffer, 0, bytemuck::cast_slice(&self.edges));
-        }
-    }
-
-    fn render(
-        &self,
-        pipeline: &Self::Pipeline,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        clip_bounds: &Rectangle<u32>,
-    ) {
-        if self.nodes.is_empty() {
-            return;
-        }
-
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("graph render pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        let [vx, vy, vw, vh] = pipeline.viewport_rect;
-        pass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
-        pass.set_scissor_rect(
-            clip_bounds.x,
-            clip_bounds.y,
-            clip_bounds.width.max(1),
-            clip_bounds.height.max(1),
-        );
-        pass.set_bind_group(0, &pipeline.bind_group, &[]);
-
-        if !self.edges.is_empty() {
-            pass.set_pipeline(&pipeline.edges_pipeline);
-            pass.set_vertex_buffer(0, pipeline.edges_buffer.slice(..));
-            pass.draw(0..6, 0..self.edges.len() as u32);
-        }
-
-        pass.set_pipeline(&pipeline.nodes_pipeline);
-        pass.set_vertex_buffer(0, pipeline.nodes_buffer.slice(..));
-        pass.draw(0..6, 0..self.nodes.len() as u32);
-    }
-}
-
-// ───────────────────────────── pipeline ─────────────────────────────
-
-pub struct GpuGraphPipeline {
-    nodes_pipeline: wgpu::RenderPipeline,
-    edges_pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
-    globals_buffer: wgpu::Buffer,
-    nodes_buffer: wgpu::Buffer,
-    edges_buffer: wgpu::Buffer,
-    nodes_capacity: usize,
-    edges_capacity: usize,
-    is_srgb: bool,
-    viewport_rect: [f32; 4],
-}
-
-impl shader::Pipeline for GpuGraphPipeline {
-    fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("graph shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/graph.wgsl").into()),
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("graph globals layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("graph pipeline layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let blend = Some(wgpu::BlendState::ALPHA_BLENDING);
-
-        let node_attrs = wgpu::vertex_attr_array![
-            0 => Float32x2, // center
-            1 => Float32,   // radius
-            2 => Float32,   // glow
-            3 => Float32x4, // color
-            4 => Float32,   // ring
-            5 => Float32,   // dim
-        ];
-        let edge_attrs = wgpu::vertex_attr_array![
-            0 => Float32x2, // p0
-            1 => Float32x2, // p1
-            2 => Float32x4, // color
-            3 => Float32,   // thickness
-        ];
-
-        let nodes_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("graph nodes pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_node"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<NodeInstance>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &node_attrs,
-                }],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_node"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        let edges_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("graph edges pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_edge"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<EdgeInstance>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &edge_attrs,
-                }],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_edge"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        let globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("graph globals"),
-            size: std::mem::size_of::<Globals>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let nodes_capacity = 256;
-        let edges_capacity = 512;
-        let nodes_buffer =
-            new_instance_buffer::<NodeInstance>(device, nodes_capacity, "graph nodes");
-        let edges_buffer =
-            new_instance_buffer::<EdgeInstance>(device, edges_capacity, "graph edges");
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("graph globals bind group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: globals_buffer.as_entire_binding(),
-            }],
-        });
-
-        Self {
-            nodes_pipeline,
-            edges_pipeline,
-            bind_group,
-            globals_buffer,
-            nodes_buffer,
-            edges_buffer,
-            nodes_capacity,
-            edges_capacity,
-            is_srgb: format.is_srgb(),
-            viewport_rect: [0.0, 0.0, 1.0, 1.0],
-        }
-    }
-}
-
-impl GpuGraphPipeline {
-    fn ensure_capacity(&mut self, device: &wgpu::Device, nodes: usize, edges: usize) {
-        if nodes > self.nodes_capacity {
-            self.nodes_capacity = (nodes * 2).max(256);
-            self.nodes_buffer =
-                new_instance_buffer::<NodeInstance>(device, self.nodes_capacity, "graph nodes");
-        }
-        if edges > self.edges_capacity {
-            self.edges_capacity = (edges * 2).max(512);
-            self.edges_buffer =
-                new_instance_buffer::<EdgeInstance>(device, self.edges_capacity, "graph edges");
-        }
-    }
-}
-
-fn new_instance_buffer<T>(device: &wgpu::Device, capacity: usize, label: &str) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: (capacity * std::mem::size_of::<T>()) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
 
 // ───────────────────────────── program ──────────────────────────────
 
@@ -378,7 +68,7 @@ impl Default for Interaction {
 }
 
 /// Two left-presses on the same node within this window open the document.
-const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+use crate::design::motion::MULTI_CLICK as DOUBLE_CLICK;
 
 #[derive(Debug, Clone)]
 enum Gesture {
@@ -415,10 +105,7 @@ impl GpuGraphProgram {
     }
 
     fn fit(&self, bounds: Rectangle) -> ViewTransform {
-        let points: Vec<Point> = (0..self.frame.nodes().len())
-            .map(|index| self.frame.world(index))
-            .collect();
-        fit_transform(&points, bounds)
+        self.frame.fit(bounds)
     }
 
     /// The transform to render/interact with. Once this widget has applied the
@@ -466,23 +153,14 @@ impl GpuGraphProgram {
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(index, _)| index)
     }
-}
 
-impl shader::Program<Message> for GpuGraphProgram {
-    type State = Interaction;
-    type Primitive = GpuGraphPrimitive;
-
-    fn update(
+    /// Commit a pending fit, or adopt a transform the app published, before
+    /// handling the event. Returns the fit to publish, if one was committed.
+    fn commit_view(
         &self,
-        state: &mut Self::State,
-        event: &iced::Event,
+        state: &mut Interaction,
         bounds: Rectangle,
-        cursor: mouse::Cursor,
     ) -> Option<shader::Action<Message>> {
-        use iced::Event;
-
-        // Commit a pending fit before handling anything else, mirroring it into
-        // the shared state so the label overlay adopts the same framing.
         let needs_fit = !state.initialized
             || state.applied_fit != self.frame.fit_revision
             || state.fitted_size != Some(bounds.size());
@@ -495,15 +173,18 @@ impl shader::Program<Message> for GpuGraphProgram {
             state.applied_view = self.frame.view_revision;
             state.fitted_size = Some(bounds.size());
             state.gesture = None;
-            // Publishing already schedules a redraw; no capture so a coincident
-            // gesture on this same event still reaches the handlers below.
-            return Some(shader::Action::publish(Message::GraphSetView {
-                pan_x: fit.pan.x,
-                pan_y: fit.pan.y,
-                zoom: fit.zoom,
-            }));
+            // Mirror the fit into the shared state so the label overlay adopts
+            // the same framing. Publishing already schedules a redraw; no
+            // capture so a coincident gesture still reaches the handlers.
+            return Some(shader::Action::publish(Message::Graph(
+                GraphMessage::SetView {
+                    pan_x: fit.pan.x,
+                    pan_y: fit.pan.y,
+                    zoom: fit.zoom,
+                    fitted: Some((self.frame.fit_revision, bounds.width, bounds.height)),
+                },
+            )));
         }
-
         // Adopt a transform the app published (zoom buttons, reveal-in-graph).
         // `GraphState` already holds it, so there is nothing to publish back.
         if state.applied_view != self.frame.view_revision {
@@ -512,188 +193,103 @@ impl shader::Program<Message> for GpuGraphProgram {
             state.applied_view = self.frame.view_revision;
             state.gesture = None;
         }
+        None
+    }
 
-        let transform = ViewTransform {
-            pan: state.pan,
-            zoom: state.zoom,
+    /// Left press: open on double-click, start a node drag, or start a pan.
+    fn on_left_press(
+        &self,
+        state: &mut Interaction,
+        bounds: Rectangle,
+        transform: ViewTransform,
+        point: Point,
+    ) -> shader::Action<Message> {
+        let Some(index) = self.hit_node(bounds, transform, point) else {
+            state.last_click = None;
+            state.gesture = Some(Gesture::Pan {
+                start: point,
+                initial_pan: transform.pan,
+            });
+            return publish_captured(GraphMessage::NodeSelected(None));
         };
-        let cursor_pos = cursor.position_in(bounds);
+        let node = &self.frame.nodes()[index];
+        let now = std::time::Instant::now();
+        let double = state.last_click.as_ref().is_some_and(|(path, at)| {
+            path == &node.path && now.duration_since(*at) <= DOUBLE_CLICK
+        });
+        if double {
+            // Second click of a double: open the note instead of starting
+            // another drag, and require a fresh pair.
+            state.last_click = None;
+            state.gesture = None;
+            return publish_captured(GraphMessage::NodeOpen(node.path.clone()));
+        }
+        state.last_click = Some((node.path.clone(), now));
+        let pointer_world = screen_to_world(point, bounds, transform);
+        state.gesture = Some(Gesture::Node {
+            path: node.path.clone(),
+            grab_offset: pointer_world - self.frame.world(index),
+            origin: point,
+            dragging: false,
+        });
+        publish_captured(GraphMessage::NodeSelected(Some(node.path.clone())))
+    }
 
-        match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let point = cursor_pos?;
-                if let Some(index) = self.hit_node(bounds, transform, point) {
-                    let node = &self.frame.nodes()[index];
-                    let now = std::time::Instant::now();
-                    let double = state.last_click.as_ref().is_some_and(|(path, at)| {
-                        path == &node.path && now.duration_since(*at) <= DOUBLE_CLICK
-                    });
-                    if double {
-                        // Second click of a double: open the note instead of
-                        // starting another drag, and require a fresh pair.
-                        state.last_click = None;
-                        state.gesture = None;
-                        return Some(
-                            shader::Action::publish(Message::GraphNodeOpen(node.path.clone()))
-                                .and_capture(),
-                        );
-                    }
-                    state.last_click = Some((node.path.clone(), now));
-                    let world = self.frame.world(index);
-                    let pointer_world = screen_to_world(point, bounds, transform);
-                    state.gesture = Some(Gesture::Node {
-                        path: node.path.clone(),
-                        grab_offset: pointer_world - world,
-                        origin: point,
-                        dragging: false,
-                    });
-                    Some(
-                        shader::Action::publish(Message::GraphNodeSelected(Some(
-                            node.path.clone(),
-                        )))
-                        .and_capture(),
-                    )
-                } else {
-                    state.last_click = None;
-                    state.gesture = Some(Gesture::Pan {
-                        start: point,
-                        initial_pan: transform.pan,
-                    });
-                    Some(shader::Action::publish(Message::GraphNodeSelected(None)).and_capture())
-                }
+    /// Pointer motion: continue a pan or node drag, or update hover.
+    fn on_cursor_moved(
+        &self,
+        state: &mut Interaction,
+        bounds: Rectangle,
+        transform: ViewTransform,
+        cursor_pos: Option<Point>,
+    ) -> Option<shader::Action<Message>> {
+        match &mut state.gesture {
+            Some(Gesture::Pan { start, initial_pan }) => {
+                let pan = *initial_pan + (cursor_pos? - *start);
+                state.pan = pan;
+                Some(publish_captured(set_view(pan, state.zoom)))
             }
-            // Right-click pins a node where it sits (or releases it) — the fast
-            // path for the arrange-by-hand workflow the inspector button also
-            // offers.
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+            Some(Gesture::Node {
+                path,
+                grab_offset,
+                origin,
+                dragging,
+            }) => {
                 let point = cursor_pos?;
-                let index = self.hit_node(bounds, transform, point)?;
-                let path = self.frame.nodes()[index].path.clone();
-                Some(shader::Action::publish(Message::GraphPinToggled(path)).and_capture())
-            }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
-                let point = cursor_pos?;
-                state.gesture = Some(Gesture::Pan {
-                    start: point,
-                    initial_pan: transform.pan,
-                });
-                Some(shader::Action::capture())
-            }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => match &mut state.gesture {
-                Some(Gesture::Pan { start, initial_pan }) => {
-                    let point = cursor_pos?;
-                    let pan = *initial_pan + (point - *start);
-                    state.pan = pan;
-                    Some(
-                        shader::Action::publish(Message::GraphSetView {
-                            pan_x: pan.x,
-                            pan_y: pan.y,
-                            zoom: state.zoom,
-                        })
-                        .and_capture(),
-                    )
+                if !*dragging && distance(point, *origin) < DRAG_THRESHOLD {
+                    // Still within click tolerance — swallow the movement
+                    // rather than turning a selection into a pinned node.
+                    return Some(shader::Action::capture());
                 }
-                Some(Gesture::Node {
-                    path,
-                    grab_offset,
-                    origin,
-                    dragging,
-                }) => {
-                    let point = cursor_pos?;
-                    if !*dragging && distance(point, *origin) < DRAG_THRESHOLD {
-                        // Still within click tolerance — swallow the movement
-                        // rather than turning a selection into a pinned node.
-                        return Some(shader::Action::capture());
-                    }
-                    *dragging = true;
-                    let world = screen_to_world(point, bounds, transform) - *grab_offset;
-                    let path = path.clone();
-                    Some(
-                        shader::Action::publish(Message::GraphNodeMoved {
-                            path,
-                            x: world.x,
-                            y: world.y,
-                        })
-                        .and_capture(),
-                    )
-                }
-                None => {
-                    let hovered = cursor_pos
-                        .and_then(|point| self.hit_node(bounds, transform, point))
-                        .map(|index| self.frame.nodes()[index].path.clone());
-                    let current = self
-                        .frame
-                        .hovered
-                        .map(|index| self.frame.nodes()[index].path.clone());
-                    if hovered != current {
-                        Some(shader::Action::publish(Message::GraphHovered(hovered)))
-                    } else {
-                        None
-                    }
-                }
-            },
-            Event::Mouse(mouse::Event::ButtonReleased(
-                mouse::Button::Left | mouse::Button::Middle,
-            )) => state.gesture.take().map(|_| shader::Action::capture()),
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                let point = cursor_pos?;
-                let amount = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => y * 0.13,
-                    mouse::ScrollDelta::Pixels { y, .. } => y * 0.0025,
-                };
-                let zoomed = crate::views::graph::zoom_about(
-                    transform,
-                    bounds,
-                    point,
-                    amount.exp(),
-                    MIN_ZOOM,
-                    MAX_ZOOM,
-                );
-                state.pan = zoomed.pan;
-                state.zoom = zoomed.zoom;
-                Some(
-                    shader::Action::publish(Message::GraphSetView {
-                        pan_x: zoomed.pan.x,
-                        pan_y: zoomed.pan.y,
-                        zoom: zoomed.zoom,
-                    })
-                    .and_capture(),
-                )
+                *dragging = true;
+                let world = screen_to_world(point, bounds, transform) - *grab_offset;
+                Some(publish_captured(GraphMessage::NodeMoved {
+                    path: path.clone(),
+                    x: world.x,
+                    y: world.y,
+                }))
             }
-            _ => None,
+            None => {
+                let hovered = cursor_pos
+                    .and_then(|point| self.hit_node(bounds, transform, point))
+                    .map(|index| self.frame.nodes()[index].path.clone());
+                let current = self
+                    .frame
+                    .hovered
+                    .map(|index| self.frame.nodes()[index].path.clone());
+                (hovered != current).then(|| {
+                    shader::Action::publish(Message::Graph(GraphMessage::Hovered(hovered)))
+                })
+            }
         }
     }
 
-    fn draw(
+    fn build_node_instances(
         &self,
-        state: &Self::State,
-        _cursor: mouse::Cursor,
-        bounds: Rectangle,
-    ) -> Self::Primitive {
-        let transform = self.transform(state, bounds);
-        let w = bounds.width.max(1.0);
-        let h = bounds.height.max(1.0);
-        let globals = Globals {
-            transform: [
-                2.0 * transform.zoom / w,
-                -2.0 * transform.zoom / h,
-                2.0 * transform.pan.x / w,
-                -2.0 * transform.pan.y / h,
-            ],
-            viewport: [w, h],
-            srgb: 0.0,
-            _pad: 0.0,
-        };
-
-        // One allocation up front instead of a set lookup per node per frame.
-        let focus_mask = self.frame.focus_mask();
-        let focus = focus_mask.as_ref().map(|(focus, _)| *focus);
-        let in_focus = |index: usize| {
-            focus_mask
-                .as_ref()
-                .is_some_and(|(_, mask)| mask.get(index).copied().unwrap_or(false))
-        };
-
+        transform: ViewTransform,
+        focus: Option<usize>,
+        in_focus: impl Fn(usize) -> bool,
+    ) -> Vec<NodeInstance> {
         let mut nodes = Vec::with_capacity(self.frame.nodes().len());
         for (index, node) in self.frame.nodes().iter().enumerate() {
             let is_focus = focus == Some(index);
@@ -729,6 +325,12 @@ impl shader::Program<Message> for GpuGraphProgram {
             } else {
                 0.22 + node_magnitude(node) * 0.5
             };
+            let shape = match node.kind {
+                md_editor_core::types::GraphNodeKind::Markdown => 0.0,
+                md_editor_core::types::GraphNodeKind::Pdf => 1.0,
+                md_editor_core::types::GraphNodeKind::Sketch => 2.0,
+                md_editor_core::types::GraphNodeKind::Missing => 3.0,
+            };
             let color = kind_color(node.kind);
             let world = self.frame.world(index);
             nodes.push(NodeInstance {
@@ -738,10 +340,15 @@ impl shader::Program<Message> for GpuGraphProgram {
                 color: [color.r, color.g, color.b, 1.0],
                 ring,
                 dim,
-                _pad: [0.0, 0.0],
+                shape,
+                _pad: 0.0,
             });
         }
+        nodes
+    }
 
+    fn build_edge_instances(&self, focus: Option<usize>) -> Vec<EdgeInstance> {
+        let tokens = crate::design::tokens();
         let mut edges = Vec::with_capacity(self.frame.graph.snapshot.edges.len());
         for (edge, &(source, target)) in self
             .frame
@@ -758,24 +365,167 @@ impl shader::Program<Message> for GpuGraphProgram {
             let to = self.frame.world(target);
             let focused = focus.is_some_and(|focus| source == focus || target == focus);
             let weight = edge.weight.max(1) as f32;
+            let (epistemic_color, style) = match edge.kind {
+                md_editor_core::types::GraphEdgeKind::Supports => {
+                    (Some(tokens.status_success), 1.0)
+                }
+                md_editor_core::types::GraphEdgeKind::Contradicts => {
+                    (Some(tokens.status_danger), 2.0)
+                }
+                md_editor_core::types::GraphEdgeKind::Derives => (Some(tokens.status_info), 3.0),
+                md_editor_core::types::GraphEdgeKind::WikiLink
+                | md_editor_core::types::GraphEdgeKind::PdfAnnotation => (None, 0.0),
+            };
             // Links are the whole point of the view, so even the quietest state
-            // stays visible against the near-black canvas.
-            const LINK: iced::Color = iced::Color::from_rgb(0.52, 0.60, 0.62);
-            let (color, alpha, thickness) = if focused {
-                (theme::ACCENT_GLOW, 0.95, 1.8 + weight.ln() * 0.5)
+            // stays visible against the canvas (`pages/graph.md`: `border.control`).
+            let link = tokens.border_control;
+            let (color, alpha, thickness) = if let Some(role_color) = epistemic_color {
+                if focused {
+                    (role_color, 0.96, 1.9 + weight.ln() * 0.5)
+                } else if focus.is_some() {
+                    (role_color, 0.30, 1.2 + weight.ln() * 0.4)
+                } else {
+                    (role_color, 0.78, 1.35 + weight.ln() * 0.4)
+                }
+            } else if focused {
+                (
+                    crate::design::fade(tokens.accent, 0.5),
+                    0.95,
+                    1.8 + weight.ln() * 0.5,
+                )
             } else if focus.is_some() {
-                (LINK, 0.24, 1.0 + weight.ln() * 0.4)
+                (link, 0.24, 1.0 + weight.ln() * 0.4)
             } else {
-                (LINK, 0.48, 1.0 + weight.ln() * 0.4)
+                (link, 0.48, 1.0 + weight.ln() * 0.4)
             };
             edges.push(EdgeInstance {
                 p0: [from.x, from.y],
                 p1: [to.x, to.y],
                 color: [color.r, color.g, color.b, alpha],
                 thickness,
-                _pad: [0.0, 0.0, 0.0],
+                style,
+                _pad: [0.0, 0.0],
             });
         }
+        // Draw plain structural links first so epistemic edges (`style > 0.0`) always sit on top.
+        edges.sort_by_key(|edge| edge.style > 0.0);
+        edges
+    }
+}
+
+fn set_view(pan: Vector, zoom: f32) -> GraphMessage {
+    GraphMessage::SetView {
+        pan_x: pan.x,
+        pan_y: pan.y,
+        zoom,
+        fitted: None,
+    }
+}
+
+fn publish_captured(message: GraphMessage) -> shader::Action<Message> {
+    shader::Action::publish(Message::Graph(message)).and_capture()
+}
+
+impl shader::Program<Message> for GpuGraphProgram {
+    type State = Interaction;
+    type Primitive = GpuGraphPrimitive;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &iced::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<shader::Action<Message>> {
+        use iced::Event;
+
+        if let Some(action) = self.commit_view(state, bounds) {
+            return Some(action);
+        }
+        let transform = ViewTransform {
+            pan: state.pan,
+            zoom: state.zoom,
+        };
+        let cursor_pos = cursor.position_in(bounds);
+
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                Some(self.on_left_press(state, bounds, transform, cursor_pos?))
+            }
+            // Right-click pins a node where it sits (or releases it) — the fast
+            // path for the arrange-by-hand workflow the inspector button also
+            // offers.
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                let index = self.hit_node(bounds, transform, cursor_pos?)?;
+                let path = self.frame.nodes()[index].path.clone();
+                Some(publish_captured(GraphMessage::PinToggled(path)))
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+                state.gesture = Some(Gesture::Pan {
+                    start: cursor_pos?,
+                    initial_pan: transform.pan,
+                });
+                Some(shader::Action::capture())
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                self.on_cursor_moved(state, bounds, transform, cursor_pos)
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(
+                mouse::Button::Left | mouse::Button::Middle,
+            )) => state.gesture.take().map(|_| shader::Action::capture()),
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let amount = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => y * 0.13,
+                    mouse::ScrollDelta::Pixels { y, .. } => y * 0.0025,
+                };
+                let zoomed = crate::views::graph::zoom_about(
+                    transform,
+                    bounds,
+                    cursor_pos?,
+                    amount.exp(),
+                    MIN_ZOOM,
+                    MAX_ZOOM,
+                );
+                state.pan = zoomed.pan;
+                state.zoom = zoomed.zoom;
+                Some(publish_captured(set_view(zoomed.pan, zoomed.zoom)))
+            }
+            _ => None,
+        }
+    }
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        _cursor: mouse::Cursor,
+        bounds: Rectangle,
+    ) -> Self::Primitive {
+        let transform = self.transform(state, bounds);
+        let w = bounds.width.max(1.0);
+        let h = bounds.height.max(1.0);
+        let globals = Globals {
+            transform: [
+                2.0 * transform.zoom / w,
+                -2.0 * transform.zoom / h,
+                2.0 * transform.pan.x / w,
+                -2.0 * transform.pan.y / h,
+            ],
+            viewport: [w, h],
+            srgb: 0.0,
+            _pad: 0.0,
+        };
+
+        // One allocation up front instead of a set lookup per node per frame.
+        let focus_mask = self.frame.focus_mask();
+        let focus = focus_mask.as_ref().map(|(focus, _)| *focus);
+        let in_focus = |index: usize| {
+            focus_mask
+                .as_ref()
+                .is_some_and(|(_, mask)| mask.get(index).copied().unwrap_or(false))
+        };
+
+        let nodes = self.build_node_instances(transform, focus, in_focus);
+        let edges = self.build_edge_instances(focus);
 
         GpuGraphPrimitive {
             nodes,

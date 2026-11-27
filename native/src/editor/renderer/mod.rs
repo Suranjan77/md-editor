@@ -55,18 +55,45 @@ pub use reveal::{CaretView, Reveal};
 /// pixels instead of being upscaled from a smaller bitmap.
 pub const MATH_BLOCK_SCALE: f32 = 1.2;
 
-/// A rendered equation. Two bitmaps are rasterized per TeX string — one at
-/// inline display scale and one at block display scale (`MATH_BLOCK_SCALE`
-/// larger) — so each context draws its bitmap 1:1 on device pixels instead of
-/// resampling one bitmap at a fractional ratio (which blurs thin strokes).
-/// `width`/`height` are the logical layout size shared by both; block layout
-/// multiplies by `MATH_BLOCK_SCALE`.
+/// Widget id of the note editor, for `iced::widget::operation::focus`: F6 into
+/// the main region, or closing find, puts the keyboard back in the note.
+pub const EDITOR_ID: &str = "md_editor_note";
+
+/// A rendered equation. Two bitmaps are rasterized per TeX string: inline
+/// (text style, as `$…$` sits in a line) and block (display style, as `$$…$$`
+/// stands alone, `MATH_BLOCK_SCALE` larger). Each is rasterized for the size
+/// it is drawn at, so it lands 1:1 on device pixels instead of being resampled
+/// at a fractional ratio (which blurs thin strokes). `width`/`height` are the
+/// inline layout size; `block_width`/`block_height` the block's, scale included.
 #[derive(Debug, Clone)]
 pub struct MathRender {
     pub inline_handle: iced::widget::image::Handle,
     pub block_handle: iced::widget::image::Handle,
     pub width: f32,
     pub height: f32,
+    pub block_width: f32,
+    pub block_height: f32,
+}
+
+impl MathRender {
+    /// A render whose block form is its inline form scaled by
+    /// `MATH_BLOCK_SCALE` (tests and previews with stand-in bitmaps).
+    #[cfg(test)]
+    pub fn uniform(
+        inline_handle: iced::widget::image::Handle,
+        block_handle: iced::widget::image::Handle,
+        width: f32,
+        height: f32,
+    ) -> Self {
+        Self {
+            inline_handle,
+            block_handle,
+            width,
+            height,
+            block_width: width * MATH_BLOCK_SCALE,
+            block_height: height * MATH_BLOCK_SCALE,
+        }
+    }
 }
 
 /// Decoded images keyed by path: handle plus natural width and height.
@@ -102,12 +129,19 @@ pub struct Editor<'a, Message> {
     on_pointer_command: Box<dyn Fn(EditorCommand) -> Message + 'a>,
     on_link_click: Box<dyn Fn(String) -> Message + 'a>,
     on_checkbox_toggle: Box<dyn Fn(usize) -> Message + 'a>,
+    /// Ctrl+V: when set, the app handles pasting (images, files); otherwise
+    /// the widget inserts clipboard text itself.
+    on_paste: Option<Box<dyn Fn() -> Message + 'a>>,
     /// The app's latest request to bring the caret into view.
     reveal_request: u64,
     on_caret_view: Option<Box<dyn Fn(CaretView) -> Message + 'a>>,
     /// Names the lines and the resources they show; see
     /// [`Editor::layout_revision`].
     layout_revision: Option<u64>,
+    /// A completion popup is open: its navigation keys belong to the app.
+    completion_open: bool,
+    /// The id focus operations find this editor by (one per pane).
+    id: widget::Id,
 }
 
 /// Everything a layout depends on: while it is unchanged, so is the layout.
@@ -122,9 +156,32 @@ struct LayoutKey {
     cursor: (usize, usize),
 }
 
+impl widget::operation::Focusable for State {
+    fn is_focused(&self) -> bool {
+        self.is_focused
+    }
+
+    fn focus(&mut self) {
+        self.is_focused = true;
+    }
+
+    /// Losing focus to another widget also ends a pointer selection in
+    /// progress, as clicking outside the editor does.
+    fn unfocus(&mut self) {
+        self.is_focused = false;
+        self.is_dragging = false;
+    }
+}
+
 /// Widget state persisted across frames in the iced tree.
 #[derive(Default)]
 pub struct State {
+    /// Height of the visible part of the document, for PageUp / PageDown.
+    viewport_height: f32,
+    /// The last press and how many presses in a row landed there (1–3), for
+    /// double-click word and triple-click line selection.
+    last_click: Option<(std::time::Instant, iced::Point)>,
+    click_count: u8,
     /// A left-button drag is extending the pointer selection.
     is_dragging: bool,
     is_focused: bool,
@@ -142,6 +199,9 @@ pub struct State {
     layout_tree: HeightTree,
     line_height_cache: Vec<LineHeightCache>,
     last_layout_width: f32,
+    /// `design::theme_revision` the line heights were measured at: a new body
+    /// size or reading font changes every line's height.
+    last_typography: u64,
     /// First and last line index of every code, table, math and quote block.
     block_ranges: HashMap<usize, (usize, usize)>,
     /// Per line, the caption band above its body and the gutter below it, as
@@ -183,10 +243,32 @@ impl<'a, Message> Editor<'a, Message> {
             on_pointer_command: Box::new(on_pointer_command),
             on_link_click: Box::new(on_link_click),
             on_checkbox_toggle: Box::new(on_checkbox_toggle),
+            on_paste: None,
             reveal_request: 0,
             on_caret_view: None,
             layout_revision: None,
+            completion_open: false,
+            id: widget::Id::new(EDITOR_ID),
         }
+    }
+
+    /// The id focus operations find this editor by; [`EDITOR_ID`] if unset.
+    pub fn id(mut self, id: widget::Id) -> Self {
+        self.id = id;
+        self
+    }
+
+    /// While a completion popup is open, leave ↑ ↓ Enter Tab Escape to the
+    /// app, which drives the popup with them.
+    pub fn completion_open(mut self, open: bool) -> Self {
+        self.completion_open = open;
+        self
+    }
+
+    /// Hand Ctrl+V to the app instead of inserting clipboard text here.
+    pub fn on_paste(mut self, on_paste: impl Fn() -> Message + 'a) -> Self {
+        self.on_paste = Some(Box::new(on_paste));
+        self
     }
 
     pub fn search(
@@ -268,9 +350,20 @@ where
         }
     }
 
+    fn operate(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        _renderer: &R,
+        operation: &mut dyn widget::Operation,
+    ) {
+        let state = tree.state.downcast_mut::<State>();
+        operation.focusable(Some(&self.id), layout.bounds(), state);
+    }
+
     fn layout(&mut self, tree: &mut widget::Tree, _renderer: &R, limits: &Limits) -> Node {
         let state = tree.state.downcast_mut::<State>();
-        let max_width = limits.max().width.min(metrics::MAX_CONTENT_WIDTH);
+        let max_width = limits.max().width.min(metrics::max_content_width());
         let key = self.layout_revision.map(|revision| LayoutKey {
             revision,
             lines: self.lines.len(),
@@ -315,6 +408,7 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State>();
+        state.viewport_height = viewport.height;
         if let Event::Window(iced::window::Event::RedrawRequested(now)) = event {
             self.report_caret::<R>(state, layout.bounds(), *viewport, shell);
             let place = self.caret_place::<R>(state, layout.bounds(), *viewport);

@@ -11,6 +11,7 @@ use super::measure::{centered_text_top, measure_char_width};
 use super::metrics::*;
 use super::{Editor, Measure, State};
 use crate::editor::highlight::StyledLine;
+use crate::editor::renderer::measure::mono_font;
 
 /// The caret's rectangle within its line.
 pub(super) struct CaretBox {
@@ -59,12 +60,12 @@ impl<Message> Editor<'_, Message> {
             };
         };
         if line.is_code_block {
-            let font = iced::Font::MONOSPACE;
-            let height = CODE_FONT_SIZE + 2.0;
-            let text_top = centered_text_top(row_height(CODE_FONT_SIZE), CODE_FONT_SIZE, font);
+            let font = mono_font();
+            let height = code_font_size() + 2.0;
+            let text_top = centered_text_top(row_height(code_font_size()), code_font_size(), font);
             return CaretBox {
                 x: code_x_for_col::<R>(line, col, is_editing),
-                y: text_top + (CODE_FONT_SIZE * LINE_BOX_FACTOR - height) / 2.0,
+                y: text_top + (code_font_size() * LINE_BOX_FACTOR - height) / 2.0,
                 height,
             };
         }
@@ -226,7 +227,7 @@ fn code_chars(line: &StyledLine, is_editing: bool) -> impl Iterator<Item = (usiz
 }
 
 fn code_char_width<R: Measure>(ch: char) -> f32 {
-    measure_char_width::<R>(ch, CODE_FONT_SIZE, iced::Font::MONOSPACE)
+    measure_char_width::<R>(ch, code_font_size(), mono_font())
 }
 
 /// X of `col` in an unwrapped code line.

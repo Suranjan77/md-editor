@@ -9,11 +9,13 @@ with `Ctrl+G`, the toolbar, or *Open Knowledge Graph* in the palette; see the
 | :--- | :--- | :--- |
 | Snapshot | `core/src/vault/graph.rs` → `get_graph_snapshot` | Building `GraphSnapshot` (nodes + edges) from the index and the PDF sidecar DB |
 | Data types | `core/src/types.rs` | `GraphSnapshot`, `GraphNode`/`GraphNodeKind`, `GraphEdge`/`GraphEdgeKind` |
-| State | `native/src/graph_state.rs` | `GraphState`: snapshot, scope, filters, selection, pins, view transform, refresh generations, insights |
+| State | `native/src/graph_state.rs` | `GraphState`: snapshot, scope, filters, selection, pins, view transform, refresh generations |
+| Pinboards | `native/src/graph_state/pinboards.rs`, `app/graph_pinboards.rs` | Named per-vault Pinboards (`pinboards:<vault_root>`): pinned node positions, scope, filters, camera, rename/delete propagation |
 | Simulation | `native/src/graph_state/physics.rs` | Barnes–Hut quadtree, `PhysicsState` (prepare / tick / nudge, settle budgets) |
 | Initial layout | `native/src/graph_state/layout.rs` | Adjacency, connected components, island packing, seeded positions |
+| Filters and insights | `native/src/graph_state/queries.rs` | Scope/filter/query reduction, keyboard node cycling, stats, incoming/outgoing epistemic edges, related notes, hubs, orphans, missing targets |
 | Messages | `native/src/app/graph.rs` → `update_graph` | Every `Graph*` message |
-| GPU layer | `native/src/views/gpu_graph.rs`, `native/shaders/graph.wgsl` | Instanced nodes and edges; all pointer interaction |
+| GPU layer | `native/src/views/gpu_graph.rs` (+`gpu_graph/pipeline.rs`), `native/shaders/graph.wgsl` | Shape-coded instanced nodes and epistemic-styled edges; all pointer interaction |
 | Overlay and chrome | `native/src/views/graph.rs`, `views/graph/` | Labels and hover card (canvas), toolbar, inspector, legend, empty states |
 
 ---
@@ -22,10 +24,10 @@ with `Ctrl+G`, the toolbar, or *Open Knowledge Graph* in the palette; see the
 
 `get_graph_snapshot(&AppState)` returns a deterministic `GraphSnapshot`:
 
-- **Nodes** — every indexed Markdown file and every PDF on disk, connected or not, plus a
+- **Nodes** — every indexed Markdown file, every PDF, and every sketch file (`.ink` / `.ink.svg`) on disk, connected or not, plus a
   `Missing` node for each link target that does not resolve. A node's id is its
   vault-relative path with `/` separators.
-- **Edges** — `WikiLink` edges from the `FileIndex`'s outgoing map, and `PdfAnnotation`
+- **Edges** — `WikiLink` and typed epistemic edges (`Supports`, `Contradicts`, `Derives` from `supports:: [[Target]]`, `contradicts:: [[Target]]`, `derives:: [[Target]]` outside code spans), inline `![alt](target.ink)` / `.ink.svg` embeds, plus `PdfAnnotation`
   edges from PDF highlights linked to notes, aggregated per document/note pair.
 
 The vault-root and index locks are held only long enough to clone what is needed, under the
@@ -62,24 +64,28 @@ A new snapshot is laid out in two steps:
   without rebuilding. It stops itself after `SETTLE_BUDGET` ticks (or `NUDGE_BUDGET` after a
   nudge), and the 33ms tick subscription is armed only while it runs.
 
-Pinned nodes are excluded from integration but still exert forces. Dragged positions last
-for the session only.
+Pinned nodes are excluded from integration but still exert forces. Dragged positions can be saved across sessions in named per-vault **Pinboards** (persisted under `pinboards:<vault_root>` in SQLite `settings`), preserving pinned coordinates, scope, filter chips, and camera framing, and updating automatically on vault renames and deletes.
 
 ## 4. Rendering and Input
 
 The view is a `stack` of two layers sharing one transform:
 
-- **`GpuGraphProgram`** (`gpu_graph.rs`) — an iced `shader` widget that draws edges then
-  nodes as instanced quads, generated in the vertex shader. It uses no storage buffers or
+- **`GpuGraphProgram`** (`gpu_graph.rs`) — an iced `shader` widget that draws shape-coded nodes (circle for Markdown, rounded page rectangle for PDF, diamond for Sketch, hollow ring for Missing) and epistemic edges (`WikiLink` / `PdfAnnotation` solid, `Supports` directional pulse, `Contradicts` dashed, `Derives` dotted-dash) as instanced quads generated in the vertex shader. It uses no storage buffers or
   compute passes, which keeps it inside iced's default device limits. It owns pan, zoom,
   drag, hover, selection and fit, and publishes the result as `GraphSetView`,
-  `GraphHovered`, `GraphNodeMoved` and `GraphNodeSelected`.
+  `GraphHovered`, `GraphNodeMoved` and `GraphNodeSelected`. While visible without a captured text input, `Tab` / `Shift+Tab` (and `←` / `→`) step through nodes, `P` pins/unpins the selected node, and `Enter` opens it.
 - **`GraphLabels`** (`views/graph/labels.rs`) — a canvas over it that draws node labels,
   thinned by a degree cutoff once the graph is dense, and the hover card.
 
 `views/graph/geometry.rs` holds the shared transform (`ViewTransform`, world ⇄ screen) and
 node sizing, so both layers agree on where a node is. Zoom is clamped to
 `MIN_ZOOM..=MAX_ZOOM` (0.002–6.0).
+
+A fit (on open, filter, scope switch, resize) is requested by bumping `fit_revision`; the
+GPU layer draws a fresh fit at once but only commits it on its next `update`, publishing
+`SetView` with `fitted: (revision, width, height)`. Until `GraphState::fitted` matches the
+current revision and canvas size, `GraphFrame::label_transform` gives the labels that same
+fresh fit (`GraphFrame::fit`), so the two layers agree from the first frame.
 
 ## 5. Filtering and Insights
 
@@ -88,7 +94,7 @@ layers share that one allocation per rebuild.
 
 - **Scope** — global, or local around the active note/PDF at depth 1 or 2.
 - **Query** — narrows to matching nodes while keeping their direct neighbours for context.
-- **Filters** — PDFs, missing targets, unconnected nodes. None of them touch vault files.
+- **Filters** — PDFs, sketches, missing targets, unconnected nodes. None of them touch vault files.
 - **Insights** — `stats()` (notes, PDFs, missing targets, connections, unconnected nodes,
   components), `hubs()`, `unconnected()`,
   `missing()`, and `related(path)`: notes sharing neighbours with the selection but not

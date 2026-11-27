@@ -2,8 +2,8 @@
 
 MD Editor ships an integrated study tracker: a timer, a session log, and a **configurable
 curriculum** of phases, projects, checkpoint gates, and reading lists. It lives inside the
-workspace, beside the notes and papers it is tracking, and its data is in the same portable
-SQLite database as everything else.
+workspace, beside the notes and papers it is tracking, and its data is stored in SQLite
+and mirrored into `<vault>/.md-editor/study-sessions.jsonl` for portable Git/Syncthing sync.
 
 It is opened from the toolbar or from the command palette (`Ctrl+P` → *Study Tracker*), and
 closed with `Escape`.
@@ -18,11 +18,18 @@ Three tables in `md_editor_settings.sqlite`, plus one `settings` key:
 erDiagram
     tracker_sessions {
         INTEGER id PK "autoincrement"
+        TEXT uid UK "stable cross-machine id"
         TEXT date "YYYY-MM-DD or YYYY-MM-DD HH:MM"
         REAL hours "duration in hours"
         TEXT activity_type "e.g. Study"
         TEXT phase "e.g. Focus"
         TEXT notes "optional, nullable"
+        INTEGER updated_at "unix seconds"
+    }
+    tracker_sidecar_sync {
+        TEXT vault_scope PK "hashed vault root"
+        TEXT content_hash "last synced jsonl sha256"
+        TEXT ids_json "last synced uid set"
     }
     tracker_kv {
         TEXT key PK "proj_<id>, gate_<id>_<n>, read_<section>_<n>"
@@ -36,7 +43,13 @@ erDiagram
     }
 ```
 
-- **`tracker_sessions`** — one row per logged interval, whether timed or entered by hand.
+- **`tracker_sessions`** — one row per logged interval, whether timed or entered by hand,
+  carrying a stable `uid` and `updated_at` timestamp for cross-machine merging.
+- **`tracker_sidecar_sync`** — per-vault base state for three-way merging
+  `<vault>/.md-editor/study-sessions.jsonl` (`core/src/state/tracker_sidecar.rs`).
+  Whenever `save_session` or `delete_session` mutates SQLite while a vault is open, the
+  JSONL file is rewritten deterministically (sorted by `(date, uid)`), and vault indexing
+  reconciles remote additions, deletions, and edits on open.
 - **`tracker_kv`** — the checkbox and status state of the curriculum: project statuses, gate
   item ticks, reading item ticks. Written through
   `tracker::set_kv(state, key, value)`, an upsert.
@@ -51,11 +64,13 @@ erDiagram
 ```rust
 pub struct StudySession {
     pub id: i64,
+    pub uid: String,
     pub date: String,
     pub hours: f32,
     pub activity_type: String,
     pub phase: String,
     pub notes: Option<String>,
+    pub updated_at: i64,
 }
 
 pub struct TrackerKv { pub key: String, pub value: String }
@@ -100,11 +115,22 @@ Deliberately minimal — one button, no dialog:
 - **Stop** computes `elapsed.as_secs_f32() / 3600.0`, floored at `0.01` hours so a very short
   session still records something, and saves a `StudySession` **immediately** with
   `date` = `chrono::Local::now()` as `"%Y-%m-%d %H:%M"`, `activity_type = "Study"`,
-  `phase = "Focus"`, and no notes. It toasts *"Study session saved"*.
+  `phase = "Focus"`, and as `notes` a summary of what the session worked on. It toasts
+  *"Study session saved"*.
+
+**What a session worked on** (`study_context.rs`). While the timer runs, the shell reports
+an `Observation` after every update (`MdEditor::study_observation`): the document in front
+(note, PDF or ink page), the note's word count, and the PDF's page and highlight count.
+Time goes to the document that was in front. At stop, `SessionContext::finish` names up to
+three documents, most time first, for example
+`Vaswani2017.pdf p. 3–8, +3 highlights · attention.md, +410 words`. A document in front
+for under 30 s that changed nothing is left out, and extra documents are counted
+(`+2 more`). Highlights count only after the PDF's saved ones have loaded, so opening a
+highlighted PDF does not look like highlighting it.
 
 There is no pause, no pomodoro cycle, and no post-stop dialog. To record an activity type or
-notes, use the Log tab's manual entry, which takes a date, an hours value, and free-text
-notes.
+notes for an untimed session, use the Log tab's manual entry, which takes a date, an hours
+value, and free-text notes.
 
 ### Log
 
@@ -162,5 +188,5 @@ four collections.
   stored config before adopting it.
 - Opening the panel (`TrackerToggle`) reloads from disk, so an external edit to the database
   or a change made in another session is picked up.
-- Side effects that belong to the global UI are emitted as `Message::ShowToast` tasks rather
+- Side effects that belong to the global UI are emitted as `ShellMessage::ShowToast` tasks rather
   than reaching back into the shell — the tracker never touches another pane's state.

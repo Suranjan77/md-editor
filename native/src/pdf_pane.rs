@@ -19,12 +19,25 @@ use md_editor_core::pdf::{
     LinkInfo, PdfAnnotation, PdfAnnotationColor, PdfPageText, PdfSearchMatch,
 };
 
-use crate::messages::Message;
+use crate::messages::{Message, PdfMessage};
 use crate::views::interactive_pdf::PdfSelection;
 use crate::views::pdf_viewer::{PDF_PAGE_LIST_PADDING, PDF_PAGE_SPACING};
 
+/// Active non-destructive margin ink tool on PDF pages (`None` = normal reading/selecting).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfInkTool {
+    Pen,
+    Eraser,
+}
+
 pub struct PdfPane {
     pub active_path: Option<String>,
+    /// Measured width of the page list's viewport, from a `sensor` around it.
+    /// Fit-to-width uses this rather than an estimate from the window width
+    /// minus known panels, which missed chrome (the activity rail, the sheet
+    /// gutters), fitted pages wider than the pane, and made iced squeeze the
+    /// bitmap under highlights and search hits drawn at the full zoom.
+    pub viewport_width: Option<f32>,
     // TODO(P3.3): add a password-entry retry flow for encrypted PDFs; the
     // current safe minimum reports the distinct password-required error.
     pub load_error: Option<String>,
@@ -32,7 +45,13 @@ pub struct PdfPane {
     pub total_pages: u16,
     pub zoom: f32,
     pub fit_to_width: bool,
+    /// Fit-to-width was asked for from the toolbar, so it fills the pane at any
+    /// zoom. The automatic fit on open stops at `PDF_FIT_MAX_ZOOM` so a narrow
+    /// page in a wide window is not blown up past readability.
+    pub fit_fills_pane: bool,
     pub scroll_y: f32,
+    /// Visible height of the page list, as last scrolled (0 until known).
+    pub viewport_height: f32,
 
     pub pages: Vec<Option<Handle>>,
     pub dimensions: Vec<Option<(u32, u32)>>,
@@ -72,25 +91,41 @@ pub struct PdfPane {
     pub pending_pages: HashSet<u16>,
     pub pending_links: HashSet<u16>,
 
+    /// Bumped when the page bitmaps go stale: a new document or a zoom that
+    /// crosses a render bucket. Gates rendered bitmaps only.
     pub render_generation: u64,
+    /// Bumped only when a different document opens. Gates zoom-independent
+    /// per-page data (text layer, links): gating those on `render_generation`
+    /// dropped any that arrived after the first fit-to-width, leaving the page
+    /// unselectable until it was scrolled away and back.
+    pub document_generation: u64,
     pub programmatic_scroll: bool,
     pub toc_target_page: Option<u16>,
 
     /// Color used by the next quick highlight; advances through the palette on
     /// each quick highlight so successive highlights are visually distinct.
     pub next_highlight_color: PdfAnnotationColor,
+    /// Non-destructive margin ink tool; when `None`, pointer input stays on text selection/links.
+    pub ink_tool: Option<PdfInkTool>,
+    /// Selected color for new margin ink strokes.
+    pub ink_color: PdfAnnotationColor,
+    /// Live preview stroke currently under the pointer on `(page_index, normalized_points)`.
+    pub live_ink: Option<(u16, Vec<[f32; 3]>)>,
 }
 
 impl PdfPane {
     pub fn new() -> Self {
         Self {
             active_path: None,
+            viewport_width: None,
             load_error: None,
             current_page: 0,
             total_pages: 0,
             zoom: 1.5,
             fit_to_width: true,
+            fit_fills_pane: false,
             scroll_y: 0.0,
+            viewport_height: 0.0,
             pages: Vec::new(),
             dimensions: Vec::new(),
             page_sizes: Vec::new(),
@@ -113,9 +148,13 @@ impl PdfPane {
             pending_pages: HashSet::new(),
             pending_links: HashSet::new(),
             render_generation: 0,
+            document_generation: 0,
             programmatic_scroll: false,
             toc_target_page: None,
             next_highlight_color: PdfAnnotationColor::Yellow,
+            ink_tool: None,
+            ink_color: PdfAnnotationColor::Blue,
+            live_ink: None,
         }
     }
 
@@ -126,7 +165,7 @@ impl PdfPane {
     /// the shell.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::PdfPageSizesLoaded(generation, path, sizes) => {
+            Message::Pdf(PdfMessage::PageSizesLoaded(generation, path, sizes)) => {
                 if generation != self.render_generation
                     && self.active_path.as_deref() != Some(path.as_str())
                 {
@@ -140,12 +179,12 @@ impl PdfPane {
                     self.placeholder_page_size = self.first_page_size();
                 }
                 if self.fit_to_width && self.total_pages > 0 {
-                    Task::done(Message::PdfFitToWidth)
+                    Task::done(Message::Pdf(PdfMessage::FitToWidth))
                 } else {
                     Task::none()
                 }
             }
-            Message::PdfRenderSkipped(generation, page) => {
+            Message::Pdf(PdfMessage::RenderSkipped(generation, page)) => {
                 self.pending_pages.remove(&page);
                 if generation != self.render_generation {
                     return Task::none();
@@ -156,14 +195,14 @@ impl PdfPane {
                 }
                 Task::none()
             }
-            Message::ClosePdfLinkPreview => {
+            Message::Pdf(PdfMessage::ClosePdfLinkPreview) => {
                 self.link_preview = None;
                 self.link_preview_size = None;
                 Task::none()
             }
-            Message::PdfPageTextLoaded(generation, page, res) => {
+            Message::Pdf(PdfMessage::PageTextLoaded(generation, page, res)) => {
                 self.pending_text.remove(&page);
-                if generation == self.render_generation
+                if generation == self.document_generation
                     && let Ok(page_text) = res
                 {
                     self.page_text.insert(page, page_text);
@@ -176,7 +215,7 @@ impl PdfPane {
                 }
                 Task::none()
             }
-            Message::PdfSelectionCleared => {
+            Message::Pdf(PdfMessage::SelectionCleared) => {
                 self.selection = None;
                 Task::none()
             }
@@ -287,6 +326,9 @@ impl PdfPane {
 
         let page_anns = self.annotations.get(&page_idx)?;
         for ann in page_anns {
+            if ann.kind == md_editor_core::pdf::PdfAnnotationKind::Ink {
+                continue;
+            }
             for rect in &ann.rects {
                 let view_y = page_text.page_height - rect.y - rect.height;
                 if px >= rect.x

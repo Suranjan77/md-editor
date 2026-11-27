@@ -66,6 +66,27 @@ fn outline_width_tracks_pressure() {
 }
 
 #[test]
+fn the_working_pressure_range_gives_clearly_different_widths() {
+    // A tablet spends ordinary writing between about 0.2 and 0.8. That range
+    // must read as different line weights at the default size, not just the
+    // extremes.
+    let opts = StrokeOptions {
+        taper_start: 0.0,
+        taper_end: 0.0,
+        ..StrokeOptions::default()
+    };
+    let width = |pressure| {
+        let (min, max) = bounds(&outline(&horizontal(24, pressure), &opts)).unwrap();
+        max.y - min.y
+    };
+    let (light, firm) = (width(0.2), width(0.8));
+    assert!(
+        firm > light * 1.8,
+        "light={light}, firm={firm}: pressure must visibly change the line"
+    );
+}
+
+#[test]
 fn light_pressure_still_leaves_a_visible_line() {
     let opts = StrokeOptions {
         taper_start: 0.0,

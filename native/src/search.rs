@@ -77,9 +77,51 @@ pub fn line_matches(text: &str, query: &str, regex: bool, match_case: bool) -> V
     matches
 }
 
+/// The text that replaces the match at `start_col` in `line`: `replace`
+/// itself, or in regex mode with `$1` / `${name}` expanded from that match,
+/// exactly as Replace All expands them.
+pub fn replacement_for(
+    line: &str,
+    start_col: usize,
+    query: &str,
+    replace: &str,
+    regex: bool,
+    match_case: bool,
+) -> String {
+    if !regex {
+        return replace.to_string();
+    }
+    let Ok(re) = regex::RegexBuilder::new(query)
+        .case_insensitive(!match_case)
+        .build()
+    else {
+        return replace.to_string();
+    };
+    let start = line
+        .char_indices()
+        .nth(start_col)
+        .map_or(line.len(), |(byte, _)| byte);
+    let mut out = String::new();
+    match re.captures_at(line, start) {
+        Some(caps) => caps.expand(replace, &mut out),
+        None => out.push_str(replace),
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regex_replacement_expands_capture_groups_of_that_match() {
+        let line = "a=1, b=22";
+        assert_eq!(
+            replacement_for(line, 5, r"(\w)=(\d+)", "$2:$1", true, true),
+            "22:b"
+        );
+        assert_eq!(replacement_for(line, 0, "a", "$1", false, true), "$1");
+    }
 
     #[test]
     fn case_insensitive_columns_stay_aligned_after_expanding_lowercase() {

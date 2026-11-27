@@ -43,17 +43,34 @@ All commands run from the repository root.
 ```bash
 cargo fmt --check            # formatting
 cargo check --workspace      # fast typecheck
-cargo clippy --workspace     # lints — see the note below
+scripts/clippy-ratchet.sh    # lints — see the note below
 cargo test --workspace       # full test suite
 cargo run                    # launch in debug
 cargo build --release        # optimized binary
 ```
 
-> `cargo fmt --check` and `cargo test --workspace` pass cleanly on `main`. Clippy does not
-> yet: the tree carries 10 warnings (2 in core, 8 in native, none in the editor) — argument
-> counts on view builders, index loops in the graph simulation, and two `from_str` names — so
-> `-D warnings` fails on a fresh checkout. Treat the current count as the baseline and do
-> not add to it.
+> `cargo fmt --check`, `cargo test --workspace` and clippy are all clean: the baseline in
+> `clippy-baseline.txt` is 0. `scripts/clippy-ratchet.sh` fails if the count rises above it.
+> View builders with many inputs take a `…Props` struct (`ToolbarProps`, `SearchProps`,
+> `TrackerProps`, `ContinuousProps`) rather than positional arguments.
+>
+> Lint policy lives in `[workspace.lints]` in `Cargo.toml` and `clippy.toml` (tests may
+> unwrap and print). Core forbids `unsafe` and warns on `unwrap()`; so does `native/src/app/`.
+> `print!`/`eprintln!` are linted everywhere except the CLI installer and the examples — use
+> `log::{info, warn, error}` instead (see *Logging* below). The Win32 modules deny
+> undocumented `unsafe` blocks.
+
+### Logging
+
+`native/src/logging.rs` installs a `log` logger at startup. Records go to `md-editor.log` in
+the data directory (beside the settings database), rotated at 1 MB with three old files
+kept (`.1`–`.3`); warnings and errors are echoed to stderr. `MD_EDITOR_LOG` is a
+comma-separated list: a bare level for the app's own crates (`error`, `warn`, `info` — the
+default — `debug`, `trace`, `off`) and `target=level` overrides matched by module-path
+prefix, e.g. `debug,iced_winit=info`. Other crates default to `warn` (iced_winit logs each
+window's icon pixels at `info`). Lines over 8 KB are truncated, and a run of identical
+messages is written once plus a "repeated N more times" line. A panic hook logs the
+panic with a backtrace before the default hook runs. Core logs through the same facade.
 
 Release output:
 
@@ -94,15 +111,15 @@ copies the library both into `core/pdfium/` and into the Cargo profile output di
 An unsupported platform prints a warning and skips the download; PDF support is then simply
 unavailable and the rest of the app still builds.
 
-Two environment variables control the download, and **both are opt-in**:
+By default the build downloads a **pinned** release (`DEFAULT_PDFIUM_RELEASE` in
+`core/build_pdfium.rs`, currently `chromium/8165`) and verifies it against the per-platform
+SHA-256 in `pinned_sha256`; a mismatch **panics** the build. To move the pin, update both
+together. Two environment variables override it:
 
 | Variable | Effect |
 | :--- | :--- |
-| `PDFIUM_RELEASE` | Pin a release tag, for example `chromium/6996`. Defaults to `latest`. |
-| `PDFIUM_SHA256` | Expected hex digest of the platform `.tgz`. When set, a mismatch **panics** the build. When unset, the script warns that the archive is unverified. |
-
-> For a reproducible, verified build, set both. Leaving them unset trusts whatever bytes the
-> network returned.
+| `PDFIUM_RELEASE` | Use another release tag, for example `chromium/6996` or `latest`. |
+| `PDFIUM_SHA256` | Expected hex digest of the platform `.tgz` for an override. When set, a mismatch panics the build; when unset on an override, the script warns that the archive is unverified. |
 
 The archive is cached at `target/pdfium/<slug>/`, so a rebuild with the library already
 present skips the network entirely.
@@ -112,13 +129,14 @@ present skips the network entirely.
 The binding is created **once per process** behind a `OnceLock`, and candidates are tried in
 this order:
 
-1. `<executable directory>/resources/<library>`
-2. `<executable directory>/<library>`
-3. `<CARGO_MANIFEST_DIR>/pdfium/<library>` — the development path
-4. the plain library name, leaving resolution to the system loader
+1. `<executable directory>/../lib/md-editor/<library>` — the installed layout
+   (`/usr/bin/md-editor` + `/usr/lib/md-editor/libpdfium.so`)
+2. `<executable directory>/<library>` — development builds
+3. `<executable directory>/resources/<library>`
+4. `<CARGO_MANIFEST_DIR>/pdfium/<library>` — tests run from the source tree
+5. the plain library name, leaving resolution to the system loader
 
-For packaged or portable builds, ship the library in a `resources/` folder beside the
-executable, or directly beside it.
+The list is built by `core/src/pdf.rs::pdfium_candidates`.
 
 ---
 
@@ -128,7 +146,7 @@ executable, or directly beside it.
 cargo test --workspace
 ```
 
-The suite covers both crates, plus a few opt-in renderer and slide tools that are
+The suite covers both crates, plus a few opt-in renderer tools that are
 `#[ignore]`d by default (below). They run in a few seconds
 and need no display server.
 
@@ -147,7 +165,7 @@ graph TD
     NativeTests --> HighlightT["editor/highlight/tests.rs — concealing, fences, incremental = fresh"]
     NativeTests --> RendererT["editor/renderer/ — invariants, caret, hit testing, motion, painting"]
     NativeTests --> TreeT["editor/layout_tree.rs — exact prefix sums and find_line_at_y"]
-    NativeTests --> MotionT["motion.rs — springs, panel widths, settling"]
+    NativeTests --> MotionT["design/motion.rs — springs, panel widths, settling"]
     NativeTests --> FuzzyT["fuzzy.rs — ordering, word starts, initials"]
     NativeTests --> PaletteT["views/command_palette.rs — ranking, caps, activation"]
     NativeTests --> AppT["app/tests.rs — PDF page slots, offsets, note paths"]
@@ -284,24 +302,6 @@ It uses only the widget's public API, so the same file can be dropped into an ol
 checkout to render a before/after pair. Text is shaped with system fonts, so glyphs the
 software renderer's fonts lack (the task checkmark, for one) may show as boxes.
 
-### Slide previews
-
-`native/src/slides/preview.rs` renders the slides of any `.pptx` to PNG files through the
-viewer's own widgets (`views::pptx_viewer::slide_page`) and the tiny-skia software renderer.
-Converting the same deck with `soffice --headless --convert-to pdf` and rasterising the
-result with `pdftoppm` gives a reference to compare against.
-
-```bash
-PPTX_PREVIEW_FILE=/abs/path/deck.pptx PPTX_PREVIEW_DIR=/tmp/slides \
-  cargo test -p md-editor-native slide_preview -- --ignored
-```
-
-Cargo runs the test from `native/`, so give absolute paths. `PPTX_PREVIEW_WIDTH` sets the
-slide width in pixels (default 960) and `PPTX_PREVIEW_LIMIT` caps the number of slides.
-Slide text is shaped with the fonts installed on the machine, through the substitutions the
-app makes (`slides/fonts.rs`), so a deck set in fonts you lack breaks lines slightly
-differently than it does in PowerPoint.
-
 ### Reference-resolver tools
 
 ```bash
@@ -309,32 +309,76 @@ cargo run --example dump_refs -- path/to/paper.pdf    # precision spot-check
 cargo run --example bench_refs -- path/to/paper.pdf   # text-scan cost
 ```
 
----
+### End-to-end scenarios (`native/src/e2e/`)
 
-## 5. Linux Desktop Integration
+The real program runs headless in `iced_test`'s emulator on a throwaway vault, with a private
+data directory (`test_support::isolate_data_dir`; every test that builds the app uses it).
 
-Linux builds are portable by default; desktop integration is explicitly opt-in.
+- `scenarios.rs` — data safety: autosave/undo (S2), rename/delete of the open note (S4),
+  tracker validation (S11), switching vault while dirty (S15), external edits (S16), failure
+  injection (S17).
+- `flows.rs` — UI flows: boot variants (S1), navigation (S3), search (S5), find/replace
+  (S6), palette (S7), PDF (S8), split view (S9), graph (S10), handwriting (S12), scale (S13,
+  `#[ignore]`d — run before releases), formatting (S14).
+- `Session` drives the app: `send` (then settle), `send_quick` (no settle — edits stay
+  unsaved), `type_in_note`, `click`, `wait`, `screenshot`, `probe()` (state after the last
+  update), `restart` (relaunch keeping settings), `finish`.
+- After every settle the **quiet-state invariants** run (`invariant_violations`): a clean
+  note equals disk, the tree equals disk, no PDF page pending, no unexpected error toast
+  (`expect_error_toast()` to allow one), no update over budget (100 ms default,
+  `set_update_budget`). A failure names the step and saves a screenshot.
+- Toasts auto-hide after 3 s; assert on them with `send_quick`, not after long waits.
 
 ```bash
-./target/release/md-editor --install     # or --install-desktop
-./target/release/md-editor --uninstall   # or --uninstall-desktop
+cargo test -p md-editor-native e2e -- --nocapture       # ~90 s; screenshots + telemetry in target/e2e/
+cargo test -p md-editor-native s13 -- --ignored          # the slow scale scenarios
 ```
 
-`--install` (`native/src/main.rs`):
+### README screenshots and GIF
 
-1. writes the icon to `~/.local/share/icons/md-editor.png` and
-   `~/.local/share/icons/hicolor/scalable/apps/md-editor.png`;
-2. resizes it into `hicolor/{16,32,48,64,128,256,512}x…/apps/md-editor.png` with Lanczos3;
-3. copies the system `hicolor/index.theme` if the local hicolor tree lacks one;
-4. writes `~/.local/share/applications/md-editor.desktop` with an absolute `Exec=<path> %F`,
-   `MimeType=text/markdown;application/pdf;`, and `StartupWMClass=md-editor` so the window
-   associates with the launcher;
-5. runs `update-desktop-database` and `gtk-update-icon-cache -f` where available.
+`scripts/readme-media.sh` regenerates everything in `images/`. It runs the `#[ignore]`d
+scenario `e2e/showcase.rs::readme_media`, which builds a demo research vault (with the
+paper `tests-fixtures/showcase/sparse-attention.pdf`, built from the `.tex` beside it),
+drives the real app through writing, reading, the graph, the palette, the Daily Desk and
+the tracker, and saves stills at 1.6× (1920×1280) plus GIF frames. ffmpeg then assembles
+`images/intro.gif`. Rerun it after a visible UI change.
 
-`--uninstall` removes the desktop entry and the installed icons and refreshes the caches
-again. Both flags exit non-zero and print a message on non-Linux platforms.
+---
 
-The whole round-trip is covered by `tests::test_linux_desktop_installation_roundtrip`.
+## 5. Arch Linux Package
+
+MD Editor ships as an Arch Linux package; there is no portable build and no self-installer.
+`packaging/arch/` holds:
+
+| File | Purpose |
+| :--- | :--- |
+| `md-editor/PKGBUILD` | AUR `md-editor`: builds the release tagged `v$pkgver` |
+| `md-editor-git/PKGBUILD`, `.SRCINFO` | AUR `md-editor-git`: builds `main` |
+| `md-editor.desktop` | Desktop entry (`Exec=md-editor %F`, Markdown/PDF MIME types, `StartupWMClass=md-editor`) |
+
+Both PKGBUILDs download the pinned PDFium archive as a declared `source` and hand it to the
+build script through `PDFIUM_ARCHIVE`, which verifies it against `pinned_sha256`. When the
+PDFium pin moves, update `_pdfium` and its checksum in both PKGBUILDs too. `package()`
+installs:
+
+- `/usr/bin/md-editor` and `/usr/lib/md-editor/libpdfium.so`;
+- `/usr/share/applications/md-editor.desktop` and icons in
+  `/usr/share/icons/hicolor/{16…512}x…/apps/md-editor.png` (resized with ImageMagick);
+- the GPL licence and PDFium's licences under `/usr/share/licenses/<pkgname>/`.
+
+pacman's hooks refresh the desktop and icon caches. Every library except glibc/gcc-libs is
+loaded at runtime, so `depends` lists `wayland` and `libxkbcommon`, with Vulkan, the XDG
+desktop portal (file pickers) and the X11 libraries as `optdepends`.
+
+To build and install from a working tree (uncommitted changes included):
+
+```bash
+scripts/build-arch-package.sh -si          # add --nodeps if Rust comes from rustup, not pacman
+```
+
+CI's `arch-package` job does the same in an `archlinux` container, runs `check()` (the test
+suite) and `namcap`, and uploads the package. After changing a PKGBUILD, regenerate
+`.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` before pushing to the AUR.
 
 ---
 
@@ -353,9 +397,19 @@ three jobs:
 Both packages use the **`resources/` layout**, which is the first path
 [`bind_pdfium`](#3-pdfium-resolution) checks at runtime.
 
-Note that CI does **not** currently run `cargo test`, `cargo fmt --check`, or `cargo clippy` —
-those are the contributor's responsibility before opening a pull request, per
-[Contributor Guidelines](Contributor-Guidelines.md).
+### Quality gate — `.github/workflows/ci.yml`
+
+Runs on every push to `main` and every pull request:
+
+| Job | Runner | Checks |
+| :--- | :--- | :--- |
+| `fmt` | `ubuntu-latest` | `cargo fmt --all -- --check` |
+| `arch-package` | `archlinux` container | `scripts/build-arch-package.sh` (builds and tests the package), `namcap`; uploads the `.pkg.tar.zst` |
+| `test` | `ubuntu-latest`, `windows-latest` | Linux: `scripts/clippy-ratchet.sh`; Windows: `cargo clippy` (compiles the Win32-only modules). Both: `cargo test --workspace`, including the headless e2e scenarios, whose screenshots and telemetry (`target/e2e/`) are uploaded as an artifact |
+| `audit` | `ubuntu-latest` | `cargo audit` (RustSec advisories) and `cargo deny check licenses bans` (policy in `deny.toml`) |
+
+A dependency with a new advisory or a licence outside `deny.toml`'s allow-list fails the
+gate; fix it by updating the crate, or extend the policy deliberately in the same change.
 
 Give a first-time build on either runner extra time: `rusqlite`'s bundled SQLite compiles
 from source and the PDFium archive downloads, both exactly once per cache.

@@ -4,7 +4,8 @@
 //! that intersects the viewport (cards, captions, badges); the selection under
 //! text; each visible line — search highlights first, then its content, then
 //! the caret; the selection over blocks drawn whole (tables, images,
-//! equations); and finally the scrollbars of blocks wider than the column.
+//! equations); line numbers in the margin when they are on; and finally the
+//! scrollbars of blocks wider than the column.
 //!
 //! Lines are painted by kind (see [`LineKind`]):
 //!
@@ -18,6 +19,7 @@
 
 mod blocks;
 mod captions;
+mod gutter;
 mod inline;
 mod overlays;
 mod primitives;
@@ -34,7 +36,6 @@ use super::selection::TextRange;
 use super::spans::span_is_editing;
 use super::{Editor, Paint, State};
 use crate::editor::highlight::StyledLine;
-use crate::theme;
 use blocks::BlockMeta;
 use overlays::paint_selection;
 use primitives::paint_scrollbar;
@@ -116,7 +117,7 @@ impl<Message> Editor<'_, Message> {
                 border: Border::default(),
                 ..Default::default()
             },
-            theme::BG_PRIMARY,
+            crate::design::tokens().bg_canvas,
         );
 
         let (visible_start, visible_end) = self.visible_lines(state, bounds, viewport);
@@ -176,6 +177,9 @@ impl<Message> Editor<'_, Message> {
             self.paint_line(renderer, &frame, row, &mut counters);
         }
         paint_selection(renderer, &selection, true, viewport);
+        if crate::design::line_numbers() {
+            gutter::paint_line_numbers(renderer, &frame, &rows);
+        }
 
         for (&block_id, meta) in &frame.blocks {
             if let Some(extent) = meta.scroll.filter(|extent| extent.overflows()) {

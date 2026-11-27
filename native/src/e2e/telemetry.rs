@@ -17,12 +17,19 @@ use std::time::Duration;
 
 use iced_program::Program;
 
-/// The app wrapped so its update and view report `iced_debug` spans.
+/// State the harness inspects after boot and after every update.
+pub(crate) trait Observe {
+    fn observe(&self);
+}
+
+/// The app wrapped so its update and view report `iced_debug` spans, and its
+/// state is observed after every update.
 pub(crate) struct Traced<P>(pub P);
 
 impl<P: Program> Program for Traced<P>
 where
     P::Message: std::fmt::Debug,
+    P::State: Observe,
 {
     type State = P::State;
     type Message = P::Message;
@@ -46,6 +53,7 @@ where
         let span = iced_debug::boot();
         let booted = self.0.boot();
         span.finish();
+        booted.0.observe();
         booted
     }
 
@@ -53,6 +61,7 @@ where
         let span = iced_debug::update(&message);
         let task = self.0.update(state, message);
         span.finish();
+        state.observe();
         task
     }
 
@@ -215,7 +224,7 @@ impl Recorder {
         }
 
         let mut updates: Vec<&Record> = records.iter().filter(|r| r.stage == "update").collect();
-        updates.sort_by(|a, b| b.duration.cmp(&a.duration));
+        updates.sort_by_key(|r| std::cmp::Reverse(r.duration));
         let _ = writeln!(out, "\nSlowest updates:\n");
         for record in updates.iter().take(5) {
             let message = record.message.as_deref().unwrap_or("");
@@ -242,7 +251,18 @@ impl Recorder {
 
     /// Updates recorded since `mark` that took longer than `budget`.
     pub fn slow_updates(&self, mark: usize, budget: Duration) -> Vec<(Duration, String)> {
-        self.records.lock().unwrap()[mark..]
+        let end = self.mark();
+        self.slow_updates_between(mark, end, budget)
+    }
+
+    /// Updates recorded in `from..to` that took longer than `budget`.
+    pub fn slow_updates_between(
+        &self,
+        from: usize,
+        to: usize,
+        budget: Duration,
+    ) -> Vec<(Duration, String)> {
+        self.records.lock().unwrap()[from..to]
             .iter()
             .filter(|r| r.stage == "update" && r.duration > budget)
             .map(|r| (r.duration, r.message.clone().unwrap_or_default()))

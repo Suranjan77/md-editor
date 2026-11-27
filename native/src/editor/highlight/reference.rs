@@ -14,10 +14,24 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
     let mut block_id: usize = 0;
     let mut current_block_id: usize = 0;
     let mut code_highlighter: Option<syntect::easy::HighlightLines<'static>> = None;
+    let all: Vec<&str> = text.split('\n').collect();
+    let mut opens_frontmatter = super::frontmatter_closes(&all);
+    let mut in_frontmatter = false;
 
-    for raw_line in text.split('\n') {
+    for raw_line in all {
         let raw_line = raw_line.trim_end_matches('\r');
-        let trimmed = raw_line.trim();
+        let mut trimmed = raw_line.trim();
+
+        // YAML frontmatter is a `yaml` code block fenced by `---` / `...`.
+        if std::mem::take(&mut opens_frontmatter) {
+            in_frontmatter = true;
+            trimmed = "```yaml";
+        } else if in_frontmatter && matches!(raw_line.trim_end(), "---" | "...") {
+            in_frontmatter = false;
+            trimmed = "```";
+        } else if in_frontmatter && trimmed.starts_with("```") {
+            trimmed = "";
+        }
 
         // Stop table block if not a table row
         if in_table && !trimmed.starts_with('|') {
@@ -35,7 +49,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(String::new()),
-                    color: theme::TEXT_MUTED,
+                    color: crate::design::tokens().doc_syntax,
                     is_syntax: true,
                     font_size: 13.0,
                     is_code: true,
@@ -66,7 +80,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(String::new()),
-                    color: theme::TEXT_MUTED,
+                    color: crate::design::tokens().doc_syntax,
                     is_syntax: true,
                     font_size: 14.0,
                     is_code: true,
@@ -107,7 +121,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(String::new()),
-                color: theme::WARNING,
+                color: crate::design::tokens().doc_math,
                 is_syntax: true,
                 is_math: true,
                 font_size: 16.0,
@@ -130,7 +144,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(inline_math.to_string()),
-                    color: theme::WARNING,
+                    color: crate::design::tokens().doc_math,
                     italic: true,
                     font_size: 16.0,
                     is_math: true,
@@ -149,7 +163,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 sl.spans.push(StyledSpan {
                     text: raw_line.to_string(),
                     display_text: Some(trimmed.to_string()),
-                    color: theme::WARNING,
+                    color: crate::design::tokens().doc_math,
                     italic: true,
                     font_size: 16.0,
                     is_math: true,
@@ -169,7 +183,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: Some(String::new()),
-                color: theme::WARNING,
+                color: crate::design::tokens().doc_math,
                 is_syntax: true,
                 is_math: true,
                 font_size: 16.0,
@@ -187,7 +201,7 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
             sl.spans.push(StyledSpan {
                 text: raw_line.to_string(),
                 display_text: None,
-                color: theme::WARNING,
+                color: crate::design::tokens().doc_math,
                 italic: true,
                 font_size: 16.0,
                 is_math: true,
@@ -214,8 +228,11 @@ pub fn highlight_markdown(text: &str) -> Vec<StyledLine> {
                 .all(|c| c == '|' || c == '-' || c == ' ' || c == ':');
             if is_separator {
                 // We can mark this as an empty row or skip spans, but let's just make it a row
-                sl.spans
-                    .push(StyledSpan::syntax(raw_line, theme::TEXT_MUTED, 16.0));
+                sl.spans.push(StyledSpan::syntax(
+                    raw_line,
+                    crate::design::tokens().doc_syntax,
+                    16.0,
+                ));
             } else {
                 let mut parts = trimmed.split('|').collect::<Vec<_>>();
                 if parts.first() == Some(&"") {
@@ -352,7 +369,7 @@ pub fn highlight_code_spans(
     lang: Option<&str>,
 ) -> Vec<StyledSpan> {
     let Some((syntax_set, _)) = syntect_defaults() else {
-        return vec![code_span(line, theme::TEXT_PRIMARY)];
+        return vec![code_span(line, crate::design::tokens().doc_text)];
     };
 
     if highlighter.is_none() {
@@ -360,7 +377,7 @@ pub fn highlight_code_spans(
     }
 
     let Some(highlighter) = highlighter.as_mut() else {
-        return vec![code_span(line, theme::TEXT_PRIMARY)];
+        return vec![code_span(line, crate::design::tokens().doc_text)];
     };
 
     let terminated = format!("{line}\n");
@@ -379,12 +396,12 @@ pub fn highlight_code_spans(
                 })
                 .collect::<Vec<_>>();
             if spans.is_empty() {
-                vec![code_span(line, theme::TEXT_PRIMARY)]
+                vec![code_span(line, crate::design::tokens().doc_text)]
             } else {
                 spans
             }
         }
-        Err(_) => vec![code_span(line, theme::TEXT_PRIMARY)],
+        Err(_) => vec![code_span(line, crate::design::tokens().doc_text)],
     }
 }
 

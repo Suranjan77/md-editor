@@ -17,13 +17,15 @@ rediscover — each exists because something concrete broke without it.
 ### Rule 2: Use the design tokens
 
 - No hardcoded dimensions, padding, font sizes, or hex colours in view modules.
-- Sizes come from `TEXT_XS` … `TEXT_DISPLAY`, gaps from `SPACE_0` … `SPACE_6`, radii from
-  `RADIUS_SM` / `RADIUS_MD` / `RADIUS_LG`, and colours from the palette — all in
-  `native/src/theme.rs`.
-- Animations use `Easing::EaseOutQuad` and one of `FAST`, `PANEL`, `OVERLAY` from
-  `native/src/motion.rs`. A new duration needs a reason, not a preference.
+- Text picks a `TextRole` (`design/type_scale.rs`, never below 12px); gaps come from
+  `SPACE_0` … `SPACE_7` and sizes, radii and elevation from `design/metrics.rs`; colours from
+  the semantic roles of `design::tokens()` (Dark and Light), and user content colours from
+  `ContentHue`. Build controls from `native/src/ui/` components rather than raw widgets.
+- Animations use `EASE` and one of `FAST`, `BASE`, `SLOW` from
+  `native/src/design/motion.rs`, through `duration()` so reduced motion turns them off. A new
+  duration needs a reason, not a preference.
 - Motion that follows something moving — the editor scrolling to the caret, the caret
-  gliding — uses the closed-form critically damped `Spring` in `motion.rs`, sampled at the
+  gliding — uses the closed-form critically damped `Spring` in `design/motion.rs`, sampled at the
   frame's time. Never integrate motion step by step per frame.
 - A panel's animated open width must match the width it actually lays out at, or the clip
   that produces the slide crops it permanently.
@@ -63,8 +65,6 @@ rediscover — each exists because something concrete broke without it.
 ### Rule 4: PDFs are immutable
 
 - Never write to a user's `.pdf`.
-- The same goes for `.pptx`: the presentation viewer is view-only, and `core/src/pptx.rs`
-  has no write path. Keep it that way.
 - Highlights, notes, bookmarks, and cross-references belong in `pdf_annotations` and
   `pdf_references`, keyed by the content-derived `document_id`.
 - Only ever create one `Pdfium` binding per process, and reach it only through
@@ -132,8 +132,9 @@ The full set of PDF rules is in [PDF Viewer Internals](PDF-Viewer-Internals.md#1
 
 ## 3. Documentation
 
-**This wiki is the only documentation tree.** There is no `docs/` directory; anything that
-would have gone there goes here instead.
+**This wiki is the documentation.** `docs/` holds only the design-system specification
+(`docs/design-system/`) and the list of open items (`docs/open-items.md`); plans live there
+while in progress and are deleted once done, with what they built described here.
 
 - A change that alters behaviour described on a wiki page updates that page in the same pull
   request.
@@ -147,21 +148,19 @@ would have gone there goes here instead.
 
 ## 4. Pre-Pull-Request Verification
 
-CI builds and packages, but does **not** run the tests or the lints. Run them locally:
+CI (`.github/workflows/ci.yml`) runs the same gate on every pull request; run it locally
+first:
 
 ```bash
 cargo fmt --check
 cargo check --workspace
 cargo test --workspace           # must pass in full
-cargo clippy --workspace
+scripts/clippy-ratchet.sh        # clippy count must equal clippy-baseline.txt
 ```
 
-`cargo fmt --check` and `cargo test` must pass cleanly.
-
-**Clippy is not yet warning-clean**: the tree currently carries 10 warnings (2 in core, 8 in
-native), mostly `too_many_arguments` in view functions. The editor is warning-clean. So
-`-D warnings` does not pass on a fresh checkout. The rule is therefore *do not add new ones*:
-compare the count before and after your change, and fix any warning your own code introduces.
+`cargo fmt --check`, `cargo test` and clippy must all pass cleanly — the clippy baseline is
+0, and the ratchet fails on any new warning. A view builder that needs more than seven
+inputs takes a `…Props` struct. Log with `log::{info, warn, error}`, never `println!`/`eprintln!`.
 
 Then, if your change touches saving, navigation, animation, or the PDF pane, walk the
 relevant items in the [Release Checklist](Release-Checklist.md) — particularly the durability

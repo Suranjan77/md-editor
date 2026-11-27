@@ -89,6 +89,23 @@ The retained registry holds `MAX_RETAINED_BUFFERS = 32` documents, evicting the 
 recently used. `take_retained_matching(path, disk_text)` only returns a parked buffer when
 the file on disk still matches what the buffer was based on — otherwise the stale buffer is
 dropped, so an external edit is never silently overwritten by a resurrected undo stack.
+Closing a pane (`close_pane`) or switching desks (`switch_to_desk`) absorbs the parked
+buffers from the closing pane into the surviving pane so undo history follows documents
+across panes and desk switches.
+
+### Flow 3: Portable Sidecar Sync (`<vault>/.md-editor/*.jsonl`)
+
+Both PDF highlights (`<vault>/.md-editor/annotations/<document_id>.jsonl`) and Study
+Tracker sessions (`<vault>/.md-editor/study-sessions.jsonl`) use the same deterministic
+JSONL + three-way merge protocol (`pdf_sidecar.rs`, `tracker_sidecar.rs`, with
+`*.jsonl merge=union` in `.md-editor/.gitattributes`):
+
+- Every local save or delete writes SQLite first and immediately rewrites the vault sidecar.
+- Reopening or indexing a vault reconciles the file against SQLite using the last synced
+  ID set (`pdf_sidecar_sync`, `tracker_sidecar_sync`): additions on either side are kept,
+  deletions on one side propagate, and edits to the same record keep the newer `updated_at`
+  timestamp (file wins ties). Missing sidecar files are rewritten from SQLite rather than
+  treating absence as deletion.
 
 ### Flow 3: PDF Selection to Sidecar Highlight & Linked Note
 
@@ -124,7 +141,7 @@ sequenceDiagram
 
 ---
 
-## 2. The Five Non-Negotiable Durability Invariants
+## 2. The Six Non-Negotiable Durability Invariants
 
 These are pass/fail engineering requirements, not judgement calls. **If any one fails, the
 build does not ship, regardless of what else works.**
@@ -172,6 +189,22 @@ build does not ship, regardless of what else works.**
 - **Mechanism** — the per-frame subscription is armed only while `motion.is_animating()`
   holds; every other subscription (toast, autosave, highlight, search) is likewise armed only
   when it has pending work. A settled window has no live timers at all.
+
+### Invariant 6: An external edit is never silently overwritten
+
+- **Scenario** — another program (git, Syncthing, a second editor) changes the open note.
+- **Guarantee** — if the note has no unsaved edits, the buffer follows the file (caret kept).
+  If it has unsaved edits, both versions survive: your buffer is saved to the note and the
+  disk version is kept beside it as `<name> (conflict YYYY-MM-DD HH-MM-SS).md`, with a
+  toast naming it.
+- **Mechanism** — `EditorPane::disk_hash` records what the note held when last read or
+  written. Every save goes through `vault::save_file_guarded`, which compares the file on
+  disk with that hash and writes the conflict copy first if they differ — so it holds no
+  matter whether the watcher or the autosave fires first. The watcher
+  (`VaultFilesChanged`) reloads a clean open note (`reload_open_note_from_disk`). A rename
+  flushes the open note first, then reloads it, so links the rename rewrote inside it are
+  not mistaken for a conflict. E2E: `s16_external_edit_of_{clean,dirty}_open_note`,
+  `s4_rename_open_dirty_note`.
 
 Each invariant has a manual verification step in the
 [Release Checklist](Release-Checklist.md).

@@ -21,7 +21,10 @@ use std::collections::HashMap;
 /// Version of the resolution algorithm. Bump whenever the resolver's output for
 /// the same input would change (new rules, coordinate/aim tweaks) so stale
 /// cached results (keyed by document id) are discarded and recomputed.
-pub const RESOLVER_VERSION: u32 = 2;
+///
+/// 3: bookmark-less documents resolve against the link-aware recovered outline.
+/// 4: rects are in the displayed page box (rotation and crop box applied).
+pub const RESOLVER_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum ReferenceKind {
@@ -576,7 +579,7 @@ fn leading_section_number(title: &str) -> Option<String> {
 
 /// Text of a char range `[start, end)` of a page (1:1 string/char mapping).
 fn line_slice(page: &PdfPageText, start: usize, end: usize) -> String {
-    page.text.chars().skip(start).take(end - start).collect()
+    page.text_range(start, end).to_string()
 }
 
 #[cfg(test)]

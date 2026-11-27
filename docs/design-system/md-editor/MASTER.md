@@ -3,9 +3,11 @@
 The single source of truth for how MD Editor looks, moves and behaves. Page files in
 `pages/` override this file for one surface; where they are silent, this file applies.
 
-**Status:** proposed (2026-11-23). Implemented by the plan in
-[`docs/ui-overhaul-plan.md`](../../ui-overhaul-plan.md). Until then `native/src/theme.rs`
-and `motion.rs` describe what ships.
+**Status:** implemented (2026-11-24) in `native/src/design/` and `native/src/ui/`, by the plan
+of the UI overhaul (now finished; its plan is in git history up to `0cdab3a`). What is still
+open is in [`docs/open-items.md`](../../open-items.md).
+**Redesigned 2026-11-25 as "Folio"** (§0): new palette, serif display type and shell layout
+on the same token and component architecture.
 
 **Provenance.** Generated with the UI/UX Pro Max skill (v2.15.0):
 `--design-system` for "note-taking knowledge management research desktop productivity" and
@@ -17,6 +19,36 @@ not a marketing page). Palettes were adapted from its *Developer Tool / IDE* and
 results; every pair below was re-measured for WCAG contrast, and adjustments are marked.
 The skill has no Rust/Iced stack profile, so its guidance is applied through Iced's own
 widgets.
+
+---
+
+## 0. Folio — the 2026-11-25 redesign
+
+The first pass was correct but generic (cool slate, teal, a 40px icon toolbar). Folio gives
+the app an identity drawn from what it holds: **papers on a desk**.
+
+- **Paper and ink.** Warm stone neutrals replace slate; the document sits on paper
+  (`#FFFEFB` light, warm graphite `#1E1D1B` dark). The accent is ink blue (`#3346C4` light,
+  periwinkle `#8FA1FF` dark), with amber kept for "found here" highlights.
+- **The sheet.** The document is a rounded sheet (`metrics::SHEET_RADIUS`, soft
+  `Elevation::Sheet` shadow) floating on the chrome ground (`bg.surface`). The active tab
+  shares the sheet's colour, so tab and document read as one surface. Toolbars inside the
+  sheet use the sheet colour; wells nested in it use `bg.inset`.
+- **Activity rail.** A 48px rail (`views/rail.rs`) at the left edge replaces the top
+  toolbar: Files, Search, Command palette · Graph, Handwriting, Tracker · theme, Settings.
+  Document toggles (split, outline, backlinks) sit at the end of the tab strip; the path is
+  breadcrumbs in the status bar (`views/breadcrumbs.rs`). The window gains a row of height.
+- **Serif display.** Document headings are always Source Serif semibold (body follows the
+  reading-font setting); the UI `heading` and `display` roles use it too. Inter stays for
+  chrome, JetBrains Mono for code and numbers.
+- **Floating surfaces** (menus, tooltips, dialogs, palette, toasts) use `bg.popover`:
+  white paper in light, lifted graphite in dark.
+
+Provenance: `--design-system "research notes knowledge workspace calm editorial"` (variance
+4, motion 3, density 7) returned *Swiss Modernism 2.0* with "institutional navy + research
+accent + serif headings" and an academic serif pairing. Folio keeps the Swiss grid and the
+serif-heading idea, uses the bundled Source Serif instead of EB Garamond (already shipped,
+built for screens), and softens navy to ink blue so it works as an accent in both themes.
 
 ---
 
@@ -42,55 +74,57 @@ Two layers: a **primitive** ramp (never used by views directly) and **semantic r
 
 ### 2.1 Semantic roles — Dark (default)
 
-| Role | Hex | Use | Contrast (measured) |
-| :--- | :--- | :--- | :--- |
-| `bg.canvas` | `#0B1120` | Window ground, editor page | — |
-| `bg.surface` | `#111827` | Sidebar, panels, toolbars | — |
-| `bg.raised` | `#1B2336` | Cards, inputs, hovered rows, menus | — |
-| `bg.overlay` | `#272F42` | Selected rows, pressed controls, popovers | — |
-| `bg.scrim` | `#020617` @ 60% | Behind modals | measured per composition |
-| `border.subtle` | `#1E293B` | Dividers (decorative) | exempt |
-| `border.default` | `#334155` | Panel and card edges | 1.7:1 on surface (decorative) |
-| `border.control` | `#64748B` | Input and control boundaries | **3.7:1** on surface, 3.3:1 on raised |
-| `fg.primary` | `#F8FAFC` | Body and titles | 17.0:1 surface · 12.8:1 overlay |
-| `fg.secondary` | `#CBD5E1` | Labels, metadata | 12.0:1 surface · 9.0:1 overlay |
-| `fg.tertiary` | `#94A3B8` | Captions, placeholders, disabled-adjacent | 6.9:1 surface · 5.2:1 overlay |
-| `accent` | `#2DD4BF` | Primary actions, active state, links | 9.5:1 surface |
-| `on-accent` | `#042F2E` | Text/icons on `accent` fills | 7.8:1 |
-| `accent.muted` | `#2DD4BF` @ 16% | Selected backgrounds, active tab underlay | — |
-| `focus.ring` | `#5EEAD4` | Keyboard focus, 2px | 12.0:1 surface |
-| `highlight` | `#F59E0B` | Search matches, attention (not errors) | 8.3:1 surface |
-| `status.danger` | `#F87171` | Errors, destructive | 6.4:1 surface · 4.8:1 overlay |
-| `status.success` | `#4ADE80` | Saved, completed | 10.2:1 surface |
-| `status.warning` | `#FBBF24` | Unsaved, degraded | 10.6:1 surface |
-| `status.info` | `#60A5FA` | Neutral notices | 7.0:1 surface |
+Contrast is measured on `bg.canvas` (the sheet) and `bg.overlay` (worst case); the full
+matrix, `bg.inset` and `bg.popover` included, is asserted by
+`design/tests.rs::wcag_contrast_holds_in_dark_and_light_themes`.
 
-*Adjusted from the skill's Developer-Tool palette: background darkened from `#0F172A` to
-`#0B1120` for more surface separation; run-green accent replaced by the product's existing
-teal family (brand continuity with the current `#B1CCC6`), lifted to `#2DD4BF` for 9.5:1
-contrast; amber kept from the "markdown editor" run as the highlight colour.*
+| Role | Hex | Use | Contrast (canvas · overlay) |
+| :--- | :--- | :--- | :--- |
+| `bg.canvas` | `#1E1D1B` | The document sheet, active tab, toolbars inside the sheet | — |
+| `bg.surface` | `#111010` | Chrome ground: rail, sidebar, side panels, tab strip, status bar | — |
+| `bg.raised` | `#262421` | Hovered rows, secondary controls | — |
+| `bg.overlay` | `#322F2B` | Selected rows, pressed controls | — |
+| `bg.inset` | `#23221F` | Wells and cards nested in the sheet (charts, graph canvas) | — |
+| `bg.popover` | `#282623` | Menus, tooltips, dialogs, palette, toasts | — |
+| `bg.scrim` | `#0A0908` @ 62% | Behind modals | — |
+| `border.subtle` | `#2A2825` | Dividers, sheet edge (decorative) | exempt |
+| `border.default` | `#3B3834` | Card edges (decorative) | exempt |
+| `border.control` | `#7C766D` | Input and control boundaries | 3.7 · 3.0 |
+| `fg.primary` | `#EDEAE4` | Body and titles | 14.0 · 11.1 |
+| `fg.secondary` | `#CAC5BC` | Labels, metadata | 9.8 · 7.8 |
+| `fg.tertiary` | `#A09A90` | Captions, placeholders | 6.0 · 4.8 |
+| `accent` | `#8FA1FF` | Primary action, current location, links | 7.0 · 5.5 |
+| `on-accent` | `#0E1436` | Text/icons on `accent` fills | 7.4 on accent |
+| `accent.muted` | `#8FA1FF` @ 16% | Selected backgrounds | — |
+| `focus.ring` | `#ADBAFF` | Keyboard focus, 2px | 9.0 · 7.1 |
+| `highlight` | `#F2A93B` | Search matches, attention (not errors) | 8.4 · 6.7 |
+| `status.danger` | `#F27A6E` | Errors, destructive | 6.2 · 4.9 |
+| `status.success` | `#74C98E` | Saved, completed | 8.4 · 6.7 |
+| `status.warning` | `#E9B44F` | Unsaved, degraded | 8.9 · 7.0 |
+| `status.info` | `#82B4F2` | Neutral notices | 7.8 · 6.2 |
 
 ### 2.2 Semantic roles — Light
 
-| Role | Hex | Contrast (measured) |
+| Role | Hex | Contrast (canvas · overlay) |
 | :--- | :--- | :--- |
-| `bg.canvas` | `#F8FAFC` | — |
-| `bg.surface` | `#FFFFFF` | — |
-| `bg.raised` | `#F1F5F9` | — |
-| `bg.overlay` | `#E2E8F0` | — |
-| `border.default` | `#CBD5E1` | decorative |
-| `border.control` | `#64748B` | **4.8:1** on surface |
-| `fg.primary` | `#0F172A` | 17.9:1 surface · 14.5:1 overlay |
-| `fg.secondary` | `#334155` | 10.4:1 surface |
-| `fg.tertiary` | `#475569` | 7.6:1 surface · 6.2:1 overlay |
-| `accent` | `#0F766E` | 5.5:1 surface |
-| `on-accent` | `#FFFFFF` | 5.5:1 |
-| `focus.ring` | `#0D9488` | 3.7:1 surface (non-text, ≥3:1) |
-| `highlight` | `#B45309` | 5.0:1 surface |
-| `status.danger` | `#B91C1C` | 6.5:1 surface |
-| `status.success` | `#15803D` | 5.0:1 surface |
-| `status.warning` | `#A16207` | 4.9:1 surface |
-| `status.info` | `#1D4ED8` | 6.7:1 surface |
+| `bg.canvas` | `#FFFEFB` (paper) | — |
+| `bg.surface` | `#F3F1EC` (stone chrome) | — |
+| `bg.raised` | `#EAE7E0` | — |
+| `bg.overlay` | `#DFDBD2` | — |
+| `bg.inset` | `#F7F5F0` | — |
+| `bg.popover` | `#FFFFFF` | — |
+| `border.default` | `#D3CEC4` | decorative |
+| `border.control` | `#7A7369` | 4.6 · 3.4 |
+| `fg.primary` | `#1C1A17` | 17.2 · 12.6 |
+| `fg.secondary` | `#433E38` | 10.5 · 7.7 |
+| `fg.tertiary` | `#625B52` | 6.6 · 4.8 |
+| `accent` / `focus.ring` | `#3346C4` | 7.4 · 5.4 |
+| `on-accent` | `#FFFFFF` | 7.5 on accent |
+| `highlight` | `#924A06` | 6.5 · 4.7 |
+| `status.danger` | `#A8231B` | 7.1 · 5.2 |
+| `status.success` | `#256B30` | 6.5 · 4.7 |
+| `status.warning` | `#845006` | 6.6 · 4.9 |
+| `status.info` | `#1F4DB0` | 7.6 · 5.5 |
 
 **Light-theme rule:** coloured *text* (`accent`, `highlight`, `status.*`) goes on
 `bg.canvas`, `bg.surface` or `bg.raised` only. On `bg.overlay` it drops to 4.0–4.4:1, so
@@ -123,9 +157,9 @@ measurement and rendering match on every platform. All three are OFL-licensed.
 
 | Family | Use | Weights |
 | :--- | :--- | :--- |
-| **Inter** | All UI chrome; default document face | 400, 500, 600, 700 |
+| **Inter** | All UI chrome; default document body face | 400, 500, 600, 700 |
 | **JetBrains Mono** | Code blocks, inline code, numeric data, shortcuts | 400, 600 |
-| **Source Serif 4** *(optional)* | Alternative document face (Settings → Reading font) | 400, 600, italic |
+| **Source Serif** | Document headings (always), UI `heading` / `display`, optional body face | 400, 600, 700, italic |
 
 *Inter is the skill's match for "developer tools, high-end productivity apps"; the mono
 pairing follows its Inter + JetBrains Mono tri-stack. Source Serif 4 answers the skill's
@@ -144,8 +178,8 @@ Minimum UI size is **12px** (skill: text < 12px is an anti-pattern). Numbers in 
 | `body.strong` | 13 / 20 | 600 | Emphasis within UI text |
 | `title.sm` | 14 / 20 | 600 | Panel headers, dialog body headings |
 | `title` | 16 / 24 | 600 | Dialog titles, view titles |
-| `heading` | 20 / 28 | 600 | Settings sections, tracker headers |
-| `display` | 32 / 40 | 700 | Welcome wordmark only |
+| `heading` | 20 / 28 | Serif 600 | Settings sections, stat values |
+| `display` | 32 / 40 | Serif 700 | Welcome wordmark only |
 
 Replaces today's `TEXT_XS` 8 / `TEXT_SM` 10 / `TEXT_BASE` 11 / `TEXT_MD` 14 / `TEXT_LG` 16 /
 `TEXT_DISPLAY` 42.

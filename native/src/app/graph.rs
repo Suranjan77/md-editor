@@ -1,43 +1,19 @@
 //! The knowledge graph: snapshot loading, filters, selection and the physics layout.
 
 use super::*;
+use crate::graph_state::{GraphScope, GraphState};
+use crate::messages::{GraphMessage, VaultMessage};
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_graph(&mut self, message: Message) -> Task<Message> {
+    pub(super) fn update_graph(&mut self, message: GraphMessage) -> Task<Message> {
         match message {
-            Message::GraphToggle => {
-                if self.vault.root.is_none() {
-                    return Task::none();
-                }
-                if self.graph.visible {
-                    self.graph.visible = false;
-                } else {
-                    self.graph.visible = true;
-                    self.tracker.hide();
-                    self.search.visible = false;
-                    self.search.file_visible = false;
-                    self.ui.command_palette_visible = false;
-                    self.graph.retry_refresh();
-                    let active = self.graph.active_path.clone();
-                    self.graph.select(active);
-                }
+            GraphMessage::Toggle => {
+                self.on_graph_toggle();
                 Task::none()
             }
-            Message::GraphRefresh => {
-                if !self.graph.visible {
-                    return Task::none();
-                }
-                let Some(generation) = self.graph.begin_refresh() else {
-                    return Task::none();
-                };
-                let state = self.state.clone();
-                Task::perform(
-                    async move { md_editor_core::vault::get_graph_snapshot(&state) },
-                    move |result| Message::GraphSnapshotLoaded(generation, result),
-                )
-            }
-            Message::GraphSnapshotLoaded(generation, result) => {
+            GraphMessage::Refresh => self.on_graph_refresh(),
+            GraphMessage::SnapshotLoaded(generation, result) => {
                 match result {
                     Ok(snapshot) => {
                         self.graph.complete_refresh(generation, snapshot);
@@ -51,114 +27,124 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::GraphScopeGlobal => {
-                self.graph.set_scope(crate::graph_state::GraphScope::Global);
-                Task::none()
-            }
-            Message::GraphScopeLocal => {
-                let depth = match self.graph.scope {
-                    crate::graph_state::GraphScope::Local { depth } => depth,
-                    crate::graph_state::GraphScope::Global => 1,
-                };
-                self.graph
-                    .set_scope(crate::graph_state::GraphScope::Local { depth });
-                Task::none()
-            }
-            Message::GraphLocalDepthChanged(depth) => {
-                self.graph
-                    .set_scope(crate::graph_state::GraphScope::Local { depth });
-                Task::none()
-            }
-            Message::GraphQueryChanged(query) => {
-                self.graph.set_query(query);
-                Task::none()
-            }
-            Message::GraphShowPdfsToggled(show) => {
-                self.graph.set_show_pdfs(show);
-                Task::none()
-            }
-            Message::GraphShowMissingToggled(show) => {
-                self.graph.set_show_missing(show);
-                Task::none()
-            }
-            Message::GraphShowOrphansToggled(show) => {
-                self.graph.set_show_orphans(show);
-                Task::none()
-            }
-            Message::GraphNodeSelected(path) => {
-                self.graph.select(path);
-                Task::none()
-            }
-            Message::GraphNodeMoved { path, x, y } => {
-                self.graph.move_node(&path, x, y);
-                Task::none()
-            }
-            Message::GraphNodeOpen(path) => {
+            GraphMessage::NodeOpen(path) => {
                 let exists = self.graph.node(&path).is_some_and(|node| node.exists);
                 if exists {
                     // The graph is a full-window workspace, so leaving it up
                     // would hide the document the user just asked to read.
                     self.graph.visible = false;
-                    Task::done(Message::SidebarFileClicked(path))
+                    Task::done(Message::Vault(VaultMessage::SidebarFileClicked(path)))
                 } else {
                     self.ui.toast = Some("That link target does not exist yet".to_string());
                     Task::none()
                 }
             }
-            Message::GraphNodeFocused(path) => {
-                self.graph.focus_on(&path);
+            GraphMessage::OpenPinboardsModal => self.open_pinboards_modal(),
+            GraphMessage::OpenSavePinboardModal => self.open_save_pinboard_modal(),
+            GraphMessage::SavePinboard(name) => self.submit_save_pinboard_modal(&name),
+            GraphMessage::LoadPinboard(name) => self.load_pinboard(&name),
+            GraphMessage::DeletePinboard(name) => self.delete_pinboard(&name),
+            m => {
+                apply_graph_view(&mut self.graph, m);
                 Task::none()
             }
-            Message::GraphPinToggled(path) => {
-                self.graph.toggle_pin(&path);
-                Task::none()
-            }
-            Message::GraphUnpinAll => {
-                self.graph.unpin_all();
-                Task::none()
-            }
-            Message::GraphZoomBy(factor) => {
-                self.graph.zoom_by(factor);
-                Task::none()
-            }
-            Message::GraphPhysicsToggled => {
-                self.graph.toggle_physics();
-                Task::none()
-            }
-            Message::GraphFiltersReset => {
-                self.graph.reset_filters();
-                Task::none()
-            }
-            Message::GraphInspectorToggled => {
-                self.graph.inspector_visible = !self.graph.inspector_visible;
-                Task::none()
-            }
-            Message::GraphFitView => {
-                self.graph.fit_revision = self.graph.fit_revision.wrapping_add(1);
-                Task::none()
-            }
-            Message::GraphResetLayout => {
-                self.graph.reset_layout();
-                Task::none()
-            }
-            Message::GraphPhysicsTick => {
-                self.graph.physics_tick();
-                Task::none()
-            }
-            Message::GraphSetView { pan_x, pan_y, zoom } => {
-                self.graph.set_view(pan_x, pan_y, zoom);
-                Task::none()
-            }
-            Message::GraphHovered(path) => {
-                self.graph.set_hovered(path);
-                Task::none()
-            }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
+    }
+
+    fn on_graph_toggle(&mut self) {
+        if self.vault.root.is_none() {
+            return;
+        }
+        if self.graph.visible {
+            self.graph.visible = false;
+        } else {
+            self.graph.visible = true;
+            self.tracker.hide();
+            self.search.visible = false;
+            self.search.file_visible = false;
+            self.ui.command_palette_visible = false;
+            self.graph.retry_refresh();
+            let active = self.graph.active_path.clone();
+            self.graph.select(active);
+        }
+    }
+
+    fn on_graph_refresh(&mut self) -> Task<Message> {
+        if !self.graph.visible {
+            return Task::none();
+        }
+        let Some(generation) = self.graph.begin_refresh() else {
+            return Task::none();
+        };
+        let state = self.state.clone();
+        Task::perform(
+            super::blocking(move || {
+                md_editor_core::vault::get_graph_snapshot(&state).map_err(String::from)
+            }),
+            move |result| Message::Graph(GraphMessage::SnapshotLoaded(generation, result)),
+        )
     }
 
     pub(super) fn invalidate_graph(&mut self) {
         self.graph.mark_dirty();
+    }
+}
+
+/// Graph messages that only change the graph's own view state: filters,
+/// selection, pins, camera and physics.
+fn apply_graph_view(graph: &mut GraphState, message: GraphMessage) {
+    match message {
+        GraphMessage::ScopeGlobal => graph.set_scope(GraphScope::Global),
+        GraphMessage::ScopeLocal => {
+            let depth = match graph.scope {
+                GraphScope::Local { depth } => depth,
+                GraphScope::Global => 1,
+            };
+            graph.set_scope(GraphScope::Local { depth });
+        }
+        GraphMessage::LocalDepthChanged(depth) => graph.set_scope(GraphScope::Local { depth }),
+        GraphMessage::QueryChanged(query) => graph.set_query(query),
+        GraphMessage::ShowPdfsToggled(show) => graph.set_show_pdfs(show),
+        GraphMessage::ShowSketchesToggled(show) => graph.set_show_sketches(show),
+        GraphMessage::ShowMissingToggled(show) => graph.set_show_missing(show),
+        GraphMessage::ShowOrphansToggled(show) => graph.set_show_orphans(show),
+        GraphMessage::NodeSelected(path) => graph.select(path),
+        GraphMessage::CycleNode(delta) => graph.cycle_node(delta),
+        GraphMessage::ToggleSelectedPin => graph.toggle_selected_pin(),
+        GraphMessage::NodeMoved { path, x, y } => graph.move_node(&path, x, y),
+        GraphMessage::NodeFocused(path) => graph.focus_on(&path),
+        GraphMessage::PinToggled(path) => graph.toggle_pin(&path),
+        GraphMessage::UnpinAll => graph.unpin_all(),
+        GraphMessage::ZoomBy(factor) => graph.zoom_by(factor),
+        GraphMessage::PhysicsToggled => graph.toggle_physics(),
+        GraphMessage::FiltersReset => graph.reset_filters(),
+        GraphMessage::InspectorToggled => graph.inspector_visible = !graph.inspector_visible,
+        GraphMessage::FitView => graph.fit_revision = graph.fit_revision.wrapping_add(1),
+        GraphMessage::ResetLayout => graph.reset_layout(),
+        GraphMessage::PhysicsTick => {
+            graph.physics_tick();
+        }
+        GraphMessage::SetView {
+            pan_x,
+            pan_y,
+            zoom,
+            fitted,
+        } => {
+            graph.set_view(pan_x, pan_y, zoom);
+            if fitted.is_some() {
+                graph.fitted = fitted;
+            }
+        }
+        GraphMessage::Hovered(path) => graph.set_hovered(path),
+        // Handled by `update_graph`; listed so a new variant must be routed.
+        GraphMessage::Toggle
+        | GraphMessage::Refresh
+        | GraphMessage::SnapshotLoaded(..)
+        | GraphMessage::NodeOpen(_)
+        | GraphMessage::OpenPinboardsModal
+        | GraphMessage::OpenSavePinboardModal
+        | GraphMessage::SavePinboard(_)
+        | GraphMessage::LoadPinboard(_)
+        | GraphMessage::DeletePinboard(_) => {}
     }
 }

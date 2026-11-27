@@ -1,6 +1,8 @@
 //! Opening PDFs and managing their pages: rendering, links, text, fit, navigation and highlights.
 
+use super::pdf_render::scroll_pdf_to;
 use super::*;
+use crate::messages::PdfMessage;
 
 impl MdEditor {
     pub(super) fn open_pdf(&mut self, path: &str) -> Task<Message> {
@@ -9,17 +11,22 @@ impl MdEditor {
             return Task::none();
         };
         let path_str = abs_path.to_string_lossy().to_string();
+        self.save_current_tab_view();
         self.pdf.active_path = Some(path.to_string());
+        self.tabs.open(path, crate::tabs::TabKind::Pdf, false);
+        self.persist_tabs();
+        self.ui.pdf_page_input = None;
+        self.ui.pdf_zoom_input = None;
         self.graph.set_active_path(Some(path.to_string()));
         self.pdf.load_error = None;
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
-        self.pptx.close();
         self.showing_pdf = true;
         self.active_panel = ActivePanel::Pdf;
         self.pdf.current_page = 0;
         self.pdf.fit_to_width = true;
+        self.pdf.fit_fills_pane = false;
         self.pdf.pages = Vec::new();
         self.pdf.dimensions = Vec::new();
         self.pdf.page_sizes = Vec::new();
@@ -31,15 +38,21 @@ impl MdEditor {
         self.search.pdf_results.clear();
         self.search.pdf_indices_by_page.clear();
         self.search.pdf_error = None;
+        self.search.match_index = None;
+        // A search still running is for the previous document.
+        self.search.pdf_search_seq = self.search.pdf_search_seq.wrapping_add(1);
         self.pdf.programmatic_scroll = false;
         self.pdf.toc_target_page = None;
         self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
+        self.pdf.document_generation = self.pdf.document_generation.wrapping_add(1);
         let generation = self.pdf.render_generation;
+        let document_generation = self.pdf.document_generation;
 
         // Reset PDF study state
         self.pdf.document_id = None;
         self.pdf.page_text.clear();
         self.pdf.selection = None;
+        self.pdf.live_ink = None;
         self.pdf.annotations.clear();
         self.pdf.focused_annotation_id = None;
         self.pdf.pending_text.clear();
@@ -52,13 +65,13 @@ impl MdEditor {
         let path_for_hash = path.to_string();
         let abs_path_for_hash = abs_path.clone();
         let hash_task = Task::perform(
-            async move {
+            super::blocking(move || {
                 match md_editor_core::pdf::compute_provisional_id(&abs_path_for_hash) {
                     Ok((hash, len, mtime)) => Some((path_for_hash, hash, len, mtime)),
                     Err(_) => None,
                 }
-            },
-            move |result| Message::PdfDocumentIdComputed(generation, result),
+            }),
+            move |result| Message::Pdf(PdfMessage::DocumentIdComputed(document_generation, result)),
         );
 
         let _state = self.state.clone();
@@ -73,38 +86,52 @@ impl MdEditor {
         Task::batch(vec![
             hash_task,
             Task::perform(
-                async move {
+                super::blocking(move || {
                     let renderer = _state
                         .pdf_renderer
                         .as_ref()
                         .ok_or_else(|| "PDF renderer is unavailable".to_string())?;
                     renderer.page_count(&path_clone)
+                }),
+                // Gated on the document, not the render generation: a zoom
+                // or refit while the PDF loads must not drop its page count.
+                move |res| {
+                    Message::Pdf(PdfMessage::Loaded(
+                        document_generation,
+                        res.map_err(String::from),
+                    ))
                 },
-                move |res| Message::PdfLoaded(generation, res),
             ),
             Task::perform(
-                async move {
+                super::blocking(move || {
                     let renderer = _state_sizes.pdf_renderer.as_ref()?;
                     renderer.page_sizes(&path_str_sizes).ok()
-                },
+                }),
                 move |res| {
-                    Message::PdfPageSizesLoaded(
+                    Message::Pdf(PdfMessage::PageSizesLoaded(
                         generation,
                         path_for_sizes.clone(),
                         res.unwrap_or_default(),
-                    )
+                    ))
                 },
             ),
+            // Bookmarks only: cheap, and in the interactive lane. A
+            // bookmark-less PDF gets its outline from the background document
+            // scan (`load_pdf_document_scan`) instead of a full-text pass that
+            // used to sit in front of the first page render.
             Task::perform(
-                async move {
+                super::blocking(move || {
                     let renderer = _state_toc.pdf_renderer.as_ref()?;
-                    renderer.get_toc(&path_str_toc).ok()
-                },
-                move |res| {
-                    let (entries, synthetic) = res.unwrap_or_default();
-                    Message::PdfTocLoaded(path_for_toc.clone(), entries, synthetic)
-                },
-            ),
+                    renderer.get_embedded_toc(&path_str_toc).ok()
+                }),
+                |res| res,
+            )
+            .then(move |res| match res {
+                Some(entries) if !entries.is_empty() => Task::done(Message::Pdf(
+                    PdfMessage::TocLoaded(path_for_toc.clone(), entries, false),
+                )),
+                _ => Task::none(),
+            }),
         ])
     }
 
@@ -121,22 +148,26 @@ impl MdEditor {
         let _state = self.state.clone();
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = _state.pdf_renderer.as_ref()?;
                 let res = renderer.render_page(&path_str, page, zoom);
                 Some((page, res))
-            },
+            }),
             move |res| {
                 if let Some((p, Ok(img))) = res {
-                    Message::PdfRendered(generation, p, img)
+                    Message::Pdf(PdfMessage::Rendered(
+                        generation,
+                        p,
+                        crate::messages::PageImage(img),
+                    ))
                 } else if let Some((p, Err(err))) = res {
-                    if err == "Skipped" {
-                        Message::PdfRenderSkipped(generation, p)
+                    if err == md_editor_core::pdf::PdfError::Skipped {
+                        Message::Pdf(PdfMessage::RenderSkipped(generation, p))
                     } else {
-                        Message::PdfRenderFailed(generation, p)
+                        Message::Pdf(PdfMessage::RenderFailed(generation, p))
                     }
                 } else {
-                    Message::PdfRenderFailed(generation, page)
+                    Message::Pdf(PdfMessage::RenderFailed(generation, page))
                 }
             },
         )
@@ -163,20 +194,26 @@ impl MdEditor {
         }
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = _state.pdf_renderer.as_ref()?;
-                renderer
-                    .render_page_priority(&path_str, page, zoom)
-                    .map_err(|e| println!("PDF PRIORITY RENDER ERROR (Page {}): {}", page, e))
-                    .ok()
-                    .map(|img| (page, img))
-            },
-            move |res| {
-                if let Some((p, img)) = res {
-                    Message::PdfRendered(generation, p, img)
-                } else {
-                    Message::PdfRenderFailed(generation, page)
+                Some(renderer.render_page_priority(&path_str, page, zoom))
+            }),
+            move |res| match res {
+                Some(Ok(img)) => Message::Pdf(PdfMessage::Rendered(
+                    generation,
+                    page,
+                    crate::messages::PageImage(img),
+                )),
+                // A newer priority request replaced this one (fast navigation):
+                // nothing failed, so no error toast.
+                Some(Err(md_editor_core::pdf::PdfError::Skipped)) => {
+                    Message::Pdf(PdfMessage::RenderSkipped(generation, page))
                 }
+                Some(Err(e)) => {
+                    log::warn!("Priority render of page {page} failed: {e}");
+                    Message::Pdf(PdfMessage::RenderFailed(generation, page))
+                }
+                None => Message::Pdf(PdfMessage::RenderFailed(generation, page)),
             },
         )
     }
@@ -193,15 +230,21 @@ impl MdEditor {
         };
         self.pdf.pending_links.insert(page);
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf.render_generation;
+        let generation = self.pdf.document_generation;
         let _state = self.state.clone();
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = _state.pdf_renderer.as_ref()?;
                 renderer.get_page_links(&path_str, page).ok()
+            }),
+            move |res| {
+                Message::Pdf(PdfMessage::PageLinksLoaded(
+                    generation,
+                    page,
+                    res.unwrap_or_default(),
+                ))
             },
-            move |res| Message::PdfPageLinksLoaded(generation, page, res.unwrap_or_default()),
         )
     }
 
@@ -217,18 +260,24 @@ impl MdEditor {
         };
         self.pdf.pending_text.insert(page);
         let path_str = abs_path.to_string_lossy().to_string();
-        let generation = self.pdf.render_generation;
+        let generation = self.pdf.document_generation;
         let _state = self.state.clone();
 
         Task::perform(
-            async move {
+            super::blocking(move || {
                 let renderer = _state
                     .pdf_renderer
                     .as_ref()
                     .ok_or_else(|| "No PDF renderer".to_string())?;
                 renderer.get_page_text(&path_str, page)
+            }),
+            move |res| {
+                Message::Pdf(PdfMessage::PageTextLoaded(
+                    generation,
+                    page,
+                    res.map_err(String::from),
+                ))
             },
-            move |res| Message::PdfPageTextLoaded(generation, page, res),
         )
     }
 
@@ -369,66 +418,54 @@ impl MdEditor {
     }
 
     pub(super) fn refit_pdf_if_needed(&self) -> Task<Message> {
-        if self.pdf.fit_to_width && self.pdf.active_path.is_some() {
-            Task::done(Message::PdfFitToWidth)
+        // Before the page count is known the fit has nothing to measure; the
+        // load fits the pages itself.
+        if self.pdf.fit_to_width && self.pdf.active_path.is_some() && self.pdf.total_pages > 0 {
+            Task::done(Message::Pdf(PdfMessage::FitToWidth))
         } else {
             Task::none()
         }
     }
 
     pub(super) fn pdf_available_width(&self) -> f32 {
+        // The measured pane, once the PDF has been laid out at least once.
+        if self.showing_pdf
+            && let Some(width) = self.pdf.viewport_width
+        {
+            return width;
+        }
         let sidebar_width = if self.vault.sidebar_visible {
-            260.0
+            self.ui.sidebar_width
         } else {
             0.0
         };
-        let toc_width = if self.editor.toc_visible { 260.0 } else { 0.0 };
+        let toc_width = if self.editor.toc_visible {
+            self.ui.side_panel_width
+        } else {
+            0.0
+        };
         let backlinks_width = if self.vault.backlinks_visible {
-            260.0
+            self.ui.side_panel_width
         } else {
             0.0
         };
-        let chrome_width = sidebar_width + toc_width + backlinks_width;
+        // Before the first measurement only: the Folio chrome around the sheet
+        // (activity rail, right gutter, sheet border).
+        let folio_chrome = crate::design::metrics::RAIL_WIDTH
+            + crate::design::metrics::SHEET_GUTTER
+            + 2.0 * crate::design::metrics::BORDER_WIDTH;
+        let chrome_width = sidebar_width + toc_width + backlinks_width + folio_chrome;
         let content_width = (self.ui.window_width - chrome_width).max(320.0);
 
-        if self.ui.split_view_active && self.active_path.is_some() && self.pdf.active_path.is_some()
-        {
-            (content_width * (1.0 - self.ui.split_ratio)).max(280.0)
-        } else {
-            content_width
-        }
-    }
-
-    pub(super) fn default_pdf_note_path(&self, ann: &md_editor_core::pdf::PdfAnnotation) -> String {
-        let pdf_filename = self
-            .pdf
-            .active_path
-            .as_deref()
-            .and_then(|pdf_path| std::path::Path::new(pdf_path).file_stem())
-            .and_then(|s| s.to_str())
-            .unwrap_or("document");
-        let clean_pdf_name = slug_fragment(pdf_filename);
-        format!(
-            "pdf-notes/{}-p{}-{}.md",
-            clean_pdf_name,
-            ann.page_index + 1,
-            &ann.id[..8.min(ann.id.len())]
-        )
-    }
-
-    pub(super) fn linked_pdf_note_file_content(
-        &self,
-        note_path: &str,
-        pdf_path: &str,
-        ann: &md_editor_core::pdf::PdfAnnotation,
-    ) -> String {
-        match md_editor_core::vault::open_file(&self.state, note_path)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-        {
-            Some(existing) => append_linked_pdf_note_section(&existing, pdf_path, ann),
-            None => new_linked_pdf_note_content(note_path, pdf_path, ann),
-        }
+        // This pane's share, side by side.
+        let share = match (self.workspace.is_split(), self.workspace.axis) {
+            (true, super::workspace::SplitAxis::Vertical) => match self.workspace.current {
+                super::workspace::PaneId::A => self.ui.split_ratio,
+                super::workspace::PaneId::B => 1.0 - self.ui.split_ratio,
+            },
+            _ => 1.0,
+        };
+        (content_width * share).max(280.0)
     }
 
     pub(super) fn navigate_pdf_page(&mut self, page: u16) -> Task<Message> {
@@ -462,125 +499,7 @@ impl MdEditor {
         }
 
         self.pdf.programmatic_scroll = true;
-        let scroll_y = self.pdf.page_offset(target_page);
-        tasks.push(operation::scroll_to(
-            iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
-            AbsoluteOffset {
-                x: 0.0,
-                y: scroll_y,
-            },
-        ));
+        tasks.push(scroll_pdf_to(self.pdf.page_offset(target_page)));
         Task::batch(tasks)
-    }
-
-    pub(super) fn pdf_copy_shortcut_is_active(&self) -> bool {
-        self.pdf.selection.is_some()
-            && self.pdf.active_path.is_some()
-            && (self.showing_pdf
-                || (self.ui.split_view_active
-                    && self.active_path.is_some()
-                    && self.active_panel == ActivePanel::Pdf))
-    }
-
-    /// Create a highlight annotation over the current PDF text selection.
-    /// Shared by the explicit color buttons and the cycling quick highlight.
-    pub(super) fn create_highlight(
-        &mut self,
-        color: md_editor_core::pdf::PdfAnnotationColor,
-    ) -> Task<Message> {
-        if let (Some(sel), Some(doc_id)) = (&self.pdf.selection, &self.pdf.document_id)
-            && let Some(page_text) = self.pdf.page_text.get(&sel.page_index)
-        {
-            let start = sel.anchor_idx.min(sel.focus_idx);
-            let end = sel.anchor_idx.max(sel.focus_idx).saturating_add(1);
-
-            let mut selected_chars = Vec::new();
-            for c in &page_text.chars {
-                if c.text_index >= start && c.text_index < end {
-                    selected_chars.push(c.clone());
-                }
-            }
-
-            let selected_text = text_by_char_range(&page_text.text, start, end);
-
-            let rects = md_editor_core::pdf::merge_char_rects(&selected_chars);
-
-            let id = uuid::Uuid::new_v4().to_string();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-
-            let ann = md_editor_core::pdf::PdfAnnotation {
-                id: id.clone(),
-                document_id: doc_id.clone(),
-                page_index: sel.page_index,
-                kind: md_editor_core::pdf::PdfAnnotationKind::Highlight,
-                color,
-                selected_text,
-                ranges: vec![md_editor_core::pdf::PdfTextRange {
-                    start_text_index: start,
-                    end_text_index: end,
-                }],
-                rects,
-                note: None,
-                linked_note_path: None,
-                markdown_anchor: None,
-                created_at: now,
-                updated_at: now,
-            };
-
-            if let Err(e) = self.state.save_pdf_annotation(&ann) {
-                self.ui.toast = Some(format!("Failed to save highlight: {}", e));
-            } else {
-                self.pdf
-                    .annotations
-                    .entry(sel.page_index)
-                    .or_default()
-                    .push(ann);
-                self.pdf.selection = None;
-                if let Some(ref path) = self.pdf.active_path {
-                    self.vault.backlinks =
-                        md_editor_core::vault::get_mixed_backlinks(&self.state, path)
-                            .unwrap_or_default();
-                }
-            }
-        }
-        Task::none()
-    }
-
-    /// Build a short report of "orphan" annotations: highlights whose stored
-    /// `selected_text` no longer appears in the current text of their page,
-    /// which means the underlying PDF text has drifted away from the anchor.
-    pub(super) fn pdf_orphan_report(&self) -> String {
-        let mut total = 0usize;
-        let mut orphans = 0usize;
-        let mut checked = 0usize;
-        for (page_index, anns) in &self.pdf.annotations {
-            let page_text = self.pdf.page_text.get(page_index);
-            for ann in anns {
-                total += 1;
-                let needle = ann.selected_text.trim();
-                if needle.is_empty() {
-                    continue;
-                }
-                // Only pages whose text has been loaded can be checked.
-                if let Some(pt) = page_text {
-                    checked += 1;
-                    if !pt.text.contains(needle) {
-                        orphans += 1;
-                    }
-                }
-            }
-        }
-        if checked == 0 {
-            format!(
-                "Orphan report: 0 of {total} annotations checkable (scroll pages to load text first)"
-            )
-        } else if orphans == 0 {
-            format!("Orphan report: no drift found ({checked} of {total} checked)")
-        } else {
-            format!("Orphan report: {orphans} drifted of {checked} checked ({total} total)")
-        }
     }
 }

@@ -35,8 +35,7 @@ measure, colour roles and the reveal style, not the layout engine.
 Revealed Markdown markers (`**`, `$…$`, `#`) render in `doc.syntax` at the same size as the
 text, and revealed TeX keeps the upright math source style, so revealing a line reads as
 "the same line, now editable". Today a revealed line switches to italic source and a
-row-wide band (see the `closed under scalar multiplication` line in
-`images/markdown_window.png`); check against a current build before changing it.
+row-wide band; check against a current build before changing it.
 
 ## States
 

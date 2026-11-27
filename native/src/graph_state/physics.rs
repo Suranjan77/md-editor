@@ -387,8 +387,8 @@ impl PhysicsState {
         // distant nodes by its center of mass instead.
         self.tree.build(&self.pos[..n]);
         let repulsion = self.repulsion;
-        for i in 0..n {
-            if pinned_mask[i] {
+        for (i, &pinned) in pinned_mask.iter().enumerate().take(n) {
+            if pinned {
                 continue;
             }
             let [fx, fy] = self.tree.repulsion_on(i, self.pos[i], repulsion);
@@ -423,8 +423,8 @@ impl PhysicsState {
 
         // ── 3. Center gravity ───────────────────────────────────
         let grav = self.center_gravity;
-        for i in 0..n {
-            if pinned_mask[i] {
+        for (i, &pinned) in pinned_mask.iter().enumerate().take(n) {
+            if pinned {
                 continue;
             }
             self.forces[i][0] -= grav * self.pos[i][0];
@@ -435,8 +435,8 @@ impl PhysicsState {
         const MAX_FORCE: f32 = 50.0;
         let damping = self.damping;
         let mut total_energy = 0.0_f32;
-        for i in 0..n {
-            if pinned_mask[i] {
+        for (i, &pinned) in pinned_mask.iter().enumerate().take(n) {
+            if pinned {
                 self.vel[i] = [0.0; 2];
                 continue;
             }

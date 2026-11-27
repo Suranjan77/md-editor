@@ -2,7 +2,7 @@
 
 MD Editor is a calm, reliable, local-first desktop environment for technical notes,
 academic papers, and deep study. Its design balances performance, crash resilience,
-and portability, and it deliberately keeps the domain engine free of any GUI toolkit.
+and zero configuration, and it deliberately keeps the domain engine free of any GUI toolkit.
 
 ---
 
@@ -14,35 +14,31 @@ Nothing is locked inside a proprietary database, an opaque container, or a cloud
 
 - **The vault is just a directory.** Your workspace is an ordinary folder on the local
   filesystem, opened through a native folder picker.
-- **Plain files.** Markdown notes (`.md`, `.markdown`), PDFs (`.pdf`), PowerPoint
-  presentations (`.pptx`, view only), and images
-  (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`, `.avif` — `IMAGE_EXTENSIONS` in `core/src/vault.rs`)
+- **Plain files.** Markdown notes (`.md`, `.markdown`), PDFs (`.pdf`), and images
+  (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp` — `IMAGE_EXTENSIONS` in `core/src/vault.rs`)
   stay usable by any editor, CLI tool,
   or backup system — Git, rsync, Syncthing.
 - **No account, no network.** There are no user accounts, licence keys, or telemetry, and
   the app never requires connectivity. The only network access in the whole project is the
   *build script* fetching PDFium (see [Developer Guide](Developer-Guide-and-Testing.md)).
 
-### Pillar 2: Zero-Configuration Portability
+### Pillar 2: Zero-Configuration, Installed Natively
+
+MD Editor is an installed program (an Arch Linux package), not a portable folder; that
+promise was dropped on 2026-11-24 (code-health plan W10).
 
 - **One SQLite file.** All application state — settings, window size, per-document scroll
   and cursor positions, PDF sidecar annotations, cached PDF text, resolved references, and
   study history — lives in a single database, `md_editor_settings.sqlite`.
-- **Placed beside the executable by default.** `core/src/state.rs::data_dir()` puts the
-  database in `current_exe().parent()` whenever that directory is writable, so the whole
-  application travels as one folder on a USB stick or between workstations.
-- **Graceful fallback.** If the executable's directory is read-only (a system install under
-  `/usr/bin`, say), the resolution order continues:
-  1. the per-user platform data directory —
-     `$XDG_DATA_HOME/md-editor/` or `~/.local/share/md-editor/` on Linux,
-     `%APPDATA%\md-editor\` on Windows,
-     `~/Library/Application Support/md-editor/` on macOS;
-  2. the current working directory.
-- **One-time migration back to portable.** An interim version stored the database in the
-  per-user directory. If the portable location has no database yet but that legacy one
-  exists, `migrate_legacy_db()` copies it — along with its `-wal` and `-shm` sidecars —
-  beside the executable on launch. The legacy file is *left in place*, so an interrupted
-  copy loses nothing.
+- **XDG locations.** `core/src/state.rs::data_dir()` puts the database in
+  `$XDG_DATA_HOME/md-editor/` (default `~/.local/share/md-editor/`); `log_dir()` puts
+  `md-editor.log` in `$XDG_STATE_HOME/md-editor/` (default `~/.local/state/md-editor/`).
+  Relative `XDG_*` values are ignored, as the spec requires. `MD_EDITOR_DATA_DIR` overrides
+  both (tests, throwaway profiles). Nothing is written beside the executable.
+- **One-time migration from portable.** Earlier builds kept the database beside the
+  executable. If the XDG location has no database yet but one exists there,
+  `migrate_legacy_db()` copies it — with its `-wal` and `-shm` sidecars — on launch. The old
+  file is *left in place*, so an interrupted copy loses nothing.
 
 ### Pillar 3: Durability & Continuity
 
@@ -66,7 +62,7 @@ Work typed into the app must survive crashes, power loss, and abrupt window term
 - **Flush before switching.** Opening another note, a PDF, or an image flushes the active
   buffer first. If that write fails, navigation is refused and the failure is reported,
   rather than walking away from work that could not be persisted.
-- **Flush on close.** `Message::WindowCloseRequested` triggers one last save. It is
+- **Flush on close.** `ShellMessage::WindowCloseRequested` triggers one last save. It is
   best-effort and does not block the close — an app that refuses to quit because a write is
   failing is worse than losing the few hundred milliseconds autosave had not yet committed.
 - **Retained buffer history.** Switching documents parks the `DocBuffer` (with its undo
@@ -85,8 +81,6 @@ immutable.
 
 - **PDFs are never rewritten.** MD Editor never modifies, re-saves, or injects annotation
   streams into a `.pdf` file.
-- **Presentations are read-only.** `core/src/pptx/` only reads a `.pptx`, and the slide
-  viewer offers no editing; there is no code path that writes one.
 - **External SQLite storage.** Highlights, quick notes, linked-note paths, and resolved
   cross-references live in the `pdf_annotations` and `pdf_references` tables, keyed by a
   content-derived `document_id`.
@@ -109,7 +103,6 @@ immutable.
 │  - Design tokens and motion, zero idle CPU             │
 │  - Command palette and fuzzy matcher                   │
 │  - Interactive PDF widget, overlays, drag selection    │
-│  - Slide viewer: text layout, layered canvases         │
 └───────────────────────────┬────────────────────────────┘
                             │ depends on
 ┌───────────────────────────▼────────────────────────────┐
@@ -121,7 +114,6 @@ immutable.
 │  - Full-text search over SQLite FTS5                   │
 │  - PDFium worker thread with a priority render queue   │
 │  - Internal reference resolver (equations/figures/…)   │
-│  - Read-only PowerPoint parser and slide model         │
 │  - Study tracker domain logic and persistence          │
 └────────────────────────────────────────────────────────┘
 ```

@@ -4,15 +4,18 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use md_editor_core::types::{GraphNode, GraphNodeKind, GraphSnapshot};
+use md_editor_core::types::{GraphEdgeKind, GraphNode, GraphNodeKind, GraphSnapshot};
+use serde::{Deserialize, Serialize};
 
 mod layout;
 mod physics;
+pub mod pinboards;
+mod queries;
 
 use layout::*;
 pub use physics::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GraphScope {
     Global,
     Local { depth: u8 },
@@ -50,6 +53,7 @@ impl GraphLayout {
 pub struct GraphStats {
     pub markdown: usize,
     pub pdfs: usize,
+    pub sketches: usize,
     pub missing: usize,
     pub connections: usize,
     pub unconnected: usize,
@@ -58,7 +62,7 @@ pub struct GraphStats {
 
 impl GraphStats {
     pub fn documents(&self) -> usize {
-        self.markdown + self.pdfs
+        self.markdown + self.pdfs + self.sketches
     }
 }
 
@@ -149,6 +153,7 @@ pub struct GraphState {
     pub scope: GraphScope,
     pub query: String,
     pub show_pdfs: bool,
+    pub show_sketches: bool,
     pub show_missing: bool,
     pub show_orphans: bool,
     pub selected_path: Option<String>,
@@ -162,6 +167,11 @@ pub struct GraphState {
     /// Shared world→screen zoom applied by both render layers.
     pub zoom: f32,
     pub fit_revision: u64,
+    /// The fit revision and canvas size the shared `pan`/`zoom` were fitted
+    /// for, once the GPU layer has committed that fit. Until it matches the
+    /// current request, the label overlay frames the graph itself, exactly as
+    /// the GPU layer does, so the two never disagree.
+    pub fitted: Option<(u64, f32, f32)>,
     /// Bumped whenever the *app* (rather than a pointer gesture) sets the
     /// transform — zoom buttons, "reveal in graph". The render layer owns
     /// pan/zoom during interaction, so it needs this nudge to adopt ours.
@@ -202,6 +212,7 @@ impl GraphState {
             scope: GraphScope::Global,
             query: String::new(),
             show_pdfs: true,
+            show_sketches: true,
             show_missing: true,
             show_orphans: true,
             selected_path: None,
@@ -211,6 +222,7 @@ impl GraphState {
             pan: (0.0, 0.0),
             zoom: 1.0,
             fit_revision: 0,
+            fitted: None,
             view_revision: 0,
             physics: PhysicsState::default(),
             snapshot: GraphSnapshot::default(),
@@ -328,6 +340,14 @@ impl GraphState {
         }
     }
 
+    pub fn set_show_sketches(&mut self, show: bool) {
+        if self.show_sketches != show {
+            self.show_sketches = show;
+            self.rebuild_filtered();
+            self.request_fit();
+        }
+    }
+
     pub fn set_show_missing(&mut self, show: bool) {
         if self.show_missing != show {
             self.show_missing = show;
@@ -436,6 +456,12 @@ impl GraphState {
         self.physics.nudge();
     }
 
+    pub fn toggle_selected_pin(&mut self) {
+        if let Some(path) = self.selected_path.clone() {
+            self.toggle_pin(&path);
+        }
+    }
+
     pub fn unpin_all(&mut self) {
         if self.pinned.is_empty() {
             return;
@@ -475,11 +501,12 @@ impl GraphState {
 
     /// Whether any node/type filter is currently hiding something.
     pub fn filters_active(&self) -> bool {
-        !self.show_pdfs || !self.show_missing || !self.show_orphans
+        !self.show_pdfs || !self.show_sketches || !self.show_missing || !self.show_orphans
     }
 
     pub fn reset_filters(&mut self) {
         self.show_pdfs = true;
+        self.show_sketches = true;
         self.show_missing = true;
         self.show_orphans = true;
         self.query.clear();
@@ -684,241 +711,6 @@ impl GraphState {
             .map(|node| self.layout.get(&node.path).unwrap_or_default())
             .collect();
         self.positions = Arc::new(positions);
-    }
-
-    /// Reduce the vault graph to what the current scope, filters, and query
-    /// admit.
-    ///
-    /// Runs entirely on an index-keyed `Vec<bool>` mask. The original
-    /// path-keyed `BTreeSet` version did an O(n) linear node lookup per node
-    /// and re-lowercased every label on every keystroke, which cost ~145 ms on
-    /// a 10k-note vault — enough to make typing in the search box unusable.
-    fn compute_filtered(&self) -> GraphSnapshot {
-        let count = self.snapshot.nodes.len();
-        let mut allowed = vec![false; count];
-
-        match self.scope {
-            GraphScope::Global => allowed.fill(true),
-            GraphScope::Local { depth } => {
-                for path in self.local_paths(depth) {
-                    if let Some(&index) = self.node_index.get(&path) {
-                        allowed[index] = true;
-                    }
-                }
-            }
-        }
-
-        for (index, node) in self.snapshot.nodes.iter().enumerate() {
-            if !allowed[index] {
-                continue;
-            }
-            allowed[index] = (self.show_pdfs || node.kind != GraphNodeKind::Pdf)
-                && (self.show_missing || node.kind != GraphNodeKind::Missing)
-                && (self.show_orphans || node.incoming + node.outgoing > 0);
-        }
-
-        let query = self.query.trim().to_lowercase();
-        if !query.is_empty() {
-            let mut matched = vec![false; count];
-            for (index, key) in self.search_keys.iter().enumerate() {
-                matched[index] = allowed[index] && key.contains(&query);
-            }
-            // Keep immediate context around matches; a graph search is more
-            // useful when the reason a result matters stays visible.
-            let mut contextual = matched.clone();
-            for &(source, target) in &self.snapshot_edge_pairs {
-                if source == usize::MAX || target == usize::MAX {
-                    continue;
-                }
-                if matched[source] && allowed[target] {
-                    contextual[target] = true;
-                }
-                if matched[target] && allowed[source] {
-                    contextual[source] = true;
-                }
-            }
-            allowed = contextual;
-        }
-
-        let nodes = self
-            .snapshot
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| allowed[*index])
-            .map(|(_, node)| node.clone())
-            .collect();
-        let edges = self
-            .snapshot
-            .edges
-            .iter()
-            .zip(&self.snapshot_edge_pairs)
-            .filter(|(_, pair)| {
-                let (source, target) = **pair;
-                source != usize::MAX && target != usize::MAX && allowed[source] && allowed[target]
-            })
-            .map(|(edge, _)| edge.clone())
-            .collect();
-        GraphSnapshot { nodes, edges }
-    }
-
-    fn local_paths(&self, depth: u8) -> BTreeSet<String> {
-        let Some(active) = self
-            .active_path
-            .as_ref()
-            .filter(|path| self.node(path).is_some())
-        else {
-            return BTreeSet::new();
-        };
-        let adjacency = &self.adjacency;
-        let mut found = BTreeSet::from([active.clone()]);
-        let mut queue = VecDeque::from([(active.clone(), 0_u8)]);
-        while let Some((path, distance)) = queue.pop_front() {
-            if distance >= depth.clamp(1, 2) {
-                continue;
-            }
-            if let Some(neighbors) = adjacency.get(&path) {
-                for neighbor in neighbors {
-                    if found.insert(neighbor.clone()) {
-                        queue.push_back((neighbor.clone(), distance + 1));
-                    }
-                }
-            }
-        }
-        found
-    }
-
-    pub fn stats(&self) -> GraphStats {
-        self.stats_cache.clone()
-    }
-
-    fn compute_stats(&self) -> GraphStats {
-        let mut stats = GraphStats::default();
-        for node in &self.snapshot.nodes {
-            match node.kind {
-                GraphNodeKind::Markdown => stats.markdown += 1,
-                GraphNodeKind::Pdf => stats.pdfs += 1,
-                GraphNodeKind::Missing => stats.missing += 1,
-            }
-            if node.kind == GraphNodeKind::Markdown && node.incoming + node.outgoing == 0 {
-                stats.unconnected += 1;
-            }
-        }
-        stats.connections = self.snapshot.edges.iter().map(|edge| edge.weight).sum();
-        stats.components = components_from(&self.adjacency).len();
-        stats
-    }
-
-    pub fn incoming(&self, path: &str) -> Vec<GraphNode> {
-        let sources: BTreeSet<&str> = self
-            .snapshot
-            .edges
-            .iter()
-            .filter(|edge| edge.target == path)
-            .map(|edge| edge.source.as_str())
-            .collect();
-        self.snapshot
-            .nodes
-            .iter()
-            .filter(|node| sources.contains(node.path.as_str()))
-            .cloned()
-            .collect()
-    }
-
-    pub fn outgoing(&self, path: &str) -> Vec<GraphNode> {
-        let targets: BTreeSet<&str> = self
-            .snapshot
-            .edges
-            .iter()
-            .filter(|edge| edge.source == path)
-            .map(|edge| edge.target.as_str())
-            .collect();
-        self.snapshot
-            .nodes
-            .iter()
-            .filter(|node| targets.contains(node.path.as_str()))
-            .cloned()
-            .collect()
-    }
-
-    pub fn related(&self, path: &str, limit: usize) -> Vec<RelatedNode> {
-        let adjacency = &self.adjacency;
-        let Some(origin_neighbors) = adjacency.get(path) else {
-            return Vec::new();
-        };
-        let directly_connected = origin_neighbors;
-        let mut related = Vec::new();
-        for node in &self.snapshot.nodes {
-            if node.path == path
-                || node.kind != GraphNodeKind::Markdown
-                || directly_connected.contains(&node.path)
-            {
-                continue;
-            }
-            let Some(candidate_neighbors) = adjacency.get(&node.path) else {
-                continue;
-            };
-            let shared: Vec<&String> = origin_neighbors.intersection(candidate_neighbors).collect();
-            if shared.is_empty() {
-                continue;
-            }
-            let score = shared.iter().fold(0.0, |score, neighbor| {
-                let degree = adjacency.get(*neighbor).map_or(1, BTreeSet::len);
-                score + 1.0 / (1.0 + degree as f32).ln().max(0.1)
-            });
-            related.push(RelatedNode {
-                node: node.clone(),
-                score,
-                shared_connections: shared.len(),
-            });
-        }
-        related.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| a.node.path.cmp(&b.node.path))
-        });
-        related.truncate(limit);
-        related
-    }
-
-    pub fn hubs(&self, limit: usize) -> Vec<GraphNode> {
-        let mut nodes: Vec<_> = self
-            .snapshot
-            .nodes
-            .iter()
-            .filter(|node| node.kind != GraphNodeKind::Missing)
-            .cloned()
-            .collect();
-        nodes.sort_by(|a, b| {
-            (b.incoming + b.outgoing)
-                .cmp(&(a.incoming + a.outgoing))
-                .then_with(|| a.path.cmp(&b.path))
-        });
-        nodes.truncate(limit);
-        nodes
-    }
-
-    pub fn unconnected(&self, limit: usize) -> Vec<GraphNode> {
-        self.snapshot
-            .nodes
-            .iter()
-            .filter(|node| {
-                node.kind == GraphNodeKind::Markdown && node.incoming + node.outgoing == 0
-            })
-            .take(limit)
-            .cloned()
-            .collect()
-    }
-
-    pub fn missing(&self, limit: usize) -> Vec<GraphNode> {
-        self.snapshot
-            .nodes
-            .iter()
-            .filter(|node| node.kind == GraphNodeKind::Missing)
-            .take(limit)
-            .cloned()
-            .collect()
     }
 }
 

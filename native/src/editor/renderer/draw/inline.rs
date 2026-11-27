@@ -9,15 +9,19 @@ use super::super::flow::{Flow, ItemKind};
 use super::super::measure::{bold_font, centered_text_top, measure_width};
 use super::super::metrics::*;
 use super::super::spans::{math_source, span_is_editing};
-use super::super::{Editor, MATH_BLOCK_SCALE, MathRender, Measure, Paint};
+use super::super::{Editor, MathRender, Measure, Paint};
 use super::captions::{block_ordinal, figure_number, paint_equation_number};
 use super::primitives::{TextRun, clip_viewport, fill, rounded};
 use super::{Counters, Frame, LineBox};
 use crate::editor::highlight::StyledSpan;
-use crate::theme;
+use crate::editor::renderer::measure::mono_font;
 
-const IMAGE_TOP: f32 = 5.0;
+pub(in crate::editor::renderer) const IMAGE_TOP: f32 = 5.0;
 const FIGURE_CAPTION_SIZE: f32 = 13.0;
+/// A strikethrough sits this fraction of the font size above the baseline,
+/// about half the x-height.
+const STRIKE_RISE: f32 = 0.27;
+const STRIKE_THICKNESS: f32 = 1.0;
 
 impl<Message> Editor<'_, Message> {
     pub(super) fn paint_rule<R: Measure>(
@@ -37,7 +41,7 @@ impl<Message> Editor<'_, Message> {
                 height: 2.0,
             },
             rounded(1.0),
-            theme::ACCENT_GLOW,
+            crate::design::tokens().border_control,
         );
     }
 
@@ -85,6 +89,23 @@ impl<Message> Editor<'_, Message> {
                         span.color,
                         frame.viewport,
                     );
+                    if span.strikethrough && !text.trim().is_empty() {
+                        // Through the middle of the lower-case letters, and
+                        // on across a trailing space to join the next word.
+                        let width = measure_width::<R>(text, size, part.font);
+                        let y = row.y + flow.baseline(item.row) - size * STRIKE_RISE;
+                        fill(
+                            renderer,
+                            Rectangle {
+                                x,
+                                y: self.snap_px(y),
+                                width,
+                                height: STRIKE_THICKNESS,
+                            },
+                            Border::default(),
+                            span.color,
+                        );
+                    }
                 }
                 ItemKind::Checkbox { checked } => {
                     paint_checkbox(renderer, frame, *checked, x, row.y + flow.axis(item.row));
@@ -111,6 +132,36 @@ impl<Message> Editor<'_, Message> {
         }
     }
 
+    /// Where a loaded image is drawn on its line, relative to the content
+    /// bounds' left edge and the line's body top: centered in the text
+    /// column, shrunk to fit it. Painting and hit testing both use this.
+    pub(in crate::editor::renderer) fn image_box(
+        &self,
+        span: &StyledSpan,
+        content_width: f32,
+    ) -> Option<(&iced::widget::image::Handle, Rectangle)> {
+        let (handle, w, h) = span
+            .image_path
+            .as_ref()
+            .and_then(|p| self.image_cache.get(p))?;
+        let available_w = text_column_width(content_width);
+        let scale = if *w > available_w && *w > 0.0 {
+            available_w / w
+        } else {
+            1.0
+        };
+        let (draw_w, draw_h) = (w * scale, h * scale);
+        Some((
+            handle,
+            Rectangle {
+                x: text_left(content_width) + (available_w - draw_w) / 2.0,
+                y: IMAGE_TOP,
+                width: draw_w,
+                height: draw_h,
+            },
+        ))
+    }
+
     /// A loaded image, centered in the text column, with its figure caption.
     fn paint_image<R: Paint>(
         &self,
@@ -120,24 +171,11 @@ impl<Message> Editor<'_, Message> {
         span: &StyledSpan,
         running_number: usize,
     ) {
-        let Some((handle, w, h)) = span
-            .image_path
-            .as_ref()
-            .and_then(|p| self.image_cache.get(p))
-        else {
+        let Some((handle, image_box)) = self.image_box(span, frame.bounds.width) else {
             return;
         };
-        let bounds = frame.bounds;
-
-        let available_w = text_column_width(bounds.width);
-        let scale = if *w > available_w && *w > 0.0 {
-            available_w / w
-        } else {
-            1.0
-        };
-        let draw_w = w * scale;
-        let draw_h = h * scale;
-        let draw_x = bounds.x + text_left(bounds.width) + (available_w - draw_w) / 2.0;
+        let (draw_w, draw_h) = (image_box.width, image_box.height);
+        let draw_x = frame.bounds.x + image_box.x;
 
         renderer.draw_image(
             iced::advanced::image::Image::new(handle.clone()),
@@ -161,7 +199,7 @@ impl<Message> Editor<'_, Message> {
             .draw(
                 renderer,
                 Point::new(draw_x + draw_w / 2.0, row.y + draw_h + 12.0),
-                theme::TEXT_MUTED,
+                crate::design::tokens().doc_syntax,
                 frame.viewport,
             );
     }
@@ -232,8 +270,8 @@ impl<Message> Editor<'_, Message> {
         let (extent, scroll_x) = self.row_scroll::<R>(frame, row);
         // The block bitmap is rasterized for exactly this scale (see
         // MathRender).
-        let draw_w = math.width * MATH_BLOCK_SCALE;
-        let draw_h = math.height * MATH_BLOCK_SCALE;
+        let draw_w = math.block_width;
+        let draw_h = math.block_height;
         let left = bounds.x + text_left(bounds.width);
         let draw_x = left
             + if draw_w <= extent.viewport_w {
@@ -303,25 +341,24 @@ impl<Message> Editor<'_, Message> {
             },
         );
 
-        let source_row = row_height(MATH_SOURCE_FONT_SIZE);
-        let text_offset =
-            centered_text_top(source_row, MATH_SOURCE_FONT_SIZE, iced::Font::MONOSPACE);
+        let source_row = row_height(math_source_font_size());
+        let text_offset = centered_text_top(source_row, math_source_font_size(), mono_font());
         let paint_source = |renderer: &mut R| {
             let mut row_top = row.y + MATH_BLOCK_PADDING / 2.0;
             for source_line in tex.lines() {
                 TextRun::new(
                     source_line,
-                    MATH_SOURCE_FONT_SIZE,
+                    math_source_font_size(),
                     Size::new(
                         extent.content_w.max(1.0),
-                        MATH_SOURCE_FONT_SIZE * LINE_BOX_FACTOR,
+                        math_source_font_size() * LINE_BOX_FACTOR,
                     ),
                 )
-                .font(iced::Font::MONOSPACE)
+                .font(mono_font())
                 .draw(
                     renderer,
                     Point::new(left - scroll_x, row_top + text_offset),
-                    theme::TEXT_SECONDARY,
+                    crate::design::tokens().doc_math_source,
                     viewport,
                 );
                 row_top += source_row;
@@ -369,7 +406,7 @@ fn paint_checkbox<R: Measure>(
             renderer,
             box_rect,
             Border {
-                color: theme::BORDER,
+                color: crate::design::tokens().border_control,
                 width: 1.5,
                 radius: 4.0.into(),
             },
@@ -378,7 +415,12 @@ fn paint_checkbox<R: Measure>(
         return;
     }
 
-    fill(renderer, box_rect, rounded(4.0), theme::ACCENT);
+    fill(
+        renderer,
+        box_rect,
+        rounded(4.0),
+        crate::design::tokens().accent,
+    );
     let check_size = 13.0;
     let check_w = measure_width::<R>("✓", check_size, bold_font());
     TextRun::new("✓", check_size, Size::new(check_w, CHECKBOX_SIZE))
@@ -389,7 +431,7 @@ fn paint_checkbox<R: Measure>(
                 x + (CHECKBOX_SIZE - check_w) / 2.0,
                 box_y + (CHECKBOX_SIZE - check_size) / 2.0 - 0.5,
             ),
-            theme::BG_PRIMARY,
+            crate::design::tokens().on_accent,
             frame.viewport,
         );
 }

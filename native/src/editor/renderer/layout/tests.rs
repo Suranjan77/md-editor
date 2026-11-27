@@ -138,12 +138,12 @@ fn test_renderer_line_height_permutations() {
     );
     math_cache.insert(
         "E = mc^2".to_string(),
-        MathRender {
-            inline_handle: iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]),
-            block_handle: iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]),
-            width: 200.0,
-            height: 50.0,
-        },
+        MathRender::uniform(
+            iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]),
+            iced::widget::image::Handle::from_rgba(10, 10, vec![0; 400]),
+            200.0,
+            50.0,
+        ),
     );
 
     let widths = vec![100.0, 200.0, 400.0, 600.0, 800.0, 1000.0, 1200.0];

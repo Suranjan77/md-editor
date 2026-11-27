@@ -10,7 +10,6 @@ use super::flow::Affinity;
 use super::measure::measure_width;
 use super::testing::{Call, View};
 use crate::editor::buffer::EditorCommand;
-use crate::theme;
 
 /// iced's default line height, relative to font size.
 const LINE_BOX: f32 = 1.3;
@@ -64,7 +63,7 @@ fn quads(calls: &[Call], color: Color) -> Vec<Rectangle> {
 }
 
 fn caret(calls: &[Call]) -> Option<Rectangle> {
-    let carets: Vec<_> = quads(calls, theme::ACCENT)
+    let carets: Vec<_> = quads(calls, crate::design::tokens().doc_caret)
         .into_iter()
         .filter(|q| q.width == 2.0)
         .collect();
@@ -113,8 +112,12 @@ fn published_col(messages: &[String]) -> usize {
     published_caret(messages).0
 }
 
-const TRACK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.06);
-const SELECTION: Color = Color::from_rgba(0.69, 0.80, 0.78, 0.24);
+fn track() -> Color {
+    crate::design::fade(crate::design::tokens().fg_primary, 0.06)
+}
+fn selection() -> Color {
+    crate::design::tokens().doc_selection
+}
 
 const WIDTHS: [f32; 5] = [260.0, 300.0, 390.0, 480.0, 700.0];
 
@@ -324,13 +327,16 @@ fn table_header_row_is_filled_and_body_rows_striped() {
 
     let header = run_containing(&runs, "Name");
     assert!(
-        quads(&calls, theme::BG_TERTIARY)
+        quads(&calls, crate::design::tokens().bg_raised)
             .iter()
             .any(|q| contains(*q, header.center())),
         "header row has no header fill"
     );
 
-    let stripes = quads(&calls, Color::from_rgba(1.0, 1.0, 1.0, 0.025));
+    let stripes = quads(
+        &calls,
+        crate::design::fade(crate::design::tokens().fg_primary, 0.025),
+    );
     assert_eq!(stripes.len(), 1, "one striped body row expected");
     assert!(contains(stripes[0], run_exact(&runs, "b").center()));
 }
@@ -351,7 +357,7 @@ fn selection_covers_every_row_of_a_wrapped_line() {
 
     let mut rows: Vec<f32> = runs(&calls).iter().map(|r| r.y).collect();
     rows.dedup_by(|a, b| (*a - *b).abs() < 1.0);
-    let highlights = quads(&calls, SELECTION);
+    let highlights = quads(&calls, selection());
     assert!(rows.len() > 1, "test needs a wrapped line");
     assert_eq!(highlights.len(), rows.len(), "one highlight per row");
     for run in runs(&calls) {
@@ -378,7 +384,7 @@ fn a_multi_line_selection_is_one_continuous_shape() {
             focus_col: 40,
             affinity: Affinity::Downstream,
         });
-        let mut shape = quads(&view.draw(), SELECTION);
+        let mut shape = quads(&view.draw(), selection());
         shape.sort_by(|a, b| a.y.total_cmp(&b.y));
         assert!(shape.len() >= 4, "width {width}: {shape:?}");
 
@@ -583,7 +589,7 @@ fn a_selection_covers_images_tables_and_equations_whole() {
             affinity: Affinity::Downstream,
         });
         let calls = view.draw();
-        let shape = quads(&calls, SELECTION);
+        let shape = quads(&calls, selection());
         let covered = |p: Point| shape.iter().any(|q| contains(*q, p));
 
         // Every painted image, clipped to the text column, is inside the shape.
@@ -676,7 +682,9 @@ fn selection_goes_over_rendered_blocks_and_under_text() {
             .iter()
             .enumerate()
             .filter_map(|(i, call)| match call {
-                Call::Quad { bounds, color, .. } if *color == SELECTION && contains(*bounds, p) => {
+                Call::Quad { bounds, color, .. }
+                    if *color == selection() && contains(*bounds, p) =>
+                {
                     Some(call.paint_order(i))
                 }
                 _ => None,
@@ -698,7 +706,7 @@ fn selection_goes_over_rendered_blocks_and_under_text() {
                 );
                 checked.0 += 1;
             }
-            Call::Quad { bounds, color, .. } if *color == theme::BG_TERTIARY => {
+            Call::Quad { bounds, color, .. } if *color == crate::design::tokens().bg_raised => {
                 let over = covering(center(bounds));
                 assert!(
                     !over.is_empty() && over.iter().all(|&j| j > order),
@@ -856,7 +864,10 @@ fn dragging_a_scrollbar_thumb_moves_it_with_the_pointer() {
             view.add_math("\\wide", 900.0, 40.0);
         }
         let calls = view.draw();
-        let thumbs = quads(&calls, theme::ACCENT_DIM);
+        let thumbs = quads(
+            &calls,
+            crate::design::fade(crate::design::tokens().fg_tertiary, 0.6),
+        );
         assert_eq!(thumbs.len(), 1, "one thumb expected in {doc:?}");
         let thumb = thumbs[0];
 
@@ -865,7 +876,10 @@ fn dragging_a_scrollbar_thumb_moves_it_with_the_pointer() {
         view.move_to(Point::new(grab.x + 30.0, grab.y));
         view.release(Point::new(grab.x + 30.0, grab.y));
 
-        let moved = quads(&view.draw(), theme::ACCENT_DIM)[0];
+        let moved = quads(
+            &view.draw(),
+            crate::design::fade(crate::design::tokens().fg_tertiary, 0.6),
+        )[0];
         assert!(
             (moved.x - thumb.x - 30.0).abs() < 0.5,
             "thumb moved {} for a 30px drag in {doc:?}",
@@ -879,7 +893,7 @@ fn code_block_scrollbar_is_painted_once() {
     let long = "x".repeat(200);
     let doc = format!("```\n{long}\nb\nc\nd\n```");
     let mut view = View::new(&doc, 600.0);
-    assert_eq!(quads(&view.draw(), TRACK).len(), 1);
+    assert_eq!(quads(&view.draw(), track()).len(), 1);
 }
 
 #[test]
@@ -894,7 +908,7 @@ fn narrow_widths_do_not_panic() {
         let mut view = View::new(&doc, width as f32);
         view.add_math("\\wide", 900.0, 40.0);
         let calls = view.draw();
-        for track in quads(&calls, TRACK) {
+        for track in quads(&calls, track()) {
             let p = Point::new(track.x + 1.0, track.y + 1.0);
             shift_wheel(&mut view, p, 1.0);
             view.press(p);
@@ -918,7 +932,7 @@ fn clicks_in_a_scrolled_code_block_hit_the_character_under_the_pointer() {
     let run = run_containing(&runs, "overflows");
     let offset = run.content.find("overflows").unwrap();
     let prefix = &run.content[..offset];
-    let size = super::metrics::CODE_FONT_SIZE;
+    let size = super::metrics::code_font_size();
     let x = run.x + measure_width::<iced::Renderer>(prefix, size, iced::Font::MONOSPACE) + 1.0;
 
     let col = published_col(&view.click(Point::new(x, run.center().y)).messages);
@@ -943,7 +957,7 @@ fn tables_with_narrow_columns_scroll_to_their_last_column() {
     let calls = view.draw();
     let runs = runs(&calls);
     let last = run_exact(&runs, "x");
-    let card = quads(&calls, theme::BG_SECONDARY)
+    let card = quads(&calls, crate::design::tokens().doc_block_bg)
         .into_iter()
         .find(|q| contains(*q, last.center()))
         .expect("table card");
@@ -990,4 +1004,176 @@ fn rows_of_one_line_never_overlap_and_stay_inside_it() {
             "text spills into the next line at width {width}"
         );
     }
+}
+
+/// Press `key` with `modifiers` on a focused editor.
+fn press(
+    view: &mut View,
+    key: &str,
+    modifiers: keyboard::Modifiers,
+) -> super::testing::EventOutcome {
+    view.focus();
+    view.event(
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Character(key.into()),
+            modified_key: keyboard::Key::Character(key.into()),
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        }),
+        None,
+    )
+}
+
+#[test]
+fn ctrl_shift_z_redoes_and_ctrl_z_undoes() {
+    let mut view = View::new("text", 600.0);
+    let ctrl_shift = keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT;
+
+    let undo = press(&mut view, "z", keyboard::Modifiers::CTRL);
+    assert_eq!(undo.messages, vec!["cmd Undo"]);
+    // With Shift held, keyboards report the letter as upper case.
+    for key in ["z", "Z"] {
+        let redo = press(&mut view, key, ctrl_shift);
+        assert_eq!(redo.messages, vec!["cmd Redo"], "Ctrl+Shift+{key}");
+    }
+    assert_eq!(
+        press(&mut view, "y", keyboard::Modifiers::CTRL).messages,
+        vec!["cmd Redo"]
+    );
+}
+
+#[test]
+fn editor_shortcuts_are_captured_so_app_shortcuts_do_not_also_fire() {
+    let mut view = View::new("text", 600.0);
+    let bold = press(&mut view, "b", keyboard::Modifiers::CTRL);
+    assert_eq!(bold.messages, vec!["cmd FormatBold"]);
+    assert!(
+        bold.captured,
+        "Ctrl+B must not also reach the sidebar toggle"
+    );
+
+    // A shortcut the editor does not bind stays available to the app.
+    let save = press(&mut view, "s", keyboard::Modifiers::CTRL);
+    assert!(save.messages.is_empty());
+    assert!(!save.captured, "Ctrl+S must still reach the app");
+}
+
+/// Struck text gets a thin line drawn through it; plain text does not.
+#[test]
+fn strikethrough_draws_a_line_through_the_text() {
+    let thin_quads = |doc: &str| {
+        let mut view = View::new(doc, 600.0);
+        view.draw()
+            .into_iter()
+            .filter(|call| {
+                matches!(call, super::testing::Call::Quad { bounds, .. }
+                    if bounds.height <= 1.0 && bounds.width > 10.0)
+            })
+            .count()
+    };
+    assert_eq!(thin_quads("plain words here"), 0);
+    assert!(thin_quads("plain ~~struck words~~ here") >= 1);
+}
+
+/// A `> [!danger]` quote is framed with the danger colour, a plain quote not.
+#[test]
+fn callout_quotes_take_their_colour() {
+    let uses = |doc: &str, color: iced::Color| {
+        let mut view = View::new(doc, 600.0);
+        view.draw()
+            .into_iter()
+            .any(|call| matches!(call, super::testing::Call::Quad { color: c, .. } if c == color))
+    };
+    let danger = crate::design::tokens().status_danger;
+    assert!(uses("> [!danger] Careful\n> text", danger));
+    assert!(!uses("> just a quote\n> text", danger));
+}
+
+#[test]
+fn line_numbers_paint_in_the_margin_beside_each_line_only_when_on() {
+    let doc = "# Title\n\nbody text\nmore";
+    let numbers = |calls: &[Call]| -> Vec<(String, Point)> {
+        calls
+            .iter()
+            .filter_map(|call| match call {
+                Call::Text { content, at, .. }
+                    if !content.is_empty() && content.chars().all(|c| c.is_ascii_digit()) =>
+                {
+                    Some((content.clone(), *at))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+
+    let mut view = View::new(doc, 800.0);
+    assert!(numbers(&view.draw()).is_empty(), "off by default");
+
+    crate::design::set_line_numbers(true);
+    let calls = view.draw();
+    let painted = numbers(&calls);
+    let labels: Vec<&str> = painted.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(labels, ["1", "2", "3", "4"]);
+
+    let body = runs(&calls)
+        .into_iter()
+        .find(|run| run.content.contains("body"))
+        .expect("body text painted");
+    let (_, three) = &painted[2];
+    assert!(
+        three.x < body.x,
+        "the number's right edge {} sits left of the text at {}",
+        three.x,
+        body.x
+    );
+    assert!(
+        three.y > body.y && three.y < body.y + body.height,
+        "the number {} is centred on its line's row ({}..{})",
+        three.y,
+        body.y,
+        body.y + body.height
+    );
+}
+
+#[test]
+fn ctrl_click_on_a_pdf_crop_opens_its_link_but_not_on_a_plain_image() {
+    let crop = "pdf://papers/p.pdf?page=2&crop=0,0,150,75";
+    let doc = format!("Before\n\n![fig]({crop})\n\n![plain](pic.png)\n\nAfter");
+    let mut view = View::new(&doc, 800.0);
+    let handle = iced::widget::image::Handle::from_rgba(2, 2, vec![7; 16]);
+    view.images
+        .insert(crop.to_string(), (handle.clone(), 200.0, 100.0));
+    view.images
+        .insert("pic.png".to_string(), (handle, 200.0, 100.0));
+    let images: Vec<Rectangle> = view
+        .draw()
+        .iter()
+        .filter_map(|call| match call {
+            Call::Image { bounds, .. } => Some(*bounds),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images.len(), 2, "both images drawn");
+    let (crop_box, plain_box) = (images[0], images[1]);
+
+    view.modifiers(keyboard::Modifiers::CTRL);
+    assert_eq!(
+        view.interaction(crop_box.center()),
+        mouse::Interaction::Pointer
+    );
+    let messages = view.click(crop_box.center()).messages;
+    assert!(
+        messages.iter().any(|m| m == &format!("link {crop}")),
+        "ctrl+click on the crop published {messages:?}"
+    );
+    let messages = view.click(plain_box.center()).messages;
+    assert!(
+        !messages.iter().any(|m| m.starts_with("link")),
+        "a plain image is not a link: {messages:?}"
+    );
 }

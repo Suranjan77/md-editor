@@ -549,3 +549,114 @@ fn stale_failure_does_not_throttle_the_new_generation() {
     assert!(state.refresh_due());
     assert_ne!(state.begin_refresh(), Some(stale_generation));
 }
+
+/// BUG-06: until the GPU layer commits a fit, the label overlay must frame the
+/// graph exactly as the GPU layer does (a fresh fit), not with the stale
+/// shared pan/zoom; once committed at this size, both use the shared one.
+#[test]
+fn labels_follow_the_pending_fit_until_it_is_committed() {
+    use crate::views::graph::GraphFrame;
+    use iced::{Point, Rectangle, Size};
+
+    let mut state = GraphState::new();
+    state.set_snapshot(sample());
+    state.set_view(500.0, -300.0, 3.0);
+    let bounds = Rectangle::new(Point::ORIGIN, Size::new(900.0, 600.0));
+
+    let frame = GraphFrame::from_state(&state);
+    let (labels, fit) = (frame.label_transform(bounds), frame.fit(bounds));
+    assert_eq!(
+        (labels.pan, labels.zoom),
+        (fit.pan, fit.zoom),
+        "pending fit"
+    );
+
+    state.fitted = Some((state.fit_revision, bounds.width, bounds.height));
+    let labels = GraphFrame::from_state(&state).label_transform(bounds);
+    assert_eq!((labels.pan.x, labels.pan.y), state.pan);
+    assert_eq!(labels.zoom, state.zoom);
+
+    // A resize makes the committed fit stale again.
+    let smaller = Rectangle::new(Point::ORIGIN, Size::new(400.0, 300.0));
+    let frame = GraphFrame::from_state(&state);
+    let (labels, fit) = (frame.label_transform(smaller), frame.fit(smaller));
+    assert_eq!((labels.pan, labels.zoom), (fit.pan, fit.zoom));
+
+    // So does a new fit request (scope switch, filter, reopen).
+    state.set_scope(GraphScope::Local { depth: 1 });
+    state.set_active_path(Some("a.md".to_string()));
+    let frame = GraphFrame::from_state(&state);
+    let (labels, fit) = (frame.label_transform(bounds), frame.fit(bounds));
+    assert_eq!((labels.pan, labels.zoom), (fit.pan, fit.zoom));
+}
+
+#[test]
+fn sketch_filter_epistemic_edges_keyboard_cycle_and_pinboard_round_trip() {
+    let mut snap = sample();
+    snap.nodes.push(GraphNode {
+        path: "sketch.ink".to_string(),
+        label: "sketch".to_string(),
+        kind: GraphNodeKind::Sketch,
+        exists: true,
+        incoming: 1,
+        outgoing: 0,
+    });
+    snap.edges.push(GraphEdge {
+        source: "a.md".to_string(),
+        target: "sketch.ink".to_string(),
+        kind: GraphEdgeKind::Supports,
+        weight: 1,
+    });
+
+    let mut state = GraphState::new();
+    state.set_snapshot(snap);
+    assert_eq!(state.stats().sketches, 1);
+    assert_eq!(state.filtered().snapshot.nodes.len(), 6);
+
+    let out = state.outgoing_edges("a.md");
+    assert!(
+        out.iter()
+            .any(|(n, kind)| n.path == "sketch.ink" && *kind == GraphEdgeKind::Supports)
+    );
+    let inc = state.incoming_edges("sketch.ink");
+    assert!(
+        inc.iter()
+            .any(|(n, kind)| n.path == "a.md" && *kind == GraphEdgeKind::Supports)
+    );
+
+    // Filter Sketches off and back on.
+    state.set_show_sketches(false);
+    assert!(
+        !state
+            .filtered()
+            .snapshot
+            .nodes
+            .iter()
+            .any(|n| n.path == "sketch.ink")
+    );
+    state.set_show_sketches(true);
+
+    // Keyboard cycle wraps around visible nodes and `toggle_selected_pin` pins it.
+    state.cycle_node(1);
+    let first = state.selected_path.clone().unwrap();
+    state.cycle_node(-1);
+    let last = state.selected_path.clone().unwrap();
+    assert_ne!(first, last);
+    state.toggle_selected_pin();
+    assert!(state.is_pinned(&last));
+
+    // Move a node and capture/restore a Pinboard.
+    state.move_node("b.md", 123.0, -45.0);
+    state.set_show_missing(false);
+    let board = state.capture_pinboard("Thesis");
+    state.unpin_all();
+    state.set_show_missing(true);
+    assert_eq!(state.pinned_count(), 0);
+
+    state.apply_pinboard(&board);
+    assert!(state.is_pinned("b.md"));
+    assert!(state.is_pinned(&last));
+    assert!(!state.show_missing);
+    let pos = state.graph_layout().get("b.md").unwrap();
+    assert!((pos.x - 123.0).abs() < 0.001 && (pos.y + 45.0).abs() < 0.001);
+}

@@ -12,9 +12,13 @@ use tar::Archive;
 /// Download and set up PDFium binaries for the current platform.
 /// Returns the directory containing the PDFium shared library.
 pub fn setup_pdfium() -> PathBuf {
-    const DEFAULT_PDFIUM_RELEASE: &str = "latest";
+    // Pinned so CI and release builds are reproducible. `chromium/8165` is the
+    // build the test suite runs against with pdfium-render 0.9.1. To move the
+    // pin, update this tag and `pinned_sha256` together.
+    const DEFAULT_PDFIUM_RELEASE: &str = "chromium/8165";
     println!("cargo:rerun-if-env-changed=PDFIUM_RELEASE");
     println!("cargo:rerun-if-env-changed=PDFIUM_SHA256");
+    println!("cargo:rerun-if-env-changed=PDFIUM_ARCHIVE");
     let release = env::var("PDFIUM_RELEASE").unwrap_or_else(|_| DEFAULT_PDFIUM_RELEASE.to_string());
     let release_slug: String = release
         .chars()
@@ -86,7 +90,12 @@ pub fn setup_pdfium() -> PathBuf {
     let lib_subdir = if target_os == "windows" { "bin" } else { "lib" };
     let lib_path = cache_dir.join(lib_subdir).join(lib_filename);
 
-    let expected_sha = env::var("PDFIUM_SHA256").ok();
+    let expected_sha = env::var("PDFIUM_SHA256").ok().or_else(|| {
+        (release == DEFAULT_PDFIUM_RELEASE)
+            .then(|| pinned_sha256(platform_slug))
+            .flatten()
+            .map(str::to_string)
+    });
     let checksum_marker = cache_dir.join(".sha256");
     let checksum_matches = expected_sha.as_ref().is_none_or(|expected| {
         fs::read_to_string(&checksum_marker)
@@ -103,11 +112,11 @@ pub fn setup_pdfium() -> PathBuf {
         return cache_dir;
     }
 
-    // Pin the PDFium release for reproducible builds. Override with the
-    // `PDFIUM_RELEASE` env var (e.g. `chromium/6996`); defaults to `latest`.
-    // To verify the archive, set `PDFIUM_SHA256` to the expected hex digest of
-    // the platform `.tgz` — the build then fails loudly on mismatch instead of
-    // trusting whatever bytes the network returned.
+    // The default release is pinned and verified against `pinned_sha256`.
+    // Override with the `PDFIUM_RELEASE` env var (e.g. `chromium/6996`, or
+    // `latest`); set `PDFIUM_SHA256` to the hex digest of the platform `.tgz`
+    // to verify an override — the build then fails loudly on mismatch instead
+    // of trusting whatever bytes the network returned.
     println!(
         "cargo:warning=Downloading PDFium ({release}) for {}...",
         platform_slug
@@ -131,7 +140,16 @@ pub fn setup_pdfium() -> PathBuf {
     let archive_path = cache_dir.join("pdfium.tgz");
     fs::create_dir_all(&cache_dir).expect("Failed to create PDFium cache directory");
 
-    if let Err(e) = download_to_file(&url, &archive_path) {
+    // Packagers (the Arch PKGBUILD) download the archive themselves, as a
+    // declared source, and point `PDFIUM_ARCHIVE` at it; it is still verified
+    // below.
+    let fetched = match env::var("PDFIUM_ARCHIVE") {
+        Ok(local) => fs::copy(&local, &archive_path)
+            .map(|_| ())
+            .map_err(|e| format!("copying {local} failed: {e}")),
+        Err(_) => download_to_file(&url, &archive_path),
+    };
+    if let Err(e) = fetched {
         println!(
             "cargo:warning=Failed to download PDFium archive: {}. PDFium will not be available.",
             e
@@ -264,4 +282,18 @@ fn emit_pdfium_paths(target_dir: &Path, profile_dir: &Path) {
         "cargo:rustc-env=PDFIUM_TARGET_PROFILE_DIR={}",
         profile_dir.display()
     );
+}
+
+/// SHA-256 of each platform archive of the pinned `DEFAULT_PDFIUM_RELEASE`
+/// (from the release's asset digests on bblanchon/pdfium-binaries).
+fn pinned_sha256(platform_slug: &str) -> Option<&'static str> {
+    Some(match platform_slug {
+        "linux-x64" => "ba7865e16c0271daab75256790be06c26272190afe6e2a70eae0bb39bb99089c",
+        "linux-arm64" => "338f5dcc907a20331812ae8ab01b16ff18966f4a247d790c8ad8fb49029d768b",
+        "win-x64" => "ca7338ae7779b8b1b82f4580305c4d762d214f8df1d54b47647fe3cc75989ded",
+        "win-arm64" => "d65e405c59cffe6fe36c0935b90d40ddf3ce75ef284f3168a28dcf00d0388131",
+        "mac-x64" => "07285915b564e46a432a9909dbc1f15892885ca6489e3faeefc70dee77ed371a",
+        "mac-arm64" => "112e74d717f3e0310273b70f3c8780e8a61ff11b34834124465c8305c841d350",
+        _ => return None,
+    })
 }

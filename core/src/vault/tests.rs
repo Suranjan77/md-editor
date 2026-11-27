@@ -262,7 +262,10 @@ fn save_file_surfaces_write_failures() {
     }
 
     let error = save_file(&state, "blocked.md", "content").unwrap_err();
-    assert!(error.contains("Failed to"), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("Failed to"),
+        "unexpected error: {error}"
+    );
 
     let _ = fs::remove_dir_all(&base);
 }
@@ -452,7 +455,107 @@ fn graph_snapshot_is_sorted_aggregated_and_includes_health_nodes() {
 #[test]
 fn graph_snapshot_requires_an_open_vault() {
     let state = AppState::new_in_memory();
-    assert_eq!(get_graph_snapshot(&state).unwrap_err(), "No vault root set");
+    let error = get_graph_snapshot(&state).unwrap_err();
+    assert!(matches!(error, VaultError::NoVault));
+    assert_eq!(error.to_string(), "No vault root set");
+}
+
+#[test]
+fn graph_snapshot_includes_sketches_and_epistemic_edges_and_rename_preserves_prefix() {
+    let base = std::env::temp_dir().join(format!("md_graph_epistemic_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(base.join("notes")).unwrap();
+    fs::write(
+        base.join("notes/Claim.md"),
+        "supports:: [[Evidence]]\ncontradicts:: [[notes/Counter]]\nderives:: [[Axiom]]\n![fig](Claim-sketch.ink)\n![vec](vector.ink.svg)\n![img](photo.png)\n",
+    )
+    .unwrap();
+    fs::write(base.join("Evidence.md"), "proof").unwrap();
+    fs::write(base.join("notes/Counter.md"), "objection").unwrap();
+    fs::write(base.join("Axiom.md"), "axiom").unwrap();
+    fs::write(base.join("notes/Claim-sketch.ink"), "{}").unwrap();
+    fs::write(base.join("notes/vector.ink.svg"), "<svg/>").unwrap();
+    fs::write(base.join("notes/OrphanSketch.ink"), "{}").unwrap();
+    fs::write(base.join("notes/photo.png"), b"png").unwrap();
+
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+    let snapshot = get_graph_snapshot(&state).unwrap();
+    let find_node = |path: &str| snapshot.nodes.iter().find(|n| n.path == path).unwrap();
+
+    assert_eq!(
+        find_node("notes/Claim-sketch.ink").kind,
+        GraphNodeKind::Sketch
+    );
+    assert_eq!(find_node("notes/Claim-sketch.ink").incoming, 1);
+    assert_eq!(
+        find_node("notes/vector.ink.svg").kind,
+        GraphNodeKind::Sketch
+    );
+    assert_eq!(find_node("notes/vector.ink.svg").label, "vector");
+    assert_eq!(
+        find_node("notes/OrphanSketch.ink").kind,
+        GraphNodeKind::Sketch
+    );
+    assert!(snapshot.nodes.iter().all(|n| n.path != "notes/photo.png"));
+
+    let has_edge = |source: &str, target: &str, kind: GraphEdgeKind| {
+        snapshot
+            .edges
+            .iter()
+            .any(|e| e.source == source && e.target == target && e.kind == kind)
+    };
+    assert!(has_edge(
+        "notes/Claim.md",
+        "Evidence.md",
+        GraphEdgeKind::Supports
+    ));
+    assert!(has_edge(
+        "notes/Claim.md",
+        "notes/Counter.md",
+        GraphEdgeKind::Contradicts
+    ));
+    assert!(has_edge(
+        "notes/Claim.md",
+        "Axiom.md",
+        GraphEdgeKind::Derives
+    ));
+    assert!(has_edge(
+        "notes/Claim.md",
+        "notes/Claim-sketch.ink",
+        GraphEdgeKind::WikiLink
+    ));
+    assert!(has_edge(
+        "notes/Claim.md",
+        "notes/vector.ink.svg",
+        GraphEdgeKind::WikiLink
+    ));
+
+    // Renaming a target note preserves `supports:: [[NewName]]` and its Supports edge.
+    rename_entry(&state, "Evidence.md", "Proof.md").unwrap();
+    let updated = fs::read_to_string(base.join("notes/Claim.md")).unwrap();
+    assert!(updated.contains("supports:: [[Proof]]"), "{updated}");
+    let after_rename = get_graph_snapshot(&state).unwrap();
+    assert!(after_rename.edges.iter().any(|e| {
+        e.source == "notes/Claim.md" && e.target == "Proof.md" && e.kind == GraphEdgeKind::Supports
+    }));
+
+    // Renaming a sketch updates markdown image embeds and keeps the Sketch node linked.
+    rename_entry(&state, "notes/Claim-sketch.ink", "notes/Renamed-sketch.ink").unwrap();
+    let updated_sketch = fs::read_to_string(base.join("notes/Claim.md")).unwrap();
+    assert!(
+        updated_sketch.contains("![fig](Renamed-sketch.ink)"),
+        "{updated_sketch}"
+    );
+    let after_sketch_rename = get_graph_snapshot(&state).unwrap();
+    assert!(after_sketch_rename.edges.iter().any(|e| {
+        e.source == "notes/Claim.md"
+            && e.target == "notes/Renamed-sketch.ink"
+            && e.kind == GraphEdgeKind::WikiLink
+    }));
+
+    drop(state);
+    let _ = fs::remove_dir_all(&base);
 }
 
 #[test]
@@ -868,4 +971,380 @@ fn handwritten_pages_are_listed_in_the_vault() {
     assert!(is_supported_vault_path(Path::new("notes/lecture.ink")));
     assert!(is_supported_vault_path(Path::new("notes/LECTURE.INK")));
     assert!(!is_supported_vault_path(Path::new("notes/lecture.inkx")));
+}
+
+#[test]
+fn guarded_save_keeps_an_external_edit_as_a_conflict_copy() {
+    let base = std::env::temp_dir().join(format!("md_editor_conflict_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(base.join("notes")).unwrap();
+    std::fs::write(base.join("notes/B.md"), "original").unwrap();
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+    let known = content_hash("original");
+
+    // Unchanged on disk: a plain save, no copy.
+    let copy = save_file_guarded(&state, "notes/B.md", "mine 1", Some(known), "S").unwrap();
+    assert_eq!(copy, None);
+    let known = content_hash("mine 1");
+
+    // Changed underneath us: theirs is kept beside ours.
+    std::fs::write(base.join("notes/B.md"), "theirs").unwrap();
+    let copy = save_file_guarded(&state, "notes/B.md", "mine 2", Some(known), "S").unwrap();
+    assert_eq!(copy.as_deref(), Some("notes/B (conflict S).md"));
+    assert_eq!(
+        std::fs::read_to_string(base.join("notes/B.md")).unwrap(),
+        "mine 2"
+    );
+    assert_eq!(
+        std::fs::read_to_string(base.join("notes/B (conflict S).md")).unwrap(),
+        "theirs"
+    );
+
+    // A second conflict in the same second gets a numbered name.
+    std::fs::write(base.join("notes/B.md"), "theirs again").unwrap();
+    let copy = save_file_guarded(
+        &state,
+        "notes/B.md",
+        "mine 3",
+        Some(content_hash("mine 2")),
+        "S",
+    )
+    .unwrap();
+    assert_eq!(copy.as_deref(), Some("notes/B (conflict S 2).md"));
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn renaming_a_note_rewrites_bare_links_from_its_sibling_folder() {
+    let base = std::env::temp_dir().join(format!("md_editor_rename_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(base.join("notes")).unwrap();
+    std::fs::write(base.join("notes/A.md"), "Links: [[B]]\n").unwrap();
+    std::fs::write(base.join("notes/B.md"), "# B\n\nSelf link: [[B]]\n").unwrap();
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+    rename_entry(&state, "notes/B.md", "notes/C.md").unwrap();
+
+    let a = std::fs::read_to_string(base.join("notes/A.md")).unwrap();
+    assert!(!a.contains("[[B]]"), "A.md still links the old name: {a:?}");
+    let c = std::fs::read_to_string(base.join("notes/C.md")).unwrap();
+    assert!(
+        !c.contains("[[B]]"),
+        "C.md's self link not rewritten: {c:?}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(unix)]
+#[test]
+fn write_file_refuses_a_read_only_note() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = std::env::temp_dir().join(format!("md_editor_ro_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&base).unwrap();
+    let note = base.join("locked.md");
+    std::fs::write(&note, "keep me").unwrap();
+    std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+    let err = write_file(&note, "overwrite").unwrap_err();
+    assert!(err.is_permission_denied(), "{err}");
+    assert!(err.to_string().contains("is read-only"), "{err}");
+    assert_eq!(std::fs::read_to_string(&note).unwrap(), "keep me");
+
+    std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn vault_errors_carry_their_kind_and_keep_their_wording() {
+    let base = std::env::temp_dir().join(format!("md_editor_err_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&base).unwrap();
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+    let missing = open_file(&state, "nope.md").unwrap_err();
+    assert!(missing.is_not_found(), "{missing:?}");
+    assert!(!missing.is_permission_denied());
+
+    let escape = open_file(&state, "../outside.md").unwrap_err();
+    assert!(matches!(escape, VaultError::OutsideVault(_)), "{escape:?}");
+    assert_eq!(
+        escape.to_string(),
+        "Path escapes the vault root: ../outside.md"
+    );
+
+    fs::write(base.join("a.md"), "a").unwrap();
+    fs::write(base.join("b.md"), "b").unwrap();
+    let clash = rename_entry(&state, "a.md", "b.md").unwrap_err();
+    assert!(matches!(clash, VaultError::AlreadyExists(_)), "{clash:?}");
+    assert!(clash.to_string().starts_with("Target already exists: "));
+
+    // Callers that still speak String convert losslessly.
+    let as_text: String = clash.into();
+    assert!(as_text.starts_with("Target already exists"));
+    let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
+fn user_excluded_folders_are_parsed_and_skipped_by_every_walker() {
+    assert_eq!(
+        parse_excluded_dirs(" drafts, /archive/ ,, a/b, drafts"),
+        vec!["archive".to_string(), "drafts".to_string()]
+    );
+
+    let base = std::env::temp_dir().join(format!("md_user_excluded_{}", uuid::Uuid::new_v4()));
+    let root = base.as_path();
+    // A name no other test uses: the exclusion list is process-wide.
+    std::fs::create_dir_all(root.join("zz-user-excluded/inner")).unwrap();
+    std::fs::write(root.join("zz-user-excluded/inner/hidden.md"), "x").unwrap();
+    std::fs::write(root.join("zz-user-excluded/hidden.pdf"), "x").unwrap();
+    std::fs::write(root.join("kept.md"), "x").unwrap();
+
+    assert!(set_user_excluded_dirs(vec!["zz-user-excluded".to_string()]));
+    assert!(!set_user_excluded_dirs(vec![
+        "zz-user-excluded".to_string()
+    ]));
+    let entries = list_vault_entries(root).unwrap();
+    let md = list_all_md_files(root).unwrap();
+    let pdf = list_all_pdf_files(root).unwrap();
+    // The vault watcher filters its events through the same rule.
+    let watcher_skips = [
+        is_excluded_rel_path("zz-user-excluded/hidden.md"),
+        is_excluded_rel_path("zz-user-excluded"),
+        is_excluded_rel_path("node_modules/x.md"),
+        is_excluded_rel_path("a/.git/HEAD"),
+    ];
+    let watcher_keeps = !is_excluded_rel_path("notes/zz-user-excluded.md");
+    set_user_excluded_dirs(Vec::new());
+    assert_eq!(watcher_skips, [true; 4]);
+    assert!(watcher_keeps);
+
+    assert!(
+        entries
+            .iter()
+            .all(|e| !e.path.starts_with("zz-user-excluded"))
+    );
+    assert!(entries.iter().any(|e| e.path == "kept.md"));
+    assert_eq!(md.len(), 1);
+    assert!(pdf.is_empty());
+    assert!(
+        list_vault_entries(root)
+            .unwrap()
+            .iter()
+            .any(|e| e.path == "zz-user-excluded")
+    );
+    assert!(is_in_excluded_dir("node_modules/pkg/readme.md"));
+    assert!(is_in_excluded_dir(".git/notes.md"));
+    assert!(!is_in_excluded_dir("notes/node_modules.md"));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+fn temp_vault(files: &[(&str, &str)]) -> (std::path::PathBuf, AppState) {
+    let base = std::env::temp_dir().join(format!("md_relink_{}", uuid::Uuid::new_v4()));
+    for (rel, content) in files {
+        let path = base.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    let state = AppState::new_in_memory();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+    (base, state)
+}
+
+#[test]
+fn directory_rename_rewrites_path_qualified_links_into_it() {
+    let (base, state) = temp_vault(&[
+        (
+            "index.md",
+            "[[topics/attention|Attention]] and [[attention]]\n",
+        ),
+        ("topics/attention.md", "Back to [[../index]].\n"),
+    ]);
+    fs::create_dir_all(base.join("archive")).unwrap();
+
+    rename_entry(&state, "topics", "archive/topics").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(base.join("index.md")).unwrap(),
+        "[[archive/topics/attention|Attention]] and [[attention]]\n"
+    );
+    assert_eq!(
+        fs::read_to_string(base.join("archive/topics/attention.md")).unwrap(),
+        "Back to [[index]].\n"
+    );
+    let index = state.file_index.lock().unwrap();
+    let mut backlinks = index.get_backlinks(&base.join("archive/topics/attention.md"));
+    backlinks.sort();
+    assert_eq!(backlinks, vec![base.join("index.md")]);
+    drop(index);
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn image_and_ink_renames_rewrite_links_to_them() {
+    let (base, state) = temp_vault(&[
+        ("notes/a.md", "![d](diagram.png)\n\n[[sketch.ink]]\n"),
+        ("notes/diagram.png", "png"),
+        ("sketch.ink", "{}"),
+    ]);
+    fs::create_dir_all(base.join("figures")).unwrap();
+    fs::create_dir_all(base.join("ink")).unwrap();
+
+    rename_entry(&state, "notes/diagram.png", "figures/diagram.png").unwrap();
+    rename_entry(&state, "sketch.ink", "ink/sketch.ink").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(base.join("notes/a.md")).unwrap(),
+        "![d](../figures/diagram.png)\n\n[[ink/sketch.ink]]\n"
+    );
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn search_finds_prefixes_and_two_letter_terms_and_reports_the_line() {
+    let (base, state) = temp_vault(&[
+        (
+            "notes/ml.md",
+            "# Intro\n\nplain text\n\nWe use ML for transformers.\n",
+        ),
+        ("other.md", "nothing relevant\n"),
+        ("transformers-overview.md", "short\n"),
+    ]);
+    let hits = search_vault(&state, "ML").unwrap().items;
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!((hits[0].path.as_str(), hits[0].line), ("notes/ml.md", 5));
+
+    // The last term matches as a prefix, as it is being typed; a file whose
+    // name matches ranks first.
+    let hits = search_vault(&state, "transfor").unwrap().items;
+    let paths: Vec<_> = hits.iter().map(|h| h.path.as_str()).collect();
+    assert_eq!(paths, ["transformers-overview.md", "notes/ml.md"]);
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn search_includes_pdf_quick_notes_with_their_page() {
+    let (base, state) = temp_vault(&[("a.md", "x\n")]);
+    state
+        .save_pdf_document("paper", "papers/p.pdf", 1, None)
+        .unwrap();
+    insert_annotation_link(&state, "ann", "paper", "a.md");
+    let id = state.pdf_storage_document_id("paper").unwrap();
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE pdf_annotations SET note = 'Check the Lemma here', page_index = 3 WHERE document_id = ?1",
+            rusqlite::params![id],
+        )
+        .unwrap();
+
+    let hits = search_vault(&state, "lemma check").unwrap().items;
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!((hits[0].path.as_str(), hits[0].line), ("papers/p.pdf", 4));
+    assert!(hits[0].context.contains("Check the Lemma"));
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_cannot_be_deleted_stays_indexed_and_searchable() {
+    use std::os::unix::fs::PermissionsExt;
+    let (base, state) = temp_vault(&[
+        ("locked/note.md", "unique-delete-token\n"),
+        ("a.md", "[[locked/note]]\n"),
+    ]);
+    // A read-only folder: its files cannot be unlinked.
+    fs::set_permissions(base.join("locked"), fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = base.join("locked/probe");
+    let can_write = fs::write(&probe, "").is_ok();
+    let _ = fs::remove_file(&probe);
+    if !can_write {
+        assert!(delete_entry(&state, "locked/note.md").is_err());
+        assert_eq!(
+            search_vault(&state, "unique-delete-token")
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        let index = state.file_index.lock().unwrap();
+        assert_eq!(
+            index.get_backlinks(&base.join("locked/note.md")),
+            vec![base.join("a.md")]
+        );
+    }
+    fs::set_permissions(base.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = fs::remove_dir_all(base);
+}
+
+fn search_paths(state: &AppState, query: &str) -> Vec<String> {
+    let mut paths: Vec<String> = search_vault(state, query)
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|item| item.path)
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn reopening_a_vault_rereads_only_changed_files() {
+    let (base, state) = temp_vault(&[
+        ("a.md", "alpha [[b]]\n"),
+        ("b.md", "bravo\n"),
+        ("c.md", "charlie\n"),
+    ]);
+    // Tamper with a's row: if reopening re-read a.md, the row would be fixed.
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE file_search SET content = 'tampered' WHERE path = 'a.md'",
+            [],
+        )
+        .unwrap();
+    // Change c (size differs), delete b's neighbour d appears.
+    fs::write(base.join("c.md"), "charlie edited longer\n").unwrap();
+    fs::write(base.join("d.md"), "delta\n").unwrap();
+
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+
+    assert_eq!(
+        search_paths(&state, "tampered"),
+        ["a.md"],
+        "unchanged a.md was re-read"
+    );
+    assert_eq!(search_paths(&state, "edited"), ["c.md"]);
+    assert_eq!(search_paths(&state, "delta"), ["d.md"]);
+    // Links of the file that was not read still count.
+    let index = state.file_index.lock().unwrap();
+    assert_eq!(
+        index.get_backlinks(&base.join("b.md")),
+        vec![base.join("a.md")]
+    );
+    drop(index);
+
+    fs::remove_file(base.join("d.md")).unwrap();
+    set_vault_root(&state, base.to_str().unwrap()).unwrap();
+    assert!(
+        search_paths(&state, "delta").is_empty(),
+        "deleted file still indexed"
+    );
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn switching_vaults_reindexes_and_never_mixes_rows() {
+    let (first, state) = temp_vault(&[("one.md", "shared-term first\n")]);
+    let (second, _) = temp_vault(&[("two.md", "shared-term second\n")]);
+    set_vault_root(&state, second.to_str().unwrap()).unwrap();
+    assert_eq!(search_paths(&state, "shared-term"), ["two.md"]);
+    set_vault_root(&state, first.to_str().unwrap()).unwrap();
+    assert_eq!(search_paths(&state, "shared-term"), ["one.md"]);
+    let _ = fs::remove_dir_all(first);
+    let _ = fs::remove_dir_all(second);
 }

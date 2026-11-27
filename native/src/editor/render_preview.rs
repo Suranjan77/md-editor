@@ -65,16 +65,15 @@ fn math(lines: &[crate::editor::highlight::StyledLine]) -> MathCache {
         if tex.is_empty() || cache.contains_key(&tex) {
             continue;
         }
-        let render =
-            crate::editor_state::render_latex_task(&tex, PREVIEW_SCALE).unwrap_or_else(|_| {
-                let handle = bitmap(40, 20, [230, 200, 120, 255]);
-                MathRender {
-                    inline_handle: handle.clone(),
-                    block_handle: handle,
-                    width: 40.0,
-                    height: 20.0,
-                }
-            });
+        let render = crate::editor_state::render_latex_task(
+            &tex,
+            PREVIEW_SCALE,
+            crate::design::tokens().doc_math,
+        )
+        .unwrap_or_else(|_| {
+            let handle = bitmap(40, 20, [230, 200, 120, 255]);
+            MathRender::uniform(handle.clone(), handle, 40.0, 20.0)
+        });
         cache.insert(tex, render);
     }
     cache
@@ -206,7 +205,7 @@ fn render(scene: &Scene, out_dir: &str) {
         (bounds.width * scale) as u32,
         (bounds.height * scale) as u32,
     );
-    let pixels = renderer.screenshot(size, scale, crate::theme::BG_PRIMARY);
+    let pixels = renderer.screenshot(size, scale, crate::design::tokens().bg_canvas);
     let path = format!("{out_dir}/{}.png", scene.name);
     image::save_buffer(
         &path,

@@ -14,15 +14,21 @@
 //!
 //! Artifacts land in `target/e2e/`: screenshots per step and `telemetry.md`.
 
-// The harness API is ahead of the scenarios written so far; the planned
-// suite is in docs/e2e-bug-discovery-plan.md.
+// Not every harness helper is used by a scenario at any one time.
 #![allow(dead_code)]
 
+mod desks;
+mod flows;
+mod monkey;
+mod panes;
 mod scenarios;
+mod showcase;
+mod synthesis;
 mod telemetry;
+mod workspace;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use iced::mouse;
@@ -35,12 +41,41 @@ use iced_test::instruction::{Expectation, Interaction, Keyboard, Mouse, Target};
 use crate::app::MdEditor;
 use crate::messages::Message;
 
+/// The app state as of the last update, captured by [`telemetry::Observe`].
+/// Sessions run one at a time (`SERIAL`), so one slot is enough.
+static LATEST: Mutex<Option<crate::app::Probe>> = Mutex::new(None);
+
+impl telemetry::Observe for MdEditor {
+    fn observe(&self) {
+        *LATEST.lock().unwrap_or_else(|p| p.into_inner()) = Some(self.probe());
+    }
+}
+
+/// The app state after the most recent update.
+pub(crate) fn latest_probe() -> crate::app::Probe {
+    LATEST
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .expect("the app has booted")
+}
+
+/// Default per-update time budget for the invariant check (debug build).
+const UPDATE_BUDGET: Duration = Duration::from_millis(100);
+
 /// Viewport every session runs at; matches the app's default window size.
 pub(crate) const VIEWPORT: iced::Size = iced::Size::new(1200.0, 800.0);
 
 /// Emulator sessions share the settings database and the beacon, so they run
 /// one at a time.
 static SERIAL: Mutex<()> = Mutex::new(());
+
+/// Hold this while a test creates a headless renderer or changes the global
+/// design state (theme, interface scale): running alongside an emulator
+/// session crashes the renderer and repaints that session in the wrong theme.
+pub(crate) fn exclusive() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|poison| poison.into_inner())
+}
 
 /// Where screenshots and the telemetry report are written.
 pub(crate) fn artifacts_dir() -> PathBuf {
@@ -53,16 +88,8 @@ pub(crate) fn artifacts_dir() -> PathBuf {
 }
 
 fn isolate_data_dir() {
-    static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
-    let dir = DATA_DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("md-editor-e2e-data-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create e2e data dir");
-        dir
-    });
-    assert!(
-        md_editor_core::state::override_data_dir(dir.clone()),
-        "another data directory was pinned before the e2e tests"
-    );
+    crate::test_support::isolate_data_dir();
+    crate::test_support::load_bundled_fonts();
 }
 
 /// A throwaway vault on disk.
@@ -126,28 +153,71 @@ pub(crate) struct Session<P: Program<State = MdEditor, Message = Message>> {
     renderer: P::Renderer,
     shot: usize,
     mark: usize,
+    /// The action being settled, for invariant failure messages.
+    step: String,
+    /// Whether an error toast is expected (cleared after each check).
+    expect_error: bool,
+    update_budget: Duration,
+    /// Telemetry records already checked against the budget, so each update
+    /// is judged once, against the budget in force when it ran.
+    checked: usize,
     _serial: MutexGuard<'static, ()>,
 }
 
-/// Boot the real app on `vault`, opening `open` (vault-relative) if given.
+/// Boot the app on `vault` as a vault, then open `open` (vault-relative) from
+/// the sidebar, so paths stay relative to the vault root.
 pub(crate) fn boot(
     name: &str,
     vault: &Vault,
     open: Option<&str>,
 ) -> Session<impl Program<State = MdEditor, Message = Message> + 'static> {
+    let mut session = boot_with_path(name, vault.root.clone());
+    if let Some(rel) = open {
+        session.send(Message::Vault(
+            crate::messages::VaultMessage::SidebarFileClicked(rel.to_string()),
+        ));
+    }
+    session
+}
+
+/// Boot the app exactly as `md-editor <path>` would. A file path makes its
+/// folder the vault (unless it is inside the remembered vault).
+pub(crate) fn boot_with_path(
+    name: &str,
+    startup: PathBuf,
+) -> Session<impl Program<State = MdEditor, Message = Message> + 'static> {
     let serial = SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    boot_inner(name, Some(startup), true, serial)
+}
+
+fn boot_inner(
+    name: &str,
+    startup: Option<PathBuf>,
+    fresh_settings: bool,
+    serial: MutexGuard<'static, ()>,
+) -> Session<impl Program<State = MdEditor, Message = Message> + 'static> {
     isolate_data_dir();
+    if fresh_settings {
+        // Sessions share the isolated data dir; start each from blank
+        // settings and tracker state so one scenario cannot leak into the next.
+        // (Clearing rows, not deleting the file: unit tests running in
+        // parallel hold the same database open.)
+        let state = md_editor_core::state::AppState::new();
+        md_editor_core::config::clear_sys_config(&state).expect("clear settings");
+        let db = state.db.lock().expect("lock db");
+        db.execute_batch(
+            "DELETE FROM tracker_sessions; DELETE FROM tracker_kv; DELETE FROM tracker_sidecar_sync;",
+        )
+        .expect("clear tracker tables");
+    }
+    *LATEST.lock().unwrap_or_else(|p| p.into_inner()) = None;
     let mark = telemetry::recorder().mark();
 
-    let startup = match open {
-        Some(rel) => vault.root.join(rel),
-        None => vault.root.clone(),
-    };
     let window = iced::window::Settings {
         size: VIEWPORT,
         ..Default::default()
     };
-    let program = telemetry::Traced(crate::program(window, Some(startup)));
+    let program = telemetry::Traced(crate::program(window, startup));
 
     let (sender, events) = mpsc::channel(1024);
     let emulator = Emulator::new(sender, &program, Mode::Zen, VIEWPORT);
@@ -161,6 +231,10 @@ pub(crate) fn boot(
         renderer,
         shot: 0,
         mark,
+        step: "boot".to_string(),
+        expect_error: false,
+        update_budget: UPDATE_BUDGET,
+        checked: mark,
         _serial: serial,
     };
     session.settle();
@@ -182,11 +256,59 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
     /// Run the event loop until nothing has happened for a moment: tasks
     /// done, debounces (autosave, search) fired, the vault watcher quiet.
     pub fn settle(&mut self) {
-        self.pump(Duration::from_millis(600), Duration::from_secs(15));
+        self.pump(Duration::from_millis(300), Duration::from_secs(15));
+        self.check_invariants();
+    }
+
+    /// The next settle may show an error toast without failing the scenario.
+    pub fn expect_error_toast(&mut self) {
+        self.expect_error = true;
+    }
+
+    /// Raise (or lower) the per-update budget for this session.
+    pub fn set_update_budget(&mut self, budget: Duration) {
+        self.update_budget = budget;
+    }
+
+    /// The app state as of the last update.
+    pub fn probe(&self) -> crate::app::Probe {
+        latest_probe()
+    }
+
+    /// Checks that must hold whenever the app is quiet. Panics naming the step
+    /// that broke them, so a failure points at the action, not the assertion.
+    fn check_invariants(&mut self) {
+        let probe = latest_probe();
+        let violations = invariant_violations(&probe, self.expect_error);
+        self.expect_error = false;
+
+        let end = telemetry::recorder().mark();
+        let new_slow =
+            telemetry::recorder().slow_updates_between(self.checked, end, self.update_budget);
+        self.checked = end;
+
+        let mut problems = violations;
+        for (duration, message) in new_slow {
+            problems.push(format!(
+                "update took {duration:.1?} (budget {:?}): {message}",
+                self.update_budget
+            ));
+        }
+        if !problems.is_empty() {
+            let shot = self.screenshot("invariant-failure");
+            panic!(
+                "[{}] invariants broken after `{}`:\n  - {}\n(screenshot: {})",
+                self.name,
+                self.step,
+                problems.join("\n  - "),
+                shot.display()
+            );
+        }
     }
 
     /// Run the event loop for a fixed time regardless of activity.
     pub fn wait(&mut self, duration: Duration) {
+        self.step = format!("wait {duration:?}");
         self.pump(duration, duration);
     }
 
@@ -218,13 +340,33 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
         }
     }
 
+    /// Deliver a message without letting the event loop run — so, for
+    /// example, edits are still unsaved (autosave waits 400 ms) when the next
+    /// message arrives.
+    pub fn send_quick(&mut self, message: Message) {
+        self.step = format!("send_quick {message:?}");
+        self.emulator.update(&self.program, message);
+        // Long enough for the tasks it spawns (a toast) to land, well short
+        // of the 400 ms autosave debounce.
+        self.pump(Duration::from_millis(15), Duration::from_millis(100));
+    }
+
+    /// Insert text at the caret of the open note, as typing would.
+    pub fn type_in_note(&mut self, text: &str) {
+        self.send(Message::Editor(crate::messages::EditorMessage::Command(
+            crate::editor::buffer::EditorCommand::InsertText(text.to_string()),
+        )));
+    }
+
     /// Deliver a message as if the app had produced it, then settle.
     pub fn send(&mut self, message: Message) {
+        self.step = format!("send {message:?}");
         self.emulator.update(&self.program, message);
         self.settle();
     }
 
     fn instruct(&mut self, instruction: Instruction) -> Result<(), String> {
+        self.step = instruction.to_string();
         let before = self.failures.len();
         self.emulator.run(&self.program, instruction);
         self.settle();
@@ -250,6 +392,14 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
         })));
     }
 
+    /// Right-click a point of the viewport.
+    pub fn right_click_at(&mut self, x: f32, y: f32) {
+        let _ = self.instruct(Instruction::Interact(Interaction::Mouse(Mouse::Click {
+            button: mouse::Button::Right,
+            target: Some(Target::Point(iced::Point::new(x, y))),
+        })));
+    }
+
     /// Type text into whatever has keyboard focus.
     pub fn type_text(&mut self, text: &str) {
         let _ = self.instruct(Instruction::Interact(Interaction::Keyboard(
@@ -263,8 +413,47 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
             .is_ok()
     }
 
+    /// Run one frame the way a window would: the widgets see a redraw and
+    /// what they publish then (the editor's caret report, say) is delivered.
+    /// Screenshots alone drop those messages.
+    pub fn redraw(&mut self) {
+        use iced_test::core::{Event, clipboard, window};
+        use iced_test::runtime::user_interface::{Cache, UserInterface};
+
+        let mut messages = Vec::new();
+        let mut ui = UserInterface::build(
+            self.emulator.view(&self.program),
+            VIEWPORT,
+            Cache::default(),
+            &mut self.renderer,
+        );
+        let _ = ui.update(
+            &[Event::Window(
+                window::Event::RedrawRequested(Instant::now()),
+            )],
+            mouse::Cursor::Unavailable,
+            &mut self.renderer,
+            &mut clipboard::Null,
+            &mut messages,
+        );
+        drop(ui);
+        for message in messages {
+            self.emulator.update(&self.program, message);
+        }
+        self.settle();
+    }
+
     /// Render the current frame to `target/e2e/<session>-<n>-<label>.png`.
     pub fn screenshot(&mut self, label: &str) -> PathBuf {
+        let path = artifacts_dir().join(format!("{}-{:02}-{label}.png", self.name, self.shot + 1));
+        self.screenshot_to(&path, 1.0);
+        path
+    }
+
+    /// Render the current frame at `scale` (device pixels per logical pixel)
+    /// to `path`. The layout is the same as at 1×; only the pixel density
+    /// changes, as on a HiDPI display.
+    pub fn screenshot_to(&mut self, path: &Path, scale: f32) {
         use iced_test::core::renderer::Headless as _;
         use iced_test::core::{Event, clipboard, renderer, theme, window};
         use iced_test::runtime::user_interface::{Cache, UserInterface};
@@ -274,7 +463,10 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
             .theme(&self.program)
             .expect("the app always sets a theme");
         let style = theme::Base::base(&theme);
-        let size = iced::Size::new(VIEWPORT.width as u32, VIEWPORT.height as u32);
+        let size = iced::Size::new(
+            (VIEWPORT.width * scale).round() as u32,
+            (VIEWPORT.height * scale).round() as u32,
+        );
         let mut cache = Cache::default();
         let mut rgba = Vec::new();
         // Two frames: on the first, text widgets have only just shaped their
@@ -304,16 +496,30 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
                 mouse::Cursor::Unavailable,
             );
             cache = ui.into_cache();
-            rgba = self.renderer.screenshot(size, 1.0, style.background_color);
+            rgba = self
+                .renderer
+                .screenshot(size, scale, style.background_color);
         }
 
         self.shot += 1;
-        let path = artifacts_dir().join(format!("{}-{:02}-{label}.png", self.name, self.shot));
         image::RgbaImage::from_raw(size.width, size.height, rgba)
             .expect("screenshot buffer matches its size")
-            .save(&path)
+            .save(path)
             .expect("write screenshot");
-        path
+    }
+
+    /// Quit and launch again, keeping the settings this session left (last
+    /// vault, last file, layout) — a restart. No other scenario can run in
+    /// between. `startup` as on the command line, or `None`.
+    pub fn restart(
+        self,
+        name: &str,
+        startup: Option<PathBuf>,
+    ) -> Session<impl Program<State = MdEditor, Message = Message> + 'static> {
+        telemetry::recorder().report(&self.name, self.mark);
+        let serial = self._serial;
+        drop(self.emulator);
+        boot_inner(name, startup, false, serial)
     }
 
     /// End the session: write its telemetry and hand back the final state.
@@ -325,5 +531,118 @@ impl<P: Program<State = MdEditor, Message = Message> + 'static> Session<P> {
     /// Updates since this session started that took longer than `budget`.
     pub fn slow_updates(&self, budget: Duration) -> Vec<(Duration, String)> {
         telemetry::recorder().slow_updates(self.mark, budget)
+    }
+}
+
+/// The quiet-state invariants (e2e plan, Step 0). Pure, so it is unit-tested.
+pub(crate) fn invariant_violations(probe: &crate::app::Probe, expect_error: bool) -> Vec<String> {
+    let mut problems = Vec::new();
+
+    if let Some(toast) = &probe.toast
+        && !expect_error
+        && is_error_toast(toast)
+    {
+        problems.push(format!("unexpected error toast: {toast:?}"));
+    }
+
+    if let (Some(root), Some(path)) = (&probe.vault_root, &probe.active_path)
+        && !probe.dirty
+        && md_editor_core::vault::is_markdown_path(Path::new(path))
+        && probe.pdf_path.is_none()
+    {
+        let on_disk = std::fs::read_to_string(Path::new(root).join(path));
+        match on_disk {
+            Ok(text) if text != probe.buffer => problems.push(format!(
+                "{path} is clean but differs from disk: buffer {:?}, disk {:?}",
+                truncate(&probe.buffer),
+                truncate(&text)
+            )),
+            Err(error) => {
+                problems.push(format!("{path} is open and clean but unreadable: {error}"))
+            }
+            Ok(_) => {}
+        }
+    }
+
+    if let Some(root) = &probe.vault_root
+        && let Ok(listed) = md_editor_core::vault::list_vault_entries(Path::new(root))
+    {
+        let mut on_disk: Vec<String> = listed.into_iter().map(|e| e.path).collect();
+        let mut shown = probe.entries.clone();
+        on_disk.sort();
+        shown.sort();
+        if on_disk != shown {
+            let missing: Vec<_> = on_disk.iter().filter(|p| !shown.contains(p)).collect();
+            let extra: Vec<_> = shown.iter().filter(|p| !on_disk.contains(p)).collect();
+            problems.push(format!(
+                "file tree out of sync with disk: missing {missing:?}, stale {extra:?}"
+            ));
+        }
+    }
+
+    if probe.pdf_pending_pages > 0 {
+        problems.push(format!(
+            "{} PDF page renders still pending after settling",
+            probe.pdf_pending_pages
+        ));
+    }
+
+    problems
+}
+
+/// Toasts are plain strings; error toasts say so.
+fn is_error_toast(toast: &str) -> bool {
+    let lower = toast.to_lowercase();
+    ["fail", "error", "could not", "cannot", "can't", "unable"]
+        .iter()
+        .any(|word| lower.contains(word))
+}
+
+fn truncate(text: &str) -> String {
+    text.chars().take(120).collect()
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+
+    fn probe(root: &Path) -> crate::app::Probe {
+        let mut probe = MdEditor::new_with_startup_file(None).0.probe();
+        probe.vault_root = Some(root.to_string_lossy().into_owned());
+        probe.entries = vec!["a.md".to_string()];
+        probe
+    }
+
+    #[test]
+    fn a_consistent_quiet_state_has_no_violations() {
+        let vault = Vault::new("inv-ok").file("a.md", "hello");
+        let mut p = probe(&vault.root);
+        p.active_path = Some("a.md".to_string());
+        p.buffer = "hello".to_string();
+        assert!(invariant_violations(&p, false).is_empty());
+    }
+
+    #[test]
+    fn each_broken_invariant_is_reported() {
+        let vault = Vault::new("inv-bad").file("a.md", "on disk");
+        let mut p = probe(&vault.root);
+        p.active_path = Some("a.md".to_string());
+        p.buffer = "in memory".to_string();
+        p.entries.push("ghost.md".to_string());
+        p.toast = Some("Save failed: permission denied".to_string());
+        p.pdf_pending_pages = 2;
+        let problems = invariant_violations(&p, false);
+        assert_eq!(problems.len(), 4, "{problems:#?}");
+
+        // An expected error toast is not a violation; a dirty buffer may differ.
+        p.dirty = true;
+        assert_eq!(invariant_violations(&p, true).len(), 2);
+    }
+
+    #[test]
+    fn info_toasts_are_not_errors() {
+        assert!(!is_error_toast("No unsaved changes"));
+        assert!(is_error_toast("Autosave failed: disk full"));
+        assert!(is_error_toast("Could not open vault"));
     }
 }

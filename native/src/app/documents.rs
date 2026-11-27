@@ -1,4 +1,4 @@
-//! Opening, saving and parking documents (notes, PDFs, decks, images) and session persistence.
+//! Opening, saving and parking documents (notes, PDFs, images) and session persistence.
 
 use super::*;
 
@@ -27,12 +27,29 @@ impl MdEditor {
         };
 
         let content = self.editor.buffer.text();
-        match md_editor_core::vault::save_file(&self.state, &path, &content) {
-            Ok(()) => {
+        let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M-%S").to_string();
+        match md_editor_core::vault::save_file_guarded(
+            &self.state,
+            &path,
+            &content,
+            self.editor.disk_hash,
+            &stamp,
+        ) {
+            Ok(conflict) => {
+                self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&content));
+                if let Some(copy) = conflict {
+                    self.note_self_write(&copy);
+                    self.vault.entries =
+                        md_editor_core::vault::list_vault(&self.state).unwrap_or_default();
+                    self.ui.toast = Some(format!(
+                        "{path} was changed on disk while you were editing. Your version is saved; the other is in {copy}"
+                    ));
+                }
                 self.editor.buffer.mark_saved();
                 self.editor.autosave_pending_since = None;
                 self.invalidate_graph();
                 self.autosave_failure_reported = false;
+                self.ui.last_save_failed = false;
                 self.note_self_write(&path);
                 self.persist_document_position();
                 SaveOutcome::Saved
@@ -44,6 +61,11 @@ impl MdEditor {
                 // would retry a failing write (a full create/write/fsync/rename
                 // attempt) ten times a second for the rest of the session.
                 self.editor.mark_dirty_now();
+                self.ui.last_save_failed = true;
+                // Once per failure run, like the toast: retries are silent.
+                if !self.autosave_failure_reported {
+                    log::warn!("Saving {path} failed: {err}");
+                }
                 SaveOutcome::Failed(err)
             }
         }
@@ -58,7 +80,7 @@ impl MdEditor {
     /// persisted, in which case the caller must not proceed.
     pub(super) fn leave_active_document(&mut self) -> Result<(), String> {
         if let SaveOutcome::Failed(err) = self.save_active_document() {
-            return Err(err);
+            return Err(err.to_string());
         }
         self.park_active_buffer();
         Ok(())
@@ -86,9 +108,28 @@ impl MdEditor {
     /// Written once on exit rather than on every resize or scroll event, so
     /// dragging a window edge or flicking through a long note does not turn
     /// into a stream of database writes.
-    pub(super) fn persist_session(&self) {
+    pub(super) fn persist_session(&mut self) {
+        let _ = self.for_each_pane(|app| {
+            app.save_current_tab_view();
+            app.persist_tabs();
+            app.persist_document_position();
+            Task::none()
+        });
         self.persist_window_size();
-        self.persist_document_position();
+    }
+
+    /// Save every pane's note and tab views; the first write error, if any.
+    pub(super) fn save_all_panes(&mut self) -> Option<String> {
+        let mut failure = None;
+        let _ = self.for_each_pane(|app| {
+            if let SaveOutcome::Failed(err) = app.save_active_document() {
+                failure.get_or_insert(err.to_string());
+            }
+            app.save_current_tab_view();
+            app.persist_tabs();
+            Task::none()
+        });
+        failure
     }
 
     /// Record the window geometry. Called as the window resizes rather than
@@ -144,7 +185,7 @@ impl MdEditor {
         let Some(path) = self.active_path.clone() else {
             return;
         };
-        let outgoing = std::mem::replace(&mut self.editor.buffer, DocBuffer::new());
+        let outgoing = std::mem::take(&mut self.editor.buffer);
         let scroll_y = self.editor.scroll_y;
         self.editor.retain_buffer(path, outgoing, scroll_y);
     }
@@ -168,7 +209,13 @@ impl MdEditor {
             .as_deref()
             .map(|root| std::path::Path::new(root).join(&resolved).exists())
             .unwrap_or(false);
-        if !exists && let Some(found) = resolve_vault_note_by_name(&self.vault.entries, link_path) {
+        // Only a bare name is found by basename; `[[sub/Name]]` names a place,
+        // as the link index resolves it.
+        let bare = !link_path.contains('/') && !link_path.starts_with('.');
+        if !exists
+            && bare
+            && let Some(found) = resolve_vault_note_by_name(&self.vault.entries, link_path)
+        {
             return found;
         }
         resolved
@@ -176,6 +223,16 @@ impl MdEditor {
 
     pub(super) fn open_file_extended(&mut self, path: &str, reset_scroll: bool) -> Task<Message> {
         let is_different = self.active_path.as_deref() != Some(path);
+
+        // Re-opening the note already on screen: flush it first, so the read
+        // below sees our own edits and the live buffer (undo history, caret)
+        // can be kept instead of rebuilt from disk.
+        if !is_different && let SaveOutcome::Failed(err) = self.save_active_document() {
+            self.ui.toast = Some(format!(
+                "Not reopening {path}: {err}. Your edits are still open here."
+            ));
+            return Task::none();
+        }
 
         // Read the incoming file *first*. Parking the outgoing buffer before
         // knowing the open will succeed would leave an empty buffer bound to
@@ -209,16 +266,37 @@ impl MdEditor {
         }
 
         let content = incoming;
+        self.editor.completion = None;
+        if is_different {
+            // Image links are relative to the note: a cached `img.png` from
+            // another folder is not this note's `img.png`.
+            self.editor.forget_images();
+        }
+        self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&content));
         // Resume the parked buffer when it still matches disk, so
         // undo history and cursor survive a round trip; otherwise
         // the file changed underneath us and a fresh buffer is the
         // only honest option.
-        let resumed = self.editor.take_retained_matching(path, &content);
+        let keep_current = !is_different && self.editor.buffer.text() == content;
+        let resumed = if keep_current {
+            None
+        } else {
+            self.editor
+                .take_retained_matching(path, &content)
+                .or_else(|| {
+                    self.workspace
+                        .other
+                        .as_mut()
+                        .and_then(|other| other.editor.take_retained_matching(path, &content))
+                })
+        };
         let resumed_scroll = resumed.as_ref().map(|(_, y)| *y);
-        let is_resumed = resumed.is_some();
-        self.editor.buffer = resumed
-            .map(|(buffer, _)| buffer)
-            .unwrap_or_else(|| DocBuffer::from_text(&content));
+        let is_resumed = keep_current || resumed.is_some();
+        if !keep_current {
+            self.editor.buffer = resumed
+                .map(|(buffer, _)| buffer)
+                .unwrap_or_else(|| DocBuffer::from_text(&content));
+        }
 
         // A buffer built fresh from disk starts at the top. If a
         // previous session left a cursor here, put it back.
@@ -227,11 +305,18 @@ impl MdEditor {
         }
         self.editor.autosave_pending_since = None;
         self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+        self.save_current_tab_view();
         self.active_path = Some(path.to_string());
+        self.tabs.open(path, crate::tabs::TabKind::Note, false);
+        self.persist_tabs();
         let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
         self.active_image_path = None;
         self.active_image = None;
-        self.pptx.close();
+        if !self.pdf.pending_pages.is_empty() {
+            self.pdf.pending_pages.clear();
+            self.pdf.pending_links.clear();
+            self.pdf.render_generation = self.pdf.render_generation.wrapping_add(1);
+        }
         self.showing_pdf = false;
         self.active_panel = ActivePanel::Markdown;
         self.editor.toc_entries = views::toc::get_toc(&content);
@@ -249,7 +334,7 @@ impl MdEditor {
             self.editor.scroll_y = target_y;
             self.motion.editor_scroll = None;
             let scroll_task = operation::scroll_to(
-                iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+                workspace::current_pane().editor_scrollable_id(),
                 AbsoluteOffset {
                     x: 0.0,
                     y: target_y,
@@ -260,55 +345,14 @@ impl MdEditor {
         highlight_task
     }
 
-    /// Show a presentation in the viewer. Like an image, a presentation takes
-    /// the pane from the open note, so the note is flushed and parked first.
-    pub(super) fn open_pptx(&mut self, path: &str) -> Task<Message> {
-        if self.vault.root.is_none() {
-            self.ui.toast = Some("Open a vault before opening a presentation".to_string());
-            return Task::none();
-        }
-        if let Err(err) = self.leave_active_document() {
-            self.ui.toast = Some(format!(
-                "Not opening the presentation: {err}. Your edits are still open."
-            ));
-            return Task::none();
-        }
-        self.active_path = None;
-        self.pdf.active_path = None;
-        self.showing_pdf = false;
-        self.active_image_path = None;
-        self.active_image = None;
-        self.active_panel = ActivePanel::Markdown;
-        self.editor.toc_entries.clear();
-        self.editor.toc_is_synthetic = false;
-        self.pdf.toc_entries.clear();
-        self.pdf.toc_is_synthetic = false;
-        let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
-        self.vault.backlinks =
-            md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
-        self.load_pptx(path)
-    }
-
-    /// Read and lay out the presentation at `path` off the UI thread.
-    pub(super) fn load_pptx(&mut self, path: &str) -> Task<Message> {
-        let Some(abs_path) = self.resolve_active_path(path) else {
-            return Task::none();
-        };
-        let generation = self.pptx.begin_load(path);
-        Task::perform(
-            async move { crate::slides::load_deck(&abs_path).map(Arc::new) },
-            move |result| Message::PptxLoaded(generation, result),
-        )
-    }
-
     pub(super) fn open_image(&mut self, path: &str) -> Task<Message> {
         let Some(abs_path) = self.resolve_active_path(path) else {
             self.ui.toast = Some("Open a vault before opening an image".to_string());
             return Task::none();
         };
 
-        match image::open(&abs_path) {
-            Ok(img) => {
+        match crate::raster::decode(&abs_path) {
+            Ok(decoded) => {
                 // Showing an image clears `active_path`, which detaches the
                 // open note from the buffer holding it. Flush and park it
                 // first, or those edits have nowhere left to be written to.
@@ -319,24 +363,20 @@ impl MdEditor {
                     return Task::none();
                 }
 
-                let (width, height) = img.dimensions();
-                let handle = iced::widget::image::Handle::from_rgba(
-                    width,
-                    height,
-                    img.into_rgba8().into_raw(),
-                );
+                let (handle, width, height) = decoded.handle();
+                self.save_current_tab_view();
+                self.active_path = None;
                 self.active_image_path = Some(path.to_string());
+                self.ui.image_zoom = None;
+                self.tabs.open(path, crate::tabs::TabKind::Image, false);
+                self.persist_tabs();
                 self.graph.set_active_path(None);
                 let _ = md_editor_core::config::set_sys_config(&self.state, "last_file", path);
-                self.active_image = Some((handle, width as f32, height as f32));
-                self.pdf.active_path = None;
-                self.pptx.close();
-                self.showing_pdf = false;
+                self.active_image = Some((handle, width, height));
+                self.clear_pdf_pane();
                 self.active_panel = ActivePanel::Markdown;
                 self.editor.toc_entries.clear();
                 self.editor.toc_is_synthetic = false;
-                self.pdf.toc_entries.clear();
-                self.pdf.toc_is_synthetic = false;
                 self.vault.backlinks.clear();
             }
             Err(err) => {
@@ -359,7 +399,7 @@ impl MdEditor {
         // Restore editor scroll position after search bar toggle
         let editor_y = self.editor.scroll_y;
         tasks.push(operation::scroll_to(
-            iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+            workspace::current_pane().editor_scrollable_id(),
             AbsoluteOffset {
                 x: 0.0,
                 y: editor_y,
@@ -369,7 +409,7 @@ impl MdEditor {
         if self.pdf.active_path.is_some() {
             let pdf_y = self.pdf.scroll_y;
             tasks.push(operation::scroll_to(
-                iced::advanced::widget::Id::new(PDF_SCROLLABLE_ID),
+                workspace::current_pane().pdf_scrollable_id(),
                 AbsoluteOffset { x: 0.0, y: pdf_y },
             ));
         }
@@ -394,13 +434,32 @@ impl MdEditor {
         self.tracker.visible = get("layout_tracker_visible")
             .and_then(|value| value.parse().ok())
             .unwrap_or(self.tracker.visible);
-        self.ui.split_view_active = get("layout_split_active")
+        // The second pane itself comes back with the vault's tabs
+        // (`restore_vault_tabs`), once there is a vault to open files from.
+        self.ui.restore_split = get("layout_split_active")
             .and_then(|value| value.parse().ok())
-            .unwrap_or(self.ui.split_view_active);
+            .unwrap_or(false);
+        self.workspace.axis = get("layout_split_axis")
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default();
         self.ui.split_ratio = get("layout_split_ratio")
             .and_then(|value| value.parse::<f32>().ok())
             .unwrap_or(self.ui.split_ratio)
-            .clamp(0.25, 0.75);
+            .clamp(0.2, 0.8);
+        self.ui.sidebar_width = get("layout_sidebar_width")
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(self.ui.sidebar_width)
+            .clamp(
+                crate::design::metrics::SIDEBAR_MIN_WIDTH,
+                crate::design::metrics::SIDEBAR_MAX_WIDTH,
+            );
+        self.ui.side_panel_width = get("layout_side_panel_width")
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(self.ui.side_panel_width)
+            .clamp(
+                crate::design::metrics::SIDE_PANEL_MIN_WIDTH,
+                crate::design::metrics::SIDE_PANEL_MAX_WIDTH,
+            );
     }
 
     pub(super) fn persist_layout(&self) {
@@ -415,11 +474,53 @@ impl MdEditor {
             ),
             ("layout_toc_visible", self.editor.toc_visible.to_string()),
             ("layout_tracker_visible", self.tracker.visible.to_string()),
-            ("layout_split_active", self.ui.split_view_active.to_string()),
+            ("layout_split_active", self.workspace.is_split().to_string()),
+            (
+                "layout_split_axis",
+                serde_json::to_string(&self.workspace.axis).unwrap_or_default(),
+            ),
             ("layout_split_ratio", self.ui.split_ratio.to_string()),
+            ("layout_sidebar_width", self.ui.sidebar_width.to_string()),
+            (
+                "layout_side_panel_width",
+                self.ui.side_panel_width.to_string(),
+            ),
         ];
         for (key, value) in values {
             let _ = md_editor_core::config::set_sys_config(&self.state, key, &value);
         }
+    }
+
+    /// The open note changed on disk (not by us). A clean buffer follows the
+    /// file, keeping the caret; a dirty one is left alone — the next save
+    /// notices the change and keeps the disk version as a conflict copy.
+    pub(super) fn reload_open_note_from_disk(&mut self) -> Task<Message> {
+        let Some(path) = self.active_path.clone() else {
+            return Task::none();
+        };
+        if self.editor.buffer.dirty || self.showing_pdf {
+            return Task::none();
+        }
+        let Ok(bytes) = md_editor_core::vault::open_file(&self.state, &path) else {
+            return Task::none();
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            return Task::none();
+        };
+        if text == self.editor.buffer.text() {
+            self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&text));
+            return Task::none();
+        }
+        let caret = self.editor.buffer.cursor_offset();
+        self.editor.buffer = DocBuffer::from_text(&text);
+        self.editor
+            .buffer
+            .set_cursor_offset(caret.min(text.chars().count()));
+        self.editor.disk_hash = Some(md_editor_core::vault::content_hash(&text));
+        self.editor.autosave_pending_since = None;
+        self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
+        self.editor.toc_entries = views::toc::get_toc(&text);
+        log::info!("Reloaded {path}: changed on disk");
+        self.highlight_all()
     }
 }

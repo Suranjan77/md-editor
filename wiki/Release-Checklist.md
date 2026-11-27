@@ -11,7 +11,8 @@ cargo fmt --check               # must be clean
 cargo check --workspace
 cargo test --workspace          # expect every test to pass (a few renderer harnesses are #[ignore]d by design)
 RENDER_PROPERTY_CASES=3000 cargo test -p md-editor-native properties
-cargo clippy --workspace        # baseline is 10 warnings; confirm it has not grown
+cargo test -p md-editor-native s13 -- --ignored   # e2e at scale: 20k-line note, 2,000-note vault
+scripts/clippy-ratchet.sh       # must match clippy-baseline.txt
 cargo build --release
 ```
 
@@ -21,11 +22,9 @@ Expected artifacts:
 - Linux / macOS — `target/release/md-editor`
 - the PDFium shared library, copied next to the executable by the build script
 
-For a reproducible release, pin and verify the PDFium download:
-
-```bash
-PDFIUM_RELEASE=chromium/6996 PDFIUM_SHA256=<hex digest> cargo build --release
-```
+The PDFium download is pinned and checksum-verified by default (`DEFAULT_PDFIUM_RELEASE` and
+`pinned_sha256` in `core/build_pdfium.rs`). Check the build log says
+`PDFium archive checksum verified` (or `already cached`).
 
 ---
 
@@ -119,51 +118,32 @@ Use a **fresh temporary vault**:
 - [ ] Open image files and confirm the preview renders.
 - [ ] Open the study tracker, start and stop a session, edit the configuration, restart the
       app, and confirm the state persisted.
-- [ ] On Linux, run `--install` and `--uninstall` and confirm the launcher appears and
-      disappears.
+- [ ] Open a `.md` file from the file manager and confirm it opens in MD Editor.
 
 ---
 
-## 5. Packaging
+## 5. Packaging (Arch Linux)
 
-### PDFium
+- [ ] Bump `version` in `Cargo.toml` and `pkgver` in `packaging/arch/md-editor/PKGBUILD`,
+      tag `v<version>`, then run `updpkgsums` and `makepkg --printsrcinfo > .SRCINFO` in
+      `packaging/arch/md-editor/`.
+- [ ] If the PDFium pin moved, `_pdfium` and its checksum match `core/build_pdfium.rs` in
+      both PKGBUILDs.
+- [ ] `scripts/build-arch-package.sh` succeeds (it runs `check()`), and `namcap` is clean on
+      the PKGBUILDs and the built package.
 
-Ship the platform library beside the executable:
+### Install check
 
-| Platform | Library |
-| :--- | :--- |
-| Windows | `pdfium.dll` |
-| Linux | `libpdfium.so` |
-| macOS | `libpdfium.dylib` |
-
-The app looks for it in, in order:
-
-1. `resources/` beside the executable — what CI produces;
-2. the executable's own directory.
-
-For portable distribution ship the executable, the PDFium library, the app icon, and the
-licence together.
-
-### Linux desktop integration
-
-Portable by default; integration is explicit:
-
-```bash
-./md-editor --install
-./md-editor --uninstall
-```
-
-`--install` writes `~/.local/share/applications/md-editor.desktop`, installs multi-size icons
-under `~/.local/share/icons/hicolor/`, and refreshes the desktop and icon caches where those
-tools exist.
-
-### First-run portability check
-
-- [ ] Run the packaged build from a fresh directory and confirm
-      `md_editor_settings.sqlite` is created **beside the executable**, not in a system
-      configuration directory.
-- [ ] Move the whole folder somewhere else and confirm settings, highlights, and study
-      history come with it.
+- [ ] `pacman -U` the package on a machine (or user) with no data yet: MD Editor appears
+      in the app launcher with its icon, and first launch creates
+      `~/.local/share/md-editor/md_editor_settings.sqlite` and
+      `~/.local/state/md-editor/md-editor.log` — nothing beside `/usr/bin/md-editor`.
+- [ ] PDFs open (PDFium found in `/usr/lib/md-editor/`; the log says `PDFium bound`).
+- [ ] Upgrade over an existing install: settings, highlights and study history remain.
+- [ ] With a database from an old portable build beside the executable and none in
+      `~/.local/share/md-editor/`, first launch copies it (log: `Migrated settings
+      database`).
+- [ ] `pacman -R`: the binary, desktop entry and icons are gone; the data folders remain.
 
 ---
 

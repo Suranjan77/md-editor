@@ -1,286 +1,301 @@
-//! Search panels: in-note find/replace and vault-wide search.
+//! Search surfaces: the in-note find bar (with replace row) and the vault-wide search overlay.
 
-use iced::widget::{
-    Column, button, checkbox, column, container, row, scrollable, text, text_input,
-};
+use iced::widget::{Column, Space, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length, Renderer, Theme};
 
-use crate::messages::Message;
-use crate::theme;
-use crate::views::icons::{self, Icon};
+use crate::design::metrics::{
+    BORDER_WIDTH, ControlSize, Elevation, PALETTE_MAX_LIST_HEIGHT, PALETTE_WIDTH, RADIUS_LG,
+    SPACE_1, SPACE_2, SPACE_3,
+};
+use crate::design::{TextRole, tokens};
+use crate::messages::{Message, PdfMessage, SearchMessage, Shortcut};
+use crate::shortcuts;
+use crate::ui::{
+    Button, ButtonVariant, Icon, IconButton, ListRowProps, TextField, empty_state, list_row,
+    toolbar_frame,
+};
 
 pub const FILE_SEARCH_INPUT_ID: &str = "file_search_input";
 pub const GLOBAL_SEARCH_INPUT_ID: &str = "global_search_input";
 
-pub fn file_bar<'a>(
-    query: &'a str,
-    replace: &'a str,
-    regex: bool,
-    match_case: bool,
-    current_match_count: usize,
-    active_match_index: Option<usize>,
+/// What the in-note find bar shows.
+pub struct FileBarProps<'a> {
+    pub query: &'a str,
+    pub replace: &'a str,
+    pub replace_visible: bool,
+    pub regex: bool,
+    pub match_case: bool,
+    pub match_count: usize,
+    pub active_match: Option<usize>,
+}
+
+fn caption<'a>(content: String) -> Element<'a, Message, Theme, Renderer> {
+    let role = TextRole::MonoCaption;
+    text(content)
+        .size(role.size())
+        .font(role.font())
+        .color(tokens().fg_secondary)
+        .into()
+}
+
+fn match_counter<'a>(
+    query: &str,
+    count: usize,
+    active: Option<usize>,
 ) -> Element<'a, Message, Theme, Renderer> {
-    let search_input = text_input("Find in current file", query)
-        .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
-        .on_input(Message::SearchQueryChanged)
-        .on_submit(Message::GlobalSearchSubmit)
-        .on_submit(Message::SearchNext)
-        .padding([theme::SPACE_3, theme::SPACE_4])
-        .size(theme::TEXT_BASE)
-        .width(Length::FillPortion(3));
-
-    let replace_input = text_input("Replace", replace)
-        .on_input(Message::SearchReplaceChanged)
-        .padding([theme::SPACE_3, theme::SPACE_4])
-        .size(theme::TEXT_BASE)
-        .width(Length::FillPortion(2));
-
-    container(
-        row![
-            icons::view(Icon::Search, theme::ACCENT, 18.0),
-            search_input,
-            replace_input,
-            button(text("Replace all").size(theme::TEXT_SM))
-                .on_press(Message::SearchReplaceAll)
-                .padding([theme::SPACE_3, theme::SPACE_4])
-                .style(button::secondary),
-            checkbox(regex)
-                .label("Regex")
-                .on_toggle(Message::SearchRegexToggled)
-                .size(theme::TEXT_BASE),
-            checkbox(match_case)
-                .label("Case")
-                .on_toggle(Message::SearchMatchCaseToggled)
-                .size(theme::TEXT_BASE),
-            button(icons::view(Icon::ChevronUp, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchPrevious)
-                .padding(theme::SPACE_3)
-                .style(button::text),
-            button(icons::view(Icon::ChevronDown, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchNext)
-                .padding(theme::SPACE_3)
-                .style(button::text),
-            text(match active_match_index {
-                Some(index) if current_match_count > 0 =>
-                    format!("{} of {}", index + 1, current_match_count),
-                _ => format!("{} matches", current_match_count),
-            })
-            .size(theme::TEXT_SM)
-            .color(theme::TEXT_MUTED),
-            button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
-                .on_press(Message::SearchClose)
-                .padding(theme::SPACE_3)
-                .style(button::text),
-        ]
-        .spacing(theme::SPACE_4)
-        .align_y(Alignment::Center)
-        .padding([theme::SPACE_3, theme::SPACE_4]),
-    )
-    .width(Length::Fill)
-    .style(|_| container::Style {
-        background: Some(iced::Background::Color(theme::BG_SECONDARY)),
-        border: iced::Border {
-            color: theme::BORDER,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..Default::default()
+    caption(match active {
+        Some(index) if count > 0 => format!("{} of {count}", index + 1),
+        _ if query.is_empty() => String::new(),
+        _ if count == 0 => "No matches".to_string(),
+        _ => format!("{count} matches"),
     })
+}
+
+fn search_toggles<'a>(regex: bool, match_case: bool) -> [Element<'a, Message, Theme, Renderer>; 2] {
+    [
+        IconButton::new(Icon::TextAa, "Match case")
+            .size(ControlSize::Sm)
+            .selected(match_case)
+            .on_press(Message::Search(SearchMessage::MatchCaseToggled(
+                !match_case,
+            )))
+            .build(),
+        IconButton::new(Icon::Regex, "Regular expression")
+            .size(ControlSize::Sm)
+            .selected(regex)
+            .on_press(Message::Search(SearchMessage::RegexToggled(!regex)))
+            .build(),
+    ]
+}
+
+/// The find bar above a note: query, toggles, counter, previous / next, and
+/// an expandable replace row.
+pub fn file_bar<'a>(props: FileBarProps<'a>) -> Element<'a, Message, Theme, Renderer> {
+    let [case, regex] = search_toggles(props.regex, props.match_case);
+    let expander = IconButton::new(
+        if props.replace_visible {
+            Icon::ChevronDown
+        } else {
+            Icon::ChevronRight
+        },
+        "Toggle replace",
+    )
+    .size(ControlSize::Sm)
+    .selected(props.replace_visible)
+    .on_press(Message::Search(SearchMessage::ToggleReplaceRow))
+    .build();
+
+    let find_row = toolbar_frame(
+        vec![
+            expander,
+            TextField::search("Find in note", props.query)
+                .id(iced::advanced::widget::Id::new(FILE_SEARCH_INPUT_ID))
+                .size(ControlSize::Sm)
+                .on_input(|value| Message::Search(SearchMessage::QueryChanged(value)))
+                .on_submit(Message::Search(SearchMessage::Next))
+                .on_clear(Message::Search(SearchMessage::QueryChanged(String::new())))
+                .build(),
+            case,
+            regex,
+            match_counter(props.query, props.match_count, props.active_match),
+            IconButton::new(Icon::ChevronUp, "Previous match")
+                .size(ControlSize::Sm)
+                .shortcut("Shift Enter")
+                .on_press(Message::Search(SearchMessage::Previous))
+                .build(),
+            IconButton::new(Icon::ChevronDown, "Next match")
+                .size(ControlSize::Sm)
+                .shortcut("Enter")
+                .on_press(Message::Search(SearchMessage::Next))
+                .build(),
+            IconButton::new(Icon::X, "Close find")
+                .size(ControlSize::Sm)
+                .shortcut("Esc")
+                .on_press(Message::Search(SearchMessage::Close))
+                .build(),
+        ],
+        false,
+    );
+    if !props.replace_visible {
+        return find_row;
+    }
+
+    let has_match = props.match_count > 0;
+    let replace_row = toolbar_frame(
+        vec![
+            Space::new()
+                .width(Length::Fixed(ControlSize::Sm.height()))
+                .into(),
+            TextField::new("Replace with", props.replace)
+                .size(ControlSize::Sm)
+                .on_input(|value| Message::Search(SearchMessage::ReplaceChanged(value)))
+                .on_submit(Message::Search(SearchMessage::ReplaceOne))
+                .build(),
+            Button::new("Replace")
+                .size(ControlSize::Sm)
+                .on_press_maybe(has_match.then_some(Message::Search(SearchMessage::ReplaceOne)))
+                .tooltip("Replace this match and go to the next", Some("Enter"))
+                .build(),
+            Button::new("Replace all")
+                .size(ControlSize::Sm)
+                .variant(ButtonVariant::Ghost)
+                .on_press_maybe(has_match.then_some(Message::Search(SearchMessage::ReplaceAll)))
+                .build(),
+        ],
+        false,
+    );
+    column![find_row, replace_row].into()
+}
+
+/// Everything the vault search overlay renders from.
+pub struct SearchProps<'a> {
+    pub query: &'a str,
+    pub regex: bool,
+    pub match_case: bool,
+    /// Matches in the open note, for the summary line.
+    pub current_match_count: usize,
+    /// Keyboard selection across PDF results, then note results.
+    pub selected: usize,
+    pub results: &'a [md_editor_core::types::SearchResult],
+    pub results_truncated: bool,
+    pub pdf_results: &'a [md_editor_core::pdf::PdfSearchMatch],
+    pub pdf_error: Option<&'a str>,
+}
+
+fn section_label<'a>(label: String) -> Element<'a, Message, Theme, Renderer> {
+    let role = TextRole::Label;
+    container(
+        text(label)
+            .size(role.size())
+            .font(role.font())
+            .color(tokens().fg_tertiary),
+    )
+    .padding([SPACE_1, SPACE_3])
     .into()
 }
 
-/// Render the vault search overlay.
-pub fn view<'a>(
-    query: &'a str,
-    replace: &'a str,
-    regex: bool,
-    match_case: bool,
-    current_match_count: usize,
-    results: &'a [md_editor_core::types::SearchResult],
-    results_truncated: bool,
-    pdf_results: &'a [md_editor_core::pdf::PdfSearchMatch],
-    pdf_error: Option<&'a str>,
-    visible: bool,
-) -> Element<'a, Message, Theme, Renderer> {
-    if !visible {
-        return container(text(""))
-            .width(Length::Fixed(0.0))
-            .height(Length::Fixed(0.0))
-            .into();
+/// The vault search overlay (`Ctrl+Shift+F`): query and toggles, then PDF
+/// matches in the open document and note matches across the vault. ↑/↓ move
+/// the selection, Enter opens it.
+pub fn view<'a>(props: SearchProps<'a>) -> Element<'a, Message, Theme, Renderer> {
+    let t = tokens();
+    let [case, regex] = search_toggles(props.regex, props.match_case);
+    let header = row![
+        TextField::search("Search notes and the open PDF", props.query)
+            .id(iced::advanced::widget::Id::new(GLOBAL_SEARCH_INPUT_ID))
+            .on_input(|value| Message::Search(SearchMessage::QueryChanged(value)))
+            .on_submit(Message::Search(SearchMessage::GlobalSearchSubmit))
+            .on_clear(Message::Search(SearchMessage::QueryChanged(String::new())))
+            .build(),
+        case,
+        regex,
+        IconButton::new(Icon::X, "Close search")
+            .shortcut(shortcuts::chord(Shortcut::Escape))
+            .on_press(Message::Search(SearchMessage::Close))
+            .build(),
+    ]
+    .spacing(SPACE_2)
+    .align_y(Alignment::Center);
+
+    let mut list: Vec<Element<'a, Message, Theme, Renderer>> = Vec::new();
+    if !props.pdf_results.is_empty() {
+        list.push(section_label(format!(
+            "In this PDF · {}",
+            props.pdf_results.len()
+        )));
+        for (i, result) in props.pdf_results.iter().enumerate() {
+            list.push(list_row(ListRowProps {
+                title: format!("p. {} — {}", result.page_index + 1, result.context.trim()).into(),
+                subtitle: None,
+                leading_icon: Some(Icon::FilePdf),
+                shortcut: None,
+                selected: props.selected == i,
+                active_doc: false,
+                focused: false,
+                drag_over: false,
+                max_title_chars: 64,
+                on_press: Some(Message::Pdf(PdfMessage::SearchResultClicked(
+                    result.page_index,
+                ))),
+            }));
+        }
+    }
+    if !props.results.is_empty() {
+        list.push(section_label(format!("Notes · {}", props.results.len())));
+        let offset = props.pdf_results.len();
+        for (i, result) in props.results.iter().enumerate() {
+            list.push(list_row(ListRowProps {
+                title: result.path.as_str().into(),
+                subtitle: Some(result.context.trim().into()),
+                leading_icon: Some(Icon::FileText),
+                shortcut: None,
+                selected: props.selected == offset + i,
+                active_doc: false,
+                focused: false,
+                drag_over: false,
+                max_title_chars: 64,
+                on_press: Some(Message::Search(SearchMessage::ResultClicked(
+                    result.path.clone(),
+                ))),
+            }));
+        }
+    }
+    if props.results_truncated {
+        list.push(section_label(
+            "Showing the first 100 notes — add words to narrow the search".to_string(),
+        ));
+    }
+    if let Some(error) = props.pdf_error {
+        list.push(section_label(error.to_string()));
     }
 
-    let search_input = text_input("Search document, vault, or PDF...", query)
-        .id(iced::advanced::widget::Id::new(GLOBAL_SEARCH_INPUT_ID))
-        .on_input(Message::SearchQueryChanged)
-        .padding([theme::SPACE_4, theme::SPACE_4])
-        .size(theme::TEXT_MD)
-        .width(Length::Fill);
-
-    let replace_input = text_input("Replace in current markdown document...", replace)
-        .on_input(Message::SearchReplaceChanged)
-        .padding([theme::SPACE_3, theme::SPACE_4])
-        .size(theme::TEXT_BASE)
-        .width(Length::Fill);
-
-    let close_btn = button(icons::view(Icon::X, theme::TEXT_MUTED, 16.0))
-        .on_press(Message::SearchClose)
-        .padding(theme::SPACE_3)
-        .style(button::text);
-
-    let header = column![
-        row![
-            icons::view(Icon::Search, theme::ACCENT, 18.0),
-            text("Global search")
-                .size(theme::TEXT_MD)
-                .color(theme::ACCENT),
-            search_input,
-            close_btn,
-        ]
-        .spacing(theme::SPACE_4)
-        .align_y(Alignment::Center),
-        row![
-            replace_input,
-            button(text("Replace all").size(theme::TEXT_SM))
-                .on_press(Message::SearchReplaceAll)
-                .padding([theme::SPACE_3, theme::SPACE_4])
-                .style(button::secondary),
-        ]
-        .spacing(theme::SPACE_4)
-        .align_y(Alignment::Center),
-        row![
-            checkbox(regex)
-                .label("Regex")
-                .on_toggle(Message::SearchRegexToggled)
-                .size(theme::TEXT_BASE),
-            checkbox(match_case)
-                .label("Match case")
-                .on_toggle(Message::SearchMatchCaseToggled)
-                .size(theme::TEXT_BASE),
-            text(format!(
-                "{} matches in current document",
-                current_match_count
-            ))
-            .size(theme::TEXT_SM)
-            .color(theme::TEXT_MUTED),
-        ]
-        .spacing(theme::SPACE_5)
-        .align_y(Alignment::Center),
-    ]
-    .spacing(theme::SPACE_4)
-    .padding(theme::SPACE_5);
-
-    let vault_results: Column<'_, Message, Theme, Renderer> =
-        results
-            .iter()
-            .fold(Column::new().spacing(theme::SPACE_1), |col, result| {
-                let path_text = text(&result.path)
-                    .size(theme::TEXT_BASE)
-                    .color(theme::ACCENT);
-                let context_text = text(&result.context)
-                    .size(theme::TEXT_SM)
-                    .color(theme::TEXT_SECONDARY);
-
-                let item: iced::widget::Button<'_, Message, Theme, Renderer> =
-                    button(column![path_text, context_text].spacing(theme::SPACE_1))
-                        .on_press(Message::SearchResultClicked(result.path.clone()))
-                        .padding([theme::SPACE_3, theme::SPACE_4])
-                        .width(Length::Fill)
-                        .style(button::text);
-
-                col.push(item)
-            });
-
-    let pdf_result_list: Column<'_, Message, Theme, Renderer> =
-        pdf_results
-            .iter()
-            .fold(Column::new().spacing(theme::SPACE_1), |col, result| {
-                let item: iced::widget::Button<'_, Message, Theme, Renderer> = button(
-                    column![
-                        text(format!("PDF page {}", result.page_index + 1))
-                            .size(theme::TEXT_BASE)
-                            .color(theme::ACCENT),
-                        text(&result.context)
-                            .size(theme::TEXT_SM)
-                            .color(theme::TEXT_SECONDARY),
-                    ]
-                    .spacing(theme::SPACE_1),
-                )
-                .on_press(Message::PdfSearchResultClicked(result.page_index))
-                .padding([theme::SPACE_3, theme::SPACE_4])
-                .width(Length::Fill)
-                .style(button::text);
-
-                col.push(item)
-            });
-
-    let empty_state = if results.is_empty() && pdf_results.is_empty() && !query.is_empty() {
-        Some(
-            text("No results found")
-                .size(theme::TEXT_SM)
-                .color(theme::TEXT_MUTED),
-        )
+    let body: Element<'a, Message, Theme, Renderer> = if list.is_empty() {
+        if props.query.trim().is_empty() {
+            empty_state(
+                Icon::Search,
+                "Search the vault",
+                "Type to search every note, and the open PDF.",
+                None,
+            )
+        } else {
+            empty_state(
+                Icon::Search,
+                "No results",
+                "Try fewer words, or turn off Match case and Regex.",
+                None,
+            )
+        }
     } else {
-        None
+        scrollable(Column::with_children(list).spacing(SPACE_1))
+            .height(Length::Shrink)
+            .into()
     };
 
-    let mut content = column![
-        header,
-        scrollable(
-            column![
-                text("PDF results")
-                    .size(theme::TEXT_SM)
-                    .color(theme::TEXT_MUTED),
-                pdf_result_list,
-                text("Vault results")
-                    .size(theme::TEXT_SM)
-                    .color(theme::TEXT_MUTED),
-                if results_truncated {
-                    text("100+ results — refine your search")
-                        .size(theme::TEXT_SM)
-                        .color(theme::TEXT_MUTED)
-                } else {
-                    text("").size(1)
-                },
-                vault_results,
-            ]
-            .spacing(theme::SPACE_3)
-            .padding([theme::SPACE_0, theme::SPACE_5])
-        )
-        .height(Length::Fill),
-    ];
+    let summary = if props.current_match_count > 0 {
+        caption(format!("{} in the open note", props.current_match_count))
+    } else {
+        Space::new().height(Length::Fixed(0.0)).into()
+    };
 
-    if let Some(err) = pdf_error {
-        content = content.push(
-            container(text(err).size(theme::TEXT_SM).color(theme::TEXT_MUTED))
-                .padding([theme::SPACE_0, theme::SPACE_5])
-                .width(Length::Fill),
-        );
-    }
-
-    if let Some(empty) = empty_state {
-        content = content.push(
-            container(empty)
-                .padding([theme::SPACE_5, theme::SPACE_5])
-                .width(Length::Fill),
-        );
-    }
-
-    container(content)
-        .width(Length::Fixed(620.0))
-        .max_height(620.0)
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(theme::BG_SECONDARY)),
-            border: iced::Border {
-                color: theme::BORDER,
-                width: 1.0,
-                radius: theme::RADIUS_MD.into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 20.0,
-            },
-            ..Default::default()
-        })
-        .into()
+    container(
+        column![
+            header,
+            summary,
+            container(body).max_height(PALETTE_MAX_LIST_HEIGHT)
+        ]
+        .spacing(SPACE_2),
+    )
+    .width(Length::Fixed(PALETTE_WIDTH))
+    .padding(SPACE_3)
+    .style(move |_| iced::widget::container::Style {
+        background: Some(iced::Background::Color(t.bg_popover)),
+        border: iced::Border {
+            color: t.border_default,
+            width: BORDER_WIDTH,
+            radius: RADIUS_LG.into(),
+        },
+        shadow: Elevation::Dialog.shadow(),
+        ..Default::default()
+    })
+    .into()
 }

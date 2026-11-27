@@ -1,18 +1,19 @@
 //! Pen input plumbing: the sample type, the capture toggle, and the stream
 //! that carries captured samples into the iced runtime.
 //!
-//! Capture itself is platform specific — see [`super::pen_win`] for the
-//! Windows implementation. Everything here is platform neutral so the rest of
+//! Capture itself is platform specific: `pen_win` on Windows (the pointer
+//! input stack) and `pen_wayland` on Linux (the Wayland tablet protocol,
+//! through the vendored winit). Everything here is platform neutral so the rest of
 //! the app never sees a `#[cfg]`.
 
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::messages::Message;
+use crate::messages::{InkMessage, Message};
 
 /// Where a sample sits in a stroke's lifecycle.
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))] // used by the pen hooks
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PenPhase {
     /// Pen touched down: start a new stroke.
@@ -43,11 +44,12 @@ pub struct PenSample {
     pub y: f32,
     /// Normalized pen pressure, `0.0..=1.0`.
     pub pressure: f32,
-    /// The pen is inverted (eraser end) — erase instead of draw.
+    /// Erase instead of draw: the pen is inverted (eraser end), or the side
+    /// button the platform hook maps to erasing is held.
     pub eraser: bool,
-    /// A barrel (side) button is held. Used to summon the radial menu at the
-    /// nib rather than making the user travel to the toolbar.
-    pub barrel: bool,
+    /// The side button that summons the radial menu at the nib is held, so
+    /// the user need not travel to the toolbar.
+    pub menu: bool,
 }
 
 /// Whether the platform hook should claim pen messages.
@@ -81,12 +83,12 @@ static CHANNEL: LazyLock<Channel> = LazyLock::new(|| {
 });
 
 /// Hand a captured sample to the runtime. Called from the platform hook.
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))] // used by the pen hooks
 pub(crate) fn emit(sample: PenSample) {
     let _ = CHANNEL.0.send(sample);
 }
 
-#[cfg_attr(not(windows), allow(dead_code))] // used by the Windows pen hook
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))] // used by the pen hooks
 pub(crate) fn is_capturing() -> bool {
     CAPTURING.load(Ordering::Relaxed)
 }
@@ -102,8 +104,15 @@ pub fn is_available() -> bool {
     INSTALLED.load(Ordering::Relaxed)
 }
 
+/// The raw id of the window the hook is attached to, `0` for none.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // used by the Wayland pen hook
+pub(crate) fn hooked_window() -> u64 {
+    HOOKED_WINDOW.load(Ordering::Relaxed)
+}
+
 /// Install the platform pen hook on the window identified by `raw_window_id`
-/// (the `HWND` on Windows, as returned by `iced::window::raw_id`).
+/// (as returned by `iced::window::raw_id`: the `HWND` on Windows, winit's
+/// window id on Linux).
 ///
 /// Installing on the same window twice is a no-op; a different window moves
 /// the hook.
@@ -123,9 +132,21 @@ pub fn install(raw_window_id: u64) -> Result<(), String> {
         Ok(())
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
-        Err("Handwriting input is only implemented on Windows".to_string())
+        // The handler is process-wide and filters by window, so following a
+        // reopened ink window only moves the id it filters on.
+        if !INSTALLED.load(Ordering::Relaxed) {
+            super::pen_wayland::install()?;
+        }
+        HOOKED_WINDOW.store(raw_window_id, Ordering::Relaxed);
+        INSTALLED.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        Err("Pen input is only implemented on Windows and Linux (Wayland)".to_string())
     }
 }
 
@@ -158,7 +179,11 @@ pub fn stream() -> std::pin::Pin<Box<dyn iced::futures::Stream<Item = Message> +
                     batch.push(next);
                 }
 
-                if output.send(Message::InkPenSamples(batch)).await.is_err() {
+                if output
+                    .send(Message::Ink(InkMessage::PenSamples(batch)))
+                    .await
+                    .is_err()
+                {
                     break; // subscription dropped
                 }
             }

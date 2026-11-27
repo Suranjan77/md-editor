@@ -1,19 +1,38 @@
 //! The Markdown editor: commands, saving, caret reveal, math and the table of contents.
 
 use super::*;
+use crate::messages::EditorMessage;
 
 impl MdEditor {
     /// Handle a message routed here by [`MdEditor::update_inner`].
-    pub(super) fn update_editor(&mut self, message: Message) -> Task<Message> {
+    pub(super) fn update_editor(&mut self, message: EditorMessage) -> Task<Message> {
         match message {
-            Message::EditorCommand(command) => self.run_editor_command(command),
-            Message::EditorCommandNoScroll(command) => {
+            EditorMessage::Command(command) => self.run_editor_command(command),
+            EditorMessage::Paste => self.paste(),
+            EditorMessage::Pasted(payload) => self.pasted(payload),
+            EditorMessage::InsertImageDialog => self.insert_image_dialog(),
+            EditorMessage::ImagesPicked(files) => {
+                if files.is_empty() {
+                    Task::none()
+                } else {
+                    self.insert_files(&files)
+                }
+            }
+            EditorMessage::OpenContextMenu(x, y) => {
+                self.ui.context_menu = Some(crate::ui_state::ActiveContextMenu {
+                    target: crate::messages::ContextMenuTarget::Editor,
+                    x,
+                    y,
+                });
+                Task::none()
+            }
+            EditorMessage::CommandNoScroll(command) => {
                 self.run_editor_command_with_scroll(command, false)
             }
             // Editor arms that mutate only `self.editor` are routed to
             // `EditorPane::update`; see editor_state.rs.
-            m @ Message::MathRendered(..) => self.editor.update(m),
-            Message::EditorSave => {
+            m @ EditorMessage::MathRendered(..) => self.editor.update(Message::Editor(m)),
+            EditorMessage::Save => {
                 match self.save_active_document() {
                     SaveOutcome::Saved => self.ui.toast = Some("File saved".to_string()),
                     // An explicit save always answers, even when autosave got
@@ -23,15 +42,21 @@ impl MdEditor {
                         self.ui.toast = Some("No unsaved changes".to_string())
                     }
                     SaveOutcome::NothingToDo => {}
-                    SaveOutcome::Failed(err) => self.ui.toast = Some(format!("Save failed: {err}")),
+                    SaveOutcome::Failed(err) => {
+                        self.ui.notify(
+                            crate::ui::ToastKind::Error,
+                            format!("Save failed: {err}"),
+                            true,
+                        );
+                    }
                 }
                 Task::none()
             }
-            Message::AnimationTick(now) => {
+            EditorMessage::AnimationTick(now) => {
                 self.motion.now = now;
                 self.step_editor_scroll(now)
             }
-            Message::AutosaveElapsed => {
+            EditorMessage::AutosaveElapsed => {
                 if self.editor.autosave_due() {
                     // Autosave is silent on success — a toast on every pause in
                     // typing would be noise. Failures still surface, because a
@@ -48,10 +73,10 @@ impl MdEditor {
                 }
                 Task::none()
             }
-            Message::EditorCheckboxToggle(line_idx) => {
+            EditorMessage::CheckboxToggle(line_idx) => {
                 self.run_editor_command(EditorCommand::ToggleCheckbox { line: line_idx })
             }
-            Message::EditorScrolled {
+            EditorMessage::Scrolled {
                 y,
                 viewport_width,
                 viewport_height,
@@ -62,13 +87,42 @@ impl MdEditor {
                 self.editor.viewport_height = viewport_height;
                 Task::none()
             }
-            Message::EditorCaretView(view) => self.reveal_caret(view),
-            Message::EditorScrollInterrupted => {
+            EditorMessage::ImageLoaded(key, abs, result) => {
+                let root = self.vault.root.clone();
+                let active = self.active_path.clone();
+                self.editor
+                    .image_loaded(key, abs, result, root.as_deref(), active.as_deref());
+                Task::none()
+            }
+            EditorMessage::PdfCropLoaded(key, result) => {
+                self.editor.pdf_crop_loaded(key, result);
+                Task::none()
+            }
+            EditorMessage::CaretView(view) => {
+                self.editor.caret_view = Some(view);
+                self.reveal_caret(view)
+            }
+            m @ (EditorMessage::CompletionMove(_)
+            | EditorMessage::CompletionAccept
+            | EditorMessage::CompletionPick(_)
+            | EditorMessage::CompletionClose) => self.update_completion_message(m),
+            EditorMessage::CodeBlockFinished {
+                expected_path,
+                expected_close_line,
+                expected_body,
+                result,
+            } => self.on_code_block_finished(
+                expected_path,
+                expected_close_line,
+                expected_body,
+                result,
+            ),
+            EditorMessage::ScrollInterrupted => {
                 self.motion.editor_scroll = None;
                 Task::none()
             }
-            Message::TocClicked(index) => {
-                if self.pdf.active_path.is_some() {
+            EditorMessage::TocClicked(index) => {
+                if self.pdf.active_path.is_some() && self.showing_pdf {
                     let target_page = (index as u16).min(self.pdf.total_pages.saturating_sub(1));
                     self.navigate_pdf_page(target_page)
                 } else {
@@ -81,20 +135,13 @@ impl MdEditor {
                     task
                 }
             }
-            Message::ToggleTOC => {
-                if self.pdf.active_path.is_some()
-                    && (self.showing_pdf
-                        || (self.ui.split_view_active && self.active_path.is_some()))
-                {
+            EditorMessage::ToggleTOC => {
+                if self.active_path.is_some() || self.pdf.active_path.is_some() {
                     self.editor.toc_visible = !self.editor.toc_visible;
-                    // The TOC panel changes the PDF pane width — re-fit so pages
-                    // don't render stretched at the old width.
                     return self.refit_pdf_if_needed();
                 }
                 Task::none()
             }
-            // Variants routed here whose remaining shapes need no work.
-            _ => Task::none(),
         }
     }
 
@@ -108,10 +155,63 @@ impl MdEditor {
     /// relative to the active document, so the vault root + active path are
     /// supplied from the shell.
     pub(super) fn load_editor_resources(&mut self) -> Task<Message> {
-        if let (Some(root), Some(path)) = (self.vault.root.clone(), self.active_path.clone()) {
-            self.editor.load_images(&root, &path);
+        let images = match (self.vault.root.clone(), self.active_path.clone()) {
+            (Some(root), Some(path)) => self.editor.load_images(&root, &path),
+            _ => Task::none(),
+        };
+        Task::batch(vec![
+            images,
+            self.load_pdf_crops(),
+            self.editor.load_math(self.ui.scale_factor),
+        ])
+    }
+
+    /// Render, off the UI thread, each `pdf://…&crop=` image the note shows
+    /// that is not rendered yet. Paths resolve the way the link opens.
+    fn load_pdf_crops(&mut self) -> Task<Message> {
+        let Some(root) = self.vault.root.clone() else {
+            return Task::none();
+        };
+        let mut tasks = Vec::new();
+        for key in self.editor.take_wanted_pdf_crops() {
+            let link = crate::pdf_notes::parse_pdf_link(unwrap_angle_brackets(&key));
+            let rel =
+                resolve_relative_link_path(Some(&root), self.active_path.as_deref(), &link.path);
+            let source = md_editor_core::vault::resolve_vault_path_checked(
+                std::path::Path::new(&root),
+                &rel,
+            );
+            let (Some(region), Ok(abs)) = (link.crop, source) else {
+                self.editor
+                    .pdf_crop_loaded(key, Err("not a crop of a PDF in this vault".into()));
+                continue;
+            };
+            let page = link.page.unwrap_or(1).saturating_sub(1);
+            // Shown at the crop's size in CSS pixels (96 per 72 points), rendered
+            // at twice the display density so it stays sharp when enlarged.
+            let (width, height) = (region.width * 4.0 / 3.0, region.height * 4.0 / 3.0);
+            let target_px = (width * self.ui.scale_factor * 2.0).clamp(64.0, 3000.0) as u32;
+            let state = self.state.clone();
+            tasks.push(Task::perform(
+                super::blocking(move || {
+                    let renderer = state
+                        .pdf_renderer
+                        .as_ref()
+                        .ok_or_else(|| "PDF renderer is unavailable".to_string())?;
+                    let image = renderer
+                        .render_region(&abs.to_string_lossy(), page, region, target_px)
+                        .map_err(|e| e.to_string())?;
+                    let handle = iced::widget::image::Handle::from_rgba(
+                        image.width,
+                        image.height,
+                        image.rgba,
+                    );
+                    Ok((handle, width, height))
+                }),
+                move |result| Message::Editor(EditorMessage::PdfCropLoaded(key.clone(), result)),
+            ));
         }
-        self.editor.load_math(self.ui.scale_factor)
+        Task::batch(tasks)
     }
 
     /// Scroll the editor the way the answered reveal request asked, now that
@@ -184,6 +284,7 @@ impl MdEditor {
     ) -> Task<Message> {
         self.active_panel = ActivePanel::Markdown;
         let result = self.editor.buffer.execute(command);
+        self.refresh_completion(result.text_changed);
         if result.text_changed {
             self.editor.buffer_revision = self.editor.buffer_revision.wrapping_add(1);
             // Restart the autosave countdown on every edit, so a write happens
@@ -192,11 +293,11 @@ impl MdEditor {
         }
         let content_task = if result.projection_changed {
             if result.text_changed {
-                self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
+                self.editor.toc_entries = self.editor.buffer.toc();
             }
             self.highlight_all()
         } else if result.text_changed {
-            self.editor.toc_entries = views::toc::get_toc(&self.editor.buffer.text());
+            self.editor.toc_entries = self.editor.buffer.toc();
             Task::none()
         } else {
             Task::none()
@@ -211,7 +312,7 @@ impl MdEditor {
 
 pub(super) fn scroll_editor_to(y: f32) -> Task<Message> {
     operation::scroll_to(
-        iced::advanced::widget::Id::new(EDITOR_SCROLLABLE_ID),
+        workspace::current_pane().editor_scrollable_id(),
         AbsoluteOffset { x: 0.0, y },
     )
 }
@@ -232,7 +333,19 @@ pub(super) fn editor_command_keeps_cursor_visible(command: &EditorCommand) -> bo
             | EditorCommand::FormatItalic
             | EditorCommand::FormatInlineCode
             | EditorCommand::InsertLink
+            | EditorCommand::InsertTable
+            | EditorCommand::InsertMath
+            | EditorCommand::InsertCheckbox
+            | EditorCommand::InsertBlock(_)
             | EditorCommand::Undo
             | EditorCommand::Redo
     )
+}
+
+/// A link destination written `<…>` (CommonMark's form for spaces), unwrapped.
+fn unwrap_angle_brackets(link: &str) -> &str {
+    let link = link.trim();
+    link.strip_prefix('<')
+        .and_then(|l| l.strip_suffix('>'))
+        .unwrap_or(link)
 }
