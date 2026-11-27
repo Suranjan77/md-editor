@@ -48,6 +48,9 @@ here when it lands; record how the feature works in `wiki/`.
   instead of returning family enums, and the sub-states (`UiState`, `TrackerState`,
   `PdfPane`, `SearchState`, `VaultState`, `EditorPane`) take the whole `Message`.
 - Dropping a file on the handwriting window opens it in the main window.
+- PDF attachments: only document-level embedded files are listed. Files attached to page
+  annotations (`/FileAttachment`) need the raw `FPDFAnnot_GetFileAttachment` binding,
+  which pdfium-render does not wrap.
 
 ## Needs real hardware or a person
 

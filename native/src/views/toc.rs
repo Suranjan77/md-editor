@@ -1,14 +1,17 @@
-//! Outline panel: Markdown headings and PDF bookmarks/synthesized headings.
+//! Outline panel: Markdown headings and PDF bookmarks/synthesized headings, then a PDF's embedded files.
 
 use iced::widget::{Column, button, container, scrollable, text};
 use iced::{Background, Border, Element, Length, Padding, Renderer, Theme};
 
+use crate::design::metrics::ControlSize;
 use crate::design::metrics::{RADIUS_SM, SPACE_0, SPACE_1, SPACE_2, SPACE_3};
 use crate::design::{TextRole, tokens};
-use crate::messages::{EditorMessage, Message};
+use crate::messages::{EditorMessage, Message, PdfMessage};
 use crate::ui::{
-    BadgeTone, Icon, IconButton, PanelSide, badge, ellipsize_single_line, empty_state, panel,
+    BadgeTone, Icon, IconButton, ListRowProps, PanelSide, badge, ellipsize_single_line,
+    empty_state, list_row, panel,
 };
+use md_editor_core::pdf::PdfAttachmentInfo;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TocEntry {
@@ -64,13 +67,85 @@ pub fn active_toc_index(toc: &[TocEntry], current_line_or_page: usize) -> Option
         .rposition(|entry| entry.line <= current_line_or_page)
 }
 
+/// A PDF's embedded files, listed under its outline.
+pub struct OutlineAttachments<'a> {
+    /// Vault path of the PDF they are in.
+    pub pdf_path: &'a str,
+    pub files: &'a [PdfAttachmentInfo],
+}
+
+/// `1.5 MB`-style size of an attachment.
+pub fn format_size(bytes: usize) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if value < 10.0 {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{value:.0} {}", UNITS[unit])
+    }
+}
+
+fn attachments_section<'a>(
+    attachments: &OutlineAttachments<'a>,
+) -> Element<'a, Message, Theme, Renderer> {
+    let t = tokens();
+    let role = TextRole::Caption;
+    let mut rows: Vec<Element<'a, Message, Theme, Renderer>> = vec![
+        text(format!("Attachments · {}", attachments.files.len()))
+            .size(role.size())
+            .font(role.font())
+            .color(t.fg_tertiary)
+            .into(),
+    ];
+    for file in attachments.files {
+        let open = Message::Pdf(PdfMessage::OpenAttachment(
+            attachments.pdf_path.to_string(),
+            file.clone(),
+        ));
+        let save = Message::Pdf(PdfMessage::SaveAttachment(
+            attachments.pdf_path.to_string(),
+            file.clone(),
+        ));
+        let mut props =
+            ListRowProps::simple(file.name.as_str(), Some(Icon::Paperclip), false, open);
+        props.subtitle = Some(format_size(file.size).into());
+        props.max_title_chars = 24;
+        rows.push(
+            iced::widget::row![
+                container(list_row(props)).width(Length::Fill),
+                IconButton::new(Icon::DownloadSimple, "Save to vault")
+                    .size(ControlSize::Sm)
+                    .on_press(save)
+                    .build(),
+            ]
+            .spacing(SPACE_1)
+            .align_y(iced::Alignment::Center)
+            .into(),
+        );
+    }
+    Column::with_children(rows)
+        .spacing(SPACE_1)
+        .padding([SPACE_2, SPACE_3])
+        .into()
+}
+
 pub fn view<'a>(
     toc: &'a [TocEntry],
     is_synthetic: bool,
     current_pos: usize,
+    attachments: Option<OutlineAttachments<'a>>,
     width: f32,
     focused: bool,
 ) -> Element<'a, Message, Theme, Renderer> {
+    let attachments = attachments.filter(|a| !a.files.is_empty());
     let t = tokens();
     let active_idx = active_toc_index(toc, current_pos);
 
@@ -84,7 +159,13 @@ pub fn view<'a>(
             .build(),
     );
 
-    let body: Element<'a, Message, Theme, Renderer> = if toc.is_empty() {
+    let body: Element<'a, Message, Theme, Renderer> = if toc.is_empty()
+        && let Some(attachments) = &attachments
+    {
+        scrollable(attachments_section(attachments))
+            .height(Length::Fill)
+            .into()
+    } else if toc.is_empty() {
         empty_state(
             Icon::ListTree,
             "No headings",
@@ -149,13 +230,16 @@ pub fn view<'a>(
             .into()
         });
 
-        scrollable(
-            Column::with_children(items)
-                .spacing(SPACE_1 * 0.5)
-                .padding([SPACE_2, SPACE_3]),
-        )
-        .height(Length::Fill)
-        .into()
+        let headings = Column::with_children(items)
+            .spacing(SPACE_1 * 0.5)
+            .padding([SPACE_2, SPACE_3]);
+        let content = match &attachments {
+            Some(attachments) => Column::new()
+                .push(headings)
+                .push(attachments_section(attachments)),
+            None => Column::new().push(headings),
+        };
+        scrollable(content).height(Length::Fill).into()
     };
 
     container(panel(
@@ -173,7 +257,16 @@ pub fn view<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{active_toc_index, get_toc};
+    use super::{active_toc_index, format_size, get_toc};
+
+    #[test]
+    fn attachment_sizes_read_naturally() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(1023), "1023 B");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(200 * 1024), "200 KB");
+        assert_eq!(format_size(3 * 1024 * 1024 + 400 * 1024), "3.4 MB");
+    }
 
     #[test]
     fn toc_skips_fenced_comments_and_tags() {

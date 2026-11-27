@@ -76,6 +76,8 @@ pub enum Icon {
     TextLoose,
     Spinner,
     Eye,
+    Paperclip,
+    DownloadSimple,
 }
 
 impl Icon {
@@ -165,6 +167,8 @@ impl Icon {
             Self::TextLoose => include_bytes!("../../assets/icons/text-loose.svg"),
             Self::Spinner => include_bytes!("../../assets/icons/spinner.svg"),
             Self::Eye => include_bytes!("../../assets/icons/eye.svg"),
+            Self::Paperclip => include_bytes!("../../assets/icons/paperclip.svg"),
+            Self::DownloadSimple => include_bytes!("../../assets/icons/download-simple.svg"),
         }
     }
 

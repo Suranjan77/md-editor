@@ -1049,3 +1049,47 @@ fn a_pdf_replaced_on_disk_is_read_again_not_served_from_the_cache() {
     assert_eq!(after, 500);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn embedded_files_are_listed_and_read_back_by_index_and_name() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let dir = TestTempDir::new();
+    let path = dir.path().join("with-attachments.pdf");
+    {
+        let pdfium = bind_pdfium().unwrap();
+        let mut doc = pdfium.create_new_pdf().unwrap();
+        doc.pages_mut()
+            .create_page_at_end(PdfPagePaperSize::a4())
+            .unwrap();
+        doc.attachments_mut()
+            .create_attachment_from_bytes("data.csv", b"a,b\n1,2\n")
+            .unwrap();
+        doc.attachments_mut()
+            .create_attachment_from_bytes("notes.md", b"# Notes")
+            .unwrap();
+        doc.save_to_file(&path).unwrap();
+    }
+    let path = path.to_string_lossy().to_string();
+    let renderer = PdfRenderer::new().unwrap();
+
+    let listed = renderer.list_attachments(&path).unwrap();
+    let names: Vec<_> = listed
+        .iter()
+        .map(|a| (a.index, a.name.as_str(), a.size))
+        .collect();
+    assert_eq!(names, vec![(0, "data.csv", 8), (1, "notes.md", 7)]);
+    assert_eq!(
+        renderer.attachment_bytes(&path, 1, "notes.md").unwrap(),
+        b"# Notes"
+    );
+    // A stale listing never hands back a different file.
+    assert!(renderer.attachment_bytes(&path, 0, "notes.md").is_err());
+    assert!(renderer.attachment_bytes(&path, 5, "notes.md").is_err());
+
+    assert!(
+        renderer
+            .list_attachments("../tests-fixtures/pdf/dummy.pdf")
+            .unwrap()
+            .is_empty()
+    );
+}

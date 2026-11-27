@@ -1,4 +1,4 @@
-//! PDF message router: dispatches each `PdfMessage` to its handler in `pdf_render.rs`, `pdf_nav.rs`, `pdf_select.rs` or `PdfPane::update`.
+//! PDF message router: dispatches each `PdfMessage` to its handler in `pdf_render.rs`, `pdf_nav.rs`, `pdf_select.rs`, `pdf_ink.rs`, `pdf_attachments.rs` or `PdfPane::update`.
 
 use super::*;
 use crate::messages::PdfMessage;
@@ -122,6 +122,18 @@ impl MdEditor {
                 y_frac,
             } => self.on_pdf_ink_erase_at(page, x_frac, y_frac),
             PdfMessage::UndoInkStroke => self.on_pdf_undo_ink_stroke(),
+            // Embedded files (pdf_attachments.rs).
+            PdfMessage::AttachmentsLoaded(path, listed) => {
+                self.on_pdf_attachments_loaded(path, listed)
+            }
+            PdfMessage::OpenAttachment(path, attachment) => {
+                self.on_pdf_open_attachment(path, attachment)
+            }
+            PdfMessage::SaveAttachment(path, attachment) => {
+                self.on_pdf_save_attachment(path, attachment)
+            }
+            PdfMessage::AttachmentSaved(stored) => self.on_pdf_attachment_saved(stored),
+            PdfMessage::AttachmentFailed(err) => self.on_pdf_attachment_failed(err),
         }
     }
 }

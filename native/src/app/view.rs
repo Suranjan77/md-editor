@@ -318,6 +318,7 @@ impl MdEditor {
             ink_tool: pane.pdf.ink_tool,
             ink_color: pane.pdf.ink_color,
             focused_annotation: focused_ann,
+            attachment_count: pane.pdf.attachments.len(),
         });
 
         let pdf_pages = scrollable(views::pdf_viewer::view_continuous(
@@ -499,10 +500,20 @@ impl MdEditor {
                     self.editor.buffer.cursor_line,
                 )
             };
+            let attachments = self
+                .pdf
+                .active_path
+                .as_deref()
+                .filter(|_| pdf_toc_active)
+                .map(|pdf_path| views::toc::OutlineAttachments {
+                    pdf_path,
+                    files: &self.pdf.attachments,
+                });
             container(views::toc::view(
                 entries,
                 is_synth,
                 current_pos,
+                attachments,
                 self.ui.side_panel_width,
                 self.ui.focused_region == FocusRegion::SidePanel,
             ))

@@ -443,6 +443,16 @@ pub enum PdfMessage {
     },
     /// Remove the most recently created margin ink stroke on the active PDF.
     UndoInkStroke,
+    /// The embedded files of the PDF at this vault path were listed.
+    AttachmentsLoaded(String, Vec<md_editor_core::pdf::PdfAttachmentInfo>),
+    /// Open an embedded file of the PDF at this vault path in the system's app.
+    OpenAttachment(String, md_editor_core::pdf::PdfAttachmentInfo),
+    /// Copy an embedded file of the PDF at this vault path into the vault.
+    SaveAttachment(String, md_editor_core::pdf::PdfAttachmentInfo),
+    /// `SaveAttachment` stored the file.
+    AttachmentSaved(md_editor_core::attachments::Stored),
+    /// Reading, opening or saving an attachment failed.
+    AttachmentFailed(String),
 }
 
 /// Global search and in-document find/replace. Handled by `app/search.rs`.

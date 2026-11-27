@@ -184,6 +184,8 @@ pub struct PdfToolbarProps<'a> {
     pub ink_tool: Option<crate::pdf_pane::PdfInkTool>,
     pub ink_color: md_editor_core::pdf::PdfAnnotationColor,
     pub focused_annotation: Option<&'a md_editor_core::pdf::PdfAnnotation>,
+    /// Files embedded in the PDF; a paperclip opens the outline that lists them.
+    pub attachment_count: usize,
 }
 
 /// The content-palette hue a PDF highlight colour is drawn in.
@@ -340,6 +342,24 @@ pub fn toolbar<'a>(props: PdfToolbarProps<'a>) -> Element<'a, Message, Theme, Re
             props.ink_color,
             props.has_ink,
         ));
+    }
+
+    if props.attachment_count > 0 {
+        let tip = if props.attachment_count == 1 {
+            "1 attached file — listed in the outline".to_string()
+        } else {
+            format!(
+                "{} attached files — listed in the outline",
+                props.attachment_count
+            )
+        };
+        context.push(
+            IconButton::new(Icon::Paperclip, tip)
+                .size(ControlSize::Sm)
+                .selected(props.toc_visible)
+                .on_press(Message::Editor(EditorMessage::ToggleTOC))
+                .build(),
+        );
     }
 
     viewer_toolbar::view(ViewerToolbar {

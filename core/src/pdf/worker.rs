@@ -179,6 +179,7 @@ impl<'a> Worker<'a> {
             | PdfCommand::GetPageTextBackground(path, index, resp) => {
                 let _ = resp.send(self.get_page_text(&path, index));
             }
+            PdfCommand::Attachments(request) => self.serve_attachments(request),
             PdfCommand::RecoverToc(path, page_texts, resp) => {
                 let _ = resp.send(
                     self.open_document(&path)

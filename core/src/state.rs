@@ -576,6 +576,20 @@ pub fn log_dir() -> PathBuf {
     .map_or_else(data_dir, |base| base.join(APP_DIR_NAME))
 }
 
+/// Directory for files that can be thrown away (a PDF attachment opened in
+/// another app).
+pub fn cache_dir() -> PathBuf {
+    if let Some(dir) = data_dir_override() {
+        return dir.join("cache");
+    }
+    xdg_dir(
+        std::env::var_os("XDG_CACHE_HOME"),
+        std::env::var_os("HOME"),
+        ".cache",
+    )
+    .map_or_else(|| data_dir().join("cache"), |base| base.join(APP_DIR_NAME))
+}
+
 const APP_DIR_NAME: &str = "md-editor";
 
 fn xdg_dir(

@@ -286,6 +286,17 @@ Open any `.pdf` from the sidebar to enter the integrated reader.
   structureless PDF correctly yields an empty outline rather than a dump of page content.
 - **Internal links** — embedded PDF links work.
 
+### Attached files
+
+A PDF can carry files of its own: data, source code, a supplement. When it does, a paperclip
+appears in the PDF toolbar, and the Outline panel lists the files under the headings with
+their size. Click one to open a copy in your system's app for that file type (the copy goes
+in `~/.cache/md-editor/pdf-attachments/`). Use the save button beside it to copy the file
+into the vault's attachments folder (Settings → attachments folder, as for pasted images).
+A file that could run as a program (`.sh`, `.exe`, `.desktop`…) is never opened, only
+saved. Files attached to a page annotation (a paperclip icon on the page) are not listed
+yet.
+
 ### Recognized cross-references
 
 Many papers say "see equation (3.14)" or "Figure 1.1" without embedding a link. MD Editor

@@ -59,6 +59,7 @@ impl MdEditor {
         self.pdf.text_lru.clear();
         self.pdf.toc_entries.clear();
         self.pdf.toc_is_synthetic = false;
+        self.pdf.attachments.clear();
         self.vault.backlinks =
             md_editor_core::vault::get_mixed_backlinks(&self.state, path).unwrap_or_default();
 
@@ -83,8 +84,11 @@ impl MdEditor {
         let path_for_sizes = path.to_string();
         let path_str_sizes = path_str.clone();
 
+        let attachments_task = self.load_pdf_attachments(path, path_str.clone());
+
         Task::batch(vec![
             hash_task,
+            attachments_task,
             Task::perform(
                 super::blocking(move || {
                     let renderer = _state

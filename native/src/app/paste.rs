@@ -241,7 +241,7 @@ impl MdEditor {
         self.run_editor_command(EditorCommand::InsertBlock(lines.join("\n")))
     }
 
-    fn attachment_folder(&self) -> AttachmentFolder {
+    pub(super) fn attachment_folder(&self) -> AttachmentFolder {
         let setting = md_editor_core::config::get_sys_config(&self.state, ATTACHMENTS_FOLDER_KEY)
             .ok()
             .flatten();

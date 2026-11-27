@@ -8,12 +8,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
+mod attachments;
 mod geometry;
 mod renderer;
 mod toc;
 mod toc_synth;
 mod worker;
 
+pub use attachments::PdfAttachmentInfo;
 pub use renderer::*;
 pub use toc::*;
 pub use toc_synth::synthesize_toc;

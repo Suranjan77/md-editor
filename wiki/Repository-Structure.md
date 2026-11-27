@@ -57,6 +57,7 @@ md-editor/
 | `src/pdf/renderer.rs` | `PdfRenderer`, the handle the app talks to. |
 | `src/pdf/worker.rs` | The PDFium worker thread: 3-document LRU cache, priority and standard queues, one handler per command (render, text, links, search, previews). |
 | `src/pdf/toc.rs` | Page-text extraction and outline recovery: embedded bookmarks, printed contents pages, dot leaders. Tests in `toc/tests.rs`. |
+| `src/pdf/attachments.rs` | Files embedded in a PDF (`EmbeddedFiles`): `PdfAttachmentInfo`, listing them and reading one back by index and name. |
 | `src/pdf/toc_synth.rs` | The typographic fallback: synthesizing an outline from heading-like lines. |
 | `src/references.rs` | Pure resolver from page text to equation, figure, table and section references. Never touches PDFium. |
 | `src/tracker.rs` | `StudySession` and tracker key/value persistence. |
@@ -77,11 +78,12 @@ md-editor/
 | `app/mod.rs` | `MdEditor` state, `boot`, `title`, `update`, and `update_inner`, which routes each message family to a handler below. |
 | `app/{pdf,graph,ink,search,editor,vault,shortcuts,shell}.rs` | One `update_<family>` handler each; see [Native Desktop GUI](Native-Desktop-GUI.md#2-messages-and-where-they-are-handled-messagesrs-app). |
 | `app/graph_pinboards.rs` | Named per-vault graph Pinboards: modal state, saving, restoring, and deleting layouts. |
-| `app/pdf.rs` | `update_pdf`: a router only; each `PdfMessage` goes to a handler in the three files below or to `PdfPane::update`. |
+| `app/pdf.rs` | `update_pdf`: a router only; each `PdfMessage` goes to a handler in the files below or to `PdfPane::update`. |
 | `app/pdf_render.rs` | PDF load results, zoom and fit-to-width, rendered/failed pages, scrolling, page links, TOC. |
 | `app/pdf_nav.rs` | PDF link clicks and previews, PDF search results, document id → highlights and references, jumping to an annotation. |
 | `app/pdf_select.rs` | PDF text selection and copy, highlights, quick notes, linked notes, orphan report. |
 | `app/pdf_ink.rs` | Non-destructive PDF margin ink handlers: pen/eraser toggle, color selection, commit, erase, and undo. |
+| `app/pdf_attachments.rs` | A PDF's embedded files: listed on open, opened in the system app from a cached copy (runnable types refused), saved into the vault's attachments folder. |
 | `app/pdf_pages.rs` | Opening PDFs, page render scheduling and eviction, available width, `navigate_pdf_page`. |
 | `app/paste.rs` | Ctrl+V in a note, "Insert image…", and files dropped on the window: images become attachments, vault files become links, drops on the sidebar are imported (never over an existing file). |
 | `app/tabs_handler.rs` | `update_tabs`: activating, closing, reopening and reordering document tabs, per-pane, per-vault tab persistence and restoring the panes. |

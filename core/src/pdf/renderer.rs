@@ -80,6 +80,7 @@ pub(super) enum PdfCommand {
         u16,
         std::sync::mpsc::SyncSender<PdfResult<PdfPageText>>,
     ),
+    Attachments(super::attachments::AttachmentRequest),
     /// Recover an outline from page text the caller already extracted.
     RecoverToc(
         String,
@@ -230,6 +231,34 @@ impl PdfRenderer {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.sender
             .send(PdfCommand::GetEmbeddedToc(path.to_string(), tx))
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
+    }
+
+    /// The files embedded in the PDF (cheap: no page is loaded).
+    pub fn list_attachments(&self, path: &str) -> PdfResult<Vec<PdfAttachmentInfo>> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::Attachments(
+                super::attachments::AttachmentRequest::List(path.to_string(), tx),
+            ))
+            .map_err(|_| PdfError::WorkerGone)?;
+        receive(rx)
+    }
+
+    /// The bytes of the attachment listed as `index` and `name`. Fails rather
+    /// than return another file when the PDF changed since it was listed.
+    pub fn attachment_bytes(&self, path: &str, index: u16, name: &str) -> PdfResult<Vec<u8>> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.sender
+            .send(PdfCommand::Attachments(
+                super::attachments::AttachmentRequest::Bytes(
+                    path.to_string(),
+                    index,
+                    name.to_string(),
+                    tx,
+                ),
+            ))
             .map_err(|_| PdfError::WorkerGone)?;
         receive(rx)
     }

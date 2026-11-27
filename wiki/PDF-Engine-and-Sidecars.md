@@ -84,7 +84,7 @@ the target page never queues behind a backlog of prefetches, link extractions, o
 
 Standard channel: `PageCount`, `ExtractText`, `PageSizes`, `RenderPage`, `GetToc`,
 `GetReferences`, `GetEmbeddedToc`, `GetLinks`, `SearchText`, `RenderLinkPreview`,
-`RenderRegion`, `GetPageText`, `GetPageTextBackground`, `RecoverToc`, `Wake`. Priority channel:
+`RenderRegion`, `GetPageText`, `GetPageTextBackground`, `RecoverToc`, `Attachments`, `Wake`. Priority channel:
 `PriorityRender { path, page_index, scale, resp }`.
 
 Every command carries a `SyncSender` for its reply, and the `PdfRenderer` methods block on
@@ -100,6 +100,13 @@ rectangle of a page as raw RGBA, with no PNG round trip. This is the crop a note
 `![…](pdf://…&crop=x,y,w,h)`. The region is in points of the displayed page box from its
 **top-left**, clamped to the page. The page is rendered whole at up to 8 px/pt and the
 region cut out of it.
+
+**Attachments.** `list_attachments(path)` returns the PDF's embedded files
+(`PdfAttachmentInfo { index, name, size }`, from the document's `EmbeddedFiles` tree);
+`attachment_bytes(path, index, name)` reads one back and fails if that index no longer has
+that name, so a PDF replaced since it was listed never yields one file under another's
+name. Both go through one `PdfCommand::Attachments` arm, handled in `pdf/attachments.rs`.
+Files attached to page annotations (`/FileAttachment` paperclips) are not read yet.
 
 **Document cache.** The worker keeps the last few opened documents (`DOC_CACHE_CAPACITY`),
 stamped with their file's size and modification time. A file replaced on disk is loaded

@@ -85,6 +85,8 @@ pub struct PdfPane {
     /// True when the outline was synthesized from page text rather than read
     /// from embedded bookmarks.
     pub toc_is_synthetic: bool,
+    /// Files embedded in the open PDF, listed under its outline.
+    pub attachments: Vec<md_editor_core::pdf::PdfAttachmentInfo>,
 
     pub pending_text: HashSet<u16>,
     pub text_lru: VecDeque<u16>,
@@ -143,6 +145,7 @@ impl PdfPane {
             initial_target_annotation: None,
             toc_entries: Vec::new(),
             toc_is_synthetic: false,
+            attachments: Vec::new(),
             pending_text: HashSet::new(),
             text_lru: VecDeque::new(),
             pending_pages: HashSet::new(),

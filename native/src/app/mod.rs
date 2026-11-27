@@ -128,6 +128,7 @@ mod pane_view;
 mod panes;
 pub(crate) mod paste;
 mod pdf;
+mod pdf_attachments;
 mod pdf_ink;
 mod pdf_nav;
 mod pdf_pages;

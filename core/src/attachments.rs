@@ -209,8 +209,15 @@ fn unique_name(dir: &Path, name: &str) -> String {
         .expect("an unbounded counter finds a free name")
 }
 
-/// Drop path separators and characters that break Markdown link targets.
+/// [`safe_file_name`] for a pasted or dropped image.
 fn sanitize_file_name(name: &str) -> String {
+    safe_file_name(name, "image")
+}
+
+/// `name` as a single, link-safe file name: path separators and characters
+/// that break Markdown link targets become `-`, and leading dots go, so it
+/// can neither leave its folder nor hide. `fallback` when nothing is left.
+pub fn safe_file_name(name: &str, fallback: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| match c {
@@ -221,7 +228,7 @@ fn sanitize_file_name(name: &str) -> String {
         .collect();
     let trimmed = cleaned.trim().trim_start_matches('.');
     if trimmed.is_empty() {
-        "image".to_string()
+        fallback.to_string()
     } else {
         trimmed.to_string()
     }
