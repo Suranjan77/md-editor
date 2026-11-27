@@ -1,6 +1,6 @@
 # Markdown editor
 
-`buffer.rs` (text, caret, undo) → `highlight.rs` (styled lines, incremental) →
+`buffer/` (text, caret, undo) → `highlight.rs` (styled lines, incremental) →
 `renderer/` (the `iced` widget). Full design: `wiki/Markdown-Pipeline.md`; rules with their
 reasons: `wiki/Contributor-Guidelines.md` Rule 3.
 

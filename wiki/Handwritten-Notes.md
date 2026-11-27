@@ -100,7 +100,7 @@ flowchart LR
 ```
 
 - The Win32 hook is attached to whichever window holds the canvas, and re-attached each
-  time it is reopened (`WindowOpened` → `InkPenHookReady` with the raw window id).
+  time it is reopened (`WindowOpened` → `InkMessage::PenHookReady` with the raw window id).
 - On Wayland, binding the tablet protocol stops the compositor from emulating a mouse for
   the pen. winit offers each tool frame to `pen_wayland` first. Frames on the canvas are
   claimed (`pen_wayland::Router`, the same rules as `pen_win`: a stroke that starts on the

@@ -3,7 +3,7 @@
 ## Shared viewer toolbar
 
 One `Toolbar` (viewer variant) for PDFs and images, docked at the **top** of the pane
-(today the PDF toolbar sits at the bottom with text glyphs):
+(`views/viewer_toolbar.rs`; the PDF toolbar used to sit at the bottom with text glyphs):
 
 `[outline]  ·  [page input] / N  ·  [− zoom % +] [fit width] [fit page]  ·  [find] [more ⋯]`
 

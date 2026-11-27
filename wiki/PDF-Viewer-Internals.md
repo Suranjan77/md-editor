@@ -80,14 +80,14 @@ PdfMessage::Rendered(generation, page, img) => {
 }
 ```
 
-The same shape applies to `PdfRenderFailed`, `PdfPageLinksLoaded`, and `PdfPageTextLoaded`.
+The same shape applies to `PdfMessage::RenderFailed`, `PdfMessage::PageLinksLoaded`, and `PdfMessage::PageTextLoaded`.
 
 Any code path that **increments** `render_generation` must also clear the in-flight state
 belonging to the previous generation — `pending_pages.clear()` and `pending_links.clear()` —
 and a document change additionally clears `page_links`, `pages`, `dimensions`, and
 `page_sizes`.
 
-One deliberate exception: `PdfReferencesLoaded` is gated on `document_id`, **never** on
+One deliberate exception: `PdfMessage::ReferencesLoaded` is gated on `document_id`, **never** on
 `render_generation`. References are a document-level artifact, and the chunked scan
 routinely outlives the fit-to-width zoom change that bumps the generation on open.
 Generation-gating silently dropped them on first open — the tell was that a *reopened* PDF
@@ -140,9 +140,9 @@ and fractional-scale displays without over-rendering on a 1× screen. Crucially,
 `dimensions` remain **logical display** dimensions rather than raw bitmap dimensions, so
 link hit-testing and placeholder math keep working in PDF-space/display-space geometry.
 
-A failure returns `PdfRenderFailed` rather than being swallowed by a generic tick.
+A failure returns `PdfMessage::RenderFailed` rather than being swallowed by a generic tick.
 
-On a successful `PdfRendered`:
+On a successful `PdfMessage::Rendered`:
 
 1. remove the page from `pending_pages`;
 2. discard the result if the generation is stale;
@@ -175,8 +175,8 @@ The stable-slot behaviour is covered by unit tests in `native/src/app/tests.rs`:
 map back to the same page, blank pages reserve space in the total document height, and
 placeholder slots scale with zoom.
 
-Page-size metadata drives loading placeholder dimensions, `pdf_page_offset(page)`,
-`pdf_page_at_scroll(scroll_y)`, viewport range detection, and the fit-to-width calculation.
+Page-size metadata drives loading placeholder dimensions, `PdfPane::page_offset(page)`,
+`PdfPane::page_at_scroll(scroll_y)`, viewport range detection, and the fit-to-width calculation.
 
 **Only pages near the viewport are widgets.** `view_continuous` lays out real page (or
 placeholder) widgets only for the pages within one screen above and two below the visible
@@ -210,8 +210,8 @@ coordinates so it survives zoom changes, and bounded to the visible range.
 ## 6. Overlay Composition
 
 `views/interactive_pdf.rs` is a custom `Widget` wrapping each page bitmap. It draws the
-image, performs hit testing, and emits `PdfLeftClicked`, `PdfRightClicked`,
-`PdfSelectionChanged`, and `PdfSelectionFinished`. A double click selects the word under
+image, performs hit testing, and emits `PdfMessage::LeftClicked`, `PdfMessage::RightClicked`,
+`PdfMessage::SelectionChanged`, and `PdfMessage::SelectionFinished`. A double click selects the word under
 the pointer and a triple click the line (`word_around`, `line_around`). Copy is the global
 `Ctrl+C` (`PdfMessage::CopySelection`); pages do not handle it themselves.
 
@@ -255,7 +255,7 @@ TOC clicks, internal link clicks, and PDF search-result clicks all funnel throug
 6. compute the target offset from the same stable blank-page slot geometry the view uses;
 7. set `programmatic_scroll = true` and issue `scroll_to`.
 
-When the target render completes, `PdfRendered` stores the bitmap and dimensions but does
+When the target render completes, `PdfMessage::Rendered` stores the bitmap and dimensions but does
 **not** change the page's outer slot.
 
 Search next/previous navigation uses `navigate_pdf_search_to_index()` instead of the generic
@@ -280,7 +280,7 @@ override the match-precise offset.
 **Programmatic scrolling (TOC, link, or annotation jump):**
 
 1. `programmatic_scroll` is set before `scroll_to`;
-2. the first matching `PdfScrolled` acknowledges it;
+2. the first matching `PdfMessage::Scrolled` acknowledges it;
 3. normal viewport scheduling is suppressed for that event;
 4. only a small range around the target page is scheduled;
 5. `toc_target_page` is cleared.

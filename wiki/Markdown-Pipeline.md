@@ -34,7 +34,7 @@ graph TD
 
 Modules under `native/src/editor/`:
 
-1. **`buffer.rs`** — rope text storage, transactions with inverse operations, undo runs,
+1. **`buffer/`** — rope text storage, transactions with inverse operations, undo runs,
    auto-pairing, list continuation, formatting commands, grapheme-aware movement, and the
    caret with its affinity.
 2. **`highlight.rs`** — markdown tokenization into `StyledLine`/`StyledSpan`, syntect code
@@ -52,7 +52,7 @@ animates the resulting scroll.
 
 ---
 
-## 1. Text Storage & Undo Architecture (`buffer.rs`)
+## 1. Text Storage & Undo Architecture (`buffer/`)
 
 `DocBuffer` is backed by [`ropey::Rope`](https://docs.rs/ropey), which keeps inserts,
 deletes, line lookup, and character-offset conversion efficient on large files instead of

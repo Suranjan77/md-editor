@@ -16,7 +16,7 @@ stays visible; Escape returns to the previous document.
 
 ## Data display
 
-- Durations formatted `1h 05m`, never negative zero (today shows `-0.0h`).
+- Durations formatted `1h 05m`, never negative zero (it once showed `-0.0h`; `views/tracker.rs::format_duration`).
 - Weekly chart: bar chart (skill: comparison → bar); bars `accent`, gridlines `border.subtle`,
   each bar labelled on hover/focus with the exact value; day labels `caption`.
   Empty state instead of a flat axis: "No sessions this week — start the timer to log one."

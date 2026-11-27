@@ -252,7 +252,7 @@ Every stream except the keyboard, window events, the vault watcher and pen input
    `SELF_WRITE_GRACE` of 3s suppresses events caused by the app's own saves. External edits
    (`git pull`, a CLI change) refresh buffers and the link index without a restart.
 6. **Scroll interrupt** — armed only while the editor is gliding to reveal the caret; a
-   wheel turn or click fires `EditorScrollInterrupted` and hands the page back to the user.
+   wheel turn or click fires `EditorMessage::ScrollInterrupted` and hands the page back to the user.
    See [Markdown Pipeline](Markdown-Pipeline.md#revealing-the-caret).
 
 7. **Graph refresh and physics** — armed only while the graph is visible: a 200ms refresh

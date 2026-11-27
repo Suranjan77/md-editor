@@ -55,6 +55,7 @@ md-editor/
 | `src/file_index/code_spans.rs` | Byte ranges of fenced code and inline code spans, where `[[...]]` is not a link. |
 | `src/pdf.rs` | PDF data types, `compute_provisional_id`, render-scale buckets, `bind_pdfium`. |
 | `src/pdf/renderer.rs` | `PdfRenderer`, the handle the app talks to. |
+| `src/pdf/geometry.rs` | Page space → view space: the transform PDFium renders with, so text, search and link rects line up with the bitmap whatever the page's rotation or crop box. |
 | `src/pdf/worker.rs` | The PDFium worker thread: 3-document LRU cache, priority and standard queues, one handler per command (render, text, links, search, previews). |
 | `src/pdf/toc.rs` | Page-text extraction and outline recovery: embedded bookmarks, printed contents pages, dot leaders. Tests in `toc/tests.rs`. |
 | `src/pdf/toc_synth.rs` | The typographic fallback: synthesizing an outline from heading-like lines. |
@@ -62,6 +63,7 @@ md-editor/
 | `src/tracker.rs` | `StudySession` and tracker key/value persistence. |
 | `src/attachments.rs` | Images pasted into notes: attachments folder, naming, SHA-256 dedupe, import, relative Markdown links. |
 | `src/types.rs` | Plain data for the UI: `FileEntry`, `SearchResult(s)`, backlinks, `GraphSnapshot`. |
+| `src/{pdf,state,vault}/error.rs` | The typed errors of each layer: `PdfError`, `StateError`, `VaultError`. |
 | `src/massive_tests.rs` | Combinatorial and stress tests. |
 | `examples/` | `dump_refs`, `bench_refs`: reference-resolver diagnostics on a real PDF. |
 
@@ -169,8 +171,8 @@ md-editor/
 
 | Crate | Runtime | Build |
 | :--- | :--- | :--- |
-| core | `rusqlite` (bundled SQLite), `pdfium-render`, `image`, `regex`, `serde`/`serde_json`, `sha2`, `uuid`, `zip` (read-only, deflate), `roxmltree` | `ureq`, `flate2`, `tar`, `sha2` (PDFium download) |
-| native | `md-editor-core`, `iced` 0.14 (canvas, image, advanced, tokio), `ropey`, `syntect`, `ratex-*`, `unicode-linebreak`, `unicode-segmentation`, `rfd`, `notify`, `tokio`, `chrono`, `image`, `regex`, `serde`, `uuid`, `bytemuck`; Windows: `windows-sys` | Windows: `winresource` |
+| core | `rusqlite` (bundled SQLite), `pdfium-render`, `image`, `regex`, `serde`/`serde_json`, `sha2`, `uuid`, `log`, `thiserror` | `ureq`, `flate2`, `tar`, `sha2` (PDFium download) |
+| native | `md-editor-core`, `iced` 0.14 (canvas, image, advanced, tokio, svg), `iced_program`, `ropey`, `syntect`, `ratex-*`, `unicode-linebreak`, `unicode-segmentation`, `rfd`, `arboard` (clipboard images and file lists), `resvg`, `notify`, `tokio`, `chrono`, `image`, `regex`, `serde`, `uuid`, `bytemuck`, `log`; Linux: `libc` (killing a code block's process group), `winit` (the vendored copy, for Wayland tablet input); Windows: `windows-sys`. Tests: `iced_test`, `iced_debug`, `iced_beacon` | Windows: `winresource` |
 
 ### Dependency Rules
 

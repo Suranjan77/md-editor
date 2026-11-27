@@ -22,13 +22,13 @@ measure, colour roles and the reveal style, not the layout engine.
 | `doc.syntax` (revealed `**`, `#`, `[]()`) | `fg.tertiary` | `fg.tertiary` | `TEXT_MUTED` |
 | `doc.link` | `accent` + underline on hover | `accent` | `ACCENT` |
 | `doc.code.fg` / `doc.code.bg` | `fg.secondary` / `bg.raised` | same roles | ad-hoc |
-| `doc.math` | `fg.primary` (rendered), `fg.secondary` source | same | **`WARNING`** (misused today) |
+| `doc.math` | `fg.primary` (rendered), `fg.secondary` source | same | **`WARNING`** (was misused) |
 | `doc.quote.bar` | `border.control` | same | `BORDER` |
 | `doc.selection` | `accent` @ 28% | `accent` @ 20% | — |
 | `doc.find` / `doc.find.active` | `highlight` @ 30% / `highlight` @ 55% + 1px `highlight` outline | same | distinct from selection by outline, not only hue |
 | `doc.caret` | `accent` | `accent` | `ACCENT_SECONDARY` |
 | `doc.block.bg` (code, table, math cards) | `bg.surface` on `bg.canvas` | `bg.raised` on `bg.surface` | — |
-| Syntax highlighting theme | syntect theme generated from tokens (one dark, one light) | — | fixed theme today |
+| Syntax highlighting theme | syntect theme generated from tokens; for now syntect's bundled `base16-ocean.dark` | for now `InspiredGitHub` (`highlight/code.rs::code_highlighter`) | one fixed theme |
 
 ## Reveal ("edit-in-place") styling
 

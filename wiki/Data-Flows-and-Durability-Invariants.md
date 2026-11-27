@@ -14,7 +14,7 @@ sequenceDiagram
     autonumber
     actor User
     participant App as Iced event loop — app/
-    participant Buf as DocBuffer — buffer.rs
+    participant Buf as DocBuffer — buffer/
     participant Tree as HeightTree — layout_tree.rs
     participant Sub as Autosave subscription
     participant Vault as vault::save_file
@@ -121,7 +121,7 @@ sequenceDiagram
 
     User->>Canvas: Drags across text on page 7
     Canvas->>Canvas: Hit-test the text layer and compute the text-index range
-    Canvas->>App: PdfSelectionChanged, then PdfSelectionFinished
+    Canvas->>App: PdfMessage::SelectionChanged, then SelectionFinished
     User->>App: Chooses Highlight
     App->>App: Merge character rects into line rectangles in PDF points
     App->>App: Take next_highlight_color, then advance the palette

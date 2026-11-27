@@ -181,7 +181,7 @@ Minimum UI size is **12px** (skill: text < 12px is an anti-pattern). Numbers in 
 | `heading` | 20 / 28 | Serif 600 | Settings sections, stat values |
 | `display` | 32 / 40 | Serif 700 | Welcome wordmark only |
 
-Replaces today's `TEXT_XS` 8 / `TEXT_SM` 10 / `TEXT_BASE` 11 / `TEXT_MD` 14 / `TEXT_LG` 16 /
+Replaced the old `TEXT_XS` 8 / `TEXT_SM` 10 / `TEXT_BASE` 11 / `TEXT_MD` 14 / `TEXT_LG` 16 /
 `TEXT_DISPLAY` 42.
 
 ### 3.2 Document typography
@@ -243,8 +243,8 @@ Flat by default (Swiss). Elevation is used only for things that float.
 ### 4.6 Icons
 
 - **One family: Phosphor, regular weight** (the skill's primary icon library), bundled as
-  SVG through iced's `svg` feature. Replaces the hand-drawn canvas icons in
-  `views/icons.rs` and every Unicode glyph used as a control (`-`, `+`, `☰`, `⧉`, `⟳`, `✎`,
+  SVG through iced's `svg` feature (`ui/icon.rs`, files in `native/assets/icons/`). It
+  replaced the hand-drawn canvas icons of the old `views/icons.rs` and every Unicode glyph used as a control (`-`, `+`, `☰`, `⧉`, `⟳`, `✎`,
   `✕`, `●`).
 - Sizes: `icon.sm` 14 · `icon.md` 16 (default) · `icon.lg` 20. Stroke weight never mixed
   within a surface; filled variants only for a *selected* state.

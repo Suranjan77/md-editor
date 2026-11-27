@@ -297,7 +297,7 @@ shell snippet never becomes a graph node, and a rename never edits code.
 
 ### Resolution Algorithm
 
-`resolve_link(target, from_file)` proceeds in order:
+`FileIndex::resolve_link(target, file_path)` proceeds in order:
 
 1. **Exact path match** — handles `[[subfolder/Note]]` and root-level `[[Note]]`. A
    path-qualified link (`[[archive/topic]]`, `[[./x]]`) stops here: only its `.markdown`

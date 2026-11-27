@@ -2,8 +2,8 @@
 
 ## Chrome
 
-- The ink window uses the same `Toolbar` component and tokens as the shell (it has its own
-  ~30 literal sizes today). Tool selection is a `Segmented` of `IconButton`s (pen,
+- The ink window uses the same `Toolbar` component and tokens as the shell (it used to have
+  its own ~30 literal sizes). Tool selection is a `Segmented` of `IconButton`s (pen,
   highlighter, eraser, lasso) with the active tool filled (MASTER §4.6 filled = selected).
 - The colour palette is a vertical rail of 28px swatches with a 2px `focus.ring` on the
   active one; each swatch has a tooltip naming the colour (not colour-only).

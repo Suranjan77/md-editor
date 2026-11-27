@@ -41,7 +41,7 @@ graph TB
     subgraph UI ["md-editor-native — Iced"]
         App["Shell: state, message router, subscriptions<br/>app/, messages.rs"]
         Widget["Markdown editor widget<br/>editor/renderer/"]
-        DocBuf["DocBuffer, undo runs<br/>editor/buffer.rs"]
+        DocBuf["DocBuffer, undo runs<br/>editor/buffer/"]
         Highlighter["Incremental Markdown highlighter<br/>editor/highlight.rs"]
         PDFView["PDF pane and page widget<br/>views/pdf_viewer.rs, views/interactive_pdf.rs"]
         GraphView["Knowledge graph<br/>graph_state.rs, views/graph*, shaders/"]

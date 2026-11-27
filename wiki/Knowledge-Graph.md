@@ -42,9 +42,9 @@ change:
 
 1. Anything that can change links — a save, a create/rename/delete, a watcher event —
    calls `MdEditor::invalidate_graph()` → `GraphState::mark_dirty()`.
-2. While the graph is visible and stale, `app/subscription.rs` ticks `GraphRefresh` every
+2. While the graph is visible and stale, `app/subscription.rs` ticks `GraphMessage::Refresh` every
    200ms; `begin_refresh()` hands out a generation and the snapshot is built in a `Task`.
-3. `GraphSnapshotLoaded(generation, result)` is applied only if the generation is still
+3. `GraphMessage::SnapshotLoaded(generation, result)` is applied only if the generation is still
    current. A failed generation is held until the next invalidation or an explicit retry,
    so a persistent database error cannot become a tight retry loop.
 
@@ -73,7 +73,7 @@ The view is a `stack` of two layers sharing one transform:
 - **`GpuGraphProgram`** (`gpu_graph.rs`) — an iced `shader` widget that draws shape-coded nodes (circle for Markdown, rounded page rectangle for PDF, diamond for Sketch, hollow ring for Missing) and epistemic edges (`WikiLink` / `PdfAnnotation` solid, `Supports` directional pulse, `Contradicts` dashed, `Derives` dotted-dash) as instanced quads generated in the vertex shader. It uses no storage buffers or
   compute passes, which keeps it inside iced's default device limits. It owns pan, zoom,
   drag, hover, selection and fit, and publishes the result as `GraphSetView`,
-  `GraphHovered`, `GraphNodeMoved` and `GraphNodeSelected`. While visible without a captured text input, `Tab` / `Shift+Tab` (and `←` / `→`) step through nodes, `P` pins/unpins the selected node, and `Enter` opens it.
+  `GraphMessage::Hovered`, `GraphMessage::NodeMoved` and `GraphMessage::NodeSelected`. While visible without a captured text input, `Tab` / `Shift+Tab` (and `←` / `→`) step through nodes, `P` pins/unpins the selected node, and `Enter` opens it.
 - **`GraphLabels`** (`views/graph/labels.rs`) — a canvas over it that draws node labels,
   thinned by a degree cutoff once the graph is dense, and the hover card.
 

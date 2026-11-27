@@ -1,6 +1,6 @@
 # Open Items
 
-What is still not done, as of 2026-11-26. It replaces the finished plans (UI overhaul, code
+What is still not done, as of 2026-11-27. It replaces the finished plans (UI overhaul, code
 health, bug review, e2e bug discovery, tabs and images, split layouts) and the product
 roadmap. They were checked against the code, and everything else in them is built and
 covered by tests (git history has the plans themselves, up to `0cdab3a`). Remove an item
@@ -43,11 +43,14 @@ here when it lands; record how the feature works in `wiki/`.
   clipped.
 - UI overhaul leftovers: italic source styling on reveal (3.3), loading shimmer (3.6), a
   selection popover on PDFs (3.7; the toolbar has those tools), a checkerboard behind
-  transparent images (3.8), light paper for handwriting (it needs an ink format change).
+  transparent images (3.8), light paper for handwriting (it needs an ink format change),
+  syntect themes generated from the tokens (code blocks use syntect's bundled
+  `base16-ocean.dark` / `InspiredGitHub`, `highlight/code.rs`).
 - State ownership (code health W7): views build `Message::Pdf(PdfMessage::…)` directly
   instead of returning family enums, and the sub-states (`UiState`, `TrackerState`,
   `PdfPane`, `SearchState`, `VaultState`, `EditorPane`) take the whole `Message`.
-- Dropping a file on the handwriting window opens it in the main window.
+- Dropping a file on the handwriting window only shows a toast asking for the main window
+  (`app/shell.rs`); it does not open or import the file.
 
 ## Needs real hardware or a person
 

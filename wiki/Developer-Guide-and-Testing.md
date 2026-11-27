@@ -51,7 +51,7 @@ cargo build --release        # optimized binary
 
 > `cargo fmt --check`, `cargo test --workspace` and clippy are all clean: the baseline in
 > `clippy-baseline.txt` is 0. `scripts/clippy-ratchet.sh` fails if the count rises above it.
-> View builders with many inputs take a `…Props` struct (`ToolbarProps`, `SearchProps`,
+> View builders with many inputs take a `…Props` struct (`PdfToolbarProps`, `SearchProps`,
 > `TrackerProps`, `ContinuousProps`) rather than positional arguments.
 >
 > Lint policy lives in `[workspace.lints]` in `Cargo.toml` and `clippy.toml` (tests may
@@ -161,7 +161,7 @@ graph TD
     CoreTests --> IndexT["file_index.rs — wikilink resolution and backlinks"]
     CoreTests --> Massive["massive_tests.rs — 8 combinatorial and stress suites"]
 
-    NativeTests --> BufferT["editor/buffer.rs — undo runs, auto-pairing, graphemes, affinity"]
+    NativeTests --> BufferT["editor/buffer/ — undo runs, auto-pairing, graphemes, affinity"]
     NativeTests --> HighlightT["editor/highlight/tests.rs — concealing, fences, incremental = fresh"]
     NativeTests --> RendererT["editor/renderer/ — invariants, caret, hit testing, motion, painting"]
     NativeTests --> TreeT["editor/layout_tree.rs — exact prefix sums and find_line_at_y"]
@@ -181,7 +181,7 @@ graph TD
    wikilink variants, graph topologies, dynamic index fuzzing, settings upserts at volume,
    tracker session volume, recursive vault operations, FTS5 indexing and search, and the
    file rename/delete lifecycle.
-3. **Buffer semantics** (`native/src/editor/buffer.rs`) — undo-run coalescing, bracket
+3. **Buffer semantics** (`native/src/editor/buffer/`) — undo-run coalescing, bracket
    wrapping and skip-over, contraction apostrophes, list continuation including ordered-list
    increment and multibyte markers, grapheme-cluster movement and deletion (CRLF as one
    stop), caret affinity that lasts only until the next change, and a deterministic editing

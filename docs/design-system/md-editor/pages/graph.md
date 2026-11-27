@@ -1,7 +1,8 @@
 # Page override — Knowledge graph
 
-The graph view has its own widget set today (`views/graph/widgets.rs`, ~150 literal sizes and
-colours). It moves onto the shared components; only what is genuinely graph-specific stays.
+The graph view used to have its own widget set (`views/graph/widgets.rs`, ~150 literal sizes
+and colours). It is now built from the shared components (`views/graph/toolbar.rs`,
+`inspector.rs`); only what is genuinely graph-specific stays.
 
 ## Node and edge encoding
 
